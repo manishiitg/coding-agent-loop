@@ -7,12 +7,14 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/t
 import ServerSelectionDropdown from './ServerSelectionDropdown'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
+import CommandSelectionDialog from './CommandSelectionDialog'
 import type { PlannerFile } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { usePresetState, usePresetApplication } from '../stores/useGlobalPresetStore'
+import { agentApi } from '../services/api'
 
 interface ChatInputProps {
   // Handlers (callbacks only)
@@ -49,8 +51,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   
   const {
     isStreaming,
-    observerId
+    observerId,
+    sessionId
   } = useChatStore()
+  
+  // State for summarization
+  const [isSummarizing, setIsSummarizing] = useState(false)
   
   const {
     enabledServers: availableServers,
@@ -144,6 +150,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [fileSearchQuery, setFileSearchQuery] = useState('')
   const [atPosition, setAtPosition] = useState(-1) // Position of @ in text
 
+  // Command selection dialog state
+  const [showCommandDialog, setShowCommandDialog] = useState(false)
+  const [commandDialogPosition, setCommandDialogPosition] = useState({ top: 0, left: 0 })
+  const [commandSearchQuery, setCommandSearchQuery] = useState('')
+  const [slashPosition, setSlashPosition] = useState(-1) // Position of / in text
+
   // Handle preset folder selection - now handled by global store
   // The global store's applyPreset method handles workspace selection and folder expansion
   // No need to add to file context here as it's handled by workspace selection
@@ -185,41 +197,87 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const newValue = e.target.value
     setLocalQuery(newValue) // Only update local state - no global updates during typing
 
-    // Check for @ symbol and update file dialog state
     const cursorPosition = e.target.selectionStart || 0
     const textBeforeCursor = newValue.substring(0, cursorPosition)
+    
+    // Check for / symbol and update command dialog state (prioritize over @)
+    const lastSlashIndex = textBeforeCursor.lastIndexOf('/')
     const lastAtIndex = textBeforeCursor.lastIndexOf('@')
+    
+    // Determine which dialog to show (prioritize the one closest to cursor)
+    const slashDistance = lastSlashIndex >= 0 ? cursorPosition - lastSlashIndex : Infinity
+    const atDistance = lastAtIndex >= 0 ? cursorPosition - lastAtIndex : Infinity
+    
+    // Check for / command
+    if (lastSlashIndex >= 0 && (lastAtIndex < 0 || slashDistance < atDistance)) {
+      const textAfterSlash = textBeforeCursor.substring(lastSlashIndex + 1)
+      const hasValidSlash = textAfterSlash === '' || textAfterSlash.match(/^[a-zA-Z0-9_]*$/)
+      
+      if (hasValidSlash) {
+        setSlashPosition(lastSlashIndex)
+        setCommandSearchQuery(textAfterSlash)
+        setShowCommandDialog(true)
+        setShowFileDialog(false) // Hide file dialog if command dialog is active
+        
+        // Calculate dialog position
+        const textarea = e.target
+        const rect = textarea.getBoundingClientRect()
+        const dialogHeight = 200 // Approximate dialog height
+        const spaceAbove = rect.top
+        const spaceBelow = window.innerHeight - rect.bottom
+        const shouldPositionAbove = spaceAbove > dialogHeight || spaceAbove > spaceBelow
 
-    // Check if @ is at the end or followed by whitespace/newline
-    const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1)
-    const hasValidAt = lastAtIndex >= 0 &&
-      (textAfterAt === '' || textAfterAt.match(/^[a-zA-Z0-9/._\-\\]*$/)) // Updated regex
+        setCommandDialogPosition({
+          top: shouldPositionAbove
+            ? rect.top + window.scrollY - dialogHeight - 10
+            : rect.bottom + window.scrollY + 10,
+          left: rect.left + window.scrollX
+        })
+      } else {
+        setShowCommandDialog(false)
+        setSlashPosition(-1)
+        setCommandSearchQuery('')
+      }
+    }
+    // Check for @ symbol and update file dialog state (only if no / command active)
+    else if (lastAtIndex >= 0 && !showCommandDialog) {
+      const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1)
+      const hasValidAt = textAfterAt === '' || textAfterAt.match(/^[a-zA-Z0-9/._\-\\]*$/)
 
-    if (hasValidAt) {
-      setAtPosition(lastAtIndex)
-      setFileSearchQuery(textAfterAt)
-      setShowFileDialog(true)
+      if (hasValidAt) {
+        setAtPosition(lastAtIndex)
+        setFileSearchQuery(textAfterAt)
+        setShowFileDialog(true)
 
-      // Calculate dialog position - smart positioning to avoid overlap
-      const textarea = e.target
-      const rect = textarea.getBoundingClientRect()
-      const dialogHeight = 320 // Approximate dialog height
-      const spaceAbove = rect.top
-      const spaceBelow = window.innerHeight - rect.bottom
+        // Calculate dialog position - smart positioning to avoid overlap
+        const textarea = e.target
+        const rect = textarea.getBoundingClientRect()
+        const dialogHeight = 320 // Approximate dialog height
+        const spaceAbove = rect.top
+        const spaceBelow = window.innerHeight - rect.bottom
 
-      // Position above if there's more space above, otherwise position below
-      const shouldPositionAbove = spaceAbove > dialogHeight || spaceAbove > spaceBelow
+        // Position above if there's more space above, otherwise position below
+        const shouldPositionAbove = spaceAbove > dialogHeight || spaceAbove > spaceBelow
 
-      setFileDialogPosition({
-        top: shouldPositionAbove
-          ? rect.top + window.scrollY - dialogHeight - 10 // Above with gap
-          : rect.bottom + window.scrollY + 10, // Below with gap
-        left: rect.left + window.scrollX
-      })
+        setFileDialogPosition({
+          top: shouldPositionAbove
+            ? rect.top + window.scrollY - dialogHeight - 10 // Above with gap
+            : rect.bottom + window.scrollY + 10, // Below with gap
+          left: rect.left + window.scrollX
+        })
+      } else {
+        setShowFileDialog(false)
+        setAtPosition(-1)
+        setFileSearchQuery('')
+      }
     } else {
+      // Close both dialogs if neither is active
       setShowFileDialog(false)
       setAtPosition(-1)
       setFileSearchQuery('')
+      setShowCommandDialog(false)
+      setSlashPosition(-1)
+      setCommandSearchQuery('')
     }
 
     // Check if any @file references were removed and remove them from context
@@ -235,9 +293,46 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     removedFiles.forEach(filePath => {
       removeFileFromContext(filePath)
     })
-  }, [chatFileContext, removeFileFromContext])
+  }, [chatFileContext, removeFileFromContext, showCommandDialog])
+
+  // Handle manual summarization
+  // If messageToSendAfter is provided, it will be sent as a user message after summarization completes
+  const handleSummarize = useCallback(async (messageToSendAfter?: string) => {
+    if (!sessionId || isSummarizing || isStreaming) {
+      return
+    }
+
+    setIsSummarizing(true)
+    try {
+      const response = await agentApi.summarizeConversation(sessionId)
+      console.log('[SUMMARIZATION] Success:', response)
+      // Show success notification (you can add a toast library here)
+      alert(`Conversation summarized successfully!\nOriginal: ${response.original_count} messages\nNew: ${response.new_count} messages\nReduced by: ${response.reduced_by} messages`)
+      
+      // If there's a message to send after summarization, send it now
+      if (messageToSendAfter && messageToSendAfter.trim() && observerId) {
+        // Small delay to ensure summarization is fully processed
+        setTimeout(() => {
+          onSubmit(messageToSendAfter.trim())
+        }, 500)
+      }
+    } catch (error) {
+      console.error('[SUMMARIZATION] Error:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      alert(`Failed to summarize conversation: ${errorMessage}`)
+    } finally {
+      setIsSummarizing(false)
+    }
+  }, [sessionId, isSummarizing, isStreaming, observerId, onSubmit])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // If command dialog is open, let it handle keyboard events
+    if (showCommandDialog) {
+      // Don't prevent default for arrow keys, enter, escape - let dialog handle them
+      if (['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(e.key)) {
+        return
+      }
+    }
     // If file dialog is open, let it handle keyboard events
     if (showFileDialog) {
       // Don't prevent default for arrow keys, enter, escape - let dialog handle them
@@ -249,6 +344,24 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // Handle normal Enter to submit
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       e.preventDefault()
+      
+      // Check for slash commands
+      const trimmedQuery = queryToSubmit?.trim() || ''
+      const summarizeIndex = trimmedQuery.indexOf('/summarize')
+      
+      if (summarizeIndex >= 0) {
+        // Handle summarize command
+        if (sessionId && !isSummarizing && !isStreaming) {
+          // Extract text before /summarize
+          const textBeforeSummarize = trimmedQuery.substring(0, summarizeIndex).trim()
+          
+          // If there's text before /summarize, send it after summarization
+          // Otherwise, just summarize
+          handleSummarize(textBeforeSummarize || undefined)
+          setLocalQuery('') // Clear input after command
+        }
+        return
+      }
       
       if (canSubmit) {
         // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
@@ -275,10 +388,28 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [localQuery, onSubmit, showFileDialog, selectedModeCategory, observerId, canSubmit, queryToSubmit])
+  }, [localQuery, onSubmit, showFileDialog, showCommandDialog, selectedModeCategory, observerId, canSubmit, queryToSubmit, sessionId, isSummarizing, isStreaming, handleSummarize])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
+    
+    // Check for slash commands
+    const trimmedQuery = queryToSubmit?.trim() || ''
+    const summarizeIndex = trimmedQuery.indexOf('/summarize')
+    
+    if (summarizeIndex >= 0) {
+      // Handle summarize command
+      if (sessionId && !isSummarizing && !isStreaming) {
+        // Extract text before /summarize
+        const textBeforeSummarize = trimmedQuery.substring(0, summarizeIndex).trim()
+        
+        // If there's text before /summarize, send it after summarization
+        // Otherwise, just summarize
+        handleSummarize(textBeforeSummarize || undefined)
+        setLocalQuery('') // Clear input after command
+      }
+      return
+    }
     
     if (canSubmit && isRequiredFolderSelected) {
       // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
@@ -288,9 +419,33 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       // Call onSubmit with the query directly - no global state coordination needed!
       onSubmit(queryToSubmit)
     }
-  }, [canSubmit, isRequiredFolderSelected, selectedModeCategory, observerId, queryToSubmit, onSubmit])
+  }, [canSubmit, isRequiredFolderSelected, selectedModeCategory, observerId, queryToSubmit, onSubmit, sessionId, isSummarizing, isStreaming, handleSummarize])
 
   // File selection handlers
+  const handleCommandSelect = useCallback((command: string) => {
+    if (!textareaRef.current || slashPosition === -1) return
+    
+    // Replace / and search text with /command + space
+    const beforeSlash = localQuery.substring(0, slashPosition)
+    const afterSearch = localQuery.substring(slashPosition + 1 + commandSearchQuery.length)
+    const newQuery = beforeSlash + '/' + command + ' ' + afterSearch
+    
+    setLocalQuery(newQuery) // Only update local state
+    setShowCommandDialog(false)
+    setSlashPosition(-1)
+    setCommandSearchQuery('')
+    
+    // Focus back to textarea and position cursor after the space
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus()
+        // Position cursor after the command and space
+        const cursorPosition = beforeSlash.length + '/'.length + command.length + ' '.length
+        textareaRef.current.setSelectionRange(cursorPosition, cursorPosition)
+      }
+    }, 0)
+  }, [localQuery, slashPosition, commandSearchQuery])
+
   const handleFileSelect = useCallback((file: PlannerFile) => {
     if (!textareaRef.current || atPosition === -1) return
     
@@ -330,6 +485,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }, 0)
   }, [localQuery, atPosition, fileSearchQuery, chatFileContext, addFileToContext, scrollToFile])
+
+  const handleCommandDialogClose = useCallback(() => {
+    setShowCommandDialog(false)
+    setSlashPosition(-1)
+    setCommandSearchQuery('')
+    textareaRef.current?.focus()
+  }, [])
 
   const handleFileDialogClose = useCallback(() => {
     setShowFileDialog(false)
@@ -432,13 +594,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     selectedModeCategory === 'workflow' ? isWorkflowReady :
     true
   const submitButtonDisabled = !hasValidQuery || !observerId || !readyForMode
-  
 
   // Memoized placeholder to prevent re-computation
   const placeholder = useMemo(() => {
     return selectedModeCategory === 'workflow'
       ? "Enter your objective for workflow execution... I'll create a todo-list and execute tasks sequentially!"
-      : "Ask me anything... I can use tools to help you!"
+      : "Ask me anything... I can use tools to help you! (Type /summarize to summarize, or 'text /summarize' to summarize then send text)"
   }, [selectedModeCategory])
 
   return (
@@ -769,6 +930,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           </div>
         </form>
       </div>
+      
+      {/* Command Selection Dialog */}
+      <CommandSelectionDialog
+        isOpen={showCommandDialog}
+        onClose={handleCommandDialogClose}
+        onSelectCommand={handleCommandSelect}
+        searchQuery={commandSearchQuery}
+        position={commandDialogPosition}
+      />
       
       {/* File Selection Dialog */}
       <FileSelectionDialog

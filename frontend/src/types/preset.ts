@@ -12,6 +12,7 @@ export interface CustomPreset {
   selectedFolder?: PlannerFile; // Single folder
   llmConfig?: PresetLLMConfig; // LLM configuration for this preset
   useCodeExecutionMode?: boolean; // MCP code execution mode
+  enableContextSummarization?: boolean; // Enable context summarization
 }
 
 export interface PredefinedPreset {
@@ -24,4 +25,5 @@ export interface PredefinedPreset {
   selectedFolder?: PlannerFile;
   llmConfig?: PresetLLMConfig; // LLM configuration for this preset
   useCodeExecutionMode?: boolean; // MCP code execution mode
+  enableContextSummarization?: boolean; // Enable context summarization
 }

@@ -30,6 +30,7 @@ export default function SemanticSearchSync({ onResync, isVisible = true }: Seman
   const [isPolling, setIsPolling] = useState<boolean>(true)
   const [lastPollTime, setLastPollTime] = useState<Date | null>(null)
   const [pollingEnabled, setPollingEnabled] = useState<boolean>(true)
+  const [isSemanticSearchDisabled, setIsSemanticSearchDisabled] = useState<boolean>(false)
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const lastStatusRef = useRef<SemanticSearchStatus | null>(null)
 
@@ -39,11 +40,8 @@ export default function SemanticSearchSync({ onResync, isVisible = true }: Seman
       if (!isPolling) setLoading(true)
       setError(null)
       
-      // Fetch both status and job status
-      const [statusResponse, jobResponse] = await Promise.all([
-        agentApi.getSemanticSearchStatus(),
-        agentApi.getSemanticJobStatus()
-      ])
+      // First, fetch status to check if semantic search is disabled
+      const statusResponse = await agentApi.getSemanticSearchStatus()
       
       if (statusResponse.success && statusResponse.data) {
         const newStatus = statusResponse.data
@@ -77,10 +75,49 @@ export default function SemanticSearchSync({ onResync, isVisible = true }: Seman
             timestamp: Date.now()
           }
           
+          // Create mock job status for disabled state
+          const disabledJobStatus: SemanticJobStatus = {
+            job_stats: {
+              completed: 0,
+              pending: 0,
+              processing: 0,
+              failed: 0
+            },
+            running: false,
+            worker_count: 0
+          }
+          
           setStatus(disabledStatus)
+          setJobStatus(disabledJobStatus)
           lastStatusRef.current = disabledStatus
           setLastPollTime(new Date())
-          return
+          setIsSemanticSearchDisabled(true) // Stop polling when disabled
+          return // Skip jobs API call when disabled
+        }
+        
+        // If we get here, semantic search is enabled - fetch jobs API
+        setIsSemanticSearchDisabled(false)
+        
+        // Fetch job status only when semantic search is enabled
+        const jobResponse = await agentApi.getSemanticJobStatus()
+        
+        if (jobResponse.success && jobResponse.data) {
+          // Handle disabled semantic search response for job status (shouldn't happen if status is enabled, but handle it anyway)
+          if (jobResponse.data.enabled === false) {
+            const disabledJobStatus: SemanticJobStatus = {
+              job_stats: {
+                completed: 0,
+                pending: 0,
+                processing: 0,
+                failed: 0
+              },
+              running: false,
+              worker_count: 0
+            }
+            setJobStatus(disabledJobStatus)
+          } else {
+            setJobStatus(jobResponse.data)
+          }
         }
         
         // Only update if status actually changed (for polling efficiency)
@@ -97,25 +134,6 @@ export default function SemanticSearchSync({ onResync, isVisible = true }: Seman
         setLastPollTime(new Date())
       } else {
         setError(statusResponse.message || 'Failed to fetch semantic search status')
-      }
-      
-      if (jobResponse.success && jobResponse.data) {
-        // Handle disabled semantic search response for job status
-        if (jobResponse.data.enabled === false) {
-          const disabledJobStatus: SemanticJobStatus = {
-            job_stats: {
-              completed: 0,
-              pending: 0,
-              processing: 0,
-              failed: 0
-            },
-            running: false,
-            worker_count: 0
-          }
-          setJobStatus(disabledJobStatus)
-        } else {
-          setJobStatus(jobResponse.data)
-        }
       }
     } catch (err) {
       console.error('Failed to fetch semantic search status:', err)
@@ -194,9 +212,9 @@ export default function SemanticSearchSync({ onResync, isVisible = true }: Seman
     fetchStatus()
   }, [fetchStatus])
 
-  // Polling effect - only poll when visible and enabled
+  // Polling effect - only poll when visible, enabled, and semantic search is not disabled
   useEffect(() => {
-    if (isVisible && pollingEnabled && isPolling) {
+    if (isVisible && pollingEnabled && isPolling && !isSemanticSearchDisabled) {
       const interval = setInterval(() => {
         fetchStatus(true) // Pass true to indicate this is a polling call
       }, 10000) // 10 seconds for more frequent updates
@@ -210,13 +228,13 @@ export default function SemanticSearchSync({ onResync, isVisible = true }: Seman
         }
       }
     } else {
-      // Clear interval if not visible or polling disabled
+      // Clear interval if not visible, polling disabled, or semantic search is disabled
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current)
         pollingIntervalRef.current = null
       }
     }
-  }, [isVisible, pollingEnabled, isPolling, fetchStatus])
+  }, [isVisible, pollingEnabled, isPolling, isSemanticSearchDisabled, fetchStatus])
 
   // Cleanup on unmount
   useEffect(() => {

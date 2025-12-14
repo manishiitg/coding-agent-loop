@@ -1,33 +1,51 @@
 # Prerequisite Failure Detection - Implementation Guide
 
-## Overview
+## 📋 Overview
 
 **Status**: ✅ **COMPLETED**
 
-Per-step manual configuration via UI. Users enable prerequisite detection for specific steps and configure **prerequisite rules** - each rule specifies one step dependency and one description of when to detect prerequisite failures. When validation fails due to a missing prerequisite (e.g., expired login session, missing config file), the validation agent evaluates all rules and navigates back to the matching prerequisite step instead of retrying the current step.
+Prerequisite failure detection allows the execution agent to proactively detect missing prerequisites during step execution and immediately navigate back to the prerequisite step. Users enable prerequisite detection for specific steps and configure **prerequisite rules** - each rule specifies one step dependency and one description of when to detect prerequisite failures.
 
-**Key Design**: Each prerequisite rule has **one** step dependency and **one** description, ensuring clear, unambiguous prerequisite detection logic.
+**Key Design**: The execution agent has access to a special tool `detect_prerequisite_failure` that, when called, immediately stops execution and triggers navigation to the prerequisite step. This is a proactive, tool-based approach rather than post-validation detection.
+
+**Key Benefits:**
+- Immediate detection during execution (no need to wait for validation)
+- LLM-driven decision making (execution agent decides when prerequisites are missing)
+- Single tool handles all prerequisite scenarios via `depends_on_step_id` parameter
+- Context cancellation ensures execution stops immediately when tool is called
 
 ---
 
-## Data Model
+## 📁 Key Files & Locations
 
-### Step Configuration (`step_config.json`)
+| Component | File | Key Functions/Types |
+|-----------|------|---------------------|
+| **Tool Creation** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `createPrerequisiteDetectionTool()`, `formatPrerequisiteRulesForExecutionAgent()`, `PrerequisiteFailureError` |
+| **Tool Registration** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) | `createExecutionOnlyAgent()` |
+| **Execution Loop** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `executeSingleStep()` - channel-based error handling |
+| **System Prompt** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go) | `executionOnlySystemPromptProcessor()` - includes prerequisite rules info |
+| **Data Model** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `PrerequisiteInfo`, `PrerequisiteRuleInfo`, `gatherPrerequisiteInfo()` |
+| **Frontend Config** | [`frontend/src/components/workflow/canvas/PrerequisiteConfigPanel.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/canvas/PrerequisiteConfigPanel.tsx) | UI for configuring prerequisite rules |
+| **Frontend Visualization** | [`frontend/src/components/workflow/hooks/usePlanToFlow.ts`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/hooks/usePlanToFlow.ts) | `createPrerequisiteEdges()` - creates prerequisite edges in React Flow |
+
+---
+
+## 🔄 How It Works
+
+### 1. Configuration
+
+User enables prerequisite detection and configures rules in the UI:
 
 ```json
 {
   "steps": [{
     "id": "step-2",
     "agent_configs": {
-      "enable_prerequisite_detection": true,  // Default: false
+      "enable_prerequisite_detection": true,
       "prerequisite_rules": [
         {
-          "depends_on_step": "step-0",  // Step ID this rule depends on
-          "description": "If login session is missing or expired, go back to step 0"  // User description for this specific step
-        },
-        {
-          "depends_on_step": "step-1",
-          "description": "If config file is missing, go back to step 1"
+          "depends_on_step": "step-0",
+          "description": "If login session is missing or expired, go back to step 0"
         }
       ]
     }
@@ -35,121 +53,333 @@ Per-step manual configuration via UI. Users enable prerequisite detection for sp
 }
 ```
 
-**Key Points**:
-- Each rule has **one** step dependency and **one** description
-- Multiple rules can be configured for different prerequisite scenarios
-- The validation agent evaluates all rules and uses the first matching one
+### 2. Tool Registration
 
-### Backend Types
+During step execution, if prerequisite detection is enabled:
 
-**`planning_agent.go`**:
+1. **Gather Prerequisite Info**: `gatherPrerequisiteInfo()` collects prerequisite rules and dependency step information
+2. **Create Cancellable Context**: Execution context is wrapped with `context.WithCancel()` to allow immediate cancellation
+3. **Create Error Channel**: Buffered channel (`chan *PrerequisiteFailureError`) is created to receive errors from tool
+4. **Register Tool**: `detect_prerequisite_failure` tool is registered with the execution agent:
+   - Tool executor validates `depends_on_step_id` against configured rules
+   - Tool executor validates step index, navigation distance, and prerequisites
+   - On success, tool sends error to channel and cancels execution context
+5. **Update System Prompt**: Prerequisite rules are formatted and added to execution agent's system prompt via `formatPrerequisiteRulesForExecutionAgent()`
+
+### 3. Tool Execution Flow
+
+```mermaid
+sequenceDiagram
+    participant LLM as Execution Agent (LLM)
+    participant Tool as detect_prerequisite_failure
+    participant Channel as Error Channel
+    participant Context as Execution Context
+    participant Orchestrator as Execution Loop
+    
+    LLM->>Tool: Call tool with depends_on_step_id + reason
+    Tool->>Tool: Validate step ID, index, distance
+    Tool->>Channel: Send PrerequisiteFailureError
+    Tool->>Context: Cancel context
+    Context-->>LLM: Execution stopped
+    Orchestrator->>Channel: Check for prerequisite error
+    Channel-->>Orchestrator: PrerequisiteFailureError
+    Orchestrator->>Orchestrator: Trigger navigation
+```
+
+### 4. Immediate Cancellation
+
+When the tool is called:
+
+1. **Validation**: Tool validates:
+   - `depends_on_step_id` exists in prerequisite rules
+   - Step index exists in plan
+   - Target step is before current step
+   - Navigation distance ≤ 10 steps
+
+2. **Error Creation**: Creates `PrerequisiteFailureError` with:
+   - `DependsOnStepID`: The step ID to navigate to
+   - `StepIndex`: 0-based step index
+   - `Reason`: User-provided reason
+
+3. **Channel Send**: Sends error to channel (non-blocking)
+
+4. **Context Cancellation**: Calls `cancelFunc()` to immediately stop agent execution
+
+5. **Return**: Returns empty string (execution already stopped)
+
+### 5. Error Handling in Execution Loop
+
+After `Execute()` returns (due to context cancellation):
+
 ```go
-type PrerequisiteRule struct {
-    DependsOnStep string `json:"depends_on_step"` // Step ID this rule depends on
-    Description   string `json:"description"`     // User description for this specific step
-}
-
-type AgentConfigs struct {
-    EnablePrerequisiteDetection *bool              `json:"enable_prerequisite_detection,omitempty"`
-    PrerequisiteRules           []PrerequisiteRule `json:"prerequisite_rules,omitempty"` // Array of prerequisite rules
+// Check for prerequisite failure (from tool call via channel)
+var prereqErr *PrerequisiteFailureError
+select {
+case prereqErr = <-prereqErrChan:
+    // Prerequisite failure detected - tool called and context was cancelled
+default:
+    // No prerequisite failure - check for other errors
 }
 ```
 
-**`validation_agent.go`**:
+If prerequisite error found:
+1. Validate target step (index, distance, branch constraints)
+2. Clean up progress from target step onward via `cleanupProgressFromStep()`
+3. Emit `PrerequisiteNavigationEvent`
+4. Return navigation error to restart from target step
+
+---
+
+## 🏗️ Architecture
+
+### Tool Registration
+
+**File**: [`controller_agent_factory.go:354-385`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go#L354)
+
 ```go
-type ValidationResponse struct {
-    FailureType         string `json:"failure_type,omitempty"`  // "prerequisite" | "execution"
-    ShouldRetryFromStep *int   `json:"should_retry_from_step,omitempty"`  // 0-based index
-    RetryReason         string `json:"retry_reason,omitempty"`
+if prerequisiteInfo != nil && len(prerequisiteInfo.PrerequisiteRules) > 0 {
+    toolExecutor := hcpo.createPrerequisiteDetectionTool(
+        prerequisiteInfo, allSteps, currentStepIndex, 
+        cancelFunc, prereqErrChan)
+    
+    toolParams := map[string]interface{}{
+        "type": "object",
+        "properties": map[string]interface{}{
+            "depends_on_step_id": map[string]interface{}{
+                "type": "string",
+                "description": "Step ID from one of the prerequisite rules",
+            },
+            "reason": map[string]interface{}{
+                "type": "string",
+                "description": "Brief explanation of why the prerequisite failure was detected",
+            },
+        },
+        "required": []string{"depends_on_step_id", "reason"},
+    }
+    
+    toolDescription := "Detect a prerequisite failure and navigate back to a prerequisite step. Call this tool when you detect that a prerequisite condition (as described in the prerequisite rules) is met during execution. Execution will stop and automatically navigate back to the specified prerequisite step."
+    
+    mcpAgent.RegisterCustomTool(
+        "detect_prerequisite_failure",
+        toolDescription,
+        toolParams,
+        toolExecutor,
+        "structured_output", // Always available even in code execution mode
+    )
+}
+```
+
+### Tool Executor
+
+**File**: [`controller_execution.go:386-464`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L386)
+
+The tool executor:
+1. Validates `depends_on_step_id` is in configured prerequisite rules
+2. Validates step index exists and is before current step
+3. Validates navigation distance ≤ 10 steps
+4. Creates `PrerequisiteFailureError`
+5. Sends error to channel
+6. Cancels execution context
+7. Returns (execution already stopped)
+
+### System Prompt Integration
+
+**File**: [`execution_only_agent.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go)
+
+Prerequisite rules are formatted via `formatPrerequisiteRulesForExecutionAgent()` and included in the system prompt template:
+
+```go
+{{if .PrerequisiteRulesInfo}}{{.PrerequisiteRulesInfo}}{{end}}
+```
+
+The formatted text includes:
+- Available prerequisite rules with step IDs and descriptions
+- Instructions on when to call `detect_prerequisite_failure`
+- How to use the tool (parameters, behavior)
+
+---
+
+## 🧩 Code Examples
+
+### Tool Executor Implementation
+
+```go
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createPrerequisiteDetectionTool(
+    prerequisiteInfo *PrerequisiteInfo, 
+    allSteps []TodoStep, 
+    currentStepIndex int, 
+    cancelFunc context.CancelFunc, 
+    prereqErrChan chan<- *PrerequisiteFailureError,
+) func(ctx context.Context, args map[string]interface{}) (string, error) {
+    // ... validation maps setup ...
+    
+    return func(ctx context.Context, args map[string]interface{}) (string, error) {
+        // Extract and validate parameters
+        dependsOnStepID := args["depends_on_step_id"].(string)
+        reason := args["reason"].(string)
+        
+        // Validate against prerequisite rules
+        // ... validation logic ...
+        
+        // Create error
+        prereqErr := &PrerequisiteFailureError{
+            DependsOnStepID: dependsOnStepID,
+            StepIndex:       stepIndex,
+            Reason:          reason,
+        }
+        
+        // Send to channel
+        select {
+        case prereqErrChan <- prereqErr:
+        default:
+        }
+        
+        // Cancel execution immediately
+        if cancelFunc != nil {
+            cancelFunc()
+        }
+        
+        return "", nil
+    }
+}
+```
+
+### Execution Loop Integration
+
+```go
+// Create cancellable context
+executionCtx, cancelExecution := context.WithCancel(ctx)
+defer cancelExecution()
+
+// Create error channel
+prereqErrChan := make(chan *PrerequisiteFailureError, 1)
+
+// Create agent with tool registration
+executionAgent, err := hcpo.createExecutionOnlyAgent(
+    executionCtx, "execution_only", stepPath, executionAgentName, 
+    step.AgentConfigs, isRetryAfterValidationFailure, retryAttempt, 
+    prerequisiteInfoForExecution, allSteps, stepIndex, 
+    cancelExecution, prereqErrChan,
+)
+
+// Execute agent
+executionResult, executionConversationHistory, err := executionAgent.Execute(
+    executionCtx, templateVars, []llmtypes.MessageContent{},
+)
+
+// Check for prerequisite failure
+var prereqErr *PrerequisiteFailureError
+select {
+case prereqErr = <-prereqErrChan:
+    // Handle navigation
+    targetStepIndex := prereqErr.StepIndex
+    // ... navigation logic ...
+default:
+    // No prerequisite failure
 }
 ```
 
 ---
 
-## Frontend
+## ⚙️ Configuration
 
-### 1. Prerequisite Config Panel
+### Step Configuration
 
-**Component**: `PrerequisiteConfigPanel.tsx`
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `enable_prerequisite_detection` | `boolean` | `false` | Enable prerequisite detection for this step |
+| `prerequisite_rules` | `PrerequisiteRule[]` | `[]` | Array of prerequisite rules |
 
-**UI**:
-```
-┌─────────────────────────────────┐
-│ ☑ Enable prerequisite detection │
-│                                 │
-│ Prerequisite Rules:             │
-│ ┌─────────────────────────────┐ │
-│ │ Rule 1                    [×]│ │
-│ │ Depends on step:            │ │
-│ │ [Select a step...]          │ │
-│ │ Detection description:      │ │
-│ │ ┌─────────────────────────┐ │ │
-│ │ │ If login session is     │ │ │
-│ │ │ missing or expired, go │ │ │
-│ │ │ back to step 0          │ │ │
-│ │ └─────────────────────────┘ │ │
-│ └─────────────────────────────┘ │
-│ ┌─────────────────────────────┐ │
-│ │ Rule 2                    [×]│ │
-│ │ Depends on step:            │ │
-│ │ [Select a step...]          │ │
-│ │ Detection description:      │ │
-│ │ ┌─────────────────────────┐ │ │
-│ │ │ If config file is       │ │ │
-│ │ │ missing, go back to    │ │ │
-│ │ │ step 1                 │ │ │
-│ │ └─────────────────────────┘ │ │
-│ └─────────────────────────────┘ │
-│ [+ Add prerequisite rule]        │
-└─────────────────────────────────┘
-```
+### Prerequisite Rule Structure
 
-**Key Features**:
-- Each rule has its own step selector and description field
-- Users can add multiple rules for different prerequisite scenarios
-- Each rule is independent - one step dependency per rule
+| Field | Type | Required | Purpose |
+|-------|------|----------|---------|
+| `depends_on_step` | `string` | Yes | Step ID this rule depends on (e.g., `"step-0"`) |
+| `description` | `string` | Yes | Natural language description of when to detect prerequisite failure |
 
-**Integration**: Add to `StepSidebar.tsx` in StepEditPanel section.
+### Tool Parameters
 
-### 2. React Flow Visualization
-
-**Changes to `usePlanToFlow.ts`**:
-- Add `prerequisite` edge type (dashed, orange/purple)
-- Toggle to show/hide (like context dependencies)
-- Highlight navigation path on events
+| Parameter | Type | Required | Purpose |
+|-----------|------|----------|---------|
+| `depends_on_step_id` | `string` | Yes | Step ID from prerequisite rules to navigate to |
+| `reason` | `string` | Yes | Brief explanation of why prerequisite failure was detected |
 
 ---
 
-## Backend
+## 🛠️ Common Issues & Solutions
 
-### 1. Gather Prerequisite Info
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Tool not available in execution agent | Prerequisite detection not enabled or no rules configured | Check `enable_prerequisite_detection` and `prerequisite_rules` in step config |
+| Execution doesn't stop immediately | Context cancellation not working | Verify `cancelFunc` is passed correctly to tool executor |
+| Prerequisite error not detected | Channel not checked after Execute() | Ensure `select` statement checks channel after `Execute()` returns |
+| Invalid step ID error | Step ID not in prerequisite rules | Verify `depends_on_step_id` matches a configured rule's `depends_on_step` |
+| Navigation distance exceeded | Target step too far back | Maximum 10 steps - check step indices |
 
-**Function**: `gatherPrerequisiteInfo()` in `controller_execution.go`
+---
 
-**Logic**:
-- Check if `enable_prerequisite_detection` is true
-- Get `prerequisite_rules` array from config
-- For each prerequisite rule:
-  - Get the `depends_on_step` and `description` from the rule
-  - Check dependency step completion status
-  - Check context output file status
-  - Get validation status
-  - Build `PrerequisiteRuleInfo` with step info and description
-- Return `PrerequisiteInfo` JSON (includes description)
+## 🔍 For LLMs: Quick Reference
 
-### 2. Pass to Validation Agent
+### Constraints
 
-**In `executeSingleStep()`**, before validation:
+✅ **Allowed:**
+- Calling `detect_prerequisite_failure` when prerequisite condition is met
+- Using any configured `depends_on_step_id` from prerequisite rules
+- Providing clear reason for prerequisite failure
+
+❌ **Forbidden:**
+- Calling tool with step IDs not in prerequisite rules
+- Calling tool for execution failures (not prerequisite failures)
+- Navigating more than 10 steps back
+
+### Tool Usage Pattern
+
 ```go
-prerequisiteInfo, _ := hcpo.gatherPrerequisiteInfo(...)
-if prerequisiteInfo != nil {
-    prerequisiteInfoJSON, _ := json.Marshal(prerequisiteInfo)
-    validationTemplateVars["PrerequisiteInfo"] = string(prerequisiteInfoJSON)
-    validationTemplateVars["EnablePrerequisiteDetection"] = "true"
+// When prerequisite condition is detected:
+detect_prerequisite_failure({
+    "depends_on_step_id": "step-0",  // Must match a configured rule
+    "reason": "Login session expired" // Brief explanation
+})
+```
+
+### System Prompt Format
+
+The execution agent receives prerequisite rules in this format:
+
+```
+## 🔄 Prerequisite Detection
+
+**Prerequisite detection is enabled for this step.** If you detect that a prerequisite condition described below is met during execution, you can call the `detect_prerequisite_failure` tool to navigate back to the prerequisite step.
+
+### Available Prerequisite Rules:
+
+**Rule 1:**
+- **Step ID**: `step-0` (Step 1: Login to Website)
+- **Condition**: If login session is missing or expired, go back to step 0
+
+### How to Use:
+1. Call `detect_prerequisite_failure` with:
+   - `depends_on_step_id`: The step ID from the matching rule
+   - `reason`: A brief explanation
+2. Execution will stop and automatically navigate back
+```
+
+---
+
+## 📊 Data Model
+
+### PrerequisiteFailureError
+
+```go
+type PrerequisiteFailureError struct {
+    DependsOnStepID string // Step ID to navigate back to
+    StepIndex       int    // 0-based step index (computed from step ID)
+    Reason          string // Reason for prerequisite failure
 }
 ```
 
-**PrerequisiteInfo Structure**:
+### PrerequisiteInfo
+
 ```go
 type PrerequisiteInfo struct {
     CurrentStepID               string                 `json:"current_step_id"`
@@ -165,180 +395,33 @@ type PrerequisiteRuleInfo struct {
 }
 ```
 
-### 3. Validation Agent Prompt
+---
 
-**Add conditional section** (only when enabled):
-- **Parse Prerequisite Rules**: The prerequisite information contains an array of prerequisite rules
-- **Each Rule Contains**:
-  - `depends_on_step`: The step ID this rule depends on
-  - `description`: User description of when to detect prerequisite failures for this specific step
-  - `dependency_step_info`: Information about the dependency step (step index, title, completion status, context output)
-- **Evaluate Each Rule**:
-  - Analyze the description to understand when to detect prerequisite failures
-  - Parse the description to extract condition (e.g., "login is missing") and target step
-  - Analyze execution history to check if condition is met
-  - Check dependency step info (completion status, context output existence)
-- **Decision**:
-  - If ANY rule's condition is met → PREREQUISITE FAILURE → set `should_retry_from_step` to the matching rule's `dependency_step_info.step_index`
-  - If NO rule's condition is met → EXECUTION FAILURE → retry current step
-- **Examples**:
-  - Rule 1: "If login session is missing or expired, go back to step 0" → If "session expired" detected → navigate to step 0
-  - Rule 2: "If config file is missing, go back to step 1" → If "config file not found" → navigate to step 1
+## 🎯 Safety Limits
 
-### 4. Navigation Logic
-
-**After validation**:
-```go
-if validationResponse.ShouldRetryFromStep != nil {
-    targetStepIndex := *validationResponse.ShouldRetryFromStep
-    // Validate target (not before start, not in different branch)
-    // Clean up progress from target step onward
-    // Emit prerequisite_navigation event
-    // Return navigation error (handled by caller)
-}
-```
-
-### 5. Progress Cleanup
-
-**Function**: `cleanupProgressFromStep()`
-- Remove completed indices from target step onward
-- Clean up branch steps
-- Save updated progress
+| Limit | Value | Purpose |
+|-------|-------|---------|
+| **Max Navigation Distance** | 10 steps | Prevents excessive backtracking |
+| **Channel Buffer Size** | 1 | Single error per execution |
+| **Validation** | Multiple checks | Step ID, index, distance, branch constraints |
 
 ---
 
-## Event System
+## ✅ Implementation Status
 
-### Event Type
-
-**`events/types.go`**: Add `PrerequisiteNavigation = "prerequisite_navigation"`
-
-**`events/data.go`**:
-```go
-type PrerequisiteNavigationEvent struct {
-    BaseEventData
-    FromStepIndex int
-    ToStepIndex   int
-    Reason        string
-    FailureType   string
-}
-```
-
-### Frontend Handling
-
-**In `WorkflowCanvas.tsx`**:
-- Listen for `prerequisite_navigation` events
-- Highlight navigation path
-- Show notification
+1. ✅ **Data Model**: `PrerequisiteRule`, `PrerequisiteInfo`, `PrerequisiteFailureError`
+2. ✅ **Tool Creation**: `createPrerequisiteDetectionTool()` with context cancellation
+3. ✅ **Tool Registration**: Registered in `createExecutionOnlyAgent()` with `structured_output` category
+4. ✅ **System Prompt**: `formatPrerequisiteRulesForExecutionAgent()` adds rules to execution agent prompt
+5. ✅ **Execution Loop**: Channel-based error detection in `executeSingleStep()`
+6. ✅ **Navigation Logic**: Progress cleanup and event emission
+7. ✅ **Frontend UI**: `PrerequisiteConfigPanel` for rule configuration
+8. ✅ **Frontend Visualization**: Prerequisite edges in React Flow
 
 ---
 
-## Implementation Status
+## 📖 Related Documentation
 
-✅ **All phases completed**
-
-1. ✅ **Data Model**: Added `PrerequisiteRule` type and `prerequisite_rules` array to `AgentConfigs`, `ValidationResponse` with failure detection fields
-2. ✅ **Backend Gathering**: Implemented `gatherPrerequisiteInfo()` in `controller_execution.go` to process multiple prerequisite rules
-3. ✅ **Backend Navigation**: Implemented navigation logic + `cleanupProgressFromStep()` in `controller_progress.go`
-4. ✅ **Frontend UI**: Created `PrerequisiteConfigPanel` with rule-based UI (each rule has one step + one description) + integrated into `StepEditPanel`
-5. ✅ **Frontend Viz**: Added prerequisite edges to React Flow in `usePlanToFlow.ts` (one edge per rule)
-6. ✅ **Events**: Added `PrerequisiteNavigation` event type + frontend handling in `useWorkflowExecution.ts`
-7. ✅ **Node Visualization**: Added prerequisite badge and rule display in `StepNode.tsx`
-8. ✅ **Validation Agent**: Updated prompt to handle multiple prerequisite rules, evaluating each rule independently
-
----
-
-## Safety Limits
-
-- **Max Navigation Distance**: 10 steps
-- **Max Navigation Attempts**: 3 per step
-- **Validation**: Can't navigate to future steps, different branches, or before step 0
-
----
-
-## Success Criteria
-
-- ✅ Per-step enable/disable via UI
-- ✅ Configure multiple prerequisite rules per step (each rule has one step dependency + one description)
-- ✅ Visual edges in React Flow (orange dashed edges, one per rule)
-- ✅ Detection + navigation works (validation agent evaluates all rules, uses first matching one)
-- ✅ Safety limits prevent loops (max 10 steps distance)
-- ✅ Edge cases handled
-- ✅ Node visualization shows prerequisite badge and all rules
-- ✅ Event system emits `prerequisite_navigation` events
-- ✅ Progress cleanup resets state from target step onward
-- ✅ Rule-based structure ensures one description per step dependency (no ambiguity)
-
----
-
-## Key Files
-
-**Backend**:
-- `planning_agent.go` - `PrerequisiteRule` struct and `AgentConfigs` with `prerequisite_rules` array
-- `validation_agent.go` - `ValidationResponse` with `FailureType`, `ShouldRetryFromStep`, `RetryReason` + updated prompt to handle multiple rules
-- `controller_execution.go` - `gatherPrerequisiteInfo()` processes multiple rules, navigation logic in `executeSingleStep()`, error handling in `runExecutionPhase()`
-- `controller_progress.go` - `cleanupProgressFromStep()` function
-- `mcpagent/events/types.go` - `PrerequisiteNavigation` event type
-- `mcpagent/events/data.go` - `PrerequisiteNavigationEvent` struct
-
-**Frontend**:
-- `frontend/src/components/workflow/canvas/PrerequisiteConfigPanel.tsx` - Configuration UI component
-- `frontend/src/components/events/orchestrator/StepEditPanel.tsx` - Integration point
-- `frontend/src/components/workflow/canvas/StepSidebar.tsx` - Passes `planSteps` to `StepEditPanel`
-- `frontend/src/components/workflow/nodes/StepNode.tsx` - Prerequisite badge and dependency display
-- `frontend/src/components/workflow/hooks/usePlanToFlow.ts` - `createPrerequisiteEdges()` function
-- `frontend/src/components/workflow/hooks/useWorkflowExecution.ts` - Event handling for `prerequisite_navigation`
-- `frontend/src/utils/stepConfigMatching.ts` - `AgentConfigs` interface with prerequisite fields
-
-## How It Works
-
-### User Configuration
-
-1. User enables prerequisite detection for a specific step via the UI
-2. User selects which previous steps this step depends on
-3. User provides a natural language description (e.g., "If login session is missing or expired, go back to step 0")
-
-### Execution Flow
-
-1. **During Validation**: The validation agent receives:
-   - Prerequisite detection description
-   - Information about dependency steps (completion status, context outputs, etc.)
-   - Execution history
-
-2. **Failure Analysis**: The validation agent analyzes:
-   - Whether the condition in the description is met
-   - If it's a prerequisite failure (missing dependency) vs execution failure (retry needed)
-
-3. **Navigation Decision**:
-   - If `failure_type == "prerequisite"` → Navigate to `should_retry_from_step`
-   - If `failure_type == "execution"` → Retry current step (no navigation)
-
-4. **Navigation Process**:
-   - Validate target step (must be before current step, within max distance)
-   - Clean up progress from target step onward
-   - Emit `prerequisite_navigation` event
-   - Restart execution from target step
-
-### Safety Features
-
-- **Max Navigation Distance**: 10 steps (prevents excessive backtracking)
-- **Validation**: Target step must be before current step
-- **Explicit Check**: Only navigates when `failure_type == "prerequisite"`
-- **Progress Cleanup**: Resets completed steps and branch steps from target onward
-
-## Example Use Cases
-
-1. **Login Session Expiration**:
-   - Step 0: Login to website
-   - Step 1: Scrape data
-   - If Step 1 fails with "session expired" → Navigate back to Step 0
-
-2. **Config File Missing**:
-   - Step 0: Generate config file
-   - Step 1: Read and use config
-   - If Step 1 fails with "config file not found" → Navigate back to Step 0
-
-3. **Database Connection Lost**:
-   - Step 0: Establish database connection
-   - Step 1: Query data
-   - If Step 1 fails with "connection lost" → Navigate back to Step 0
+- [Workflow Execution Guide](../workflow_execution.md) - Overall workflow execution flow
+- [Agent Factory Guide](../agent_factory.md) - Agent creation and tool registration
+- [Event System](../events.md) - Event types and handling

@@ -21,7 +21,10 @@ import (
 // isRetryAfterValidationFailure: if true and fallbackToOriginalLLMOnFailure is enabled, will skip tempOverrideLLM and use original LLM
 // stepPath: Step path identifier (e.g., "step-1" for regular steps, "step-3-if-true-0" for branch steps)
 // retryAttempt: current retry attempt number (1 = first attempt, 2 = second attempt, etc.) - used for cascading LLM fallback
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, isRetryAfterValidationFailure bool, retryAttempt int) (agents.OrchestratorAgent, error) {
+// prerequisiteInfo: Prerequisite information for this step (nil if prerequisite detection is disabled)
+// allSteps: All steps in the plan (required if prerequisiteInfo is not nil)
+// currentStepIndex: 0-based index of current step (required if prerequisiteInfo is not nil)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, isRetryAfterValidationFailure bool, retryAttempt int, prerequisiteInfo *PrerequisiteInfo, allSteps []TodoStep, currentStepIndex int, cancelFunc context.CancelFunc, prereqErrChan chan<- *PrerequisiteFailureError) (agents.OrchestratorAgent, error) {
 	// Set folder guard paths: allow reads from learnings (read-only) and execution (via writePaths), writes only to execution
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
@@ -58,7 +61,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 	maxTurns := hcpo.GetMaxTurns()
 	if stepConfig != nil && stepConfig.ExecutionMaxTurns != nil {
 		maxTurns = *stepConfig.ExecutionMaxTurns
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only max turns: %d", maxTurns))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only max turns: %d (orchestrator default was: %d)", maxTurns, hcpo.GetMaxTurns()))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default execution-only max turns: %d (no step-specific config)", maxTurns))
 	}
 
 	// Determine LLM config with cascading fallback: tempLLM1 → tempLLM2 → step LLM
@@ -347,6 +352,40 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ All custom tools registered for %s agent (%s mode)", agentName, baseAgent.GetMode()))
 
+		// Register prerequisite detection tool if prerequisite detection is enabled
+		if prerequisiteInfo != nil && len(prerequisiteInfo.PrerequisiteRules) > 0 {
+			toolExecutor := hcpo.createPrerequisiteDetectionTool(prerequisiteInfo, allSteps, currentStepIndex, cancelFunc, prereqErrChan)
+			toolParams := map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"depends_on_step_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Step ID from one of the prerequisite rules to navigate back to (e.g., \"step-0\")",
+					},
+					"reason": map[string]interface{}{
+						"type":        "string",
+						"description": "Brief explanation of why the prerequisite failure was detected, matching the condition described in the prerequisite rule",
+					},
+				},
+				"required": []string{"depends_on_step_id", "reason"},
+			}
+
+			toolDescription := "Detect a prerequisite failure and navigate back to a prerequisite step. Call this tool when you detect that a prerequisite condition (as described in the prerequisite rules) is met during execution. Execution will stop and automatically navigate back to the specified prerequisite step."
+
+			// Use "structured_output" category so it's always available even in code execution mode
+			if err := mcpAgent.RegisterCustomTool(
+				"detect_prerequisite_failure",
+				toolDescription,
+				toolParams,
+				toolExecutor,
+				"structured_output",
+			); err != nil {
+				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to register prerequisite detection tool: %v", err), nil)
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Registered prerequisite detection tool for %s agent", agentName))
+			}
+		}
+
 		// Set folder guard paths on MCP agent (required for both code execution mode and simple mode)
 		// This ensures path validation works at the tool executor level
 		readPaths, writePaths := hcpo.GetFolderGuardPaths()
@@ -565,113 +604,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 		}
 	}
 
-	return agent, nil
-}
-
-// createPrerequisiteDetectionAgent creates a prerequisite detection agent
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createPrerequisiteDetectionAgent(ctx context.Context, phase string, step int, agentName string, stepConfig *AgentConfigs) (agents.OrchestratorAgent, error) {
-	// Set folder guard paths: allow reads from execution (read-only), no write permissions
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	// Use run folder if available, otherwise use base workspace (backward compatibility)
-	var runWorkspacePath string
-	if hcpo.selectedRunFolder != "" {
-		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
-	} else {
-		runWorkspacePath = baseWorkspacePath
-	}
-	executionPath := fmt.Sprintf("%s/execution", runWorkspacePath)
-
-	// Prerequisite detection agent only reads - no write permissions needed
-	readPaths := []string{executionPath}
-	writePaths := []string{} // No write permissions - prerequisite detection agent only reads and returns structured JSON
-	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for prerequisite detection agent - Read paths: %v, Write paths: %v (read-only, no file writes)", readPaths, writePaths))
-
-	// Determine max turns: use step-specific if provided, otherwise use orchestrator default
-	maxTurns := hcpo.GetMaxTurns()
-	if stepConfig != nil && stepConfig.ValidationMaxTurns != nil {
-		maxTurns = *stepConfig.ValidationMaxTurns
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific prerequisite detection max turns: %d", maxTurns))
-	}
-
-	// Determine LLM config: Priority: step config > preset default > orchestrator default
-	// Use validation LLM config (prerequisite detection is similar to validation)
-	var llmConfig *orchestrator.LLMConfig
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
-	if stepConfig != nil && stepConfig.ValidationLLM != nil && stepConfig.ValidationLLM.Provider != "" && stepConfig.ValidationLLM.ModelID != "" {
-		llmConfig = &orchestrator.LLMConfig{
-			Provider:       stepConfig.ValidationLLM.Provider,
-			ModelID:        stepConfig.ValidationLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific prerequisite detection LLM: %s/%s", stepConfig.ValidationLLM.Provider, stepConfig.ValidationLLM.ModelID))
-	} else if hcpo.presetValidationLLM != nil && hcpo.presetValidationLLM.Provider != "" && hcpo.presetValidationLLM.ModelID != "" {
-		llmConfig = &orchestrator.LLMConfig{
-			Provider:       hcpo.presetValidationLLM.Provider,
-			ModelID:        hcpo.presetValidationLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for preset defaults
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default prerequisite detection LLM: %s/%s", hcpo.presetValidationLLM.Provider, hcpo.presetValidationLLM.ModelID))
-	} else {
-		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default prerequisite detection LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID))
-	}
-
-	// Create agent config with custom LLM if needed
-	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
-
-	// Prerequisite detection agents always use NoServers (pure LLM analysis agent)
-	// Step-specific server/tool selection is only for execution agents
-	config.ServerNames = []string{mcpclient.NoServers} // No MCP servers needed - pure LLM analysis agent
-
-	// Code execution mode only applies to execution agents, not prerequisite detection agents
-	config.UseCodeExecutionMode = false
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for prerequisite detection agent (only execution agents use MCP tools)"))
-
-	// Set EnableLargeOutputVirtualTools if specified
-	if stepConfig != nil && stepConfig.EnableLargeOutputVirtualTools != nil {
-		config.EnableLargeOutputVirtualTools = stepConfig.EnableLargeOutputVirtualTools
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools))
-	}
-
-	// Create agent using provided factory function
-	agent := NewHumanControlledTodoPlannerPrerequisiteDetectionAgent(config, hcpo.GetLogger(), hcpo.GetTracer(), hcpo.GetContextAwareBridge())
-
-	// Initialize and setup agent (inlined from CreateAndSetupStandardAgent)
-	if err := agent.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to initialize prerequisite detection agent: %w", err), nil)
-	}
-
-	// Validate essentials and connect event bridge
-	eventBridge := hcpo.GetContextAwareBridge()
-	if eventBridge == nil {
-		return nil, fmt.Errorf(fmt.Sprintf("context-aware event bridge is nil for %s", agentName), nil)
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Checking agent structure for %s", agentName))
-	baseAgent := agent.GetBaseAgent()
-	if baseAgent == nil {
-		return nil, fmt.Errorf(fmt.Sprintf("base agent is nil for %s", agentName), nil)
-	}
-
-	mcpAgent := baseAgent.Agent()
-	if mcpAgent == nil {
-		return nil, fmt.Errorf(fmt.Sprintf("MCP agent is nil for %s", agentName), nil)
-	}
-
-	// Connect agent to orchestrator's main event bridge
-	baseAgentName := baseAgent.GetName()
-	if cab, ok := eventBridge.(*orchestrator.ContextAwareEventBridge); ok {
-		cab.SetOrchestratorContext(phase, step, baseAgentName)
-		mcpAgent.AddEventListener(cab)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName))
-	} else {
-		return nil, fmt.Errorf(fmt.Sprintf("context-aware bridge type mismatch for %s", agentName), nil)
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Prerequisite detection agent created successfully: %s", agentName))
 	return agent, nil
 }
 

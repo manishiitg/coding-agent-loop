@@ -26,6 +26,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 No step-specific learning detail level set, using default: 'exact'"))
 	}
 
+	// LOCK LEARNINGS: Check if learnings are locked (prevents learning agent from running but still uses existing learnings)
+	// Note: Lock learnings takes precedence - even in code execution mode, if learnings are locked, skip learning agent
+	isLearningsLocked := step.AgentConfigs != nil && step.AgentConfigs.LockLearnings != nil && *step.AgentConfigs.LockLearnings
+	if isLearningsLocked {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping success learning analysis for %s/%d (using existing learnings)", learningPathIdentifier, totalSteps))
+		return nil
+	}
+
 	// Skip learning if "none" is selected or learning is disabled
 	// CODE EXECUTION MODE: Force learning enabled regardless of step config
 	// Use the provided step-specific code execution mode (already computed with step-level priority)
@@ -137,6 +145,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 Using step-specific learning detail level: '%s'", learningDetailLevel))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 No step-specific learning detail level set, using default: 'exact'"))
+	}
+
+	// LOCK LEARNINGS: Check if learnings are locked (prevents learning agent from running but still uses existing learnings)
+	// Note: Lock learnings takes precedence - even in code execution mode, if learnings are locked, skip learning agent
+	isLearningsLocked := step.AgentConfigs != nil && step.AgentConfigs.LockLearnings != nil && *step.AgentConfigs.LockLearnings
+	if isLearningsLocked {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping failure learning analysis for %s/%d (using existing learnings)", learningPathIdentifier, totalSteps))
+		return "", "", nil
 	}
 
 	// Skip learning if "none" is selected or learning is disabled

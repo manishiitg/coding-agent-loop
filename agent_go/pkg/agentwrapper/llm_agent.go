@@ -61,6 +61,12 @@ type LLMAgentConfig struct {
 	// MCP tools are accessed via generated Go code using discover_code_files and write_code
 	UseCodeExecutionMode bool
 	APIKeys              *llm.ProviderAPIKeys // API keys for providers
+
+	// Context summarization configuration
+	EnableContextSummarization bool    // Enable context summarization feature
+	SummarizeOnTokenThreshold  bool    // Enable token-based summarization trigger
+	TokenThresholdPercent      float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
+	SummaryKeepLastMessages    int     // Number of recent messages to keep when summarizing (0 = use default: 8)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -217,6 +223,23 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		logger.Info("🔧 Code execution mode enabled - MCP tools will be accessed via generated Go code")
 	}
 
+	// Add context summarization options if enabled
+	if config.EnableContextSummarization {
+		agentOptions = append(agentOptions, mcpagent.WithContextSummarization(true))
+		if config.SummarizeOnTokenThreshold {
+			thresholdPercent := config.TokenThresholdPercent
+			if thresholdPercent <= 0 || thresholdPercent > 1.0 {
+				thresholdPercent = 0.8 // Default to 80%
+			}
+			agentOptions = append(agentOptions, mcpagent.WithSummarizeOnTokenThreshold(true, thresholdPercent))
+		}
+		if config.SummaryKeepLastMessages > 0 {
+			agentOptions = append(agentOptions, mcpagent.WithSummaryKeepLastMessages(config.SummaryKeepLastMessages))
+		}
+		logger.Info(fmt.Sprintf("📝 Context summarization enabled - Token threshold: %v (%.0f%%), Keep last messages: %d",
+			config.SummarizeOnTokenThreshold, config.TokenThresholdPercent*100, config.SummaryKeepLastMessages))
+	}
+
 	// Add smart routing options if enabled
 	if config.EnableSmartRouting {
 		// Set smart routing thresholds (use defaults if not specified)
@@ -250,31 +273,38 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		v2Logger = loggerv2.NewDefault()
 	}
 
+	// Build options from parameters
+	options := agentOptions
+	if config.ServerName != "" && config.ServerName != "all" {
+		options = append(options, mcpagent.WithServerName(config.ServerName))
+	}
+	if tracer != nil {
+		options = append(options, mcpagent.WithTracer(tracer))
+	}
+	if traceID != "" {
+		options = append(options, mcpagent.WithTraceID(traceID))
+	}
+	if v2Logger != nil {
+		options = append(options, mcpagent.WithLogger(v2Logger))
+	}
+
 	if config.AgentMode == mcpagent.SimpleAgent {
 		// Create Simple agent
+		// modelID is automatically extracted from llm
 		agent, err = mcpagent.NewSimpleAgent(
 			ctx,
 			llm,
-			config.ServerName,
 			config.ConfigPath,
-			config.ModelID,
-			tracer,
-			traceID,
-			v2Logger,
-			agentOptions...,
+			options...,
 		)
 	} else {
 		// Create Simple agent (default)
+		// modelID is automatically extracted from llm
 		agent, err = mcpagent.NewSimpleAgent(
 			ctx,
 			llm,
-			config.ServerName,
 			config.ConfigPath,
-			config.ModelID,
-			tracer,
-			traceID,
-			v2Logger,
-			agentOptions...,
+			options...,
 		)
 	}
 	if err != nil {

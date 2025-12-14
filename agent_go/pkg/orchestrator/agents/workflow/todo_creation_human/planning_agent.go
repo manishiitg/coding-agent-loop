@@ -82,11 +82,12 @@ type AgentConfigs struct {
 	ValidationLLM                 *AgentLLMConfig    `json:"validation_llm,omitempty"`
 	LearningLLM                   *AgentLLMConfig    `json:"learning_llm,omitempty"`
 	ConditionalLLM                *AgentLLMConfig    `json:"conditional_llm,omitempty"`                   // Step-specific conditional LLM for conditional step evaluation
-	ExecutionMaxTurns             *int               `json:"execution_max_turns,omitempty"`               // default: 25
-	ValidationMaxTurns            *int               `json:"validation_max_turns,omitempty"`              // default: 25
-	LearningMaxTurns              *int               `json:"learning_max_turns,omitempty"`                // default: 25
+	ExecutionMaxTurns             *int               `json:"execution_max_turns,omitempty"`               // default: 100
+	ValidationMaxTurns            *int               `json:"validation_max_turns,omitempty"`              // default: 100
+	LearningMaxTurns              *int               `json:"learning_max_turns,omitempty"`                // default: 100
 	DisableValidation             *bool              `json:"disable_validation,omitempty"`                // skip validation entirely (nil = not set/enabled, true = disabled, false = explicitly enabled)
 	DisableLearning               *bool              `json:"disable_learning,omitempty"`                  // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
+	LockLearnings                 *bool              `json:"lock_learnings,omitempty"`                    // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
 	LearningAfterLoopIteration    bool               `json:"learning_after_loop_iteration,omitempty"`     // run learning after each loop iteration
 	LearningDetailLevel           string             `json:"learning_detail_level,omitempty"`             // "exact", "general", or "none" (default: "exact")
 	SelectedServers               []string           `json:"selected_servers,omitempty"`                  // step-level MCP server selection (subset of preset servers)
@@ -560,7 +561,7 @@ func getAddRegularStepSchema() string {
 			},
 			"success_criteria": {
 				"type": "string",
-				"description": "REQUIRED: Detailed explanation of how to verify this step was completed successfully - be specific and comprehensive. CRITICAL: Success criteria MUST be file-verifiable. The validation agent will check file outputs to verify completion. Reference specific files (especially the context_output file) and what to look for in them (specific text, patterns, data, status indicators). Examples: 'File step_1_results.md exists and contains Deployment successful status', 'Context output file contains 10 databases found and lists all database names'. Avoid vague statements like 'Task completed successfully' that cannot be verified through files."
+				"description": "REQUIRED: Detailed explanation of how to verify this step was completed successfully - be specific and comprehensive. CRITICAL: Success criteria MUST be file-verifiable. The validation agent will check file outputs to verify completion. Reference specific files (especially the context_output file) and what to look for in them (specific text, patterns, data, status indicators). Examples: 'File step_1_results.json exists and contains status: \"success\" field', 'Context output file contains database_count: 10 field and databases array with all database names'. Avoid vague statements like 'Task completed successfully' that cannot be verified through files."
 			},
 			"context_dependencies": {
 				"type": "array",
@@ -569,7 +570,7 @@ func getAddRegularStepSchema() string {
 			},
 			"context_output": {
 				"type": "string",
-				"description": "REQUIRED: What context file this step will create for subsequent steps - e.g., 'step_1_results.md'. IMPORTANT: Execution agents work ONLY in the execution folder, so context output files will be written to the execution folder."
+				"description": "REQUIRED: What context file this step will create for subsequent steps - e.g., 'step_1_results.json'. IMPORTANT: Execution agents work ONLY in the execution folder, so context output files will be written to the execution folder."
 			},
 			"has_loop": {
 				"type": "boolean",
@@ -747,7 +748,7 @@ func getAddLoopStepSchema() string {
 			},
 			"context_output": {
 				"type": "string",
-				"description": "REQUIRED: What context file this step will create for subsequent steps - e.g., 'step_1_results.md'."
+				"description": "REQUIRED: What context file this step will create for subsequent steps - e.g., 'step_1_results.json'."
 			},
 			"loop_condition": {
 				"type": "string",
@@ -1992,6 +1993,132 @@ func registerPlanModificationTools(
 	return nil
 }
 
+// getExtractVariablesSchema returns the JSON schema for extract_variables tool
+func getExtractVariablesSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"text": {
+				"type": "string",
+				"description": "Text or objective to extract variables from. Look for hard-coded values like URLs, account IDs, ports, credentials, resource names, environment values, hosts/endpoints, specific identifiers, paths, and configurations."
+			}
+		},
+		"required": ["text"]
+	}`
+}
+
+// createExtractVariablesExecutor creates an executor function for extract_variables tool
+func createExtractVariablesExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Extract text to analyze
+		textRaw, ok := args["text"].(string)
+		if !ok || textRaw == "" {
+			return "", fmt.Errorf(fmt.Sprintf("invalid text argument"), nil)
+		}
+		text := textRaw
+
+		// Check if variables.json already exists, create if it doesn't
+		manifest, err := readVariablesFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			// Variables file doesn't exist - create new manifest
+			manifest = &VariablesManifest{
+				Variables:      []Variable{},
+				Groups:         []VariableGroup{},
+				ExtractionDate: time.Now().Format(time.RFC3339),
+				Objective:      "", // Not important anymore, but keep for backward compatibility
+			}
+			// Write the new manifest
+			if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
+				return "", fmt.Errorf(fmt.Sprintf("failed to create variables.json: %w", err), nil)
+			}
+		}
+
+		// Log the extraction request
+		textPreview := text
+		if len(text) > 100 {
+			textPreview = text[:100] + "..."
+		}
+		logger.Info(fmt.Sprintf("📝 Extract variables tool called with text: %s", textPreview))
+
+		// Write changelog entry for extraction initiation
+		detailsJSON, _ := json.Marshal(map[string]interface{}{
+			"text_preview":             textPreview,
+			"existing_variables_count": len(manifest.Variables),
+		})
+		changelogEntry := VariableChangeLogEntry{
+			Timestamp:   time.Now().Format(time.RFC3339),
+			ChangeType:  "extraction",
+			Description: fmt.Sprintf("Variable extraction initiated from text (existing variables: %d)", len(manifest.Variables)),
+			Details:     string(detailsJSON),
+			Changes:     []VariableFieldChange{},
+		}
+		if err := writeVariableChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
+			logger.Warn(fmt.Sprintf("⚠️ Failed to write variable changelog entry: %v", err))
+		}
+
+		// Return guidance for the LLM to extract variables
+		// The LLM should analyze the text and use update_variable tool to add each variable
+		return fmt.Sprintf("Variables file ready. Analyze the provided text and extract hard-coded values as variables. Use update_variable tool with action='add' to add each extracted variable. Look for: URLs, account IDs, ports, credentials, resource names, environment values, hosts/endpoints, specific identifiers, paths, and configurations. For each value found, create a variable with UPPER_SNAKE_CASE name, the original value, and a clear description. Current variables file has %d variables.", len(manifest.Variables)), nil
+	}
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// registerVariableExtractionTools registers variable extraction and management tools
+// This allows the planning agent to extract and manage variables based on human input
+func registerVariableExtractionTools(
+	mcpAgent *mcpagent.Agent,
+	workspacePath string,
+	logger loggerv2.Logger,
+	readFile func(context.Context, string) (string, error),
+	writeFile func(context.Context, string, string) error,
+	agentName string, // e.g., "planning agent"
+) error {
+	// Register extract_variables tool
+	extractSchema := getExtractVariablesSchema()
+	extractParams, err := parseSchemaForToolParameters(extractSchema)
+	if err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to parse extract_variables schema: %w", err), nil)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"extract_variables",
+		"Extract variables from text or objective. Provide the text to analyze, and the tool will guide you to extract hard-coded values (URLs, account IDs, ports, credentials, resource names, etc.) as variables. After extraction, use update_variable tool to add each variable.",
+		extractParams,
+		createExtractVariablesExecutor(workspacePath, logger, readFile, writeFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to register extract_variables tool: %w", err), nil)
+	}
+
+	// Register update_variable tool (reuse from variable_extraction_agent.go)
+	updateVariableSchema := getUpdateVariableSchema()
+	updateVariableParams, err := parseSchemaForToolParameters(updateVariableSchema)
+	if err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to parse update_variable schema: %w", err), nil)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"update_variable",
+		"Update, add, or delete variables in variables.json. Provide action (required: 'update', 'add', or 'delete'), existing_variable_name (required for update/delete), and fields to update. The variables.json file is updated immediately when this tool is called.",
+		updateVariableParams,
+		createUpdateVariableExecutor(workspacePath, logger, readFile, writeFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to register update_variable tool: %w", err), nil)
+	}
+
+	if logger != nil {
+		logger.Info(fmt.Sprintf("✅ Registered variable extraction tools for %s", agentName))
+	}
+
+	return nil
+}
+
 // createConvertStepToConditionalExecutor creates an executor function for convert_step_to_conditional tool
 func createConvertStepToConditionalExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -3166,7 +3293,7 @@ func planningSystemPromptProcessorForCreate(templateVars map[string]string) stri
 
 **Top 3 Rules**:
 1. **Output**: Use type-specific tools (add_regular_step, add_conditional_step, add_decision_step, add_loop_step) to build the plan incrementally - start with first step, then continue adding steps
-2. **Success Criteria**: Reference file names only (e.g., 'step_1_results.md'), NOT paths
+2. **Success Criteria**: Reference file names only (e.g., 'step_1_results.json'), NOT paths
 3. **Variables**: Preserve placeholders ({{"{{"}}VARIABLE_NAME{{"}}"}}) - never replace with actual values
 
 **Key Concepts**:
@@ -3332,11 +3459,11 @@ Available variables:
 ### Success Criteria Format
 
 **✅ GOOD Examples** (file names only):
-- "File 'step_1_results.md' exists and contains 'Deployment successful' status"
-- "File 'config.json' exists and contains 'status: active' field"
-- "Context output file 'step_2_output.md' contains '10 databases found' and lists all database names"
-- "File 'deployment_log.md' exists and contains 'All pods running' confirmation"
-- "File 'minute_calculation_result.md' exists and contains the correct calculation result"
+- "File 'step_1_results.json' exists and contains 'status: \"success\"' field"
+- "File 'config.json' exists and contains 'status: \"active\"' field"
+- "Context output file 'step_2_output.json' contains 'database_count: 10' field and 'databases' array with all database names"
+- "File 'deployment_status.json' exists and contains 'pods_running: true' field"
+- "File 'calculation_result.json' exists and contains the correct 'result' field value"
 
 **❌ BAD Examples** (vague or path-based):
 - "Task completed successfully" (too vague, no file reference)
@@ -3349,7 +3476,7 @@ Available variables:
 
 **File Reference**:
 - Must reference context_output file name (not path) or other file names
-- Use file name only (e.g., 'step_1_results.md', 'config.json')
+- Use file name only (e.g., 'step_1_results.json', 'config.json')
 - Do NOT include folder paths or exact locations
 
 **Content Verification**:
@@ -3382,12 +3509,12 @@ Available variables:
 **Context Dependencies**:
 - Specify context files needed from previous steps
 - Use empty array [] if no dependencies
-- Reference by file name only (e.g., 'step_1_results.md')
+- Reference by file name only (e.g., 'step_1_results.json')
 - Execution agents will locate files automatically
 
 **Context Output**:
 - Specify context file name to create for subsequent steps
-- Example: 'step_1_results.md'
+- Example: 'step_1_results.json'
 - Execution agents will write to appropriate step folder
 - Use relative paths only - NEVER use absolute paths
 
@@ -3413,6 +3540,12 @@ Available variables:
 | delete_branch_steps | Delete steps from a branch |
 | update_conditional_step | Update condition question/context |
 | convert_conditional_to_regular | Remove conditional, make regular step |
+
+**Variable Extraction Tools** (for extracting and managing variables):
+| Tool | Purpose |
+|------|---------|
+| extract_variables | Extract variables from text or objective. Provide the text to analyze, and the tool will guide you to extract hard-coded values (URLs, account IDs, ports, credentials, resource names, etc.) as variables. After extraction, use update_variable to add each variable. |
+| update_variable | Add, update, or delete variables in variables.json. Use action='add' to add new variables, action='update' to modify existing ones, or action='delete' to remove variables. Variables are stored in variables/variables.json. |
 
 **Workflow for CREATE Mode**:
 1. Start with empty plan (plan.json already exists but is empty)
@@ -3479,7 +3612,7 @@ func planningSystemPromptProcessorForUpdate(templateVars map[string]string) stri
 
 **Top 3 Rules**:
 1. **Human Confirmation**: ALWAYS use human_feedback tool FIRST before making any plan changes
-2. **Success Criteria**: Reference file names only (e.g., 'step_1_results.md'), NOT paths
+2. **Success Criteria**: Reference file names only (e.g., 'step_1_results.json'), NOT paths
 3. **Variables**: Preserve placeholders ({{"{{"}}VARIABLE_NAME{{"}}"}}) - never replace with actual values
 
 **Workflow**:
@@ -3587,6 +3720,25 @@ Update this plan based on human feedback. Use judgment to determine what changes
 - **Purpose**: Convert conditional back to regular step (removes all conditional properties)
 - **Parameters**: step_id
 
+### Variable Extraction Tools
+
+**extract_variables**:
+- **Purpose**: Extract variables from text or objective based on human input
+- **When**: Use when user asks to extract variables from text, objective, or other input
+- **Parameters**: text (required) - the text to analyze for hard-coded values
+- **Process**: The tool prepares variables.json, then you should analyze the text and use update_variable to add each extracted variable
+- **Look for**: URLs, account IDs, ports, credentials, resource names, environment values, hosts/endpoints, specific identifiers, paths, configurations
+
+**update_variable**:
+- **Purpose**: Add, update, or delete variables in variables.json
+- **Parameters**: 
+  - action (required): 'add', 'update', or 'delete'
+  - name (required for add): Variable name in UPPER_SNAKE_CASE
+  - existing_variable_name (required for update/delete): Name of existing variable
+  - value (optional): Variable value
+  - description (optional): Variable description
+- **Effect**: variables.json is updated immediately when this tool is called
+
 ### Human Confirmation Workflow (CRITICAL)
 
 **Step 1: Request Confirmation**
@@ -3646,11 +3798,11 @@ The human_feedback tool returns user's response as TEXT. You must interpret:
 ### Success Criteria Format
 
 **✅ GOOD Examples** (file names only):
-- "File 'step_1_results.md' exists and contains 'Deployment successful' status"
-- "File 'config.json' exists and contains 'status: active' field"
-- "Context output file 'step_2_output.md' contains '10 databases found' and lists all database names"
-- "File 'deployment_log.md' exists and contains 'All pods running' confirmation"
-- "File 'minute_calculation_result.md' exists and contains the correct calculation result"
+- "File 'step_1_results.json' exists and contains 'status: \"success\"' field"
+- "File 'config.json' exists and contains 'status: \"active\"' field"
+- "Context output file 'step_2_output.json' contains 'database_count: 10' field and 'databases' array with all database names"
+- "File 'deployment_status.json' exists and contains 'pods_running: true' field"
+- "File 'calculation_result.json' exists and contains the correct 'result' field value"
 
 **❌ BAD Examples** (vague or path-based):
 - "Task completed successfully" (too vague, no file reference)
@@ -3663,7 +3815,7 @@ The human_feedback tool returns user's response as TEXT. You must interpret:
 
 **File Reference**:
 - Must reference context_output file name (not path) or other file names
-- Use file name only (e.g., 'step_1_results.md', 'config.json')
+- Use file name only (e.g., 'step_1_results.json', 'config.json')
 - Do NOT include folder paths or exact locations
 
 **Content Verification**:
@@ -3703,12 +3855,12 @@ The human_feedback tool returns user's response as TEXT. You must interpret:
 **Context Dependencies**:
 - Specify context files needed from previous steps
 - Use empty array [] if no dependencies
-- Reference by file name only (e.g., 'step_1_results.md')
+- Reference by file name only (e.g., 'step_1_results.json')
 - Execution agents will locate files automatically
 
 **Context Output**:
 - Specify context file name to create for subsequent steps
-- Example: 'step_1_results.md'
+- Example: 'step_1_results.json'
 - Execution agents will write to appropriate step folder
 - Use relative paths only - NEVER use absolute paths
 

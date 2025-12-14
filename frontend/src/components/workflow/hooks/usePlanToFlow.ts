@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import dagre from 'dagre'
-import type { PlanStep, PlanningResponse, AgentConfigs, AgentLLMConfig } from '../../../utils/stepConfigMatching'
+import type { PlanStep, PlanningResponse, AgentConfigs, AgentLLMConfig, PrerequisiteRule } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
 import type { VariablesManifest } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
@@ -34,6 +34,7 @@ export interface StepNodeData extends Record<string, unknown> {
 export interface ConditionalNodeData extends Record<string, unknown> {
   id: string
   title: string
+  description?: string
   condition_question?: string
   condition_context?: string
   status: 'pending' | 'evaluating' | 'decided_true' | 'decided_false'
@@ -1116,15 +1117,63 @@ function createDependencyEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
 }
 
 /**
+ * Helper function to safely extract enable_prerequisite_detection from PlanStep
+ * Checks agent_configs first, then falls back to top-level property (for backward compatibility)
+ */
+function getEnablePrerequisiteDetection(step: PlanStep): boolean | undefined {
+  if (step.agent_configs?.enable_prerequisite_detection !== undefined) {
+    return step.agent_configs.enable_prerequisite_detection
+  }
+  // Check top-level property (for backward compatibility)
+  const topLevelValue = step['enable_prerequisite_detection']
+  if (typeof topLevelValue === 'boolean') {
+    return topLevelValue
+  }
+  return undefined
+}
+
+/**
+ * Helper function to safely extract prerequisite_rules from PlanStep
+ * Checks agent_configs first, then falls back to top-level property (for backward compatibility)
+ */
+function getPrerequisiteRules(step: PlanStep): PrerequisiteRule[] | undefined {
+  if (step.agent_configs?.prerequisite_rules !== undefined) {
+    return step.agent_configs.prerequisite_rules
+  }
+  // Check top-level property (for backward compatibility)
+  const topLevelValue = step['prerequisite_rules']
+  if (Array.isArray(topLevelValue)) {
+    // Type guard: ensure all items match PrerequisiteRule structure
+    const isValidRule = (rule: unknown): rule is PrerequisiteRule => {
+      if (typeof rule !== 'object' || rule === null) {
+        return false
+      }
+      const ruleObj = rule as Record<string, unknown>
+      return (
+        'depends_on_step' in ruleObj &&
+        'description' in ruleObj &&
+        typeof ruleObj.depends_on_step === 'string' &&
+        typeof ruleObj.description === 'string'
+      )
+    }
+    if (topLevelValue.every(isValidRule)) {
+      return topLevelValue
+    }
+  }
+  return undefined
+}
+
+/**
  * Create edges based on prerequisite dependencies
- * Edges go from validation nodes to previous step nodes
+ * Edges go from validation nodes (or step/learning nodes if no validation) to previous step nodes
  * Uses handle-based routing to prevent overlapping edges
  */
 function createPrerequisiteEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
   const edges: WorkflowEdge[] = []
   
-  // Filter to validation nodes and step-type nodes
+  // Filter to validation nodes, learning nodes, and step-type nodes
   const validationNodes = nodes.filter(node => node.type === 'validation')
+  const learningNodes = nodes.filter(node => node.type === 'learning')
   const stepNodes = nodes.filter(isStepTypeNode)
   
   // Create a map of step ID to step node ID
@@ -1145,103 +1194,142 @@ function createPrerequisiteEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
     }
   })
 
+  // Create a map of parent step ID to validation/learning node ID
+  const parentStepIdToValidationNodeMap = new Map<string, string>()
+  validationNodes.forEach(validationNode => {
+    const validationData = validationNode.data as ValidationNodeData
+    parentStepIdToValidationNodeMap.set(validationData.parentStepId, validationNode.id)
+  })
+
+  const parentStepIdToLearningNodeMap = new Map<string, string>()
+  learningNodes.forEach(learningNode => {
+    const learningData = learningNode.data as LearningNodeData
+    parentStepIdToLearningNodeMap.set(learningData.parentStepId, learningNode.id)
+  })
+
   // Track edges per target step to assign different handles and prevent overlapping
   const targetEdgeCounts = new Map<string, number>()
   
-  // For each validation node, check if its parent step has prerequisite rules
-  validationNodes.forEach(validationNode => {
-    const validationData = validationNode.data as ValidationNodeData
-    const parentStepId = validationData.parentStepId
+  // Helper function to create prerequisite edge
+  const createPrerequisiteEdge = (
+    sourceNodeId: string,
+    targetStepNodeId: string,
+    depStepId: string,
+    rule: { depends_on_step: string; description: string },
+    sourceHandle: string,
+    targetHandle?: string
+  ) => {
+    // Get current count for this target to assign handle position
+    const currentCount = targetEdgeCounts.get(targetStepNodeId) || 0
+    targetEdgeCounts.set(targetStepNodeId, currentCount + 1)
     
-    // Find the parent step node
-    const parentStepNode = stepNodes.find(node => node.id === parentStepId)
-    if (!parentStepNode) return
+    // Assign handle positions to spread edges horizontally along bottom
+    // Use modulo to cycle through handle positions if many edges
+    const handlePositions = ['left', 'middle', 'right']
+    const handleIndex = currentCount % handlePositions.length
+    const finalTargetHandle = targetHandle || `prereq-target-${handlePositions[handleIndex]}`
     
-    // Get the step data to access prerequisite rules
-    const parentStep = stepNodeIdToStepMap.get(parentStepId)
-    if (!parentStep) return
+    // Use description as label (truncate if too long, but allow more characters)
+    // Split long text into multiple lines for better readability
+    let label = rule.description
+    if (label.length > 60) {
+      // Try to break at word boundaries
+      const words = label.split(' ')
+      let line = ''
+      const lines: string[] = []
+      for (const word of words) {
+        if ((line + word).length > 50 && line.length > 0) {
+          lines.push(line.trim())
+          line = word + ' '
+        } else {
+          line += word + ' '
+        }
+      }
+      if (line.trim().length > 0) {
+        lines.push(line.trim())
+      }
+      // If still too long, truncate the last line
+      if (lines.length > 2) {
+        label = lines.slice(0, 2).join('\n') + '...'
+      } else {
+        label = lines.join('\n')
+      }
+    }
     
-    const agentConfigs = parentStep.agent_configs
-    if (agentConfigs?.enable_prerequisite_detection && agentConfigs?.prerequisite_rules) {
-      // Create edges from validation node to each dependency step
-      agentConfigs.prerequisite_rules.forEach((rule: { depends_on_step: string; description: string }) => {
-        const depStepId = rule.depends_on_step
-        if (depStepId) {
-          const targetStepNodeId = stepIdToNodeMap.get(depStepId)
-          if (targetStepNodeId && targetStepNodeId !== parentStepId) {
-            // Get current count for this target to assign handle position
-            const currentCount = targetEdgeCounts.get(targetStepNodeId) || 0
-            targetEdgeCounts.set(targetStepNodeId, currentCount + 1)
-            
-            // Assign handle positions to spread edges horizontally along bottom
-            // Use modulo to cycle through handle positions if many edges
-            const handlePositions = ['left', 'middle', 'right']
-            const handleIndex = currentCount % handlePositions.length
-            const targetHandle = `prereq-${handlePositions[handleIndex]}`
-            
-            // For source (validation node), use different handles based on rule index
-            const sourceHandleIndex = currentCount % 3
-            const sourceHandle = `prereq-${handlePositions[sourceHandleIndex]}`
-            
-            // Use description as label (truncate if too long, but allow more characters)
-            // Split long text into multiple lines for better readability
-            let label = rule.description
-            if (label.length > 60) {
-              // Try to break at word boundaries
-              const words = label.split(' ')
-              let line = ''
-              const lines: string[] = []
-              for (const word of words) {
-                if ((line + word).length > 50 && line.length > 0) {
-                  lines.push(line.trim())
-                  line = word + ' '
-                } else {
-                  line += word + ' '
-                }
-              }
-              if (line.trim().length > 0) {
-                lines.push(line.trim())
-              }
-              // If still too long, truncate the last line
-              if (lines.length > 2) {
-                label = lines.slice(0, 2).join('\n') + '...'
-              } else {
-                label = lines.join('\n')
-              }
-            }
-            
             edges.push({
-              id: `prereq-${validationNode.id}-to-${targetStepNodeId}-${depStepId}-${currentCount}`,
-              source: validationNode.id,
+              id: `prereq-${sourceNodeId}-to-${targetStepNodeId}-${depStepId}-${currentCount}`,
+              source: sourceNodeId,
               target: targetStepNodeId,
               sourceHandle: sourceHandle,
-              targetHandle: targetHandle,
-              type: 'smoothstep',
-              style: { stroke: '#f59e0b', strokeDasharray: '5,5', strokeWidth: 2, opacity: 0.8 },
-              animated: false,
-              label: label,
-              labelStyle: { 
-                fill: '#f59e0b', 
-                fontSize: 8, 
-                fontWeight: 600,
-                whiteSpace: 'pre-line',
-                textAlign: 'center',
-                maxWidth: '200px'
-              },
-              labelBgStyle: { 
-                fill: '#fef3c7', 
-                fillOpacity: 0.95,
-                stroke: '#f59e0b',
-                strokeWidth: 1
-              },
-              labelBgPadding: [6, 8] as [number, number],
-              labelBgBorderRadius: 4,
-              labelShowBg: true
-            })
-          }
-        }
-      })
+              targetHandle: finalTargetHandle,
+      type: 'smoothstep',
+      style: { stroke: '#f59e0b', strokeDasharray: '5,5', strokeWidth: 2, opacity: 0.8 },
+      animated: false,
+      label: label,
+      labelStyle: { 
+        fill: '#f59e0b', 
+        fontSize: 8, 
+        fontWeight: 600,
+        whiteSpace: 'pre-line',
+        textAlign: 'center',
+        maxWidth: '200px'
+      },
+      labelBgStyle: { 
+        fill: '#fef3c7', 
+        fillOpacity: 0.95,
+        stroke: '#f59e0b',
+        strokeWidth: 1
+      },
+      labelBgPadding: [6, 8] as [number, number],
+      labelBgBorderRadius: 4,
+      labelShowBg: true
+    })
+  }
+  
+  // Prerequisite detection happens during execution (via detect_prerequisite_failure tool call)
+  // Create prerequisite edges from step/learning nodes (not from validation nodes)
+  stepNodes.forEach(stepNode => {
+    const step = stepNodeIdToStepMap.get(stepNode.id)
+    if (!step) return
+    
+    // Check for prerequisite rules in agent_configs first, then fall back to top level (for backward compatibility)
+    const enablePrerequisiteDetection = getEnablePrerequisiteDetection(step)
+    const prerequisiteRules = getPrerequisiteRules(step)
+    
+    // Only process if prerequisite detection is enabled and rules exist
+    if (!enablePrerequisiteDetection || !prerequisiteRules || prerequisiteRules.length === 0) {
+      return
     }
+    
+    // Find the appropriate source node: learning node if exists, otherwise step node
+    // Prerequisite detection happens during execution, so edges come from execution/learning nodes
+    const learningNodeId = parentStepIdToLearningNodeMap.get(stepNode.id)
+    const sourceNodeId = learningNodeId || stepNode.id
+    
+    prerequisiteRules.forEach((rule: { depends_on_step: string; description: string }) => {
+      const depStepId = rule.depends_on_step
+      if (depStepId) {
+        const targetStepNodeId = stepIdToNodeMap.get(depStepId)
+        if (!targetStepNodeId) {
+          console.warn('[PrerequisiteEdges] Target step not found in stepIdToNodeMap:', {
+            depStepId,
+            stepId: step.id,
+            stepTitle: step.title,
+            availableStepIds: Array.from(stepIdToNodeMap.keys())
+          })
+        } else if (targetStepNodeId === stepNode.id) {
+          // Skip self-reference
+        } else {
+          // Use step or learning node as source (execution node)
+          const sourceHandleIndex = (targetEdgeCounts.get(targetStepNodeId) || 0) % 3
+          const handlePositions = ['left', 'middle', 'right']
+          const sourceHandle = `prereq-${handlePositions[sourceHandleIndex]}`
+          const targetHandleIndex = (targetEdgeCounts.get(targetStepNodeId) || 0) % 3
+          const targetHandle = `prereq-target-${handlePositions[targetHandleIndex]}`
+          createPrerequisiteEdge(sourceNodeId, targetStepNodeId, depStepId, rule, sourceHandle, targetHandle)
+        }
+      }
+    })
   })
 
   return edges

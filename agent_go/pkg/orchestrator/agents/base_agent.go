@@ -9,6 +9,7 @@ import (
 
 	mcpagent "mcpagent/agent"
 	internalLLM "mcpagent/llm"
+	"mcpagent/mcpclient"
 	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -31,16 +32,14 @@ type AgentType string
 
 const (
 	// Multi-agent TodoPlanner sub-agents (actively used)
-	VariableExtractionAgentType               AgentType = "variable_extraction"                 // Extracts variables from objective
-	TodoPlannerAnonymizationAgentType         AgentType = "todo_planner_anonymization"          // Anonymizes learnings by replacing values with variables
-	TodoPlannerPlanImprovementAgentType       AgentType = "todo_planner_plan_improvement"       // Analyzes execution and provides plan improvement feedback
-	TodoPlannerPlanningAgentType              AgentType = "todo_planner_planning"               // Creates step-wise plan from objective
-	TodoPlannerExecutionAgentType             AgentType = "todo_planner_execution"              // Executes first step of plan
-	TodoPlannerValidationAgentType            AgentType = "todo_planner_validation"             // Validates execution results
-	TodoPlannerPrerequisiteDetectionAgentType AgentType = "todo_planner_prerequisite_detection" // Detects if validation failure is due to missing prerequisites
-	TodoPlannerSuccessLearningAgentType       AgentType = "todo_planner_success_learning"       // Analyzes successful executions to capture best practices
-	TodoPlannerPlanToolOptimizationAgentType  AgentType = "todo_planner_plan_tool_optimization" // Optimizes tool selections in step_config.json based on learnings
-	ConditionalAgentType                      AgentType = "conditional"                         // Conditional decision agent for evaluating step conditions
+	TodoPlannerAnonymizationAgentType        AgentType = "todo_planner_anonymization"          // Anonymizes learnings by replacing values with variables
+	TodoPlannerPlanImprovementAgentType      AgentType = "todo_planner_plan_improvement"       // Analyzes execution and provides plan improvement feedback
+	TodoPlannerPlanningAgentType             AgentType = "todo_planner_planning"               // Creates step-wise plan from objective
+	TodoPlannerExecutionAgentType            AgentType = "todo_planner_execution"              // Executes first step of plan
+	TodoPlannerValidationAgentType           AgentType = "todo_planner_validation"             // Validates execution results
+	TodoPlannerSuccessLearningAgentType      AgentType = "todo_planner_success_learning"       // Analyzes successful executions to capture best practices
+	TodoPlannerPlanToolOptimizationAgentType AgentType = "todo_planner_plan_tool_optimization" // Optimizes tool selections in step_config.json based on learnings
+	ConditionalAgentType                     AgentType = "conditional"                         // Conditional decision agent for evaluating step conditions
 )
 
 // BaseAgentInterface defines the interface for base agent operations
@@ -125,6 +124,10 @@ func NewBaseAgent(
 	logger loggerv2.Logger,
 	cacheOnly bool,
 	enableLargeOutputVirtualTools *bool, // NEW parameter
+	enableContextSummarization bool, // Context summarization configuration
+	summarizeOnTokenThreshold bool, // Enable token-based summarization trigger
+	tokenThresholdPercent float64, // Percentage of context window to trigger summarization
+	summaryKeepLastMessages int, // Number of recent messages to keep when summarizing
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
 	// All agents use Simple mode
@@ -170,14 +173,25 @@ func NewBaseAgent(
 	}
 	agentOptions = append(agentOptions, mcpagent.WithLargeOutputVirtualTools(largeOutputEnabled))
 
+	// Add context summarization configuration
+	if enableContextSummarization {
+		agentOptions = append(agentOptions, mcpagent.WithContextSummarization(true))
+		if summarizeOnTokenThreshold {
+			agentOptions = append(agentOptions, mcpagent.WithSummarizeOnTokenThreshold(true, tokenThresholdPercent))
+		}
+		if summaryKeepLastMessages > 0 {
+			agentOptions = append(agentOptions, mcpagent.WithSummaryKeepLastMessages(summaryKeepLastMessages))
+		}
+	}
+
 	// Removed verbose logging
 
 	// Use logger directly (already loggerv2.Logger)
 	v2Logger := logger
 
-	// Determine server name (join multiple servers with comma, or use first server, or empty string)
+	// Determine server name (join multiple servers with comma, or use first server, or AllServers)
 	// NewAgentConnection supports comma-separated server names to connect to multiple servers
-	serverName := ""
+	serverName := mcpclient.AllServers
 	if len(serverNames) > 0 {
 		if len(serverNames) == 1 {
 			serverName = serverNames[0]
@@ -187,8 +201,24 @@ func NewBaseAgent(
 		}
 	}
 
+	// Build options from parameters
+	options := agentOptions
+	if serverName != "" && serverName != mcpclient.AllServers {
+		options = append(options, mcpagent.WithServerName(serverName))
+	}
+	if tracer != nil {
+		options = append(options, mcpagent.WithTracer(tracer))
+	}
+	if traceID != "" {
+		options = append(options, mcpagent.WithTraceID(traceID))
+	}
+	if v2Logger != nil {
+		options = append(options, mcpagent.WithLogger(v2Logger))
+	}
+
 	// Create agent with all options
-	agent, err := mcpagent.NewAgent(ctx, llm, serverName, configPath, modelID, tracer, traceID, v2Logger, agentOptions...)
+	// modelID is automatically extracted from llm
+	agent, err := mcpagent.NewAgent(ctx, llm, configPath, options...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create agent: %w", err)
 	}

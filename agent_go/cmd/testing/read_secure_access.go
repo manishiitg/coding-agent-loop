@@ -115,15 +115,12 @@ Example:
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 
+		// modelID is automatically extracted from llmModel
 		agent, err := mcpagent.NewAgent(
 			ctx,
 			llmModel,
-			"fileserver",                      // server name
-			"configs/mcp_servers_simple.json", // config path
-			model,                             // model ID
-			nil,                               // tracer
-			"",                                // trace ID
-			nil,                               // logger (use default)
+			"configs/mcp_servers_simple.json",     // config path
+			mcpagent.WithServerName("fileserver"), // server name
 			mcpagent.WithMaxTurns(10),
 		)
 		if err != nil {

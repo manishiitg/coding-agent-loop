@@ -2,8 +2,10 @@ package todo_creation_human
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // executeConditionalStep executes a conditional step by evaluating the condition and executing the chosen branch
@@ -131,7 +133,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 
 	// Evaluate condition using ConditionalAgent
 	// Note: Branch step execution agents will set their own context when created via createExecutionOnlyAgent
-	conditionalResponse, err := conditionalAgent.Decide(ctx, conditionContext, step.ConditionQuestion, stepIndex, 0, isCodeExecutionMode, learningHistory)
+	conditionalResponse, err := conditionalAgent.Decide(ctx, conditionContext, step.ConditionQuestion, step.Description, stepIndex, 0, isCodeExecutionMode, learningHistory)
 
 	if err != nil {
 		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate condition for step %d: %v", stepIndex+1, err), nil)
@@ -150,6 +152,49 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 	branchExecuted := "if_false"
 	if conditionResult {
 		branchExecuted = "if_true"
+	}
+
+	// Store conditional evaluation result to logs (if enabled)
+	// Note: conditionalStepPath is already defined earlier in the function
+	if hcpo.saveValidationResponses {
+		// Determine validation workspace path (same logic as validation agent)
+		var validationWorkspacePath string
+		if hcpo.selectedRunFolder != "" {
+			validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+		} else {
+			validationWorkspacePath = hcpo.GetWorkspacePath()
+		}
+
+		// Get validation folder path based on conditionalStepPath (step-{X})
+		validationFolderPath := getValidationFolderPath(validationWorkspacePath, conditionalStepPath)
+
+		// Save conditional evaluation result
+		conditionalEvaluationFilePath := fmt.Sprintf("%s/conditional-evaluation.json", validationFolderPath)
+		conditionalEvaluationResponse := map[string]interface{}{
+			"step_index":            stepIndex + 1,
+			"step_path":             conditionalStepPath,
+			"conditional_step_id":   step.ID,
+			"condition_question":    step.ConditionQuestion,
+			"condition_result":      conditionResult,
+			"condition_reason":      conditionReason,
+			"branch_executed":       branchExecuted,
+			"if_true_next_step_id":  step.IfTrueNextStepID,
+			"if_false_next_step_id": step.IfFalseNextStepID,
+			"depth":                 depth,
+			"timestamp":             time.Now().Format(time.RFC3339),
+		}
+
+		// Marshal and save conditional evaluation result
+		conditionalJSON, err := json.MarshalIndent(conditionalEvaluationResponse, "", "  ")
+		if err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal conditional evaluation response to JSON: %v", err))
+		} else {
+			if err := hcpo.WriteWorkspaceFile(ctx, conditionalEvaluationFilePath, string(conditionalJSON)); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write conditional evaluation response to %s: %v", conditionalEvaluationFilePath, err))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("💾 Conditional evaluation response saved to: %s", conditionalEvaluationFilePath))
+			}
+		}
 	}
 
 	// Always initialize fresh branch progress (never read from stored progress)

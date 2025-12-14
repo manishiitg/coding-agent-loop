@@ -313,7 +313,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         </div>
 
         {/* ChatArea Panel - single instance, show/hide via CSS */}
-        <div className={`${showChatArea ? 'w-1/2' : 'w-0 overflow-hidden'} border-l border-gray-200 dark:border-gray-700 flex flex-col bg-white dark:bg-gray-900 relative z-20 transition-all duration-300`}>
+        <div className={`${showChatArea ? 'w-1/2' : 'w-0 overflow-hidden'} border-l border-gray-200 dark:border-gray-700 flex flex-col h-full min-h-0 bg-white dark:bg-gray-900 relative z-20 transition-all duration-300`}>
           {/* Close button overlay - only visible when panel is open */}
           {showChatArea && (
             <button

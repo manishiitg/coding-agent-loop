@@ -53,6 +53,9 @@ import type {
   ErrorDetailEvent,
   MaxTurnsReachedEvent,
   ContextCancelledEvent,
+  ContextSummarizationStartedEvent,
+  ContextSummarizationCompletedEvent,
+  ContextSummarizationErrorEvent,
   LargeToolOutputDetectedEvent,
   LargeToolOutputFileWrittenEvent,
   LargeToolOutputFileWriteErrorEvent,
@@ -161,6 +164,9 @@ export type EventTypeString =
   | 'error_detail'
   | 'max_turns_reached'
   | 'context_cancelled'
+  | 'context_summarization_started'
+  | 'context_summarization_completed'
+  | 'context_summarization_error'
   | 'large_tool_output_detected'
   | 'large_tool_output_file_written'
   | 'large_tool_output_file_write_error'
@@ -272,6 +278,9 @@ export interface EventTypeToDataMap {
   'error_detail': ErrorDetailEvent;
   'max_turns_reached': MaxTurnsReachedEvent;
   'context_cancelled': ContextCancelledEvent;
+  'context_summarization_started': ContextSummarizationStartedEvent;
+  'context_summarization_completed': ContextSummarizationCompletedEvent;
+  'context_summarization_error': ContextSummarizationErrorEvent;
   'large_tool_output_detected': LargeToolOutputDetectedEvent;
   'large_tool_output_file_written': LargeToolOutputFileWrittenEvent;
   'large_tool_output_file_write_error': LargeToolOutputFileWriteErrorEvent;
@@ -558,6 +567,9 @@ export type {
   ErrorDetailEvent,
   MaxTurnsReachedEvent,
   ContextCancelledEvent,
+  ContextSummarizationStartedEvent,
+  ContextSummarizationCompletedEvent,
+  ContextSummarizationErrorEvent,
   LargeToolOutputDetectedEvent,
   LargeToolOutputFileWrittenEvent,
   LargeToolOutputFileWriteErrorEvent,

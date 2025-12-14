@@ -9,15 +9,15 @@ export const StepTokenUsageEventDisplay: React.FC<StepTokenUsageEventDisplayProp
   const stepLabel = event.step_title || `Step ${(event.step ?? 0) + 1}`
   
   return (
-    <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-md p-3">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-3 mb-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-orange-700 dark:text-orange-300">
-            📊 Step Token Usage: {stepLabel}
+    <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-md p-2">
+      {/* Compact header */}
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap text-xs">
+          <span className="font-semibold text-orange-700 dark:text-orange-300">
+            📊 {stepLabel}
           </span>
-          <span className="text-xs text-orange-600 dark:text-orange-400">
-            • Phase: {event.phase || 'unknown'} • Step: {(event.step ?? 0) + 1}
+          <span className="text-orange-600 dark:text-orange-400">
+            • {event.phase || 'unknown'} • Step {(event.step ?? 0) + 1}
           </span>
         </div>
         {event.timestamp && (
@@ -27,51 +27,65 @@ export const StepTokenUsageEventDisplay: React.FC<StepTokenUsageEventDisplayProp
         )}
       </div>
       
-      {/* Main token metrics */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm font-medium">
+      {/* Combined metrics: All tokens with costs inline, context, stats - all in one compact line */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+        {/* Token breakdown with costs inline */}
         <span className="text-orange-700 dark:text-orange-300">
-          Input: <span className="font-semibold">{(event.prompt_tokens ?? 0).toLocaleString()}</span>
+          <span className="font-semibold">Tokens:</span>
+          <span className="ml-1">
+            In:{(event.prompt_tokens ?? 0).toLocaleString()}
+            {(event.input_cost_usd ?? 0) > 0 && (
+              <span className="text-green-600 dark:text-green-400 ml-1">(${(event.input_cost_usd ?? 0).toFixed(4)})</span>
+            )}
+          </span>
+          {(event.cache_tokens ?? 0) > 0 && (
+            <span className="text-cyan-600 dark:text-cyan-400 ml-1">
+              Cache:{(event.cache_tokens ?? 0).toLocaleString()}
+              {(event.cache_cost_usd ?? 0) > 0 && (
+                <span className="text-green-600 dark:text-green-400 ml-1">(${(event.cache_cost_usd ?? 0).toFixed(4)})</span>
+              )}
+            </span>
+          )}
+          {(event.reasoning_tokens ?? 0) > 0 && (
+            <span className="text-purple-600 dark:text-purple-400 ml-1">
+              Reason:{(event.reasoning_tokens ?? 0).toLocaleString()}
+              {(event.reasoning_cost_usd ?? 0) > 0 && (
+                <span className="text-green-600 dark:text-green-400 ml-1">(${(event.reasoning_cost_usd ?? 0).toFixed(4)})</span>
+              )}
+            </span>
+          )}
+          <span className="ml-1">
+            Out:{(event.completion_tokens ?? 0).toLocaleString()}
+            {(event.output_cost_usd ?? 0) > 0 && (
+              <span className="text-green-600 dark:text-green-400 ml-1">(${(event.output_cost_usd ?? 0).toFixed(4)})</span>
+            )}
+          </span>
+          {(event.total_cost_usd ?? 0) > 0 && (
+            <span className="ml-1 font-semibold text-green-600 dark:text-green-400">
+              Total:${(event.total_cost_usd ?? 0).toFixed(4)}
+            </span>
+          )}
         </span>
-        <span className="text-orange-700 dark:text-orange-300">
-          Output: <span className="font-semibold">{(event.completion_tokens ?? 0).toLocaleString()}</span>
-        </span>
-        <span className="text-orange-700 dark:text-orange-300">
-          Total: <span className="font-semibold">{(event.total_tokens ?? 0).toLocaleString()}</span>
-        </span>
-        {(event.cache_tokens ?? 0) > 0 && (
-          <span className="text-cyan-600 dark:text-cyan-400 font-medium">
-            Cache: {(event.cache_tokens ?? 0).toLocaleString()}
+        
+        {/* Context usage */}
+        {(event.context_usage_percent ?? 0) > 0 && (
+          <span className={(event.context_usage_percent ?? 0) > 80 ? 'text-red-600 dark:text-red-400' : (event.context_usage_percent ?? 0) > 50 ? 'text-yellow-600 dark:text-yellow-400' : 'text-orange-600 dark:text-orange-400'}>
+            <span className="font-semibold">Context:</span>
+            <span className="ml-1">{(event.context_usage_percent ?? 0).toFixed(1)}%</span>
           </span>
         )}
-        {(event.reasoning_tokens ?? 0) > 0 && (
-          <span className="text-purple-600 dark:text-purple-400 font-medium">
-            Reasoning: {(event.reasoning_tokens ?? 0).toLocaleString()}
+        
+        {/* Stats */}
+        {(event.llm_call_count ?? 0) > 0 && (
+          <span className="text-orange-600 dark:text-orange-400">
+            <span className="font-semibold">Calls:</span>
+            <span className="ml-1">{event.llm_call_count}</span>
+            {(event.cache_enabled_call_count ?? 0) > 0 && (
+              <span className="text-cyan-600 dark:text-cyan-400 ml-1">({event.cache_enabled_call_count} cached)</span>
+            )}
           </span>
         )}
       </div>
-      
-      {/* Additional metrics */}
-      {((event.llm_call_count ?? 0) > 0 || (event.cache_enabled_call_count ?? 0) > 0) && (
-        <div className="mt-3 pt-2 border-t border-orange-200 dark:border-orange-700">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-orange-600 dark:text-orange-400">
-            {(event.llm_call_count ?? 0) > 0 && (
-              <span>
-                LLM Calls: <span className="font-semibold">{event.llm_call_count}</span>
-              </span>
-            )}
-            {(event.cache_enabled_call_count ?? 0) > 0 && (
-              <span>
-                Cache-Enabled Calls: <span className="font-semibold">{event.cache_enabled_call_count}</span>
-              </span>
-            )}
-            {(event.llm_call_count ?? 0) > 0 && (event.total_tokens ?? 0) > 0 && (
-              <span>
-                Avg per Call: <span className="font-semibold">{Math.round((event.total_tokens ?? 0) / (event.llm_call_count ?? 1)).toLocaleString()}</span>
-              </span>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

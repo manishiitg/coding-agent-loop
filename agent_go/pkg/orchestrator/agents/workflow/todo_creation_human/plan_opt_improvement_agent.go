@@ -914,6 +914,64 @@ The human_feedback tool returns user's response as TEXT. You must interpret:
 
 **Usage**: Check validation-{N}.json for validation failures, execution-attempt-*.json for execution results, decision-evaluation.json for decision routing logic, and conversation.json for full LLM conversation context.
 
+## READING EXECUTION OUTPUT FILES
+
+Execution output files are stored in logs folders. Use search_large_output tool (if enabled) or read_workspace_file to read them.
+
+### Conversation History File Structure
+
+**File location**: logs/step-{X}/execution/execution-attempt-{N}-iteration-{M}-conversation.json
+
+**JSON Structure**:
+{
+  "step_index": 1,
+  "step_path": "step-1",
+  "retry_attempt": 1,
+  "loop_iteration": 0,
+  "conversation_history": [
+    {
+      "Role": "ai",  // or "role": "ai" (depending on serialization)
+      "Parts": [     // or "parts": [] (depending on serialization)
+        {
+          "FunctionCall": {  // Tool call structure
+            "Name": "tool_name",
+            "Arguments": "{...}"
+          }
+          // OR alternative structure:
+          // "type": "tool_call",
+          // "content": {
+          //   "function_name": "tool_name",
+          //   "function_args": "{...}"
+          // }
+        }
+      ]
+    }
+  ],
+  "timestamp": "2025-01-27T14:30:25Z"
+}
+
+**To extract tool names from conversation history:**
+- Use search_large_output with operation="query" and jq query: .conversation_history[] | select(.Role == "ai" or .role == "ai") | .Parts[]? // .parts[]? | select(.FunctionCall != null or .type == "tool_call") | (.FunctionCall.Name // .content.function_name)
+- Or read the file and parse manually to find all tool calls in assistant messages
+
+### Execution Result File Structure
+
+**File location**: logs/step-{X}/execution/execution-attempt-{N}-iteration-{M}.json
+
+**JSON Structure**:
+{
+  "step_index": 1,
+  "step_path": "step-1",
+  "retry_attempt": 1,
+  "loop_iteration": 0,
+  "execution_result": "The actual execution output text...",
+  "timestamp": "2025-01-27T14:30:25Z"
+}
+
+**To read execution result:**
+- Use search_large_output with operation="query" and jq query: .execution_result
+- Or use read_workspace_file to read the entire file
+
 ## SUCCESS CRITERIA REQUIREMENTS
 
 Success criteria MUST be **file-verifiable** (validation agent checks files):

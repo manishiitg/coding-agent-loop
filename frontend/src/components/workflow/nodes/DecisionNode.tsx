@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Play, Settings, Code, Terminal, AlertTriangle, Zap } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Play, Settings, Code, Terminal, AlertTriangle, Zap, Lock } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { getToolsByCategory } from '../../../utils/customToolNames'
@@ -92,6 +92,7 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
     execution_llm?: { provider?: string; model_id?: string }
     learning_llm?: { provider?: string; model_id?: string }
     disable_learning?: boolean
+    lock_learnings?: boolean
     learning_detail_level?: string
     execution_max_turns?: number
     selected_servers?: string[]
@@ -168,9 +169,14 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
     return stepConfig?.agent_configs?.learning_detail_level || 'exact'
   }, [stepConfig?.agent_configs?.learning_detail_level, stepConfig?.agent_configs?.disable_learning, useCodeExecutionMode])
 
-  // Execution max turns (defaults to 25)
+  // Lock learnings status
+  const lockLearnings = useMemo(() => {
+    return stepConfig?.agent_configs?.lock_learnings === true && stepConfig?.agent_configs?.disable_learning !== true
+  }, [stepConfig?.agent_configs?.lock_learnings, stepConfig?.agent_configs?.disable_learning])
+
+  // Execution max turns (defaults to 100)
   const executionMaxTurns = useMemo(() => {
-    return stepConfig?.agent_configs?.execution_max_turns || 25
+    return stepConfig?.agent_configs?.execution_max_turns || 100
   }, [stepConfig?.agent_configs?.execution_max_turns])
 
   // MCP Servers: step config > preset
@@ -326,6 +332,16 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
             <span>Prereq</span>
           </div>
         )}
+        {/* Lock Learnings Badge */}
+        {stepConfig?.agent_configs?.lock_learnings && !stepConfig?.agent_configs?.disable_learning && (
+          <div 
+            className="flex items-center gap-1 px-2 py-1 rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 text-[10px] font-semibold border border-purple-200 dark:border-purple-800"
+            title="Learnings are locked - learning agent will not run but existing learnings will be used"
+          >
+            <Lock className="w-3 h-3" />
+            <span>Locked</span>
+          </div>
+        )}
       </div>
 
       {/* Decision Badge - Top */}
@@ -414,6 +430,7 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
           executionMaxTurns={executionMaxTurns}
           learningLLM={learningLLM}
           learningDetailLevel={learningDetailLevel}
+          lockLearnings={lockLearnings}
           effectiveServers={effectiveServers}
           toolsDisplayInfo={toolsDisplayInfo}
           workspaceToolsInfo={workspaceToolsInfo}

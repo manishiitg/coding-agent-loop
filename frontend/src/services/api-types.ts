@@ -50,6 +50,10 @@ export interface AgentQueryRequest {
   use_code_execution_mode?: boolean
   // Execution options from frontend (for workflow execution phase)
   execution_options?: ExecutionOptions
+  // Context summarization configuration
+  enable_context_summarization?: boolean // Enable context summarization feature
+  summarize_on_max_turns?: boolean // Automatically summarize when max turns is reached
+  summary_keep_last_messages?: number // Number of recent messages to keep when summarizing (default: 8)
 }
 
 export interface AgentQueryResponse {
@@ -114,6 +118,21 @@ export interface HumanFeedbackResponse {
   unique_id: string
   status: string
   message?: string
+}
+
+// Context Summarization types
+export interface SummarizeConversationRequest {
+  keep_last_messages?: number // Optional: number of recent messages to keep (default: 8)
+}
+
+export interface SummarizeConversationResponse {
+  session_id: string
+  status: string
+  message?: string
+  original_count?: number
+  new_count?: number
+  reduced_by?: number
+  summary?: string
 }
 
 // Slack Feedback Configuration types
@@ -541,6 +560,7 @@ export interface PresetQuery {
   agent_mode: string;
   llm_config: string; // JSON string of PresetLLMConfig
   use_code_execution_mode?: boolean;
+  enable_context_summarization?: boolean; // Enable context summarization
   is_predefined: boolean;
   created_at: string;
   updated_at: string;
@@ -556,6 +576,7 @@ export interface CreatePresetQueryRequest {
   agent_mode?: string;
   llm_config?: PresetLLMConfig; // LLM configuration for this preset
   use_code_execution_mode?: boolean; // MCP code execution mode
+  enable_context_summarization?: boolean; // Enable context summarization
   is_predefined?: boolean;
 }
 
@@ -568,6 +589,7 @@ export interface UpdatePresetQueryRequest {
   agent_mode?: string;
   llm_config?: PresetLLMConfig; // LLM configuration for this preset
   use_code_execution_mode?: boolean; // MCP code execution mode
+  enable_context_summarization?: boolean; // Enable context summarization
 }
 
 export interface ListPresetQueriesResponse {

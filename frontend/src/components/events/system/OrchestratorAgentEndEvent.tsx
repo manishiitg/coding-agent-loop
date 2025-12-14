@@ -133,6 +133,7 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
                       reasoning_tokens?: number
                     }
                     if (eventWithTokens.total_tokens !== undefined && eventWithTokens.total_tokens > 0) {
+                      const contextUsagePercent = event.metadata?.context_usage_percent as number | undefined
                       return (
                         <>
                           {' • Tokens: '}
@@ -148,6 +149,11 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
                           {eventWithTokens.reasoning_tokens !== undefined && eventWithTokens.reasoning_tokens > 0 && (
                             <span className="text-purple-600 dark:text-purple-400">
                               {' • Reasoning: '}{eventWithTokens.reasoning_tokens.toLocaleString()}
+                            </span>
+                          )}
+                          {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
+                            <span className={contextUsagePercent > 80 ? 'text-red-600 dark:text-red-400' : contextUsagePercent > 50 ? 'text-yellow-600 dark:text-yellow-400' : 'text-green-600 dark:text-green-400'}>
+                              {' • Context: '}{contextUsagePercent.toFixed(1)}%
                             </span>
                           )}
                         </>

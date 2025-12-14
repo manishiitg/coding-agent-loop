@@ -1,0 +1,29 @@
+{
+  "$id": "unified-events.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Unified JSON schema for all event types",
+  "properties": {
+    "data": {
+      "additionalProperties": true,
+      "description": "Event-specific data",
+      "type": "object"
+    },
+    "timestamp": {
+      "description": "Event timestamp",
+      "format": "date-time",
+      "type": "string"
+    },
+    "type": {
+      "description": "The type of event",
+      "type": "string"
+    }
+  },
+  "required": [
+    "type",
+    "timestamp",
+    "data"
+  ],
+  "title": "Unified Events",
+  "type": "object"
+}

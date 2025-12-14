@@ -355,16 +355,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 
 // createPlanningAgent creates a planning agent for the current iteration
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
-	// Set folder guard paths: allow reads from learnings (read-only) and planning (via writePaths), writes only to planning
+	// Set folder guard paths: allow reads from learnings and planning, writes to both planning and learnings (for folder syncing)
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	planningPath := fmt.Sprintf("%s/planning", baseWorkspacePath)
 	learningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
 
-	// Only specify learnings in readPaths - planning is automatically readable since it's in writePaths
+	// Read paths: learnings (for reading existing folders), planning is automatically readable since it's in writePaths
 	readPaths := []string{learningsPath}
-	writePaths := []string{planningPath}
+	// Write paths: planning (for plan.json) and learnings (for renaming folders when step numbering changes)
+	writePaths := []string{planningPath, learningsPath}
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (planning automatically readable via writePaths)", readPaths, writePaths))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (write access to learnings/ for folder syncing)", readPaths, writePaths))
 
 	// Determine LLM config: Priority: presetPlanningLLM > presetLearningLLM > orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig

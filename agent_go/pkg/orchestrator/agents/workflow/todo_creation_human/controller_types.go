@@ -124,17 +124,16 @@ const (
 
 // TodoStep represents a todo step in the execution
 type TodoStep struct {
-	ID                       string   `json:"id"` // Stable step ID (from PlanStep) - required for frontend matching
-	Title                    string   `json:"title"`
-	Description              string   `json:"description"`
-	SuccessCriteria          string   `json:"success_criteria"`
-	ContextDependencies      []string `json:"context_dependencies"`
-	ContextOutput            string   `json:"context_output"`
-	LearningFilesToReference []string `json:"learning_files_to_reference,omitempty"` // learning files to read for context (execution agent reads full files)
-	HasLoop                  bool     `json:"has_loop"`                              // true if step needs to loop
-	LoopCondition            string   `json:"loop_condition"`                        // condition description (same as success criteria) - REQUIRED when has_loop=true
-	MaxIterations            int      `json:"max_iterations,omitempty"`              // max iterations (default: 10)
-	LoopDescription          string   `json:"loop_description,omitempty"`            // human-readable explanation
+	ID                  string   `json:"id"` // Stable step ID (from PlanStep) - required for frontend matching
+	Title               string   `json:"title"`
+	Description         string   `json:"description"`
+	SuccessCriteria     string   `json:"success_criteria"`
+	ContextDependencies []string `json:"context_dependencies"`
+	ContextOutput       string   `json:"context_output"`
+	HasLoop             bool     `json:"has_loop"`                   // true if step needs to loop
+	LoopCondition       string   `json:"loop_condition"`             // condition description (same as success criteria) - REQUIRED when has_loop=true
+	MaxIterations       int      `json:"max_iterations,omitempty"`   // max iterations (default: 10)
+	LoopDescription     string   `json:"loop_description,omitempty"` // human-readable explanation
 	// Conditional branching fields
 	HasCondition      bool       `json:"has_condition"`                   // true if step has conditional branches
 	ConditionQuestion string     `json:"condition_question,omitempty"`    // question to ask ConditionalLLM

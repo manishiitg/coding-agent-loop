@@ -53,21 +53,15 @@ func GetWorkflowConstants() WorkflowConstants {
 	return WorkflowConstants{
 		Phases: []WorkflowPhase{
 			{
-				ID:          "variable-extraction",
-				Title:       "Variable Extraction",
-				Description: "Extract variables from the objective and replace hard-coded values with templated placeholders. This phase runs before planning to identify dynamic values that should be parameterized.",
-				Options:     []WorkflowPhaseOption{}, // No options for variable extraction phase
-			},
-			{
 				ID:          "planning",
 				Title:       "Planning",
-				Description: "Create and iterate on a comprehensive plan using the planning agent. You can refine and improve the plan through conversation until you're satisfied. This phase runs after variable extraction and before execution.",
+				Description: "Create and iterate on a comprehensive plan using the planning agent. You can refine and improve the plan through conversation until you're satisfied. Variable extraction is handled by the planning agent tools during this phase.",
 				Options:     []WorkflowPhaseOption{}, // No options for planning phase
 			},
 			{
 				ID:          database.WorkflowStatusPreVerification,
 				Title:       "Execution",
-				Description: "Execute the approved plan using MCP tools. This phase runs after both variable extraction and planning are complete.",
+				Description: "Execute the approved plan using MCP tools. This phase runs after planning is complete.",
 				Options:     []WorkflowPhaseOption{}, // No options for execution phase
 			},
 			{
@@ -435,10 +429,7 @@ func (wo *WorkflowOrchestrator) executeFlow(
 
 	// Route to appropriate phase based on workflow status
 	// IMPORTANT: Each phase is isolated and should NOT trigger other phases
-	if workflowStatus == "variable-extraction" {
-		wo.GetLogger().Info(fmt.Sprintf("🔍 Routing to variable extraction phase (workflowStatus: %s)", workflowStatus))
-		return wo.runVariableExtraction(ctx, objective, selectedOptions)
-	}
+	// Note: Variable extraction is now handled by planning agent tools, no separate phase needed
 
 	if workflowStatus == "planning" {
 		wo.GetLogger().Info(fmt.Sprintf("📋 Routing to planning phase (workflowStatus: %s)", workflowStatus))
@@ -477,29 +468,6 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	// Execution requires both variables.json and plan.json to exist
 	wo.GetLogger().Info(fmt.Sprintf("🚀 Routing to execution phase (workflowStatus: %s)", workflowStatus))
 	return wo.runPlanning(ctx, objective, selectedOptions)
-}
-
-// runVariableExtraction runs only the variable extraction phase
-func (wo *WorkflowOrchestrator) runVariableExtraction(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Variable Extraction Phase"))
-
-	// Create variable manager directly (independent from controller)
-	variableManager := todo_creation_human.NewVariableManager(
-		wo.BaseOrchestrator,
-		wo.presetVariableExtractionLLM,
-		wo.presetLearningLLM, // Pass learning LLM for fallback
-		wo.getSessionID(),
-		wo.getWorkflowID(),
-	)
-
-	// Run only variable extraction
-	result, err := variableManager.ExtractVariablesOnly(ctx, objective, wo.GetWorkspacePath())
-	if err != nil {
-		return "", fmt.Errorf("variable extraction failed: %w", err)
-	}
-
-	wo.GetLogger().Info(fmt.Sprintf("✅ Variable extraction completed successfully"))
-	return result, nil
 }
 
 // runPlanningOnly runs only the planning phase
@@ -845,7 +813,6 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 			} else {
 				// Validate it's a known workflow status
 				validStatuses := []string{
-					"variable-extraction",                  // Variable extraction phase
 					"planning",                             // Planning phase
 					database.WorkflowStatusPreVerification, // Execution phase
 					"anonymize-learnings",                  // Anonymize learnings phase

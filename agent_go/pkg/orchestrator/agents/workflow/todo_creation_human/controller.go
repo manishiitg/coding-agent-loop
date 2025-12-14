@@ -222,10 +222,6 @@ func NewHumanControlledTodoPlannerOrchestrator(
 	// Create VariableManager for variable extraction operations (independent from controller)
 	hcpo.variableManager = NewVariableManager(
 		baseOrchestrator,
-		presetVariableExtractionLLM,
-		presetLearningLLM, // Pass learning LLM for fallback
-		hcpo.sessionID,
-		hcpo.workflowID,
 	)
 
 	return hcpo, nil
@@ -394,19 +390,29 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	hcpo.SetWorkspacePath(workspacePath)
 
 	// PHASE 0: Check both variables and plan at start (before any prompts)
-	// Check if variables.json exists - REQUIRED for planning
+	// Check if variables.json exists - OPTIONAL (planning agent can create it)
 	variablesPath := fmt.Sprintf("%s/variables/variables.json", hcpo.GetWorkspacePath())
 	variablesExist, existingVariablesManifest, err := hcpo.variableManager.checkExistingVariables(ctx, variablesPath)
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to check for existing variables: %w", err), nil)
-	}
-	if !variablesExist {
-		return "", fmt.Errorf(fmt.Sprintf("variables.json not found at %s - variable extraction must be run first as a separate phase", variablesPath), nil)
+		// Log error but continue without variables (planning agent can create them)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check for existing variables: %v - proceeding without variables", err))
+		variablesExist = false
 	}
 
-	// Variables exist - use them
-	hcpo.variablesManifest = existingVariablesManifest // Store in orchestrator so formatVariableNames/Values can access it
-	templatedObjective := existingVariablesManifest.Objective
+	var templatedObjective string
+	if variablesExist && existingVariablesManifest != nil {
+		// Variables exist - use them
+		hcpo.variablesManifest = existingVariablesManifest // Store in orchestrator so formatVariableNames/Values can access it
+		templatedObjective = existingVariablesManifest.Objective
+		hcpo.SetObjective(templatedObjective)
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Using existing variables.json with %d variables", len(existingVariablesManifest.Variables)))
+	} else {
+		// No variables.json - planning agent can extract variables if needed
+		hcpo.variablesManifest = nil
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 No variables.json found - planning agent can extract variables if needed"))
+		// Use original objective (no templating)
+		templatedObjective = hcpo.GetObjective()
+	}
 
 	// Check if plan.json exists - REQUIRED for execution
 	planPath := fmt.Sprintf("%s/planning/plan.json", hcpo.GetWorkspacePath())

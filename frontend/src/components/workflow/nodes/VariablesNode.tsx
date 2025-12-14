@@ -20,6 +20,7 @@ const getEnabledGroups = (manifest: VariablesManifest | null): VariableGroup[] =
   if (!manifest) return []
   if (!manifest.groups || manifest.groups.length === 0) {
     // Single group mode - create virtual group from variables
+    if (!manifest.variables || !Array.isArray(manifest.variables)) return []
     const values: Record<string, string> = {}
     manifest.variables.forEach(v => {
       values[v.name] = v.value || ''
@@ -172,7 +173,7 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
             
             {/* Variables for this group */}
             <div className="ml-4 space-y-1">
-              {manifest.variables.slice(0, 3).map((variable, idx) => {
+              {manifest.variables && manifest.variables.slice(0, 3).map((variable, idx) => {
                 const value = group.values[variable.name] || ''
                 return (
                   <div key={idx} className="flex flex-col gap-0.5 text-xs">
@@ -188,7 +189,7 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
                   </div>
                 )
               })}
-              {manifest.variables.length > 3 && (
+              {manifest.variables && manifest.variables.length > 3 && (
                 <div className="text-[10px] text-gray-400 dark:text-gray-500 italic ml-3">
                   +{manifest.variables.length - 3} more...
                 </div>

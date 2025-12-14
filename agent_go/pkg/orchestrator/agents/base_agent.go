@@ -32,7 +32,6 @@ type AgentType string
 
 const (
 	// Multi-agent TodoPlanner sub-agents (actively used)
-	VariableExtractionAgentType               AgentType = "variable_extraction"                 // Extracts variables from objective
 	TodoPlannerAnonymizationAgentType         AgentType = "todo_planner_anonymization"          // Anonymizes learnings by replacing values with variables
 	TodoPlannerPlanImprovementAgentType       AgentType = "todo_planner_plan_improvement"       // Analyzes execution and provides plan improvement feedback
 	TodoPlannerPlanningAgentType              AgentType = "todo_planner_planning"               // Creates step-wise plan from objective

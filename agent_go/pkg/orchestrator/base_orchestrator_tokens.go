@@ -462,7 +462,6 @@ func IsPhaseOnlyAgent(phase string) bool {
 		"planning",
 		"plan-tool-optimization",
 		"plan-learnings-alignment",
-		"variable-extraction",
 		"learning-consolidation",
 		"anonymization",
 		"plan-improvement",

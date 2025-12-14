@@ -126,17 +126,17 @@ type EventDataUnion struct {
 	OrchestratorAgentError *events.OrchestratorAgentErrorEvent `json:"orchestrator_agent_error,omitempty"`
 
 	// Step Execution Events
-	StepStarted         *events.StepStartedEvent                    `json:"step_execution_start,omitempty"`
-	StepFinished        *events.StepFinishedEvent                   `json:"step_execution_end,omitempty"`
-	StepFailed          *events.StepFailedEvent                     `json:"step_execution_failed,omitempty"`
-	StepTokenUsage      *events.StepTokenUsageEvent                 `json:"step_token_usage,omitempty"`
-	StepProgressUpdated *events.StepProgressUpdatedEvent            `json:"step_progress_updated,omitempty"`
-	DecisionEvaluated   *todo_creation_human.DecisionEvaluatedEvent `json:"decision_evaluated,omitempty"`
+	StepStarted         *todo_creation_human.StepStartedEvent         `json:"step_execution_start,omitempty"`
+	StepFinished        *todo_creation_human.StepFinishedEvent        `json:"step_execution_end,omitempty"`
+	StepFailed          *events.StepFailedEvent                       `json:"step_execution_failed,omitempty"`
+	StepTokenUsage      *events.StepTokenUsageEvent                   `json:"step_token_usage,omitempty"`
+	StepProgressUpdated *todo_creation_human.StepProgressUpdatedEvent `json:"step_progress_updated,omitempty"`
+	DecisionEvaluated   *todo_creation_human.DecisionEvaluatedEvent   `json:"decision_evaluated,omitempty"`
 
 	// Todo/Planning Events
-	TodoStepsExtracted       *events.TodoStepsExtractedEvent       `json:"todo_steps_extracted,omitempty"`
-	VariablesExtracted       *events.VariablesExtractedEvent       `json:"variables_extracted,omitempty"`
-	IndependentStepsSelected *events.IndependentStepsSelectedEvent `json:"independent_steps_selected,omitempty"`
+	TodoStepsExtracted       *todo_creation_human.TodoStepsExtractedEvent       `json:"todo_steps_extracted,omitempty"`
+	VariablesExtracted       *todo_creation_human.VariablesExtractedEvent       `json:"variables_extracted,omitempty"`
+	IndependentStepsSelected *todo_creation_human.IndependentStepsSelectedEvent `json:"independent_steps_selected,omitempty"`
 
 	// Human Feedback Events
 	RequestHumanFeedback      *events.RequestHumanFeedbackEvent      `json:"request_human_feedback,omitempty"`
@@ -473,16 +473,16 @@ type UnifiedEvent struct {
 	RequestHumanFeedbackEvent events.RequestHumanFeedbackEvent `json:"request_human_feedback"`
 
 	// Step Execution Events
-	StepStartedEvent         events.StepStartedEvent         `json:"step_execution_start"`
-	StepFinishedEvent        events.StepFinishedEvent        `json:"step_execution_end"`
-	StepFailedEvent          events.StepFailedEvent          `json:"step_execution_failed"`
-	StepTokenUsageEvent      events.StepTokenUsageEvent      `json:"step_token_usage"`
-	StepProgressUpdatedEvent events.StepProgressUpdatedEvent `json:"step_progress_updated"`
+	StepStartedEvent         todo_creation_human.StepStartedEvent         `json:"step_execution_start"`
+	StepFinishedEvent        todo_creation_human.StepFinishedEvent        `json:"step_execution_end"`
+	StepFailedEvent          events.StepFailedEvent                       `json:"step_execution_failed"`
+	StepTokenUsageEvent      events.StepTokenUsageEvent                   `json:"step_token_usage"`
+	StepProgressUpdatedEvent todo_creation_human.StepProgressUpdatedEvent `json:"step_progress_updated"`
 
 	// Todo/Planning Events
-	TodoStepsExtractedEvent       events.TodoStepsExtractedEvent       `json:"todo_steps_extracted"`
-	VariablesExtractedEvent       events.VariablesExtractedEvent       `json:"variables_extracted"`
-	IndependentStepsSelectedEvent events.IndependentStepsSelectedEvent `json:"independent_steps_selected"`
+	TodoStepsExtractedEvent       todo_creation_human.TodoStepsExtractedEvent       `json:"todo_steps_extracted"`
+	VariablesExtractedEvent       todo_creation_human.VariablesExtractedEvent       `json:"variables_extracted"`
+	IndependentStepsSelectedEvent todo_creation_human.IndependentStepsSelectedEvent `json:"independent_steps_selected"`
 
 	// Structured Output Events
 	StructuredOutputStartEvent events.StructuredOutputStartEvent `json:"structured_output_start"`

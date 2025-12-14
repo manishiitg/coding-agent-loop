@@ -22,7 +22,6 @@ import (
 type HumanControlledTodoPlannerPlanLearningsAlignmentTemplate struct {
 	WorkspacePath       string
 	PlanJSON            string
-	ChangelogJSON       string
 	AllowedPaths        string
 	SelectedFolder      string
 	IsCodeExecutionMode string
@@ -196,21 +195,6 @@ func (plam *PlanLearningsAlignmentManager) CheckAlignmentOnly(ctx context.Contex
 		return "", fmt.Errorf("failed to marshal filtered plan to JSON: %w", err)
 	}
 
-	// Read changelog if it exists (reads all changelog-*.json files from planning/changelog/)
-	listFilesFunc := func(ctx context.Context, dirPath string) ([]string, error) {
-		return plam.ListWorkspaceFiles(ctx, dirPath)
-	}
-	changelog, err := readChangelog(ctx, plam.GetWorkspacePath(), plam.ReadWorkspaceFile, listFilesFunc)
-	if err != nil {
-		plam.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read changelog: %v (continuing without changelog)", err))
-		changelog = &PlanChangeLog{Entries: []PlanChangeLogEntry{}}
-	}
-	changelogJSONBytes, err := json.MarshalIndent(changelog, "", "  ")
-	if err != nil {
-		plam.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal changelog: %v (continuing without changelog)", err))
-		changelogJSONBytes = []byte("[]")
-	}
-
 	// Create alignment agent
 	alignmentAgent, err := plam.createPlanLearningsAlignmentAgent(ctx, plam.GetWorkspacePath())
 	if err != nil {
@@ -220,11 +204,11 @@ func (plam *PlanLearningsAlignmentManager) CheckAlignmentOnly(ctx context.Contex
 	// Prepare template variables
 	// Use actual workspace path so agent can navigate correctly
 	// Explicitly list allowed paths for the agent (step-specific learnings always enabled)
+	// Agent has read access to planning/changelog/ and can discover/read changelog files on demand
 	allowedPaths := "['planning/', 'planning/changelog/', 'learnings/']"
 	alignmentTemplateVars := map[string]string{
 		"WorkspacePath":       plam.GetWorkspacePath(),
 		"PlanJSON":            string(planJSONBytes),
-		"ChangelogJSON":       string(changelogJSONBytes),
 		"AllowedPaths":        allowedPaths,
 		"SelectedFolder":      selectedFolder,
 		"IsCodeExecutionMode": "false", // Not used anymore, but kept for template compatibility
@@ -278,12 +262,11 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 	// Extract variables from template variables
 	workspacePath := templateVars["WorkspacePath"]
 	planJSON := templateVars["PlanJSON"]
-	changelogJSON := templateVars["ChangelogJSON"]
 
 	// Provide default allowed paths if not present
 	allowedPaths := templateVars["AllowedPaths"]
 	if allowedPaths == "" {
-		allowedPaths = "['planning/', 'learnings/']"
+		allowedPaths = "['planning/', 'planning/changelog/', 'learnings/']"
 	}
 
 	// Provide default selected folder if not present
@@ -296,23 +279,10 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 		isCodeExecutionMode = "false" // Default to MCP Tool Mode
 	}
 
-	// If changelog not provided in template vars, try to read it
-	if changelogJSON == "" {
-		// Get base agent to access ReadWorkspaceFile
-		baseAgent := agent.GetBaseAgent()
-		if baseAgent != nil {
-			// Try to read changelog using workspace tools
-			// Note: We can't directly call readChangelog here without access to ReadWorkspaceFile
-			// So we'll rely on the agent reading it via workspace tools
-			changelogJSON = "[]" // Default to empty changelog
-		}
-	}
-
 	// Prepare template variables
 	alignmentTemplateVars := map[string]string{
 		"WorkspacePath":       workspacePath,
 		"PlanJSON":            planJSON,
-		"ChangelogJSON":       changelogJSON,
 		"AllowedPaths":        allowedPaths,
 		"SelectedFolder":      selectedFolder,
 		"IsCodeExecutionMode": isCodeExecutionMode,
@@ -322,7 +292,6 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 	templateData := HumanControlledTodoPlannerPlanLearningsAlignmentTemplate{
 		WorkspacePath:       workspacePath,
 		PlanJSON:            planJSON,
-		ChangelogJSON:       changelogJSON,
 		AllowedPaths:        allowedPaths,
 		SelectedFolder:      selectedFolder,
 		IsCodeExecutionMode: isCodeExecutionMode,
@@ -629,7 +598,6 @@ For each learning file, follow this decision process:
   - Branch step changes: Steps added/updated/deleted in conditional branches
 - **Use changelog to prioritize**: Focus alignment checks on steps that were recently changed
 - **Note**: If changelog directory doesn't exist or is empty, proceed with normal alignment check
-- **Note**: If changelog JSON is provided in template vars (ChangelogJSON), it's already combined from all files - use it directly
 
 ### 1. Extract Plan Information
 - Parse plan.json to get all step IDs, titles, and execution modes
@@ -804,24 +772,9 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
 		planJSON = "No plan JSON provided."
 	}
 
-	changelogJSON := templateVars["ChangelogJSON"]
-	changelogSection := ""
-	if changelogJSON != "" && changelogJSON != "[]" {
-		changelogSection = `
-**Plan Changelog** (recent changes to the plan - combined from all changelog files):
-` + changelogJSON + `
-
-**IMPORTANT**: 
-- This changelog is already combined from all individual changelog files in planning/changelog/
-- Changelog files are named with timestamps: changelog-YYYY-MM-DD-HH-MM-SS.json
-- Use this changelog to identify which steps were recently modified, deleted, or added
-- This helps prioritize alignment checks and identify learnings that are likely out of sync
+	changelogSection := `
+**Plan Changelog**: You have read access to planning/changelog/ directory. Use list_workspace_files with folder="planning/changelog" to discover all changelog-*.json files, then read them individually using read_workspace_file. Combine all entries from all files and sort by timestamp (oldest first) to understand recent plan changes.
 `
-	} else {
-		changelogSection = `
-**Plan Changelog**: No changelog found or empty. You should still check planning/changelog/ directory using list_workspace_files to discover any changelog-*.json files, then read them individually.
-`
-	}
 
 	return `# Plan-Learnings Alignment Check Task
 
@@ -850,7 +803,6 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
      3. Read each file using read_workspace_file
      4. Each file contains an array of change entries (each entry has: timestamp, change_type, step_ids, description, details)
      5. Combine all entries from all files and sort by timestamp (oldest first)
-   - **Alternative**: If ChangelogJSON is provided in template vars, it's already combined from all files - use it directly
    - The changelog contains a history of all plan modifications
    - **Purpose**: Understanding recent changes helps identify which learnings are likely out of sync
    - **What to extract from changelog**:
@@ -861,7 +813,6 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
      * Branch step changes: Steps added/updated/deleted in conditional branches
    - **Prioritization**: Steps mentioned in recent changelog entries should be checked first
    - **Note**: If changelog directory doesn't exist or is empty, that's fine - proceed with normal alignment check
-   - **If changelog is provided in template vars**: Use the ChangelogJSON variable directly (already combined from all files)
 
 **Phase 1: Analysis**
 

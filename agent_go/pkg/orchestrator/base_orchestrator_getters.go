@@ -143,3 +143,23 @@ func (bo *BaseOrchestrator) SetIterationFolder(iterationFolder string) {
 func (bo *BaseOrchestrator) GetIterationFolder() string {
 	return bo.iterationFolder
 }
+
+// GetEnableContextSummarization returns whether context summarization is enabled
+func (bo *BaseOrchestrator) GetEnableContextSummarization() bool {
+	return bo.enableContextSummarization
+}
+
+// GetSummarizeOnTokenThreshold returns whether token-based summarization is enabled
+func (bo *BaseOrchestrator) GetSummarizeOnTokenThreshold() bool {
+	return bo.summarizeOnTokenThreshold
+}
+
+// GetTokenThresholdPercent returns the token threshold percentage for summarization
+func (bo *BaseOrchestrator) GetTokenThresholdPercent() float64 {
+	return bo.tokenThresholdPercent
+}
+
+// GetSummaryKeepLastMessages returns the number of recent messages to keep when summarizing
+func (bo *BaseOrchestrator) GetSummaryKeepLastMessages() int {
+	return bo.summaryKeepLastMessages
+}

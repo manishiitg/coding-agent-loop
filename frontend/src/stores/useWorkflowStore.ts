@@ -324,7 +324,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       getDefaultPhase: () => {
         const phases = get().phases
-        return phases.length > 0 ? phases[0].id : 'variable-extraction'
+        return phases.length > 0 ? phases[0].id : 'planning'
       },
 
       // Get phases that can work on individual steps

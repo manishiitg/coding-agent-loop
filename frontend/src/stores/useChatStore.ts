@@ -181,7 +181,7 @@ export const useChatStore = create<ChatState>()(
       isApprovingWorkflow: false,
       sessionState: 'loading',
       isCheckingActiveSessions: false,
-      currentWorkflowPhase: 'variable-extraction' as WorkflowPhase,
+      currentWorkflowPhase: 'planning' as WorkflowPhase,
       currentWorkflowQueryId: null,
       toasts: [],
 
@@ -349,7 +349,7 @@ export const useChatStore = create<ChatState>()(
           isApprovingWorkflow: false,
           sessionState: 'loading',
           isCheckingActiveSessions: false,
-          currentWorkflowPhase: 'variable-extraction' as WorkflowPhase,
+          currentWorkflowPhase: 'planning' as WorkflowPhase,
           currentWorkflowQueryId: null,
           toasts: []
         })

@@ -63,12 +63,13 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     lastEventCountRef.current = currentEventCount;
   }, [displayEvents.length, visibleEventCount]);
   
-  // Limit visible events for rendering - show LATEST events first
+  // Limit visible events for rendering - show LATEST events (at bottom of list)
   // ALWAYS takes the last N events (most recent) - ensures latest events are always visible
   const visibleEvents = React.useMemo(() => {
     // Take the last N events (most recent) from displayEvents
     // displayEvents is already the most recent MAX_EVENTS_TO_PROCESS events
     // slice(-N) ensures we ALWAYS get the LATEST events, never older ones
+    // These will be rendered at the bottom (chronological order: oldest to newest)
     return displayEvents.slice(-visibleEventCount);
   }, [displayEvents, visibleEventCount]);
 
@@ -549,11 +550,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     return filteredEvents.map(event => buildTreeRecursive(event));
   }, [visibleEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId, getHierarchyLevel]);
 
-  // Reverse event tree to show latest events first (must be before early return)
-  const reversedEventTree = React.useMemo(() => {
-    return [...eventTree].reverse();
-  }, [eventTree]);
-
   // Load more events handler (must be before return)
   // Loads OLDER events (going back in time) - smaller increments for better performance
   const handleLoadMore = React.useCallback(() => {
@@ -584,12 +580,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
       {/* Event tree */}
       <div
         className="event-tree-container"
-        style={{
-          height: '100%',
-          overflow: 'auto'
-        }}
       >
-        {/* Load older events button at TOP (since we show latest first) */}
+        {/* Load older events button at TOP (to load events that appear above current view) */}
         {hasMoreEvents && (
           <div className="flex justify-center py-4">
             <button
@@ -601,9 +593,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
           </div>
         )}
         
-        {/* Render events in reverse order (latest first) */}
+        {/* Render events in chronological order (oldest first, latest at bottom) */}
         {/* Performance: Only render top-level nodes initially to prevent freeze */}
-        {reversedEventTree.map((node) => (
+        {eventTree.map((node) => (
           <div key={node.event.id}>
             {renderEventNode(node)}
           </div>

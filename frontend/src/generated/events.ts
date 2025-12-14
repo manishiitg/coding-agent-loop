@@ -32,6 +32,9 @@ export interface UnifiedEventsCompleteSchema {
   token_usage?: TokenUsageEvent;
   max_turns_reached?: MaxTurnsReachedEvent;
   context_cancelled?: ContextCancelledEvent;
+  context_summarization_started?: ContextSummarizationStartedEvent;
+  context_summarization_completed?: ContextSummarizationCompletedEvent;
+  context_summarization_error?: ContextSummarizationErrorEvent;
   tool_output?: ToolOutputEvent;
   tool_response?: ToolResponseEvent;
   model_change?: ModelChangeEvent;
@@ -435,6 +438,7 @@ export interface SystemPromptEvent {
   };
   content?: string;
   turn?: number;
+  token_count?: number;
 }
 export interface UserMessageEvent {
   timestamp?: string;
@@ -587,6 +591,14 @@ export interface TokenUsageEvent {
   context?: string;
   cache_discount?: number;
   reasoning_tokens?: number;
+  input_cost_usd?: number;
+  output_cost_usd?: number;
+  reasoning_cost_usd?: number;
+  cache_cost_usd?: number;
+  total_cost_usd?: number;
+  context_window_usage?: number;
+  model_context_window?: number;
+  context_usage_percent?: number;
   generation_info?: {
     [k: string]: unknown;
   };
@@ -629,6 +641,70 @@ export interface ContextCancelledEvent {
   turn?: number;
   reason?: string;
   duration?: number;
+}
+export interface ContextSummarizationStartedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  original_message_count?: number;
+  keep_last_messages?: number;
+  desired_split_index?: number;
+}
+export interface ContextSummarizationCompletedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  original_message_count?: number;
+  new_message_count?: number;
+  old_messages_count?: number;
+  recent_messages_count?: number;
+  summary_length?: number;
+  safe_split_index?: number;
+  desired_split_index?: number;
+  summary?: string;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  cache_tokens?: number;
+  reasoning_tokens?: number;
+}
+export interface ContextSummarizationErrorEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  error?: string;
+  original_message_count?: number;
+  keep_last_messages?: number;
 }
 export interface ToolOutputEvent {
   timestamp?: string;
@@ -1168,6 +1244,12 @@ export interface StepTokenUsageEvent {
   reasoning_tokens?: number;
   llm_call_count?: number;
   cache_enabled_call_count?: number;
+  input_cost_usd?: number;
+  output_cost_usd?: number;
+  reasoning_cost_usd?: number;
+  cache_cost_usd?: number;
+  total_cost_usd?: number;
+  context_usage_percent?: number;
 }
 export interface StepProgressUpdatedEvent {
   timestamp?: string;
@@ -1218,17 +1300,70 @@ export interface TodoStepsExtractedEvent {
   extracted_steps?: TodoStep[];
   extraction_method?: string;
   plan_source?: string;
+  workspace_path?: string;
+  run_folder?: string;
 }
 export interface TodoStep {
   id?: string;
   title?: string;
   description?: string;
   success_criteria?: string;
-  why_this_step?: string;
   context_dependencies?: string[];
   context_output?: string;
-  success_patterns?: string[];
-  failure_patterns?: string[];
+  learning_files_to_reference?: string[];
+  has_loop?: boolean;
+  loop_condition?: string;
+  max_iterations?: number;
+  loop_description?: string;
+  has_condition?: boolean;
+  condition_question?: string;
+  condition_context?: string;
+  if_true_steps?: TodoStep[];
+  if_false_steps?: TodoStep[];
+  if_true_next_step_id?: string;
+  if_false_next_step_id?: string;
+  condition_result?: boolean;
+  condition_reason?: string;
+  has_decision_step?: boolean;
+  decision_step?: TodoStep;
+  decision_evaluation_question?: string;
+  decision_result?: boolean;
+  decision_reason?: string;
+  decision_response?: DecisionResponse;
+  agent_configs?: AgentConfigs;
+}
+export interface DecisionResponse {
+  result?: boolean;
+  reasoning?: string;
+}
+export interface AgentConfigs {
+  execution_llm?: AgentLLMConfig;
+  validation_llm?: AgentLLMConfig;
+  learning_llm?: AgentLLMConfig;
+  conditional_llm?: AgentLLMConfig;
+  execution_max_turns?: number;
+  validation_max_turns?: number;
+  learning_max_turns?: number;
+  disable_validation?: boolean;
+  disable_learning?: boolean;
+  learning_after_loop_iteration?: boolean;
+  learning_detail_level?: string;
+  selected_servers?: string[];
+  selected_tools?: string[];
+  enabled_custom_tool_categories?: string[];
+  enabled_custom_tools?: string[];
+  enable_large_output_virtual_tools?: boolean;
+  use_code_execution_mode?: boolean;
+  enable_prerequisite_detection?: boolean;
+  prerequisite_rules?: PrerequisiteRule[];
+}
+export interface AgentLLMConfig {
+  provider?: string;
+  model_id?: string;
+}
+export interface PrerequisiteRule {
+  depends_on_step?: string;
+  description?: string;
 }
 export interface VariablesExtractedEvent {
   timestamp?: string;

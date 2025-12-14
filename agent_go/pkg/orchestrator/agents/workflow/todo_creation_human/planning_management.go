@@ -269,6 +269,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 		return nil, nil, err
 	}
 
+	// Register variable extraction tools (extract_variables, update_variable)
+	if err := registerVariableExtractionTools(mcpAgent, workspacePath, hcpo.GetLogger(), hcpo.ReadWorkspaceFile, hcpo.WriteWorkspaceFile, "planning agent"); err != nil {
+		return nil, nil, err
+	}
+
 	// Generate system prompt based on mode
 	var systemPrompt string
 	if isUpdateMode {

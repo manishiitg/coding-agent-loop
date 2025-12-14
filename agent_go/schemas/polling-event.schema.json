@@ -1,6 +1,84 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
+    "AgentConfigs": {
+      "properties": {
+        "execution_llm": {
+          "$ref": "#/$defs/AgentLLMConfig"
+        },
+        "validation_llm": {
+          "$ref": "#/$defs/AgentLLMConfig"
+        },
+        "learning_llm": {
+          "$ref": "#/$defs/AgentLLMConfig"
+        },
+        "conditional_llm": {
+          "$ref": "#/$defs/AgentLLMConfig"
+        },
+        "execution_max_turns": {
+          "type": "integer"
+        },
+        "validation_max_turns": {
+          "type": "integer"
+        },
+        "learning_max_turns": {
+          "type": "integer"
+        },
+        "disable_validation": {
+          "type": "boolean"
+        },
+        "disable_learning": {
+          "type": "boolean"
+        },
+        "learning_after_loop_iteration": {
+          "type": "boolean"
+        },
+        "learning_detail_level": {
+          "type": "string"
+        },
+        "selected_servers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "selected_tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enabled_custom_tool_categories": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enabled_custom_tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enable_large_output_virtual_tools": {
+          "type": "boolean"
+        },
+        "use_code_execution_mode": {
+          "type": "boolean"
+        },
+        "enable_prerequisite_detection": {
+          "type": "boolean"
+        },
+        "prerequisite_rules": {
+          "items": {
+            "$ref": "#/$defs/PrerequisiteRule"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "AgentEndEvent": {
       "properties": {
         "timestamp": {
@@ -169,6 +247,18 @@
         "data": {
           "$ref": "#/$defs/EventDataUnion",
           "description": "The actual typed event data"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "AgentLLMConfig": {
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "model_id": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1181,6 +1271,183 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "ContextSummarizationCompletedEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "original_message_count": {
+          "type": "integer"
+        },
+        "new_message_count": {
+          "type": "integer"
+        },
+        "old_messages_count": {
+          "type": "integer"
+        },
+        "recent_messages_count": {
+          "type": "integer"
+        },
+        "summary_length": {
+          "type": "integer"
+        },
+        "safe_split_index": {
+          "type": "integer"
+        },
+        "desired_split_index": {
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "prompt_tokens": {
+          "type": "integer"
+        },
+        "completion_tokens": {
+          "type": "integer"
+        },
+        "total_tokens": {
+          "type": "integer"
+        },
+        "cache_tokens": {
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ContextSummarizationErrorEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "error": {
+          "type": "string"
+        },
+        "original_message_count": {
+          "type": "integer"
+        },
+        "keep_last_messages": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ContextSummarizationStartedEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "original_message_count": {
+          "type": "integer"
+        },
+        "keep_last_messages": {
+          "type": "integer"
+        },
+        "desired_split_index": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ConversationEndEvent": {
       "properties": {
         "timestamp": {
@@ -1560,27 +1827,12 @@
           "type": "string"
         },
         "decision_response": {
-          "$ref": "#/$defs/DecisionResponse"
+          "$ref": "#/$defs/DecisionResponseEvent"
         },
         "run_folder": {
           "type": "string"
         },
         "workspace_path": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "DecisionFeedback": {
-      "properties": {
-        "type": {
-          "type": "string"
-        },
-        "description": {
-          "type": "string"
-        },
-        "severity": {
           "type": "string"
         }
       },
@@ -1594,14 +1846,24 @@
         },
         "reasoning": {
           "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "DecisionResponseEvent": {
+      "properties": {
+        "result": {
+          "type": "boolean"
+        },
+        "reasoning": {
+          "type": "string"
         },
         "confidence": {
           "type": "string"
         },
         "feedback": {
-          "items": {
-            "$ref": "#/$defs/DecisionFeedback"
-          },
+          "items": true,
           "type": "array"
         },
         "evidence": {
@@ -1763,6 +2025,15 @@
         },
         "context_cancelled": {
           "$ref": "#/$defs/ContextCancelledEvent"
+        },
+        "context_summarization_started": {
+          "$ref": "#/$defs/ContextSummarizationStartedEvent"
+        },
+        "context_summarization_completed": {
+          "$ref": "#/$defs/ContextSummarizationCompletedEvent"
+        },
+        "context_summarization_error": {
+          "$ref": "#/$defs/ContextSummarizationErrorEvent"
         },
         "large_tool_output_detected": {
           "$ref": "#/$defs/LargeToolOutputDetectedEvent"
@@ -1963,96 +2234,99 @@
     "EventType": {
       "type": "string",
       "enum": [
-        "smart_routing_start",
-        "streaming_error",
-        "conversation_thinking",
-        "tool_call_end",
-        "user_message",
-        "throttling_detected",
-        "structured_output_start",
-        "structured_output_error",
-        "mcp_server_connection_end",
-        "agent_end",
-        "conversation_end",
-        "tool_call_error",
-        "context_cancelled",
-        "large_tool_output_detected",
-        "streaming_start",
+        "cache_hit",
+        "json_validation_start",
         "batch_group_start",
-        "conversation_turn",
-        "tool_execution",
+        "llm_generation_end",
         "unified_completion",
-        "llm_generation_with_retry",
+        "orchestrator_agent_error",
+        "todo_steps_extracted",
+        "blocking_human_feedback",
+        "conversation_thinking",
+        "batch_execution_end",
+        "agent_end",
+        "tool_call_start",
+        "system_prompt",
         "orchestrator_end",
-        "streaming_chunk",
-        "streaming_progress",
-        "streaming_connection_lost",
-        "cache_write",
-        "debug",
+        "performance",
+        "batch_group_end",
+        "llm_generation_start",
+        "context_summarization_error",
+        "step_execution_failed",
+        "decision_evaluated",
+        "streaming_end",
+        "streaming_error",
+        "mcp_server_connection_start",
+        "llm_messages",
+        "large_tool_output_detected",
+        "token_limit_exceeded",
+        "orchestrator_start",
+        "orchestrator_agent_start",
+        "independent_steps_selected",
+        "structured_output_error",
+        "llm_generation_with_retry",
+        "tool_call_error",
         "large_tool_output_file_written",
         "large_tool_output_server_unavailable",
-        "step_execution_end",
-        "tool_call_progress",
-        "mcp_server_connection",
-        "mcp_server_selection",
+        "request_human_feedback",
+        "cache_error",
+        "cache_operation_start",
+        "conversation_turn",
+        "mcp_server_discovery",
         "token_usage",
-        "blocking_human_feedback",
-        "structured_output_end",
-        "conversation_start",
-        "system_prompt",
-        "step_execution_failed",
-        "large_tool_output_file_write_error",
-        "todo_steps_extracted",
+        "error_detail",
+        "step_execution_end",
+        "streaming_connection_lost",
+        "llm_generation_error",
+        "mcp_server_selection",
+        "variables_extracted",
         "human_verification_response",
-        "fallback_model_used",
-        "cache_cleanup",
-        "batch_group_end",
+        "streaming_progress",
+        "cache_write",
+        "batch_execution_start",
+        "agent_start",
+        "conversation_end",
+        "llm_token_usage",
         "agent_error",
+        "tool_execution",
+        "tool_response",
+        "context_cancelled",
+        "model_change",
+        "orchestrator_agent_end",
+        "streaming_start",
+        "fallback_model_used",
+        "streaming_chunk",
+        "debug",
+        "mcp_server_connection",
+        "context_summarization_started",
+        "smart_routing_end",
+        "step_execution_start",
+        "step_progress_updated",
+        "structured_output_end",
+        "json_validation_end",
+        "conversation_start",
+        "tool_call_end",
+        "max_turns_reached",
+        "large_tool_output_file_write_error",
+        "throttling_detected",
+        "orchestrator_error",
+        "step_token_usage",
+        "cache_miss",
+        "user_message",
+        "context_summarization_completed",
+        "cache_expired",
+        "cache_cleanup",
+        "mcp_server_connection_error",
+        "tool_call_progress",
+        "comprehensive_cache",
+        "smart_routing_start",
+        "mcp_server_connection_end",
+        "agent_processing",
+        "conversation_error",
         "tool_output",
         "workspace_file_operation",
-        "max_turns_reached",
-        "comprehensive_cache",
-        "step_token_usage",
-        "cache_hit",
-        "cache_expired",
-        "tool_call_start",
-        "step_execution_start",
-        "cache_error",
-        "mcp_server_connection_error",
-        "json_validation_start",
-        "json_validation_end",
-        "llm_messages",
-        "performance",
-        "llm_generation_start",
-        "llm_generation_end",
-        "tool_response",
-        "mcp_server_discovery",
         "fallback_attempt",
-        "orchestrator_error",
-        "streaming_end",
-        "mcp_server_connection_start",
-        "agent_start",
-        "conversation_error",
-        "llm_generation_error",
-        "orchestrator_agent_start",
-        "orchestrator_agent_end",
-        "decision_evaluated",
-        "request_human_feedback",
-        "batch_execution_end",
-        "model_change",
-        "token_limit_exceeded",
-        "orchestrator_agent_error",
-        "step_progress_updated",
-        "cache_miss",
-        "llm_token_usage",
-        "batch_execution_start",
-        "smart_routing_end",
-        "orchestrator_start",
-        "variables_extracted",
-        "independent_steps_selected",
-        "cache_operation_start",
-        "agent_processing",
-        "error_detail"
+        "structured_output_start"
       ]
     },
     "FallbackAttemptEvent": {
@@ -3953,6 +4227,18 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "PrerequisiteRule": {
+      "properties": {
+        "depends_on_step": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "RequestHumanFeedbackEvent": {
       "properties": {
         "timestamp": {
@@ -4547,6 +4833,24 @@
         },
         "cache_enabled_call_count": {
           "type": "integer"
+        },
+        "input_cost_usd": {
+          "type": "number"
+        },
+        "output_cost_usd": {
+          "type": "number"
+        },
+        "reasoning_cost_usd": {
+          "type": "number"
+        },
+        "cache_cost_usd": {
+          "type": "number"
+        },
+        "total_cost_usd": {
+          "type": "number"
+        },
+        "context_usage_percent": {
+          "type": "number"
         }
       },
       "additionalProperties": false,
@@ -4799,10 +5103,10 @@
         "chunks_received": {
           "type": "integer"
         },
-        "bytes_received": {
+        "total_chunks": {
           "type": "integer"
         },
-        "elapsed_time": {
+        "progress": {
           "type": "string"
         }
       },
@@ -5046,6 +5350,9 @@
         },
         "turn": {
           "type": "integer"
+        },
+        "token_count": {
+          "type": "integer"
         }
       },
       "additionalProperties": false,
@@ -5129,9 +5436,6 @@
         "success_criteria": {
           "type": "string"
         },
-        "why_this_step": {
-          "type": "string"
-        },
         "context_dependencies": {
           "items": {
             "type": "string"
@@ -5141,17 +5445,77 @@
         "context_output": {
           "type": "string"
         },
-        "success_patterns": {
+        "learning_files_to_reference": {
           "items": {
             "type": "string"
           },
           "type": "array"
         },
-        "failure_patterns": {
+        "has_loop": {
+          "type": "boolean"
+        },
+        "loop_condition": {
+          "type": "string"
+        },
+        "max_iterations": {
+          "type": "integer"
+        },
+        "loop_description": {
+          "type": "string"
+        },
+        "has_condition": {
+          "type": "boolean"
+        },
+        "condition_question": {
+          "type": "string"
+        },
+        "condition_context": {
+          "type": "string"
+        },
+        "if_true_steps": {
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/TodoStep"
           },
           "type": "array"
+        },
+        "if_false_steps": {
+          "items": {
+            "$ref": "#/$defs/TodoStep"
+          },
+          "type": "array"
+        },
+        "if_true_next_step_id": {
+          "type": "string"
+        },
+        "if_false_next_step_id": {
+          "type": "string"
+        },
+        "condition_result": {
+          "type": "boolean"
+        },
+        "condition_reason": {
+          "type": "string"
+        },
+        "has_decision_step": {
+          "type": "boolean"
+        },
+        "decision_step": {
+          "$ref": "#/$defs/TodoStep"
+        },
+        "decision_evaluation_question": {
+          "type": "string"
+        },
+        "decision_result": {
+          "type": "boolean"
+        },
+        "decision_reason": {
+          "type": "string"
+        },
+        "decision_response": {
+          "$ref": "#/$defs/DecisionResponse"
+        },
+        "agent_configs": {
+          "$ref": "#/$defs/AgentConfigs"
         }
       },
       "additionalProperties": false,
@@ -5206,6 +5570,12 @@
           "type": "string"
         },
         "plan_source": {
+          "type": "string"
+        },
+        "workspace_path": {
+          "type": "string"
+        },
+        "run_folder": {
           "type": "string"
         }
       },
@@ -5344,6 +5714,30 @@
         },
         "reasoning_tokens": {
           "type": "integer"
+        },
+        "input_cost_usd": {
+          "type": "number"
+        },
+        "output_cost_usd": {
+          "type": "number"
+        },
+        "reasoning_cost_usd": {
+          "type": "number"
+        },
+        "cache_cost_usd": {
+          "type": "number"
+        },
+        "total_cost_usd": {
+          "type": "number"
+        },
+        "context_window_usage": {
+          "type": "integer"
+        },
+        "model_context_window": {
+          "type": "integer"
+        },
+        "context_usage_percent": {
+          "type": "number"
         },
         "generation_info": {
           "type": "object"

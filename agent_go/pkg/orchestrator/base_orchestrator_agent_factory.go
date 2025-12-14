@@ -91,6 +91,12 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 		}
 	}
 
+	// Context summarization configuration from orchestrator
+	config.EnableContextSummarization = bo.GetEnableContextSummarization()
+	config.SummarizeOnTokenThreshold = bo.GetSummarizeOnTokenThreshold()
+	config.TokenThresholdPercent = bo.GetTokenThresholdPercent()
+	config.SummaryKeepLastMessages = bo.GetSummaryKeepLastMessages()
+
 	return config
 }
 

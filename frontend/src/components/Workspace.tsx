@@ -67,6 +67,14 @@ export default function Workspace({
     setIncludeDownloadsFolder(false)
   }, [activeWorkflowPreset?.id, selectedModeCategory])
 
+  // Export/Import backup state
+  const [isExporting, setIsExporting] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [importSuccess, setImportSuccess] = useState<string | null>(null)
+  const backupFileInputRef = useRef<HTMLInputElement>(null)
+
   const {
     files,
     loading,
@@ -1277,6 +1285,137 @@ export default function Workspace({
     closeCreateFolderDialog()
   }
 
+  // Export backup handler - accepts folder path (uses workflow folder if not provided)
+  const handleExportBackup = async (folderPath?: string) => {
+    const workspacePath = folderPath || activeWorkflowPreset?.selectedFolder?.filepath
+    if (!workspacePath) {
+      setError('No workspace folder selected')
+      return
+    }
+
+    setIsExporting(true)
+    setExportError(null)
+
+    try {
+      // If folderPath is provided from folder dropdown, it's already the original path
+      // Otherwise, use the workflow preset's selected folder path
+      // Only reconstruct if we're in workflow mode and the path might be adjusted
+      const fullPath = folderPath && selectedModeCategory === 'workflow' && workflowFolderPath
+        ? getOriginalFilePath(folderPath)
+        : workspacePath
+      const blob = await agentApi.exportWorkflowBackup(fullPath)
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      
+      // Generate filename
+      const workspaceName = fullPath.split('/').pop() || 'workspace'
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
+      link.download = `${workspaceName}-backup-${timestamp}.zip`
+      
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Export failed:', error)
+      setExportError(error instanceof Error ? error.message : 'Failed to export backup')
+      // Auto-dismiss error message after 5 seconds
+      setTimeout(() => {
+        setExportError(null)
+      }, 5000)
+    } finally {
+      setIsExporting(false)
+    }
+  }
+
+  // Import backup click handler
+  const handleImportBackupClick = (folderPath?: string) => {
+    // Store the folder path in a data attribute or state for use in handleImportBackup
+    if (backupFileInputRef.current) {
+      backupFileInputRef.current.setAttribute('data-folder-path', folderPath || '')
+    }
+    backupFileInputRef.current?.click()
+  }
+
+  // Import backup handler
+  const handleImportBackup = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    // Get folder path from input's data attribute
+    const folderPath = backupFileInputRef.current?.getAttribute('data-folder-path') || ''
+    const workspacePath = folderPath || activeWorkflowPreset?.selectedFolder?.filepath
+    
+    if (!workspacePath) {
+      setError('No workspace folder selected')
+      return
+    }
+
+    // Validate file type
+    if (!file.name.endsWith('.zip')) {
+      setImportError('Please select a ZIP file')
+      setIsImporting(false)
+      // Auto-dismiss error message after 5 seconds
+      setTimeout(() => {
+        setImportError(null)
+      }, 5000)
+      return
+    }
+
+    setIsImporting(true)
+    setImportError(null)
+    setImportSuccess(null)
+
+    try {
+      // If folderPath is provided from folder dropdown, it's already the original path
+      // Otherwise, use the workflow preset's selected folder path
+      // Only reconstruct if we're in workflow mode and the path might be adjusted
+      const fullPath = folderPath && selectedModeCategory === 'workflow' && workflowFolderPath
+        ? getOriginalFilePath(folderPath)
+        : workspacePath
+      
+      // Ask for confirmation
+      const overwrite = window.confirm(
+        'This will restore the workspace from the backup. Existing files may be overwritten. Continue?'
+      )
+
+      const result = await agentApi.importWorkflowBackup(fullPath, file, overwrite)
+      
+      if (result.success) {
+        setImportSuccess(`Successfully imported ${result.data?.files_extracted || 0} files`)
+        
+        // Refresh workspace files
+        setTimeout(() => {
+          fetchFiles().catch(console.error)
+        }, 500)
+        
+        // Auto-dismiss success message after 5 seconds
+        setTimeout(() => {
+          setImportSuccess(null)
+        }, 5000)
+      } else {
+        setImportError(result.message || 'Import failed')
+        // Auto-dismiss error message after 5 seconds
+        setTimeout(() => {
+          setImportError(null)
+        }, 5000)
+      }
+    } catch (error) {
+      console.error('Import failed:', error)
+      setImportError(error instanceof Error ? error.message : 'Failed to import backup')
+    } finally {
+      setIsImporting(false)
+      // Reset file input
+      if (backupFileInputRef.current) {
+        backupFileInputRef.current.value = ''
+        backupFileInputRef.current.removeAttribute('data-folder-path')
+      }
+    }
+  }
+
   return (
     <TooltipProvider>
       <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900">
@@ -1506,6 +1645,11 @@ export default function Workspace({
                 onFolderMove={handleFolderMove}
                 onFileDownload={handleFileDownload}
                 hideAddToChat={selectedModeCategory === 'workflow' && !!workflowFolderPath}
+                onExportBackup={selectedModeCategory === 'workflow' && activeWorkflowPreset?.selectedFolder?.filepath ? handleExportBackup : undefined}
+                onImportBackup={selectedModeCategory === 'workflow' && activeWorkflowPreset?.selectedFolder?.filepath ? handleImportBackupClick : undefined}
+                workflowFolderPath={workflowFolderPath}
+                isExporting={isExporting}
+                isImporting={isImporting}
               />
             </div>
           </div>
@@ -1700,6 +1844,73 @@ export default function Workspace({
         setCommitMessage={(message) => setMoveDialog({ commitMessage: message })}
         isLoading={moveDialog.isLoading}
       />
+
+      {/* Hidden file input for backup import */}
+      <input
+        ref={backupFileInputRef}
+        type="file"
+        accept=".zip"
+        onChange={handleImportBackup}
+        className="hidden"
+      />
+
+      {/* Error/Success Messages for Backup Operations */}
+      {exportError && (
+        <div className="fixed bottom-4 right-4 bg-red-500 text-white px-4 py-3 rounded-lg shadow-lg z-50 max-w-md">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-medium">Export Failed</p>
+              <p className="text-sm text-red-100">{exportError}</p>
+            </div>
+            <button
+              onClick={() => setExportError(null)}
+              className="text-white hover:text-red-100 flex-shrink-0"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {importError && (
+        <div className="fixed bottom-4 right-4 bg-red-500 text-white px-4 py-3 rounded-lg shadow-lg z-50 max-w-md">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-medium">Import Failed</p>
+              <p className="text-sm text-red-100">{importError}</p>
+            </div>
+            <button
+              onClick={() => setImportError(null)}
+              className="text-white hover:text-red-100 flex-shrink-0"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {importSuccess && (
+        <div className="fixed bottom-4 right-4 bg-green-500 text-white px-4 py-3 rounded-lg shadow-lg z-50 max-w-md">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-medium">Import Successful</p>
+              <p className="text-sm text-green-100">{importSuccess}</p>
+            </div>
+            <button
+              onClick={() => setImportSuccess(null)}
+              className="text-white hover:text-green-100 flex-shrink-0"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
       </div>
     </TooltipProvider>
   )

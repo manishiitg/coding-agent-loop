@@ -46,6 +46,14 @@ type StepTokenUsage struct {
 	LLMCallCount          int
 	CacheEnabledCallCount int
 	CacheDiscountSum      float64 // Sum of cache discounts for averaging
+	// Pricing fields (aggregated across all models)
+	InputCost     float64
+	OutputCost    float64
+	ReasoningCost float64
+	CacheCost     float64
+	TotalCost     float64
+	// Context window usage (max across all models)
+	ContextUsagePercent float64
 }
 
 // StepTokenData represents token data for a step to be persisted
@@ -69,6 +77,15 @@ type ModelTokenData struct {
 	CacheTokens     int
 	ReasoningTokens int
 	LLMCallCount    int
+	// Pricing fields (calculated from model metadata)
+	InputCost     float64
+	OutputCost    float64
+	ReasoningCost float64
+	CacheCost     float64
+	TotalCost     float64
+	// Context window tracking
+	ContextWindowUsage int // Current tokens used in context window
+	ModelContextWindow int // Model's context window size
 }
 
 // TokenUsageFile represents persisted token usage data per iteration
@@ -101,6 +118,16 @@ type ModelTokenUsage struct {
 	ReasoningTokens  int    `json:"reasoning_tokens"`   // raw count
 	ReasoningTokensM string `json:"reasoning_tokens_m"` // formatted as "0.000M"
 	LLMCallCount     int    `json:"llm_call_count"`     // count
+	// Pricing fields (in USD)
+	InputCost     float64 `json:"input_cost_usd,omitempty"`
+	OutputCost    float64 `json:"output_cost_usd,omitempty"`
+	ReasoningCost float64 `json:"reasoning_cost_usd,omitempty"`
+	CacheCost     float64 `json:"cache_cost_usd,omitempty"`
+	TotalCost     float64 `json:"total_cost_usd,omitempty"`
+	// Context window tracking
+	ContextWindowUsage  int     `json:"context_window_usage,omitempty"`  // Current tokens used
+	ModelContextWindow  int     `json:"model_context_window,omitempty"`  // Model's context window size
+	ContextUsagePercent float64 `json:"context_usage_percent,omitempty"` // Percentage of context window used
 }
 
 // StepTokenSummary represents token usage summary for a workflow step

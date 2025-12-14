@@ -122,6 +122,10 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.logger,
 		false,                                    // cacheOnly - not used in orchestrator agents
 		boa.config.EnableLargeOutputVirtualTools, // NEW: Pass large output virtual tools setting
+		boa.config.EnableContextSummarization,    // Context summarization configuration
+		boa.config.SummarizeOnTokenThreshold,
+		boa.config.TokenThresholdPercent,
+		boa.config.SummaryKeepLastMessages,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create base agent: %w", err)

@@ -105,6 +105,7 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 	// Get variable names and values for system prompt
 	variableNames := templateVars["VariableNames"]
 	variableValues := templateVars["VariableValues"]
+	prerequisiteRulesInfo := templateVars["PrerequisiteRulesInfo"]
 
 	// Define the system prompt template
 	templateStr := `# Execution-Only Agent
@@ -153,7 +154,9 @@ The step description, success criteria, and context dependencies define WHAT you
 ## 📋 Previous Steps Context
 {{.PreviousStepsSummary}}
 {{end}}
-
+{{if .PrerequisiteRulesInfo}}
+{{.PrerequisiteRulesInfo}}
+{{end}}
 ## 📚 SECONDARY: Learning Context (BEST PRACTICE GUIDANCE)
 {{.LearningHistory}}
 
@@ -318,6 +321,7 @@ Validation agent will verify your work - focus on execution and evidence.`
 		"StepNumber":                stepNumber,
 		"StepExecutionPath":         stepExecutionPath,
 		"PreviousStepsSummary":      previousStepsSummary,
+		"PrerequisiteRulesInfo":     prerequisiteRulesInfo,
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution-only system prompt template: %v", err)

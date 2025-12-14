@@ -77,7 +77,7 @@ func init() {
 	rootCmd.PersistentFlags().String("trace-provider", "console", "tracing provider (console, langfuse, noop)")
 	rootCmd.PersistentFlags().String("langfuse-host", "https://cloud.langfuse.com", "Langfuse host URL")
 	rootCmd.PersistentFlags().Bool("debug", false, "enable debug logging")
-	rootCmd.PersistentFlags().Int("max-turns", 25, "maximum conversation turns per agent")
+	rootCmd.PersistentFlags().Int("max-turns", 100, "maximum conversation turns per agent")
 	rootCmd.PersistentFlags().Float64("temperature", 0.2, "LLM temperature")
 
 	// Logging flags

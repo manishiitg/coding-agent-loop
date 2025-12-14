@@ -107,15 +107,12 @@ This test demonstrates:
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 
+		// modelID is automatically extracted from llmModel
 		agent, err := mcpagent.NewAgent(
 			ctx,
 			llmModel,
-			"fileserver",                      // server name
 			"configs/mcp_servers_simple.json", // config path
-			"gpt-4.1",                         // model ID
-			nil,                               // tracer
-			"",                                // trace ID
-			nil,                               // logger (use default)
+			mcpagent.WithServerName("fileserver"), // server name
 			mcpagent.WithMaxTurns(5),
 		)
 		if err != nil {

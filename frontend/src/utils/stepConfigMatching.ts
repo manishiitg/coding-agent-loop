@@ -17,6 +17,7 @@ export interface AgentConfigs {
   learning_max_turns?: number;
   disable_validation?: boolean;
   disable_learning?: boolean;
+  lock_learnings?: boolean; // If true, prevents learning agent from running but still uses existing learnings
   learning_after_loop_iteration?: boolean;
   learning_detail_level?: 'exact' | 'general';
   selected_servers?: string[];

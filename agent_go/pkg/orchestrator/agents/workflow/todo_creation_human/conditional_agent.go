@@ -52,7 +52,7 @@ func NewHumanControlledTodoPlannerConditionalAgent(config *agents.OrchestratorAg
 
 // Decide makes a true/false decision based on context and question
 // Returns ConditionalResponse for backward compatibility with conditional steps
-func (hctpca *HumanControlledTodoPlannerConditionalAgent) Decide(ctx context.Context, conditionContext, question string, stepIndex, iteration int, isCodeExecutionMode bool, learningHistory string) (*ConditionalResponse, error) {
+func (hctpca *HumanControlledTodoPlannerConditionalAgent) Decide(ctx context.Context, conditionContext, question, description string, stepIndex, iteration int, isCodeExecutionMode bool, learningHistory string) (*ConditionalResponse, error) {
 	// Verify event bridge is set (factory pattern ensures it's set, but check for safety)
 	// The factory pattern handles event bridge connection, so this is just a safety check
 	// Note: Event bridge is set by the factory pattern, so this check is mostly for debugging
@@ -61,6 +61,7 @@ func (hctpca *HumanControlledTodoPlannerConditionalAgent) Decide(ctx context.Con
 	templateVars := map[string]string{
 		"ConditionContext": conditionContext,
 		"Question":         question,
+		"Description":      description,
 		"StepIndex":        fmt.Sprintf("%d", stepIndex),
 		"Iteration":        fmt.Sprintf("%d", iteration),
 		"LearningHistory":  learningHistory,
@@ -83,6 +84,8 @@ You are an expert decision-making agent specialized in evaluating workflow condi
 ### Step 1: Understand the Condition
 **Analyze the question:** What specific state or condition needs to be verified?
 
+**Step Description**: %s
+
 ### Step 2: Review Reference Context (Optional Guidance)
 - **Condition Context**: Previous step execution output (historical reference only)
 - **Step Learnings**: Patterns from previous executions (guidance, not current state)
@@ -140,7 +143,7 @@ You are an expert decision-making agent specialized in evaluating workflow condi
 - Use learnings to understand what typically needs verification
 - Reference learnings for investigation strategies, not as current state
 - Verify that learning patterns still apply to current situation using tools
-`, codeExecutionInstructions, learningHistory)
+`, description, codeExecutionInstructions, learningHistory)
 		overwriteSystemPrompt = true // Overwrite base prompt in code execution mode
 	} else {
 		// Non-code execution mode: append to base prompt (keeps MCP tools available)
@@ -153,6 +156,8 @@ You are an expert decision-making agent specialized in evaluating workflow condi
 ### Step 1: Understand the Condition
 **Analyze the question:** What specific state or condition needs to be verified?
 
+**Step Description**: %s
+
 ### Step 2: Review Reference Context (Optional Guidance)
 - **Condition Context**: Previous step execution output (historical reference only)
 - **Step Learnings**: Patterns from previous executions (guidance, not current state)
@@ -208,15 +213,18 @@ You are an expert decision-making agent specialized in evaluating workflow condi
 - Use learnings to understand what typically needs verification
 - Reference learnings for investigation strategies, not as current state
 - Verify that learning patterns still apply to current situation using tools
-`, learningHistory)
+`, description, learningHistory)
 		overwriteSystemPrompt = false // Append to base prompt (keeps MCP tools)
 	}
 
 	// Build user message input processor
 	inputProcessor := func(vars map[string]string) string {
+		descriptionSection := ""
+		if vars["Description"] != "" {
+			descriptionSection = fmt.Sprintf("\n**Step Description**:\n%s\n", vars["Description"])
+		}
 		return fmt.Sprintf(`## 📝 DECISION TASK
-
-**Reference Context** (historical data - verify with tools):
+%s**Reference Context** (historical data - verify with tools):
 %s
 
 **Condition to Evaluate**:
@@ -242,7 +250,7 @@ Return ONLY valid JSON: {"result": true/false, "reason": "detailed explanation o
 - Tools used for verification
 - What each tool revealed
 - How evidence supports your decision
-- Any cross-verification performed`, vars["ConditionContext"], vars["Question"])
+- Any cross-verification performed`, descriptionSection, vars["ConditionContext"], vars["Question"])
 	}
 
 	// Build schema

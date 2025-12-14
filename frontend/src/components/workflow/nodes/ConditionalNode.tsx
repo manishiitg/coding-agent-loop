@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, GitBranch, Play, Settings, Code, Terminal, AlertTriangle } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, GitBranch, Play, Settings, Code, Terminal, AlertTriangle, Lock } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { getToolsByCategory } from '../../../utils/customToolNames'
@@ -68,7 +68,7 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) => {
-  const { id, title, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun } = data
+  const { id, title, description, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun } = data
 
   // Get preset for config badges
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -90,6 +90,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
     execution_llm?: { provider?: string; model_id?: string }
     learning_llm?: { provider?: string; model_id?: string }
     disable_learning?: boolean
+    lock_learnings?: boolean
     learning_detail_level?: string
     execution_max_turns?: number
     selected_servers?: string[]
@@ -168,6 +169,11 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
     }
     return stepConfig?.agent_configs?.learning_detail_level || 'exact'
   }, [stepConfig?.agent_configs?.learning_detail_level, stepConfig?.agent_configs?.disable_learning, useCodeExecutionMode])
+
+  // Lock learnings status
+  const lockLearnings = useMemo(() => {
+    return stepConfig?.agent_configs?.lock_learnings === true && stepConfig?.agent_configs?.disable_learning !== true
+  }, [stepConfig?.agent_configs?.lock_learnings, stepConfig?.agent_configs?.disable_learning])
 
   // Execution max turns (defaults to 25)
   const executionMaxTurns = useMemo(() => {
@@ -348,6 +354,16 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
             <span>Prereq</span>
           </div>
         )}
+        {/* Lock Learnings Badge */}
+        {stepConfig?.agent_configs?.lock_learnings && !stepConfig?.agent_configs?.disable_learning && (
+          <div 
+            className="flex items-center gap-1 px-2 py-1 rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 text-[10px] font-semibold border border-purple-200 dark:border-purple-800"
+            title="Learnings are locked - learning agent will not run but existing learnings will be used"
+          >
+            <Lock className="w-3 h-3" />
+            <span>Locked</span>
+          </div>
+        )}
       </div>
 
       {/* Condition Badge - Top */}
@@ -415,9 +431,18 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
         />
       </div>
 
+      {/* Description below the diamond */}
+      {description && (
+        <div className="mt-3 mx-4">
+          <p className="text-xs text-gray-600 dark:text-gray-400 text-center leading-relaxed">
+            {description}
+          </p>
+        </div>
+      )}
+
       {/* Question below the diamond */}
       {condition_question && (
-        <div className="mt-3 mx-4">
+        <div className={`mx-4 ${description ? 'mt-2' : 'mt-3'}`}>
           <p className="text-[11px] text-gray-600 dark:text-gray-400 text-center leading-relaxed p-2.5 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800/50">
             {condition_question}
           </p>
@@ -431,6 +456,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
           executionMaxTurns={executionMaxTurns}
           learningLLM={learningLLM}
           learningDetailLevel={learningDetailLevel}
+          lockLearnings={lockLearnings}
           effectiveServers={effectiveServers}
           toolsDisplayInfo={toolsDisplayInfo}
           workspaceToolsInfo={workspaceToolsInfo}

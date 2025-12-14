@@ -32,15 +32,14 @@ type AgentType string
 
 const (
 	// Multi-agent TodoPlanner sub-agents (actively used)
-	TodoPlannerAnonymizationAgentType         AgentType = "todo_planner_anonymization"          // Anonymizes learnings by replacing values with variables
-	TodoPlannerPlanImprovementAgentType       AgentType = "todo_planner_plan_improvement"       // Analyzes execution and provides plan improvement feedback
-	TodoPlannerPlanningAgentType              AgentType = "todo_planner_planning"               // Creates step-wise plan from objective
-	TodoPlannerExecutionAgentType             AgentType = "todo_planner_execution"              // Executes first step of plan
-	TodoPlannerValidationAgentType            AgentType = "todo_planner_validation"             // Validates execution results
-	TodoPlannerPrerequisiteDetectionAgentType AgentType = "todo_planner_prerequisite_detection" // Detects if validation failure is due to missing prerequisites
-	TodoPlannerSuccessLearningAgentType       AgentType = "todo_planner_success_learning"       // Analyzes successful executions to capture best practices
-	TodoPlannerPlanToolOptimizationAgentType  AgentType = "todo_planner_plan_tool_optimization" // Optimizes tool selections in step_config.json based on learnings
-	ConditionalAgentType                      AgentType = "conditional"                         // Conditional decision agent for evaluating step conditions
+	TodoPlannerAnonymizationAgentType        AgentType = "todo_planner_anonymization"          // Anonymizes learnings by replacing values with variables
+	TodoPlannerPlanImprovementAgentType      AgentType = "todo_planner_plan_improvement"       // Analyzes execution and provides plan improvement feedback
+	TodoPlannerPlanningAgentType             AgentType = "todo_planner_planning"               // Creates step-wise plan from objective
+	TodoPlannerExecutionAgentType            AgentType = "todo_planner_execution"              // Executes first step of plan
+	TodoPlannerValidationAgentType           AgentType = "todo_planner_validation"             // Validates execution results
+	TodoPlannerSuccessLearningAgentType      AgentType = "todo_planner_success_learning"       // Analyzes successful executions to capture best practices
+	TodoPlannerPlanToolOptimizationAgentType AgentType = "todo_planner_plan_tool_optimization" // Optimizes tool selections in step_config.json based on learnings
+	ConditionalAgentType                     AgentType = "conditional"                         // Conditional decision agent for evaluating step conditions
 )
 
 // BaseAgentInterface defines the interface for base agent operations

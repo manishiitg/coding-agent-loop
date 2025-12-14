@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle, Lock } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -129,6 +129,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     execution_max_turns?: number
     learning_llm?: { provider?: string; model_id?: string }
     disable_learning?: boolean
+    lock_learnings?: boolean
     learning_detail_level?: 'exact' | 'general'
     selected_servers?: string[]
     selected_tools?: string[]
@@ -201,6 +202,11 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     }
     return stepConfig?.agent_configs?.learning_detail_level || 'exact'
   }, [stepConfig?.agent_configs?.learning_detail_level, stepConfig?.agent_configs?.disable_learning, useCodeExecutionMode])
+
+  // Lock learnings status
+  const lockLearnings = useMemo(() => {
+    return stepConfig?.agent_configs?.lock_learnings === true && stepConfig?.agent_configs?.disable_learning !== true
+  }, [stepConfig?.agent_configs?.lock_learnings, stepConfig?.agent_configs?.disable_learning])
 
   // Execution max turns (defaults to 25)
   const executionMaxTurns = useMemo(() => {
@@ -497,6 +503,16 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
               <span>Prereq</span>
             </div>
           )}
+          {/* Lock Learnings Badge */}
+          {stepConfig?.agent_configs?.lock_learnings && !stepConfig?.agent_configs?.disable_learning && (
+            <div 
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 text-[10px] font-semibold border border-purple-200 dark:border-purple-800"
+              title="Learnings are locked - learning agent will not run but existing learnings will be used"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>Locked</span>
+            </div>
+          )}
           {statusIcons[status]}
         </div>
       </div>
@@ -601,6 +617,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
         executionMaxTurns={executionMaxTurns}
         learningLLM={learningLLM}
         learningDetailLevel={learningDetailLevel}
+        lockLearnings={lockLearnings}
         effectiveServers={effectiveServers}
         toolsDisplayInfo={toolsDisplayInfo}
         workspaceToolsInfo={workspaceToolsInfo}
@@ -612,25 +629,48 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
 
       <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-900" />
       
-      {/* Prerequisite target handles (bottom, for edges coming from validation nodes) */}
+      {/* Prerequisite source handles (bottom, for edges going back to previous steps when prerequisite is detected during execution) */}
       <Handle
-        type="target"
+        type="source"
         position={Position.Bottom}
         id="prereq-left"
         style={{ left: '25%' }}
         className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-900"
       />
       <Handle
-        type="target"
+        type="source"
         position={Position.Bottom}
         id="prereq-middle"
         style={{ left: '50%' }}
         className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-900"
       />
       <Handle
-        type="target"
+        type="source"
         position={Position.Bottom}
         id="prereq-right"
+        style={{ left: '75%' }}
+        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-900"
+      />
+      
+      {/* Prerequisite target handles (bottom, for edges coming from step/learning nodes when prerequisite is detected during execution) */}
+      <Handle
+        type="target"
+        position={Position.Bottom}
+        id="prereq-target-left"
+        style={{ left: '25%' }}
+        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-900"
+      />
+      <Handle
+        type="target"
+        position={Position.Bottom}
+        id="prereq-target-middle"
+        style={{ left: '50%' }}
+        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-900"
+      />
+      <Handle
+        type="target"
+        position={Position.Bottom}
+        id="prereq-target-right"
         style={{ left: '75%' }}
         className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-900"
       />

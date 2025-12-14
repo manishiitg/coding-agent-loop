@@ -588,7 +588,8 @@ Each agent can be configured with custom LLM settings.
 
 ### Learning Configuration
 - **Detail Levels**: `exact` (actual values), `general` (anonymized), `none`
-- **Toggles**: `disable_learning`, `learning_after_loop_iteration`
+- **Toggles**: `disable_learning`, `lock_learnings`, `learning_after_loop_iteration`
+- **lock_learnings**: Prevents learning agent from running but still uses existing learnings. Takes precedence over code execution mode.
 - **Code Execution Mode**: Forces learning enabled, uses specialized learning agent
 
 ### Validation Configuration

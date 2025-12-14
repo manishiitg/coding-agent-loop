@@ -1,4 +1,4 @@
-import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move, Download } from 'lucide-react'
+import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move, Download, Archive } from 'lucide-react'
 import type { PlannerFile } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/tooltip'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
@@ -24,6 +24,11 @@ interface PlannerFileListProps {
   onFolderMove?: (folder: PlannerFile) => void
   onFileDownload?: (file: PlannerFile) => void
   hideAddToChat?: boolean
+  onExportBackup?: (folderPath: string) => void
+  onImportBackup?: (folderPath: string) => void
+  workflowFolderPath?: string | null
+  isExporting?: boolean
+  isImporting?: boolean
 }
 
 export default function PlannerFileList({
@@ -46,7 +51,12 @@ export default function PlannerFileList({
   onFileMove,
   onFolderMove,
   onFileDownload,
-  hideAddToChat = false
+  hideAddToChat = false,
+  onExportBackup,
+  onImportBackup,
+  workflowFolderPath,
+  isExporting = false,
+  isImporting = false
 }: PlannerFileListProps) {
   const { scrollToFile } = useWorkspaceStore()
 
@@ -70,6 +80,19 @@ export default function PlannerFileList({
       })
     }
     const isInContext = chatFileContext.some(ctx => ctx.path === file.filepath)
+    
+    // Check if this folder is the workflow folder
+    // In workflow mode, the workflow folder appears as the root folder in filtered view
+    // We check:
+    // 1. If the folder's originalFilepath matches the workflowFolderPath (exact match)
+    // 2. If the folder's filepath matches the workflowFolderPath (when paths aren't adjusted)
+    // 3. If it's at depth 0 (root level) in filtered view and we're in workflow mode
+    //    (the workflow folder is shown as root in filtered view)
+    const isWorkflowFolder = file.type === 'folder' && workflowFolderPath && (
+      (file.originalFilepath && file.originalFilepath === workflowFolderPath) ||
+      (file.filepath && file.filepath === workflowFolderPath) ||
+      (depth === 0 && workflowFolderPath) // Root folder in filtered workflow view
+    )
 
     return (
       <div key={file.filepath} className="select-none">
@@ -207,6 +230,42 @@ export default function PlannerFileList({
                         <Move className="w-3 h-3" />
                         Move
                       </button>
+                    )}
+                    {/* Export/Import Backup - Only show for workflow folder */}
+                    {isWorkflowFolder && onExportBackup && onImportBackup && (
+                      <>
+                        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onExportBackup(file.originalFilepath || file.filepath)
+                          }}
+                          disabled={isExporting}
+                          className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {isExporting ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Archive className="w-3 h-3" />
+                          )}
+                          Export Backup
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onImportBackup(file.originalFilepath || file.filepath)
+                          }}
+                          disabled={isImporting}
+                          className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {isImporting ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Upload className="w-3 h-3" />
+                          )}
+                          Import Backup
+                        </button>
+                      </>
                     )}
                     {onDeleteAllFilesInFolder && (
                       <button

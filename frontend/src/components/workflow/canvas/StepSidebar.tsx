@@ -35,6 +35,7 @@ interface StepSidebarProps {
   onStartPhase?: (phaseId: string, stepId?: string | ExecutionOptions) => void
   plan?: PlanningResponse | null
   completedStepIndices?: number[]  // 0-based indices of completed steps (for enabling/disabling run button)
+  isCompact?: boolean  // When true, use narrower width (400px instead of 600px)
 }
 
 export const StepSidebar: React.FC<StepSidebarProps> = ({
@@ -48,7 +49,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   presetQueryId,
   onStartPhase,
   plan,
-  completedStepIndices = []
+  completedStepIndices = [],
+  isCompact = false
 }) => {
   const { availableLLMs } = useLLMStore()
   
@@ -620,8 +622,10 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       await onEditStep(parentStepId, updates)
     }
     
+    const sidebarWidth = isCompact ? 'w-[400px]' : 'w-[600px]'
+    
     return (
-      <div className="absolute right-0 top-0 bottom-0 w-[600px] bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 shadow-xl z-50 flex flex-col">
+      <div className={`absolute right-0 top-0 bottom-0 ${sidebarWidth} bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 shadow-xl z-50 flex flex-col transition-all duration-300`}>
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
           <div className="flex items-center gap-2">
@@ -750,8 +754,10 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData
   const step = stepData.step
 
+  const sidebarWidth = isCompact ? 'w-[400px]' : 'w-[600px]'
+  
   return (
-    <div className="absolute right-0 top-0 bottom-0 w-[600px] bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 shadow-xl z-50 flex flex-col">
+    <div className={`absolute right-0 top-0 bottom-0 ${sidebarWidth} bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 shadow-xl z-50 flex flex-col transition-all duration-300`}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
         <div className="flex items-center gap-2">

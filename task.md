@@ -51,3 +51,5 @@ h) check if external package is even required
 15. all filesystem events like logs/ should not highlight files
 
 16. diff patch tool, corrupts json
+
+17. saving set config is taking too long

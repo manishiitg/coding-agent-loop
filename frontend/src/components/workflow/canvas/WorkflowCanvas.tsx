@@ -20,6 +20,7 @@ import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type StepNodeData,
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
+import { useAppStore } from '../../../stores/useAppStore'
 import { agentApi } from '../../../services/api'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import type { VariablesManifest } from '../../../services/api-types'
@@ -74,6 +75,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   
   // Workflow store actions
   const setVariablesManifestInStore = useWorkflowStore.getState().setVariablesManifest
+  
+  // Get workspace minimized state to determine if StepSidebar should be compact
+  const workspaceMinimized = useAppStore(state => state.workspaceMinimized)
+  
+  // Calculate if StepSidebar should be in compact mode (when both ChatArea and Workspace are open)
+  const isStepSidebarCompact = showChatArea && !workspaceMinimized
   
   // Callback for when progress changes in toolbar
   const handleProgressChange = useCallback((indices: number[]) => {
@@ -948,7 +955,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
       {/* React Flow Canvas with Sidebar */}
       <div className="flex-1 relative flex">
-        <div className={`flex-1 transition-all duration-300 ${selectedNode ? 'mr-[600px]' : showVariablesSidebar ? 'mr-[450px]' : ''}`}>
+        <div className={`flex-1 transition-all duration-300 ${
+          selectedNode 
+            ? (isStepSidebarCompact ? 'mr-[400px]' : 'mr-[600px]')
+            : showVariablesSidebar 
+              ? 'mr-[450px]' 
+              : ''
+        }`}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -999,6 +1012,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             onStartPhase={handleStartPhaseForStep}
             plan={plan}
             completedStepIndices={completedStepIndices}
+            isCompact={isStepSidebarCompact}
           />
         )}
 

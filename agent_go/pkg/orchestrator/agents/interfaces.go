@@ -3,10 +3,11 @@ package agents
 import (
 	"context"
 	"fmt"
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // OrchestratorAgent defines the interface for all orchestrator agents
@@ -92,6 +93,12 @@ type OrchestratorAgentConfig struct {
 
 	// System prompt configuration
 	OverwriteSystemPrompt *bool `json:"overwrite_system_prompt,omitempty"` // Overwrite (true) or append (false) system prompt during execution (default: false if nil)
+
+	// Context summarization configuration
+	EnableContextSummarization bool    `json:"enable_context_summarization,omitempty"` // Enable context summarization feature
+	SummarizeOnTokenThreshold  bool    `json:"summarize_on_token_threshold,omitempty"` // Enable token-based summarization trigger
+	TokenThresholdPercent      float64 `json:"token_threshold_percent,omitempty"`      // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
+	SummaryKeepLastMessages    int     `json:"summary_keep_last_messages,omitempty"`   // Number of recent messages to keep when summarizing (default: 8)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration

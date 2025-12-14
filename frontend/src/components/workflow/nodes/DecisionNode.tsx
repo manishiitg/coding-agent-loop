@@ -174,9 +174,9 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
     return stepConfig?.agent_configs?.lock_learnings === true && stepConfig?.agent_configs?.disable_learning !== true
   }, [stepConfig?.agent_configs?.lock_learnings, stepConfig?.agent_configs?.disable_learning])
 
-  // Execution max turns (defaults to 25)
+  // Execution max turns (defaults to 100)
   const executionMaxTurns = useMemo(() => {
-    return stepConfig?.agent_configs?.execution_max_turns || 25
+    return stepConfig?.agent_configs?.execution_max_turns || 100
   }, [stepConfig?.agent_configs?.execution_max_turns])
 
   // MCP Servers: step config > preset

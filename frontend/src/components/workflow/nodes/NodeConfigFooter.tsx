@@ -34,7 +34,7 @@ interface NodeConfigFooterProps {
 
 export const NodeConfigFooter = memo(({
   executionLLM,
-  executionMaxTurns = 25,
+  executionMaxTurns = 100,
   learningLLM,
   learningDetailLevel,
   lockLearnings = false,
@@ -68,7 +68,7 @@ export const NodeConfigFooter = memo(({
             {executionLLM}
           </span>
         )}
-        {executionMaxTurns !== 25 && (
+        {executionMaxTurns !== 100 && (
           <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 dark:bg-gray-800/30 text-gray-600 dark:text-gray-400">
             {executionMaxTurns} turns
           </span>

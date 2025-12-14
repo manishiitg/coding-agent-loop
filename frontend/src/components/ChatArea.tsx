@@ -1421,9 +1421,19 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           setSessionId(response.query_id)
         }
         
+        // Extract and set observer ID from response (backend returns it in the response)
+        // This ensures polling can start immediately without waiting for separate observer registration
+        if (response.observer_id) {
+          console.log('[SUBMIT] Setting observer ID from response:', response.observer_id)
+          setObserverId(response.observer_id)
+          // Sync observer ID to API module for request interceptor
+          setCurrentObserverId(response.observer_id)
+        } else {
+          console.warn('[SUBMIT] No observer_id in response, will use existing observer or wait for initialization')
+        }
+        
         // Start polling for events
         // pollEvents will check for observerId from store and skip if not available
-        // The observer should be initialized by the useEffect hook
         const interval = setInterval(pollEvents, 1000)
         setPollingInterval(interval)
       } else {

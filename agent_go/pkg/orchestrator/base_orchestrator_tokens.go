@@ -83,7 +83,13 @@ func calculatePricingFromModelData(modelData *ModelTokenData) (inputCost, output
 	contextWindow = metadata.ContextWindow
 
 	// Calculate input cost (excluding cached tokens which are charged separately)
+	// Input tokens = total input tokens - cached tokens (cached tokens are charged separately at a different rate)
 	inputTokens := modelData.InputTokens - modelData.CacheTokens
+	if inputTokens < 0 {
+		// Safety check: cache tokens should not exceed input tokens
+		// This could indicate a data inconsistency, but we'll clamp to 0 to prevent negative costs
+		inputTokens = 0
+	}
 	if inputTokens > 0 {
 		inputCost = calculateCostFromTokens(inputTokens, metadata.InputCostPer1MTokens)
 	}

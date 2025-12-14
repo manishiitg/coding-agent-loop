@@ -124,6 +124,10 @@ func NewBaseAgent(
 	logger loggerv2.Logger,
 	cacheOnly bool,
 	enableLargeOutputVirtualTools *bool, // NEW parameter
+	enableContextSummarization bool, // Context summarization configuration
+	summarizeOnTokenThreshold bool, // Enable token-based summarization trigger
+	tokenThresholdPercent float64, // Percentage of context window to trigger summarization
+	summaryKeepLastMessages int, // Number of recent messages to keep when summarizing
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
 	// All agents use Simple mode
@@ -168,6 +172,17 @@ func NewBaseAgent(
 		largeOutputEnabled = *enableLargeOutputVirtualTools
 	}
 	agentOptions = append(agentOptions, mcpagent.WithLargeOutputVirtualTools(largeOutputEnabled))
+
+	// Add context summarization configuration
+	if enableContextSummarization {
+		agentOptions = append(agentOptions, mcpagent.WithContextSummarization(true))
+		if summarizeOnTokenThreshold {
+			agentOptions = append(agentOptions, mcpagent.WithSummarizeOnTokenThreshold(true, tokenThresholdPercent))
+		}
+		if summaryKeepLastMessages > 0 {
+			agentOptions = append(agentOptions, mcpagent.WithSummaryKeepLastMessages(summaryKeepLastMessages))
+		}
+	}
 
 	// Removed verbose logging
 

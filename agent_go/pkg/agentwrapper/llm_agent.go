@@ -65,7 +65,7 @@ type LLMAgentConfig struct {
 	// Context summarization configuration
 	EnableContextSummarization bool    // Enable context summarization feature
 	SummarizeOnTokenThreshold  bool    // Enable token-based summarization trigger
-	TokenThresholdPercent      float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.7 = 70%)
+	TokenThresholdPercent      float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
 	SummaryKeepLastMessages    int     // Number of recent messages to keep when summarizing (0 = use default: 8)
 }
 
@@ -229,7 +229,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		if config.SummarizeOnTokenThreshold {
 			thresholdPercent := config.TokenThresholdPercent
 			if thresholdPercent <= 0 || thresholdPercent > 1.0 {
-				thresholdPercent = 0.7 // Default to 70%
+				thresholdPercent = 0.8 // Default to 80%
 			}
 			agentOptions = append(agentOptions, mcpagent.WithSummarizeOnTokenThreshold(true, thresholdPercent))
 		}

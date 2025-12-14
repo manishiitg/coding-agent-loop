@@ -560,6 +560,7 @@ export interface PresetQuery {
   agent_mode: string;
   llm_config: string; // JSON string of PresetLLMConfig
   use_code_execution_mode?: boolean;
+  enable_context_summarization?: boolean; // Enable context summarization
   is_predefined: boolean;
   created_at: string;
   updated_at: string;
@@ -575,6 +576,7 @@ export interface CreatePresetQueryRequest {
   agent_mode?: string;
   llm_config?: PresetLLMConfig; // LLM configuration for this preset
   use_code_execution_mode?: boolean; // MCP code execution mode
+  enable_context_summarization?: boolean; // Enable context summarization
   is_predefined?: boolean;
 }
 
@@ -587,6 +589,7 @@ export interface UpdatePresetQueryRequest {
   agent_mode?: string;
   llm_config?: PresetLLMConfig; // LLM configuration for this preset
   use_code_execution_mode?: boolean; // MCP code execution mode
+  enable_context_summarization?: boolean; // Enable context summarization
 }
 
 export interface ListPresetQueriesResponse {

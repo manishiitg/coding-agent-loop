@@ -61,7 +61,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx
 	maxTurns := hcpo.GetMaxTurns()
 	if stepConfig != nil && stepConfig.ExecutionMaxTurns != nil {
 		maxTurns = *stepConfig.ExecutionMaxTurns
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only max turns: %d", maxTurns))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only max turns: %d (orchestrator default was: %d)", maxTurns, hcpo.GetMaxTurns()))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default execution-only max turns: %d (no step-specific config)", maxTurns))
 	}
 
 	// Determine LLM config with cascading fallback: tempLLM1 → tempLLM2 → step LLM

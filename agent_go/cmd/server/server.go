@@ -250,7 +250,7 @@ type QueryRequest struct {
 	// Context summarization configuration
 	EnableContextSummarization bool    `json:"enable_context_summarization,omitempty"` // Enable context summarization feature
 	SummarizeOnTokenThreshold  bool    `json:"summarize_on_token_threshold,omitempty"` // Enable token-based summarization trigger
-	TokenThresholdPercent      float64 `json:"token_threshold_percent,omitempty"`      // Percentage of context window to trigger summarization (0.0-1.0, default: 0.7 = 70%)
+	TokenThresholdPercent      float64 `json:"token_threshold_percent,omitempty"`      // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
 	SummaryKeepLastMessages    int     `json:"summary_keep_last_messages,omitempty"`   // Number of recent messages to keep when summarizing (default: 8)
 }
 
@@ -306,7 +306,7 @@ func init() {
 	ServerCmd.Flags().String("provider", "bedrock", "LLM provider (bedrock, openai, anthropic)")
 	ServerCmd.Flags().String("model", "", "Model ID (uses provider default if empty)")
 	ServerCmd.Flags().Float64("temperature", 0.2, "Temperature for LLM")
-	ServerCmd.Flags().Int("max-turns", 30, "Maximum conversation turns")
+	ServerCmd.Flags().Int("max-turns", 100, "Maximum conversation turns")
 	ServerCmd.Flags().String("mcp-config", "configs/mcp_servers_clean.json", "MCP servers configuration path")
 	ServerCmd.Flags().String("agent-mode", "simple", "Agent mode (simple)")
 
@@ -889,6 +889,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	req.Provider = agentProvider
 	req.ModelID = agentModel
 
+	// Default maxTurns from environment variable or 100 if not provided or 0 (applies to both workflow and simple agent modes)
+	if req.MaxTurns <= 0 {
+		req.MaxTurns = orchestrator.GetDefaultMaxTurnsFromEnv()
+		log.Printf("[AGENT] MaxTurns not provided or 0, defaulting to %d (from env or 100)", req.MaxTurns)
+	}
+
 	// Use enabled_servers if provided, otherwise fall back to servers
 	selectedServers := req.EnabledServers
 	if len(selectedServers) == 0 {
@@ -1111,6 +1117,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Create workflow orchestrator for this request
+		// Note: req.MaxTurns is already defaulted to 100 earlier in the handler
 		workflowOrchestrator, err := orchtypes.NewWorkflowOrchestrator(
 			req.Provider,         // provider
 			req.ModelID,          // model
@@ -1126,7 +1133,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			allTools,             // customTools
 			allExecutors,         // customToolExecutors
 			req.LLMConfig,        // llmConfig
-			req.MaxTurns,         // maxTurns
+			req.MaxTurns,         // maxTurns (defaults to 100 if not provided)
 			toolCategories,       // NEW: toolCategories
 			presetLLMConfig,      // preset LLM config for agent defaults
 		)
@@ -1622,8 +1629,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						return threshold
 					}
 				}
-				// Default to 10% (0.1) for testing
-				return 0.1
+				// Default to 80% (0.8)
+				return 0.8
 			}(),
 			SummaryKeepLastMessages: func() int {
 				if req.SummaryKeepLastMessages > 0 {

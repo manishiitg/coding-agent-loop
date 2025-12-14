@@ -61,7 +61,7 @@ export MCP_CACHE_TTL_MINUTES="10080"
 # Context summarization configuration
 export ENABLE_CONTEXT_SUMMARIZATION="true"
 export SUMMARIZE_ON_TOKEN_THRESHOLD="true"
-export TOKEN_THRESHOLD_PERCENT="0.1"  # 10% for testing (default: 0.1 = 10%)
+export TOKEN_THRESHOLD_PERCENT="0.7"  # 70% threshold (default: 0.7 = 70%)
 export SUMMARY_KEEP_LAST_MESSAGES="8"  # Keep last 8 messages when summarizing
 
 # Set main LLM configuration
@@ -130,7 +130,7 @@ echo "- Available OpenAI Models: $OPENAI_AVAILABLE_MODELS" | tee -a "$LOG_FILE"
 echo "- Structured Output LLM: $DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER/$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL" | tee -a "$LOG_FILE"
 echo "- Workspace tools: Enabled" | tee -a "$LOG_FILE"
 echo "- Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION" | tee -a "$LOG_FILE"
-echo "- Token Threshold: $TOKEN_THRESHOLD_PERCENT (10% for testing)" | tee -a "$LOG_FILE"
+echo "- Token Threshold: $TOKEN_THRESHOLD_PERCENT (70%)" | tee -a "$LOG_FILE"
 echo "- Keep Last Messages: $SUMMARY_KEEP_LAST_MESSAGES" | tee -a "$LOG_FILE"
 echo "=========================================" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
@@ -148,7 +148,7 @@ echo "🔄 OpenRouter Cross-Provider Fallback: $OPENROUTER_CROSS_FALLBACK_PROVID
 echo "🔄 Vertex Anthropic Fallback Models: $VERTEX_ANTHROPIC_FALLBACK_MODELS"
 echo "🔧 Structured Output LLM: $DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER/$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL"
 echo "📁 Workspace Tools: Enabled"
-echo "📝 Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION (Threshold: $TOKEN_THRESHOLD_PERCENT = 10% for testing)"
+echo "📝 Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION (Threshold: $TOKEN_THRESHOLD_PERCENT = 70%)"
 echo "📊 Debug level: $LOG_LEVEL"
 
 # Run the server with all the enhanced configuration and log to both file and console

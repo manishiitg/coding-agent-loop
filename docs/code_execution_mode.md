@@ -1,12 +1,28 @@
 # Code Execution Mode
 
-## Overview
+## 📋 Overview
 
-Code Execution Mode allows the Execution Agent to generate and run Go code instead of using MCP tools directly. This enables complex operations, batch processing, and reusable code patterns.
+Code Execution Mode allows the Execution Agent to generate and run Go code instead of using MCP tools directly. This enables complex operations, batch processing, and reusable code patterns across workflow iterations.
 
-## Critical Rule: WorkspacePath as CLI Argument
+**Key Benefits:**
+- **Reusability**: Code works across iterations with different workspace paths
+- **Complex operations**: Batch processing and multi-step logic in single execution
+- **Pattern capture**: Learning agent captures successful code patterns for reuse
 
-**🚨 ALWAYS pass WorkspacePath as the first CLI argument (os.Args[1])**
+---
+
+## 📁 Key Files & Locations
+
+| Component | File Path | Key Functions |
+|-----------|-----------|---------------|
+| **Execution Agent** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go) | Code execution mode instructions |
+| **Learning Agent** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/learning_agent_code_execution.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/learning_agent_code_execution.go) | Captures Go code patterns for reuse |
+
+---
+
+## 🚨 Critical Rule: WorkspacePath as CLI Argument
+
+**ALWAYS pass WorkspacePath as the first CLI argument (`os.Args[1]`)**
 
 ### Why This Matters
 
@@ -14,41 +30,34 @@ Code Execution Mode allows the Execution Agent to generate and run Go code inste
 - Hardcoded paths in Go code break when reused across iterations
 - Passing path via CLI args makes code reusable - only the argument changes
 
-### Two-Step Process
+---
 
-**1. Tool Call (write_code):**
-- ✅ **Correct**: `args=["{{.WorkspacePath}}", "other_var1", "other_var2"]` (ONLY base path)
-- ❌ **Wrong**: `args=["{{.WorkspacePath}}/step-1/file.json", ...]` (passing full file paths)
-- ❌ **Wrong**: `args=["other_var1"]` (missing workspace path)
+## 🔄 Two-Step Process
 
-**2. Go Code Content:**
-- ✅ **Correct**: `workspacePath := os.Args[1]` then use `filepath.Join(workspacePath, "step-N/file.json")`
-- ❌ **Wrong**: `filepath := "workspace/runs/run-1/execution/step-1"` (hardcoded path)
-- ❌ **Wrong**: Passing full file paths as CLI arguments
+### 1. Tool Call (`write_code`)
 
-### Path Handling (CRITICAL)
-
-**Base Path vs Relative Paths:**
-- **Base Path**: `os.Args[1]` is the base execution workspace (e.g., `Workflow/runs/iteration-11/execution`)
-- **Context Dependencies**: Use relative paths like `step-1/step_1_output.json` (NOT full paths)
-- **File Construction**: `filepath.Join(basePath, relativePath)` for ALL file operations
-
-**Example:**
-- Base: `os.Args[1]` → `Workflow/runs/iteration-11/execution`
-- Relative: `step-1/credentials.json`
-- Full: `filepath.Join(basePath, "step-1/credentials.json")` → `Workflow/runs/iteration-11/execution/step-1/credentials.json`
-
-### Example
-
-**Tool Call:**
+**✅ Correct:**
+```json
+{
+  "code": "package main\n...",
+  "args": ["{{.WorkspacePath}}", "other_var1", "other_var2"]
+}
 ```
-write_code(
-  code="...",
-  args=["{{.WorkspacePath}}", "userId"]
-)
+- Pass ONLY base path as first argument
+- Additional variables follow
+
+**❌ Wrong:**
+```json
+// Passing full file paths
+{"args": ["{{.WorkspacePath}}/step-1/file.json", ...]}
+
+// Missing workspace path
+{"args": ["other_var1"]}
 ```
 
-**Go Code:**
+### 2. Go Code Content
+
+**✅ Correct:**
 ```go
 package main
 import (
@@ -78,50 +87,104 @@ func main() {
 }
 ```
 
-## Variable Handling
+**❌ Wrong:**
+```go
+// Hardcoded path
+filepath := "workspace/runs/run-1/execution/step-1"
 
-- **Pass**: All variables via `args` parameter: `args=["{{.WorkspacePath}}", "value1", "value2"]`
-- **Access**: Read from `os.Args[1]` (workspace path), `os.Args[2]`, `os.Args[3]`, etc.
-- **NO Hardcoding**: Never hardcode variable values OR workspace paths in Go code
-
-## Packages & Operations
-
-- **Packages**: Import generated tool packages (`aws_tools`, `workspace_tools`, `google_sheets_tools`, etc.)
-- **File Ops**: Always use `workspace_tools` for file operations
-- **Paths**: Always use `os.Args[1]` for workspace paths, never hardcode directory paths
-
-## Common Mistakes to Avoid
-
-❌ **Passing full file paths as CLI arguments:**
-```
-// WRONG - passing full file paths
-args=["Workflow/runs/iteration-11/execution", "Workflow/runs/iteration-11/execution/step-1/file.json"]
+// Passing full file paths as CLI arguments
+// (should use relative paths with filepath.Join)
 ```
 
-✅ **Correct - pass only base path, use relative paths in code:**
-```
-// Correct tool call
-args=["Workflow/runs/iteration-11/execution", "userId"]
+---
 
-// Correct code
+## ⚙️ Path Handling
+
+### Base Path vs Relative Paths
+
+| Type | Source | Example | Usage |
+|------|--------|---------|-------|
+| **Base Path** | `os.Args[1]` | `Workflow/runs/iteration-11/execution` | Root execution workspace |
+| **Relative Path** | Context dependencies | `step-1/step_1_output.json` | NOT full paths |
+| **Full Path** | `filepath.Join(basePath, relativePath)` | `Workflow/runs/iteration-11/execution/step-1/credentials.json` | All file operations |
+
+### Example
+
+```
+Base: os.Args[1] → "Workflow/runs/iteration-11/execution"
+Relative: "step-1/credentials.json"
+Full: filepath.Join(basePath, "step-1/credentials.json") 
+     → "Workflow/runs/iteration-11/execution/step-1/credentials.json"
+```
+
+---
+
+## ⚙️ Variable Handling
+
+| Aspect | Implementation | Example |
+|--------|----------------|---------|
+| **Pass** | All variables via `args` parameter | `args=["{{.WorkspacePath}}", "value1", "value2"]` |
+| **Access** | Read from `os.Args` | `os.Args[1]` (workspace), `os.Args[2]`, `os.Args[3]`, etc. |
+| **NO Hardcoding** | Never hardcode values OR workspace paths | ❌ `path := "fixed/path"` |
+
+---
+
+## ⚙️ Packages & Operations
+
+| Type | Implementation | Example |
+|------|----------------|---------|
+| **Packages** | Import generated tool packages | `aws_tools`, `workspace_tools`, `google_sheets_tools` |
+| **File Ops** | Always use `workspace_tools` | `workspace_tools.ReadWorkspaceFile()` |
+| **Paths** | Always use `os.Args[1]` + `filepath.Join()` | `filepath.Join(os.Args[1], "step-1/file.json")` |
+
+---
+
+## 🛠️ Common Mistakes to Avoid
+
+| Mistake | Wrong | Correct |
+|---------|-------|---------|
+| **Full file paths as args** | `args=["{{.WorkspacePath}}/step-1/file.json"]` | `args=["{{.WorkspacePath}}"]` + `filepath.Join(basePath, "step-1/file.json")` |
+| **Hardcoded iteration paths** | `path := "Workflow/runs/iteration-11/execution/step-1/file.json"` | `basePath := os.Args[1]`<br>`path := filepath.Join(basePath, "step-1/file.json")` |
+| **Missing workspace path** | `args=["userId"]` | `args=["{{.WorkspacePath}}", "userId"]` |
+
+### Examples
+
+**❌ Wrong - Passing full file paths:**
+```json
+{
+  "args": [
+    "Workflow/runs/iteration-11/execution",
+    "Workflow/runs/iteration-11/execution/step-1/file.json"
+  ]
+}
+```
+
+**✅ Correct - Pass only base path:**
+```json
+{
+  "args": ["Workflow/runs/iteration-11/execution", "userId"]
+}
+```
+
+```go
 basePath := os.Args[1]
 filePath := filepath.Join(basePath, "step-1/file.json")
 ```
 
-❌ **Hardcoding iteration-specific paths:**
+**❌ Wrong - Hardcoding iteration:**
 ```go
-// WRONG - hardcoded iteration number
 filepath := "Workflow/runs/iteration-11/execution/step-1/file.json"
 ```
 
-✅ **Correct - use base path + relative path:**
+**✅ Correct - Use base path + relative:**
 ```go
-// Correct - works for any iteration
 basePath := os.Args[1]
 filePath := filepath.Join(basePath, "step-1/file.json")
 ```
 
-## Code Generation Checklist
+---
+
+## 📋 Code Generation Checklist
 
 Before generating Go code:
 
@@ -132,16 +195,48 @@ Before generating Go code:
 5. Verify Go syntax and imports
 6. Parse tool responses correctly
 
-## Learning Integration
+---
+
+## 🔄 Learning Integration
 
 When learnings contain Go code with hardcoded paths:
-- Extract the code pattern
-- Replace hardcoded paths with `os.Args[1]`
-- Keep the logic and error handling patterns
-- Update variable access to use CLI args
 
-## Files
+1. Extract the code pattern
+2. Replace hardcoded paths with `os.Args[1]`
+3. Keep the logic and error handling patterns
+4. Update variable access to use CLI args
 
-- **Execution Agent**: `execution_only_agent.go` - Contains code execution mode instructions
-- **Learning Agent**: `learning_agent_code_execution.go` - Captures Go code patterns for reuse
+---
 
+## 🔍 For LLMs: Quick Reference
+
+**Constraints:**
+- ✅ **Allowed**: `os.Args[1]` for workspace path
+- ✅ **Allowed**: `filepath.Join(basePath, relativePath)` for file paths
+- ✅ **Allowed**: Generated tool packages (`workspace_tools`, `aws_tools`, etc.)
+- ❌ **Forbidden**: Hardcoded workspace paths
+- ❌ **Forbidden**: Full file paths as CLI arguments
+- ❌ **Forbidden**: Direct OS calls (use `workspace_tools`)
+
+**Example Template:**
+```go
+package main
+import (
+    "os"
+    "path/filepath"
+    "workspace_tools"
+)
+
+func main() {
+    basePath := os.Args[1]  // ALWAYS first argument
+    // ... use filepath.Join(basePath, "relative/path") for all files
+}
+```
+
+---
+
+## 📖 Related Documentation
+
+- [Workflow Orchestrator](workflow_orchestrator.md) - Overall execution system
+- [Execution Agent](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go) - Code execution instructions
+- [Learning Agent](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/learning_agent_code_execution.go) - Code pattern capture

@@ -210,11 +210,24 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [getNode, setViewport])
 
   // Handle opening sidebar for a node
-  const handleOpenSidebar = useCallback((nodeId: string) => {
+  const handleOpenSidebar = useCallback(async (nodeId: string) => {
     setShowVariablesSidebar(false) // Close variables sidebar if open
-    focusNode(nodeId, { topPadding: 150, selectNode: true, delay: 100 })
+    
+    // Refresh plan.json from API to ensure we have the latest data before opening sidebar
+    try {
+      console.log('[WorkflowCanvas] Refreshing plan.json before opening sidebar for node:', nodeId)
+      await refresh()
+      console.log('[WorkflowCanvas] Plan refreshed, opening sidebar for node:', nodeId)
+    } catch (error) {
+      console.error('[WorkflowCanvas] Failed to refresh plan before opening sidebar:', error)
+      // Continue anyway - we'll use existing plan data
+    }
+    
+    // Open sidebar after refresh completes (plan will be updated, nodes will re-render)
+    // Use a small delay to ensure nodes have been updated from the refreshed plan
+    focusNode(nodeId, { topPadding: 150, selectNode: true, delay: 150 })
     console.log('[WorkflowCanvas] Opened sidebar and positioned viewport for node:', nodeId)
-  }, [focusNode])
+  }, [focusNode, refresh])
 
   // Handle navigating to a step from legend (without opening sidebar)
   const handleNavigateToStep = useCallback((nodeId: string) => {
@@ -339,18 +352,19 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         planSteps: plan?.steps?.map(s => ({ id: s.id, title: s.title })) || []
       })
       
-      // If granular change data is provided, use it directly instead of comparison
+      // Refresh plan to get latest data
+      await refresh()
+      
+      // If granular change data is provided, use it directly
       if (changedStepIDs || deletedStepIDs) {
-        console.log('[WorkflowPlanUpdate] Using granular change data (no comparison needed)')
+        console.log('[WorkflowPlanUpdate] Using granular change data from events')
         const changes: PlanChanges = {
           added: changedStepIDs?.filter(id => !deletedStepIDs?.includes(id)) || [],
           updated: changedStepIDs?.filter(id => !deletedStepIDs?.includes(id)) || [],
           deleted: deletedStepIDs || [],
           hasChanges: (changedStepIDs?.length || 0) > 0 || (deletedStepIDs?.length || 0) > 0
         }
-        // Still refresh plan to get latest data, but use provided changes
-        await refresh()
-        // Set changes directly from metadata
+        // Set changes directly from granular event data
         if (changes.hasChanges) {
           setChanges(changes)
         }
@@ -358,14 +372,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         return changes
       }
       
-      // Fallback to comparison if no granular data provided
-      const detectedChanges = await refresh()
-      console.log('[WorkflowPlanUpdate] refresh() completed, changes:', detectedChanges)
-      console.log('[WorkflowPlanUpdate] Plan state after refresh:', { 
-        hasPlan: !!plan, 
-        stepCount: plan?.steps?.length || 0 
-      })
-      return detectedChanges
+      // No granular data - just refresh without setting changes
+      console.log('[WorkflowPlanUpdate] refresh() completed (no granular changes provided)')
+      return null
     },
     getStepCount: () => {
       // Count steps from plan data
@@ -761,6 +770,23 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     return false
   }, [])
 
+  // Helper function to check if updates contain plan-related fields (excluding agent_configs)
+  const hasPlanRelatedFields = useCallback((updates: Partial<PlanStep>): boolean => {
+    // List of all plan-related fields (everything except agent_configs)
+    const planFields = [
+      'id', 'title', 'description', 'success_criteria', 'context_dependencies', 'context_output',
+      'has_loop', 'loop_condition', 'max_iterations', 'loop_description',
+      'has_condition', 'condition_question', 'condition_context',
+      'if_true_steps', 'if_false_steps', 'if_true_next_step_id', 'if_false_next_step_id',
+      'condition_result', 'condition_reason',
+      'has_decision_step', 'decision_step', 'decision_evaluation_question',
+      'decision_result', 'decision_reason'
+    ]
+    
+    // Check if any plan-related field is in updates
+    return planFields.some(field => field in updates)
+  }, [])
+
   // Handle edit step
   const handleEditStep = useCallback(async (stepId: string, updates: Partial<PlanStep>) => {
     if (!plan) return
@@ -775,6 +801,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       stepTitle: stepIndex >= 0 ? plan.steps[stepIndex]?.title : 'N/A',
       stepHasCondition: stepIndex >= 0 ? plan.steps[stepIndex]?.has_condition : false,
       hasAgentConfigs: 'agent_configs' in updates,
+      hasPlanFields: hasPlanRelatedFields(updates),
       updatesKeys: Object.keys(updates),
       isBranchStep: stepIndex < 0
     })
@@ -806,14 +833,17 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       const found = await findAndUpdateStep(updatedSteps, stepId, updates)
       
       if (found) {
-        // Save the updated plan
-        const updatedPlan = {
-          ...plan,
-          steps: updatedSteps
+        // Only save plan.json if updates contain plan-related fields (not just agent_configs)
+        const shouldSavePlan = hasPlanRelatedFields(updates)
+        if (shouldSavePlan) {
+          const updatedPlan = {
+            ...plan,
+            steps: updatedSteps
+          }
+          await savePlan(updatedPlan)
         }
-        await savePlan(updatedPlan)
         
-        // If agent_configs is in updates, also save to step_config.json
+        // If agent_configs is in updates, save to step_config.json
         if ('agent_configs' in updates) {
           await saveStepConfig(stepId, updates.agent_configs)
         }
@@ -829,7 +859,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         throw new Error(`Step with ID "${stepId}" not found in plan (including branch steps)`)
       }
     }
-  }, [plan, updateStep, highlightStepNode, findAndUpdateStep, savePlan, saveStepConfig])
+  }, [plan, updateStep, highlightStepNode, findAndUpdateStep, savePlan, saveStepConfig, hasPlanRelatedFields])
 
   // Handle delete step
   const handleDeleteStep = useCallback(async (stepId: string) => {

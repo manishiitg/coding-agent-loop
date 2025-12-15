@@ -286,17 +286,32 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 
 ## 📊 PATTERN SCORING & OPTIMAL PATH TRACKING
 
-**Format**: [Runs: X | Success: Y%] ✅
-- X = successful completions, Y = success rate
-- When pattern works: increment Runs, recalculate rate
-- When pattern fails: increment failure count, recalculate rate (don't increment Runs)
-- New patterns: [Runs: 1 | Success: 100%]
+**Score Format**: [Runs: X | Success: Y%] ✅
+- **Runs (X)**: Count of successful completions (only increment when pattern succeeds)
+- **Total Attempts**: Runs + Failures (count of times pattern was tried)
+- **Success Rate (Y%)**: (Runs / Total Attempts) × 100
+- **Pattern Matching Logic**:
+  * **Same Pattern**: Same tool/function names = same pattern (normalize to {{VARS}} for comparison)
+  * **Different Pattern**: Different tool/function names = different pattern
+  * **Normalization**: When comparing, normalize both patterns to {{VARS}} format first
+- **Score Update Rules** (Most recent run is considered the best):
+  * **When pattern works**: Increment Runs by 1, recalculate Success rate
+    - Example: [Runs: 3 | Success: 75%] (3/4) → [Runs: 4 | Success: 80%] (4/5)
+  * **When pattern fails**: Keep Runs same, recalculate Success rate (add 1 to total attempts)
+    - Example: [Runs: 3 | Success: 75%] (3/4) → [Runs: 3 | Success: 60%] (3/5)
+  * **New patterns that succeeded**: [Runs: 1 | Success: 100%]
+  * **New patterns that failed**: [Runs: 0 | Success: 0%]
 - Higher Runs + Success % = more reliable
 
 **🏆 OPTIMAL PATH IDENTIFICATION (Critical for Long-Term Learning):**
 - **Track Multiple Approaches**: If different tool sequences achieve the same goal, document ALL of them
-- **Compare & Rank**: After multiple runs, identify which approach has highest success rate
+- **Compare & Rank**: After multiple runs, identify which approach has highest [Runs + Success%] combination
 - **Mark Optimal Path**: Add "⭐ OPTIMAL" tag to the approach with best [Runs + Success%] combination
+  - **If tie**: Prefer pattern with higher Success % over higher Runs
+  - **Must have**: Success % ≥ 50% (otherwise mark as ⚠️ UNRELIABLE)
+- **Update Optimal Path Immediately**: When current optimal pattern fails, immediately check if another pattern should become optimal
+  - Compare all patterns' [Runs + Success%] scores
+  - Mark the pattern with highest score as ⭐ OPTIMAL
 - **Deprecate Inferior Paths**: Mark approaches with <50% success as "⚠️ UNRELIABLE - prefer optimal path"
 - **Evolution Over Time**: As more runs complete, the optimal path becomes clearer
   - Run 1-3: Multiple approaches may have similar scores
@@ -683,40 +698,52 @@ Failures teach us what NOT to do - use them to refine the workflow until it succ
    
 2. **SECONDARY - CONSOLIDATE EXISTING FILES**: ` + existingPath + `
    - Follow consolidation process from system prompt (detect files, read all, consolidate patterns)
+   - **Consolidation Rule**: When same pattern appears in multiple files, **keep the version with highest score** (highest [Runs + Success%])
    - **Note**: This is secondary - don't spend excessive time on consolidation
    
 3. **PRIMARY - MERGE WITH NEW LEARNINGS**: ` + func() string {
 					if learningDetailLevel == "exact" {
 						return `Refine consolidated workflow based on latest run (PRIMARY FOCUS)`
 					}
-					return `Append new patterns from current execution to consolidated learnings (PRIMARY FOCUS)`
+					return `Merge consolidated learnings with new patterns from latest run (PRIMARY FOCUS)`
 				}() + `
+   - **Pattern Matching**: Normalize both patterns to {{VARS}} format, then compare tool/function names
+   - **Same pattern** (same tool/function names): Update existing pattern (scores + code/workflow if better)
+   - **Different pattern**: Append as new pattern entry
    
-4. **UPDATE**: If latest run differs from consolidated patterns, update them
+4. **UPDATE EXISTING PATTERNS**: 
+   - **If pattern worked**: Update scores (increment Runs, recalculate Success %), replace code/workflow if current is better
+   - **If pattern failed**: Update scores (keep Runs same, recalculate Success %), keep existing code/workflow
    
-5. **WRITE CONSOLIDATED FILE**: Write all consolidated learnings (from all files + new from current execution) to: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md
-6. **CLEANUP (MANDATORY)**: After successfully writing consolidated file, delete ALL old files that were consolidated (use delete_workspace_file tool for each old file)`
+5. **OUTDATED PATTERNS**: Remove patterns not used in current run ONLY if better alternative exists
+   
+6. **WRITE CONSOLIDATED FILE**: Write all consolidated learnings (from all files + new from current execution) to: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md
+7. **CLEANUP (MANDATORY)**: After successfully writing consolidated file, delete ALL old files that were consolidated (use delete_workspace_file tool for each old file)`
 			} else {
-				return `1. **READ FIRST**: ` + existingPath + `
-2. **MERGE**: Preserve all previous learnings, ` + func() string {
-					if learningDetailLevel == "exact" {
-						return `refine workflow based on latest run`
-					}
-					return `append new patterns`
-				}() + `  
-3. **UPDATE**: If latest run differs from existing patterns, update them`
+				return `1. **READ FIRST**: Use read_workspace_file tool to read: ` + existingPath + `
+2. **PATTERN MATCHING**: Compare current run patterns with existing patterns:
+   - Normalize both to {{VARS}} format before comparing
+   - Same tool/function names = same pattern (update existing)
+   - Different tool/function names = different pattern (append new)
+3. **UPDATE EXISTING PATTERNS**:
+   - **If pattern matches AND worked**: Update scores (increment Runs, recalculate Success %), replace code/workflow if current is better
+   - **If pattern matches AND failed**: Update scores (keep Runs same, recalculate Success %), keep existing code/workflow
+   - **If pattern is new**: Append as new pattern entry with [Runs: 1 | Success: 100%] if succeeded, or [Runs: 0 | Success: 0%] if failed
+4. **OUTDATED PATTERNS**: Remove patterns not used in current run ONLY if better alternative exists
+5. **PRESERVE ALL LEARNINGS**: Keep all previous learnings, only update scores and code/workflow for matching patterns`
 			}
 		}
 		return `1. **NO EXISTING LEARNINGS**: No learning file exists for this step - DO NOT try to read or search for existing learnings
-2. **CREATE NEW FILE**: Create new learning file at ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md with all current learnings`
+2. **CREATE NEW FILE**: Create new learning file at ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md with all current learnings
+3. **NEW PATTERNS**: All new patterns start with [Runs: 1 | Success: 100%] if succeeded, or [Runs: 0 | Success: 0%] if failed`
 	}() + `
-3. **SCORES**: Update [Runs: X | Success: Y%] when patterns repeat
-4. **WRITE**: Merged content (existing + new)` + func() string {
+4. **UPDATE OPTIMAL PATH**: After updating scores, immediately check if optimal path should change (if current optimal failed, find new optimal)
+5. **WRITE**: Merged content (existing + new learnings with updated scores)` + func() string {
 		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
 			hasMultipleFiles := strings.Contains(existingPath, ",") || strings.HasSuffix(existingPath, "/") || strings.HasSuffix(existingPath, "\\")
 			if hasMultipleFiles {
 				return `
-5. **CLEANUP**: Delete all old consolidated files after successful write`
+6. **CLEANUP**: Delete all old consolidated files after successful write`
 			}
 		}
 		return ""

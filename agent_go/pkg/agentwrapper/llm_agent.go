@@ -63,10 +63,12 @@ type LLMAgentConfig struct {
 	APIKeys              *llm.ProviderAPIKeys // API keys for providers
 
 	// Context summarization configuration
-	EnableContextSummarization bool    // Enable context summarization feature
-	SummarizeOnTokenThreshold  bool    // Enable token-based summarization trigger
-	TokenThresholdPercent      float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
-	SummaryKeepLastMessages    int     // Number of recent messages to keep when summarizing (0 = use default: 8)
+	EnableContextSummarization      bool    // Enable context summarization feature
+	SummarizeOnTokenThreshold       bool    // Enable token-based summarization trigger (percentage-based)
+	TokenThresholdPercent           float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
+	SummarizeOnFixedTokenThreshold  bool    // Enable fixed token-based summarization trigger
+	FixedTokenThreshold             int     // Fixed token threshold to trigger summarization (e.g., 200000 = 200k tokens)
+	SummaryKeepLastMessages         int     // Number of recent messages to keep when summarizing (0 = use default: 8)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -233,11 +235,14 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 			}
 			agentOptions = append(agentOptions, mcpagent.WithSummarizeOnTokenThreshold(true, thresholdPercent))
 		}
+		if config.SummarizeOnFixedTokenThreshold && config.FixedTokenThreshold > 0 {
+			agentOptions = append(agentOptions, mcpagent.WithSummarizeOnFixedTokenThreshold(true, config.FixedTokenThreshold))
+		}
 		if config.SummaryKeepLastMessages > 0 {
 			agentOptions = append(agentOptions, mcpagent.WithSummaryKeepLastMessages(config.SummaryKeepLastMessages))
 		}
-		logger.Info(fmt.Sprintf("📝 Context summarization enabled - Token threshold: %v (%.0f%%), Keep last messages: %d",
-			config.SummarizeOnTokenThreshold, config.TokenThresholdPercent*100, config.SummaryKeepLastMessages))
+		logger.Info(fmt.Sprintf("📝 Context summarization enabled - Token threshold: %v (%.0f%%), Fixed threshold: %v (%d tokens), Keep last messages: %d",
+			config.SummarizeOnTokenThreshold, config.TokenThresholdPercent*100, config.SummarizeOnFixedTokenThreshold, config.FixedTokenThreshold, config.SummaryKeepLastMessages))
 	}
 
 	// Add smart routing options if enabled

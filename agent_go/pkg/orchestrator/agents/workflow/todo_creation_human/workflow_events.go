@@ -38,10 +38,13 @@ func (e *DecisionEvaluatedEvent) GetEventType() events.EventType {
 // StepStartedEvent represents the event when a step execution starts
 type StepStartedEvent struct {
 	events.BaseEventData
-	StepID    string `json:"step_id"`    // Step ID from plan
-	StepIndex int    `json:"step_index"` // 0-based step index
-	StepTitle string `json:"step_title"` // Step title
-	StepPath  string `json:"step_path"`  // Step path (e.g., "step-1" or "step-1-if-true-0")
+	StepID        string `json:"step_id"`        // Step ID from plan
+	StepIndex     int    `json:"step_index"`     // 0-based step index
+	StepTitle     string `json:"step_title"`     // Step title
+	StepPath      string `json:"step_path"`      // Step path (e.g., "step-1" or "step-1-if-true-0")
+	IsBranchStep  bool   `json:"is_branch_step"` // Whether this is a branch step
+	RunFolder     string `json:"run_folder"`     // Run folder name (e.g., "iteration-1")
+	WorkspacePath string `json:"workspace_path"` // Workspace path for file operations
 }
 
 func (e *StepStartedEvent) GetEventType() events.EventType {

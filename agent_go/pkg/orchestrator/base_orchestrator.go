@@ -83,10 +83,12 @@ type BaseOrchestrator struct {
 	iterationFolder string
 
 	// Context summarization configuration
-	enableContextSummarization bool
-	summarizeOnTokenThreshold  bool
-	tokenThresholdPercent      float64
-	summaryKeepLastMessages    int
+	enableContextSummarization     bool
+	summarizeOnTokenThreshold      bool
+	tokenThresholdPercent          float64
+	summarizeOnFixedTokenThreshold bool
+	fixedTokenThreshold            int
+	summaryKeepLastMessages        int
 }
 
 // NewBaseOrchestrator creates a new unified base orchestrator
@@ -129,6 +131,16 @@ func NewBaseOrchestrator(
 			summaryKeepLastMessages = keepLast
 		}
 	}
+	summarizeOnFixedTokenThreshold := true // Default to enabled with 200k token threshold
+	if envVal := os.Getenv("SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD"); envVal == "false" {
+		summarizeOnFixedTokenThreshold = false
+	}
+	fixedTokenThreshold := 200000 // Default to 200k tokens
+	if envVal := os.Getenv("FIXED_TOKEN_THRESHOLD"); envVal != "" {
+		if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
+			fixedTokenThreshold = threshold
+		}
+	}
 
 	// Default maxTurns from environment variable or 100 if not provided or 0
 	if maxTurns <= 0 {
@@ -157,10 +169,12 @@ func NewBaseOrchestrator(
 		llmConfig:            llmConfig,
 		maxTurns:             maxTurns,
 		// Context summarization configuration
-		enableContextSummarization: enableContextSummarization,
-		summarizeOnTokenThreshold:  summarizeOnTokenThreshold,
-		tokenThresholdPercent:      tokenThresholdPercent,
-		summaryKeepLastMessages:    summaryKeepLastMessages,
+		enableContextSummarization:     enableContextSummarization,
+		summarizeOnTokenThreshold:      summarizeOnTokenThreshold,
+		tokenThresholdPercent:          tokenThresholdPercent,
+		summarizeOnFixedTokenThreshold: summarizeOnFixedTokenThreshold,
+		fixedTokenThreshold:            fixedTokenThreshold,
+		summaryKeepLastMessages:        summaryKeepLastMessages,
 	}
 
 	// Set token persister on bridge (no longer using accumulators)

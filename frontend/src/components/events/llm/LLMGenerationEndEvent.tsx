@@ -20,6 +20,19 @@ export const LLMGenerationEndEventDisplay: React.FC<LLMGenerationEndEventProps> 
 
   // Extract context usage from metadata
   const contextUsagePercent = event.metadata?.context_usage_percent as number | undefined
+  const modelContextWindow = event.metadata?.model_context_window as number | undefined
+  const fixedThresholdPercent = event.metadata?.fixed_threshold_percent as number | undefined
+  const fixedThresholdTokens = event.metadata?.fixed_threshold_tokens as number | undefined
+
+  // Helper function to format token count (e.g., 1000000 -> "1M", 200000 -> "200k")
+  const formatTokenCount = (tokens: number): string => {
+    if (tokens >= 1_000_000) {
+      return `${(tokens / 1_000_000).toFixed(1)}M`.replace('.0', '')
+    } else if (tokens >= 1_000) {
+      return `${(tokens / 1_000).toFixed(0)}k`
+    }
+    return tokens.toString()
+  }
 
   const bgColor = isSuccess
     ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
@@ -74,11 +87,25 @@ export const LLMGenerationEndEventDisplay: React.FC<LLMGenerationEndEventProps> 
                       )}
                     </>
                   )}
-                  {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
-                    <span className={contextUsagePercent > 80 ? 'text-red-600 dark:text-red-400' : contextUsagePercent > 50 ? 'text-yellow-600 dark:text-yellow-400' : 'text-green-600 dark:text-green-400'}>
-                      {' • Context: '}{contextUsagePercent.toFixed(1)}%
-                    </span>
-                  )}
+                  {(contextUsagePercent !== undefined && contextUsagePercent > 0) || (fixedThresholdPercent !== undefined && fixedThresholdPercent > 0) ? (
+                    <>
+                      {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
+                        <span className={contextUsagePercent > 80 ? 'text-red-600 dark:text-red-400' : contextUsagePercent > 50 ? 'text-yellow-600 dark:text-yellow-400' : 'text-green-600 dark:text-green-400'}>
+                          {' • Context: '}{contextUsagePercent.toFixed(1)}%
+                          {modelContextWindow !== undefined && modelContextWindow > 0 && (
+                            <span className="text-gray-600 dark:text-gray-400">
+                              {' ('}{formatTokenCount(modelContextWindow)}{')'}
+                            </span>
+                          )}
+                        </span>
+                      )}
+                      {fixedThresholdPercent !== undefined && fixedThresholdPercent > 0 && fixedThresholdTokens !== undefined && (
+                        <span className="text-blue-600 dark:text-blue-400">
+                          {' • Fixed: '}{fixedThresholdPercent.toFixed(1)}% ({formatTokenCount(fixedThresholdTokens)})
+                        </span>
+                      )}
+                    </>
+                  ) : null}
                 </span>
               </div>
             </div>

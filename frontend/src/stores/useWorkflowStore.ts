@@ -868,7 +868,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
           activePhase: null,
           showChatArea: false
         })
-      }
+      },
+
     }),
     {
       name: 'workflow-store'
@@ -882,4 +883,19 @@ export const useWorkflowPhasesLoading = () => useWorkflowStore(state => state.is
 export const useWorkflowRunFolders = () => useWorkflowStore(state => state.runFolders)
 export const useWorkflowProgress = () => useWorkflowStore(state => state.stepProgress)
 export const useCompletedStepIndices = () => useWorkflowStore(state => state.stepProgress?.completed_step_indices || [])
+
+// Computed selector for selected group ID
+export const useSelectedGroupId = () => {
+  return useWorkflowStore(state => {
+    // Extract group ID from selectedRunFolder if it contains a group path
+    // Pattern: iteration-X/group-Y
+    if (state.selectedRunFolder && state.selectedRunFolder !== 'new' && state.selectedRunFolder.includes('/group-')) {
+      const parts = state.selectedRunFolder.split('/')
+      if (parts.length === 2 && parts[1].startsWith('group-')) {
+        return parts[1] // e.g., "group-5"
+      }
+    }
+    return null
+  })
+}
 

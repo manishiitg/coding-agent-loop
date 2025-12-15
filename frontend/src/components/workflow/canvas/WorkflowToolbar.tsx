@@ -543,45 +543,30 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     return startPointOptions.find(o => o.stepNumber === selectedStartPoint) || startPointOptions[0]
   }, [selectedStartPoint, selectedBranchStep, startPointOptions])
 
-  // Validate selectedStartPoint after progress/options are loaded
-  // Reset to 0 if the saved start point is no longer valid
-  // Only validate when options are fully ready (not just "from_beginning")
+  // Validate selectedStartPoint - only check if it's within valid range (1 to totalSteps)
+  // We don't need to check if it's in startPointOptions because:
+  // 1. startPointOptions is just a UI convenience showing common options
+  // 2. Users should be able to select any step number, not just completed ones
+  // 3. The backend will handle execution from any valid step number
   useEffect(() => {
     // Don't validate if no start point is selected
     if (selectedStartPoint === 0) {
       return
     }
 
-    // Check if options are fully ready:
-    // 1. Must have more than just "from_beginning" option
-    // 2. Must have at least one resume option with a stepNumber
-    // 3. Must have progress data loaded
-    const hasResumeOptions = startPointOptions.some(option => option.stepNumber !== undefined)
-    const isOptionsReady = startPointOptions.length > 1 && hasResumeOptions && stepProgress !== null
-
-    if (!isOptionsReady) {
-      // Options not fully loaded yet - don't validate
-      console.log(`[WorkflowToolbar] ⏳ Waiting for options to load before validating start point ${selectedStartPoint}`, {
-        optionsCount: startPointOptions.length,
-        hasResumeOptions,
-        hasProgress: stepProgress !== null
-      })
+    // Don't validate if totalSteps is not yet known
+    if (totalSteps === 0) {
       return
     }
 
-    // Now validate - check if the selected start point exists in available options
-    const isValid = startPointOptions.some(
-      option => option.stepNumber === selectedStartPoint
-    )
-
-    if (!isValid) {
-      console.log(`[WorkflowToolbar] Saved start point ${selectedStartPoint} is no longer valid (not in ${startPointOptions.length} options), resetting to 0`)
-      console.log(`[WorkflowToolbar] Available options:`, startPointOptions.map(o => ({ id: o.id, stepNumber: o.stepNumber, label: o.label })))
+    // Only validate that the step number is within valid range
+    if (selectedStartPoint < 1 || selectedStartPoint > totalSteps) {
+      console.log(`[WorkflowToolbar] Selected start point ${selectedStartPoint} is out of range (1-${totalSteps}), resetting to 0`)
       setStartPoint(0)
     } else {
-      console.log(`[WorkflowToolbar] ✅ Saved start point ${selectedStartPoint} is valid`)
+      console.log(`[WorkflowToolbar] ✅ Selected start point ${selectedStartPoint} is valid (range: 1-${totalSteps})`)
     }
-  }, [selectedStartPoint, startPointOptions, stepProgress, setStartPoint])
+  }, [selectedStartPoint, totalSteps, setStartPoint])
 
   // Get current phase details
   const currentPhaseDetails = phases.find((p: WorkflowPhase) => p.id === currentPhase)

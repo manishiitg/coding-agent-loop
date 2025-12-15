@@ -515,6 +515,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 	allSteps []TodoStep, // All steps in the plan (for prerequisite detection)
 	isDecisionInnerStep bool, // true if this is the inner step of a decision step (skips final human feedback on success)
 	decisionContext *DecisionContext, // Optional: context from decision step that routed to this step (nil if not routed from decision)
+	decisionEvaluationQuestion string, // Optional: evaluation question for decision inner steps (used to format output for LLM evaluation)
 ) (executionResult string, updatedContextFiles []string, err error) {
 	// Initialize updated context files as copy of previous context files
 	updatedContextFiles = make([]string, len(previousContextFiles))
@@ -593,6 +594,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 		// Add variable values if available (name = value - description format)
 		if variableValues := FormatVariableValues(hcpo.variablesManifest, hcpo.variableValues); variableValues != "" {
 			templateVars["VariableValues"] = variableValues
+		}
+
+		// Add decision evaluation question if this is a decision inner step
+		if isDecisionInnerStep && decisionEvaluationQuestion != "" {
+			templateVars["DecisionEvaluationQuestion"] = decisionEvaluationQuestion
+		} else {
+			templateVars["DecisionEvaluationQuestion"] = ""
 		}
 
 		// Add decision context if this step was routed from a decision step
@@ -2225,6 +2233,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			breakdownSteps, // allSteps - pass all steps for prerequisite detection
 			false,          // isDecisionInnerStep = false (regular step)
 			decisionCtx,    // decisionContext - nil if not routed from decision step
+			"",             // decisionEvaluationQuestion - empty for regular steps
 		)
 		if err != nil {
 			// Check if this is a prerequisite navigation error

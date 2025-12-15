@@ -18,28 +18,29 @@ import (
 
 // HumanControlledTodoPlannerExecutionOnlyTemplate holds template variables for execution-only agent prompts
 type HumanControlledTodoPlannerExecutionOnlyTemplate struct {
-	StepTitle               string
-	StepDescription         string
-	StepSuccessCriteria     string
-	StepContextDependencies string
-	StepContextOutput       string
-	WorkspacePath           string
-	IsCodeExecutionMode     string // "true" or "false" - indicates if code execution mode is enabled
-	ValidationFeedback      string
-	HumanFeedback           string // Human guidance provided after validation failure (highest priority)
-	PreviousIterationOutput string // Previous loop iteration execution output (for loop steps)
-	VariableNames           string // Variable names with descriptions ({{VAR_NAME}} - description)
-	VariableValues          string // Variable names with actual values ({{VAR_NAME}} = value - description)
-	HasLoop                 string // "true" or "false" as string
-	LoopCondition           string // Loop condition description (required when HasLoop="true")
-	LoopDescription         string // Human-readable explanation of the loop (optional)
-	CurrentIteration        string // Current iteration number
-	MaxIterations           string // Max iterations allowed
-	LearningHistory         string // Formatted learning conversation history (REQUIRED for execution-only mode)
-	StepNumber              string // Step identifier (e.g., "step-8" or "step-3-if-true-0")
-	StepExecutionPath       string // Full execution folder path (e.g., "execution/step-8")
-	DecisionReasoning       string // Context from decision step that routed to this step (empty if not routed from decision)
-	PreviousStepsSummary    string // Summary of previous completed steps (titles, descriptions, outputs)
+	StepTitle                  string
+	StepDescription            string
+	StepSuccessCriteria        string
+	StepContextDependencies    string
+	StepContextOutput          string
+	WorkspacePath              string
+	IsCodeExecutionMode        string // "true" or "false" - indicates if code execution mode is enabled
+	ValidationFeedback         string
+	HumanFeedback              string // Human guidance provided after validation failure (highest priority)
+	PreviousIterationOutput    string // Previous loop iteration execution output (for loop steps)
+	VariableNames              string // Variable names with descriptions ({{VAR_NAME}} - description)
+	VariableValues             string // Variable names with actual values ({{VAR_NAME}} = value - description)
+	HasLoop                    string // "true" or "false" as string
+	LoopCondition              string // Loop condition description (required when HasLoop="true")
+	LoopDescription            string // Human-readable explanation of the loop (optional)
+	CurrentIteration           string // Current iteration number
+	MaxIterations              string // Max iterations allowed
+	LearningHistory            string // Formatted learning conversation history (REQUIRED for execution-only mode)
+	StepNumber                 string // Step identifier (e.g., "step-8" or "step-3-if-true-0")
+	StepExecutionPath          string // Full execution folder path (e.g., "execution/step-8")
+	DecisionReasoning          string // Context from decision step that routed to this step (empty if not routed from decision)
+	DecisionEvaluationQuestion string // Evaluation question for decision inner steps (used to format output for LLM evaluation)
+	PreviousStepsSummary       string // Summary of previous completed steps (titles, descriptions, outputs)
 }
 
 // HumanControlledTodoPlannerExecutionOnlyAgent executes steps using pre-discovered learning context
@@ -106,6 +107,7 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 	variableNames := templateVars["VariableNames"]
 	variableValues := templateVars["VariableValues"]
 	prerequisiteRulesInfo := templateVars["PrerequisiteRulesInfo"]
+	decisionEvaluationQuestion := templateVars["DecisionEvaluationQuestion"]
 
 	// Define the system prompt template
 	templateStr := `# Execution-Only Agent
@@ -298,6 +300,29 @@ Print "✅ PASS: [criterion]" for each success, "❌ FAIL: [reason]" + os.Exit(1
 **Context Output**: File path if created
 **Workflow Deviations**: Note any deviations from learned workflow (if applicable)
 
+{{if .DecisionEvaluationQuestion}}
+## 🤖 IMPORTANT: LLM Evaluation Formatting
+
+**Your output will be evaluated by an LLM** to determine: {{.DecisionEvaluationQuestion}}
+
+**CRITICAL**: Format your output to make it easy for the LLM to answer this question. Include:
+
+1. **Clear Status**: Explicitly state whether the step succeeded or failed
+2. **Relevant Evidence**: Include specific information that directly relates to the evaluation question
+   - If the question asks about file format → show file extension, headers, structure
+   - If the question asks about verification → show verification results, checks performed
+   - If the question asks about completion → show completion indicators, final state
+3. **Quantitative Results**: Include numbers, counts, or measurable outcomes when relevant
+4. **Key Findings**: Highlight the most important information that answers the evaluation question
+5. **Structured Information**: Organize output clearly with sections if needed
+
+**Example**: If the evaluation question is "Does the file have .txt extension and contain expected headers?"
+- ✅ **Good Output**: "Status: COMPLETED. Downloaded file: data.txt (extension: .txt). File headers verified: Line 1 contains 'Date', Line 2 contains 'Narration', Line 3 contains 'Closing Balance'. All expected headers found."
+- ❌ **Bad Output**: "File downloaded successfully." (missing extension and header information)
+
+**Remember**: The LLM evaluating your output only sees your text response - make it comprehensive and clear!
+{{end}}
+
 Validation agent will verify your work - focus on execution and evidence.`
 
 	// Parse and execute the template
@@ -308,20 +333,21 @@ Validation agent will verify your work - focus on execution and evidence.`
 
 	var result strings.Builder
 	err = tmpl.Execute(&result, map[string]interface{}{
-		"WorkspacePath":             workspacePath,
-		"IsCodeExecutionMode":       isCodeExecutionMode,
-		"CodeExecutionInstructions": codeExecutionInstructions,
-		"HasLoop":                   hasLoop,
-		"StepContextOutput":         stepContextOutput,
-		"CurrentDate":               currentDate,
-		"CurrentTime":               currentTime,
-		"LearningHistory":           learningHistory,
-		"VariableNames":             variableNames,
-		"VariableValues":            variableValues,
-		"StepNumber":                stepNumber,
-		"StepExecutionPath":         stepExecutionPath,
-		"PreviousStepsSummary":      previousStepsSummary,
-		"PrerequisiteRulesInfo":     prerequisiteRulesInfo,
+		"WorkspacePath":              workspacePath,
+		"IsCodeExecutionMode":        isCodeExecutionMode,
+		"CodeExecutionInstructions":  codeExecutionInstructions,
+		"HasLoop":                    hasLoop,
+		"StepContextOutput":          stepContextOutput,
+		"CurrentDate":                currentDate,
+		"CurrentTime":                currentTime,
+		"LearningHistory":            learningHistory,
+		"VariableNames":              variableNames,
+		"VariableValues":             variableValues,
+		"StepNumber":                 stepNumber,
+		"StepExecutionPath":          stepExecutionPath,
+		"PreviousStepsSummary":       previousStepsSummary,
+		"PrerequisiteRulesInfo":      prerequisiteRulesInfo,
+		"DecisionEvaluationQuestion": decisionEvaluationQuestion,
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution-only system prompt template: %v", err)

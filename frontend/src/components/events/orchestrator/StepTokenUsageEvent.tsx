@@ -8,6 +8,22 @@ interface StepTokenUsageEventDisplayProps {
 export const StepTokenUsageEventDisplay: React.FC<StepTokenUsageEventDisplayProps> = ({ event }) => {
   const stepLabel = event.step_title || `Step ${(event.step ?? 0) + 1}`
   
+  // Extract context usage from metadata
+  const contextUsagePercent = event.context_usage_percent as number | undefined
+  const modelContextWindow = event.metadata?.model_context_window as number | undefined
+  const fixedThresholdPercent = event.metadata?.fixed_threshold_percent as number | undefined
+  const fixedThresholdTokens = event.metadata?.fixed_threshold_tokens as number | undefined
+
+  // Helper function to format token count (e.g., 1000000 -> "1M", 200000 -> "200k")
+  const formatTokenCount = (tokens: number): string => {
+    if (tokens >= 1_000_000) {
+      return `${(tokens / 1_000_000).toFixed(1)}M`.replace('.0', '')
+    } else if (tokens >= 1_000) {
+      return `${(tokens / 1_000).toFixed(0)}k`
+    }
+    return tokens.toString()
+  }
+  
   return (
     <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-md p-2">
       {/* Compact header */}
@@ -68,11 +84,25 @@ export const StepTokenUsageEventDisplay: React.FC<StepTokenUsageEventDisplayProp
         </span>
         
         {/* Context usage */}
-        {(event.context_usage_percent ?? 0) > 0 && (
-          <span className={(event.context_usage_percent ?? 0) > 80 ? 'text-red-600 dark:text-red-400' : (event.context_usage_percent ?? 0) > 50 ? 'text-yellow-600 dark:text-yellow-400' : 'text-orange-600 dark:text-orange-400'}>
-            <span className="font-semibold">Context:</span>
-            <span className="ml-1">{(event.context_usage_percent ?? 0).toFixed(1)}%</span>
-          </span>
+        {((contextUsagePercent ?? 0) > 0 || (fixedThresholdPercent !== undefined && fixedThresholdPercent > 0)) && (
+          <>
+            {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
+              <span className={contextUsagePercent > 80 ? 'text-red-600 dark:text-red-400' : contextUsagePercent > 50 ? 'text-yellow-600 dark:text-yellow-400' : 'text-orange-600 dark:text-orange-400'}>
+                <span className="font-semibold">Context:</span>
+                <span className="ml-1">{contextUsagePercent.toFixed(1)}%</span>
+                {modelContextWindow !== undefined && modelContextWindow > 0 && (
+                  <span className="text-gray-600 dark:text-gray-400">
+                    {' ('}{formatTokenCount(modelContextWindow)}{')'}
+                  </span>
+                )}
+              </span>
+            )}
+            {fixedThresholdPercent !== undefined && fixedThresholdPercent > 0 && fixedThresholdTokens !== undefined && (
+              <span className="text-blue-600 dark:text-blue-400 ml-1">
+                Fixed: {fixedThresholdPercent.toFixed(1)}% ({formatTokenCount(fixedThresholdTokens)})
+              </span>
+            )}
+          </>
         )}
         
         {/* Stats */}

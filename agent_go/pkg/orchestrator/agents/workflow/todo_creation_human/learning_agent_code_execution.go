@@ -349,19 +349,34 @@ When documenting errors discovered from ExecutionHistory, use this format:
 - **Keep descriptions concise and focused on efficiency**
 - **CRITICAL - File Content Must Be Short**: Write learning files that are brief, precise, and to the point. Avoid verbose explanations, long paragraphs, or unnecessary details. Each code pattern entry should be 1-2 lines maximum. Focus on actionable information only.
 - **SCORING SYSTEM - Track Pattern Reliability**:
-  - **Score Format**: [Runs: X | Success: Y%] where X = number of times this pattern successfully worked, Y = success rate (successful runs / total attempts × 100)
-  - **When reading existing patterns**: Compare them with current success/failure patterns from the latest run
-  - **If pattern worked again**: Increment Runs by 1, recalculate Success rate (e.g., [Runs: 3 | Success: 75%] → [Runs: 4 | Success: 80%])
-  - **If pattern failed**: Increment failure count, recalculate Success rate, don't increment Runs (e.g., [Runs: 3 | Success: 75%] → [Runs: 3 | Success: 60%])
-  - **If pattern is new**: Add it with [Runs: 1 | Success: 100%]
+  - **Score Format**: [Runs: X | Success: Y%] where:
+    * **Runs (X)**: Count of successful completions (only increment when pattern succeeds)
+    * **Total Attempts**: Runs + Failures (count of times pattern was tried)
+    * **Success Rate (Y%)**: (Runs / Total Attempts) × 100
+  - **Pattern Matching Logic**:
+    * **Same Pattern**: Same tool/function names = same pattern (normalize to {{VARS}} for comparison)
+    * **Different Pattern**: Different tool/function names = different pattern
+    * **Normalization**: When comparing, normalize both patterns to {{VARS}} format first
+  - **Score Update Rules** (Most recent run is considered the best):
+    * **If pattern worked again**: Increment Runs by 1, recalculate Success rate
+      - Example: [Runs: 3 | Success: 75%] (3/4) → [Runs: 4 | Success: 80%] (4/5)
+    * **If pattern failed**: Keep Runs same, recalculate Success rate (add 1 to total attempts)
+      - Example: [Runs: 3 | Success: 75%] (3/4) → [Runs: 3 | Success: 60%] (3/5)
+    * **If pattern is new and succeeded**: Add with [Runs: 1 | Success: 100%]
+    * **If pattern is new and failed**: Add with [Runs: 0 | Success: 0%]
   - **Score format**: Always include [Runs: X | Success: Y%] ✅ after each success pattern
   - **Failure format**: Include [Failed: Z times] after failure patterns
   - **Purpose**: Higher Runs and Success % = more reliable patterns to use in future executions
 
 **🏆 OPTIMAL CODE PATH IDENTIFICATION (Critical for Long-Term Learning):**
 - **Track Multiple Approaches**: If different code patterns achieve the same goal, document ALL of them
-- **Compare & Rank**: After multiple runs, identify which code pattern has highest success rate
+- **Compare & Rank**: After multiple runs, identify which code pattern has highest [Runs + Success%] combination
 - **Mark Optimal Path**: Add "⭐ OPTIMAL" tag to the code pattern with best [Runs + Success%] combination
+  - **If tie**: Prefer pattern with higher Success % over higher Runs
+  - **Must have**: Success % ≥ 50% (otherwise mark as ⚠️ UNRELIABLE)
+- **Update Optimal Path Immediately**: When current optimal pattern fails, immediately check if another pattern should become optimal
+  - Compare all patterns' [Runs + Success%] scores
+  - Mark the pattern with highest score as ⭐ OPTIMAL
 - **Deprecate Inferior Patterns**: Mark code patterns with <50% success as "⚠️ UNRELIABLE - prefer optimal code"
 - **Evolution Over Time**: As more runs complete, the optimal code pattern becomes clearer
   - Run 1-3: Multiple code patterns may have similar scores
@@ -398,17 +413,35 @@ You have access to all MCP tools to examine workspace files and gather additiona
 - Rank code by effectiveness: best code first, then alternatives, then failures to avoid
 - Document only meaningful best code patterns - don't save mediocre code just because it worked
 - **FILE MERGING INSTRUCTIONS**:
-  - If {StepTitle}_learning.md exists, read it first, then merge new learnings (append new success/failure patterns to existing ones, preserve all previous content)
-  - **Merging Strategy**: Combine existing and new learnings - add new patterns without removing or replacing existing ones
-  - **UPDATE EXISTING PATTERNS**: If success/failure patterns in the latest run differ from existing patterns in the file, UPDATE the existing patterns to reflect the latest run results. Replace outdated patterns with current ones based on the most recent execution. This ensures learnings stay current and accurate.
+  - **CRITICAL**: If {StepTitle}_learning.md exists, read it first using read_workspace_file tool
+  - **Pattern Matching**: Compare current run patterns with existing patterns:
+    * Normalize both to {{VARS}} format before comparing
+    * Same tool/function names = same pattern (update existing)
+    * Different tool/function names = different pattern (append new)
+  - **Pattern Update Strategy**:
+    * **If pattern matches existing AND worked in current run**:
+      - Update scores: Increment Runs, recalculate Success %
+      - **If current code is better**: Replace old code with new code
+      - Keep the pattern entry, just update code content and scores
+    * **If pattern matches existing AND failed in current run**:
+      - Update scores: Keep Runs same, recalculate Success % (add 1 to total attempts)
+      - Keep existing code (don't replace with failed code)
+    * **If pattern is new**:
+      - Always APPEND as new pattern entry
+      - Start with [Runs: 1 | Success: 100%] if succeeded
+      - Start with [Runs: 0 | Success: 0%] if failed
+  - **Outdated Pattern Removal**:
+    * Pattern is "outdated" if it was NOT used in the most recent run
+    * **Only remove if**: Better alternative exists with higher success rate
+    * **Keep if**: It's the only pattern for that approach (even if outdated)
+    * **Keep if**: No better alternative exists
+  - **Pattern Consolidation (Multiple Files)**:
+    * When merging same pattern from multiple files: **Keep the version with highest score** (highest [Runs + Success%])
+    * Do NOT sum Runs or recalculate - preserve the best-performing version
   - **EXCLUDE WORKSPACE TOOLS**: When updating or adding patterns, ensure workspace management tools are never included in success/failure patterns unless part of the code being learned
-  - **UPDATE PATTERN SCORES**: When reading existing patterns, compare them with current success/failure patterns:
-    - **If pattern worked again**: Increment Runs by 1, recalculate Success rate (e.g., [Runs: 3 | Success: 75%] → [Runs: 4 | Success: 80%])
-    - **If pattern failed**: Increment failure count, recalculate Success rate, don't increment Runs (e.g., [Runs: 3 | Success: 75%] → [Runs: 3 | Success: 60%])
-    - This tracks which patterns are consistently reliable across multiple executions
   - **UPDATE OPTIMAL PATH**: After updating scores, compare all patterns and mark the one with highest [Runs + Success%] as ⭐ OPTIMAL
     - If current run used different code pattern: Compare with existing, update optimal if better
-    - If optimal pattern failed: Check if another pattern should become optimal
+    - If optimal pattern failed: **Immediately check** if another pattern should become optimal
     - Deprecate patterns with <50% success as ⚠️ UNRELIABLE
 
 `
@@ -508,35 +541,51 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
    
 2. **SECONDARY - CONSOLIDATE EXISTING FILES**: ` + existingPath + `
    - Follow consolidation process from system prompt (detect files, read all, consolidate patterns)
+   - **Consolidation Rule**: When same pattern appears in multiple files, **keep the version with highest score** (highest [Runs + Success%])
    - **Note**: This is secondary - don't spend excessive time on consolidation
    
 3. **PRIMARY - MERGE WITH NEW LEARNINGS**: Merge consolidated learnings with new patterns from latest run (PRIMARY FOCUS)
-   - Preserve ALL previous learnings from all files
-   - Append new success/failure patterns from current execution
+   - **Pattern Matching**: Normalize both patterns to {{VARS}} format, then compare tool/function names
+   - **Same pattern** (same tool/function names): Update existing pattern (scores + code if better)
+   - **Different pattern**: Append as new pattern entry
    
-4. **UPDATE EXISTING PATTERNS**: If latest run differs from consolidated patterns, update them
+4. **UPDATE EXISTING PATTERNS**: 
+   - **If pattern worked**: Update scores (increment Runs, recalculate Success %), replace code if current code is better
+   - **If pattern failed**: Update scores (keep Runs same, recalculate Success %), keep existing code
    
 5. **WRITE CONSOLIDATED FILE**: Write all consolidated learnings (from all files + new from current execution) to: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md
 6. **CLEANUP (MANDATORY)**: After successfully writing consolidated file, delete ALL old files that were consolidated (use delete_workspace_file tool for each old file)`
 			} else {
 				return `1. **FIRST**: Use read_workspace_file tool to read the existing file: ` + existingPath + `
-2. **IF FILE EXISTS**: Merge new learnings with existing content - preserve ALL previous learnings, append new success/failure patterns`
+2. **PATTERN MATCHING**: Compare current run patterns with existing patterns:
+   - Normalize both to {{VARS}} format before comparing
+   - Same tool/function names = same pattern (update existing)
+   - Different tool/function names = different pattern (append new)
+3. **UPDATE EXISTING PATTERNS**:
+   - **If pattern matches AND worked**: Update scores (increment Runs, recalculate Success %), replace code if current code is better
+   - **If pattern matches AND failed**: Update scores (keep Runs same, recalculate Success %), keep existing code
+   - **If pattern is new**: Append as new pattern entry with [Runs: 1 | Success: 100%] if succeeded, or [Runs: 0 | Success: 0%] if failed
+4. **OUTDATED PATTERNS**: Remove patterns not used in current run ONLY if better alternative exists
+5. **PRESERVE ALL LEARNINGS**: Keep all previous learnings, only update scores and code for matching patterns`
 			}
 		}
 		return `1. **NO EXISTING LEARNINGS**: No learning file exists for this step - DO NOT try to read or search for existing learnings
-2. **CREATE NEW FILE**: Create a new learning file at ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md with all current learnings`
+2. **CREATE NEW FILE**: Create a new learning file at ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md with all current learnings
+3. **NEW PATTERNS**: All new patterns start with [Runs: 1 | Success: 100%] if succeeded, or [Runs: 0 | Success: 0%] if failed`
 	}() + `
-3. **UPDATE EXISTING PATTERNS**: If success/failure patterns in the latest run differ from existing patterns, UPDATE the existing patterns to reflect the latest run results
-4. **UPDATE PATTERN SCORES**: Compare existing patterns with current success/failure patterns:
-   - **If pattern worked again**: Increment Runs by 1, recalculate Success rate (e.g., [Runs: 2 | Success: 66.7%] → [Runs: 3 | Success: 75%])
-   - **If pattern failed**: Increment failure count, recalculate Success rate, don't increment Runs
-   - **New patterns**: Start with [Runs: 1 | Success: 100%]
-   - This tracks reliability across executions - higher Runs and Success % = more reliable
-5. **EXCLUDE WORKSPACE TOOLS**: Never include workspace management tools (read_workspace_file, write_workspace_file, etc.) in success/failure patterns unless part of the code being learned
-6. **IF FILE DOESN'T EXIST**: Create new file with current learnings (all new patterns start with [Runs: 1 | Success: 100%])
-7. **THEN**: Use update_workspace_file tool to write the MERGED content (existing + new learnings with updated scores)
-8. **SAVE WORKING CODE**: If Go code worked, save the complete code to ` + codePath + `/` + templateVars["StepTitle"] + `_code.go using write_workspace_file tool, then reference it in the learning file
-9. **CLEANUP (if multiple files consolidated)**: After successfully writing consolidated file, delete ALL old files that were consolidated` + `
+4. **EXCLUDE WORKSPACE TOOLS**: Never include workspace management tools (read_workspace_file, write_workspace_file, etc.) in success/failure patterns unless part of the code being learned
+5. **UPDATE OPTIMAL PATH**: After updating scores, immediately check if optimal path should change (if current optimal failed, find new optimal)
+6. **THEN**: Use update_workspace_file tool to write the MERGED content (existing + new learnings with updated scores)
+7. **SAVE WORKING CODE**: If Go code worked, save the complete code to ` + codePath + `/` + templateVars["StepTitle"] + `_code.go using write_workspace_file tool, then reference it in the learning file` + func() string {
+		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
+			hasMultipleFiles := strings.Contains(existingPath, ",") || strings.HasSuffix(existingPath, "/") || strings.HasSuffix(existingPath, "\\")
+			if hasMultipleFiles {
+				return `
+8. **CLEANUP**: After successfully writing consolidated file, delete ALL old files that were consolidated`
+			}
+		}
+		return ""
+	}() + `
 
 **After writing the file, output ONLY the file path** (e.g., "Updated: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md"). 
 

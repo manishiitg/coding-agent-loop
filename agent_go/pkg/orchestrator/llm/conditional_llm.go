@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	loggerv2 "mcpagent/logger/v2"
 	mcpagent "mcpagent/agent"
 	"mcpagent/events"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
 	"time"
 
@@ -57,7 +57,7 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 		if context != "" {
 			inputData["context"] = context
 		}
-		
+
 		startEvent := &events.OrchestratorAgentStartEvent{
 			BaseEventData: events.BaseEventData{
 				Timestamp: time.Now(),
@@ -96,7 +96,7 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Parse JSON output into ConditionalResponse
 	var response ConditionalResponse
 	if err := json.Unmarshal([]byte(jsonOutput), &response); err != nil {

@@ -26,10 +26,6 @@ const INITIAL_VISIBLE_EVENTS = 30; // Show first 30 events (reduced from 50 for 
 export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact = false }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
-  // Track sessions that user has manually expanded - these should never be auto-collapsed
-  const [manuallyExpandedSessions, setManuallyExpandedSessions] = useState<Set<string>>(new Set());
-  // Track previously seen session keys to detect truly new sessions
-  const previousSessionKeysRef = React.useRef<Set<string>>(new Set());
   // Performance: Limit visible events to prevent browser freeze
   const [visibleEventCount, setVisibleEventCount] = useState(INITIAL_VISIBLE_EVENTS);
   // Track last event count to detect new events
@@ -240,121 +236,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     return sessionEvents;
   }, [visibleEvents, getAgentSessionKey]);
 
-  // Get ordered list of completed sessions by their end event index
-  // OPTIMIZATION: Only process visibleEvents to reduce computation
-  const getOrderedCompletedSessions = React.useMemo(() => {
-    const sessionEndIndices = new Map<string, number>(); // sessionKey -> end event index
-    
-    // Find all orchestrator_agent_end events and their indices
-    visibleEvents.forEach((event, index) => {
-      const sessionKey = getAgentSessionKey(event);
-      if (sessionKey && event.type === 'orchestrator_agent_end') {
-        // Only include sessions that have both start and end (completed sessions)
-        if (findEventsBetweenStartEnd.has(sessionKey)) {
-          sessionEndIndices.set(sessionKey, index);
-        }
-      }
-    });
-    
-    // Sort sessions by end event index (completion time)
-    return Array.from(sessionEndIndices.entries())
-      .sort(([, indexA], [, indexB]) => indexA - indexB)
-      .map(([sessionKey]) => sessionKey);
-  }, [visibleEvents, getAgentSessionKey, findEventsBetweenStartEnd]);
-
-  // Auto-collapse logic: Keep 1-5 sessions expanded, keep newest 5 expanded when 6+ sessions (collapse n-5 older ones)
-  // This runs when new sessions complete or when session order changes
-  React.useEffect(() => {
-    if (getOrderedCompletedSessions.length === 0) {
-      return;
-    }
-
-    const allSessionKeys = Array.from(findEventsBetweenStartEnd.keys());
-    const currentSessionKeys = new Set(allSessionKeys);
-    const previousSessionKeys = previousSessionKeysRef.current;
-    
-    // Find truly new sessions (ones we haven't seen before)
-    const newSessionKeys = allSessionKeys.filter(key => !previousSessionKeys.has(key));
-    
-    // Update ref to track current session keys for next comparison
-    previousSessionKeysRef.current = currentSessionKeys;
-    
-    // Only process if there are new sessions or session order changed
-    const hasNewSessions = newSessionKeys.length > 0;
-    const orderedSessions = getOrderedCompletedSessions;
-    
-    if (hasNewSessions || orderedSessions.length > 0) {
-      const newCollapsed = new Set(collapsedSessions);
-      let hasChanges = false;
-      
-      const n = orderedSessions.length;
-      
-      if (n === 1) {
-        // Only one session: keep it expanded
-        const sessionKey = orderedSessions[0];
-        if (newCollapsed.has(sessionKey) && !manuallyExpandedSessions.has(sessionKey)) {
-          newCollapsed.delete(sessionKey);
-          hasChanges = true;
-        }
-      } else if (n <= 5) {
-        // 2-5 sessions: keep all expanded (except newest if manually collapsed)
-        // Only collapse newest if it's not manually expanded
-        const newestSession = orderedSessions[n - 1];
-        if (newestSession && !manuallyExpandedSessions.has(newestSession)) {
-          // Don't auto-collapse newest when we have <= 5 sessions
-          // But if it's already collapsed and not manually expanded, expand it
-          if (newCollapsed.has(newestSession)) {
-            newCollapsed.delete(newestSession);
-            hasChanges = true;
-          }
-        }
-        
-        // Ensure all other sessions are expanded (unless manually collapsed)
-        orderedSessions.slice(0, n - 1).forEach(sessionKey => {
-          if (newCollapsed.has(sessionKey) && !manuallyExpandedSessions.has(sessionKey)) {
-            newCollapsed.delete(sessionKey);
-            hasChanges = true;
-          }
-        });
-      } else {
-        // More than 5 sessions: keep newest 5 expanded, collapse the rest (n-5)
-        // Get the newest 5 sessions (last 5 in the ordered list)
-        const newest5Sessions = orderedSessions.slice(Math.max(0, n - 5)); // Last 5 sessions
-        const olderSessions = orderedSessions.slice(0, Math.max(0, n - 5)); // All sessions except newest 5
-        
-        // Keep the newest 5 sessions expanded (unless manually collapsed by user)
-        newest5Sessions.forEach(sessionKey => {
-          if (newCollapsed.has(sessionKey) && !manuallyExpandedSessions.has(sessionKey)) {
-            newCollapsed.delete(sessionKey);
-            hasChanges = true;
-          }
-        });
-        
-        // Collapse all older sessions (n-5) unless manually expanded
-        olderSessions.forEach(sessionKey => {
-          // Only auto-collapse if user hasn't manually expanded it
-          if (!manuallyExpandedSessions.has(sessionKey)) {
-            if (!newCollapsed.has(sessionKey)) {
-              newCollapsed.add(sessionKey);
-              hasChanges = true;
-            }
-          }
-        });
-      }
-      
-      // Only update if there are changes
-      if (hasChanges) {
-        setCollapsedSessions(newCollapsed);
-        // Note: We don't update manuallyExpandedSessions here to preserve user choices
-      }
-    }
-    
-    // Depend on getOrderedCompletedSessions to react to session completion order
-    // Depend on manuallyExpandedSessions to respect user choices
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [getOrderedCompletedSessions, findEventsBetweenStartEnd, manuallyExpandedSessions]);
-
-
   const toggleNode = React.useCallback((eventId: string) => {
     setExpandedNodes(prev => {
       const newExpanded = new Set(prev);
@@ -377,22 +258,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
       }
       return newCollapsed;
     });
-    
-    setManuallyExpandedSessions(prevManually => {
-      const newManuallyExpanded = new Set(prevManually);
-      const isCurrentlyCollapsed = collapsedSessions.has(sessionKey);
-      
-      if (isCurrentlyCollapsed) {
-        // User is expanding - mark as manually expanded
-        newManuallyExpanded.add(sessionKey);
-      } else {
-        // User is collapsing - remove from manually expanded (user wants it collapsed)
-        newManuallyExpanded.delete(sessionKey);
-      }
-      
-      return newManuallyExpanded;
-    });
-  }, [collapsedSessions]);
+  }, []);
 
   // Memoized event node renderer to prevent unnecessary re-renders
   const renderEventNode = React.useCallback((node: EventNode): React.ReactNode => {

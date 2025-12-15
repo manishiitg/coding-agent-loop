@@ -74,7 +74,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     return null
   }, [activeWorkflowPreset])
 
-  // Listen for todo_steps_extracted events to auto-refresh the canvas
+  // Listen for todo_steps_extracted events to auto-refresh the canvas (with granular data from backend)
   useEffect(() => {
     if (events.length === 0) return
     

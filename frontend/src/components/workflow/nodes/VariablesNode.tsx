@@ -2,7 +2,7 @@ import { memo, useCallback, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import { Variable, Layers, CheckCircle, Circle, Play } from 'lucide-react'
 import type { VariablesManifest, VariableGroup } from '../../../services/api-types'
-import { useWorkflowStore } from '../../../stores/useWorkflowStore'
+import { useWorkflowStore, useSelectedGroupId } from '../../../stores/useWorkflowStore'
 
 export interface VariablesNodeData extends Record<string, unknown> {
   manifest: VariablesManifest | null
@@ -42,6 +42,7 @@ const hasMultipleGroups = (manifest: VariablesManifest | null): boolean => {
 export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
   const { manifest, onOpenSidebar, isLoading } = data
   const currentRunningGroupId = useWorkflowStore(state => state.currentRunningGroupId)
+  const selectedGroupId = useSelectedGroupId()
   
   const variableCount = manifest?.variables?.length || 0
   const totalGroups = manifest?.groups?.length || (variableCount > 0 ? 1 : 0)
@@ -147,10 +148,17 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
             : enabledGroups
           return allGroups.map((group) => {
             const isRunning = currentRunningGroupId === group.group_id
+            const isSelected = selectedGroupId === group.group_id
             return (
             <div 
               key={group.group_id} 
-              className={`space-y-1.5 ${isRunning ? 'bg-blue-50 dark:bg-blue-900/30 rounded p-1.5 border border-blue-200 dark:border-blue-700' : ''}`}
+              className={`space-y-1.5 ${
+                isRunning 
+                  ? 'bg-blue-50 dark:bg-blue-900/30 rounded p-1.5 border border-blue-200 dark:border-blue-700' 
+                  : isSelected
+                  ? 'bg-purple-50 dark:bg-purple-900/30 rounded p-1.5 border-2 border-purple-300 dark:border-purple-600'
+                  : ''
+              }`}
             >
               {/* Group header */}
               <div className="flex items-center gap-1.5 text-xs">
@@ -161,12 +169,23 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
                 ) : (
                   <Circle className="w-3 h-3 text-gray-400 dark:text-gray-500" />
                 )}
-                <span className={`font-mono font-semibold ${isRunning ? 'text-blue-700 dark:text-blue-300' : 'text-purple-600 dark:text-purple-400'}`}>
+                <span className={`font-mono font-semibold ${
+                  isRunning 
+                    ? 'text-blue-700 dark:text-blue-300' 
+                    : isSelected
+                    ? 'text-purple-700 dark:text-purple-300'
+                    : 'text-purple-600 dark:text-purple-400'
+                }`}>
                   {group.group_id.toUpperCase()}
                 </span>
                 {isRunning && (
                   <span className="ml-auto text-[10px] text-blue-600 dark:text-blue-400 font-medium">
                     Running...
+                  </span>
+                )}
+                {!isRunning && isSelected && (
+                  <span className="ml-auto text-[10px] text-purple-600 dark:text-purple-400 font-medium">
+                    Selected
                   </span>
                 )}
               </div>
@@ -207,6 +226,7 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
           <div className="flex flex-wrap gap-1.5">
             {manifest.groups.slice(0, 6).map((group) => {
               const isRunning = currentRunningGroupId === group.group_id
+              const isSelected = selectedGroupId === group.group_id
               return (
               <div 
                 key={group.group_id}
@@ -214,11 +234,13 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
                   flex items-center gap-1 px-1.5 py-0.5 rounded text-xs
                   ${isRunning
                     ? 'bg-blue-200 dark:bg-blue-700/50 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-600'
+                    : isSelected
+                    ? 'bg-purple-300 dark:bg-purple-700/70 text-purple-800 dark:text-purple-200 border-2 border-purple-400 dark:border-purple-500'
                     : group.enabled 
                     ? 'bg-purple-200 dark:bg-purple-700/50 text-purple-700 dark:text-purple-300' 
                     : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 opacity-60'}
                 `}
-                title={isRunning ? 'Currently Running' : group.enabled ? 'Enabled' : 'Disabled'}
+                title={isRunning ? 'Currently Running' : isSelected ? 'Selected in Toolbar' : group.enabled ? 'Enabled' : 'Disabled'}
               >
                 {isRunning ? (
                   <Play className="w-3 h-3 animate-pulse" />

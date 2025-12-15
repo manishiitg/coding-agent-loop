@@ -159,6 +159,16 @@ func (bo *BaseOrchestrator) GetTokenThresholdPercent() float64 {
 	return bo.tokenThresholdPercent
 }
 
+// GetSummarizeOnFixedTokenThreshold returns whether fixed token-based summarization is enabled
+func (bo *BaseOrchestrator) GetSummarizeOnFixedTokenThreshold() bool {
+	return bo.summarizeOnFixedTokenThreshold
+}
+
+// GetFixedTokenThreshold returns the fixed token threshold for summarization
+func (bo *BaseOrchestrator) GetFixedTokenThreshold() int {
+	return bo.fixedTokenThreshold
+}
+
 // GetSummaryKeepLastMessages returns the number of recent messages to keep when summarizing
 func (bo *BaseOrchestrator) GetSummaryKeepLastMessages() int {
 	return bo.summaryKeepLastMessages

@@ -134,6 +134,8 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
                     }
                     if (eventWithTokens.total_tokens !== undefined && eventWithTokens.total_tokens > 0) {
                       const contextUsagePercent = event.metadata?.context_usage_percent as number | undefined
+                      const fixedThresholdPercent = event.metadata?.fixed_threshold_percent as number | undefined
+                      const fixedThresholdTokens = event.metadata?.fixed_threshold_tokens as number | undefined
                       return (
                         <>
                           {' • Tokens: '}
@@ -154,6 +156,11 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
                           {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
                             <span className={contextUsagePercent > 80 ? 'text-red-600 dark:text-red-400' : contextUsagePercent > 50 ? 'text-yellow-600 dark:text-yellow-400' : 'text-green-600 dark:text-green-400'}>
                               {' • Context: '}{contextUsagePercent.toFixed(1)}%
+                              {fixedThresholdPercent !== undefined && fixedThresholdPercent > 0 && fixedThresholdTokens !== undefined && (
+                                <span className="text-blue-600 dark:text-blue-400">
+                                  {' / '}{(fixedThresholdTokens / 1000).toFixed(0)}k ({fixedThresholdPercent.toFixed(1)}%)
+                                </span>
+                              )}
                             </span>
                           )}
                         </>

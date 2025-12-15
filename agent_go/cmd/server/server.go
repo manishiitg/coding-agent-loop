@@ -248,10 +248,12 @@ type QueryRequest struct {
 	// Execution options from frontend (for workflow execution phase)
 	ExecutionOptions *ExecutionOptions `json:"execution_options,omitempty"`
 	// Context summarization configuration
-	EnableContextSummarization bool    `json:"enable_context_summarization,omitempty"` // Enable context summarization feature
-	SummarizeOnTokenThreshold  bool    `json:"summarize_on_token_threshold,omitempty"` // Enable token-based summarization trigger
-	TokenThresholdPercent      float64 `json:"token_threshold_percent,omitempty"`      // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
-	SummaryKeepLastMessages    int     `json:"summary_keep_last_messages,omitempty"`   // Number of recent messages to keep when summarizing (default: 8)
+	EnableContextSummarization     bool    `json:"enable_context_summarization,omitempty"`       // Enable context summarization feature
+	SummarizeOnTokenThreshold      bool    `json:"summarize_on_token_threshold,omitempty"`       // Enable token-based summarization trigger (percentage-based)
+	TokenThresholdPercent          float64 `json:"token_threshold_percent,omitempty"`            // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
+	SummarizeOnFixedTokenThreshold bool    `json:"summarize_on_fixed_token_threshold,omitempty"` // Enable fixed token-based summarization trigger
+	FixedTokenThreshold            int     `json:"fixed_token_threshold,omitempty"`              // Fixed token threshold to trigger summarization (e.g., 200000 = 200k tokens)
+	SummaryKeepLastMessages        int     `json:"summary_keep_last_messages,omitempty"`         // Number of recent messages to keep when summarizing (default: 8)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -1631,6 +1633,29 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				// Default to 80% (0.8)
 				return 0.8
+			}(),
+			SummarizeOnFixedTokenThreshold: func() bool {
+				if req.SummarizeOnFixedTokenThreshold {
+					return true
+				}
+				// Check environment variable
+				if envVal := os.Getenv("SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD"); envVal == "true" {
+					return true
+				}
+				return false
+			}(),
+			FixedTokenThreshold: func() int {
+				// Request takes highest priority
+				if req.FixedTokenThreshold > 0 {
+					return req.FixedTokenThreshold
+				}
+				// Check environment variable
+				if envVal := os.Getenv("FIXED_TOKEN_THRESHOLD"); envVal != "" {
+					if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
+						return threshold
+					}
+				}
+				return 0 // 0 means disabled
 			}(),
 			SummaryKeepLastMessages: func() int {
 				if req.SummaryKeepLastMessages > 0 {

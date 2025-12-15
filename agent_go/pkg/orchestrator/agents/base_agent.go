@@ -127,6 +127,8 @@ func NewBaseAgent(
 	enableContextSummarization bool, // Context summarization configuration
 	summarizeOnTokenThreshold bool, // Enable token-based summarization trigger
 	tokenThresholdPercent float64, // Percentage of context window to trigger summarization
+	summarizeOnFixedTokenThreshold bool, // Enable fixed token-based summarization trigger
+	fixedTokenThreshold int, // Fixed token threshold to trigger summarization
 	summaryKeepLastMessages int, // Number of recent messages to keep when summarizing
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
@@ -178,6 +180,9 @@ func NewBaseAgent(
 		agentOptions = append(agentOptions, mcpagent.WithContextSummarization(true))
 		if summarizeOnTokenThreshold {
 			agentOptions = append(agentOptions, mcpagent.WithSummarizeOnTokenThreshold(true, tokenThresholdPercent))
+		}
+		if summarizeOnFixedTokenThreshold && fixedTokenThreshold > 0 {
+			agentOptions = append(agentOptions, mcpagent.WithSummarizeOnFixedTokenThreshold(true, fixedTokenThreshold))
 		}
 		if summaryKeepLastMessages > 0 {
 			agentOptions = append(agentOptions, mcpagent.WithSummaryKeepLastMessages(summaryKeepLastMessages))

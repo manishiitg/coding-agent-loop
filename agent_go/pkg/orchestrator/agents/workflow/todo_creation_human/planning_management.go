@@ -274,14 +274,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 		return nil, nil, err
 	}
 
-	// Generate system prompt based on mode
-	var systemPrompt string
+	// Always use UPDATE mode prompt (handles both CREATE and UPDATE scenarios)
+	systemPrompt := planningSystemPromptProcessorForUpdate(planningTemplateVars)
 	if isUpdateMode {
-		systemPrompt = planningSystemPromptProcessorForUpdate(planningTemplateVars)
 		hcpo.GetLogger().Info(fmt.Sprintf("🔄 UPDATE mode: Using update system prompt"))
 	} else {
-		systemPrompt = planningSystemPromptProcessorForCreate(planningTemplateVars)
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 CREATE mode: Using create system prompt"))
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 CREATE mode: Using update system prompt (unified prompt)"))
 	}
 
 	// Create input processor that returns the user message
@@ -355,17 +353,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 
 // createPlanningAgent creates a planning agent for the current iteration
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
-	// Set folder guard paths: allow reads from learnings and planning, writes to both planning and learnings (for folder syncing)
+	// Set folder guard paths: allow reads from learnings, planning, and runs (for execution logs), writes to both planning and learnings (for folder syncing)
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	planningPath := fmt.Sprintf("%s/planning", baseWorkspacePath)
 	learningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
+	runsPath := fmt.Sprintf("%s/runs", baseWorkspacePath)
 
-	// Read paths: learnings (for reading existing folders), planning is automatically readable since it's in writePaths
-	readPaths := []string{learningsPath}
+	// Read paths: learnings (for reading existing folders), runs (for execution logs), planning is automatically readable since it's in writePaths
+	readPaths := []string{learningsPath, runsPath}
 	// Write paths: planning (for plan.json) and learnings (for renaming folders when step numbering changes)
 	writePaths := []string{planningPath, learningsPath}
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (write access to learnings/ for folder syncing)", readPaths, writePaths))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (read access to runs/ for execution logs, write access to learnings/ for folder syncing)", readPaths, writePaths))
 
 	// Determine LLM config: Priority: presetPlanningLLM > presetLearningLLM > orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig

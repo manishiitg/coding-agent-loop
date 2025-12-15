@@ -71,6 +71,11 @@ const statusIcons: Record<string, ReactElement | null> = {
 
 export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
   const { id, title, decision_evaluation_question, decision_step, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun } = data
+  
+  // Extract description and success criteria from step and decision_step
+  const decisionDescription = step?.description
+  const innerStepDescription = decision_step?.description
+  const innerStepSuccessCriteria = decision_step?.success_criteria
 
   // Get preset for config badges
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -367,7 +372,7 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
           ${status === 'executing' || status === 'evaluating' ? 'animate-pulse' : ''}
         `}
         style={{
-          minHeight: '120px',
+          minHeight: decision_step || decisionDescription ? '180px' : '120px',
           width: '300px'
         }}
       >
@@ -380,18 +385,43 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
         />
 
         {/* Content */}
-        <div className="flex flex-col items-center justify-center px-6 py-5 text-center min-h-[120px]">
-          <div className="flex items-center gap-1.5 mb-2">
+        <div className="flex flex-col px-4 py-4">
+          <div className="flex items-center gap-1.5 mb-2 justify-center">
             {statusIcons[status]}
           </div>
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white leading-tight">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white leading-tight text-center mb-1.5">
             {title || `Decision ${stepIndex + 1}`}
           </h3>
-          {/* Show inner step title if available */}
-          {decision_step?.title && (
-            <p className="text-[10px] text-indigo-600 dark:text-indigo-400 mt-1 font-medium">
-              Executes: {decision_step.title}
+          
+          {/* Decision step description */}
+          {decisionDescription && (
+            <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed mb-2 text-center px-1">
+              {decisionDescription}
             </p>
+          )}
+          
+          {/* Inner step info - always show if decision_step exists */}
+          {decision_step && (
+            <div className="mt-1.5 p-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/50">
+              <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold mb-1">
+                Executes: {decision_step.title || 'Untitled Step'}
+              </p>
+              {/* Inner step description */}
+              {innerStepDescription && (
+                <p className="text-[10px] text-indigo-600 dark:text-indigo-400 leading-relaxed mt-1">
+                  {innerStepDescription}
+                </p>
+              )}
+              {/* Inner step success criteria */}
+              {innerStepSuccessCriteria && (
+                <div className="flex gap-1.5 mt-1.5 p-1.5 rounded bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50">
+                  <CheckCircle className="w-3 h-3 text-green-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-green-700 dark:text-green-300 leading-relaxed">
+                    {innerStepSuccessCriteria}
+                  </p>
+                </div>
+              )}
+            </div>
           )}
         </div>
 

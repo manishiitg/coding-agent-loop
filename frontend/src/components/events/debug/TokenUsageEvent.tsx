@@ -61,6 +61,22 @@ export const TokenUsageEventDisplay: React.FC<TokenUsageEventDisplayProps> = ({ 
   const contextUsagePercent = isTotalEvent
     ? (event.generation_info?.context_usage_percent as number ?? event.context_usage_percent ?? 0)
     : (event.context_usage_percent ?? 0)
+  const fixedThresholdPercent = isTotalEvent
+    ? (event.generation_info?.fixed_threshold_percent as number ?? undefined)
+    : undefined
+  const fixedThresholdTokens = isTotalEvent
+    ? (event.generation_info?.fixed_threshold_tokens as number ?? undefined)
+    : undefined
+
+  // Helper function to format token count (e.g., 1000000 -> "1M", 200000 -> "200k")
+  const formatTokenCount = (tokens: number): string => {
+    if (tokens >= 1_000_000) {
+      return `${(tokens / 1_000_000).toFixed(1)}M`.replace('.0', '')
+    } else if (tokens >= 1_000) {
+      return `${(tokens / 1_000).toFixed(0)}k`
+    }
+    return tokens.toString()
+  }
 
   // Theme colors - use purple for total events, blue for per-call events
   const bgColor = isTotalEvent 
@@ -146,10 +162,19 @@ export const TokenUsageEventDisplay: React.FC<TokenUsageEventDisplayProps> = ({ 
           <span className={textSecondaryColor}>
             <span className="font-semibold">Context:</span>
             <span className="ml-1">{contextWindowUsage.toLocaleString()}/{modelContextWindow.toLocaleString()}</span>
-            {contextUsagePercent > 0 && (
-              <span className={contextUsagePercent > 80 ? 'text-red-600 dark:text-red-400' : contextUsagePercent > 50 ? 'text-yellow-600 dark:text-yellow-400' : 'ml-1'}>
-                {' '}({contextUsagePercent.toFixed(1)}%)
-              </span>
+            {(contextUsagePercent > 0 || (fixedThresholdPercent !== undefined && fixedThresholdPercent > 0)) && (
+              <>
+                {contextUsagePercent > 0 && (
+                  <span className={contextUsagePercent > 80 ? 'text-red-600 dark:text-red-400' : contextUsagePercent > 50 ? 'text-yellow-600 dark:text-yellow-400' : 'ml-1'}>
+                    {' '}({contextUsagePercent.toFixed(1)}% ({formatTokenCount(modelContextWindow)}))
+                  </span>
+                )}
+                {fixedThresholdPercent !== undefined && fixedThresholdPercent > 0 && fixedThresholdTokens !== undefined && (
+                  <span className="text-blue-600 dark:text-blue-400 ml-1">
+                    Fixed: {fixedThresholdPercent.toFixed(1)}% ({formatTokenCount(fixedThresholdTokens)})
+                  </span>
+                )}
+              </>
             )}
           </span>
         )}

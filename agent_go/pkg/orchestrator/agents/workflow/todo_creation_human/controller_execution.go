@@ -834,9 +834,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 				// Works for both:
 				// 1. Retry attempts within the same loop iteration (retryAttempt > 1)
 				// 2. New loop iterations after a previous iteration failed validation (loopIterationCount > 1 for loop steps)
+				// 3. Steps routed from decision step with false result (similar to validation failure - skip tempLLM)
 				// Note: For tempLLM logic, only FAILED status counts as failure - COMPLETED/PARTIAL/INCOMPLETE are considered success
 				isRetryAfterValidationFailure := isValidationFailure(previousValidationResponse) &&
 					(retryAttempt > 1 || (step.HasLoop && loopIterationCount > 1))
+				// Also treat decision step false result as validation failure (skip tempLLM)
+				isDecisionStepFalse := decisionContext != nil && !decisionContext.DecisionResult
+				if isDecisionStepFalse {
+					isRetryAfterValidationFailure = true
+					hcpo.GetLogger().Info(fmt.Sprintf("🔄 Step routed from decision step with FALSE result - will skip tempLLM (treating as validation failure)"))
+				}
 				if isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure {
 					hcpo.GetLogger().Info(fmt.Sprintf("🔄 Validation failed on previous attempt - will use original LLM instead of temp override (fallback enabled)"))
 				}
@@ -1099,6 +1106,29 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 						hcpo.GetLogger().Info(fmt.Sprintf("🔍 Checking loop condition for step %d (iteration %d): %s", stepIndex+1, loopIterationCount, step.LoopCondition))
 					} else {
 						validationTemplateVars["LoopCondition"] = ""
+					}
+
+					// Add decision context if this step was routed from a decision step
+					if decisionContext != nil {
+						decisionReasoning := fmt.Sprintf(
+							"## 🎯 Decision Context\n\n"+
+								"This step was routed from decision step **%d: %s**.\n\n"+
+								"**Decision Result**: %v\n"+
+								"**Decision Reasoning**: %s\n\n"+
+								"## 📋 Decision Step Execution Output\n\n"+
+								"The following is the execution output from the decision step's inner step that was evaluated:\n\n"+
+								"```\n%s\n```\n\n"+
+								"Use this context to understand why this step is being executed and what conditions led to routing here.",
+							decisionContext.DecisionStepIndex+1, // Convert to 1-based for display
+							decisionContext.DecisionStepTitle,
+							decisionContext.DecisionResult,
+							decisionContext.DecisionReasoning,
+							decisionContext.DecisionExecutionResult,
+						)
+						validationTemplateVars["DecisionReasoning"] = decisionReasoning
+						hcpo.GetLogger().Info(fmt.Sprintf("📝 Added decision context to validation template variables for step %d (routed from decision step %d)", stepIndex+1, decisionContext.DecisionStepIndex+1))
+					} else {
+						validationTemplateVars["DecisionReasoning"] = ""
 					}
 
 					// Prerequisite detection is handled by execution agent tool (detect_prerequisite_failure)
@@ -2097,16 +2127,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 				if targetStepIndex >= 0 {
 					hcpo.GetLogger().Info(fmt.Sprintf("🔗 Jumping to step %d (ID: %s) as specified by next_step_id", targetStepIndex+1, nextStepID))
 
-					// Store decision context for the target step
-					// This will be passed to executeSingleStep when the target step executes
-					decisionContextMap[targetStepIndex] = &DecisionContext{
-						DecisionStepIndex:       i,
-						DecisionStepTitle:       step.Title,
-						DecisionResult:          decisionResult,
-						DecisionReasoning:       step.DecisionResponse.Reasoning,
-						DecisionExecutionResult: executionResult,
+					// Store decision context for the target step ONLY when decision result is false
+					// When decision is true, the step executes normally without decision context
+					// When decision is false, we pass context to help understand why this step is being executed
+					if !decisionResult {
+						decisionContextMap[targetStepIndex] = &DecisionContext{
+							DecisionStepIndex:       i,
+							DecisionStepTitle:       step.Title,
+							DecisionResult:          decisionResult,
+							DecisionReasoning:       step.DecisionResponse.Reasoning,
+							DecisionExecutionResult: executionResult,
+						}
+						hcpo.GetLogger().Info(fmt.Sprintf("💾 Stored decision context for step %d (from decision step %d: %s) - decision was FALSE", targetStepIndex+1, i+1, step.Title))
+					} else {
+						hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Skipping decision context for step %d - decision was TRUE (normal execution path)", targetStepIndex+1))
 					}
-					hcpo.GetLogger().Info(fmt.Sprintf("💾 Stored decision context for step %d (from decision step %d: %s)", targetStepIndex+1, i+1, step.Title))
 
 					// When decision step routes back to a previous step, we need to:
 					// 1. Remove target step AND all subsequent steps from completed list (they all depend on target step's output)

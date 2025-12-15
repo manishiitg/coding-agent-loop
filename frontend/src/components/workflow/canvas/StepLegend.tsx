@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback } from 'react'
-import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Repeat, Zap } from 'lucide-react'
+import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Repeat, Zap, Lock } from 'lucide-react'
 import type { WorkflowNode, StepNodeData, ConditionalNodeData, LoopNodeData, DecisionNodeData } from '../hooks/usePlanToFlow'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
@@ -244,6 +244,9 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                 ? stepCodeExecSetting === true  // Step has explicit setting
                 : presetUseCodeExecutionMode     // Fall back to preset default
 
+              // Check if learnings are locked (same logic as StepNode)
+              const lockLearnings = step.agent_configs?.lock_learnings === true && step.agent_configs?.disable_learning !== true
+
               // Calculate indentation for branch steps (1rem = 16px, so 0.75rem = 12px per level)
               const indentRem = depth * 0.75 // 0.75rem (12px) per depth level
 
@@ -304,6 +307,11 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                         <span>{step.title || `Step ${stepIndex + 1}`}</span>
                         {useCodeExecutionMode && (
                           <Code className="w-3 h-3 text-blue-500 flex-shrink-0" />
+                        )}
+                        {lockLearnings && (
+                          <span title="Learnings are locked" className="flex-shrink-0">
+                            <Lock className="w-3 h-3 text-purple-500" />
+                          </span>
                         )}
                       </div>
                     </div>

@@ -16,131 +16,16 @@ export interface UsePlanDataReturn {
   plan: PlanningResponse | null
   loading: boolean
   error: string | null
-  changes: PlanChanges | null  // Latest detected changes
-  loadPlan: () => Promise<PlanChanges | null>  // Returns detected changes
+  changes: PlanChanges | null  // Latest detected changes (set via setChanges from granular events)
+  loadPlan: () => Promise<void>  // Loads plan without comparison
   savePlan: (plan: PlanningResponse) => Promise<void>
   saveStepConfig: (stepId: string, agentConfigs: AgentConfigs | undefined) => Promise<void>
   updateStep: (stepIndex: number, updates: Partial<PlanStep>) => Promise<void>
   deleteStep: (stepIndex: number) => Promise<void>
   addStep: (step: PlanStep, afterIndex?: number) => Promise<void>
-  refresh: () => Promise<PlanChanges | null>  // Returns detected changes (alias for loadPlan)
+  refresh: () => Promise<void>  // Refreshes plan without comparison (alias for loadPlan)
   clearChanges: () => void  // Clear the changes state
   setChanges: (changes: PlanChanges | null) => void  // Set changes directly (for granular events)
-}
-
-/**
- * Compare two plans to detect changes (added, updated, deleted steps)
- */
-function detectPlanChanges(
-  oldPlan: PlanningResponse | null,
-  newPlan: PlanningResponse | null
-): PlanChanges {
-  const changes: PlanChanges = {
-    added: [],
-    updated: [],
-    deleted: [],
-    hasChanges: false
-  }
-
-  if (!newPlan?.steps) {
-    // If new plan has no steps but old plan did, all are deleted
-    if (oldPlan?.steps) {
-      changes.deleted = collectAllStepIds(oldPlan.steps)
-      changes.hasChanges = changes.deleted.length > 0
-    }
-    return changes
-  }
-
-  if (!oldPlan?.steps) {
-    // If old plan had no steps, all new steps are added
-    changes.added = collectAllStepIds(newPlan.steps)
-    changes.hasChanges = changes.added.length > 0
-    return changes
-  }
-
-  // Create maps of step IDs to step data for comparison
-  const oldStepsMap = createStepMap(oldPlan.steps)
-  const newStepsMap = createStepMap(newPlan.steps)
-
-  // Find added and updated steps
-  for (const [id, newStep] of newStepsMap) {
-    const oldStep = oldStepsMap.get(id)
-    if (!oldStep) {
-      changes.added.push(id)
-    } else if (hasStepChanged(oldStep, newStep)) {
-      changes.updated.push(id)
-    }
-  }
-
-  // Find deleted steps
-  for (const id of oldStepsMap.keys()) {
-    if (!newStepsMap.has(id)) {
-      changes.deleted.push(id)
-    }
-  }
-
-  changes.hasChanges = changes.added.length > 0 || 
-                       changes.updated.length > 0 || 
-                       changes.deleted.length > 0
-
-  return changes
-}
-
-/**
- * Collect all step IDs from a plan (including nested branch steps)
- */
-function collectAllStepIds(steps: PlanStep[]): string[] {
-  const ids: string[] = []
-  
-  const collect = (stepList: PlanStep[]) => {
-    for (const step of stepList) {
-      if (step.id) ids.push(step.id)
-      if (step.if_true_steps) collect(step.if_true_steps)
-      if (step.if_false_steps) collect(step.if_false_steps)
-    }
-  }
-  
-  collect(steps)
-  return ids
-}
-
-/**
- * Create a map of step ID -> step data (including nested steps)
- */
-function createStepMap(steps: PlanStep[]): Map<string, PlanStep> {
-  const map = new Map<string, PlanStep>()
-  
-  const addToMap = (stepList: PlanStep[]) => {
-    for (const step of stepList) {
-      if (step.id) map.set(step.id, step)
-      if (step.if_true_steps) addToMap(step.if_true_steps)
-      if (step.if_false_steps) addToMap(step.if_false_steps)
-    }
-  }
-  
-  addToMap(steps)
-  return map
-}
-
-/**
- * Check if a step has been meaningfully changed
- */
-function hasStepChanged(oldStep: PlanStep, newStep: PlanStep): boolean {
-  // Compare key fields that would indicate a change
-  return (
-    oldStep.title !== newStep.title ||
-    oldStep.description !== newStep.description ||
-    oldStep.success_criteria !== newStep.success_criteria ||
-    oldStep.has_condition !== newStep.has_condition ||
-    oldStep.has_loop !== newStep.has_loop ||
-    oldStep.loop_condition !== newStep.loop_condition ||
-    oldStep.max_iterations !== newStep.max_iterations ||
-    oldStep.condition_question !== newStep.condition_question ||
-    JSON.stringify(oldStep.context_dependencies) !== JSON.stringify(newStep.context_dependencies) ||
-    JSON.stringify(oldStep.context_output) !== JSON.stringify(newStep.context_output) ||
-    // Also detect agent_configs changes (step_config.json)
-    JSON.stringify(oldStep.agent_configs) !== JSON.stringify(newStep.agent_configs)
-  )
 }
 
 /**
@@ -221,12 +106,8 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
   const [error, setError] = useState<string | null>(null)
   const [changes, setChanges] = useState<PlanChanges | null>(null)
   
-  // Keep track of previous plan for change detection
-  const previousPlanRef = useRef<PlanningResponse | null>(null)
-  // Track workspace path to detect workflow switches (don't animate on switch)
+  // Track workspace path to detect workflow switches
   const currentWorkspaceRef = useRef<string | null>(null)
-  // Track if this is the initial load for current workspace
-  const isInitialLoadRef = useRef<boolean>(true)
 
   // Construct the plan file path
   const getPlanFilePath = useCallback(() => {
@@ -240,24 +121,22 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     return `${workspacePath}/planning/step_config.json`
   }, [workspacePath])
 
-  // Load plan from workspace (returns detected changes for refresh scenarios)
-  const loadPlan = useCallback(async (): Promise<PlanChanges | null> => {
+  // Load plan from workspace (no comparison - changes come from granular events)
+  const loadPlan = useCallback(async (): Promise<void> => {
     const planPath = getPlanFilePath()
     const stepConfigPath = getStepConfigFilePath()
     if (!planPath) {
       setError('No workspace path provided')
-      return null
+      return
     }
 
     console.log('[WorkflowPlanUpdate] loadPlan called', { planPath, stepConfigPath, workspacePath })
 
-    // Check if workspace changed - if so, this is an initial load (no animations)
+    // Check if workspace changed
     const isWorkspaceChange = currentWorkspaceRef.current !== workspacePath
     if (isWorkspaceChange) {
       currentWorkspaceRef.current = workspacePath
-      isInitialLoadRef.current = true
-      previousPlanRef.current = null
-      console.log('[WorkflowPlanUpdate] Workspace changed, resetting for initial load')
+      console.log('[WorkflowPlanUpdate] Workspace changed')
     }
 
     setLoading(true)
@@ -331,121 +210,30 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
           }
         }
         
-        // Only detect changes if NOT initial load (don't animate on workflow switch/first load)
-        if (isInitialLoadRef.current) {
-          console.log('[WorkflowPlanUpdate] Initial load - skipping change detection, setting plan')
-          setPlan(planData)
-          previousPlanRef.current = planData
-          isInitialLoadRef.current = false
-          return null
-        }
-        
-        // Detect changes between previous and new plan
-        console.log('[WorkflowPlanUpdate] Detecting changes between previous and new plan')
-        console.log('[WorkflowPlanUpdate] Previous plan:', {
-          hasPrevious: !!previousPlanRef.current,
-          previousStepCount: previousPlanRef.current?.steps?.length || 0,
-          previousStepIds: previousPlanRef.current?.steps?.map(s => s.id) || []
-        })
-        console.log('[WorkflowPlanUpdate] New plan:', {
-          hasNew: !!planData,
-          newStepCount: planData.steps?.length || 0,
-          newStepIds: planData.steps?.map(s => s.id) || []
-        })
-        
-        // Compare specific step that was updated (if we can identify it)
-        if (previousPlanRef.current && planData.steps) {
-          const updatedStepId = 'cleanup-data-and-delete-sensitive-data-from-workspace-files-yob6og'
-          const prevStep = previousPlanRef.current.steps.find(s => s.id === updatedStepId)
-          const newStep = planData.steps.find(s => s.id === updatedStepId)
-          if (prevStep && newStep) {
-            console.log('[WorkflowPlanUpdate] Comparing updated step:', {
-              stepId: updatedStepId,
-              prevSuccessCriteria: prevStep.success_criteria,
-              newSuccessCriteria: newStep.success_criteria,
-              successCriteriaChanged: prevStep.success_criteria !== newStep.success_criteria,
-              prevStepStr: JSON.stringify(prevStep),
-              newStepStr: JSON.stringify(newStep),
-              stepChanged: JSON.stringify(prevStep) !== JSON.stringify(newStep)
-            })
-          }
-        }
-        
-        const detectedChanges = detectPlanChanges(previousPlanRef.current, planData)
-        console.log('[WorkflowPlanUpdate] Change detection result:', {
-          hasChanges: detectedChanges.hasChanges,
-          added: detectedChanges.added?.length || 0,
-          updated: detectedChanges.updated?.length || 0,
-          deleted: detectedChanges.deleted?.length || 0,
-          addedIds: detectedChanges.added,
-          updatedIds: detectedChanges.updated,
-          deletedIds: detectedChanges.deleted
-        })
-        
-        // Update state
+        // Update state (no comparison - changes come from granular events via setChanges)
         console.log('[WorkflowPlanUpdate] Updating plan state')
         setPlan(planData)
-        previousPlanRef.current = planData
-        
-        if (detectedChanges.hasChanges) {
-          setChanges(detectedChanges)
-          console.log('[WorkflowPlanUpdate] Plan changes detected and set:', detectedChanges)
-          return detectedChanges
-        } else {
-          console.log('[WorkflowPlanUpdate] No changes detected, plan is the same')
-          // Even if no changes detected, return null to indicate refresh completed
-          return null
-        }
       } else {
         // Plan doesn't exist yet - that's okay
-        if (isInitialLoadRef.current) {
-          setPlan(null)
-          previousPlanRef.current = null
-          isInitialLoadRef.current = false
-          console.log('[usePlanData] Initial load - no plan found at:', planPath)
-          return null
-        }
-        
-        const detectedChanges = detectPlanChanges(previousPlanRef.current, null)
         setPlan(null)
-        previousPlanRef.current = null
         console.log('[usePlanData] No plan found at:', planPath)
-        
-        if (detectedChanges.hasChanges) {
-          setChanges(detectedChanges)
-          return detectedChanges
-        }
       }
-      return null
+      return
     } catch (err) {
       // Check if it's a 404 (plan doesn't exist)
       if (err && typeof err === 'object' && 'response' in err) {
         const axiosError = err as { response?: { status?: number } }
         if (axiosError.response?.status === 404) {
           // Plan doesn't exist yet - not an error
-          if (isInitialLoadRef.current) {
-            setPlan(null)
-            previousPlanRef.current = null
-            isInitialLoadRef.current = false
-            console.log('[usePlanData] Initial load - plan not found (404):', planPath)
-            return null
-          }
-          
-          const detectedChanges = detectPlanChanges(previousPlanRef.current, null)
           setPlan(null)
-          previousPlanRef.current = null
           console.log('[usePlanData] Plan not found (404):', planPath)
-          if (detectedChanges.hasChanges) {
-            setChanges(detectedChanges)
-            return detectedChanges
-          }
-          return null
+          return
         }
       }
       
       console.error('[usePlanData] Failed to load plan:', err)
       setError(err instanceof Error ? err.message : 'Failed to load plan')
-      return null
+      return
     } finally {
       setLoading(false)
     }
@@ -546,6 +334,23 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     }
   }, [getStepConfigFilePath])
 
+  // Helper function to check if updates contain plan-related fields (excluding agent_configs)
+  const hasPlanRelatedFields = useCallback((updates: Partial<PlanStep>): boolean => {
+    // List of all plan-related fields (everything except agent_configs)
+    const planFields = [
+      'id', 'title', 'description', 'success_criteria', 'context_dependencies', 'context_output',
+      'has_loop', 'loop_condition', 'max_iterations', 'loop_description',
+      'has_condition', 'condition_question', 'condition_context',
+      'if_true_steps', 'if_false_steps', 'if_true_next_step_id', 'if_false_next_step_id',
+      'condition_result', 'condition_reason',
+      'has_decision_step', 'decision_step', 'decision_evaluation_question',
+      'decision_result', 'decision_reason'
+    ]
+    
+    // Check if any plan-related field is in updates
+    return planFields.some(field => field in updates)
+  }, [])
+
   // Update a single step
   const updateStep = useCallback(async (stepIndex: number, updates: Partial<PlanStep>) => {
     if (!plan) {
@@ -563,19 +368,21 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
       ...updates
     }
 
-    const updatedPlan: PlanningResponse = {
-      ...plan,
-      steps: updatedSteps
+    // Only save plan.json if updates contain plan-related fields (not just agent_configs)
+    const shouldSavePlan = hasPlanRelatedFields(updates)
+    if (shouldSavePlan) {
+      const updatedPlan: PlanningResponse = {
+        ...plan,
+        steps: updatedSteps
+      }
+      await savePlan(updatedPlan)
     }
 
-    // Save plan.json
-    await savePlan(updatedPlan)
-
-    // If agent_configs is in updates, also save to step_config.json
+    // If agent_configs is in updates, save to step_config.json
     if ('agent_configs' in updates) {
       await saveStepConfig(stepId, updates.agent_configs)
     }
-  }, [plan, savePlan, saveStepConfig])
+  }, [plan, savePlan, saveStepConfig, hasPlanRelatedFields])
 
   // Delete a step
   const deleteStep = useCallback(async (stepIndex: number) => {
@@ -657,9 +464,7 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     } else {
       // Reset everything when no workspace
       setPlan(null)
-      previousPlanRef.current = null
       currentWorkspaceRef.current = null
-      isInitialLoadRef.current = true
       setError(null)
       setChanges(null)
     }

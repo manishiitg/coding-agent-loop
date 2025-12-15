@@ -32,3 +32,6 @@ export { WorkspaceFileOperationEventDisplay } from './WorkspaceFileOperationEven
 export { ContextSummarizationStartedEventDisplay } from './ContextSummarizationStartedEvent'
 export { ContextSummarizationCompletedEventDisplay } from './ContextSummarizationCompletedEvent'
 export { ContextSummarizationErrorEventDisplay } from './ContextSummarizationErrorEvent'
+
+// Temp LLM skipped event component
+export { TempLLMSkippedEventDisplay } from './TempLLMSkippedEvent'

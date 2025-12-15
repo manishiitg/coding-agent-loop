@@ -417,19 +417,28 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentSys
   - Discover all step-specific folders:
     * Regular steps use learnings/step-{X}/ folders (e.g., step-1/, step-2/)
     * Branch steps use learnings/step-{parentStep}-{true/false}-{branchIdx}/ folders (e.g., step-3-true-0/, step-3-false-1/)
+    * Decision step inner steps use learnings/step-{X}/ folders (same as regular steps - e.g., step-2/ for decision step 2's inner step)
   - **CRITICAL**: Each step folder (step-1/, step-2/, step-3-true-0/, step-3-false-1/, etc.) must be evaluated independently
   - **CRITICAL STEP-SPECIFIC RULE**: Check alignment ONLY within the SAME step folder
   - **NEVER compare across step folders**: Do NOT check alignment between step-1/ and step-2/ files, or between step-3/ and step-3-true-0/ files
   - **Branch step folders**: Branch steps (if_true_steps, if_false_steps) have their own folders separate from the parent conditional step folder
+  - **Decision step inner steps**: Learnings for decision step inner steps are stored in learnings/step-{X}/ (same folder as the decision step's step number)
+  - **Conditional/Decision step parents**: Conditional steps and decision steps themselves do NOT have learnings (they only evaluate conditions/routes). Only their branch steps (for conditionals) or inner steps (for decisions) have learnings.
   - **Consolidation within step folders**: If multiple files exist within a single step folder, they should be consolidated (handled by the consolidation agent, not this alignment agent)
 
 **Expected Folder Structure**:
-- learnings/step-{X}/ - All learnings for regular step X (MCP patterns, scripts, and code) (at workspace root)
+- learnings/step-{X}/ - All learnings for regular step X OR decision step X's inner step (MCP patterns, scripts, and code) (at workspace root)
 - learnings/step-{X}-{true/false}-{Y}/ - All learnings for branch step Y of conditional step X (at workspace root)
 - learnings/step-{X}/scripts/ - Python scripts for step X (if any)
 - learnings/step-{X}/code/ - Go code patterns for step X (if any)
 - learnings/step-{X}-{true/false}-{Y}/scripts/ - Python scripts for branch step (if any)
-- learnings/step-{X}-{true/false}-{Y}/code/ - Go code patterns for branch step (if any)`
+- learnings/step-{X}-{true/false}-{Y}/code/ - Go code patterns for branch step (if any)
+
+**IMPORTANT - Step Type Learnings**:
+- **Regular steps**: Learnings in learnings/step-{X}/
+- **Conditional steps**: NO learnings (parent step only evaluates conditions). Branch steps have learnings in learnings/step-{X}-{true/false}-{Y}/
+- **Decision steps**: NO learnings (parent step only evaluates inner step output). Inner step (decision_step) has learnings in learnings/step-{X}/ (same folder as decision step number)
+- **Branch steps**: Learnings in learnings/step-{parentStep}-{true/false}-{branchIdx}/`
 	discoverSection := `
 **STEP-SPECIFIC MODE**:
 - Scan ` + "`learnings/`" + `: Use 'list_workspace_files' with folder="learnings" to discover all step folders
@@ -456,6 +465,11 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentSys
   Step: Retrieve and Submit OTP (step-3-if-true-0, branch step of conditional step 3)
   → MATCHED ✅ - Filename matches branch step, in correct branch step folder
 
+**Example 1c - MATCHED (Decision Step Inner Step)**:
+  File: learnings/step-2/check_deployment_status_learning.md
+  Step: Check Deployment Status (decision step 2's inner step - decision_step field)
+  → MATCHED ✅ - Filename matches decision step inner step, in correct folder (learnings/step-2/ - same as decision step number)
+
 **Example 2 - MISMATCH** (filename matches but wrong folder):
   File: learnings/step-2/deploy_to_kubernetes_learning.md  
   Step: Deploy to Kubernetes (step-2, use_code_execution_mode: true)
@@ -464,7 +478,12 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentSys
 **Example 2b - MISMATCH (Branch Step in Wrong Folder)**:
   File: learnings/step-3/retrieve_otp_learning.md
   Step: Retrieve and Submit OTP (step-3-if-true-0, branch step of conditional step 3)
-  → MISMATCH ⚠️ - Branch step file is in parent step folder, should be in learnings/step-3-true-0/`
+  → MISMATCH ⚠️ - Branch step file is in parent step folder, should be in learnings/step-3-true-0/
+
+**Example 2c - MISMATCH (Decision Step Inner Step in Wrong Folder)**:
+  File: learnings/step-5/check_deployment_status_learning.md
+  Step: Check Deployment Status (decision step 2's inner step - decision_step field)
+  → MISMATCH ⚠️ - Decision step inner step file is in wrong folder, should be in learnings/step-2/ (decision step's step number)`
 	example4Section := `
   File: learnings/step-3/old_step_name_learning.md
   Content: Contains step_3, Deploy Application
@@ -502,9 +521,12 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentSys
 
 **IMPORTANT**: You are checking alignment for learnings/ folder (unified folder for all learning types).
 
-**Plan**: The plan.json provided to you contains all steps, including regular steps and branch steps (if_true_steps, if_false_steps). All learnings are stored in step-specific folders:
+**Plan**: The plan.json provided to you contains all steps, including regular steps, conditional steps, decision steps, and branch steps (if_true_steps, if_false_steps). All learnings are stored in step-specific folders:
 - Regular steps: learnings/step-{X}/ folders
 - Branch steps: learnings/step-{parentStep}-{true/false}-{branchIdx}/ folders
+- Decision step inner steps: learnings/step-{X}/ folders (same as regular steps - stored in the decision step's step number folder)
+- Conditional steps: NO learnings (parent step only evaluates conditions, doesn't execute)
+- Decision steps: NO learnings (parent step only evaluates inner step output, doesn't execute itself)
 
 **Target Folder**: ` + targetFolderPath + `
 
@@ -556,6 +578,9 @@ For each learning file, follow this decision process:
   - YES: Is file in correct step-specific folder?
     - Regular step: Is file in learnings/step-{X}/ folder?
     - Branch step: Is file in learnings/step-{parentStep}-{true/false}-{branchIdx}/ folder?
+    - Decision step inner step: Is file in learnings/step-{X}/ folder? (same as regular steps - uses decision step's step number)
+    - Conditional step: NO learnings expected (parent step doesn't execute)
+    - Decision step: NO learnings expected (parent step doesn't execute, only inner step has learnings)
     - YES → **MATCHED** ✅
     - NO → **MISMATCH** ⚠️ (suggest moving to correct step-specific folder)
   - NO: Continue to Step B
@@ -604,11 +629,18 @@ For each learning file, follow this decision process:
 - For each step, note agent_configs.use_code_execution_mode value (true/false/missing)
 - **CRITICAL**: Identify step types:
   - Regular steps: Top-level steps in plan.steps array
+  - Conditional steps: Steps with has_condition=true (parent step - NO learnings, only branch steps have learnings)
+  - Decision steps: Steps with has_decision_step=true (parent step - NO learnings, only inner step has learnings)
   - Branch steps: Steps nested in if_true_steps or if_false_steps arrays
+  - Decision step inner steps: Steps in decision_step field (stored in learnings/step-{X}/ where X is the decision step's step number)
 - For branch steps, note the parent step ID and branch type (true/false)
-- Build a reference map: step ID → {title, execution_mode, expected_folder, is_branch_step, parent_step_id, branch_type, branch_index}
+- For decision steps, note that the inner step (decision_step field) has learnings in learnings/step-{X}/ (same folder as decision step number)
+- Build a reference map: step ID → {title, execution_mode, expected_folder, step_type, is_branch_step, is_decision_inner, parent_step_id, branch_type, branch_index}
   - Regular steps: expected_folder = learnings/step-{X}/
   - Branch steps: expected_folder = learnings/step-{parentStep}-{true/false}-{branchIdx}/
+  - Decision step inner steps: expected_folder = learnings/step-{X}/ (where X is the decision step's step number)
+  - Conditional steps: expected_folder = NONE (no learnings - parent step doesn't execute)
+  - Decision steps: expected_folder = NONE (no learnings - parent step doesn't execute, only inner step has learnings)
 - **Cross-reference with changelog**: Mark steps that appear in recent changelog entries as "recently changed"
 
 ### 2. Discover Learning Files in Selected Folder
@@ -820,12 +852,18 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
    - Parse the plan.json above to extract all step IDs and titles
    - **CRITICAL**: Identify step types:
      * Regular steps: Top-level steps in plan.steps array
+     * Conditional steps: Steps with has_condition=true (parent step - NO learnings, only branch steps have learnings)
+     * Decision steps: Steps with has_decision_step=true (parent step - NO learnings, only inner step has learnings)
      * Branch steps: Steps nested in if_true_steps or if_false_steps arrays (note parent step ID and branch type)
+     * Decision step inner steps: Steps in decision_step field (stored in learnings/step-{X}/ where X is the decision step's step number)
    - For each step, note the agent_configs.use_code_execution_mode value:
 ` + expectedFolderNote + `
-   - Create a mental map of: step ID → {title, execution_mode, expected_folder, is_branch_step, parent_step_id, branch_type, branch_index}
+   - Create a mental map of: step ID → {title, execution_mode, expected_folder, step_type, is_branch_step, is_decision_inner, parent_step_id, branch_type, branch_index}
      * Regular steps: expected_folder = learnings/step-{X}/
      * Branch steps: expected_folder = learnings/step-{parentStep}-{true/false}-{branchIdx}/
+     * Decision step inner steps: expected_folder = learnings/step-{X}/ (where X is the decision step's step number)
+     * Conditional steps: expected_folder = NONE (no learnings - parent step doesn't execute)
+     * Decision steps: expected_folder = NONE (no learnings - parent step doesn't execute, only inner step has learnings)
 
 2. **Discover All Learning Files**
 ` + discoverInstructions + `
@@ -833,10 +871,13 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
 3. **Classify Each File** (Follow the decision flow from system prompt)
    
    For each file:
-   - **Step A**: Try filename matching against step titles (both regular and branch steps)
+   - **Step A**: Try filename matching against step titles (regular steps, branch steps, and decision step inner steps)
      * If matched, check if folder is correct for step type:
        - Regular step: Is file in learnings/step-{X}/ folder?
        - Branch step: Is file in learnings/step-{parentStep}-{true/false}-{branchIdx}/ folder?
+       - Decision step inner step: Is file in learnings/step-{X}/ folder? (where X is the decision step's step number)
+       - Conditional step: NO learnings expected (parent step doesn't execute)
+       - Decision step: NO learnings expected (parent step doesn't execute, only inner step has learnings)
      * Result: MATCHED ✅ or MISMATCH ⚠️
    
    - **Step B**: If no filename match, check if it's a consolidated file

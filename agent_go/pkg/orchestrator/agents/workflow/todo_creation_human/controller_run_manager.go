@@ -250,37 +250,30 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) workspaceFileExists(ctx cont
 	return false
 }
 
-// isStepLearningsFolderEmpty checks if the step's learnings folder exists and has any files
+// isStepLearningsFolderEmpty checks if the step's learnings folder exists and has any learning files
+// Uses readStepLearningFiles to check for learning files (excludes metadata files automatically)
 // Returns: (isEmpty bool, error)
-// - isEmpty: true if folder doesn't exist or is empty, false if it has files
+// - isEmpty: true if folder doesn't exist or has no learning files, false if it has learning files
 // - error: any error encountered during checking
 // stepNumber is 1-based (e.g., step 1 = learnings/step-1/)
 func (hcpo *HumanControlledTodoPlannerOrchestrator) isStepLearningsFolderEmpty(ctx context.Context, stepNumber int) (bool, error) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	stepLearningsPath := fmt.Sprintf("%s/learnings/step-%d", baseWorkspacePath, stepNumber)
 
-	// Check if folder exists
-	learningsFolderExists := hcpo.workspaceFileExists(ctx, stepLearningsPath)
-
-	if !learningsFolderExists {
-		hcpo.GetLogger().Info(fmt.Sprintf("📁 Step %d learnings folder does not exist: %s (will use tempLLM if available)", stepNumber, stepLearningsPath))
-		return true, nil
-	}
-
-	// Check if folder has any files
-	files, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, stepLearningsPath)
+	// Use readStepLearningFiles to check for learning files (it already excludes metadata)
+	learningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
 	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to list files in step learnings folder for step %d: %v", stepNumber, err))
-		// On error, assume empty (conservative approach - will use tempLLM)
+		// If folder doesn't exist or can't be read, assume empty (conservative approach - will use tempLLM)
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Step %d learnings folder does not exist or cannot be read: %s (will use tempLLM if available)", stepNumber, stepLearningsPath))
 		return true, err
 	}
 
-	if len(files) == 0 {
-		hcpo.GetLogger().Info(fmt.Sprintf("📁 Step %d learnings folder is empty: %s (will use tempLLM if available)", stepNumber, stepLearningsPath))
+	if len(learningFiles) == 0 {
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Step %d learnings folder has no learning files (only metadata or empty): %s (will use tempLLM if available)", stepNumber, stepLearningsPath))
 		return true, nil
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d learnings folder has %d files: %s (will use tempLLM if available)", stepNumber, len(files), stepLearningsPath))
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d learnings folder has %d learning file(s): %s (will use tempLLM if available)", stepNumber, len(learningFiles), stepLearningsPath))
 	return false, nil
 }
 

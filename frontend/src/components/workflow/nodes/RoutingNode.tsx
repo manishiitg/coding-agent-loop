@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Play, Settings, Code, Terminal, AlertTriangle, Zap, Lock, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Play, Settings, Code, Terminal, AlertTriangle, Lock, ArrowDownToLine, ArrowUpFromLine, GitBranch } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -9,7 +9,7 @@ import { agentApi } from '../../../services/api'
 import { isValidJSON } from '../../../utils/event-helpers'
 import { getToolsByCategory } from '../../../utils/customToolNames'
 import { NodeConfigFooter } from './NodeConfigFooter'
-import type { DecisionNodeData } from '../hooks/usePlanToFlow'
+import type { RoutingNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 
 // Helper to parse tool entry (format: "category:tool" or "category:*")
@@ -38,17 +38,16 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
   return { enabled, total: allCategoryTools.length }
 }
 
-interface DecisionNodeProps {
-  data: DecisionNodeData
+interface RoutingNodeProps {
+  data: RoutingNodeData
   selected?: boolean
 }
 
 const statusBorderColors: Record<string, string> = {
-  pending: 'border-indigo-400 dark:border-indigo-500',
-  executing: 'border-indigo-500 dark:border-indigo-400',
-  evaluating: 'border-purple-500 dark:border-purple-400',
-  decided_true: 'border-green-500 dark:border-green-400',
-  decided_false: 'border-red-500 dark:border-red-400',
+  pending: 'border-gray-300 dark:border-gray-600',
+  executing: 'border-blue-500 dark:border-blue-600',
+  evaluating: 'border-blue-500 dark:border-blue-600',
+  routing: 'border-blue-500 dark:border-blue-600',
   completed: 'border-green-500 dark:border-green-400'
 }
 
@@ -66,31 +65,30 @@ const changeBadgeStyles: Record<ChangeType, { bg: string; icon: ReactElement }> 
 
 const statusIcons: Record<string, ReactElement | null> = {
   pending: null,
-  executing: <Loader2 className="w-4 h-4 text-indigo-500 animate-spin" />,
-  evaluating: <Loader2 className="w-4 h-4 text-purple-500 animate-spin" />,
-  decided_true: <CheckCircle className="w-4 h-4 text-green-500" />,
-  decided_false: <XCircle className="w-4 h-4 text-red-500" />,
+  executing: <Loader2 className="w-4 h-4 text-blue-500 dark:text-blue-400 animate-spin" />,
+  evaluating: <Loader2 className="w-4 h-4 text-blue-500 dark:text-blue-400 animate-spin" />,
+  routing: <Loader2 className="w-4 h-4 text-blue-500 dark:text-blue-400 animate-spin" />,
   completed: <CheckCircle className="w-4 h-4 text-green-500" />
 }
 
-export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
-  const { id, title, decision_evaluation_question, decision_step, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun, workspacePath, selectedRunFolder } = data
+export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
+  const { id, title, routing_evaluation_question, routing_step, routing_routes, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun, workspacePath, selectedRunFolder } = data
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
   
-  // Extract description and success criteria from step and decision_step
-  const decisionDescription = step?.description
-  const innerStepDescription = decision_step?.description
-  const innerStepSuccessCriteria = decision_step?.success_criteria
+  // Extract description and success criteria from step and routing_step
+  const routingDescription = step?.description
+  const routingSuccessCriteria = step?.success_criteria
+  const mainStepDescription = routing_step?.description
+  const mainStepSuccessCriteria = routing_step?.success_criteria
 
-  // Context inputs and outputs from the INNER STEP (decision_step) - this is what actually executes
-  // The inner step is what reads context dependencies and produces context output
-  const contextInputs = useMemo(() => decision_step?.context_dependencies || [], [decision_step?.context_dependencies])
+  // Context inputs and outputs from the MAIN STEP (routing_step) - this is what actually executes
+  const contextInputs = useMemo(() => routing_step?.context_dependencies || [], [routing_step?.context_dependencies])
   const contextOutputs = useMemo(() => {
-    const output = decision_step?.context_output
+    const output = routing_step?.context_output
     if (!output) return []
     return Array.isArray(output) ? output : [output]
-  }, [decision_step?.context_output])
+  }, [routing_step?.context_output])
   const hasContext = contextInputs.length > 0 || contextOutputs.length > 0
 
   // Get preset for config badges
@@ -144,58 +142,47 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
   }, [stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs])
 
-  // Conditional LLM (for evaluation): step config > execution LLM > preset default
+  // Conditional LLM (for routing evaluation): step config > execution LLM > preset default
   const conditionalLLM = useMemo(() => {
     const presetLLMConfig = activePreset?.llmConfig
     const stepConditionalLLM = stepConfig?.agent_configs?.conditional_llm
-    const stepExecutionLLM = stepConfig?.agent_configs?.execution_llm
     const presetExecutionLLM = presetLLMConfig?.execution_llm
     const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id 
       ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
     
-    const llmConfig = stepConditionalLLM || stepExecutionLLM || presetExecutionLLM || presetDefaultLLM
+    const llmConfig = stepConditionalLLM || presetExecutionLLM || presetDefaultLLM
     if (!llmConfig?.provider || !llmConfig?.model_id) return null
     
     const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
-  }, [stepConfig?.agent_configs?.conditional_llm, stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs])
+  }, [stepConfig?.agent_configs?.conditional_llm, activePreset?.llmConfig, availableLLMs])
 
   // Learning LLM: step config > preset learning_llm > preset default
   const learningLLM = useMemo(() => {
-    if (stepConfig?.agent_configs?.disable_learning === true) {
-      return null
-    }
-    
     const presetLLMConfig = activePreset?.llmConfig
-    const stepLLMConfig = stepConfig?.agent_configs?.learning_llm
+    const stepLearningLLM = stepConfig?.agent_configs?.learning_llm
     const presetLearningLLM = presetLLMConfig?.learning_llm
     const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id 
       ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
     
-    const llmConfig = stepLLMConfig || presetLearningLLM || presetDefaultLLM
+    const llmConfig = stepLearningLLM || presetLearningLLM || presetDefaultLLM
     if (!llmConfig?.provider || !llmConfig?.model_id) return null
     
     const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
-  }, [stepConfig?.agent_configs?.learning_llm, stepConfig?.agent_configs?.disable_learning, activePreset?.llmConfig, availableLLMs])
+  }, [stepConfig?.agent_configs?.learning_llm, activePreset?.llmConfig, availableLLMs])
 
-  // Learning detail level (defaults to 'exact', but 'exact' in code exec mode)
+  // Learning detail level
   const learningDetailLevel = useMemo(() => {
-    if (stepConfig?.agent_configs?.disable_learning === true) {
-      return null
-    }
-    if (useCodeExecutionMode) {
-      return 'exact'
-    }
-    return stepConfig?.agent_configs?.learning_detail_level || 'exact'
-  }, [stepConfig?.agent_configs?.learning_detail_level, stepConfig?.agent_configs?.disable_learning, useCodeExecutionMode])
+    return stepConfig?.agent_configs?.learning_detail_level || 'general'
+  }, [stepConfig?.agent_configs?.learning_detail_level])
 
-  // Lock learnings status
+  // Lock learnings
   const lockLearnings = useMemo(() => {
-    return stepConfig?.agent_configs?.lock_learnings === true && stepConfig?.agent_configs?.disable_learning !== true
-  }, [stepConfig?.agent_configs?.lock_learnings, stepConfig?.agent_configs?.disable_learning])
+    return stepConfig?.agent_configs?.lock_learnings || false
+  }, [stepConfig?.agent_configs?.lock_learnings])
 
-  // Execution max turns (defaults to 100)
+  // Execution max turns
   const executionMaxTurns = useMemo(() => {
     return stepConfig?.agent_configs?.execution_max_turns || 100
   }, [stepConfig?.agent_configs?.execution_max_turns])
@@ -291,13 +278,13 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
     return filePath.split('/').pop() || filePath
   }
 
-  // Handle file click - open file in workspace (same as StepNode)
+  // Handle file click - open file in workspace (same as DecisionNode)
   const handleFileClick = useCallback(async (filename: string, e: MouseEvent) => {
     e.stopPropagation() // Prevent node selection
     
     // Don't open if no workspace path or run folder selected
     if (!workspacePath || !selectedRunFolder || selectedRunFolder === 'new') {
-      console.warn('[DecisionNode] Cannot open file: missing workspacePath or selectedRunFolder')
+      console.warn('[RoutingNode] Cannot open file: missing workspacePath or selectedRunFolder')
       return
     }
     
@@ -388,7 +375,7 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
         setSelectedFile(null)
       }
     } catch (error) {
-      console.error('[DecisionNode] Error opening file:', error)
+      console.error('[RoutingNode] Error opening file:', error)
       const fileName = filePath.split('/').pop() || filePath
       const errorMessage = error instanceof Error ? error.message : 'Failed to fetch file content'
       setError(`Failed to open file: ${fileName}\n${errorMessage}\n\nPath: ${filePath}`)
@@ -400,9 +387,24 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
     }
   }, [workspacePath, selectedRunFolder, highlightFile, setShowFileContent, fetchFiles, setWorkspaceMinimized, setSelectedFile, setFileContent, setLoadingFileContent, setError])
 
+  // Calculate node height based on content
+  const nodeHeight = useMemo(() => {
+    let height = 120 // Base height
+    if (routingDescription) height += 30
+    if (routingSuccessCriteria) height += 50
+    if (routing_step) height += 40
+    if (hasContext) height += 40
+    // Add height for routing routes section (with conditions)
+    if (routing_routes && routing_routes.length > 0) {
+      // Each route takes ~60px (route name + condition text)
+      height += 30 + (routing_routes.length * 60) // Header + routes
+    }
+    return Math.max(height, 200) // Minimum height
+  }, [routing_step, routingDescription, routingSuccessCriteria, routing_routes, hasContext])
+
   return (
-    <div className={`relative w-[300px] ${changeType ? changeHighlightStyles[changeType] : ''}`}>
-      {/* Header with buttons - above the diamond */}
+    <div className={`relative w-[360px] ${changeType ? changeHighlightStyles[changeType] : ''}`}>
+      {/* Header with buttons - above the card */}
       <div className="absolute -top-12 left-0 right-0 flex items-center justify-center gap-2 z-20">
         {/* Run from this step button */}
         {onRunFromStep ? (
@@ -479,10 +481,10 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
         )}
       </div>
 
-      {/* Decision Badge - Top */}
-      <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-600 dark:bg-indigo-500 text-white text-[11px] font-semibold shadow-lg">
-        <Zap className="w-3.5 h-3.5" />
-        <span>Decision</span>
+      {/* Routing Badge - Top */}
+      <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-600 dark:bg-blue-700 text-white text-[11px] font-semibold shadow-lg">
+        <GitBranch className="w-3.5 h-3.5" />
+        <span>Routing</span>
       </div>
 
       {/* Change badge */}
@@ -498,19 +500,19 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
         className={`
           relative rounded-xl border-2 bg-white dark:bg-gray-900 shadow-lg overflow-visible
           ${statusBorderColors[status]}
-          ${selected ? 'ring-2 ring-indigo-500/40' : ''}
-          ${status === 'executing' || status === 'evaluating' ? 'animate-pulse' : ''}
+          ${selected ? 'ring-2 ring-blue-500/40' : ''}
+          ${status === 'executing' || status === 'evaluating' || status === 'routing' ? 'animate-pulse' : ''}
         `}
         style={{
-          minHeight: decision_step || decisionDescription ? '180px' : '120px',
-          width: '300px'
+          minHeight: `${nodeHeight}px`,
+          width: '360px'
         }}
       >
         {/* Input handle */}
         <Handle 
           type="target" 
           position={Position.Left} 
-          className="!w-3 !h-3 !bg-indigo-400 dark:!bg-indigo-500 !border-2 !border-white dark:!border-gray-900"
+          className="!w-3 !h-3 !bg-blue-500 dark:!bg-blue-600 !border-2 !border-white dark:!border-gray-900"
           style={{ left: '-6px', top: '50%' }}
         />
 
@@ -520,41 +522,51 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
             {statusIcons[status]}
           </div>
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white leading-tight text-center mb-1.5">
-            {title || `Decision ${stepIndex + 1}`}
+            {title || `Routing ${stepIndex + 1}`}
           </h3>
           
-          {/* Decision step description */}
-          {decisionDescription && (
-            <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed mb-2 text-center px-1">
-              {decisionDescription}
+          {/* Routing step description (main step) */}
+          {routingDescription && (
+            <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed mb-2 px-1">
+              {routingDescription}
             </p>
           )}
           
-          {/* Inner step info - always show if decision_step exists */}
-          {decision_step && (
-            <div className="mt-1.5 p-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/50">
-              <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold mb-1">
-                Executes: {decision_step.title || 'Untitled Step'}
+          {/* Routing step success criteria (main step) */}
+          {routingSuccessCriteria && (
+            <div className="flex gap-2 p-2.5 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50 mb-2">
+              <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-green-700 dark:text-green-300 leading-relaxed">
+                {routingSuccessCriteria}
               </p>
-              {/* Inner step description */}
-              {innerStepDescription && (
-                <p className="text-[10px] text-indigo-600 dark:text-indigo-400 leading-relaxed mt-1">
-                  {innerStepDescription}
+            </div>
+          )}
+          
+          {/* Main orchestrator step info */}
+          {routing_step && (
+            <div className="mt-1.5 p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700/60">
+              <p className="text-[10px] text-gray-700 dark:text-gray-300 font-semibold mb-1.5">
+                Orchestrator: {routing_step.title || 'Untitled Step'}
+              </p>
+              {/* Main step description */}
+              {mainStepDescription && (
+                <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-relaxed">
+                  {mainStepDescription}
                 </p>
               )}
-              {/* Inner step success criteria */}
-              {innerStepSuccessCriteria && (
-                <div className="flex gap-1.5 mt-1.5 p-1.5 rounded bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50">
-                  <CheckCircle className="w-3 h-3 text-green-500 flex-shrink-0 mt-0.5" />
+              {/* Main step success criteria */}
+              {mainStepSuccessCriteria && (
+                <div className="flex gap-1.5 mt-2 p-2 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50">
+                  <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0 mt-0.5" />
                   <p className="text-[10px] text-green-700 dark:text-green-300 leading-relaxed">
-                    {innerStepSuccessCriteria}
+                    {mainStepSuccessCriteria}
                   </p>
                 </div>
               )}
             </div>
           )}
 
-          {/* Context Files - from inner step (decision_step) */}
+          {/* Context Files - from main step (routing_step) */}
           {hasContext && (
             <div className="space-y-1.5 mt-2">
               {contextInputs.length > 0 && (
@@ -607,32 +619,65 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
               )}
             </div>
           )}
+
+          {/* Routing Routes with Conditions */}
+          {routing_routes && routing_routes.length > 0 && (
+            <div className="mt-3 space-y-2">
+              <p className="text-[10px] text-gray-700 dark:text-gray-300 font-semibold mb-1.5">
+                Routes:
+              </p>
+              {routing_routes.map((route) => (
+                <div 
+                  key={route.route_id}
+                  className="p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50"
+                >
+                  <p className="text-[10px] text-gray-700 dark:text-gray-300 font-semibold mb-1">
+                    {route.route_name || route.route_id}
+                  </p>
+                  {route.condition && (
+                    <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-relaxed">
+                      {route.condition}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* True handle - top right area */}
-        <Handle 
-          type="source" 
-          position={Position.Right} 
-          id="true" 
-          className="!w-3 !h-3 !bg-green-500 !border-2 !border-white dark:!border-gray-900 !shadow-md"
-          style={{ top: '30%', right: '-6px' }}
-        />
-
-        {/* False handle - bottom right area */}
-        <Handle 
-          type="source" 
-          position={Position.Right} 
-          id="false" 
-          className="!w-3 !h-3 !bg-red-500 !border-2 !border-white dark:!border-gray-900 !shadow-md"
-          style={{ top: '70%', right: '-6px' }}
-        />
+        {/* Output handles - one for each route (or single handle if no routes) */}
+        {routing_routes && routing_routes.length > 0 ? (
+          routing_routes.map((route, index) => {
+            const totalRoutes = routing_routes.length
+            const positionPercent = totalRoutes === 1 
+              ? 50 
+              : 20 + (index * (60 / (totalRoutes - 1))) // Distribute handles from 20% to 80%
+            return (
+              <Handle 
+                key={route.route_id}
+                type="source" 
+                position={Position.Bottom} 
+                id={route.route_id}
+                className="!w-3 !h-3 !bg-blue-500 dark:!bg-blue-600 !border-2 !border-white dark:!border-gray-900 !shadow-md"
+                style={{ left: `${positionPercent}%`, bottom: '-6px' }}
+              />
+            )
+          })
+        ) : (
+          <Handle 
+            type="source" 
+            position={Position.Bottom} 
+            className="!w-3 !h-3 !bg-blue-500 dark:!bg-blue-600 !border-2 !border-white dark:!border-gray-900 !shadow-md"
+            style={{ left: '50%', bottom: '-6px' }}
+          />
+        )}
       </div>
 
-      {/* Evaluation Question below the diamond */}
-      {decision_evaluation_question && (
+      {/* Evaluation Question below the card */}
+      {routing_evaluation_question && (
         <div className="mt-3 mx-4">
-          <p className="text-[11px] text-gray-600 dark:text-gray-400 text-center leading-relaxed p-2.5 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/50">
-            {decision_evaluation_question}
+          <p className="text-[11px] text-gray-600 dark:text-gray-400 text-center leading-relaxed p-3 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700">
+            {routing_evaluation_question}
           </p>
         </div>
       )}
@@ -657,7 +702,7 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
         {conditionalLLM && (
           <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800/30 border-t border-gray-200 dark:border-gray-700 rounded-b-lg">
             <div className="flex flex-wrap gap-1.5 justify-center">
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300" title="LLM used for decision evaluation">
+              <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 dark:bg-gray-800/50 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700/60" title="LLM used for routing evaluation">
                 Eval: {conditionalLLM}
               </span>
             </div>
@@ -668,6 +713,6 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
   )
 })
 
-DecisionNode.displayName = 'DecisionNode'
-export default DecisionNode
+RoutingNode.displayName = 'RoutingNode'
+export default RoutingNode
 

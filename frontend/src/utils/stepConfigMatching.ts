@@ -142,8 +142,23 @@ export interface PlanStep {
   decision_evaluation_question?: string; // Question to evaluate step output
   decision_result?: boolean;          // runtime: stores evaluation result
   decision_reason?: string;           // runtime: stores evaluation reasoning
+  // Routing step fields (orchestrator with multiple sub-agents)
+  has_routing_step?: boolean;
+  routing_step?: PlanStep;            // The main orchestrator step to execute
+  routing_evaluation_question?: string; // Question to evaluate routing step output
+  routing_routes?: PlanRoutingRoute[]; // Array of possible routes with conditions
+  next_step_id?: string;              // ID of step after routing completes (or "end")
   agent_configs?: AgentConfigs;       // Merged from step_config.json
   [key: string]: unknown;              // Allow other fields for flexibility
+}
+
+// PlanRoutingRoute represents a possible route/sub-agent for planning
+export interface PlanRoutingRoute {
+  route_id: string;                   // Unique ID for this route
+  route_name: string;                 // Human-readable name
+  condition: string;                  // Condition description
+  sub_agent_step: PlanStep;            // The sub-agent step to execute
+  context_to_pass?: string;           // Optional: specific context to pass to sub-agent
 }
 
 // PlanningResponse interface for plan.json

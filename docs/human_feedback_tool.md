@@ -17,12 +17,12 @@ The human feedback tool is an **interactive virtual tool** that pauses LLM execu
 
 | Component | File | Key Functions |
 |-----------|------|---------------|
-| **Virtual Tool** | [`human_tools.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/virtual-tools/human_tools.go) | `CreateHumanTools()`, `handleHumanFeedback()` |
-| **Backend Store** | [`human_feedback_store.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/virtual-tools/human_feedback_store.go) | `CreateRequest()`, `SubmitResponse()`, `WaitForResponse()`, `Cleanup()` |
-| **API Endpoint** | [`server.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go) | `handleSubmitHumanFeedback()` (POST `/api/human-feedback/submit`) |
-| **Frontend UI** | [`HumanFeedbackToolCallDisplay.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/events/tools/ToolCallSpecialRender/HumanFeedbackToolCallDisplay.tsx) | `HumanFeedbackToolCallDisplay` component |
-| **Event Data Structures** | [`data.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/events/data.go) | `BlockingHumanFeedbackEvent`, `RequestHumanFeedbackEvent` |
-| **Orchestrator Helpers** | [`base_orchestrator.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/base_orchestrator.go) | `RequestHumanFeedback()`, `RequestYesNoFeedback()`, `RequestMultipleChoiceFeedback()` |
+| **Virtual Tool** | [`human_tools.go`](../agent_go/cmd/server/virtual-tools/human_tools.go) | `CreateHumanTools()`, `handleHumanFeedback()` |
+| **Backend Store** | [`human_feedback_store.go`](../agent_go/cmd/server/virtual-tools/human_feedback_store.go) | `CreateRequest()`, `SubmitResponse()`, `WaitForResponse()`, `Cleanup()` |
+| **API Endpoint** | [`server.go`](../agent_go/cmd/server/server.go) | `handleSubmitHumanFeedback()` (POST `/api/human-feedback/submit`) |
+| **Frontend UI** | [`HumanFeedbackToolCallDisplay.tsx`](../frontend/src/components/events/tools/ToolCallSpecialRender/HumanFeedbackToolCallDisplay.tsx) | `HumanFeedbackToolCallDisplay` component |
+| **Event Data Structures** | [`data.go`](../agent_go/pkg/events/data.go) | `BlockingHumanFeedbackEvent`, `RequestHumanFeedbackEvent` |
+| **Orchestrator Helpers** | [`base_orchestrator.go`](../agent_go/pkg/orchestrator/base_orchestrator.go) | `RequestHumanFeedback()`, `RequestYesNoFeedback()`, `RequestMultipleChoiceFeedback()` |
 
 ---
 
@@ -122,7 +122,7 @@ sequenceDiagram
 
 ### Backend Tool Handler
 
-**File:** [`human_tools.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/virtual-tools/human_tools.go)
+**File:** [`human_tools.go`](../agent_go/cmd/server/virtual-tools/human_tools.go)
 
 ```go
 func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -150,7 +150,7 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 
 ### Frontend Submit Handler
 
-**File:** [`HumanFeedbackToolCallDisplay.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/events/tools/ToolCallSpecialRender/HumanFeedbackToolCallDisplay.tsx)
+**File:** [`HumanFeedbackToolCallDisplay.tsx`](../frontend/src/components/events/tools/ToolCallSpecialRender/HumanFeedbackToolCallDisplay.tsx)
 
 ```typescript
 const handleSubmit = async () => {
@@ -177,7 +177,7 @@ const handleSubmit = async () => {
 
 ### Orchestrator Helper Functions
 
-**File:** [`base_orchestrator.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/base_orchestrator.go)
+**File:** [`base_orchestrator.go`](../agent_go/pkg/orchestrator/base_orchestrator.go)
 
 ```go
 // Request human feedback with text input
@@ -334,9 +334,9 @@ User response: "582491"
 
 ## 📖 Related Documentation
 
-- [Todo Creation Human Workflow](file:///Users/mipl/ai-work/mcp-agent-builder-go/docs/todo_creation_human_workflow.md) - Uses human feedback for plan approval and variable confirmation
-- [Virtual Tools](file:///Users/mipl/ai-work/mcp-agent-builder-go/docs/) - Overview of all virtual tools
-- [Event System](file:///Users/mipl/ai-work/mcp-agent-builder-go/docs/) - How events coordinate frontend/backend
+- [Todo Creation Human Workflow](todo_creation_human_workflow.md) - Uses human feedback for plan approval and variable confirmation
+- [Virtual Tools]() - Overview of all virtual tools
+- [Event System]() - How events coordinate frontend/backend
 
 ---
 
@@ -491,7 +491,7 @@ choice, err := orchestrator.RequestMultipleChoiceFeedback(
 
 ### Cleanup Mechanism
 
-**File:** [`human_feedback_store.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/virtual-tools/human_feedback_store.go)
+**File:** [`human_feedback_store.go`](../agent_go/cmd/server/virtual-tools/human_feedback_store.go)
 
 ```go
 // Remove requests older than maxAge

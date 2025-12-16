@@ -15,8 +15,8 @@ Code Execution Mode allows the Execution Agent to generate and run Go code inste
 
 | Component | File Path | Key Functions |
 |-----------|-----------|---------------|
-| **Execution Agent** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go) | Code execution mode instructions |
-| **Learning Agent** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/learning_agent_code_execution.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/learning_agent_code_execution.go) | Captures Go code patterns for reuse |
+| **Execution Agent** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go) | Code execution mode instructions |
+| **Learning Agent** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/learning_agent_code_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/learning_agent_code_execution.go) | Captures Go code patterns for reuse |
 
 ---
 

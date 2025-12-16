@@ -1255,7 +1255,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 							// Loop condition met means step completed successfully
 							learningPathIdentifier := getLearningPathIdentifier(stepPath)
 							hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running success learning analysis for %s (loop completed)", stepPath))
-							err := hcpo.runSuccessLearningPhase(ctx, learningPathIdentifier, totalSteps, &step, executionConversationHistory, validationResponse, isCodeExecutionMode)
+							err := hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, &step, executionConversationHistory, validationResponse, isCodeExecutionMode)
 							if err != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, err))
 							} else {
@@ -1403,7 +1403,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 								learningPathIdentifier := getLearningPathIdentifier(stepPath)
 								hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running learning analysis after loop iteration %d for %s", loopIterationCount, stepPath))
 								// Run learning even though condition not met (for iteration analysis)
-								err := hcpo.runSuccessLearningPhase(ctx, learningPathIdentifier, totalSteps, &step, executionConversationHistory, validationResponse, isCodeExecutionMode)
+								err := hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, &step, executionConversationHistory, validationResponse, isCodeExecutionMode)
 								if err != nil {
 									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Learning phase failed after loop iteration %d for %s: %v", loopIterationCount, stepPath, err))
 								} else {
@@ -1513,7 +1513,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 						// Success Learning Agent - analyze what worked well and update plan.json
 						learningPathIdentifier := getLearningPathIdentifier(stepPath)
 						hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running success learning analysis for %s", stepPath))
-						err := hcpo.runSuccessLearningPhase(ctx, learningPathIdentifier, totalSteps, &step, executionConversationHistory, validationResponse, isCodeExecutionMode)
+						err := hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, &step, executionConversationHistory, validationResponse, isCodeExecutionMode)
 						if err != nil {
 							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, err))
 						} else {
@@ -1527,7 +1527,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 						} else {
 							learningPathIdentifier := getLearningPathIdentifier(stepPath)
 							hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running failure learning analysis for %s", stepPath))
-							refinedTaskDescription, _, err := hcpo.runFailureLearningPhase(ctx, learningPathIdentifier, totalSteps, &step, executionConversationHistory, validationResponse, isCodeExecutionMode)
+							refinedTaskDescription, _, err := hcpo.runFailureLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, &step, executionConversationHistory, validationResponse, isCodeExecutionMode)
 							if err != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for %s: %v", stepPath, err))
 							} else {
@@ -1938,7 +1938,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 		previousContextFiles := make([]string, 0)
 		for prevIdx := 0; prevIdx < i; prevIdx++ {
 			if prevIdx < len(breakdownSteps) && breakdownSteps[prevIdx].ContextOutput != "" {
-				previousContextFiles = append(previousContextFiles, breakdownSteps[prevIdx].ContextOutput)
+				// Resolve variables in context output (consistent with conditional steps)
+				resolvedOutput := ResolveVariables(breakdownSteps[prevIdx].ContextOutput, hcpo.variableValues)
+				previousContextFiles = append(previousContextFiles, resolvedOutput)
 			}
 		}
 
@@ -2199,13 +2201,109 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			continue
 		}
 
+		// Check if this is an orchestration step
+		if step.HasOrchestrationStep {
+			// Execute orchestration step - executes main step, evaluates output, routes to sub-agents, loops until success
+			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Starting orchestration step execution: %s", step.Title))
+			successCriteriaMet, nextStepID, err := hcpo.executeOrchestrationStep(ctx, &step, i, progress, previousContextFiles, iteration, execCtx, breakdownSteps)
+			if err != nil {
+				hcpo.GetLogger().Error(fmt.Sprintf("❌ Orchestration step %d execution failed: %v", i+1, err), nil)
+				// Emit error event using centralized method
+				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "orchestration-step-execution", fmt.Sprintf("Execute orchestration step: %s", step.Title), err.Error(), i, iteration)
+				return fmt.Errorf("orchestration step %d execution failed: %w", i+1, err)
+			}
+
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration step %d completed successfully: %s (SuccessCriteriaMet: %t)", i+1, step.Title, successCriteriaMet))
+
+			// Mark orchestration step as completed
+			hcpo.addCompletedStepIndex(progress, i)
+			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after orchestration step: %w", err))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved progress: orchestration step %d marked as completed", i+1))
+			}
+
+			// Check if we're in single step mode and should stop
+			if hcpo.runSingleStepOnly && i == hcpo.singleStepTarget {
+				hcpo.GetLogger().Info(fmt.Sprintf("🎯 Single step mode: completed target step %d, stopping execution", i+1))
+				hcpo.SetRunSingleStepMode(false, -1) // Reset mode
+				break
+			}
+
+			// Handle next step navigation
+			if nextStepID == "end" {
+				// End workflow
+				hcpo.GetLogger().Info(fmt.Sprintf("🏁 Orchestration step %d specified 'end' - terminating workflow", i+1))
+				break
+			} else if nextStepID != "" {
+				// Find target step by ID and jump to it
+				targetStepIndex := -1
+				for idx, s := range breakdownSteps {
+					if s.ID == nextStepID {
+						targetStepIndex = idx
+						break
+					}
+				}
+				if targetStepIndex >= 0 {
+					hcpo.GetLogger().Info(fmt.Sprintf("🔗 Jumping to step %d (ID: %s) as specified by next_step_id", targetStepIndex+1, nextStepID))
+
+					// When orchestration step routes to a step, we need to:
+					// 1. Remove target step AND all subsequent steps from completed list (they all depend on target step's output)
+					// 2. Delete execution folders for target step AND all subsequent steps
+					// This ensures a clean state for re-execution
+
+					// Use cleanupProgressFromStep to remove all steps from targetStepIndex onward from progress
+					// This also handles branch step cleanup and saves progress to steps_done.json
+					if err := hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress); err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup progress from step %d: %v (continuing anyway)", targetStepIndex+1, err))
+					} else {
+						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Cleaned up progress: removed step %d and all subsequent steps from completed list", targetStepIndex+1))
+					}
+
+					// Delete execution folders for target step and all subsequent steps
+					// This ensures old execution artifacts don't interfere with re-execution
+					cleanedCount := 0
+					for stepNum := targetStepIndex + 1; stepNum <= len(breakdownSteps); stepNum++ {
+						if err := hcpo.deleteStepExecutionFolder(ctx, stepNum); err != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete execution folder for step %d: %v (continuing)", stepNum, err))
+						} else {
+							cleanedCount++
+							hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned up execution folder for step %d", stepNum))
+						}
+					}
+					if cleanedCount > 0 {
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ Cleaned up execution folders for %d steps (step-%d to step-%d)", cleanedCount, targetStepIndex+1, len(breakdownSteps)))
+					}
+
+					// Update startFromStep to allow execution from target step
+					// This prevents the skip check (i < startFromStep) from blocking execution
+					if targetStepIndex < startFromStep {
+						startFromStep = targetStepIndex
+						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Updated startFromStep to %d to allow execution from routed step", startFromStep+1))
+					}
+
+					// Set loop index to jump to target step (subtract 1 because loop will increment)
+					i = targetStepIndex - 1
+					continue
+				} else {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Target step ID '%s' not found in plan - defaulting to next sequential step", nextStepID))
+					// Fall through to default behavior (continue to next step)
+				}
+			}
+
+			// Default: continue to next sequential step
+			continue
+		}
+
 		// Execute regular step using executeSingleStep
 		// Note: previousContextFiles is still needed for executeSingleStep (for context dependencies)
 		// But for conditional steps, we use previousExecutionResults instead
 		previousContextFiles = make([]string, 0)
 		for prevIdx := 0; prevIdx < i; prevIdx++ {
 			if prevIdx < len(breakdownSteps) && breakdownSteps[prevIdx].ContextOutput != "" {
-				previousContextFiles = append(previousContextFiles, breakdownSteps[prevIdx].ContextOutput)
+				// Resolve variables in context output (consistent with conditional steps)
+				resolvedOutput := ResolveVariables(breakdownSteps[prevIdx].ContextOutput, hcpo.variableValues)
+				previousContextFiles = append(previousContextFiles, resolvedOutput)
 			}
 		}
 
@@ -2363,57 +2461,24 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) readLearningHistory(
 	// Use stepPath to determine the correct learning folder (supports branch steps)
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	stepLearningsPath := getLearningFolderPath(baseWorkspacePath, stepPath)
-	pathInfo := parseStepPath(stepPath)
 
-	// Check if step-specific learnings folder exists and has files before proceeding
-	// For new workflows and first steps, the learnings folder won't exist yet
-	// For branch steps, check the branch-specific folder; for regular steps, use the helper function
-	var learningsFolderEmpty bool
-	if pathInfo.IsBranchStep {
-		// For branch steps, check the folder directly
-		files, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, stepLearningsPath)
-		if listErr != nil {
-			learningsFolderEmpty = true
-		} else {
-			// Check if there are any .md files
-			hasMdFiles := false
-			for _, file := range files {
-				if strings.HasSuffix(file, ".md") {
-					hasMdFiles = true
-					break
-				}
-			}
-			learningsFolderEmpty = !hasMdFiles
-		}
-	} else {
-		// For regular steps, use the existing helper function
-		stepNumber := stepIndex + 1 // Convert to 1-based
-		var checkErr error
-		learningsFolderEmpty, checkErr = hcpo.isStepLearningsFolderEmpty(ctx, stepNumber)
-		if checkErr != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check if step learnings folder is empty: %v, proceeding anyway", checkErr))
-		}
-	}
-
-	if learningsFolderEmpty {
-		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping learning reading agent for %s - learnings folder does not exist or is empty: %s", stepPath, stepLearningsPath))
-		return "", nil // Return empty string, no error
-	}
-
-	// Create and execute Learning Reading Agent
-	// Include mode in agent name: "code-exec" or "simple"
-	// Step-specific learnings: manually read files from step folder
-	hcpo.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings - manually reading files from step folder for %s", stepPath))
-
-	// Read all .md files from step folder
+	// Read learning files from step folder (works for both regular and branch steps)
+	// This automatically excludes metadata files and checks all subfolders (code/, scripts/)
 	learningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
 	if err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning files from %s: %v - will proceed without learning history", stepLearningsPath, err))
-		formattedLearningHistory = "No learning history available."
-	} else {
-		// Format file contents as learning history
-		formattedLearningHistory = hcpo.formatStepLearningFilesAsHistory(learningFiles)
+		formattedLearningHistory = ""
+	} else if len(learningFiles) > 0 {
+		// Format file contents as learning history (only when we have files)
+		formattedLearningHistory, _ = hcpo.formatStepLearningFilesAsHistory(learningFiles)
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Read %d learning file(s) from step folder for %s", len(learningFiles), stepPath))
+
+		// Note: We no longer save previous learnings content to metadata
+		// Previous learnings are read directly from files before the learning phase runs
+	} else {
+		// No learning files found
+		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ No learning files found for %s - learnings folder is empty: %s", stepPath, stepLearningsPath))
+		formattedLearningHistory = ""
 	}
 
 	return formattedLearningHistory, nil

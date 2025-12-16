@@ -149,7 +149,11 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 
 ## ⚠️ CRITICAL RULES
 
-**What to Capture**:
+### **Decision Criteria: Task-Specific vs General Knowledge**
+
+**CRITICAL PRINCIPLE**: Only capture learnings that are SPECIFIC to executing this task better. General programming knowledge is NOT a learning.
+
+**Include (Task-Specific Learnings)**:
 - ✅ MCP server tools (format: server_name.tool_name)` + func() string {
 		if learningDetailLevel == "exact" {
 			return ` with COMPLETE arguments JSON
@@ -164,11 +168,23 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 - ✅ Python scripts (.py files) - extract FULL script content
 - ✅ **OUTPUT FILE FORMATS** - The structure/format of JSON files and other output files created by the execution agent (especially files referenced in success criteria). Capture the exact JSON structure, field names, data types, and format so future executions can create files in the same format.
 - ✅ Both success patterns (what worked) AND failure patterns (what to avoid)
+- ✅ **Task-specific execution failures**:
+  - Wrong tool usage for the task
+  - Wrong approach/strategy for achieving the step goal
+  - Wrong data format/structure for the task
+  - Missing prerequisites specific to the task
+  - Task-specific error recovery patterns
 
-**What to EXCLUDE**:
+**Exclude (General Knowledge - NOT Learnings)**:
 - ❌ Workspace management tools (read_workspace_file, write_workspace_file, etc.)
 - ❌ Internal infrastructure tools
 - ❌ Tools not from MCP servers
+- ❌ **General programming language errors/guidelines** (NOT task-specific):
+  - Syntax errors (missing semicolons, brackets, etc.)
+  - Compilation errors (unused variables, type mismatches, etc.)
+  - General code quality issues (formatting, naming conventions, etc.)
+  - Language-specific best practices that are general knowledge
+  - **These are NOT learnings** - they're general programming knowledge the LLM already knows
 
 **Variable Replacement**:
 ` + func() string {
@@ -231,118 +247,18 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 			return `7`
 		}
 		return `6`
-	}() + `. Handle Existing Files** - **MANDATORY**:
-
-**Consolidation Behavior** (when multiple files detected):
-- **Detection**: Multiple files if path contains commas or ends with "/" or "\"
-- **Process**:
-  1. If comma-separated: Split by comma and read each file
-  2. If folder path: Use 'list_workspace_files' to find all *_learning.md files, then read each
-  3. Read all files and extract patterns from each
-  4. **Consolidate Logic**:
-     - Compare patterns across all files
-     - **Keep Latest**: Patterns from most recent files (by modification time or content freshness)
-     - **Keep Best**: Patterns with highest success rates [Runs: X | Success: Y%]
-     - **Merge Duplicates**: When same pattern appears in multiple files, combine run counts and recalculate success rate
-     - **Remove Outdated**: Patterns with low success (<50%) that have better alternatives
-     - **Preserve Unique**: Keep all unique valuable patterns from all files
-  5. **Output**: Write consolidated content to single file at target path
-  6. **Cleanup (MANDATORY)**: After successfully writing consolidated file, delete ALL old files that were consolidated (use delete_workspace_file tool for each old file)
-- **Priority**: Latest patterns → Best success rates → Most runs → Unique patterns
-- **Note**: Consolidation is SECONDARY - PRIMARY goal is always to learn from current execution
-
-**Read Existing Files**:
-   ` + func() string {
-		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
-			// Check if path contains multiple files (comma-separated) or is a folder
-			hasMultipleFiles := strings.Contains(existingPath, ",") || strings.HasSuffix(existingPath, "/") || strings.HasSuffix(existingPath, "\\")
-
-			if hasMultipleFiles {
-				return `- **MULTIPLE EXISTING LEARNINGS FOUND**: ` + existingPath + `
-   - **SECONDARY**: Consolidate all files using consolidation process from system prompt
-   - **PRIMARY**: Then merge new learnings from current execution with consolidated existing learnings`
-			} else {
-				return `- **EXISTING LEARNINGS FOUND**: Read ` + existingPath + `
-   - Merge new learnings with existing (preserve all previous content)
-   - Update existing patterns if latest run differs from file
-   - Update pattern scores: [Runs: X | Success: Y%]`
-			}
-		}
-		return `- **NO EXISTING LEARNINGS**: No learning file exists for this step - DO NOT try to read or search for existing learnings
-   - **Action**: Create new file at ` + writePath + `/{StepTitle}_learning.md with all current learnings`
-	}() + `
-
-**` + func() string {
-		if learningDetailLevel == "exact" {
-			return `8`
-		}
-		return `7`
-	}() + `. Write Merged Content** - Priority: ` + func() string {
+	}() + `. Write New Learning Content** - Priority: ` + func() string {
 		if learningDetailLevel == "exact" {
 			return `Execution Workflow → Data Flow → Decision Logic → Error Recovery → Failures`
 		}
 		return `Success tools/scripts → Guidelines → Failures`
 	}() + `
 
-## 📊 PATTERN SCORING & OPTIMAL PATH TRACKING
-
-**Score Format**: [Runs: X | Success: Y%] ✅
-- **Runs (X)**: Count of successful completions (only increment when pattern succeeds)
-- **Total Attempts**: Runs + Failures (count of times pattern was tried)
-- **Success Rate (Y%)**: (Runs / Total Attempts) × 100
-- **Pattern Matching Logic**:
-  * **Same Pattern**: Same tool/function names = same pattern (normalize to {{VARS}} for comparison)
-  * **Different Pattern**: Different tool/function names = different pattern
-  * **Normalization**: When comparing, normalize both patterns to {{VARS}} format first
-- **Score Update Rules** (Most recent run is considered the best):
-  * **When pattern works**: Increment Runs by 1, recalculate Success rate
-    - Example: [Runs: 3 | Success: 75%] (3/4) → [Runs: 4 | Success: 80%] (4/5)
-  * **When pattern fails**: Keep Runs same, recalculate Success rate (add 1 to total attempts)
-    - Example: [Runs: 3 | Success: 75%] (3/4) → [Runs: 3 | Success: 60%] (3/5)
-  * **New patterns that succeeded**: [Runs: 1 | Success: 100%]
-  * **New patterns that failed**: [Runs: 0 | Success: 0%]
-- Higher Runs + Success % = more reliable
-
-**🏆 OPTIMAL PATH IDENTIFICATION (Critical for Long-Term Learning):**
-- **Track Multiple Approaches**: If different tool sequences achieve the same goal, document ALL of them
-- **Compare & Rank**: After multiple runs, identify which approach has highest [Runs + Success%] combination
-- **Mark Optimal Path**: Add "⭐ OPTIMAL" tag to the approach with best [Runs + Success%] combination
-  - **If tie**: Prefer pattern with higher Success % over higher Runs
-  - **Must have**: Success % ≥ 50% (otherwise mark as ⚠️ UNRELIABLE)
-- **Update Optimal Path Immediately**: When current optimal pattern fails, immediately check if another pattern should become optimal
-  - Compare all patterns' [Runs + Success%] scores
-  - Mark the pattern with highest score as ⭐ OPTIMAL
-- **Deprecate Inferior Paths**: Mark approaches with <50% success as "⚠️ UNRELIABLE - prefer optimal path"
-- **Evolution Over Time**: As more runs complete, the optimal path becomes clearer
-  - Run 1-3: Multiple approaches may have similar scores
-  - Run 4-10: Clear winner emerges based on consistent success
-  - Run 10+: Optimal path is well-established, alternatives are documented but de-prioritized
-
-**Example Optimal Path Tracking:**
-
-⭐ OPTIMAL PATH [Runs: 15 | Success: 93%] - RECOMMENDED
-  Step 1 → Step 2 → Step 3 (3-step approach)
-  
-Alternative Path A [Runs: 8 | Success: 75%]
-  Step 1 → Step 2a → Step 2b → Step 3 (4-step approach)
-  Note: More steps, slightly less reliable
-  
-⚠️ UNRELIABLE Path B [Runs: 5 | Success: 40%]
-  Step 1 → Step X → Step 3 (skips validation)
-  Note: Fails often due to missing validation - avoid
-
-` + func() string {
-		if learningDetailLevel == "exact" {
-			return `
-**WORKFLOW SCORING (Exact Mode):**
-- **Track entire workflow success**, not just individual tools
-- When workflow completes successfully: increment workflow Runs
-- When any step fails: note which step failed, don't increment workflow Runs
-- **Compare workflow variations**: If Step 2 has alternatives (2a vs 2b), track each path separately
-- **Converge to optimal**: Over time, the best workflow path should have highest score`
-		}
-		return ``
-	}() + `
+**CRITICAL**: Write ONLY new learning content extracted from current execution. Do NOT merge with existing files.
+- **Output File**: ` + writePath + `/_learning_new.md (temporary file for consolidation agent)
+- **Content**: Only patterns extracted from current execution (ExecutionHistory and ValidationResult)
+- **Format**: Use same format as final learning file, but this is raw extraction output
+- **Note**: Consolidation agent will merge this with existing learnings and handle scoring/optimization
 
 ## 📝 OUTPUT FORMAT
 
@@ -530,11 +446,12 @@ Alternative Path [Runs: X | Success: Y%]
 - What tool categories were effective
 - What workflow sequence worked
 
-**Failure Patterns**:
-- Which MCP tools failed
-- Which Python scripts failed
-- What approaches didn't work
-- Root causes of failures
+**Failure Patterns** (TASK-SPECIFIC ONLY):
+- Which MCP tools failed for this specific task (wrong tool choice, wrong arguments for the task)
+- Which Python scripts failed due to task-specific issues (wrong approach, wrong data format, missing task prerequisites)
+- What task-specific approaches didn't work (wrong strategy for achieving the step goal)
+- Root causes of task-specific failures (wrong data format, missing prerequisites, wrong tool sequence)
+- **CRITICAL**: EXCLUDE general programming errors (syntax errors, unused variables, type errors, etc.) - these are NOT task-specific learnings
 
 **Extract**:
 - Tool names (format: server_name.tool_name)
@@ -546,15 +463,16 @@ Alternative Path [Runs: X | Success: Y%]
 
 ## 📤 REQUIRED OUTPUT
 
-**CRITICAL**: After writing learning file, output ONLY the file path:
-Updated: ` + writePath + "/" + templateVars["StepTitle"] + "_learning.md" + `
+**CRITICAL**: After writing new learning file, output ONLY the file path:
+Updated: ` + writePath + "/_learning_new.md" + `
 
 **DO NOT provide**: summaries, analysis reports, long explanations, lists of patterns
 
 **Key Requirements**:
-- ALWAYS read existing file first, merge new learnings (never overwrite)
+- **EXTRACTION ONLY**: Extract patterns from current execution, do NOT merge with existing files
 - ALWAYS save working Python scripts to ` + scriptsPath + `/` + `
 - Document learnings ONLY in ` + writePath + `/ folder
+- Write to temporary file: _learning_new.md (consolidation agent will handle merging)
 ` + func() string {
 		if learningDetailLevel == "exact" {
 			return "- **PRESERVE WORKFLOW ORDER** - Steps must be in execution sequence\n" +
@@ -564,8 +482,9 @@ Updated: ` + writePath + "/" + templateVars["StepTitle"] + "_learning.md" + `
 		}
 		return "- Keep file content SHORT and precise (each entry 1-2 lines max)"
 	}() + `
-- Update pattern scores when reading existing patterns
-- Analyze BOTH success and failure patterns
+- Analyze BOTH success and failure patterns from current execution
+- **NO SCORING**: Do not add [Runs: X | Success: Y%] scores (consolidation agent handles this)
+- **NO OPTIMAL MARKERS**: Do not mark ⭐ OPTIMAL paths (consolidation agent handles this)
 `
 }
 
@@ -652,33 +571,29 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
 3. **Capture Decision Points** - Note any conditional logic, retries, or branches
 4. **Document Error Recovery** - What failed and how it was (or should be) handled
 5. **Identify Prerequisites** - What must be true before each step runs
-6. **Update Workflow Scores** - Track success rate of the entire workflow, not just individual tools
+6. **Extract Patterns** - Document what worked and what failed from current execution
 
-**🏆 OPTIMAL PATH EVOLUTION (Key for Long-Term Success):**
-- **First few runs**: Document all approaches that work, even if different
-- **After 5+ runs**: Compare approaches, identify which has highest success rate
-- **Mark the winner**: Tag the best approach as "⭐ OPTIMAL" 
-- **Keep alternatives**: Document other approaches but note they're less reliable
-- **Continuous improvement**: Each run refines scores and clarifies the optimal path
+**🔴 LEARNING FROM FAILURES (TASK-SPECIFIC ONLY):**
 
-**MERGING WITH EXISTING LEARNINGS:**
-- If workflow exists: Compare step-by-step, update scores, add new decision points
-- If step order changed: Document BOTH patterns, compare their success rates
-- If new errors discovered: Add to error recovery section
-- If new prerequisites found: Add to prerequisites section
-- If current run used different approach: Compare with existing, update optimal path if better
+**CRITICAL**: Only document failures that relate to executing THIS TASK better. General programming errors are NOT learnings.
 
-**🔴 LEARNING FROM FAILURES (Critical):**
-- **Analyze ValidationResult**: If validation failed, understand WHY
+**Include (Task-Specific Failures)**:
+- **Analyze ValidationResult**: If validation failed, understand WHY (task-specific reason, not general code errors)
 - **Identify failing step**: Which step in the workflow caused the failure?
-- **Root cause analysis**: Was it auth? Data format? Timing? Missing prerequisite?
-- **Update workflow**: Add error recovery, prerequisites, or decision points to PREVENT this failure
+- **Root cause analysis**: Was it wrong tool choice? Wrong data format for the task? Missing task prerequisite? Wrong approach/strategy?
+- **Update workflow**: Add error recovery, prerequisites, or decision points to PREVENT this task-specific failure
 - **Track failure count**: Increment [Failed: X times] for the failing approach
-- **Document fix**: What change would make this succeed next time?
+- **Document fix**: What task-specific change would make this succeed next time?
 - **Deprecate bad paths**: If an approach fails >50% of the time, mark as ⚠️ UNRELIABLE
 
+**Exclude (General Programming Errors)**:
+- ❌ Syntax errors, unused variables, type errors, compilation errors
+- ❌ General code quality issues (formatting, naming conventions)
+- ❌ Language-specific best practices that are general knowledge
+- **These are NOT learnings** - they're general programming knowledge the LLM already knows
+
 **GOAL**: After multiple runs, the OPTIMAL PATH should emerge with high confidence (90%+ success rate). 
-Failures teach us what NOT to do - use them to refine the workflow until it succeeds consistently.`
+Task-specific failures teach us what NOT to do - use them to refine the workflow until it succeeds consistently.`
 		}
 		return `**Remember**: 
 1. Success tools/scripts come first (what worked)
@@ -688,69 +603,18 @@ Failures teach us what NOT to do - use them to refine the workflow until it succ
 	}() + `
 
 **File Handling**:
-` + func() string {
-		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
-			// Check if path contains multiple files (comma-separated) or is a folder
-			hasMultipleFiles := strings.Contains(existingPath, ",") || strings.HasSuffix(existingPath, "/") || strings.HasSuffix(existingPath, "\\")
-
-			if hasMultipleFiles {
-				return `1. **PRIMARY GOAL FIRST**: Extract learnings from current execution (ExecutionHistory and ValidationResult above)
+1. **EXTRACTION ONLY**: Extract learnings from current execution (ExecutionHistory and ValidationResult above)
+   - Do NOT read existing learning files
+   - Do NOT merge with existing patterns
+   - Do NOT update scores or optimal paths
    
-2. **SECONDARY - CONSOLIDATE EXISTING FILES**: ` + existingPath + `
-   - Follow consolidation process from system prompt (detect files, read all, consolidate patterns)
-   - **Consolidation Rule**: When same pattern appears in multiple files, **keep the version with highest score** (highest [Runs + Success%])
-   - **Note**: This is secondary - don't spend excessive time on consolidation
+2. **WRITE NEW FILE**: Write extracted patterns to: ` + writePath + `/_learning_new.md
+   - This is a temporary file that the consolidation agent will process
+   - Include all patterns extracted from current execution (success + failure)
+   - Use same format as final learning file, but without scores or optimal markers
    
-3. **PRIMARY - MERGE WITH NEW LEARNINGS**: ` + func() string {
-					if learningDetailLevel == "exact" {
-						return `Refine consolidated workflow based on latest run (PRIMARY FOCUS)`
-					}
-					return `Merge consolidated learnings with new patterns from latest run (PRIMARY FOCUS)`
-				}() + `
-   - **Pattern Matching**: Normalize both patterns to {{VARS}} format, then compare tool/function names
-   - **Same pattern** (same tool/function names): Update existing pattern (scores + code/workflow if better)
-   - **Different pattern**: Append as new pattern entry
+3. **OUTPUT**: After writing, output ONLY the file path (e.g., "Updated: ` + writePath + `/_learning_new.md")
    
-4. **UPDATE EXISTING PATTERNS**: 
-   - **If pattern worked**: Update scores (increment Runs, recalculate Success %), replace code/workflow if current is better
-   - **If pattern failed**: Update scores (keep Runs same, recalculate Success %), keep existing code/workflow
-   
-5. **OUTDATED PATTERNS**: Remove patterns not used in current run ONLY if better alternative exists
-   
-6. **WRITE CONSOLIDATED FILE**: Write all consolidated learnings (from all files + new from current execution) to: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md
-7. **CLEANUP (MANDATORY)**: After successfully writing consolidated file, delete ALL old files that were consolidated (use delete_workspace_file tool for each old file)`
-			} else {
-				return `1. **READ FIRST**: Use read_workspace_file tool to read: ` + existingPath + `
-2. **PATTERN MATCHING**: Compare current run patterns with existing patterns:
-   - Normalize both to {{VARS}} format before comparing
-   - Same tool/function names = same pattern (update existing)
-   - Different tool/function names = different pattern (append new)
-3. **UPDATE EXISTING PATTERNS**:
-   - **If pattern matches AND worked**: Update scores (increment Runs, recalculate Success %), replace code/workflow if current is better
-   - **If pattern matches AND failed**: Update scores (keep Runs same, recalculate Success %), keep existing code/workflow
-   - **If pattern is new**: Append as new pattern entry with [Runs: 1 | Success: 100%] if succeeded, or [Runs: 0 | Success: 0%] if failed
-4. **OUTDATED PATTERNS**: Remove patterns not used in current run ONLY if better alternative exists
-5. **PRESERVE ALL LEARNINGS**: Keep all previous learnings, only update scores and code/workflow for matching patterns`
-			}
-		}
-		return `1. **NO EXISTING LEARNINGS**: No learning file exists for this step - DO NOT try to read or search for existing learnings
-2. **CREATE NEW FILE**: Create new learning file at ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md with all current learnings
-3. **NEW PATTERNS**: All new patterns start with [Runs: 1 | Success: 100%] if succeeded, or [Runs: 0 | Success: 0%] if failed`
-	}() + `
-4. **UPDATE OPTIMAL PATH**: After updating scores, immediately check if optimal path should change (if current optimal failed, find new optimal)
-5. **WRITE**: Merged content (existing + new learnings with updated scores)` + func() string {
-		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
-			hasMultipleFiles := strings.Contains(existingPath, ",") || strings.HasSuffix(existingPath, "/") || strings.HasSuffix(existingPath, "\\")
-			if hasMultipleFiles {
-				return `
-6. **CLEANUP**: Delete all old consolidated files after successful write`
-			}
-		}
-		return ""
-	}() + `
-
-**After writing, output ONLY the file path** (e.g., \"Updated: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md\"). 
-
 **Keep response minimal** - just the file path. No summaries or analysis.
 `
 }

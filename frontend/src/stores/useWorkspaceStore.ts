@@ -561,13 +561,17 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             }
             
             const { operation, filepath } = eventData
+            // Check should_highlight flag (defaults to true for backward compatibility)
+            const shouldHighlight = eventData.should_highlight !== false
             
             console.log('[WorkspaceStore] Processing workspace_file_operation event:', {
               operation,
               filepath,
               folder: eventData.folder,
               turn: eventData.turn,
-              server_name: eventData.server_name
+              server_name: eventData.server_name,
+              should_highlight: eventData.should_highlight,
+              willHighlight: shouldHighlight
             })
             
             if (!operation) {
@@ -582,6 +586,12 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             if (operation === 'read' || operation === 'update' || operation === 'patch') {
               if (!filepath) {
                 console.warn('[WorkspaceStore] No filepath in event for operation:', operation)
+                return true
+              }
+              
+              // Skip highlighting if should_highlight is false (e.g., for logs/ folder)
+              if (!shouldHighlight) {
+                console.log('[WorkspaceStore] Skipping highlight for file (should_highlight=false):', filepath)
                 return true
               }
               
@@ -638,6 +648,12 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               // Both events are emitted separately, so we handle them individually
               // The delete event removes the source, the update event highlights the destination
               if (filepath) {
+                // Skip highlighting if should_highlight is false (e.g., for logs/ folder)
+                if (!shouldHighlight) {
+                  console.log('[WorkspaceStore] Skipping highlight for moved file (should_highlight=false):', filepath)
+                  return true
+                }
+                
                 const state = get()
                 const fileExists = findFileInTree(state.files, filepath)
                 if (!fileExists) {

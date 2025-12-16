@@ -15,9 +15,9 @@ The `step_config.json` file stores step-specific agent configurations (LLM model
 
 | Component | File Path | Key Functions |
 |-----------|-----------|---------------|
-| **Frontend Parser** | [`frontend/src/components/workflow/hooks/usePlanData.ts`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/hooks/usePlanData.ts) | `normalizeStepConfigFile()`, `saveStepConfig()` |
-| **Backend Parser** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go) | `ParseStepConfigContent()`, `StepConfigFile` |
-| **Type Definitions** | [`frontend/src/utils/stepConfigMatching.ts`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/utils/stepConfigMatching.ts) | `StepConfig`, `AgentConfigs` |
+| **Frontend Parser** | [`frontend/src/components/workflow/hooks/usePlanData.ts`](../frontend/src/components/workflow/hooks/usePlanData.ts) | `normalizeStepConfigFile()`, `saveStepConfig()` |
+| **Backend Parser** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go) | `ParseStepConfigContent()`, `StepConfigFile` |
+| **Type Definitions** | [`frontend/src/utils/stepConfigMatching.ts`](../frontend/src/utils/stepConfigMatching.ts) | `StepConfig`, `AgentConfigs` |
 
 ---
 
@@ -76,7 +76,7 @@ Both frontend and backend **read and write** only the object format with `steps`
 
 ### Frontend Implementation
 
-**File:** [`frontend/src/components/workflow/hooks/usePlanData.ts`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/hooks/usePlanData.ts)
+**File:** [`frontend/src/components/workflow/hooks/usePlanData.ts`](../frontend/src/components/workflow/hooks/usePlanData.ts)
 
 **Read:**
 ```typescript
@@ -104,7 +104,7 @@ await agentApi.updatePlannerFile(stepConfigPath, content, `Updated step config f
 
 ### Backend Implementation
 
-**File:** [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go)
+**File:** [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go)
 
 **Read:**
 ```go

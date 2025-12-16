@@ -30,6 +30,9 @@
         "disable_learning": {
           "type": "boolean"
         },
+        "lock_learnings": {
+          "type": "boolean"
+        },
         "learning_after_loop_iteration": {
           "type": "boolean"
         },
@@ -1867,6 +1870,48 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "OrchestrationResponse": {
+      "properties": {
+        "selected_route_id": {
+          "type": "string"
+        },
+        "reasoning": {
+          "type": "string"
+        },
+        "success_criteria_met": {
+          "type": "boolean"
+        },
+        "success_reasoning": {
+          "type": "string"
+        },
+        "success_criteria_verified_by_validation": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "OrchestrationRoute": {
+      "properties": {
+        "route_id": {
+          "type": "string"
+        },
+        "route_name": {
+          "type": "string"
+        },
+        "condition": {
+          "type": "string"
+        },
+        "sub_agent_step": {
+          "$ref": "#/$defs/TodoStep"
+        },
+        "context_to_pass": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "OrchestratorAgentEndEvent": {
       "properties": {
         "timestamp": {
@@ -3220,12 +3265,6 @@
         "context_output": {
           "type": "string"
         },
-        "learning_files_to_reference": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "has_loop": {
           "type": "boolean"
         },
@@ -3288,6 +3327,27 @@
         },
         "decision_response": {
           "$ref": "#/$defs/DecisionResponse"
+        },
+        "has_orchestration_step": {
+          "type": "boolean"
+        },
+        "orchestration_step": {
+          "$ref": "#/$defs/TodoStep"
+        },
+        "orchestration_evaluation_question": {
+          "type": "string"
+        },
+        "orchestration_routes": {
+          "items": {
+            "$ref": "#/$defs/OrchestrationRoute"
+          },
+          "type": "array"
+        },
+        "orchestration_response": {
+          "$ref": "#/$defs/OrchestrationResponse"
+        },
+        "next_step_id": {
+          "type": "string"
         },
         "agent_configs": {
           "$ref": "#/$defs/AgentConfigs"
@@ -4086,6 +4146,9 @@
         },
         "server_name": {
           "type": "string"
+        },
+        "should_highlight": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,

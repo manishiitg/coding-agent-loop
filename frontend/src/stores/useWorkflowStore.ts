@@ -89,6 +89,7 @@ interface WorkflowStore {
   loadProgress: (workspacePath: string, runFolder: string) => Promise<void>
   loadFolderProgressOnDemand: (workspacePath: string, folderName: string) => Promise<void>
   getCompletedStepIndices: () => number[]
+  updateStepProgressFromEvent: (progress: StepProgress) => void
 
   // Execution options
   setExecutionMode: (mode: ExecutionModeType) => void
@@ -476,6 +477,26 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       getCompletedStepIndices: () => {
         return get().stepProgress?.completed_step_indices || []
+      },
+
+      // Update step progress from event data (called when step_progress_updated events are received)
+      updateStepProgressFromEvent: (progress: StepProgress) => {
+        const state = get()
+        // Only update if this progress is for the currently selected run folder
+        // Note: We can't check run_folder here since it's not in StepProgress type,
+        // but the caller (WorkflowLayout) will filter by run_folder before calling this
+        set({ stepProgress: progress })
+        
+        // Also update the folder info in state if it exists
+        if (state.selectedRunFolder && state.selectedRunFolder !== 'new') {
+          set(prevState => ({
+            runFolders: prevState.runFolders.map(f =>
+              f.name === state.selectedRunFolder
+                ? { ...f, progress }
+                : f
+            )
+          }))
+        }
       },
 
       setExecutionMode: (mode: ExecutionModeType) => {

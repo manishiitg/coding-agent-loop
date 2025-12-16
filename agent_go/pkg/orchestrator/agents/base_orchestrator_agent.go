@@ -126,6 +126,9 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.SummarizeOnTokenThreshold,
 		boa.config.TokenThresholdPercent,
 		boa.config.SummaryKeepLastMessages,
+		boa.config.EnableContextEditing, // Context editing configuration
+		boa.config.ContextEditingThreshold,
+		boa.config.ContextEditingTurnThreshold,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create base agent: %w", err)

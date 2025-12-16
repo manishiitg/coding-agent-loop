@@ -256,6 +256,16 @@ export const agentApi = {
     return response.data
   },
 
+  // Compact context (edit stale tool responses) for a session
+  compactContext: async (sessionId: string, request?: CompactContextRequest): Promise<CompactContextResponse> => {
+    const response = await api.post(`/api/sessions/${sessionId}/compact`, request || {}, {
+      headers: {
+        'X-Session-ID': sessionId
+      }
+    })
+    return response.data
+  },
+
   // Human Feedback Management
   // Submit human feedback response
   submitHumanFeedback: async (uniqueId: string, response: string): Promise<HumanFeedbackResponse> => {

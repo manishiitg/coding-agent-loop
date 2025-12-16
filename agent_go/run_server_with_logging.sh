@@ -64,6 +64,11 @@ export SUMMARIZE_ON_TOKEN_THRESHOLD="true"
 export TOKEN_THRESHOLD_PERCENT="0.7"  # 70% threshold (default: 0.7 = 70%)
 export SUMMARY_KEEP_LAST_MESSAGES="8"  # Keep last 8 messages when summarizing
 
+# Context editing configuration (dynamic context reduction)
+export ENABLE_CONTEXT_EDITING="true"
+export CONTEXT_EDITING_THRESHOLD="100"  # Token threshold for compaction (default: 100)
+export CONTEXT_EDITING_TURN_THRESHOLD="5"  # Turn age threshold (default: 5 turns)
+
 # Set main LLM configuration
 export DEEP_SEARCH_MAIN_LLM_PROVIDER="openrouter"
 export DEEP_SEARCH_MAIN_LLM_MODEL="x-ai/grok-code-fast-1"
@@ -132,6 +137,9 @@ echo "- Workspace tools: Enabled" | tee -a "$LOG_FILE"
 echo "- Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION" | tee -a "$LOG_FILE"
 echo "- Token Threshold: $TOKEN_THRESHOLD_PERCENT (70%)" | tee -a "$LOG_FILE"
 echo "- Keep Last Messages: $SUMMARY_KEEP_LAST_MESSAGES" | tee -a "$LOG_FILE"
+echo "- Context Editing: $ENABLE_CONTEXT_EDITING" | tee -a "$LOG_FILE"
+echo "- Context Editing Threshold: $CONTEXT_EDITING_THRESHOLD tokens" | tee -a "$LOG_FILE"
+echo "- Context Editing Turn Threshold: $CONTEXT_EDITING_TURN_THRESHOLD turns" | tee -a "$LOG_FILE"
 echo "=========================================" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 
@@ -149,6 +157,7 @@ echo "🔄 Vertex Anthropic Fallback Models: $VERTEX_ANTHROPIC_FALLBACK_MODELS"
 echo "🔧 Structured Output LLM: $DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER/$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL"
 echo "📁 Workspace Tools: Enabled"
 echo "📝 Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION (Threshold: $TOKEN_THRESHOLD_PERCENT = 70%)"
+echo "✂️  Context Editing: $ENABLE_CONTEXT_EDITING (Token Threshold: $CONTEXT_EDITING_THRESHOLD, Turn Threshold: $CONTEXT_EDITING_TURN_THRESHOLD)"
 echo "📊 Debug level: $LOG_LEVEL"
 
 # Run the server with all the enhanced configuration and log to both file and console

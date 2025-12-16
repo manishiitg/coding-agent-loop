@@ -108,6 +108,8 @@ export interface EventDataUnion {
   context_summarization_started?: ContextSummarizationStartedEvent;
   context_summarization_completed?: ContextSummarizationCompletedEvent;
   context_summarization_error?: ContextSummarizationErrorEvent;
+  context_editing_completed?: ContextEditingCompletedEvent;
+  context_editing_error?: ContextEditingErrorEvent;
   large_tool_output_detected?: LargeToolOutputDetectedEvent;
   large_tool_output_file_written?: LargeToolOutputFileWrittenEvent;
   large_tool_output_file_write_error?: LargeToolOutputFileWriteErrorEvent;
@@ -847,6 +849,59 @@ export interface ContextSummarizationErrorEvent {
   original_message_count?: number;
   keep_last_messages?: number;
 }
+export interface ContextEditingCompletedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  total_messages?: number;
+  tool_response_count?: number;
+  compacted_count?: number;
+  total_tokens_saved?: number;
+  token_threshold?: number;
+  turn_threshold?: number;
+  current_turn?: number;
+  evaluations?: ToolResponseEvaluation[];
+  already_compacted_count?: number;
+}
+export interface ToolResponseEvaluation {
+  tool_name?: string;
+  token_count?: number;
+  turn_age?: number;
+  meets_token_threshold?: boolean;
+  meets_turn_threshold?: boolean;
+  was_compacted?: boolean;
+  skip_reason?: string;
+  tokens_saved?: number;
+}
+export interface ContextEditingErrorEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  error?: string;
+  total_messages?: number;
+  token_threshold?: number;
+  turn_threshold?: number;
+}
 export interface LargeToolOutputDetectedEvent {
   timestamp?: string;
   trace_id?: string;
@@ -1565,6 +1620,7 @@ export interface AgentConfigs {
   learning_max_turns?: number;
   disable_validation?: boolean;
   disable_learning?: boolean;
+  lock_learnings?: boolean;
   learning_after_loop_iteration?: boolean;
   learning_detail_level?: string;
   selected_servers?: string[];

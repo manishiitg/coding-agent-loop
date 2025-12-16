@@ -98,6 +98,10 @@ type EventDataUnion struct {
 	ContextSummarizationCompleted *events.ContextSummarizationCompletedEvent `json:"context_summarization_completed,omitempty"`
 	ContextSummarizationError     *events.ContextSummarizationErrorEvent     `json:"context_summarization_error,omitempty"`
 
+	// Context Editing Events
+	ContextEditingCompleted *events.ContextEditingCompletedEvent `json:"context_editing_completed,omitempty"`
+	ContextEditingError     *events.ContextEditingErrorEvent     `json:"context_editing_error,omitempty"`
+
 	// Large Output Events
 	LargeToolOutputDetected          *events.LargeToolOutputDetectedEvent          `json:"large_tool_output_detected,omitempty"`
 	LargeToolOutputFileWritten       *events.LargeToolOutputFileWrittenEvent       `json:"large_tool_output_file_written,omitempty"`
@@ -247,6 +251,10 @@ var EventTypeMapping = map[events.EventType]string{
 	events.ContextSummarizationStarted:   "context_summarization_started",
 	events.ContextSummarizationCompleted: "context_summarization_completed",
 	events.ContextSummarizationError:     "context_summarization_error",
+
+	// Context Editing Events
+	events.ContextEditingCompleted: "context_editing_completed",
+	events.ContextEditingError:     "context_editing_error",
 
 	// Large Output Events
 	events.LargeToolOutputDetected:                   "large_tool_output_detected",
@@ -460,6 +468,10 @@ type UnifiedEvent struct {
 	ContextSummarizationStartedEvent   events.ContextSummarizationStartedEvent   `json:"context_summarization_started"`
 	ContextSummarizationCompletedEvent events.ContextSummarizationCompletedEvent `json:"context_summarization_completed"`
 	ContextSummarizationErrorEvent     events.ContextSummarizationErrorEvent     `json:"context_summarization_error"`
+
+	// Context Editing Events
+	ContextEditingCompletedEvent events.ContextEditingCompletedEvent `json:"context_editing_completed"`
+	ContextEditingErrorEvent     events.ContextEditingErrorEvent     `json:"context_editing_error"`
 
 	// Additional MCP Agent Events that exist in backend
 	ToolOutputEvent   events.ToolOutputEvent   `json:"tool_output"`

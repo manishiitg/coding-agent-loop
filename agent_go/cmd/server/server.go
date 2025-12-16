@@ -252,6 +252,10 @@ type QueryRequest struct {
 	SummarizeOnTokenThreshold  bool    `json:"summarize_on_token_threshold,omitempty"` // Enable token-based summarization trigger
 	TokenThresholdPercent      float64 `json:"token_threshold_percent,omitempty"`      // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
 	SummaryKeepLastMessages    int     `json:"summary_keep_last_messages,omitempty"`   // Number of recent messages to keep when summarizing (default: 8)
+	// Context editing configuration
+	EnableContextEditing        bool `json:"enable_context_editing,omitempty"`         // Enable context editing (dynamic context reduction)
+	ContextEditingThreshold     int  `json:"context_editing_threshold,omitempty"`      // Token threshold for context editing (0 = use default: 100)
+	ContextEditingTurnThreshold int  `json:"context_editing_turn_threshold,omitempty"` // Turn age threshold for context editing (0 = use default: 5)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -618,6 +622,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Context Summarization API routes
 	apiRouter.HandleFunc("/sessions/{session_id}/summarize", api.handleSummarizeConversation).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/sessions/{session_id}/compact", api.handleCompactContext).Methods("POST", "OPTIONS")
 
 	// Human Feedback API
 	apiRouter.HandleFunc("/human-feedback/submit", api.handleSubmitHumanFeedback).Methods("POST", "OPTIONS")
@@ -1643,6 +1648,47 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				return 0 // 0 means use default (8 messages)
+			}(),
+			// Context editing configuration
+			// Priority: Request > Environment Variable > Default
+			EnableContextEditing: func() bool {
+				if req.EnableContextEditing {
+					return true
+				}
+				// Check environment variable
+				if envVal := os.Getenv("ENABLE_CONTEXT_EDITING"); envVal == "true" {
+					return true
+				}
+				// Default to enabled (true), can be disabled via ENABLE_CONTEXT_EDITING=false
+				return os.Getenv("ENABLE_CONTEXT_EDITING") != "false"
+			}(),
+			ContextEditingThreshold: func() int {
+				// Request takes highest priority
+				if req.ContextEditingThreshold > 0 {
+					return req.ContextEditingThreshold
+				}
+				// Check environment variable
+				if envVal := os.Getenv("CONTEXT_EDITING_THRESHOLD"); envVal != "" {
+					if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
+						return threshold
+					}
+				}
+				// Default to 0 (use default: 100)
+				return 0
+			}(),
+			ContextEditingTurnThreshold: func() int {
+				// Request takes highest priority
+				if req.ContextEditingTurnThreshold > 0 {
+					return req.ContextEditingTurnThreshold
+				}
+				// Check environment variable
+				if envVal := os.Getenv("CONTEXT_EDITING_TURN_THRESHOLD"); envVal != "" {
+					if turnThreshold, err := strconv.Atoi(envVal); err == nil && turnThreshold > 0 {
+						return turnThreshold
+					}
+				}
+				// Default to 0 (use default: 5)
+				return 0
 			}(),
 		}
 

@@ -95,7 +95,9 @@ import {
   WorkspaceFileOperationEventDisplay,
   ContextSummarizationStartedEventDisplay,
   ContextSummarizationCompletedEventDisplay,
-  ContextSummarizationErrorEventDisplay
+  ContextSummarizationErrorEventDisplay,
+  ContextEditingCompletedEventDisplay,
+  ContextEditingErrorEventDisplay
 } from './debug'
 import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
@@ -428,6 +430,14 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
   if (isEventType(event, 'context_summarization_error')) {
     return <CompactWrapper><ContextSummarizationErrorEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+  }
+
+  // Context Editing Events
+  if (isEventType(event, 'context_editing_completed')) {
+    return <CompactWrapper><ContextEditingCompletedEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+  }
+  if (isEventType(event, 'context_editing_error')) {
+    return <CompactWrapper><ContextEditingErrorEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
 
   // Planning Events

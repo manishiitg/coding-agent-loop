@@ -30,6 +30,9 @@
         "disable_learning": {
           "type": "boolean"
         },
+        "lock_learnings": {
+          "type": "boolean"
+        },
         "learning_after_loop_iteration": {
           "type": "boolean"
         },
@@ -478,6 +481,128 @@
           "type": "string"
         },
         "duration": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ContextEditingCompletedEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "total_messages": {
+          "type": "integer"
+        },
+        "tool_response_count": {
+          "type": "integer"
+        },
+        "compacted_count": {
+          "type": "integer"
+        },
+        "total_tokens_saved": {
+          "type": "integer"
+        },
+        "token_threshold": {
+          "type": "integer"
+        },
+        "turn_threshold": {
+          "type": "integer"
+        },
+        "current_turn": {
+          "type": "integer"
+        },
+        "evaluations": {
+          "items": {
+            "$ref": "#/$defs/ToolResponseEvaluation"
+          },
+          "type": "array"
+        },
+        "already_compacted_count": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ContextEditingErrorEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "error": {
+          "type": "string"
+        },
+        "total_messages": {
+          "type": "integer"
+        },
+        "token_threshold": {
+          "type": "integer"
+        },
+        "turn_threshold": {
           "type": "integer"
         }
       },
@@ -3838,6 +3963,36 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "ToolResponseEvaluation": {
+      "properties": {
+        "tool_name": {
+          "type": "string"
+        },
+        "token_count": {
+          "type": "integer"
+        },
+        "turn_age": {
+          "type": "integer"
+        },
+        "meets_token_threshold": {
+          "type": "boolean"
+        },
+        "meets_turn_threshold": {
+          "type": "boolean"
+        },
+        "was_compacted": {
+          "type": "boolean"
+        },
+        "skip_reason": {
+          "type": "string"
+        },
+        "tokens_saved": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ToolResponseEvent": {
       "properties": {
         "timestamp": {
@@ -4179,6 +4334,12 @@
     },
     "context_summarization_error": {
       "$ref": "#/$defs/ContextSummarizationErrorEvent"
+    },
+    "context_editing_completed": {
+      "$ref": "#/$defs/ContextEditingCompletedEvent"
+    },
+    "context_editing_error": {
+      "$ref": "#/$defs/ContextEditingErrorEvent"
     },
     "tool_output": {
       "$ref": "#/$defs/ToolOutputEvent"

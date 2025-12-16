@@ -30,6 +30,9 @@
         "disable_learning": {
           "type": "boolean"
         },
+        "lock_learnings": {
+          "type": "boolean"
+        },
         "learning_after_loop_iteration": {
           "type": "boolean"
         },
@@ -1271,6 +1274,128 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "ContextEditingCompletedEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "total_messages": {
+          "type": "integer"
+        },
+        "tool_response_count": {
+          "type": "integer"
+        },
+        "compacted_count": {
+          "type": "integer"
+        },
+        "total_tokens_saved": {
+          "type": "integer"
+        },
+        "token_threshold": {
+          "type": "integer"
+        },
+        "turn_threshold": {
+          "type": "integer"
+        },
+        "current_turn": {
+          "type": "integer"
+        },
+        "evaluations": {
+          "items": {
+            "$ref": "#/$defs/ToolResponseEvaluation"
+          },
+          "type": "array"
+        },
+        "already_compacted_count": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ContextEditingErrorEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "error": {
+          "type": "string"
+        },
+        "total_messages": {
+          "type": "integer"
+        },
+        "token_threshold": {
+          "type": "integer"
+        },
+        "turn_threshold": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ContextSummarizationCompletedEvent": {
       "properties": {
         "timestamp": {
@@ -2035,6 +2160,12 @@
         "context_summarization_error": {
           "$ref": "#/$defs/ContextSummarizationErrorEvent"
         },
+        "context_editing_completed": {
+          "$ref": "#/$defs/ContextEditingCompletedEvent"
+        },
+        "context_editing_error": {
+          "$ref": "#/$defs/ContextEditingErrorEvent"
+        },
         "large_tool_output_detected": {
           "$ref": "#/$defs/LargeToolOutputDetectedEvent"
         },
@@ -2234,99 +2365,101 @@
     "EventType": {
       "type": "string",
       "enum": [
-        "cache_hit",
-        "json_validation_start",
-        "batch_group_start",
-        "llm_generation_end",
-        "unified_completion",
-        "orchestrator_agent_error",
-        "todo_steps_extracted",
-        "blocking_human_feedback",
-        "conversation_thinking",
-        "batch_execution_end",
-        "agent_end",
-        "tool_call_start",
-        "system_prompt",
-        "orchestrator_end",
-        "performance",
-        "batch_group_end",
-        "llm_generation_start",
-        "context_summarization_error",
-        "step_execution_failed",
-        "decision_evaluated",
-        "streaming_end",
-        "streaming_error",
-        "mcp_server_connection_start",
-        "llm_messages",
-        "large_tool_output_detected",
-        "token_limit_exceeded",
-        "orchestrator_start",
-        "orchestrator_agent_start",
-        "independent_steps_selected",
-        "structured_output_error",
-        "llm_generation_with_retry",
-        "tool_call_error",
-        "large_tool_output_file_written",
-        "large_tool_output_server_unavailable",
-        "request_human_feedback",
-        "cache_error",
-        "cache_operation_start",
-        "conversation_turn",
-        "mcp_server_discovery",
-        "token_usage",
-        "error_detail",
-        "step_execution_end",
-        "streaming_connection_lost",
-        "llm_generation_error",
-        "mcp_server_selection",
-        "variables_extracted",
-        "human_verification_response",
-        "streaming_progress",
-        "cache_write",
-        "batch_execution_start",
-        "agent_start",
-        "conversation_end",
-        "llm_token_usage",
-        "agent_error",
-        "tool_execution",
-        "tool_response",
-        "context_cancelled",
-        "model_change",
-        "orchestrator_agent_end",
-        "streaming_start",
-        "fallback_model_used",
-        "streaming_chunk",
-        "debug",
-        "mcp_server_connection",
-        "context_summarization_started",
-        "smart_routing_end",
-        "step_execution_start",
-        "step_progress_updated",
-        "structured_output_end",
-        "json_validation_end",
-        "conversation_start",
-        "tool_call_end",
-        "max_turns_reached",
-        "large_tool_output_file_write_error",
-        "throttling_detected",
-        "orchestrator_error",
-        "step_token_usage",
-        "cache_miss",
-        "user_message",
-        "context_summarization_completed",
-        "cache_expired",
-        "cache_cleanup",
-        "mcp_server_connection_error",
-        "tool_call_progress",
-        "comprehensive_cache",
-        "smart_routing_start",
-        "mcp_server_connection_end",
-        "agent_processing",
         "conversation_error",
         "tool_output",
-        "workspace_file_operation",
+        "context_editing_error",
+        "context_summarization_completed",
+        "streaming_end",
+        "mcp_server_connection_end",
+        "agent_start",
+        "conversation_start",
+        "tool_execution",
+        "large_tool_output_file_write_error",
+        "decision_evaluated",
+        "conversation_thinking",
+        "llm_messages",
+        "token_limit_exceeded",
+        "request_human_feedback",
+        "structured_output_error",
+        "cache_expired",
+        "json_validation_start",
+        "llm_generation_start",
+        "tool_response",
+        "smart_routing_start",
+        "blocking_human_feedback",
+        "llm_generation_error",
+        "orchestrator_error",
+        "batch_group_start",
+        "batch_execution_end",
+        "tool_call_start",
+        "mcp_server_discovery",
+        "throttling_detected",
+        "step_execution_start",
+        "cache_operation_start",
+        "agent_processing",
+        "tool_call_error",
+        "user_message",
+        "context_summarization_error",
+        "fallback_model_used",
+        "structured_output_end",
+        "tool_call_progress",
+        "conversation_turn",
+        "mcp_server_connection",
+        "mcp_server_selection",
+        "context_cancelled",
+        "context_summarization_started",
+        "model_change",
         "fallback_attempt",
-        "structured_output_start"
+        "orchestrator_start",
+        "llm_generation_with_retry",
+        "token_usage",
+        "large_tool_output_file_written",
+        "large_tool_output_server_unavailable",
+        "orchestrator_end",
+        "orchestrator_agent_end",
+        "step_execution_end",
+        "streaming_chunk",
+        "agent_end",
+        "conversation_end",
+        "unified_completion",
+        "streaming_connection_lost",
+        "cache_miss",
+        "cache_write",
+        "llm_token_usage",
+        "system_prompt",
+        "error_detail",
+        "comprehensive_cache",
+        "orchestrator_agent_error",
+        "human_verification_response",
+        "streaming_start",
+        "streaming_error",
+        "streaming_progress",
+        "llm_generation_end",
+        "tool_call_end",
+        "step_token_usage",
+        "cache_cleanup",
+        "cache_error",
+        "mcp_server_connection_start",
+        "workspace_file_operation",
+        "context_editing_completed",
+        "orchestrator_agent_start",
+        "independent_steps_selected",
+        "agent_error",
+        "large_tool_output_detected",
+        "step_progress_updated",
+        "variables_extracted",
+        "structured_output_start",
+        "cache_hit",
+        "debug",
+        "batch_execution_start",
+        "max_turns_reached",
+        "smart_routing_end",
+        "step_execution_failed",
+        "todo_steps_extracted",
+        "mcp_server_connection_error",
+        "json_validation_end",
+        "performance",
+        "batch_group_end"
       ]
     },
     "FallbackAttemptEvent": {
@@ -6116,6 +6249,36 @@
       "properties": {
         "arguments": {
           "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ToolResponseEvaluation": {
+      "properties": {
+        "tool_name": {
+          "type": "string"
+        },
+        "token_count": {
+          "type": "integer"
+        },
+        "turn_age": {
+          "type": "integer"
+        },
+        "meets_token_threshold": {
+          "type": "boolean"
+        },
+        "meets_turn_threshold": {
+          "type": "boolean"
+        },
+        "was_compacted": {
+          "type": "boolean"
+        },
+        "skip_reason": {
+          "type": "string"
+        },
+        "tokens_saved": {
+          "type": "integer"
         }
       },
       "additionalProperties": false,

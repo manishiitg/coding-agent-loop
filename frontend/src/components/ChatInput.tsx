@@ -325,6 +325,36 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [sessionId, isSummarizing, isStreaming, observerId, onSubmit])
 
+  // Handle manual context compaction (context editing)
+  // If messageToSendAfter is provided, it will be sent as a user message after compaction completes
+  const handleCompact = useCallback(async (messageToSendAfter?: string) => {
+    if (!sessionId || isSummarizing || isStreaming) {
+      return
+    }
+
+    setIsSummarizing(true) // Reuse the same loading state
+    try {
+      const response = await agentApi.compactContext(sessionId)
+      console.log('[CONTEXT_EDITING] Success:', response)
+      // Show success notification
+      alert(`Context compacted successfully!\nCompacted: ${response.compacted_count} tool responses\nTokens saved: ${response.total_tokens_saved?.toLocaleString() || 0}`)
+      
+      // If there's a message to send after compaction, send it now
+      if (messageToSendAfter && messageToSendAfter.trim() && observerId) {
+        // Small delay to ensure compaction is fully processed
+        setTimeout(() => {
+          onSubmit(messageToSendAfter.trim())
+        }, 500)
+      }
+    } catch (error) {
+      console.error('[CONTEXT_EDITING] Error:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      alert(`Failed to compact context: ${errorMessage}`)
+    } finally {
+      setIsSummarizing(false)
+    }
+  }, [sessionId, isSummarizing, isStreaming, observerId, onSubmit])
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If command dialog is open, let it handle keyboard events
     if (showCommandDialog) {
@@ -348,6 +378,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       // Check for slash commands
       const trimmedQuery = queryToSubmit?.trim() || ''
       const summarizeIndex = trimmedQuery.indexOf('/summarize')
+      const compactIndex = trimmedQuery.indexOf('/compact')
       
       if (summarizeIndex >= 0) {
         // Handle summarize command
@@ -358,6 +389,20 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           // If there's text before /summarize, send it after summarization
           // Otherwise, just summarize
           handleSummarize(textBeforeSummarize || undefined)
+          setLocalQuery('') // Clear input after command
+        }
+        return
+      }
+      
+      if (compactIndex >= 0) {
+        // Handle compact command
+        if (sessionId && !isSummarizing && !isStreaming) {
+          // Extract text before /compact
+          const textBeforeCompact = trimmedQuery.substring(0, compactIndex).trim()
+          
+          // If there's text before /compact, send it after compaction
+          // Otherwise, just compact
+          handleCompact(textBeforeCompact || undefined)
           setLocalQuery('') // Clear input after command
         }
         return
@@ -388,7 +433,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [localQuery, onSubmit, showFileDialog, showCommandDialog, selectedModeCategory, observerId, canSubmit, queryToSubmit, sessionId, isSummarizing, isStreaming, handleSummarize])
+  }, [localQuery, onSubmit, showFileDialog, showCommandDialog, selectedModeCategory, observerId, canSubmit, queryToSubmit, sessionId, isSummarizing, isStreaming, handleSummarize, handleCompact])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -396,6 +441,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // Check for slash commands
     const trimmedQuery = queryToSubmit?.trim() || ''
     const summarizeIndex = trimmedQuery.indexOf('/summarize')
+    const compactIndex = trimmedQuery.indexOf('/compact')
     
     if (summarizeIndex >= 0) {
       // Handle summarize command
@@ -406,6 +452,20 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         // If there's text before /summarize, send it after summarization
         // Otherwise, just summarize
         handleSummarize(textBeforeSummarize || undefined)
+        setLocalQuery('') // Clear input after command
+      }
+      return
+    }
+    
+    if (compactIndex >= 0) {
+      // Handle compact command
+      if (sessionId && !isSummarizing && !isStreaming) {
+        // Extract text before /compact
+        const textBeforeCompact = trimmedQuery.substring(0, compactIndex).trim()
+        
+        // If there's text before /compact, send it after compaction
+        // Otherwise, just compact
+        handleCompact(textBeforeCompact || undefined)
         setLocalQuery('') // Clear input after command
       }
       return
@@ -599,7 +659,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const placeholder = useMemo(() => {
     return selectedModeCategory === 'workflow'
       ? "Enter your objective for workflow execution... I'll create a todo-list and execute tasks sequentially!"
-      : "Ask me anything... I can use tools to help you! (Type /summarize to summarize, or 'text /summarize' to summarize then send text)"
+      : "Ask me anything... I can use tools to help you! (Type /summarize to summarize, /compact to compact context, or 'text /command' to run command then send text)"
   }, [selectedModeCategory])
 
   return (

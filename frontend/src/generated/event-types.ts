@@ -56,6 +56,8 @@ import type {
   ContextSummarizationStartedEvent,
   ContextSummarizationCompletedEvent,
   ContextSummarizationErrorEvent,
+  ContextEditingCompletedEvent,
+  ContextEditingErrorEvent,
   LargeToolOutputDetectedEvent,
   LargeToolOutputFileWrittenEvent,
   LargeToolOutputFileWriteErrorEvent,
@@ -167,6 +169,8 @@ export type EventTypeString =
   | 'context_summarization_started'
   | 'context_summarization_completed'
   | 'context_summarization_error'
+  | 'context_editing_completed'
+  | 'context_editing_error'
   | 'large_tool_output_detected'
   | 'large_tool_output_file_written'
   | 'large_tool_output_file_write_error'
@@ -281,6 +285,8 @@ export interface EventTypeToDataMap {
   'context_summarization_started': ContextSummarizationStartedEvent;
   'context_summarization_completed': ContextSummarizationCompletedEvent;
   'context_summarization_error': ContextSummarizationErrorEvent;
+  'context_editing_completed': ContextEditingCompletedEvent;
+  'context_editing_error': ContextEditingErrorEvent;
   'large_tool_output_detected': LargeToolOutputDetectedEvent;
   'large_tool_output_file_written': LargeToolOutputFileWrittenEvent;
   'large_tool_output_file_write_error': LargeToolOutputFileWriteErrorEvent;
@@ -570,6 +576,8 @@ export type {
   ContextSummarizationStartedEvent,
   ContextSummarizationCompletedEvent,
   ContextSummarizationErrorEvent,
+  ContextEditingCompletedEvent,
+  ContextEditingErrorEvent,
   LargeToolOutputDetectedEvent,
   LargeToolOutputFileWrittenEvent,
   LargeToolOutputFileWriteErrorEvent,

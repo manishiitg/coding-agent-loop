@@ -32,3 +32,7 @@ export { WorkspaceFileOperationEventDisplay } from './WorkspaceFileOperationEven
 export { ContextSummarizationStartedEventDisplay } from './ContextSummarizationStartedEvent'
 export { ContextSummarizationCompletedEventDisplay } from './ContextSummarizationCompletedEvent'
 export { ContextSummarizationErrorEventDisplay } from './ContextSummarizationErrorEvent'
+
+// Context editing event components
+export { ContextEditingCompletedEventDisplay } from './ContextEditingCompletedEvent'
+export { ContextEditingErrorEventDisplay } from './ContextEditingErrorEvent'

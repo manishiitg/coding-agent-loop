@@ -135,6 +135,20 @@ export interface SummarizeConversationResponse {
   summary?: string
 }
 
+export interface CompactContextRequest {
+  token_threshold?: number // Optional: token threshold (default: 1000)
+  turn_threshold?: number  // Optional: turn age threshold (default: 10)
+}
+
+export interface CompactContextResponse {
+  session_id: string
+  status: string
+  message?: string
+  total_messages?: number
+  compacted_count?: number
+  total_tokens_saved?: number
+}
+
 // Slack Feedback Configuration types
 export interface SlackConfig {
   enabled: boolean

@@ -16,7 +16,7 @@ import (
 // runSuccessLearningPhase analyzes successful executions to capture best practices and improve plan.json
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx context.Context, learningPathIdentifier string, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool) error {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx context.Context, stepIndex int, stepPath string, learningPathIdentifier string, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool) error {
 	// Use step-specific learning detail level, default to "exact" if not set
 	learningDetailLevel := "exact" // default
 	if step.AgentConfigs != nil && step.AgentConfigs.LearningDetailLevel != "" {
@@ -53,6 +53,19 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	// Success learning agent ALWAYS runs - it writes learnings (creates folder if needed)
 	// Only the learning reading agent (which reads existing learnings) should check folder existence
 	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Starting success learning analysis for %s/%d: %s", learningPathIdentifier, totalSteps, step.Title))
+
+	// Read previous learnings BEFORE learning phase runs (for comparison after learning phase completes)
+	// This captures the state before the learning agent potentially modifies the files
+	baseWorkspacePath := hcpo.GetWorkspacePath()
+	stepLearningsPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier)
+	previousLearningFiles, _ := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
+	previousLearningsContent := ""
+	if len(previousLearningFiles) > 0 {
+		previousLearningsContent, _ = hcpo.formatStepLearningFilesAsHistory(previousLearningFiles)
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 Read %d previous learning file(s) for comparison (before learning phase)", len(previousLearningFiles)))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 No previous learning files found (first iteration)"))
+	}
 
 	// Create success learning agent
 	// Resolve variables in step title before using in agent name
@@ -122,13 +135,77 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 		hcpo.GetLogger().Info(fmt.Sprintf("📄 No existing learning file found for %s", learningPathIdentifier))
 	}
 
-	// Execute success learning agent and capture output
-	_, _, err = successLearningAgent.Execute(ctx, successLearningTemplateVars, []llmtypes.MessageContent{})
+	// Execute extraction agent and capture output
+	extractionOutput, _, err := successLearningAgent.Execute(ctx, successLearningTemplateVars, []llmtypes.MessageContent{})
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("success learning analysis failed: %w", err), nil)
+		return fmt.Errorf(fmt.Sprintf("success learning extraction failed: %w", err), nil)
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for %s (detail level: %s)", learningPathIdentifier, learningDetailLevel))
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning extraction completed for %s (detail level: %s)", learningPathIdentifier, learningDetailLevel))
+
+	// Extract the new learning file path from agent output
+	// Output format: "Updated: {path}/_learning_new.md"
+	newLearningFilePath := ""
+	if extractionOutput != "" {
+		// Try to extract path from output
+		if strings.Contains(extractionOutput, "Updated:") {
+			parts := strings.Split(extractionOutput, "Updated:")
+			if len(parts) > 1 {
+				newLearningFilePath = strings.TrimSpace(parts[1])
+			}
+		}
+	}
+
+	// If path extraction failed, construct it manually
+	if newLearningFilePath == "" {
+		newLearningFilePath = filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier, "_learning_new.md")
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 Constructed new learning file path: %s", newLearningFilePath))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 Extracted new learning file path from output: %s", newLearningFilePath))
+	}
+
+	// Run consolidation agent to merge new learnings with existing and update scores
+	if err := hcpo.runLearningConsolidationPhase(ctx, stepIndex, stepPath, learningPathIdentifier, step, newLearningFilePath, isCodeExecutionMode); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Learning consolidation failed for %s: %v (non-blocking, continuing with detection)", learningPathIdentifier, err))
+		// Continue with detection even if consolidation fails
+	}
+
+	// Run learning detection after consolidation completes
+	// previousLearningsContent was captured BEFORE any learning agent ran
+	hasNewLearning, reasoning, confidence, detectionErr := hcpo.detectNewLearningWithLLM(
+		ctx,
+		stepIndex,
+		stepPath,
+		learningPathIdentifier,
+		step.AgentConfigs,
+		previousLearningsContent,
+		step,
+	)
+	if detectionErr == nil {
+		// Update metadata and check if auto-lock should be triggered
+		shouldAutoLock, metadataErr := hcpo.updateLearningMetadata(
+			ctx,
+			stepIndex,
+			stepPath,
+			learningPathIdentifier,
+			hasNewLearning,
+			reasoning,
+			confidence,
+		)
+		if metadataErr == nil && shouldAutoLock {
+			// Auto-lock learnings in step_config.json
+			if lockErr := hcpo.autoLockStepLearningsInConfig(ctx, step.ID, reasoning); lockErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-lock learnings for step %s: %v", step.ID, lockErr))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-locked learnings for step %s after 3 consecutive iterations with no new learning", step.ID))
+			}
+		} else if metadataErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update learning metadata for %s: %v", learningPathIdentifier, metadataErr))
+		}
+	} else {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Learning detection failed for %s: %v (non-blocking)", learningPathIdentifier, detectionErr))
+	}
+
 	return nil
 }
 
@@ -137,7 +214,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 // runFailureLearningPhase analyzes failed executions to provide refined task descriptions
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx context.Context, learningPathIdentifier string, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool) (string, string, error) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx context.Context, stepIndex int, stepPath string, learningPathIdentifier string, totalSteps int, step *TodoStep, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool) (string, string, error) {
 	// Use step-specific learning detail level, default to "exact" if not set
 	learningDetailLevel := "exact" // default
 	if step.AgentConfigs != nil && step.AgentConfigs.LearningDetailLevel != "" {
@@ -174,6 +251,19 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 	// Failure learning agent ALWAYS runs - it writes learnings (creates folder if needed)
 	// Only the learning reading agent (which reads existing learnings) should check folder existence
 	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Starting failure learning analysis for %s/%d: %s", learningPathIdentifier, totalSteps, step.Title))
+
+	// Read previous learnings BEFORE learning phase runs (for comparison after learning phase completes)
+	// This captures the state before the learning agent potentially modifies the files
+	baseWorkspacePath := hcpo.GetWorkspacePath()
+	stepLearningsPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier)
+	previousLearningFiles, _ := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
+	previousLearningsContent := ""
+	if len(previousLearningFiles) > 0 {
+		previousLearningsContent, _ = hcpo.formatStepLearningFilesAsHistory(previousLearningFiles)
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 Read %d previous learning file(s) for comparison (before learning phase)", len(previousLearningFiles)))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 No previous learning files found (first iteration)"))
+	}
 
 	// Create failure learning agent
 	// Resolve variables in step title before using in agent name
@@ -243,18 +333,86 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 		hcpo.GetLogger().Info(fmt.Sprintf("📄 No existing learning file found for %s", learningPathIdentifier))
 	}
 
-	// Execute failure learning agent and capture output
-	failureLearningOutput, _, err := failureLearningAgent.Execute(ctx, failureLearningTemplateVars, []llmtypes.MessageContent{})
+	// Execute extraction agent and capture output
+	extractionOutput, _, err := failureLearningAgent.Execute(ctx, failureLearningTemplateVars, []llmtypes.MessageContent{})
 	if err != nil {
-		return "", "", fmt.Errorf(fmt.Sprintf("failure learning analysis failed: %w", err), nil)
+		return "", "", fmt.Errorf(fmt.Sprintf("failure learning extraction failed: %w", err), nil)
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Failure learning analysis completed for %s (detail level: %s)", learningPathIdentifier, learningDetailLevel))
-	return failureLearningOutput, failureLearningOutput, nil
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Failure learning extraction completed for %s (detail level: %s)", learningPathIdentifier, learningDetailLevel))
+
+	// Extract the new learning file path from agent output
+	// Output format: "Updated: {path}/_learning_new.md"
+	newLearningFilePath := ""
+	if extractionOutput != "" {
+		// Try to extract path from output
+		if strings.Contains(extractionOutput, "Updated:") {
+			parts := strings.Split(extractionOutput, "Updated:")
+			if len(parts) > 1 {
+				newLearningFilePath = strings.TrimSpace(parts[1])
+			}
+		}
+	}
+
+	// If path extraction failed, construct it manually
+	if newLearningFilePath == "" {
+		newLearningFilePath = filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier, "_learning_new.md")
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 Constructed new learning file path: %s", newLearningFilePath))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 Extracted new learning file path from output: %s", newLearningFilePath))
+	}
+
+	// Run consolidation agent to merge new learnings with existing and update scores
+	if err := hcpo.runLearningConsolidationPhase(ctx, stepIndex, stepPath, learningPathIdentifier, step, newLearningFilePath, isCodeExecutionMode); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Learning consolidation failed for %s: %v (non-blocking, continuing with detection)", learningPathIdentifier, err))
+		// Continue with detection even if consolidation fails
+	}
+
+	// Run learning detection after consolidation completes
+	// previousLearningsContent was captured BEFORE any learning agent ran
+	hasNewLearning, reasoning, confidence, detectionErr := hcpo.detectNewLearningWithLLM(
+		ctx,
+		stepIndex,
+		stepPath,
+		learningPathIdentifier,
+		step.AgentConfigs,
+		previousLearningsContent,
+		step,
+	)
+	if detectionErr == nil {
+		// Update metadata and check if auto-lock should be triggered
+		shouldAutoLock, metadataErr := hcpo.updateLearningMetadata(
+			ctx,
+			stepIndex,
+			stepPath,
+			learningPathIdentifier,
+			hasNewLearning,
+			reasoning,
+			confidence,
+		)
+		if metadataErr == nil && shouldAutoLock {
+			// Auto-lock learnings in step_config.json
+			if lockErr := hcpo.autoLockStepLearningsInConfig(ctx, step.ID, reasoning); lockErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-lock learnings for step %s: %v", step.ID, lockErr))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-locked learnings for step %s after 3 consecutive iterations with no new learning", step.ID))
+			}
+		} else if metadataErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update learning metadata for %s: %v", learningPathIdentifier, metadataErr))
+		}
+	} else {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Learning detection failed for %s: %v (non-blocking)", learningPathIdentifier, detectionErr))
+	}
+
+	// Return empty strings since consolidation agent handles the output
+	// The function signature requires (string, string, error) for backward compatibility
+	return "", "", nil
 }
 
-// readStepLearningFiles reads all .md learning files from a step-specific folder
-// In code execution mode, also reads .go files from the code/ subfolder
+// readStepLearningFiles reads all learning files from a step-specific folder
+// Reads .md files from the step folder, .go files from code/ subfolder (Code Execution Mode),
+// and .py/.sh files from scripts/ subfolder (Simple Mode)
+// Excludes metadata files (.learning_metadata.json)
 // Returns a map of filename -> content
 func (hcpo *HumanControlledTodoPlannerOrchestrator) readStepLearningFiles(ctx context.Context, stepLearningsPath string) (map[string]string, error) {
 	learningFiles := make(map[string]string)
@@ -266,7 +424,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) readStepLearningFiles(ctx co
 	}
 
 	// Read all .md files from the step folder
+	// Exclude metadata files (.learning_metadata.json) - these are for internal tracking only
 	for _, file := range files {
+		// Skip metadata files - these should not be passed to execution agents
+		if file == ".learning_metadata.json" || strings.HasSuffix(file, ".learning_metadata.json") {
+			continue
+		}
 		if strings.HasSuffix(file, ".md") {
 			filePath := filepath.Join(stepLearningsPath, file)
 			content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, filePath)
@@ -304,17 +467,45 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) readStepLearningFiles(ctx co
 	}
 	// Note: If code/ subfolder doesn't exist or is empty, that's fine - it's optional
 
+	// Check if scripts/ subfolder exists (for simple mode)
+	// This subfolder contains .py Python scripts and .sh shell scripts
+	scriptsSubfolderPath := filepath.Join(stepLearningsPath, "scripts")
+	scriptFiles, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, scriptsSubfolderPath)
+	if err == nil && len(scriptFiles) > 0 {
+		// Read all .py and .sh files from scripts/ subfolder
+		scriptFileCount := 0
+		for _, file := range scriptFiles {
+			if strings.HasSuffix(file, ".py") || strings.HasSuffix(file, ".sh") {
+				filePath := filepath.Join(scriptsSubfolderPath, file)
+				content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, filePath)
+				if err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read script learning file %s: %v", filePath, err))
+					continue
+				}
+				// Prefix with "scripts/" to indicate it's from the scripts subfolder
+				learningFiles[filepath.Join("scripts", file)] = content
+				scriptFileCount++
+			}
+		}
+		if scriptFileCount > 0 {
+			hcpo.GetLogger().Info(fmt.Sprintf("📁 Read %d script file(s) (.py/.sh) from scripts/ subfolder", scriptFileCount))
+		}
+	}
+	// Note: If scripts/ subfolder doesn't exist or is empty, that's fine - it's optional
+
 	return learningFiles, nil
 }
 
 // formatStepLearningFilesAsHistory formats a map of learning files (filename -> content) into a formatted history string
-func (hcpo *HumanControlledTodoPlannerOrchestrator) formatStepLearningFilesAsHistory(learningFiles map[string]string) string {
+// Returns the combined content and list of file paths
+func (hcpo *HumanControlledTodoPlannerOrchestrator) formatStepLearningFilesAsHistory(learningFiles map[string]string) (string, []string) {
 	if len(learningFiles) == 0 {
-		return "No learning history available."
+		return "", []string{}
 	}
 
 	var result strings.Builder
-	result.WriteString("## 📚 Learning Context\n\n")
+	result.WriteString("## Learning Context\n\n")
+	filePaths := make([]string, 0, len(learningFiles))
 
 	// Sort filenames for consistent output
 	filenames := make([]string, 0, len(learningFiles))
@@ -329,12 +520,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) formatStepLearningFilesAsHis
 		if i > 0 {
 			result.WriteString("\n---\n\n")
 		}
-		result.WriteString(fmt.Sprintf("### 📄 %s\n\n", filename))
+		result.WriteString(fmt.Sprintf("### %s\n\n", filename))
 		result.WriteString(content)
 		result.WriteString("\n")
+		filePaths = append(filePaths, filename)
 	}
 
-	return result.String()
+	return result.String(), filePaths
 }
 
 // getExistingLearningFilePath checks if an existing learning file exists for the given step

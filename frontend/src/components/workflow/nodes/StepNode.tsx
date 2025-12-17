@@ -80,6 +80,9 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
 
+  // Check if this is a sub-agent (part of a routing step)
+  const isSubAgent = useMemo(() => id.includes('-sub-agent-'), [id])
+
   // Button is disabled if executing, can't run (previous steps not done), or no callback
   const isRunDisabled = isExecuting || !canRun || !onRunFromStep
 
@@ -398,6 +401,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     <div className={`
       relative w-[340px] rounded-xl border-2 bg-white dark:bg-gray-900 shadow-lg overflow-hidden
       ${statusBorderColors[status]}
+      ${isSubAgent ? 'border-dashed border-cyan-400 dark:border-cyan-500 bg-cyan-50/30 dark:bg-cyan-900/10' : ''}
       ${selected ? 'ring-2 ring-blue-500/40' : ''}
       ${changeType ? changeHighlightStyles[changeType] : ''}
     `}>
@@ -415,6 +419,13 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
         </div>
       )}
       
+      {/* Sub-Agent badge - positioned at top-left */}
+      {isSubAgent && (
+        <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-600 dark:bg-cyan-500 text-white text-[11px] font-semibold shadow-lg">
+          <span>Sub-Agent</span>
+        </div>
+      )}
+      
       {/* Change badge - positioned below status badge (or top-right if no status badge) */}
       {changeType && (
         <div className={`absolute ${status === 'running' || status === 'failed' ? 'top-6 right-0' : 'top-0 right-0'} z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl ${changeBadgeStyles[changeType].bg} text-white text-[10px] font-medium shadow-lg`}>
@@ -424,6 +435,17 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
       )}
 
       <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-900" />
+      
+      {/* Top handle for sub-agents (to receive connections from routing node bottom) */}
+      {isSubAgent && (
+        <Handle 
+          type="target" 
+          position={Position.Top} 
+          id="top"
+          className="!w-3 !h-3 !bg-cyan-400 dark:!bg-cyan-600 !border-2 !border-white dark:!border-gray-900" 
+          style={{ top: '-6px', left: '50%' }}
+        />
+      )}
 
       {/* Header */}
       <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">

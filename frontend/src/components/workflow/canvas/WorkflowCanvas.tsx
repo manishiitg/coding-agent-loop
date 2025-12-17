@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useImperativeHandle, forwardRef } from 'react'
+import React, { useCallback, useRef, useImperativeHandle, forwardRef, useEffect } from 'react'
 import {
   ReactFlow,
   Background,
@@ -75,6 +75,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   
   // Workflow store actions
   const setVariablesManifestInStore = useWorkflowStore.getState().setVariablesManifest
+  const getCompletedStepIndices = useWorkflowStore(state => state.getCompletedStepIndices)
+  const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  const stepProgress = useWorkflowStore(state => state.stepProgress)
   
   // Get workspace minimized state to determine if StepSidebar should be compact
   const workspaceMinimized = useAppStore(state => state.workspaceMinimized)
@@ -87,8 +90,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     setCompletedStepIndices(indices)
   }, [])
 
+  // Load initial completedStepIndices from store when component mounts or selectedRunFolder/stepProgress changes
+  // This ensures we have the correct state even after page refresh
+  useEffect(() => {
+    const indices = getCompletedStepIndices()
+    setCompletedStepIndices(indices)
+  }, [selectedRunFolder, stepProgress, getCompletedStepIndices])
+
   // Load plan data with change detection
-  const { plan, loading, error, changes, updateStep, deleteStep, refresh, clearChanges, savePlan, saveStepConfig, setChanges } = usePlanData(workspacePath)
+  const { plan, loading, error, changes, updateStep, deleteStep, refresh: loadPlanRefresh, clearChanges, savePlan, saveStepConfig, setChanges } = usePlanData(workspacePath)
 
   // Load variables when workspace changes
   React.useEffect(() => {
@@ -148,9 +158,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Refs for callbacks that need to be defined early
   const handleRunFromStepRef = React.useRef<((stepIndex: number, stepId: string) => void) | null>(null)
   const handleOpenSidebarRef = React.useRef<((nodeId: string) => void) | null>(null)
-
-  // Get selected run folder from workflow store
-  const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
   
   // React Flow state (need to define before usePlanToFlow to use in callbacks)
   const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowNode>([])
@@ -216,7 +223,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     // Refresh plan.json from API to ensure we have the latest data before opening sidebar
     try {
       console.log('[WorkflowCanvas] Refreshing plan.json before opening sidebar for node:', nodeId)
-      await refresh()
+      await loadPlanRefresh()
       console.log('[WorkflowCanvas] Plan refreshed, opening sidebar for node:', nodeId)
     } catch (error) {
       console.error('[WorkflowCanvas] Failed to refresh plan before opening sidebar:', error)
@@ -227,7 +234,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     // Use a small delay to ensure nodes have been updated from the refreshed plan
     focusNode(nodeId, { topPadding: 150, selectNode: true, delay: 150 })
     console.log('[WorkflowCanvas] Opened sidebar and positioned viewport for node:', nodeId)
-  }, [focusNode, refresh])
+  }, [focusNode, loadPlanRefresh])
 
   // Handle navigating to a step from legend (without opening sidebar)
   const handleNavigateToStep = useCallback((nodeId: string) => {
@@ -353,16 +360,22 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       })
       
       // Refresh plan to get latest data
-      await refresh()
+      await loadPlanRefresh()
       
       // If granular change data is provided, use it directly
       if (changedStepIDs || deletedStepIDs) {
         console.log('[WorkflowPlanUpdate] Using granular change data from events')
+        // The backend combines added and updated into changed_step_ids
+        // For now, we'll treat all changedStepIDs as "updated" since the backend combines them
+        // The visual highlighting will work correctly (blue ring for updated steps)
+        // TODO: Update backend to send separate added_step_ids and updated_step_ids for more accurate highlighting
+        const updated = changedStepIDs?.filter(id => !deletedStepIDs?.includes(id)) || []
+        const deleted = deletedStepIDs || []
         const changes: PlanChanges = {
-          added: changedStepIDs?.filter(id => !deletedStepIDs?.includes(id)) || [],
-          updated: changedStepIDs?.filter(id => !deletedStepIDs?.includes(id)) || [],
-          deleted: deletedStepIDs || [],
-          hasChanges: (changedStepIDs?.length || 0) > 0 || (deletedStepIDs?.length || 0) > 0
+          added: [], // Backend combines added into changed_step_ids, so we can't distinguish here
+          updated,
+          deleted,
+          hasChanges: updated.length > 0 || deleted.length > 0
         }
         // Set changes directly from granular event data
         if (changes.hasChanges) {
@@ -381,7 +394,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       if (!plan?.steps) return 0
       return plan.steps.length
     }
-  }), [refresh, plan])
+  }), [loadPlanRefresh, plan, setChanges])
 
   // Clear highlights after timeout and auto-focus on changed steps
   React.useEffect(() => {
@@ -878,7 +891,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     fitView({ padding: 0.2 })
   }, [fitView])
 
-
   // Handle toggle dependency edges
 
   // Loading state
@@ -903,7 +915,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           </div>
           <span className="text-sm text-red-600 dark:text-red-400">{error}</span>
           <button
-            onClick={refresh}
+            onClick={loadPlanRefresh}
             className="px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
           >
             Retry

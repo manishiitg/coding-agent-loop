@@ -74,8 +74,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeDecisionStep(
 		false, // isBranchStep = false
 		execCtx,
 		allSteps,
-		true, // isDecisionInnerStep = true (skip final human feedback on success)
-		nil,  // decisionContext = nil (this is the inner step, not a routed step)
+		true,                            // isDecisionInnerStep = true (skip final human feedback on success)
+		nil,                             // decisionContext = nil (this is the inner step, not a routed step)
+		step.DecisionEvaluationQuestion, // decisionEvaluationQuestion - pass to execution agent for output formatting
+		false,                           // isSubAgent = false (decision inner step, not a sub-agent)
 	)
 	if err != nil {
 		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute decision step's inner step '%s': %v", step.DecisionStep.Title, err), nil)

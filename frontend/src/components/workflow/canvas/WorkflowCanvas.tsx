@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useImperativeHandle, forwardRef } from 'react'
+import React, { useCallback, useRef, useImperativeHandle, forwardRef, useEffect } from 'react'
 import {
   ReactFlow,
   Background,
@@ -75,6 +75,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   
   // Workflow store actions
   const setVariablesManifestInStore = useWorkflowStore.getState().setVariablesManifest
+  const getCompletedStepIndices = useWorkflowStore(state => state.getCompletedStepIndices)
+  const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  const stepProgress = useWorkflowStore(state => state.stepProgress)
   
   // Get workspace minimized state to determine if StepSidebar should be compact
   const workspaceMinimized = useAppStore(state => state.workspaceMinimized)
@@ -87,8 +90,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     setCompletedStepIndices(indices)
   }, [])
 
+  // Load initial completedStepIndices from store when component mounts or selectedRunFolder/stepProgress changes
+  // This ensures we have the correct state even after page refresh
+  useEffect(() => {
+    const indices = getCompletedStepIndices()
+    setCompletedStepIndices(indices)
+  }, [selectedRunFolder, stepProgress, getCompletedStepIndices])
+
   // Load plan data with change detection
-  const { plan, loading, error, changes, updateStep, deleteStep, refresh, clearChanges, savePlan, saveStepConfig, setChanges } = usePlanData(workspacePath)
+  const { plan, loading, error, changes, updateStep, deleteStep, refresh: loadPlanRefresh, clearChanges, savePlan, saveStepConfig, setChanges } = usePlanData(workspacePath)
 
   // Load variables when workspace changes
   React.useEffect(() => {
@@ -148,9 +158,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Refs for callbacks that need to be defined early
   const handleRunFromStepRef = React.useRef<((stepIndex: number, stepId: string) => void) | null>(null)
   const handleOpenSidebarRef = React.useRef<((nodeId: string) => void) | null>(null)
-
-  // Get selected run folder from workflow store
-  const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
   
   // React Flow state (need to define before usePlanToFlow to use in callbacks)
   const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowNode>([])
@@ -210,11 +217,24 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [getNode, setViewport])
 
   // Handle opening sidebar for a node
-  const handleOpenSidebar = useCallback((nodeId: string) => {
+  const handleOpenSidebar = useCallback(async (nodeId: string) => {
     setShowVariablesSidebar(false) // Close variables sidebar if open
-    focusNode(nodeId, { topPadding: 150, selectNode: true, delay: 100 })
+    
+    // Refresh plan.json from API to ensure we have the latest data before opening sidebar
+    try {
+      console.log('[WorkflowCanvas] Refreshing plan.json before opening sidebar for node:', nodeId)
+      await loadPlanRefresh()
+      console.log('[WorkflowCanvas] Plan refreshed, opening sidebar for node:', nodeId)
+    } catch (error) {
+      console.error('[WorkflowCanvas] Failed to refresh plan before opening sidebar:', error)
+      // Continue anyway - we'll use existing plan data
+    }
+    
+    // Open sidebar after refresh completes (plan will be updated, nodes will re-render)
+    // Use a small delay to ensure nodes have been updated from the refreshed plan
+    focusNode(nodeId, { topPadding: 150, selectNode: true, delay: 150 })
     console.log('[WorkflowCanvas] Opened sidebar and positioned viewport for node:', nodeId)
-  }, [focusNode])
+  }, [focusNode, loadPlanRefresh])
 
   // Handle navigating to a step from legend (without opening sidebar)
   const handleNavigateToStep = useCallback((nodeId: string) => {
@@ -339,18 +359,25 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         planSteps: plan?.steps?.map(s => ({ id: s.id, title: s.title })) || []
       })
       
-      // If granular change data is provided, use it directly instead of comparison
+      // Refresh plan to get latest data
+      await loadPlanRefresh()
+      
+      // If granular change data is provided, use it directly
       if (changedStepIDs || deletedStepIDs) {
-        console.log('[WorkflowPlanUpdate] Using granular change data (no comparison needed)')
+        console.log('[WorkflowPlanUpdate] Using granular change data from events')
+        // The backend combines added and updated into changed_step_ids
+        // For now, we'll treat all changedStepIDs as "updated" since the backend combines them
+        // The visual highlighting will work correctly (blue ring for updated steps)
+        // TODO: Update backend to send separate added_step_ids and updated_step_ids for more accurate highlighting
+        const updated = changedStepIDs?.filter(id => !deletedStepIDs?.includes(id)) || []
+        const deleted = deletedStepIDs || []
         const changes: PlanChanges = {
-          added: changedStepIDs?.filter(id => !deletedStepIDs?.includes(id)) || [],
-          updated: changedStepIDs?.filter(id => !deletedStepIDs?.includes(id)) || [],
-          deleted: deletedStepIDs || [],
-          hasChanges: (changedStepIDs?.length || 0) > 0 || (deletedStepIDs?.length || 0) > 0
+          added: [], // Backend combines added into changed_step_ids, so we can't distinguish here
+          updated,
+          deleted,
+          hasChanges: updated.length > 0 || deleted.length > 0
         }
-        // Still refresh plan to get latest data, but use provided changes
-        await refresh()
-        // Set changes directly from metadata
+        // Set changes directly from granular event data
         if (changes.hasChanges) {
           setChanges(changes)
         }
@@ -358,21 +385,16 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         return changes
       }
       
-      // Fallback to comparison if no granular data provided
-      const detectedChanges = await refresh()
-      console.log('[WorkflowPlanUpdate] refresh() completed, changes:', detectedChanges)
-      console.log('[WorkflowPlanUpdate] Plan state after refresh:', { 
-        hasPlan: !!plan, 
-        stepCount: plan?.steps?.length || 0 
-      })
-      return detectedChanges
+      // No granular data - just refresh without setting changes
+      console.log('[WorkflowPlanUpdate] refresh() completed (no granular changes provided)')
+      return null
     },
     getStepCount: () => {
       // Count steps from plan data
       if (!plan?.steps) return 0
       return plan.steps.length
     }
-  }), [refresh, plan])
+  }), [loadPlanRefresh, plan, setChanges])
 
   // Clear highlights after timeout and auto-focus on changed steps
   React.useEffect(() => {
@@ -761,6 +783,23 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     return false
   }, [])
 
+  // Helper function to check if updates contain plan-related fields (excluding agent_configs)
+  const hasPlanRelatedFields = useCallback((updates: Partial<PlanStep>): boolean => {
+    // List of all plan-related fields (everything except agent_configs)
+    const planFields = [
+      'id', 'title', 'description', 'success_criteria', 'context_dependencies', 'context_output',
+      'has_loop', 'loop_condition', 'max_iterations', 'loop_description',
+      'has_condition', 'condition_question', 'condition_context',
+      'if_true_steps', 'if_false_steps', 'if_true_next_step_id', 'if_false_next_step_id',
+      'condition_result', 'condition_reason',
+      'has_decision_step', 'decision_step', 'decision_evaluation_question',
+      'decision_result', 'decision_reason'
+    ]
+    
+    // Check if any plan-related field is in updates
+    return planFields.some(field => field in updates)
+  }, [])
+
   // Handle edit step
   const handleEditStep = useCallback(async (stepId: string, updates: Partial<PlanStep>) => {
     if (!plan) return
@@ -775,6 +814,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       stepTitle: stepIndex >= 0 ? plan.steps[stepIndex]?.title : 'N/A',
       stepHasCondition: stepIndex >= 0 ? plan.steps[stepIndex]?.has_condition : false,
       hasAgentConfigs: 'agent_configs' in updates,
+      hasPlanFields: hasPlanRelatedFields(updates),
       updatesKeys: Object.keys(updates),
       isBranchStep: stepIndex < 0
     })
@@ -806,14 +846,17 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       const found = await findAndUpdateStep(updatedSteps, stepId, updates)
       
       if (found) {
-        // Save the updated plan
-        const updatedPlan = {
-          ...plan,
-          steps: updatedSteps
+        // Only save plan.json if updates contain plan-related fields (not just agent_configs)
+        const shouldSavePlan = hasPlanRelatedFields(updates)
+        if (shouldSavePlan) {
+          const updatedPlan = {
+            ...plan,
+            steps: updatedSteps
+          }
+          await savePlan(updatedPlan)
         }
-        await savePlan(updatedPlan)
         
-        // If agent_configs is in updates, also save to step_config.json
+        // If agent_configs is in updates, save to step_config.json
         if ('agent_configs' in updates) {
           await saveStepConfig(stepId, updates.agent_configs)
         }
@@ -829,7 +872,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         throw new Error(`Step with ID "${stepId}" not found in plan (including branch steps)`)
       }
     }
-  }, [plan, updateStep, highlightStepNode, findAndUpdateStep, savePlan, saveStepConfig])
+  }, [plan, updateStep, highlightStepNode, findAndUpdateStep, savePlan, saveStepConfig, hasPlanRelatedFields])
 
   // Handle delete step
   const handleDeleteStep = useCallback(async (stepId: string) => {
@@ -847,7 +890,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const handleFitView = useCallback(() => {
     fitView({ padding: 0.2 })
   }, [fitView])
-
 
   // Handle toggle dependency edges
 
@@ -873,7 +915,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           </div>
           <span className="text-sm text-red-600 dark:text-red-400">{error}</span>
           <button
-            onClick={refresh}
+            onClick={loadPlanRefresh}
             className="px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
           >
             Retry

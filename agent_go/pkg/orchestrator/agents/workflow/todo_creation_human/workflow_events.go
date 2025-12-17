@@ -51,7 +51,6 @@ func (e *StepStartedEvent) GetEventType() events.EventType {
 	return events.StepExecutionStart
 }
 
-// StepFinishedEvent represents the event when a step execution completes successfully
 type StepFinishedEvent struct {
 	events.BaseEventData
 	StepID       string `json:"step_id"`        // Step ID from plan

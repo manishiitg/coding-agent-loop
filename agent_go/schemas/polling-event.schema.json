@@ -2365,101 +2365,100 @@
     "EventType": {
       "type": "string",
       "enum": [
-        "conversation_error",
-        "tool_output",
-        "context_editing_error",
-        "context_summarization_completed",
-        "streaming_end",
-        "mcp_server_connection_end",
-        "agent_start",
-        "conversation_start",
-        "tool_execution",
-        "large_tool_output_file_write_error",
-        "decision_evaluated",
-        "conversation_thinking",
-        "llm_messages",
-        "token_limit_exceeded",
-        "request_human_feedback",
-        "structured_output_error",
-        "cache_expired",
-        "json_validation_start",
-        "llm_generation_start",
-        "tool_response",
-        "smart_routing_start",
-        "blocking_human_feedback",
-        "llm_generation_error",
-        "orchestrator_error",
-        "batch_group_start",
-        "batch_execution_end",
-        "tool_call_start",
-        "mcp_server_discovery",
-        "throttling_detected",
-        "step_execution_start",
-        "cache_operation_start",
-        "agent_processing",
-        "tool_call_error",
-        "user_message",
-        "context_summarization_error",
-        "fallback_model_used",
-        "structured_output_end",
-        "tool_call_progress",
-        "conversation_turn",
-        "mcp_server_connection",
-        "mcp_server_selection",
-        "context_cancelled",
-        "context_summarization_started",
-        "model_change",
-        "fallback_attempt",
-        "orchestrator_start",
-        "llm_generation_with_retry",
-        "token_usage",
-        "large_tool_output_file_written",
-        "large_tool_output_server_unavailable",
-        "orchestrator_end",
-        "orchestrator_agent_end",
-        "step_execution_end",
-        "streaming_chunk",
         "agent_end",
-        "conversation_end",
-        "unified_completion",
-        "streaming_connection_lost",
-        "cache_miss",
-        "cache_write",
-        "llm_token_usage",
-        "system_prompt",
-        "error_detail",
-        "comprehensive_cache",
-        "orchestrator_agent_error",
-        "human_verification_response",
-        "streaming_start",
-        "streaming_error",
-        "streaming_progress",
-        "llm_generation_end",
-        "tool_call_end",
-        "step_token_usage",
+        "agent_error",
+        "agent_processing",
+        "agent_start",
+        "batch_execution_end",
+        "batch_execution_start",
+        "batch_group_end",
+        "batch_group_start",
+        "blocking_human_feedback",
         "cache_cleanup",
         "cache_error",
-        "mcp_server_connection_start",
-        "workspace_file_operation",
+        "cache_expired",
+        "cache_miss",
+        "cache_operation_start",
+        "cache_write",
+        "comprehensive_cache",
+        "context_cancelled",
         "context_editing_completed",
-        "orchestrator_agent_start",
-        "independent_steps_selected",
-        "agent_error",
-        "large_tool_output_detected",
-        "step_progress_updated",
-        "variables_extracted",
-        "structured_output_start",
-        "cache_hit",
+        "context_editing_error",
+        "context_summarization_completed",
+        "context_summarization_error",
+        "context_summarization_started",
+        "conversation_end",
+        "conversation_error",
+        "conversation_start",
+        "conversation_thinking",
+        "conversation_turn",
+        "decision_evaluated",
         "debug",
-        "batch_execution_start",
-        "max_turns_reached",
-        "smart_routing_end",
-        "step_execution_failed",
-        "todo_steps_extracted",
-        "mcp_server_connection_error",
+        "error_detail",
+        "fallback_attempt",
+        "fallback_model_used",
+        "human_verification_response",
+        "independent_steps_selected",
         "json_validation_end",
+        "json_validation_start",
+        "large_tool_output_detected",
+        "large_tool_output_file_write_error",
+        "large_tool_output_file_written",
+        "large_tool_output_server_unavailable",
+        "llm_generation_end",
+        "llm_generation_error",
+        "llm_generation_start",
+        "llm_generation_with_retry",
+        "llm_messages",
+        "llm_token_usage",
+        "mcp_server_connection",
+        "mcp_server_connection_end",
+        "mcp_server_connection_error",
+        "mcp_server_connection_start",
+        "mcp_server_discovery",
+        "mcp_server_selection",
+        "model_change",
+        "max_turns_reached",
+        "orchestrator_agent_end",
+        "orchestrator_agent_error",
+        "orchestrator_agent_start",
+        "orchestrator_end",
+        "orchestrator_error",
+        "orchestrator_start",
         "performance",
-        "batch_group_end"
+        "request_human_feedback",
+        "smart_routing_end",
+        "smart_routing_start",
+        "step_execution_end",
+        "step_execution_failed",
+        "step_execution_start",
+        "step_progress_updated",
+        "step_token_usage",
+        "streaming_chunk",
+        "streaming_connection_lost",
+        "streaming_end",
+        "streaming_error",
+        "streaming_progress",
+        "streaming_start",
+        "structured_output_end",
+        "structured_output_error",
+        "structured_output_start",
+        "system_prompt",
+        "throttling_detected",
+        "todo_steps_extracted",
+        "token_limit_exceeded",
+        "token_usage",
+        "tool_call_end",
+        "tool_call_error",
+        "tool_call_progress",
+        "tool_call_start",
+        "tool_execution",
+        "tool_output",
+        "tool_response",
+        "unified_completion",
+        "user_message",
+        "variables_extracted",
+        "workspace_file_operation"
       ]
     },
     "FallbackAttemptEvent": {
@@ -3861,6 +3860,48 @@
           "type": "string"
         },
         "duration": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "OrchestrationResponse": {
+      "properties": {
+        "selected_route_id": {
+          "type": "string"
+        },
+        "reasoning": {
+          "type": "string"
+        },
+        "success_criteria_met": {
+          "type": "boolean"
+        },
+        "success_reasoning": {
+          "type": "string"
+        },
+        "success_criteria_verified_by_validation": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "OrchestrationRoute": {
+      "properties": {
+        "route_id": {
+          "type": "string"
+        },
+        "route_name": {
+          "type": "string"
+        },
+        "condition": {
+          "type": "string"
+        },
+        "sub_agent_step": {
+          "$ref": "#/$defs/TodoStep"
+        },
+        "context_to_pass": {
           "type": "string"
         }
       },
@@ -5578,12 +5619,6 @@
         "context_output": {
           "type": "string"
         },
-        "learning_files_to_reference": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "has_loop": {
           "type": "boolean"
         },
@@ -5646,6 +5681,24 @@
         },
         "decision_response": {
           "$ref": "#/$defs/DecisionResponse"
+        },
+        "has_orchestration_step": {
+          "type": "boolean"
+        },
+        "orchestration_step": {
+          "$ref": "#/$defs/TodoStep"
+        },
+        "orchestration_routes": {
+          "items": {
+            "$ref": "#/$defs/OrchestrationRoute"
+          },
+          "type": "array"
+        },
+        "orchestration_response": {
+          "$ref": "#/$defs/OrchestrationResponse"
+        },
+        "next_step_id": {
+          "type": "string"
         },
         "agent_configs": {
           "$ref": "#/$defs/AgentConfigs"
@@ -6596,6 +6649,9 @@
         },
         "server_name": {
           "type": "string"
+        },
+        "should_highlight": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,

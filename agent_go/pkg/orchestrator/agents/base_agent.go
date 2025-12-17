@@ -38,8 +38,10 @@ const (
 	TodoPlannerExecutionAgentType            AgentType = "todo_planner_execution"              // Executes first step of plan
 	TodoPlannerValidationAgentType           AgentType = "todo_planner_validation"             // Validates execution results
 	TodoPlannerSuccessLearningAgentType      AgentType = "todo_planner_success_learning"       // Analyzes successful executions to capture best practices
+	TodoPlannerLearningDetectionAgentType    AgentType = "todo_planner_learning_detection"     // Detects if new learnings were generated after learning phase
 	TodoPlannerPlanToolOptimizationAgentType AgentType = "todo_planner_plan_tool_optimization" // Optimizes tool selections in step_config.json based on learnings
 	ConditionalAgentType                     AgentType = "conditional"                         // Conditional decision agent for evaluating step conditions
+	OrchestrationAgentType                   AgentType = "orchestration"                       // Orchestration evaluation agent for orchestration step decisions
 )
 
 // BaseAgentInterface defines the interface for base agent operations
@@ -127,6 +129,8 @@ func NewBaseAgent(
 	enableContextSummarization bool, // Context summarization configuration
 	summarizeOnTokenThreshold bool, // Enable token-based summarization trigger
 	tokenThresholdPercent float64, // Percentage of context window to trigger summarization
+	summarizeOnFixedTokenThreshold bool, // Enable fixed token-based summarization trigger
+	fixedTokenThreshold int, // Fixed token threshold to trigger summarization
 	summaryKeepLastMessages int, // Number of recent messages to keep when summarizing
 	enableContextEditing bool, // Context editing configuration
 	contextEditingThreshold int, // Token threshold for context editing (0 = use default)
@@ -181,6 +185,9 @@ func NewBaseAgent(
 		agentOptions = append(agentOptions, mcpagent.WithContextSummarization(true))
 		if summarizeOnTokenThreshold {
 			agentOptions = append(agentOptions, mcpagent.WithSummarizeOnTokenThreshold(true, tokenThresholdPercent))
+		}
+		if summarizeOnFixedTokenThreshold && fixedTokenThreshold > 0 {
+			agentOptions = append(agentOptions, mcpagent.WithSummarizeOnFixedTokenThreshold(true, fixedTokenThreshold))
 		}
 		if summaryKeepLastMessages > 0 {
 			agentOptions = append(agentOptions, mcpagent.WithSummaryKeepLastMessages(summaryKeepLastMessages))

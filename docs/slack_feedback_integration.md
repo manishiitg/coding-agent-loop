@@ -18,12 +18,12 @@ The Slack Feedback Integration extends the human feedback system to send reminde
 
 | Component | File | Key Functions |
 |-----------|------|---------------|
-| **Slack Service** | [`slack_service.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/services/slack_service.go) | `SendFeedbackNotification()`, `GetUniqueIDFromThread()`, `TestConnection()` |
-| **API Routes** | [`slack_feedback_routes.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/slack_feedback_routes.go) | Configuration and test endpoints |
-| **Human Feedback Store** | [`human_feedback_store.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/virtual-tools/human_feedback_store.go) | `CreateRequestWithSlack()` - implements 2-minute delayed notification |
-| **Database Migration** | [`010_add_slack_feedback_config.sql`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/database/migrations/010_add_slack_feedback_config.sql) | Slack config and message mapping tables |
-| **Frontend UI** | [`SlackFeedbackConfig.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/settings/SlackFeedbackConfig.tsx) | Configuration component |
-| **API Service** | [`api.ts`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/services/api.ts) | `getSlackFeedbackConfig()`, `updateSlackFeedbackConfig()`, `testSlackConnection()` |
+| **Slack Service** | [`slack_service.go`](../agent_go/cmd/server/services/slack_service.go) | `SendFeedbackNotification()`, `GetUniqueIDFromThread()`, `TestConnection()` |
+| **API Routes** | [`slack_feedback_routes.go`](../agent_go/cmd/server/slack_feedback_routes.go) | Configuration and test endpoints |
+| **Human Feedback Store** | [`human_feedback_store.go`](../agent_go/cmd/server/virtual-tools/human_feedback_store.go) | `CreateRequestWithSlack()` - implements 2-minute delayed notification |
+| **Database Migration** | [`010_add_slack_feedback_config.sql`](../agent_go/pkg/database/migrations/010_add_slack_feedback_config.sql) | Slack config and message mapping tables |
+| **Frontend UI** | [`SlackFeedbackConfig.tsx`](../frontend/src/components/settings/SlackFeedbackConfig.tsx) | Configuration component |
+| **API Service** | [`api.ts`](../frontend/src/services/api.ts) | `getSlackFeedbackConfig()`, `updateSlackFeedbackConfig()`, `testSlackConnection()` |
 
 ---
 
@@ -466,8 +466,8 @@ Located at: `frontend/src/components/settings/SlackFeedbackConfig.tsx`
 
 ## 📖 Related Documentation
 
-- [Human Feedback Tool](file:///Users/mipl/ai-work/mcp-agent-builder-go/docs/human_feedback_tool.md) - Core human feedback system
-- [Workflow Orchestrator](file:///Users/mipl/ai-work/mcp-agent-builder-go/docs/workflow_orchestrator.md) - Uses human feedback for approvals
+- [Human Feedback Tool](human_feedback_tool.md) - Core human feedback system
+- [Workflow Orchestrator](workflow_orchestrator.md) - Uses human feedback for approvals
 
 ---
 

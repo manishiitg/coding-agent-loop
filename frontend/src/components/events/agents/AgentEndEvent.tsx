@@ -59,6 +59,11 @@ export function AgentEndEventComponent({ event }: AgentEndEventProps) {
                     {extendedEvent.metadata?.context_usage_percent !== undefined && (extendedEvent.metadata.context_usage_percent as number) > 0 && (
                       <span className={(extendedEvent.metadata.context_usage_percent as number) > 80 ? 'text-red-600 dark:text-red-400' : (extendedEvent.metadata.context_usage_percent as number) > 50 ? 'text-yellow-600 dark:text-yellow-400' : 'text-green-600 dark:text-green-400'}>
                         {' • Context: '}{(extendedEvent.metadata.context_usage_percent as number).toFixed(1)}%
+                        {extendedEvent.metadata?.fixed_threshold_percent !== undefined && (extendedEvent.metadata.fixed_threshold_percent as number) > 0 && extendedEvent.metadata?.fixed_threshold_tokens !== undefined && (
+                          <span className="text-blue-600 dark:text-blue-400">
+                            {' / '}{((extendedEvent.metadata.fixed_threshold_tokens as number) / 1000).toFixed(0)}k ({((extendedEvent.metadata.fixed_threshold_percent as number)).toFixed(1)}%)
+                          </span>
+                        )}
                       </span>
                     )}
                   </>

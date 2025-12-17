@@ -89,6 +89,7 @@ interface WorkflowStore {
   loadProgress: (workspacePath: string, runFolder: string) => Promise<void>
   loadFolderProgressOnDemand: (workspacePath: string, folderName: string) => Promise<void>
   getCompletedStepIndices: () => number[]
+  updateStepProgressFromEvent: (progress: StepProgress) => void
 
   // Execution options
   setExecutionMode: (mode: ExecutionModeType) => void
@@ -476,6 +477,26 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       getCompletedStepIndices: () => {
         return get().stepProgress?.completed_step_indices || []
+      },
+
+      // Update step progress from event data (called when step_progress_updated events are received)
+      updateStepProgressFromEvent: (progress: StepProgress) => {
+        const state = get()
+        // Only update if this progress is for the currently selected run folder
+        // Note: We can't check run_folder here since it's not in StepProgress type,
+        // but the caller (WorkflowLayout) will filter by run_folder before calling this
+        set({ stepProgress: progress })
+        
+        // Also update the folder info in state if it exists
+        if (state.selectedRunFolder && state.selectedRunFolder !== 'new') {
+          set(prevState => ({
+            runFolders: prevState.runFolders.map(f =>
+              f.name === state.selectedRunFolder
+                ? { ...f, progress }
+                : f
+            )
+          }))
+        }
       },
 
       setExecutionMode: (mode: ExecutionModeType) => {
@@ -868,7 +889,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
           activePhase: null,
           showChatArea: false
         })
-      }
+      },
+
     }),
     {
       name: 'workflow-store'
@@ -882,4 +904,19 @@ export const useWorkflowPhasesLoading = () => useWorkflowStore(state => state.is
 export const useWorkflowRunFolders = () => useWorkflowStore(state => state.runFolders)
 export const useWorkflowProgress = () => useWorkflowStore(state => state.stepProgress)
 export const useCompletedStepIndices = () => useWorkflowStore(state => state.stepProgress?.completed_step_indices || [])
+
+// Computed selector for selected group ID
+export const useSelectedGroupId = () => {
+  return useWorkflowStore(state => {
+    // Extract group ID from selectedRunFolder if it contains a group path
+    // Pattern: iteration-X/group-Y
+    if (state.selectedRunFolder && state.selectedRunFolder !== 'new' && state.selectedRunFolder.includes('/group-')) {
+      const parts = state.selectedRunFolder.split('/')
+      if (parts.length === 2 && parts[1].startsWith('group-')) {
+        return parts[1] // e.g., "group-5"
+      }
+    }
+    return null
+  })
+}
 

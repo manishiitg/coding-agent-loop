@@ -1365,7 +1365,6 @@ export interface TodoStep {
   success_criteria?: string;
   context_dependencies?: string[];
   context_output?: string;
-  learning_files_to_reference?: string[];
   has_loop?: boolean;
   loop_condition?: string;
   max_iterations?: number;
@@ -1385,11 +1384,31 @@ export interface TodoStep {
   decision_result?: boolean;
   decision_reason?: string;
   decision_response?: DecisionResponse;
+  has_orchestration_step?: boolean;
+  orchestration_step?: TodoStep;
+  orchestration_evaluation_question?: string;
+  orchestration_routes?: OrchestrationRoute[];
+  orchestration_response?: OrchestrationResponse;
+  next_step_id?: string;
   agent_configs?: AgentConfigs;
 }
 export interface DecisionResponse {
   result?: boolean;
   reasoning?: string;
+}
+export interface OrchestrationRoute {
+  route_id?: string;
+  route_name?: string;
+  condition?: string;
+  sub_agent_step?: TodoStep;
+  context_to_pass?: string;
+}
+export interface OrchestrationResponse {
+  selected_route_id?: string;
+  reasoning?: string;
+  success_criteria_met?: boolean;
+  success_reasoning?: string;
+  success_criteria_verified_by_validation?: boolean;
 }
 export interface AgentConfigs {
   execution_llm?: AgentLLMConfig;
@@ -1538,6 +1557,7 @@ export interface WorkspaceFileOperationEvent {
   folder?: string;
   turn?: number;
   server_name?: string;
+  should_highlight?: boolean;
 }
 export interface LargeToolOutputFileWriteErrorEvent {
   timestamp?: string;

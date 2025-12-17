@@ -125,6 +125,8 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.EnableContextSummarization,    // Context summarization configuration
 		boa.config.SummarizeOnTokenThreshold,
 		boa.config.TokenThresholdPercent,
+		boa.config.SummarizeOnFixedTokenThreshold,
+		boa.config.FixedTokenThreshold,
 		boa.config.SummaryKeepLastMessages,
 		boa.config.EnableContextEditing, // Context editing configuration
 		boa.config.ContextEditingThreshold,

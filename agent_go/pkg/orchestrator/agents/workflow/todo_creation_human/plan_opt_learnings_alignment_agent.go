@@ -22,7 +22,6 @@ import (
 type HumanControlledTodoPlannerPlanLearningsAlignmentTemplate struct {
 	WorkspacePath       string
 	PlanJSON            string
-	ChangelogJSON       string
 	AllowedPaths        string
 	SelectedFolder      string
 	IsCodeExecutionMode string
@@ -196,21 +195,6 @@ func (plam *PlanLearningsAlignmentManager) CheckAlignmentOnly(ctx context.Contex
 		return "", fmt.Errorf("failed to marshal filtered plan to JSON: %w", err)
 	}
 
-	// Read changelog if it exists (reads all changelog-*.json files from planning/changelog/)
-	listFilesFunc := func(ctx context.Context, dirPath string) ([]string, error) {
-		return plam.ListWorkspaceFiles(ctx, dirPath)
-	}
-	changelog, err := readChangelog(ctx, plam.GetWorkspacePath(), plam.ReadWorkspaceFile, listFilesFunc)
-	if err != nil {
-		plam.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read changelog: %v (continuing without changelog)", err))
-		changelog = &PlanChangeLog{Entries: []PlanChangeLogEntry{}}
-	}
-	changelogJSONBytes, err := json.MarshalIndent(changelog, "", "  ")
-	if err != nil {
-		plam.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal changelog: %v (continuing without changelog)", err))
-		changelogJSONBytes = []byte("[]")
-	}
-
 	// Create alignment agent
 	alignmentAgent, err := plam.createPlanLearningsAlignmentAgent(ctx, plam.GetWorkspacePath())
 	if err != nil {
@@ -220,11 +204,11 @@ func (plam *PlanLearningsAlignmentManager) CheckAlignmentOnly(ctx context.Contex
 	// Prepare template variables
 	// Use actual workspace path so agent can navigate correctly
 	// Explicitly list allowed paths for the agent (step-specific learnings always enabled)
+	// Agent has read access to planning/changelog/ and can discover/read changelog files on demand
 	allowedPaths := "['planning/', 'planning/changelog/', 'learnings/']"
 	alignmentTemplateVars := map[string]string{
 		"WorkspacePath":       plam.GetWorkspacePath(),
 		"PlanJSON":            string(planJSONBytes),
-		"ChangelogJSON":       string(changelogJSONBytes),
 		"AllowedPaths":        allowedPaths,
 		"SelectedFolder":      selectedFolder,
 		"IsCodeExecutionMode": "false", // Not used anymore, but kept for template compatibility
@@ -278,12 +262,11 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 	// Extract variables from template variables
 	workspacePath := templateVars["WorkspacePath"]
 	planJSON := templateVars["PlanJSON"]
-	changelogJSON := templateVars["ChangelogJSON"]
 
 	// Provide default allowed paths if not present
 	allowedPaths := templateVars["AllowedPaths"]
 	if allowedPaths == "" {
-		allowedPaths = "['planning/', 'learnings/']"
+		allowedPaths = "['planning/', 'planning/changelog/', 'learnings/']"
 	}
 
 	// Provide default selected folder if not present
@@ -296,23 +279,10 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 		isCodeExecutionMode = "false" // Default to MCP Tool Mode
 	}
 
-	// If changelog not provided in template vars, try to read it
-	if changelogJSON == "" {
-		// Get base agent to access ReadWorkspaceFile
-		baseAgent := agent.GetBaseAgent()
-		if baseAgent != nil {
-			// Try to read changelog using workspace tools
-			// Note: We can't directly call readChangelog here without access to ReadWorkspaceFile
-			// So we'll rely on the agent reading it via workspace tools
-			changelogJSON = "[]" // Default to empty changelog
-		}
-	}
-
 	// Prepare template variables
 	alignmentTemplateVars := map[string]string{
 		"WorkspacePath":       workspacePath,
 		"PlanJSON":            planJSON,
-		"ChangelogJSON":       changelogJSON,
 		"AllowedPaths":        allowedPaths,
 		"SelectedFolder":      selectedFolder,
 		"IsCodeExecutionMode": isCodeExecutionMode,
@@ -322,7 +292,6 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) Execute(ctx 
 	templateData := HumanControlledTodoPlannerPlanLearningsAlignmentTemplate{
 		WorkspacePath:       workspacePath,
 		PlanJSON:            planJSON,
-		ChangelogJSON:       changelogJSON,
 		AllowedPaths:        allowedPaths,
 		SelectedFolder:      selectedFolder,
 		IsCodeExecutionMode: isCodeExecutionMode,
@@ -448,19 +417,37 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentSys
   - Discover all step-specific folders:
     * Regular steps use learnings/step-{X}/ folders (e.g., step-1/, step-2/)
     * Branch steps use learnings/step-{parentStep}-{true/false}-{branchIdx}/ folders (e.g., step-3-true-0/, step-3-false-1/)
-  - **CRITICAL**: Each step folder (step-1/, step-2/, step-3-true-0/, step-3-false-1/, etc.) must be evaluated independently
+    * Decision step inner steps use learnings/step-{X}/ folders (same as regular steps - e.g., step-2/ for decision step 2's inner step)
+    * Routing step main orchestrator uses learnings/step-{X}/ folders (same as regular steps - e.g., step-5/ for routing step 5's main orchestrator)
+    * Orchestration step sub-agents use learnings/step-{parentStep}-sub-agent-{index}/ folders (e.g., step-5-sub-agent-1/, step-5-sub-agent-2/)
+  - **CRITICAL**: Each step folder (step-1/, step-2/, step-3-true-0/, step-3-false-1/, step-5-sub-agent-1/, etc.) must be evaluated independently
   - **CRITICAL STEP-SPECIFIC RULE**: Check alignment ONLY within the SAME step folder
   - **NEVER compare across step folders**: Do NOT check alignment between step-1/ and step-2/ files, or between step-3/ and step-3-true-0/ files
   - **Branch step folders**: Branch steps (if_true_steps, if_false_steps) have their own folders separate from the parent conditional step folder
+  - **Decision step inner steps**: Learnings for decision step inner steps are stored in learnings/step-{X}/ (same folder as the decision step's step number)
+  - **Orchestration step main orchestrator**: Learnings for orchestration step main orchestrator (orchestration_step field) are stored in learnings/step-{X}/ (same folder as the orchestration step number)
+  - **Orchestration step sub-agents**: Learnings for orchestration step sub-agents (orchestration_routes[].sub_agent_step) are stored in learnings/step-{X}-sub-agent-{index}/ (separate folder per sub-agent, private to orchestration step)
+  - **Conditional/Decision/Orchestration step parents**: Conditional steps, decision steps, and orchestration steps themselves do NOT have learnings (they only evaluate conditions/routes). Only their branch steps (for conditionals), inner steps (for decisions), main orchestrator (for orchestration), or sub-agents (for orchestration) have learnings.
   - **Consolidation within step folders**: If multiple files exist within a single step folder, they should be consolidated (handled by the consolidation agent, not this alignment agent)
 
 **Expected Folder Structure**:
-- learnings/step-{X}/ - All learnings for regular step X (MCP patterns, scripts, and code) (at workspace root)
+- learnings/step-{X}/ - All learnings for regular step X OR decision step X's inner step OR routing step X's main orchestrator (MCP patterns, scripts, and code) (at workspace root)
 - learnings/step-{X}-{true/false}-{Y}/ - All learnings for branch step Y of conditional step X (at workspace root)
+- learnings/step-{X}-sub-agent-{index}/ - All learnings for sub-agent of orchestration step X with index (at workspace root)
 - learnings/step-{X}/scripts/ - Python scripts for step X (if any)
 - learnings/step-{X}/code/ - Go code patterns for step X (if any)
 - learnings/step-{X}-{true/false}-{Y}/scripts/ - Python scripts for branch step (if any)
-- learnings/step-{X}-{true/false}-{Y}/code/ - Go code patterns for branch step (if any)`
+- learnings/step-{X}-{true/false}-{Y}/code/ - Go code patterns for branch step (if any)
+- learnings/step-{X}-sub-agent-{index}/scripts/ - Python scripts for orchestration sub-agent (if any)
+- learnings/step-{X}-sub-agent-{index}/code/ - Go code patterns for orchestration sub-agent (if any)
+
+**IMPORTANT - Step Type Learnings**:
+- **Regular steps**: Learnings in learnings/step-{X}/
+- **Conditional steps**: NO learnings (parent step only evaluates conditions). Branch steps have learnings in learnings/step-{X}-{true/false}-{Y}/
+- **Decision steps**: NO learnings (parent step only evaluates inner step output). Inner step (decision_step) has learnings in learnings/step-{X}/ (same folder as decision step number)
+- **Orchestration steps**: NO learnings (parent step only orchestrates). Main orchestrator (orchestration_step) has learnings in learnings/step-{X}/ (same folder as orchestration step number). Sub-agents (orchestration_routes[].sub_agent_step) have learnings in learnings/step-{X}-sub-agent-{index}/ (separate folder per sub-agent)
+- **Branch steps**: Learnings in learnings/step-{parentStep}-{true/false}-{branchIdx}/
+- **Orchestration sub-agents**: Learnings in learnings/step-{parentStep}-sub-agent-{index}/`
 	discoverSection := `
 **STEP-SPECIFIC MODE**:
 - Scan ` + "`learnings/`" + `: Use 'list_workspace_files' with folder="learnings" to discover all step folders
@@ -487,6 +474,11 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentSys
   Step: Retrieve and Submit OTP (step-3-if-true-0, branch step of conditional step 3)
   → MATCHED ✅ - Filename matches branch step, in correct branch step folder
 
+**Example 1c - MATCHED (Decision Step Inner Step)**:
+  File: learnings/step-2/check_deployment_status_learning.md
+  Step: Check Deployment Status (decision step 2's inner step - decision_step field)
+  → MATCHED ✅ - Filename matches decision step inner step, in correct folder (learnings/step-2/ - same as decision step number)
+
 **Example 2 - MISMATCH** (filename matches but wrong folder):
   File: learnings/step-2/deploy_to_kubernetes_learning.md  
   Step: Deploy to Kubernetes (step-2, use_code_execution_mode: true)
@@ -495,7 +487,12 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentSys
 **Example 2b - MISMATCH (Branch Step in Wrong Folder)**:
   File: learnings/step-3/retrieve_otp_learning.md
   Step: Retrieve and Submit OTP (step-3-if-true-0, branch step of conditional step 3)
-  → MISMATCH ⚠️ - Branch step file is in parent step folder, should be in learnings/step-3-true-0/`
+  → MISMATCH ⚠️ - Branch step file is in parent step folder, should be in learnings/step-3-true-0/
+
+**Example 2c - MISMATCH (Decision Step Inner Step in Wrong Folder)**:
+  File: learnings/step-5/check_deployment_status_learning.md
+  Step: Check Deployment Status (decision step 2's inner step - decision_step field)
+  → MISMATCH ⚠️ - Decision step inner step file is in wrong folder, should be in learnings/step-2/ (decision step's step number)`
 	example4Section := `
   File: learnings/step-3/old_step_name_learning.md
   Content: Contains step_3, Deploy Application
@@ -533,9 +530,15 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentSys
 
 **IMPORTANT**: You are checking alignment for learnings/ folder (unified folder for all learning types).
 
-**Plan**: The plan.json provided to you contains all steps, including regular steps and branch steps (if_true_steps, if_false_steps). All learnings are stored in step-specific folders:
+**Plan**: The plan.json provided to you contains all steps, including regular steps, conditional steps, decision steps, routing steps, and branch steps (if_true_steps, if_false_steps). All learnings are stored in step-specific folders:
 - Regular steps: learnings/step-{X}/ folders
 - Branch steps: learnings/step-{parentStep}-{true/false}-{branchIdx}/ folders
+- Decision step inner steps: learnings/step-{X}/ folders (same as regular steps - stored in the decision step's step number folder)
+- Orchestration step main orchestrator: learnings/step-{X}/ folders (same as regular steps - stored in the orchestration step's step number folder)
+- Orchestration step sub-agents: learnings/step-{parentStep}-sub-agent-{index}/ folders (separate folder per sub-agent, private to orchestration step)
+- Conditional steps: NO learnings (parent step only evaluates conditions, doesn't execute)
+- Decision steps: NO learnings (parent step only evaluates inner step output, doesn't execute itself)
+- Orchestration steps: NO learnings (parent step only orchestrates, doesn't execute itself - main orchestrator and sub-agents have learnings)
 
 **Target Folder**: ` + targetFolderPath + `
 
@@ -548,6 +551,7 @@ The selected folder corresponds to a specific execution mode:
 |-----------|------------------|------------|
 | **Regular Steps** | learnings/step-{X}/ | *_learning.md, scripts/*_script.py, code/*_code.go |
 | **Branch Steps** | learnings/step-{X}-{true/false}-{Y}/ | *_learning.md, scripts/*_script.py, code/*_code.go |
+| **Orchestration Sub-Agents** | learnings/step-{X}-sub-agent-{index}/ | *_learning.md, scripts/*_script.py, code/*_code.go |
 
 **Critical Rule**: All learnings for each step are stored in step-specific folders:
 - Regular steps: learnings/step-{X}/ folder (unified folder)
@@ -561,10 +565,13 @@ You will classify each learning file into one of these categories:
 - **MATCHED** ✅: File matches a step AND is in correct step-specific folder
   - Regular steps: learnings/step-{X}/ folder
   - Branch steps: learnings/step-{parentStep}-{true/false}-{branchIdx}/ folder
+  - Orchestration sub-agents: learnings/step-{parentStep}-sub-agent-{index}/ folder
 - **MISMATCH** ⚠️: File matches a step BUT is not in correct step-specific folder
   - Regular step file in wrong folder (e.g., step-1 file in step-2/)
   - Branch step file in parent folder (e.g., step-3-true-0 file in step-3/)
   - Branch step file in wrong branch folder (e.g., step-3-true-0 file in step-3-false-1/)
+  - Orchestration sub-agent file in parent folder (e.g., step-5-sub-agent-1 file in step-5/)
+  - Orchestration sub-agent file in wrong sub-agent folder (e.g., step-5-sub-agent-1 file in step-5-sub-agent-2/)
 - **CONSOLIDATED** ✅: Valid pattern file (e.g., consolidated_*, general_*) - preserve these
 - **CONTENT-MATCHED** ✅: Filename doesn't match any step, but content references valid step(s) AND is in correct folder
 - **ORPHANED** ⚠️: Filename doesn't match any step AND content doesn't reference any steps
@@ -587,6 +594,12 @@ For each learning file, follow this decision process:
   - YES: Is file in correct step-specific folder?
     - Regular step: Is file in learnings/step-{X}/ folder?
     - Branch step: Is file in learnings/step-{parentStep}-{true/false}-{branchIdx}/ folder?
+    - Decision step inner step: Is file in learnings/step-{X}/ folder? (same as regular steps - uses decision step's step number)
+    - Routing step main orchestrator: Is file in learnings/step-{X}/ folder? (same as regular steps - uses routing step's step number)
+    - Orchestration step sub-agent: Is file in learnings/step-{parentStep}-sub-agent-{index}/ folder? (separate folder per sub-agent)
+    - Conditional step: NO learnings expected (parent step doesn't execute)
+    - Decision step: NO learnings expected (parent step doesn't execute, only inner step has learnings)
+    - Orchestration step: NO learnings expected (parent step doesn't execute, only main orchestrator and sub-agents have learnings)
     - YES → **MATCHED** ✅
     - NO → **MISMATCH** ⚠️ (suggest moving to correct step-specific folder)
   - NO: Continue to Step B
@@ -629,18 +642,31 @@ For each learning file, follow this decision process:
   - Branch step changes: Steps added/updated/deleted in conditional branches
 - **Use changelog to prioritize**: Focus alignment checks on steps that were recently changed
 - **Note**: If changelog directory doesn't exist or is empty, proceed with normal alignment check
-- **Note**: If changelog JSON is provided in template vars (ChangelogJSON), it's already combined from all files - use it directly
 
 ### 1. Extract Plan Information
 - Parse plan.json to get all step IDs, titles, and execution modes
 - For each step, note agent_configs.use_code_execution_mode value (true/false/missing)
 - **CRITICAL**: Identify step types:
   - Regular steps: Top-level steps in plan.steps array
+  - Conditional steps: Steps with has_condition=true (parent step - NO learnings, only branch steps have learnings)
+  - Decision steps: Steps with has_decision_step=true (parent step - NO learnings, only inner step has learnings)
+  - Orchestration steps: Steps with has_orchestration_step=true (parent step - NO learnings, only main orchestrator and sub-agents have learnings)
   - Branch steps: Steps nested in if_true_steps or if_false_steps arrays
+  - Decision step inner steps: Steps in decision_step field (stored in learnings/step-{X}/ where X is the decision step's step number)
+  - Orchestration step main orchestrator: Steps in orchestration_step field (stored in learnings/step-{X}/ where X is the orchestration step's step number)
+  - Orchestration step sub-agents: Steps in orchestration_routes[].sub_agent_step fields (stored in learnings/step-{X}-sub-agent-{index}/ where X is the orchestration step's step number)
 - For branch steps, note the parent step ID and branch type (true/false)
-- Build a reference map: step ID → {title, execution_mode, expected_folder, is_branch_step, parent_step_id, branch_type, branch_index}
+- For decision steps, note that the inner step (decision_step field) has learnings in learnings/step-{X}/ (same folder as decision step number)
+- For orchestration steps, note that the main orchestrator (orchestration_step field) has learnings in learnings/step-{X}/ (same folder as orchestration step number), and sub-agents (orchestration_routes[].sub_agent_step) have learnings in learnings/step-{X}-sub-agent-{index}/ (separate folder per sub-agent)
+- Build a reference map: step ID → {title, execution_mode, expected_folder, step_type, is_branch_step, is_decision_inner, is_routing_sub_agent, parent_step_id, branch_type, branch_index, route_id}
   - Regular steps: expected_folder = learnings/step-{X}/
   - Branch steps: expected_folder = learnings/step-{parentStep}-{true/false}-{branchIdx}/
+  - Decision step inner steps: expected_folder = learnings/step-{X}/ (where X is the decision step's step number)
+  - Routing step main orchestrator: expected_folder = learnings/step-{X}/ (where X is the routing step's step number)
+  - Orchestration step sub-agents: expected_folder = learnings/step-{X}-sub-agent-{index}/ (where X is the orchestration step's step number and index is the sub-agent index)
+  - Conditional steps: expected_folder = NONE (no learnings - parent step doesn't execute)
+  - Decision steps: expected_folder = NONE (no learnings - parent step doesn't execute, only inner step has learnings)
+  - Orchestration steps: expected_folder = NONE (no learnings - parent step doesn't execute, only main orchestrator and sub-agents have learnings)
 - **Cross-reference with changelog**: Mark steps that appear in recent changelog entries as "recently changed"
 
 ### 2. Discover Learning Files in Selected Folder
@@ -804,24 +830,9 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
 		planJSON = "No plan JSON provided."
 	}
 
-	changelogJSON := templateVars["ChangelogJSON"]
-	changelogSection := ""
-	if changelogJSON != "" && changelogJSON != "[]" {
-		changelogSection = `
-**Plan Changelog** (recent changes to the plan - combined from all changelog files):
-` + changelogJSON + `
-
-**IMPORTANT**: 
-- This changelog is already combined from all individual changelog files in planning/changelog/
-- Changelog files are named with timestamps: changelog-YYYY-MM-DD-HH-MM-SS.json
-- Use this changelog to identify which steps were recently modified, deleted, or added
-- This helps prioritize alignment checks and identify learnings that are likely out of sync
+	changelogSection := `
+**Plan Changelog**: You have read access to planning/changelog/ directory. Use list_workspace_files with folder="planning/changelog" to discover all changelog-*.json files, then read them individually using read_workspace_file. Combine all entries from all files and sort by timestamp (oldest first) to understand recent plan changes.
 `
-	} else {
-		changelogSection = `
-**Plan Changelog**: No changelog found or empty. You should still check planning/changelog/ directory using list_workspace_files to discover any changelog-*.json files, then read them individually.
-`
-	}
 
 	return `# Plan-Learnings Alignment Check Task
 
@@ -850,7 +861,6 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
      3. Read each file using read_workspace_file
      4. Each file contains an array of change entries (each entry has: timestamp, change_type, step_ids, description, details)
      5. Combine all entries from all files and sort by timestamp (oldest first)
-   - **Alternative**: If ChangelogJSON is provided in template vars, it's already combined from all files - use it directly
    - The changelog contains a history of all plan modifications
    - **Purpose**: Understanding recent changes helps identify which learnings are likely out of sync
    - **What to extract from changelog**:
@@ -861,7 +871,6 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
      * Branch step changes: Steps added/updated/deleted in conditional branches
    - **Prioritization**: Steps mentioned in recent changelog entries should be checked first
    - **Note**: If changelog directory doesn't exist or is empty, that's fine - proceed with normal alignment check
-   - **If changelog is provided in template vars**: Use the ChangelogJSON variable directly (already combined from all files)
 
 **Phase 1: Analysis**
 
@@ -869,12 +878,24 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
    - Parse the plan.json above to extract all step IDs and titles
    - **CRITICAL**: Identify step types:
      * Regular steps: Top-level steps in plan.steps array
+     * Conditional steps: Steps with has_condition=true (parent step - NO learnings, only branch steps have learnings)
+     * Decision steps: Steps with has_decision_step=true (parent step - NO learnings, only inner step has learnings)
+     * Orchestration steps: Steps with has_orchestration_step=true (parent step - NO learnings, only main orchestrator and sub-agents have learnings)
      * Branch steps: Steps nested in if_true_steps or if_false_steps arrays (note parent step ID and branch type)
+     * Decision step inner steps: Steps in decision_step field (stored in learnings/step-{X}/ where X is the decision step's step number)
+     * Orchestration step main orchestrator: Steps in orchestration_step field (stored in learnings/step-{X}/ where X is the orchestration step's step number)
+     * Orchestration step sub-agents: Steps in orchestration_routes[].sub_agent_step fields (stored in learnings/step-{X}-sub-agent-{index}/ where X is the orchestration step's step number)
    - For each step, note the agent_configs.use_code_execution_mode value:
 ` + expectedFolderNote + `
-   - Create a mental map of: step ID → {title, execution_mode, expected_folder, is_branch_step, parent_step_id, branch_type, branch_index}
+   - Create a mental map of: step ID → {title, execution_mode, expected_folder, step_type, is_branch_step, is_decision_inner, is_routing_sub_agent, parent_step_id, branch_type, branch_index, route_id}
      * Regular steps: expected_folder = learnings/step-{X}/
      * Branch steps: expected_folder = learnings/step-{parentStep}-{true/false}-{branchIdx}/
+     * Decision step inner steps: expected_folder = learnings/step-{X}/ (where X is the decision step's step number)
+     * Orchestration step main orchestrator: expected_folder = learnings/step-{X}/ (where X is the orchestration step's step number)
+     * Orchestration step sub-agents: expected_folder = learnings/step-{X}-sub-agent-{index}/ (where X is the orchestration step's step number and index is the sub-agent index)
+     * Conditional steps: expected_folder = NONE (no learnings - parent step doesn't execute)
+     * Decision steps: expected_folder = NONE (no learnings - parent step doesn't execute, only inner step has learnings)
+     * Orchestration steps: expected_folder = NONE (no learnings - parent step doesn't execute, only main orchestrator and sub-agents have learnings)
 
 2. **Discover All Learning Files**
 ` + discoverInstructions + `
@@ -882,10 +903,16 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentUse
 3. **Classify Each File** (Follow the decision flow from system prompt)
    
    For each file:
-   - **Step A**: Try filename matching against step titles (both regular and branch steps)
+   - **Step A**: Try filename matching against step titles (regular steps, branch steps, decision step inner steps, orchestration step main orchestrator, and orchestration step sub-agents)
      * If matched, check if folder is correct for step type:
        - Regular step: Is file in learnings/step-{X}/ folder?
        - Branch step: Is file in learnings/step-{parentStep}-{true/false}-{branchIdx}/ folder?
+       - Decision step inner step: Is file in learnings/step-{X}/ folder? (where X is the decision step's step number)
+       - Orchestration step main orchestrator: Is file in learnings/step-{X}/ folder? (where X is the orchestration step's step number)
+       - Orchestration step sub-agent: Is file in learnings/step-{X}-sub-agent-{index}/ folder? (where X is the orchestration step's step number and index is the sub-agent index)
+     - Conditional step: NO learnings expected (parent step doesn't execute)
+     - Decision step: NO learnings expected (parent step doesn't execute, only inner step has learnings)
+     - Orchestration step: NO learnings expected (parent step doesn't execute, only main orchestrator and sub-agents have learnings)
      * Result: MATCHED ✅ or MISMATCH ⚠️
    
    - **Step B**: If no filename match, check if it's a consolidated file

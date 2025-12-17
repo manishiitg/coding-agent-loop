@@ -97,7 +97,8 @@ import {
   ContextSummarizationCompletedEventDisplay,
   ContextSummarizationErrorEventDisplay,
   ContextEditingCompletedEventDisplay,
-  ContextEditingErrorEventDisplay
+  ContextEditingErrorEventDisplay,
+  TempLLMSkippedEventDisplay
 } from './debug'
 import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
@@ -438,6 +439,38 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
   if (isEventType(event, 'context_editing_error')) {
     return <CompactWrapper><ContextEditingErrorEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+  }
+
+  // Temp LLM Skipped Event
+  if (event.type === 'temp_llm_skipped') {
+    const data = event.data as {
+      timestamp?: string
+      hierarchy_level?: number
+      component?: string
+      metadata?: {
+        orchestrator_agent_name?: string
+        orchestrator_phase?: string
+        orchestrator_step?: number
+      }
+      step_id?: string
+      step_index?: number
+      step_title?: string
+      step_path?: string
+      is_branch_step?: boolean
+      reason?: string
+      temp_llm_provider?: string
+      temp_llm_model?: string
+      learnings_path?: string
+      run_folder?: string
+      workspace_path?: string
+    }
+    return (
+      <CompactWrapper>
+        <EventWithOrchestratorContext metadata={data?.metadata}>
+          <TempLLMSkippedEventDisplay event={data || {}} compact={compact} />
+        </EventWithOrchestratorContext>
+      </CompactWrapper>
+    )
   }
 
   // Planning Events

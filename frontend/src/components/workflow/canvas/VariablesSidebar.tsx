@@ -377,18 +377,6 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
               </div>
             ))}
           </div>
-
-          {/* Objective preview */}
-          {manifest.objective && (
-            <div className="px-4 py-3 border-t border-border bg-background">
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
-                Templated Objective
-              </div>
-              <p className="text-xs text-foreground bg-muted/50 p-2 rounded font-mono whitespace-pre-wrap">
-                {manifest.objective}
-              </p>
-            </div>
-          )}
         </div>
       )}
     </div>

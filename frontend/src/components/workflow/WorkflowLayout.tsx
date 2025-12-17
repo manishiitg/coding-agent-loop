@@ -48,6 +48,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   
   // Get selected run folder and workspace fetchFiles function
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  const updateStepProgressFromEvent = useWorkflowStore(state => state.updateStepProgressFromEvent)
   const { fetchFiles } = useWorkspaceStore()
   
   // Get active workflow preset
@@ -74,7 +75,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     return null
   }, [activeWorkflowPreset])
 
-  // Listen for todo_steps_extracted events to auto-refresh the canvas
+  // Listen for todo_steps_extracted events to auto-refresh the canvas (with granular data from backend)
   useEffect(() => {
     if (events.length === 0) return
     
@@ -164,16 +165,39 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           workspace_path?: string
           completed_step_indices?: number[]
           total_steps?: number
+          branch_steps?: {
+            [k: string]: {
+              branch_executed: string
+              completed_steps: string[]
+            }
+          }
         }
         
-        // Only refresh if this event is for the currently selected iteration
+        // Only process if this event is for the currently selected iteration
         if (eventData?.run_folder === selectedRunFolder && eventData?.workspace_path === workspacePath) {
-          console.log('[WorkflowLayout] Step progress updated for current iteration, refreshing workspace:', {
+          console.log('[WorkflowLayout] Step progress updated for current iteration:', {
             runFolder: eventData.run_folder,
             completedSteps: eventData.completed_step_indices?.length || 0,
             totalSteps: eventData.total_steps || 0,
             eventIndex: i
           })
+          
+          // Update the workflow store's stepProgress from event data
+          // This ensures completedStepIndices is updated in real-time during execution
+          if (eventData.completed_step_indices !== undefined && eventData.total_steps !== undefined) {
+            // Convert branch_steps keys from string to number (event has string keys, StepProgress expects number keys)
+            const branchSteps: Record<number, { branch_executed: string; completed_steps: string[] }> | undefined = 
+              eventData.branch_steps ? Object.fromEntries(
+                Object.entries(eventData.branch_steps).map(([key, value]) => [parseInt(key, 10), value])
+              ) : undefined
+            
+            updateStepProgressFromEvent({
+              completed_step_indices: eventData.completed_step_indices,
+              total_steps: eventData.total_steps,
+              branch_steps: branchSteps,
+              last_updated: new Date().toISOString()
+            })
+          }
           
           // Refresh workspace files to show new execution files
           fetchFiles().catch((err) => {

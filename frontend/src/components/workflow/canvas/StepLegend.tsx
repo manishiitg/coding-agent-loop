@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useCallback } from 'react'
-import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Repeat, Zap } from 'lucide-react'
-import type { WorkflowNode, StepNodeData, ConditionalNodeData, LoopNodeData, DecisionNodeData } from '../hooks/usePlanToFlow'
+import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Repeat, Zap, Lock } from 'lucide-react'
+import type { WorkflowNode, StepNodeData, ConditionalNodeData, LoopNodeData, DecisionNodeData, RoutingNodeData } from '../hooks/usePlanToFlow'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 
@@ -42,10 +42,10 @@ export const StepLegend: React.FC<StepLegendProps> = ({
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
 
   // Type guard to check if node has step data
-  const hasStepData = (node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData } => {
-    return (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') &&
+  const hasStepData = (node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | RoutingNodeData } => {
+    return (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'routing') &&
            'step' in node.data &&
-           typeof (node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData).step === 'object'
+           typeof (node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | RoutingNodeData).step === 'object'
   }
 
   // Build a flat list of all steps including branch steps
@@ -244,6 +244,9 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                 ? stepCodeExecSetting === true  // Step has explicit setting
                 : presetUseCodeExecutionMode     // Fall back to preset default
 
+              // Check if learnings are locked (same logic as StepNode)
+              const lockLearnings = step.agent_configs?.lock_learnings === true && step.agent_configs?.disable_learning !== true
+
               // Calculate indentation for branch steps (1rem = 16px, so 0.75rem = 12px per level)
               const indentRem = depth * 0.75 // 0.75rem (12px) per depth level
 
@@ -291,7 +294,7 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                           ? 'font-semibold text-foreground' 
                           : 'font-medium text-foreground/90'
                       }`}>
-                        {/* Conditional, Loop, or Decision Icon */}
+                        {/* Conditional, Loop, Decision, or Routing Icon */}
                         {nodeType === 'conditional' && (
                           <GitBranch className="w-3 h-3 text-purple-500 flex-shrink-0" />
                         )}
@@ -301,9 +304,17 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                         {nodeType === 'decision' && (
                           <Zap className="w-3 h-3 text-indigo-500 flex-shrink-0" />
                         )}
+                        {nodeType === 'routing' && (
+                          <GitBranch className="w-3 h-3 text-teal-500 flex-shrink-0" />
+                        )}
                         <span>{step.title || `Step ${stepIndex + 1}`}</span>
                         {useCodeExecutionMode && (
                           <Code className="w-3 h-3 text-blue-500 flex-shrink-0" />
+                        )}
+                        {lockLearnings && (
+                          <span title="Learnings are locked" className="flex-shrink-0">
+                            <Lock className="w-3 h-3 text-purple-500" />
+                          </span>
                         )}
                       </div>
                     </div>

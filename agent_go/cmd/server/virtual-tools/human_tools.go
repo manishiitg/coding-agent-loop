@@ -30,7 +30,7 @@ func CreateHumanTools() []llmtypes.Tool {
 						"description": "Unique identifier for this feedback request. Always generate a UUID (e.g., '550e8400-e29b-41d4-a716-446655440000').",
 					},
 				},
-				"required": []string{"message_for_user", "unique_id"},
+				"required": []string{"unique_id"},
 			}),
 		},
 	}
@@ -55,10 +55,10 @@ func CreateHumanToolExecutors() map[string]func(ctx context.Context, args map[st
 
 // handleHumanFeedback handles the human_feedback tool execution
 func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (string, error) {
-	// Extract parameters
+	// Extract parameters - message_for_user is optional, use default if missing
 	messageForUser, ok := args["message_for_user"].(string)
-	if !ok {
-		return "", fmt.Errorf("message_for_user is required and must be a string")
+	if !ok || messageForUser == "" {
+		messageForUser = "Please provide your feedback here..."
 	}
 
 	uniqueID, ok := args["unique_id"].(string)

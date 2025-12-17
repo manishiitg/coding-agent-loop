@@ -83,6 +83,23 @@ export interface LoopNodeData extends Record<string, unknown> {
   selectedRunFolder?: string  // Selected iteration folder for file opening
 }
 
+export interface RoutingNodeData extends Record<string, unknown> {
+  id: string
+  title: string
+  orchestration_step?: PlanStep
+  orchestration_routes?: Array<{ route_id: string; route_name: string; condition: string; sub_agent_step: PlanStep; context_to_pass?: string }>
+  status: 'pending' | 'executing' | 'evaluating' | 'routing' | 'completed'
+  stepIndex: number
+  step: PlanStep
+  changeType?: ChangeType  // Highlight type for visual feedback
+  onRunFromStep?: OnRunFromStepCallback  // Callback to run from this step
+  onOpenSidebar?: OnOpenSidebarCallback  // Callback to open sidebar for editing
+  isExecuting?: boolean  // Whether execution is in progress
+  canRun?: boolean  // Whether this step can be run (all previous steps completed)
+  workspacePath?: string | null  // Workspace path for file opening
+  selectedRunFolder?: string  // Selected iteration folder for file opening
+}
+
 export interface ValidationNodeData extends Record<string, unknown> {
   id: string
   parentStepId: string
@@ -111,7 +128,7 @@ export interface EvaluationNodeData extends Record<string, unknown> {
   llmModel?: string  // LLM model name
 }
 
-export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData
+export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | RoutingNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -152,6 +169,7 @@ const NODE_DIMENSIONS = {
   step: { width: 340, height: 200 },
   conditional: { width: 300, height: 160 },
   decision: { width: 300, height: 180 },  // Decision step node (similar to conditional but shows inner step)
+  routing: { width: 360, height: 250 },   // Routing step node (shows orchestrator and sub-agents)
   loop: { width: 360, height: 280 },
   validation: { width: 120, height: 50 },
   learning: { width: 120, height: 50 },
@@ -265,23 +283,54 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[]): { nodes:
   g.setGraph(DAGRE_CONFIG)
   g.setDefaultEdgeLabel(() => ({}))
 
-  // Add nodes to dagre graph
+  // Separate sub-agents from main nodes (sub-agents will be positioned manually)
+  const subAgentIds = new Set(nodes.filter(n => n.id.includes('-sub-agent-')).map(n => n.id))
+  const subAgentRelatedNodeIds = new Set<string>()
+  
+  // Find all nodes related to sub-agents (validation, learning nodes)
   nodes.forEach(node => {
-    const dimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-    g.setNode(node.id, { width: dimensions.width, height: dimensions.height })
+    if (subAgentIds.has(node.id) || node.id.includes('-sub-agent-')) {
+      subAgentRelatedNodeIds.add(node.id)
+      // Also add validation/learning nodes for sub-agents
+      nodes.forEach(n => {
+        if (n.id.startsWith(node.id + '-')) {
+          subAgentRelatedNodeIds.add(n.id)
+        }
+      })
+    }
   })
 
-  // Add edges to dagre graph
+  // Add only non-sub-agent nodes to dagre graph
+  nodes.forEach(node => {
+    if (!subAgentRelatedNodeIds.has(node.id)) {
+      const dimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+      g.setNode(node.id, { width: dimensions.width, height: dimensions.height })
+    }
+  })
+
+  // Add only edges that don't involve sub-agents to dagre graph
   edges.forEach(edge => {
-    g.setEdge(edge.source, edge.target)
+    if (!subAgentRelatedNodeIds.has(edge.source) && !subAgentRelatedNodeIds.has(edge.target)) {
+      g.setEdge(edge.source, edge.target)
+    }
   })
 
   // Run layout
   dagre.layout(g)
 
-  // Apply positions to nodes
+  // Apply positions to nodes (only for nodes that were in Dagre)
   const layoutedNodes = nodes.map(node => {
+    if (subAgentRelatedNodeIds.has(node.id)) {
+      // Keep sub-agents at their initial position (will be positioned manually later)
+      return node
+    }
+    
     const nodeWithPosition = g.node(node.id)
+    if (!nodeWithPosition) {
+      // Node wasn't in Dagre graph, keep original position
+      return node
+    }
+    
     const dimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
     
     return {
@@ -357,6 +406,10 @@ function stepToNode(
       // For decision nodes, prefer decision_evaluation_question over generic title
       return step.title || step.decision_evaluation_question || `Decision ${stepIndex + 1}`
     }
+    if (step.has_orchestration_step) {
+      // For orchestration nodes, use step title or fallback
+      return step.title || `Orchestrator ${stepIndex + 1}`
+    }
     // For regular steps, use step.title or fallback
     // For nested branch steps, use a more descriptive fallback
     if (parentId) {
@@ -404,6 +457,20 @@ function stepToNode(
         decision_step: step.decision_step
         // Note: status is inherited from baseData (computed based on completedStepIndices)
       } as DecisionNodeData
+    }
+  }
+
+  if (step.has_orchestration_step) {
+    return {
+      id: nodeId,
+      type: 'routing',
+      position: { x: 0, y: 0 },
+      data: {
+        ...baseData,
+        orchestration_step: step.orchestration_step,
+        orchestration_routes: step.orchestration_routes
+        // Note: status is inherited from baseData (computed based on completedStepIndices)
+      } as RoutingNodeData
     }
   }
 
@@ -1051,6 +1118,189 @@ function processSteps(
       // Decision steps handle their own routing - don't connect to next sequential step
       lastExitNodeId = null
     }
+
+    // Handle routing step edge routing
+    // Routing steps execute a main orchestrator step, then route to sub-agents based on evaluation
+    // After sub-agents complete, they return to the main orchestrator for re-evaluation
+    // The routing step connects to next_step_id when success criteria is met
+    if (step.has_orchestration_step) {
+      const routingEdges: WorkflowEdge[] = []
+      const routingSubAgentNodes: WorkflowNode[] = []
+      
+      // Use learning/evaluation node as source if it exists, otherwise use routing node
+      const sourceNodeId = (typeof lastExitNodeId === 'string' ? lastExitNodeId : node.id)
+      
+      // Create nodes for sub-agents (private to orchestration step)
+      if (step.orchestration_routes && step.orchestration_routes.length > 0) {
+        step.orchestration_routes.forEach((route) => {
+          if (route.sub_agent_step) {
+            const subAgentNodeId = `${node.id}-sub-agent-${route.route_id}`
+            
+            // Get the stepIndex from the node data (parent routing step's index)
+            const parentStepIndex = (node.data as RoutingNodeData).stepIndex
+            
+            // Create sub-agent node (marked as sub-agent with special styling)
+            const subAgentNode = stepToNode(
+              route.sub_agent_step,
+              parentStepIndex, // Use parent step index
+              node.id,   // Parent is the routing node
+              undefined, // Not a branch
+              changes,
+              completedStepIndices,
+              stepStatusMap,
+              workspacePath,
+              selectedRunFolder
+            )
+            
+            // Override node ID and type to mark as sub-agent
+            subAgentNode.id = subAgentNodeId
+            subAgentNode.type = 'step' // Sub-agents are regular step nodes
+            // Ensure title and description are properly set from sub_agent_step
+            if (subAgentNode.data) {
+              const stepData = subAgentNode.data as StepNodeData
+              // Update title and description to ensure they come from sub_agent_step
+              stepData.title = route.sub_agent_step.title || stepData.title || `Sub-Agent ${route.route_name || route.route_id}`
+              stepData.description = route.sub_agent_step.description || stepData.description
+              // Update step object
+              stepData.step = {
+                ...route.sub_agent_step,
+                // Add a flag to identify as sub-agent (for styling)
+                id: route.sub_agent_step.id || subAgentNodeId
+              } as PlanStep
+            }
+            
+            routingSubAgentNodes.push(subAgentNode)
+            
+            // Add learning node for sub-agent (sub-agents don't have validation, only learning)
+            const agentConfigs = route.sub_agent_step.agent_configs as AgentConfigs | undefined
+            
+            // Determine if code execution mode is enabled
+            const stepCodeExecSetting = agentConfigs?.use_code_execution_mode
+            const useCodeExecutionMode = stepCodeExecSetting !== undefined 
+              ? stepCodeExecSetting 
+              : presetUseCodeExecutionMode
+            
+            // Sub-agents always have learning enabled (unless explicitly disabled)
+            const hasLearning = useCodeExecutionMode 
+              ? true  // Always enabled in code exec mode
+              : !agentConfigs?.disable_learning
+            
+            let subAgentExitNodeId = subAgentNodeId
+            
+            if (hasLearning) {
+              // Get learning LLM provider and model
+              const learningLLM = agentConfigs?.learning_llm || presetLearningLLM
+              const learningLLMInfo = getLLMProviderAndModel(learningLLM, presetLLMConfig, availableLLMs)
+              
+              const learningNodeId = `${subAgentNodeId}-learning`
+              const learningNode: WorkflowNode = {
+                id: learningNodeId,
+                type: 'learning',
+                position: { x: 0, y: 0 },
+                data: {
+                  id: learningNodeId,
+                  parentStepId: subAgentNodeId,
+                  parentStepTitle: route.sub_agent_step.title,
+                  status: 'pending',
+                  llmProvider: learningLLMInfo.provider,
+                  llmModel: learningLLMInfo.model
+                } as LearningNodeData
+              }
+              routingSubAgentNodes.push(learningNode)
+              
+              // Edge from sub-agent to learning
+              routingEdges.push({
+                id: `${subAgentNodeId}-to-learning`,
+                source: subAgentNodeId,
+                target: learningNodeId,
+                type: 'smoothstep',
+                animated: false,
+                style: { stroke: '#f59e0b', strokeWidth: 2 }
+              })
+              
+              subAgentExitNodeId = learningNodeId
+            }
+            
+            // Helper to truncate condition to 10 words
+            const truncateToWords = (text: string, maxWords: number): string => {
+              if (!text) return ''
+              const words = text.trim().split(/\s+/)
+              if (words.length <= maxWords) return text
+              return words.slice(0, maxWords).join(' ') + '...'
+            }
+            
+            // Connect routing node to sub-agent (from routing node's bottom handle to sub-agent's top)
+            // Show condition on edge (truncated to 10 words)
+            const conditionLabel = route.condition 
+              ? truncateToWords(route.condition, 10)
+              : route.route_name || route.route_id
+            
+            routingEdges.push({
+              id: `${node.id}-route-${route.route_id}-to-sub-agent`,
+              source: node.id,
+              sourceHandle: route.route_id, // Use route_id as handle (on bottom)
+              target: subAgentNodeId,
+              targetHandle: 'top', // Connect to top of sub-agent
+              type: 'smoothstep',
+              label: conditionLabel,
+              labelStyle: { fill: '#3b82f6', fontWeight: 600, fontSize: 10 },
+              labelBgStyle: { fill: '#eff6ff', fillOpacity: 0.9 },
+              labelBgPadding: [3, 3] as [number, number],
+              labelBgBorderRadius: 3,
+              style: { stroke: '#3b82f6', strokeWidth: 2, strokeDasharray: '5,5' }, // Dashed to show it's conditional
+              animated: false
+            })
+            
+            // Connect sub-agent back to routing node (sub-agents always return)
+            routingEdges.push({
+              id: `${subAgentExitNodeId}-return-to-${node.id}`,
+              source: subAgentExitNodeId,
+              target: node.id,
+              type: 'smoothstep',
+              label: 'Return',
+              labelStyle: { fill: '#6b7280', fontWeight: 500, fontSize: 9 },
+              labelBgStyle: { fill: '#f9fafb', fillOpacity: 0.9 },
+              labelBgPadding: [2, 2] as [number, number],
+              labelBgBorderRadius: 3,
+              style: { stroke: '#6b7280', strokeWidth: 1.5, strokeDasharray: '3,3' }, // Dashed return path
+              animated: false
+            })
+          }
+        })
+      }
+      
+      // Add sub-agent nodes to the nodes array
+      nodes.push(...routingSubAgentNodes)
+      
+      // Routing steps connect to next_step_id when success criteria is met
+      if (step.next_step_id) {
+        const targetNodeId = stepIdToNodeIdMap?.get(step.next_step_id)
+        if (targetNodeId) {
+          routingEdges.push({
+            id: `${sourceNodeId}-routing-to-${targetNodeId}`,
+            source: sourceNodeId,
+            target: targetNodeId,
+            type: 'smoothstep',
+            style: { stroke: '#3b82f6', strokeWidth: 2 },
+            animated: false
+          })
+        } else if (step.next_step_id === 'end') {
+          routingEdges.push({
+            id: `${sourceNodeId}-routing-to-end`,
+            source: sourceNodeId,
+            target: 'end',
+            type: 'smoothstep',
+            style: { stroke: '#3b82f6', strokeWidth: 2 },
+            animated: false
+          })
+        }
+      }
+      
+      edges.push(...routingEdges)
+      
+      // Routing steps handle their own routing - don't connect to next sequential step
+      lastExitNodeId = null
+    }
   })
 
   return { nodes, edges }
@@ -1059,8 +1309,8 @@ function processSteps(
 /**
  * Check if a node is a step-type node (has step data)
  */
-function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData } {
-  return node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop'
+function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | RoutingNodeData } {
+  return node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'routing'
 }
 
 /**
@@ -1639,6 +1889,106 @@ export function usePlanToFlow(
     // Apply dagre layout
     const layoutedResult = layoutWithDagre(nodes, edges)
     
+    // Position sub-agents vertically below their parent routing nodes
+    const routingNodeMap = new Map<string, { nodeIndex: number; subAgentIndices: number[] }>()
+    
+    // Find all routing nodes and their sub-agents by index
+    layoutedResult.nodes.forEach((node, index) => {
+      if (node.type === 'routing') {
+        routingNodeMap.set(node.id, { nodeIndex: index, subAgentIndices: [] })
+      } else if (node.id.includes('-sub-agent-')) {
+        // Extract parent routing node ID from sub-agent ID
+        const parentId = node.id.split('-sub-agent-')[0]
+        const routingInfo = routingNodeMap.get(parentId)
+        if (routingInfo) {
+          routingInfo.subAgentIndices.push(index)
+        }
+      }
+    })
+    
+    // Position sub-agents vertically below their parent routing node
+    routingNodeMap.forEach(({ nodeIndex: routingNodeIndex, subAgentIndices }) => {
+      const routingNode = layoutedResult.nodes[routingNodeIndex]
+      const routingDimensions = NODE_DIMENSIONS.routing || NODE_DIMENSIONS.step
+      
+      // Find the bottom-most node related to the routing node (including validation/learning nodes)
+      let routingBottom = routingNode.position.y + routingDimensions.height
+      layoutedResult.nodes.forEach((n) => {
+        if (n.id.startsWith(routingNode.id + '-') && !n.id.includes('-sub-agent-')) {
+          const nDimensions = NODE_DIMENSIONS[n.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+          const nBottom = n.position.y + nDimensions.height
+          if (nBottom > routingBottom) {
+            routingBottom = nBottom
+          }
+        }
+      })
+      
+      const verticalSpacing = 600 // Space between routing node and sub-agents
+      const horizontalSpacing = 100 // Space between sub-agents horizontally
+      
+      // All sub-agents should be at the same Y position (same horizontal line)
+      const subAgentY = routingBottom + verticalSpacing
+      
+      // Calculate total width needed for all sub-agents and their learning nodes
+      let totalSubAgentWidth = 0
+      const subAgentWidths: number[] = []
+      subAgentIndices.forEach((subAgentIndex) => {
+        const subAgent = layoutedResult.nodes[subAgentIndex]
+        const subAgentDimensions = NODE_DIMENSIONS[subAgent.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+        
+        // Check if sub-agent has learning node to account for its width
+        let subAgentTotalWidth = subAgentDimensions.width
+        layoutedResult.nodes.forEach((n) => {
+          if (n.id.startsWith(subAgent.id + '-learning')) {
+            const learningDimensions = NODE_DIMENSIONS.learning || NODE_DIMENSIONS.step
+            subAgentTotalWidth += learningDimensions.width + 20 // Add learning node width + spacing
+          }
+        })
+        
+        subAgentWidths.push(subAgentTotalWidth)
+        totalSubAgentWidth += subAgentTotalWidth
+        if (subAgentIndices.indexOf(subAgentIndex) < subAgentIndices.length - 1) {
+          totalSubAgentWidth += horizontalSpacing // Add spacing between sub-agents
+        }
+      })
+      
+      // Start X position to center all sub-agents relative to routing node
+      const startX = routingNode.position.x + (routingDimensions.width - totalSubAgentWidth) / 2
+      
+      let currentX = startX
+      
+      subAgentIndices.forEach((subAgentIndex, index) => {
+        const subAgent = layoutedResult.nodes[subAgentIndex]
+        const subAgentDimensions = NODE_DIMENSIONS[subAgent.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+        
+        // Update the actual node in the array - all at same Y, different X
+        layoutedResult.nodes[subAgentIndex] = {
+          ...subAgent,
+          position: {
+            x: currentX,
+            y: subAgentY
+          }
+        }
+        
+        // Also position validation/learning nodes for this sub-agent
+        layoutedResult.nodes.forEach((n, nIndex) => {
+          if (n.id.startsWith(subAgent.id + '-')) {
+            // Position validation/learning nodes next to their sub-agent
+            layoutedResult.nodes[nIndex] = {
+              ...n,
+              position: {
+                x: currentX + subAgentDimensions.width + 20,
+                y: subAgentY
+              }
+            }
+          }
+        })
+        
+        // Move to next sub-agent position
+        currentX += subAgentWidths[index] + horizontalSpacing
+      })
+    })
+    
     // Create a Set for faster lookup of completed step indices
     const completedSet = new Set(completedStepIndices)
     
@@ -1656,8 +2006,8 @@ export function usePlanToFlow(
     
     // Inject onRunFromStep callback, onOpenSidebar callback, isExecuting state, canRun, workspacePath, and selectedRunFolder into step-type nodes
     layoutedResult.nodes = layoutedResult.nodes.map(node => {
-      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
-        const stepIndex = (node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData).stepIndex
+      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'routing') {
+        const stepIndex = (node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | RoutingNodeData).stepIndex
         const canRun = canStepRun(stepIndex)
         return {
           ...node,

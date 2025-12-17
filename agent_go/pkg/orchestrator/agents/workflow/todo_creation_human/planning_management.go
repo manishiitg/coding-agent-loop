@@ -171,10 +171,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 			validationErr := validatePlanStepIDs(existingPlan.Steps)
 			if validationErr != nil {
 				// Fallback: Clear instruction for plan updates with validation error fix
-				userMessage = fmt.Sprintf("Review the existing plan and fix any validation errors. The plan has validation issues: %v. Use the plan modification tools (update_plan_steps, delete_plan_steps, add_regular_step, add_conditional_step, add_decision_step, add_loop_step) to fix validation errors and make any other changes. Always use human_feedback tool first to confirm changes with the user.", validationErr)
+				userMessage = fmt.Sprintf("Review the existing plan and fix any validation errors. The plan has validation issues: %v. Use the plan modification tools (update_regular_step, update_conditional_step, update_decision_step, update_routing_step, delete_plan_steps, add_regular_step, add_conditional_step, add_decision_step, add_routing_step, add_loop_step) to fix validation errors and make any other changes. Always use human_feedback tool first to confirm changes with the user.", validationErr)
 			} else {
 				// Fallback: Clear instruction for plan updates
-				userMessage = "Review the existing plan and update it based on the objective. Use the plan modification tools (update_plan_steps, delete_plan_steps, add_regular_step, add_conditional_step, add_decision_step, add_loop_step) to make changes. Always use human_feedback tool first to confirm changes with the user."
+				userMessage = "Review the existing plan and update it based on the objective. Use the plan modification tools (update_regular_step, update_conditional_step, update_decision_step, update_routing_step, delete_plan_steps, add_regular_step, add_conditional_step, add_decision_step, add_routing_step, add_loop_step) to make changes. Always use human_feedback tool first to confirm changes with the user."
 			}
 		}
 	} else {
@@ -265,7 +265,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 	}
 
 	// Register all plan modification tools using shared function
-	if err := registerPlanModificationTools(mcpAgent, workspacePath, hcpo.GetLogger(), hcpo.ReadWorkspaceFile, hcpo.WriteWorkspaceFile, hcpo.MoveWorkspaceFile, "planning agent"); err != nil {
+	// Pass unlock function to automatically unlock learnings when plan is modified
+	unlockLearningsFunc := hcpo.createUnlockLearningsFunction()
+	if err := registerPlanModificationTools(mcpAgent, workspacePath, hcpo.GetLogger(), hcpo.ReadWorkspaceFile, hcpo.WriteWorkspaceFile, hcpo.MoveWorkspaceFile, "planning agent", unlockLearningsFunc); err != nil {
 		return nil, nil, err
 	}
 
@@ -274,14 +276,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 		return nil, nil, err
 	}
 
-	// Generate system prompt based on mode
-	var systemPrompt string
+	// Always use UPDATE mode prompt (handles both CREATE and UPDATE scenarios)
+	systemPrompt := planningSystemPromptProcessorForUpdate(planningTemplateVars)
 	if isUpdateMode {
-		systemPrompt = planningSystemPromptProcessorForUpdate(planningTemplateVars)
 		hcpo.GetLogger().Info(fmt.Sprintf("🔄 UPDATE mode: Using update system prompt"))
 	} else {
-		systemPrompt = planningSystemPromptProcessorForCreate(planningTemplateVars)
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 CREATE mode: Using create system prompt"))
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 CREATE mode: Using update system prompt (unified prompt)"))
 	}
 
 	// Create input processor that returns the user message
@@ -300,9 +300,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 	toolCalls := extractToolCallsFromMessages(updatedConversationHistory)
 	planUpdateToolCalled := false
 	for _, toolName := range toolCalls {
-		if toolName == "update_plan_steps" || toolName == "delete_plan_steps" || toolName == "add_regular_step" || toolName == "add_conditional_step" || toolName == "add_decision_step" || toolName == "add_loop_step" ||
+		if toolName == "update_regular_step" || toolName == "update_conditional_step" || toolName == "update_decision_step" || toolName == "update_routing_step" || toolName == "delete_plan_steps" || toolName == "add_regular_step" || toolName == "add_conditional_step" || toolName == "add_decision_step" || toolName == "add_routing_step" || toolName == "add_loop_step" ||
 			toolName == "convert_step_to_conditional" || toolName == "add_branch_steps" || toolName == "update_branch_steps" ||
-			toolName == "delete_branch_steps" || toolName == "update_conditional_step" || toolName == "convert_conditional_to_regular" {
+			toolName == "delete_branch_steps" || toolName == "convert_conditional_to_regular" {
 			planUpdateToolCalled = true
 		}
 	}
@@ -355,16 +355,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 
 // createPlanningAgent creates a planning agent for the current iteration
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
-	// Set folder guard paths: allow reads from learnings (read-only) and planning (via writePaths), writes only to planning
+	// Set folder guard paths: allow reads from learnings, planning, and runs (for execution logs), writes to both planning and learnings (for folder syncing)
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	planningPath := fmt.Sprintf("%s/planning", baseWorkspacePath)
 	learningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
+	runsPath := fmt.Sprintf("%s/runs", baseWorkspacePath)
 
-	// Only specify learnings in readPaths - planning is automatically readable since it's in writePaths
-	readPaths := []string{learningsPath}
-	writePaths := []string{planningPath}
+	// Read paths: learnings (for reading existing folders), runs (for execution logs), planning is automatically readable since it's in writePaths
+	readPaths := []string{learningsPath, runsPath}
+	// Write paths: planning (for plan.json) and learnings (for renaming folders when step numbering changes)
+	writePaths := []string{planningPath, learningsPath}
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (planning automatically readable via writePaths)", readPaths, writePaths))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (read access to runs/ for execution logs, write access to learnings/ for folder syncing)", readPaths, writePaths))
 
 	// Determine LLM config: Priority: presetPlanningLLM > presetLearningLLM > orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig
@@ -646,6 +648,28 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 			}
 		}
 
+		// Validate orchestration step fields before conversion
+		if step.HasOrchestrationStep {
+			if step.OrchestrationStep == nil {
+				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has has_orchestration_step=true but is missing required orchestration_step field", i, step.Title, step.ID), nil)
+			}
+			if step.OrchestrationStep.ID == "" {
+				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has orchestration_step with missing required ID field", i, step.Title, step.ID), nil)
+			}
+			if step.OrchestrationStep.Description == "" {
+				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has orchestration_step with missing required description field", i, step.Title, step.ID), nil)
+			}
+			if step.OrchestrationStep.SuccessCriteria == "" {
+				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has orchestration_step with missing required success_criteria field", i, step.Title, step.ID), nil)
+			}
+			if len(step.OrchestrationRoutes) == 0 {
+				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has has_orchestration_step=true but has no orchestration_routes defined", i, step.Title, step.ID), nil)
+			}
+			if step.NextStepID == "" {
+				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has has_orchestration_step=true but is missing required next_step_id field", i, step.Title, step.ID), nil)
+			}
+		}
+
 		// Get matched config for this step (may be nil if no match)
 		var agentConfigs *AgentConfigs
 		if config, found := matchedConfigs[i]; found {
@@ -749,6 +773,59 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 			}
 		}
 
+		// Convert orchestration step if present
+		var orchestrationTodoStep *TodoStep
+		var orchestrationRoutes []OrchestrationRoute
+		if step.HasOrchestrationStep && step.OrchestrationStep != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔍 Converting orchestration step for step '%s' (ID: %s)", step.Title, step.ID))
+			// Convert the main orchestration orchestrator step
+			orchestrationSteps, err := convertBranchSteps([]PlanStep{*step.OrchestrationStep}, stepConfigs)
+			if err != nil {
+				return nil, fmt.Errorf(fmt.Sprintf("failed to convert orchestration step for step '%s': %w", step.Title, err), nil)
+			}
+			if len(orchestrationSteps) > 0 {
+				orchestrationTodoStep = &orchestrationSteps[0]
+				if orchestrationTodoStep.AgentConfigs != nil {
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration step '%s' (ID: %s) matched config from step_config.json", orchestrationTodoStep.Title, orchestrationTodoStep.ID))
+				} else {
+					hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Orchestration step '%s' (ID: %s) has no config match - will use defaults", orchestrationTodoStep.Title, orchestrationTodoStep.ID))
+				}
+			}
+			// Convert orchestration routes (sub-agents)
+			orchestrationRoutes = make([]OrchestrationRoute, 0, len(step.OrchestrationRoutes))
+			for _, planRoute := range step.OrchestrationRoutes {
+				hcpo.GetLogger().Info(fmt.Sprintf("🔍 Converting orchestration route '%s' (route_id: %s) for step '%s'", planRoute.RouteName, planRoute.RouteID, step.Title))
+				// Convert sub-agent step
+				subAgentSteps, err := convertBranchSteps([]PlanStep{planRoute.SubAgentStep}, stepConfigs)
+				if err != nil {
+					return nil, fmt.Errorf(fmt.Sprintf("failed to convert sub-agent step for route '%s' in step '%s': %w", planRoute.RouteID, step.Title, err), nil)
+				}
+				if len(subAgentSteps) == 0 {
+					return nil, fmt.Errorf(fmt.Sprintf("failed to convert sub-agent step for route '%s' in step '%s': no step returned", planRoute.RouteID, step.Title), nil)
+				}
+				subAgentTodoStep := subAgentSteps[0]
+				// Sub-agents should have validation disabled
+				if subAgentTodoStep.AgentConfigs == nil {
+					val := true
+					subAgentTodoStep.AgentConfigs = &AgentConfigs{
+						DisableValidation: &val,
+					}
+				} else if subAgentTodoStep.AgentConfigs.DisableValidation == nil || !*subAgentTodoStep.AgentConfigs.DisableValidation {
+					val := true
+					disabledConfigs := *subAgentTodoStep.AgentConfigs
+					disabledConfigs.DisableValidation = &val
+					subAgentTodoStep.AgentConfigs = &disabledConfigs
+				}
+				orchestrationRoutes = append(orchestrationRoutes, OrchestrationRoute{
+					RouteID:       planRoute.RouteID,
+					RouteName:     planRoute.RouteName,
+					Condition:     planRoute.Condition,
+					SubAgentStep:  subAgentTodoStep,
+					ContextToPass: planRoute.ContextToPass,
+				})
+			}
+		}
+
 		// Convert FlexibleContextOutput to string for TodoStep
 		todoSteps[i] = TodoStep{
 			ID:                         step.ID, // Copy ID from PlanStep for frontend matching
@@ -771,6 +848,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 			HasDecisionStep:            step.HasDecisionStep,
 			DecisionStep:               decisionTodoStep,
 			DecisionEvaluationQuestion: step.DecisionEvaluationQuestion,
+			HasOrchestrationStep:       step.HasOrchestrationStep,
+			OrchestrationStep:          orchestrationTodoStep,
+			OrchestrationRoutes:        orchestrationRoutes,
+			NextStepID:                 step.NextStepID,
 			AgentConfigs:               agentConfigs, // Merged from step_config.json (validation enforced for loops)
 		}
 	}
@@ -849,9 +930,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitTodoStepsExtractedEvent(
 
 // IsPlanModificationTool checks if a tool name is a plan modification tool
 func IsPlanModificationTool(name string) bool {
-	return name == "update_plan_steps" || name == "delete_plan_steps" || name == "add_regular_step" || name == "add_conditional_step" || name == "add_decision_step" || name == "add_loop_step" ||
+	return name == "update_regular_step" || name == "update_conditional_step" || name == "update_decision_step" || name == "update_routing_step" || name == "delete_plan_steps" || name == "add_regular_step" || name == "add_conditional_step" || name == "add_decision_step" || name == "add_routing_step" || name == "add_loop_step" ||
 		name == "convert_step_to_conditional" || name == "add_branch_steps" || name == "update_branch_steps" ||
-		name == "delete_branch_steps" || name == "update_conditional_step" || name == "convert_conditional_to_regular"
+		name == "delete_branch_steps" || name == "convert_conditional_to_regular"
 }
 
 // IsStepConfigModificationTool checks if a tool name is a step_config modification tool
@@ -918,16 +999,10 @@ func ExtractChangedStepIDsFromMessages(messages []llmtypes.MessageContent) Chang
 				}
 
 				switch toolName {
-				case "update_plan_steps":
-					// Extract existing_step_id from each updated step
-					if updatedStepsRaw, ok := argsMap["updated_steps"].([]interface{}); ok {
-						for _, stepRaw := range updatedStepsRaw {
-							if stepMap, ok := stepRaw.(map[string]interface{}); ok {
-								if stepID, ok := stepMap["existing_step_id"].(string); ok && stepID != "" {
-									changed.Updated = append(changed.Updated, stepID)
-								}
-							}
-						}
+				case "update_regular_step", "update_conditional_step", "update_decision_step", "update_routing_step":
+					// Extract existing_step_id from updated step
+					if stepID, ok := argsMap["existing_step_id"].(string); ok && stepID != "" {
+						changed.Updated = append(changed.Updated, stepID)
 					}
 
 				case "delete_plan_steps":
@@ -940,7 +1015,7 @@ func ExtractChangedStepIDsFromMessages(messages []llmtypes.MessageContent) Chang
 						}
 					}
 
-				case "add_regular_step", "add_conditional_step", "add_decision_step", "add_loop_step":
+				case "add_regular_step", "add_conditional_step", "add_decision_step", "add_routing_step", "add_loop_step":
 					// Extract id from new step
 					if stepID, ok := argsMap["id"].(string); ok && stepID != "" {
 						changed.Added = append(changed.Added, stepID)
@@ -1000,7 +1075,7 @@ func ExtractChangedStepIDsFromMessages(messages []llmtypes.MessageContent) Chang
 						}
 					}
 
-				case "convert_step_to_conditional", "update_conditional_step":
+				case "convert_step_to_conditional":
 					// Extract existing_step_id
 					if stepID, ok := argsMap["existing_step_id"].(string); ok && stepID != "" {
 						changed.Updated = append(changed.Updated, stepID)

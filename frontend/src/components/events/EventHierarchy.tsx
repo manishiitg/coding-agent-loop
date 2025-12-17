@@ -20,18 +20,16 @@ interface EventNode {
 }
 
 // Performance optimization: Limit events processed to prevent browser freeze
-const MAX_EVENTS_TO_PROCESS = 300; // Process max 300 events at a time (reduced from 500 for better performance)
-const INITIAL_VISIBLE_EVENTS = 30; // Show first 30 events (reduced from 50 for better performance)
+const MAX_EVENTS_TO_PROCESS = 1000; // Process max 1000 events at a time (matches memory limit in useChatStore)
+const INITIAL_VISIBLE_EVENTS = 100; // Show first 100 events initially (users can load more)
 
 export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact = false }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
-  // Track sessions that user has manually expanded - these should never be auto-collapsed
-  const [manuallyExpandedSessions, setManuallyExpandedSessions] = useState<Set<string>>(new Set());
-  // Track previously seen session keys to detect truly new sessions
-  const previousSessionKeysRef = React.useRef<Set<string>>(new Set());
-  // Performance: Limit visible events to prevent browser freeze
-  const [visibleEventCount, setVisibleEventCount] = useState(INITIAL_VISIBLE_EVENTS);
+  // Track start index for loading older events (starts from end, moves backward)
+  // startIndex represents the index in displayEvents where we start showing events
+  // Initially set to show last INITIAL_VISIBLE_EVENTS events (most recent)
+  const [startIndex, setStartIndex] = useState<number | null>(null);
   // Track last event count to detect new events
   const lastEventCountRef = React.useRef<number>(0);
   
@@ -48,30 +46,36 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     return events.slice(-MAX_EVENTS_TO_PROCESS);
   }, [events]);
   
-  // Ensure we always show latest events when new ones arrive
-  // If user has loaded more events, keep showing latest (they'll see new events automatically)
+  // Initialize startIndex when displayEvents changes (new events or first load)
   React.useEffect(() => {
     const currentEventCount = displayEvents.length;
     const previousEventCount = lastEventCountRef.current;
     
-    // If new events arrived and we're showing fewer than available, ensure we show at least INITIAL_VISIBLE_EVENTS
-    if (currentEventCount > previousEventCount && visibleEventCount < INITIAL_VISIBLE_EVENTS) {
-      // New events arrived - ensure we show at least the initial count (latest events)
-      setVisibleEventCount(INITIAL_VISIBLE_EVENTS);
+    // If new events arrived (count increased), reset to show latest events
+    if (currentEventCount > previousEventCount) {
+      // New events arrived - reset to show latest INITIAL_VISIBLE_EVENTS
+      setStartIndex(Math.max(0, displayEvents.length - INITIAL_VISIBLE_EVENTS));
+    } else if (startIndex === null) {
+      // First load - initialize to show latest INITIAL_VISIBLE_EVENTS
+      setStartIndex(Math.max(0, displayEvents.length - INITIAL_VISIBLE_EVENTS));
+    } else if (currentEventCount < previousEventCount) {
+      // Events were cleared/reset - reset startIndex
+      setStartIndex(Math.max(0, displayEvents.length - INITIAL_VISIBLE_EVENTS));
     }
     
     lastEventCountRef.current = currentEventCount;
-  }, [displayEvents.length, visibleEventCount]);
+  }, [displayEvents.length, startIndex]);
   
-  // Limit visible events for rendering - show LATEST events (at bottom of list)
-  // ALWAYS takes the last N events (most recent) - ensures latest events are always visible
+  // Limit visible events for rendering - show events starting from startIndex
+  // When startIndex is 0, shows all events from beginning
+  // When startIndex > 0, shows events from that position to end (older events are hidden)
   const visibleEvents = React.useMemo(() => {
-    // Take the last N events (most recent) from displayEvents
-    // displayEvents is already the most recent MAX_EVENTS_TO_PROCESS events
-    // slice(-N) ensures we ALWAYS get the LATEST events, never older ones
-    // These will be rendered at the bottom (chronological order: oldest to newest)
-    return displayEvents.slice(-visibleEventCount);
-  }, [displayEvents, visibleEventCount]);
+    if (startIndex === null || displayEvents.length === 0) {
+      return [];
+    }
+    // Show events from startIndex to end (includes older events when startIndex decreases)
+    return displayEvents.slice(startIndex);
+  }, [displayEvents, startIndex]);
 
   // Extract parent_id from event data
   const getParentId = React.useCallback((event: PollingEvent): string | undefined => {
@@ -240,121 +244,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     return sessionEvents;
   }, [visibleEvents, getAgentSessionKey]);
 
-  // Get ordered list of completed sessions by their end event index
-  // OPTIMIZATION: Only process visibleEvents to reduce computation
-  const getOrderedCompletedSessions = React.useMemo(() => {
-    const sessionEndIndices = new Map<string, number>(); // sessionKey -> end event index
-    
-    // Find all orchestrator_agent_end events and their indices
-    visibleEvents.forEach((event, index) => {
-      const sessionKey = getAgentSessionKey(event);
-      if (sessionKey && event.type === 'orchestrator_agent_end') {
-        // Only include sessions that have both start and end (completed sessions)
-        if (findEventsBetweenStartEnd.has(sessionKey)) {
-          sessionEndIndices.set(sessionKey, index);
-        }
-      }
-    });
-    
-    // Sort sessions by end event index (completion time)
-    return Array.from(sessionEndIndices.entries())
-      .sort(([, indexA], [, indexB]) => indexA - indexB)
-      .map(([sessionKey]) => sessionKey);
-  }, [visibleEvents, getAgentSessionKey, findEventsBetweenStartEnd]);
-
-  // Auto-collapse logic: Keep 1-5 sessions expanded, keep newest 5 expanded when 6+ sessions (collapse n-5 older ones)
-  // This runs when new sessions complete or when session order changes
-  React.useEffect(() => {
-    if (getOrderedCompletedSessions.length === 0) {
-      return;
-    }
-
-    const allSessionKeys = Array.from(findEventsBetweenStartEnd.keys());
-    const currentSessionKeys = new Set(allSessionKeys);
-    const previousSessionKeys = previousSessionKeysRef.current;
-    
-    // Find truly new sessions (ones we haven't seen before)
-    const newSessionKeys = allSessionKeys.filter(key => !previousSessionKeys.has(key));
-    
-    // Update ref to track current session keys for next comparison
-    previousSessionKeysRef.current = currentSessionKeys;
-    
-    // Only process if there are new sessions or session order changed
-    const hasNewSessions = newSessionKeys.length > 0;
-    const orderedSessions = getOrderedCompletedSessions;
-    
-    if (hasNewSessions || orderedSessions.length > 0) {
-      const newCollapsed = new Set(collapsedSessions);
-      let hasChanges = false;
-      
-      const n = orderedSessions.length;
-      
-      if (n === 1) {
-        // Only one session: keep it expanded
-        const sessionKey = orderedSessions[0];
-        if (newCollapsed.has(sessionKey) && !manuallyExpandedSessions.has(sessionKey)) {
-          newCollapsed.delete(sessionKey);
-          hasChanges = true;
-        }
-      } else if (n <= 5) {
-        // 2-5 sessions: keep all expanded (except newest if manually collapsed)
-        // Only collapse newest if it's not manually expanded
-        const newestSession = orderedSessions[n - 1];
-        if (newestSession && !manuallyExpandedSessions.has(newestSession)) {
-          // Don't auto-collapse newest when we have <= 5 sessions
-          // But if it's already collapsed and not manually expanded, expand it
-          if (newCollapsed.has(newestSession)) {
-            newCollapsed.delete(newestSession);
-            hasChanges = true;
-          }
-        }
-        
-        // Ensure all other sessions are expanded (unless manually collapsed)
-        orderedSessions.slice(0, n - 1).forEach(sessionKey => {
-          if (newCollapsed.has(sessionKey) && !manuallyExpandedSessions.has(sessionKey)) {
-            newCollapsed.delete(sessionKey);
-            hasChanges = true;
-          }
-        });
-      } else {
-        // More than 5 sessions: keep newest 5 expanded, collapse the rest (n-5)
-        // Get the newest 5 sessions (last 5 in the ordered list)
-        const newest5Sessions = orderedSessions.slice(Math.max(0, n - 5)); // Last 5 sessions
-        const olderSessions = orderedSessions.slice(0, Math.max(0, n - 5)); // All sessions except newest 5
-        
-        // Keep the newest 5 sessions expanded (unless manually collapsed by user)
-        newest5Sessions.forEach(sessionKey => {
-          if (newCollapsed.has(sessionKey) && !manuallyExpandedSessions.has(sessionKey)) {
-            newCollapsed.delete(sessionKey);
-            hasChanges = true;
-          }
-        });
-        
-        // Collapse all older sessions (n-5) unless manually expanded
-        olderSessions.forEach(sessionKey => {
-          // Only auto-collapse if user hasn't manually expanded it
-          if (!manuallyExpandedSessions.has(sessionKey)) {
-            if (!newCollapsed.has(sessionKey)) {
-              newCollapsed.add(sessionKey);
-              hasChanges = true;
-            }
-          }
-        });
-      }
-      
-      // Only update if there are changes
-      if (hasChanges) {
-        setCollapsedSessions(newCollapsed);
-        // Note: We don't update manuallyExpandedSessions here to preserve user choices
-      }
-    }
-    
-    // Depend on getOrderedCompletedSessions to react to session completion order
-    // Depend on manuallyExpandedSessions to respect user choices
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [getOrderedCompletedSessions, findEventsBetweenStartEnd, manuallyExpandedSessions]);
-
-
   const toggleNode = React.useCallback((eventId: string) => {
     setExpandedNodes(prev => {
       const newExpanded = new Set(prev);
@@ -377,22 +266,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
       }
       return newCollapsed;
     });
-    
-    setManuallyExpandedSessions(prevManually => {
-      const newManuallyExpanded = new Set(prevManually);
-      const isCurrentlyCollapsed = collapsedSessions.has(sessionKey);
-      
-      if (isCurrentlyCollapsed) {
-        // User is expanding - mark as manually expanded
-        newManuallyExpanded.add(sessionKey);
-      } else {
-        // User is collapsing - remove from manually expanded (user wants it collapsed)
-        newManuallyExpanded.delete(sessionKey);
-      }
-      
-      return newManuallyExpanded;
-    });
-  }, [collapsedSessions]);
+  }, []);
 
   // Memoized event node renderer to prevent unnecessary re-renders
   const renderEventNode = React.useCallback((node: EventNode): React.ReactNode => {
@@ -551,14 +425,21 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
   }, [visibleEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId, getHierarchyLevel]);
 
   // Load more events handler (must be before return)
-  // Loads OLDER events (going back in time) - smaller increments for better performance
+  // Loads OLDER events (going back in time) by decreasing startIndex
   const handleLoadMore = React.useCallback(() => {
-    setVisibleEventCount(prev => Math.min(prev + 30, displayEvents.length));
-  }, [displayEvents.length]);
+    setStartIndex(prev => {
+      if (prev === null) return 0;
+      // Load 50 more older events (move startIndex backward)
+      const newStartIndex = Math.max(0, prev - 50);
+      return newStartIndex;
+    });
+  }, []);
 
-  const hasMoreEvents = visibleEventCount < displayEvents.length;
+  // Check if there are older events to load (startIndex > 0 means there are events before current view)
+  const hasMoreEvents = startIndex !== null && startIndex > 0;
   const totalEventsCount = events.length;
-  const showingCount = Math.min(visibleEventCount, displayEvents.length);
+  const showingCount = visibleEvents.length;
+  const remainingCount = startIndex !== null ? startIndex : 0;
 
   if (eventTree.length === 0) {
     return (
@@ -588,7 +469,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
               onClick={handleLoadMore}
               className="px-4 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-md transition-colors"
             >
-              Load Older Events ({displayEvents.length - visibleEventCount} remaining)
+              Load Older Events ({remainingCount} remaining)
             </button>
           </div>
         )}

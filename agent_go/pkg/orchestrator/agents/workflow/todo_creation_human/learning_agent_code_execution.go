@@ -2,7 +2,6 @@ package todo_creation_human
 
 import (
 	"context"
-	"strings"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
@@ -113,15 +112,20 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningSyste
 1. **PRIMARY**: Identify and extract the BEST possible Go code that executed the step most effectively - look for code that is efficient, reliable, and well-structured
 2. **MULTIPLE VARIATIONS**: If multiple successful code patterns exist, extract ALL of them and rank them by effectiveness (best first)
 3. **COMPLETE CODE**: Extract complete, runnable Go code snippets with full function calls, imports, and logic
-4. **SECONDARY**: Capture failed code patterns to avoid in future executions  
+4. **SECONDARY**: Capture failed code patterns to avoid in future executions (TASK-SPECIFIC ONLY)
 5. **OUTPUT**: Create a library of best code examples that future executions can use directly or adapt
-- **IMPORTANT**: Each step gets its own learning file (format: {StepTitle}_learning.md)
-- **CRITICAL**: Always read existing {StepTitle}_learning.md first if it exists, then merge new learnings with existing content (preserve all previous learnings)
-- **BEST CODE FOCUS**: Prioritize code that is clean, efficient, handles errors well, and accomplishes the step goal in the best possible way
+
+**CRITICAL RULES**:
+- Each step gets its own learning file (format: {StepTitle}_learning.md)
+- Write ONLY new learning content extracted from current execution to _learning_new.md (temporary file)
+- Do NOT merge with existing files - consolidation agent handles that
+- Prioritize code that is clean, efficient, handles errors well, and accomplishes the step goal in the best possible way
 
 ## 🧠 **CODE EXTRACTION PROCESS (Focus on Efficiency)**
 
 **CRITICAL**: Always analyze BOTH success patterns AND failure patterns from execution and validation, regardless of validation outcome.
+
+**CRITICAL PRINCIPLE**: Only capture learnings that are SPECIFIC to executing this task better. General programming knowledge is NOT a learning.
 
 ### **Primary Goal:**
 **Extract the BEST possible Go code (or multiple best variations) for executing this step** - Identify which Go code patterns executed the step most effectively, efficiently, and reliably. Future executions should be able to use these best code examples directly or adapt them. Focus on finding the optimal code patterns, not just any working code.
@@ -134,57 +138,14 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningSyste
 5. **Save Multiple Variations** - If multiple effective approaches exist, save all of them ranked by effectiveness (best first)
 6. **Document Failures to Avoid** - What code patterns wasted time or failed? (brief)
 7. **Create Code Library** - Document the best code examples so future executions can use them directly
-6. **Handle Existing Files** - **CRITICAL STEP BEFORE WRITING**:
-
-**Consolidation Behavior** (when multiple files detected):
-- **Detection**: Multiple files if path contains commas or ends with "/" or "\\"
-- **Process**:
-  1. If comma-separated: Split by comma and read each file using 'read_workspace_file'
-  2. If folder path: Use 'list_workspace_files' to find all *_learning.md files, then read each
-  3. Read all files and extract code patterns from each
-  4. **Consolidate Logic**:
-     - Compare code patterns across all files
-     - **Keep Latest**: Code patterns from most recent files (by modification time or content freshness)
-     - **Keep Best**: Code patterns with highest success rates [Runs: X | Success: Y%]
-     - **Merge Duplicates**: When same code pattern appears in multiple files, combine run counts and recalculate success rate
-     - **Remove Outdated**: Code patterns with low success (<50%) that have better alternatives
-     - **Preserve Unique**: Keep all unique valuable code patterns from all files
-  5. **Output**: Write consolidated content to single file at target path
-  6. **Cleanup (MANDATORY)**: After successfully writing consolidated file, delete ALL old files that were consolidated (use delete_workspace_file tool for each old file)
-- **Priority**: Latest patterns → Best success rates → Most runs → Unique patterns
-- **Note**: Consolidation is SECONDARY - PRIMARY goal is always to learn from current execution
-
-**Read Existing Files**:
-   ` + func() string {
-		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
-			// Check if path contains multiple files (comma-separated) or is a folder
-			hasMultipleFiles := strings.Contains(existingPath, ",") || strings.HasSuffix(existingPath, "/") || strings.HasSuffix(existingPath, "\\")
-
-			if hasMultipleFiles {
-				return `- **MULTIPLE EXISTING LEARNINGS FOUND**: ` + existingPath + `
-   - **SECONDARY**: Consolidate all files using consolidation process from system prompt
-   - **PRIMARY**: Then merge new learnings from current execution with consolidated existing learnings
-   - **UPDATE EXISTING PATTERNS**: If success/failure patterns in the latest run differ from consolidated patterns, UPDATE them to reflect the latest run results`
-			} else {
-				return `- **EXISTING LEARNINGS FOUND**: Use read_workspace_file tool to read the existing learning file BEFORE writing
-   - **File Path**: ` + existingPath + `
-   - **Purpose**: Preserve all existing learnings - never overwrite or lose previous content
-   - **If file exists**: Merge new learnings with existing content (append new patterns, don't replace)
-   - **UPDATE EXISTING PATTERNS**: If success/failure patterns in the latest run differ from existing patterns in the file, UPDATE the existing patterns to reflect the latest run results. Replace outdated patterns with current ones based on the most recent execution.`
-			}
-		}
-		return `- **NO EXISTING LEARNINGS**: No learning file exists for this step - create a NEW learning file with current learnings
-   - **DO NOT** try to search for or read existing learnings - they don't exist for this step
-   - **Action**: Create new file at ` + writePath + `/{StepTitle}_learning.md with all current learnings`
-	}() + `
-
-7. **Write to File** - **USE TOOLS** to write learnings to files:
+8. **Write New Learning Content** - **USE TOOLS** to write learnings to files:
    - **Priority**: BEST code patterns (the most effective code that worked)
    - **Multiple Best Codes**: If multiple effective patterns exist, save all of them (ranked best first)
    - **Code Snippets**: Save complete, runnable Go code to ` + codePath + `/ folder (one file per best pattern, or combined if variations are similar)
    - **Ranking**: Always rank code by effectiveness - best code first
    - **Secondary**: Failure patterns (what to avoid to save time)
-   - **CRITICAL**: Write the MERGED content (existing + new learnings), not just new learnings
+   - **CRITICAL**: Write ONLY new learning content extracted from current execution to _learning_new.md (temporary file)
+   - **NO MERGING**: Do NOT merge with existing files - consolidation agent handles that
 
 ### **How to Extract Go Code from ExecutionHistory:**
 The ExecutionHistory section contains the complete execution conversation. Parse it to extract BOTH successful and failed Go code from write_code tool calls that relate to achieving the step description:
@@ -206,9 +167,11 @@ The ExecutionHistory section contains the complete execution conversation. Parse
 - **Success/Failure Status**: Whether the code execution succeeded or failed (check if response contains error indicators)
 - **Relevance to Step**: How this code contributed to (or failed to contribute to) achieving the step description
 
-**CRITICAL - Extract Code Execution Errors from ExecutionHistory:**
+**CRITICAL - Extract TASK-SPECIFIC Code Execution Errors from ExecutionHistory:**
 
-When parsing ExecutionHistory, analyze "## Tool Call" sections with tool_name="write_code" to discover ALL code execution failures:
+**Decision Criteria**: Only document errors that relate to executing THIS TASK better. General programming errors are NOT learnings.
+
+When parsing ExecutionHistory, analyze "## Tool Call" sections with tool_name="write_code" to discover TASK-SPECIFIC code execution failures:
 
 **Error Discovery Process:**
 1. Find all "### Tool Call" sections with tool_name="write_code" in ExecutionHistory
@@ -216,24 +179,38 @@ When parsing ExecutionHistory, analyze "## Tool Call" sections with tool_name="w
    - Extract the Tool ID
    - Find the matching "### Tool Response" section with the same Tool ID
    - Check if the Response contains error indicators (look for "❌ EXECUTION ERROR", "go run failed", "exit status", error messages, etc.)
-3. For each error found:
+3. **CRITICAL FILTERING**: For each error found, apply decision criteria:
+   - **EXCLUDE (General Programming Errors - NOT Learnings)**:
+     * Syntax errors (missing semicolons, brackets, etc.)
+     * Compilation errors (unused variables, type mismatches, etc.)
+     * General code quality issues (formatting, naming conventions, etc.)
+     * Language-specific best practices that are general knowledge
+     * **These are NOT learnings** - they're general programming knowledge the LLM already knows
+   - **INCLUDE (Task-Specific Errors - ARE Learnings)**:
+     * Wrong approach/strategy for achieving the step goal
+     * Wrong data format/structure for the task
+     * Wrong function/tool usage for the task
+     * Missing task-specific prerequisites
+     * Task-specific runtime errors (API errors, data validation errors, etc.)
+     * Task-specific logic errors (wrong business logic for the task)
+4. For each TASK-SPECIFIC error found:
    - Extract the complete error message from the tool response
    - Extract the code that caused it (from the "code" argument in write_code tool call)
    - Analyze the error message to identify:
-     * What type of error it is (compilation, runtime, syntax, type mismatch, path validation, JSON parsing, etc.)
-     * The specific root cause (what exactly went wrong)
+     * What type of task-specific error it is (wrong approach, wrong data format, missing prerequisite, etc.)
+     * The specific root cause (what exactly went wrong for THIS TASK)
      * Which part of the code caused the failure (line, function, operation)
-   - Determine what the correct approach should be (how to fix it)
-4. Document each discovered error in "❌ FAILURES TO AVOID" section with:
-   - What failed (the specific code pattern that failed)
-   - Why it failed (root cause analysis from the error message)
+   - Determine what the correct TASK-SPECIFIC approach should be (how to fix it for this task)
+5. Document each TASK-SPECIFIC error in "❌ FAILURES TO AVOID" section with:
+   - What failed (the specific code pattern that failed for this task)
+   - Why it failed (task-specific root cause analysis)
    - Error details (the exact error message from execution)
-   - Prevention (what should future code do differently to avoid this error)
+   - Prevention (what should future code do differently for THIS TASK to avoid this error)
    - Code example (wrong): Show the failing code snippet
    - Code example (correct): Show the corrected code pattern (if you can determine it)
    - Use instead (reference to successful code pattern if available)
 
-**Key Principle:** Let the actual errors in ExecutionHistory guide what you document. Don't assume what errors might exist - discover them from the execution results. Every error message contains valuable information about what went wrong and how to prevent it.
+**CRITICAL PRINCIPLE**: Only document TASK-SPECIFIC errors that relate to how to execute the task better. General programming errors (syntax, unused variables, etc.) are NOT learnings - they're general knowledge the LLM already knows.
 
 **From Code Content, extract:**
 - **Package Imports**: Which generated packages were imported (e.g., "aws_tools", "workspace_tools")
@@ -244,19 +221,49 @@ When parsing ExecutionHistory, analyze "## Tool Call" sections with tool_name="w
 - **Code Structure**: Overall code organization and patterns
 - **Output File Formats**: **CRITICAL** - Extract the structure/format of JSON files and other output files created by the code. Since success criteria files are mostly JSON, document the exact JSON structure including field names, data types, required vs optional fields, and nested structure. This ensures future executions create files in the same format.
 
-**Learn from Validation Failures:**
-- If ValidationResult shows failure: Analyze what went wrong in the code
-- Identify which function call or code section caused the failure
-- Root cause: Was it error handling? Data format? Missing prerequisite? Logic error?
-- Prevention: What code changes would prevent this failure?
-- Update code patterns: Add error handling, validation, or fixes to the code pattern
+**Learn from Validation Failures (TASK-SPECIFIC ONLY):**
 
-**IMPORTANT - Code Patterns:**
-- **DO capture**: Complete Go code snippets that successfully achieved the step description
-- **DO capture**: Function calls to generated tool packages (e.g., aws_tools, workspace_tools, custom_tools)
-- **DO capture**: Code logic, error handling, and data processing patterns
-- **DO NOT capture**: Internal workspace management code unless it's part of the success pattern
-- **CRITICAL - EXCLUDE WORKSPACE TOOLS**: NEVER include workspace management tool calls (e.g., read_workspace_file, write_workspace_file) in success/failure patterns unless they're part of the code being learned. Focus on the Go code patterns, not the workspace tool calls used to save files.
+**CRITICAL**: Only document failures that relate to executing THIS TASK better. General programming errors are NOT learnings.
+
+**Include (Task-Specific Failures)**:
+- If ValidationResult shows failure: Analyze what went wrong in the code (task-specific reason, not general code errors)
+- Identify which function call or code section caused the failure
+- Root cause: Was it wrong approach for the task? Wrong data format for the task? Missing task prerequisite? Wrong task-specific logic?
+- Prevention: What task-specific code changes would prevent this failure?
+- Update code patterns: Add task-specific error handling, validation, or fixes to the code pattern
+
+**Exclude (General Programming Errors)**:
+- ❌ Syntax errors, unused variables, type errors, compilation errors
+- ❌ General code quality issues (formatting, naming conventions)
+- ❌ Language-specific best practices that are general knowledge
+- **These are NOT learnings** - they're general programming knowledge the LLM already knows
+
+
+### **Decision Criteria: Task-Specific vs General Knowledge**
+
+**CRITICAL PRINCIPLE**: Only capture learnings that are SPECIFIC to executing this task better. General programming knowledge is NOT a learning.
+
+**Include (Task-Specific Learnings)**:
+- ✅ Complete Go code snippets that successfully achieved the step description
+- ✅ Function calls to generated tool packages (e.g., aws_tools, workspace_tools, custom_tools)
+- ✅ Code logic, error handling, and data processing patterns
+- ✅ **Task-specific execution failures**:
+  - Wrong approach/strategy for achieving the step goal
+  - Wrong data format/structure for the task
+  - Wrong function/tool usage for the task
+  - Missing task-specific prerequisites
+  - Task-specific runtime errors (API errors, data validation errors, etc.)
+  - Task-specific logic errors (wrong business logic for the task)
+
+**Exclude (General Knowledge - NOT Learnings)**:
+- ❌ Internal workspace management code unless it's part of the success pattern
+- ❌ Workspace management tool calls (e.g., read_workspace_file, write_workspace_file) unless they're part of the code being learned
+- ❌ **General programming language errors/guidelines** (NOT task-specific):
+  - Syntax errors (missing semicolons, brackets, etc.)
+  - Compilation errors (unused variables like "declared and not used: userId", type mismatches, etc.)
+  - General code quality issues (formatting, naming conventions, etc.)
+  - Language-specific best practices that are general knowledge
+  - **These are NOT learnings** - they're general programming knowledge the LLM already knows
 
 **CRITICAL (Priority Order)**: 
 1. **Find ALL successful code**: Identify ALL Go code that successfully achieved the step goal
@@ -348,25 +355,8 @@ When documenting errors discovered from ExecutionHistory, use this format:
 - **ONLY save best code**: Only save code that is truly effective - don't save mediocre or inefficient code just because it worked
 - **Keep descriptions concise and focused on efficiency**
 - **CRITICAL - File Content Must Be Short**: Write learning files that are brief, precise, and to the point. Avoid verbose explanations, long paragraphs, or unnecessary details. Each code pattern entry should be 1-2 lines maximum. Focus on actionable information only.
-- **SCORING SYSTEM - Track Pattern Reliability**:
-  - **Score Format**: [Runs: X | Success: Y%] where X = number of times this pattern successfully worked, Y = success rate (successful runs / total attempts × 100)
-  - **When reading existing patterns**: Compare them with current success/failure patterns from the latest run
-  - **If pattern worked again**: Increment Runs by 1, recalculate Success rate (e.g., [Runs: 3 | Success: 75%] → [Runs: 4 | Success: 80%])
-  - **If pattern failed**: Increment failure count, recalculate Success rate, don't increment Runs (e.g., [Runs: 3 | Success: 75%] → [Runs: 3 | Success: 60%])
-  - **If pattern is new**: Add it with [Runs: 1 | Success: 100%]
-  - **Score format**: Always include [Runs: X | Success: Y%] ✅ after each success pattern
-  - **Failure format**: Include [Failed: Z times] after failure patterns
-  - **Purpose**: Higher Runs and Success % = more reliable patterns to use in future executions
-
-**🏆 OPTIMAL CODE PATH IDENTIFICATION (Critical for Long-Term Learning):**
-- **Track Multiple Approaches**: If different code patterns achieve the same goal, document ALL of them
-- **Compare & Rank**: After multiple runs, identify which code pattern has highest success rate
-- **Mark Optimal Path**: Add "⭐ OPTIMAL" tag to the code pattern with best [Runs + Success%] combination
-- **Deprecate Inferior Patterns**: Mark code patterns with <50% success as "⚠️ UNRELIABLE - prefer optimal code"
-- **Evolution Over Time**: As more runs complete, the optimal code pattern becomes clearer
-  - Run 1-3: Multiple code patterns may have similar scores
-  - Run 4-10: Clear winner emerges based on consistent success
-  - Run 10+: Optimal code pattern is well-established, alternatives are documented but de-prioritized
+- **NO SCORING**: Do not add [Runs: X | Success: Y%] scores - consolidation agent handles this
+- **NO OPTIMAL MARKERS**: Do not mark ⭐ OPTIMAL paths - consolidation agent handles this
 
 ### **Available Tools:**
 You have access to all MCP tools to examine workspace files and gather additional context.
@@ -376,7 +366,7 @@ You have access to all MCP tools to examine workspace files and gather additiona
 **CRITICAL**: After writing the learning file, output ONLY the file path that was updated. Keep your response minimal and concise.
 
 **Output Format:**
-` + `Updated: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md` + `
+` + `Updated: ` + writePath + `/_learning_new.md` + `
 
 **DO NOT provide:**
 - Comprehensive summaries
@@ -388,7 +378,7 @@ You have access to all MCP tools to examine workspace files and gather additiona
 - The file path that was written/updated
 
 **Key Requirements:**
-- **CRITICAL - PRESERVE EXISTING LEARNINGS**: ALWAYS read existing learning file first, then merge new learnings with existing content. NEVER overwrite existing learnings.
+- **EXTRACTION ONLY**: Extract patterns from current execution, do NOT merge with existing files
 - **ALWAYS analyze BOTH success patterns AND failure patterns** from execution and validation
 - **ALWAYS save working Go code** to ` + codePath + `/ folder before writing the learning file
 - Document learnings ONLY in ` + writePath + `/ folder
@@ -397,19 +387,9 @@ You have access to all MCP tools to examine workspace files and gather additiona
 - Extract and save the BEST code snippets (or multiple best variations) with full function calls
 - Rank code by effectiveness: best code first, then alternatives, then failures to avoid
 - Document only meaningful best code patterns - don't save mediocre code just because it worked
-- **FILE MERGING INSTRUCTIONS**:
-  - If {StepTitle}_learning.md exists, read it first, then merge new learnings (append new success/failure patterns to existing ones, preserve all previous content)
-  - **Merging Strategy**: Combine existing and new learnings - add new patterns without removing or replacing existing ones
-  - **UPDATE EXISTING PATTERNS**: If success/failure patterns in the latest run differ from existing patterns in the file, UPDATE the existing patterns to reflect the latest run results. Replace outdated patterns with current ones based on the most recent execution. This ensures learnings stay current and accurate.
-  - **EXCLUDE WORKSPACE TOOLS**: When updating or adding patterns, ensure workspace management tools are never included in success/failure patterns unless part of the code being learned
-  - **UPDATE PATTERN SCORES**: When reading existing patterns, compare them with current success/failure patterns:
-    - **If pattern worked again**: Increment Runs by 1, recalculate Success rate (e.g., [Runs: 3 | Success: 75%] → [Runs: 4 | Success: 80%])
-    - **If pattern failed**: Increment failure count, recalculate Success rate, don't increment Runs (e.g., [Runs: 3 | Success: 75%] → [Runs: 3 | Success: 60%])
-    - This tracks which patterns are consistently reliable across multiple executions
-  - **UPDATE OPTIMAL PATH**: After updating scores, compare all patterns and mark the one with highest [Runs + Success%] as ⭐ OPTIMAL
-    - If current run used different code pattern: Compare with existing, update optimal if better
-    - If optimal pattern failed: Check if another pattern should become optimal
-    - Deprecate patterns with <50% success as ⚠️ UNRELIABLE
+- **WRITE TO TEMP FILE**: Write extracted patterns to _learning_new.md (temporary file for consolidation agent)
+- **NO MERGING**: Do NOT read existing files or merge patterns - consolidation agent handles that
+- **EXCLUDE WORKSPACE TOOLS**: Never include workspace management tools in success/failure patterns unless part of the code being learned
 
 `
 }
@@ -472,73 +452,49 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
 **Remember**: 
 1. Success code recipe comes first (what worked) - rank by effectiveness
 2. **Replace actual values with variables**: When extracting code, check if values match known variables and replace them with variable placeholders (e.g., {{AWS_ACCOUNT_ID}} instead of "123456789012")
-3. **Optimal Path Evolution**: Track multiple code patterns, identify the best one over time, mark as ⭐ OPTIMAL
-4. **Learn from Failures**: Analyze validation failures, identify root causes, update code patterns to prevent future failures
-5. Failures to avoid come second (save time)
-6. Keep it actionable for future executions
-7. **Write short, precise content**: Each entry should be 1-2 lines maximum. No verbose explanations.
+3. **Learn from Failures**: Analyze validation failures, identify root causes, document what to avoid
+4. Failures to avoid come second (save time)
+5. Keep it actionable for future executions
+6. **Write short, precise content**: Each entry should be 1-2 lines maximum. No verbose explanations.
+7. **NO SCORING**: Do not add [Runs: X | Success: Y%] scores - consolidation agent handles this
+8. **NO OPTIMAL MARKERS**: Do not mark ⭐ OPTIMAL paths - consolidation agent handles this
 
-**🏆 OPTIMAL PATH EVOLUTION (Key for Long-Term Success):**
-- **First few runs**: Document all code patterns that work, even if different
-- **After 5+ runs**: Compare patterns, identify which has highest success rate
-- **Mark the winner**: Tag the best code pattern as "⭐ OPTIMAL"
-- **Keep alternatives**: Document other patterns but note they're less reliable
-- **Continuous improvement**: Each run refines scores and clarifies the optimal code pattern
+**🔴 LEARNING FROM FAILURES (TASK-SPECIFIC ONLY):**
 
-**🔴 LEARNING FROM FAILURES (Critical):**
-- **Analyze ValidationResult**: If validation failed, understand WHY
+**CRITICAL**: Only document failures that relate to executing THIS TASK better. General programming errors are NOT learnings.
+
+**Include (Task-Specific Failures)**:
+- **Analyze ValidationResult**: If validation failed, understand WHY (task-specific reason, not general code errors)
 - **Identify failing code**: Which part of the code caused the failure?
-- **Root cause analysis**: Was it error handling? Data format? Missing prerequisite?
-- **Update code patterns**: Add error handling, prerequisites, or fixes to PREVENT this failure
-- **Track failure count**: Increment [Failed: X times] for the failing code pattern
-- **Document fix**: What change would make this code succeed next time?
-- **Deprecate bad patterns**: If a code pattern fails >50% of the time, mark as ⚠️ UNRELIABLE
+- **Root cause analysis**: Was it wrong approach for the task? Wrong data format for the task? Missing task prerequisite? Wrong task-specific logic?
+- **Document failures**: What task-specific code patterns failed and why
+- **Document fix**: What task-specific change would make this code succeed next time?
 
-**File to create/update:**
-` + `- ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md
+**Exclude (General Programming Errors)**:
+- ❌ Syntax errors, unused variables, type errors, compilation errors
+- ❌ General code quality issues (formatting, naming conventions)
+- ❌ Language-specific best practices that are general knowledge
+- **These are NOT learnings** - they're general programming knowledge the LLM already knows
+
+**File to create:**
+` + `- ` + writePath + `/_learning_new.md (temporary file for consolidation agent)
 
 **CRITICAL FILE HANDLING INSTRUCTIONS:**
-` + func() string {
-		if existingPath, ok := templateVars["ExistingLearningFilePath"]; ok && existingPath != "" {
-			// Check if path contains multiple files (comma-separated) or is a folder
-			hasMultipleFiles := strings.Contains(existingPath, ",") || strings.HasSuffix(existingPath, "/") || strings.HasSuffix(existingPath, "\\")
+1. **EXTRACTION ONLY**: Extract learnings from current execution (ExecutionHistory and ValidationResult above)
+   - Do NOT read existing learning files
+   - Do NOT merge with existing patterns
+   - Do NOT update scores or optimal paths
+   
+2. **WRITE NEW FILE**: Write extracted patterns to: ` + writePath + `/_learning_new.md
+   - This is a temporary file that the consolidation agent will process
+   - Include all patterns extracted from current execution (success + failure)
+   - Use same format as final learning file, but without scores or optimal markers
+   
+3. **SAVE WORKING CODE**: If Go code worked, save the complete code to ` + codePath + `/` + templateVars["StepTitle"] + `_code.go using write_workspace_file tool, then reference it in the learning file
+   
+4. **EXCLUDE WORKSPACE TOOLS**: Never include workspace management tools (read_workspace_file, write_workspace_file, etc.) in success/failure patterns unless part of the code being learned
 
-			if hasMultipleFiles {
-				return `1. **PRIMARY GOAL FIRST**: Extract learnings from current execution (ExecutionHistory and ValidationResult above)
-   
-2. **SECONDARY - CONSOLIDATE EXISTING FILES**: ` + existingPath + `
-   - Follow consolidation process from system prompt (detect files, read all, consolidate patterns)
-   - **Note**: This is secondary - don't spend excessive time on consolidation
-   
-3. **PRIMARY - MERGE WITH NEW LEARNINGS**: Merge consolidated learnings with new patterns from latest run (PRIMARY FOCUS)
-   - Preserve ALL previous learnings from all files
-   - Append new success/failure patterns from current execution
-   
-4. **UPDATE EXISTING PATTERNS**: If latest run differs from consolidated patterns, update them
-   
-5. **WRITE CONSOLIDATED FILE**: Write all consolidated learnings (from all files + new from current execution) to: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md
-6. **CLEANUP (MANDATORY)**: After successfully writing consolidated file, delete ALL old files that were consolidated (use delete_workspace_file tool for each old file)`
-			} else {
-				return `1. **FIRST**: Use read_workspace_file tool to read the existing file: ` + existingPath + `
-2. **IF FILE EXISTS**: Merge new learnings with existing content - preserve ALL previous learnings, append new success/failure patterns`
-			}
-		}
-		return `1. **NO EXISTING LEARNINGS**: No learning file exists for this step - DO NOT try to read or search for existing learnings
-2. **CREATE NEW FILE**: Create a new learning file at ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md with all current learnings`
-	}() + `
-3. **UPDATE EXISTING PATTERNS**: If success/failure patterns in the latest run differ from existing patterns, UPDATE the existing patterns to reflect the latest run results
-4. **UPDATE PATTERN SCORES**: Compare existing patterns with current success/failure patterns:
-   - **If pattern worked again**: Increment Runs by 1, recalculate Success rate (e.g., [Runs: 2 | Success: 66.7%] → [Runs: 3 | Success: 75%])
-   - **If pattern failed**: Increment failure count, recalculate Success rate, don't increment Runs
-   - **New patterns**: Start with [Runs: 1 | Success: 100%]
-   - This tracks reliability across executions - higher Runs and Success % = more reliable
-5. **EXCLUDE WORKSPACE TOOLS**: Never include workspace management tools (read_workspace_file, write_workspace_file, etc.) in success/failure patterns unless part of the code being learned
-6. **IF FILE DOESN'T EXIST**: Create new file with current learnings (all new patterns start with [Runs: 1 | Success: 100%])
-7. **THEN**: Use update_workspace_file tool to write the MERGED content (existing + new learnings with updated scores)
-8. **SAVE WORKING CODE**: If Go code worked, save the complete code to ` + codePath + `/` + templateVars["StepTitle"] + `_code.go using write_workspace_file tool, then reference it in the learning file
-9. **CLEANUP (if multiple files consolidated)**: After successfully writing consolidated file, delete ALL old files that were consolidated` + `
-
-**After writing the file, output ONLY the file path** (e.g., "Updated: ` + writePath + `/` + templateVars["StepTitle"] + `_learning.md"). 
+**After writing the file, output ONLY the file path** (e.g., "Updated: ` + writePath + `/_learning_new.md"). 
 
 **Keep response minimal** - just the file path. No summaries or analysis.
 `

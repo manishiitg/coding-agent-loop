@@ -41,7 +41,6 @@ export interface TodoStepWithConfigs {
   title?: string;
   description?: string;
   success_criteria?: string;
-  why_this_step?: string;
   context_dependencies?: string[];
   context_output?: string;
   success_patterns?: string[];
@@ -122,10 +121,8 @@ export interface PlanStep {
   title: string;
   description?: string;
   success_criteria?: string;
-  why_this_step?: string;
   context_dependencies?: string[];
   context_output?: string | string[];
-  learning_files_to_reference?: string[];
   has_loop?: boolean;
   loop_condition?: string;
   max_iterations?: number;
@@ -145,8 +142,22 @@ export interface PlanStep {
   decision_evaluation_question?: string; // Question to evaluate step output
   decision_result?: boolean;          // runtime: stores evaluation result
   decision_reason?: string;           // runtime: stores evaluation reasoning
+  // Orchestration step fields (orchestrator with multiple sub-agents)
+  has_orchestration_step?: boolean;
+  orchestration_step?: PlanStep;            // The main orchestrator step to execute
+  orchestration_routes?: PlanRoutingRoute[]; // Array of possible routes with conditions
+  next_step_id?: string;              // ID of step after orchestration completes (or "end")
   agent_configs?: AgentConfigs;       // Merged from step_config.json
   [key: string]: unknown;              // Allow other fields for flexibility
+}
+
+// PlanRoutingRoute represents a possible route/sub-agent for planning
+export interface PlanRoutingRoute {
+  route_id: string;                   // Unique ID for this route
+  route_name: string;                 // Human-readable name
+  condition: string;                  // Condition description
+  sub_agent_step: PlanStep;            // The sub-agent step to execute
+  context_to_pass?: string;           // Optional: specific context to pass to sub-agent
 }
 
 // PlanningResponse interface for plan.json

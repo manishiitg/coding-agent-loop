@@ -39,6 +39,8 @@ func (hctpoa *HumanControlledTodoPlannerOrchestrationAgent) EvaluateOrchestratio
 	executionOutput string,
 	evaluationQuestion string,
 	routes []OrchestrationRoute,
+	stepTitle string,
+	stepDescription string,
 	successCriteria string,
 	stepIndex int,
 	iteration int,
@@ -55,70 +57,111 @@ func (hctpoa *HumanControlledTodoPlannerOrchestrationAgent) EvaluateOrchestratio
 		}
 	}
 
+	// Check if this is a re-evaluation after validation (validation response in conversation history)
+	hasValidationResponse := false
+	for _, msg := range conversationHistory {
+		if msg.Role == llmtypes.ChatMessageTypeAI {
+			for _, part := range msg.Parts {
+				if textPart, ok := part.(llmtypes.TextContent); ok {
+					if contains(textPart.Text, "Validation agent completed") {
+						hasValidationResponse = true
+						break
+					}
+				}
+			}
+		}
+		if hasValidationResponse {
+			break
+		}
+	}
+
 	// Build template variables
 	templateVars := map[string]string{
-		"ExecutionOutput":    executionOutput,
-		"EvaluationQuestion": evaluationQuestion,
-		"RoutesDescription":  routesDescription,
-		"SuccessCriteria":    successCriteria,
-		"StepIndex":          fmt.Sprintf("%d", stepIndex),
-		"Iteration":          fmt.Sprintf("%d", iteration),
-		"LearningHistory":    learningHistory,
+		"ExecutionOutput":       executionOutput,
+		"EvaluationQuestion":    evaluationQuestion,
+		"RoutesDescription":     routesDescription,
+		"StepTitle":             stepTitle,
+		"StepDescription":       stepDescription,
+		"SuccessCriteria":       successCriteria,
+		"StepIndex":             fmt.Sprintf("%d", stepIndex),
+		"Iteration":             fmt.Sprintf("%d", iteration),
+		"LearningHistory":       learningHistory,
+		"HasValidationResponse": fmt.Sprintf("%t", hasValidationResponse),
 	}
 
 	// Build system prompt for orchestration evaluation
 	systemPrompt := fmt.Sprintf(`# Orchestration Evaluation Agent
 
-You are an expert orchestration evaluation agent specialized in analyzing execution outputs and making structured orchestration decisions. Your role is to evaluate orchestration step execution results and provide comprehensive structured analysis.
+You are an expert orchestration evaluation agent specialized in coordinating sub-agents to achieve step objectives. Your role is to evaluate the current state and decide which sub-agent should be used to achieve the step's success criteria.
+
+## 🎯 YOUR MISSION
+
+**Step Goal**: %s
+**Step Description**: %s
+**Success Criteria**: %s
+
+**Available Sub-Agents (Routes):**
+%s
+
+**Your Task**: 
+1. Evaluate the execution output from the main orchestration step
+2. Determine if the success criteria is already met
+3. If not met, select the appropriate sub-agent (route) to help achieve the success criteria
+4. Sub-agents will execute the actual work needed to complete the step
 
 ## 🔍 ORCHESTRATION EVALUATION FRAMEWORK
 
-### Step 1: Analyze Execution Output
-**Review the execution output:** What was the result of the orchestration step's execution?
+### Phase 1: Initial Evaluation (First Call)
 
-**IMPORTANT**: You have access to workspace tools, human tools, and MCP tools. If you need additional information to properly evaluate the execution output, use these tools to:
-- Read files from the workspace to understand context
-- Query systems via MCP tools to verify state
-- Request human feedback if needed for clarification
-- Gather any additional information required for accurate evaluation
+#### Step 1: Understand the Context
+- **Step Goal**: What are we trying to achieve?
+- **Success Criteria**: What defines success for this step?
+- **Execution Output**: What did the main orchestration step produce?
 
-### Step 2: Understand the Evaluation Question
-**Analyze the question:** What specific condition or criteria needs to be evaluated for orchestration?
+#### Step 2: Analyze Execution Output
+**Review the execution output:** What information does it contain? What is the current state?
 
-### Step 3: Evaluate Success Criteria
+**Evaluation Question**: %s
+Use this question to guide your analysis of the execution output.
+
+#### Step 3: Evaluate Success Criteria
 **Success Criteria**: %s
 
 **Evaluation Strategy:**
 - Analyze the execution output against the success criteria
 - **Use tools if needed**: If the execution output is unclear or you need to verify the current state, use workspace tools, MCP tools, or request human feedback
-- Determine if the success criteria is met
-- If met, validation will be called as a sub-agent to verify the success
-- If not met, proceed to route selection
+- Determine if the success criteria is met based on the execution output
+- **If success criteria appears met**: The system will call a validation agent to verify. Set success_criteria_met: true and success_criteria_verified_by_validation: false (validation hasn't run yet)
+- **If success criteria is NOT met**: Proceed to route selection to choose a sub-agent
 
-### Step 3a: Handle Validation Response (if success criteria was met)
-**When validation response is received:**
-- Review the validation response in the conversation history
-- Check if validation confirmed that success criteria is met (is_success_criteria_met: true)
-- Set **success_criteria_verified_by_validation**: true only if validation confirms success
-- If validation does not confirm success, set success_criteria_verified_by_validation: false and proceed to route selection
-
-### Step 4: Route Selection (if success criteria not met)
-**Available Routes:**
+#### Step 4: Route Selection (if success criteria not met)
+**Available Sub-Agents:**
 %s
 
 **Route Selection Strategy:**
 - Compare execution output against each route's condition
 - **Use tools if needed**: If you need more information to match the output to a route, use available tools to gather context
-- Select the route whose condition best matches the execution output
+- Select the route (sub-agent) whose condition best matches the execution output
+- The selected sub-agent will execute work to help achieve the success criteria
 - If multiple routes match, select the most specific/relevant one
 - If no route matches exactly, select the closest match
 
-### Step 5: Structured Response
+### Phase 2: Re-Evaluation After Validation (Second Call)
+
+#### Step 5: Handle Validation Response
+**When you are called again after validation:**
+- Check the conversation history for the validation agent's response
+- Look for a message containing "Validation agent completed"
+- Review the validation result: Did validation confirm success? (Check for is_success_criteria_met: true)
+- **If validation confirmed success**: Set success_criteria_met: true and success_criteria_verified_by_validation: true
+- **If validation did NOT confirm success**: Set success_criteria_met: false, success_criteria_verified_by_validation: false, and proceed to route selection
+
+### Step 6: Structured Response
 **Response Requirements:**
 - **success_criteria_met**: true if success criteria is met, false otherwise
-- **selected_route_id**: ID of the route to execute (required if success_criteria_met is false, empty string if success_criteria_met is true)
+- **selected_route_id**: ID of the route (sub-agent) to execute (required if success_criteria_met is false, empty string if success_criteria_met is true)
 - **reasoning**: Detailed explanation of route selection and success evaluation
-- **success_reasoning**: Detailed explanation of success criteria evaluation (if success_criteria_met is true)
+- **success_reasoning**: Detailed explanation of success criteria evaluation (required if success_criteria_met is true)
 - **success_criteria_verified_by_validation**: true only if validation agent confirmed success criteria is met (required if success_criteria_met is true and validation response has been received, false otherwise)
 
 ## 📋 OUTPUT REQUIREMENTS
@@ -176,14 +219,33 @@ The tool accepts a structured object with:
 - Use learnings to understand typical orchestration patterns
 - Reference learnings for decision-making strategies, not as current state
 - Verify that learning patterns apply to current execution output
-`, successCriteria, routesDescription, learningHistory)
+`, stepTitle, stepDescription, successCriteria, routesDescription, evaluationQuestion, successCriteria, routesDescription, learningHistory)
 
 	// Build user message input processor
 	inputProcessor := func(vars map[string]string) string {
-		return fmt.Sprintf(`## 📝 ORCHESTRATION EVALUATION TASK
+		evalPhase := "Initial Evaluation"
+		if vars["HasValidationResponse"] == "true" {
+			evalPhase = "Re-Evaluation After Validation"
+		}
 
-**Execution Output** (from orchestration step execution):
-%s`, vars["ExecutionOutput"])
+		return fmt.Sprintf(`## 📝 ORCHESTRATION EVALUATION TASK (%s)
+
+**Step**: %s
+**Description**: %s
+**Success Criteria**: %s
+
+**Evaluation Question**: %s
+
+**Execution Output** (from main orchestration step):
+%s
+
+%s`, evalPhase, vars["StepTitle"], vars["StepDescription"], vars["SuccessCriteria"], vars["EvaluationQuestion"], vars["ExecutionOutput"],
+			func() string {
+				if vars["HasValidationResponse"] == "true" {
+					return "\n**⚠️ IMPORTANT**: This is a re-evaluation after validation. Check the conversation history for the validation agent's response and update your evaluation accordingly."
+				}
+				return ""
+			}())
 	}
 
 	// Build schema for structured output
@@ -237,6 +299,24 @@ The tool accepts a structured object with:
 	}
 
 	return &result, nil
+}
+
+// Helper function to check if string contains substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > len(substr) &&
+			(s[:len(substr)] == substr ||
+				s[len(s)-len(substr):] == substr ||
+				containsHelper(s, substr))))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
 
 // Execute implements the OrchestratorAgent interface

@@ -55,6 +55,7 @@ type StepPathInfo struct {
 //   - "step-3-if-true-0" -> {ParentStepNumber: 3, BranchType: "true", BranchIndex: 0, IsBranchStep: true}
 //   - "step-3-if-false-1" -> {ParentStepNumber: 3, BranchType: "false", BranchIndex: 1, IsBranchStep: true}
 //   - "step-2-decision" -> {ParentStepNumber: 2, BranchType: "", BranchIndex: -1, IsBranchStep: false} (decision step inner step)
+//   - "step-2-sub-agent-1" -> {ParentStepNumber: 2, BranchType: "", BranchIndex: -1, IsBranchStep: true} (sub-agent step)
 func parseStepPath(stepPath string) StepPathInfo {
 	// Regular step pattern: "step-{number}"
 	regularStepRegex := regexp.MustCompile(`^step-(\d+)$`)
@@ -62,6 +63,8 @@ func parseStepPath(stepPath string) StepPathInfo {
 	branchStepRegex := regexp.MustCompile(`^step-(\d+)-if-(true|false)-(\d+)$`)
 	// Decision step inner step pattern: "step-{number}-decision"
 	decisionStepRegex := regexp.MustCompile(`^step-(\d+)-decision$`)
+	// Sub-agent step pattern: "step-{number}-sub-agent-{index}"
+	subAgentStepRegex := regexp.MustCompile(`^step-(\d+)-sub-agent-(\d+)$`)
 
 	if matches := branchStepRegex.FindStringSubmatch(stepPath); matches != nil {
 		// Branch step
@@ -73,6 +76,16 @@ func parseStepPath(stepPath string) StepPathInfo {
 			ParentStepNumber: parentStepNumber,
 			BranchType:       matches[2], // "true" or "false"
 			BranchIndex:      branchIndex,
+			IsBranchStep:     true,
+		}
+	} else if matches := subAgentStepRegex.FindStringSubmatch(stepPath); matches != nil {
+		// Sub-agent step - treat as branch step
+		parentStepNumber := 0
+		fmt.Sscanf(matches[1], "%d", &parentStepNumber)
+		return StepPathInfo{
+			ParentStepNumber: parentStepNumber,
+			BranchType:       "",
+			BranchIndex:      -1,
 			IsBranchStep:     true,
 		}
 	} else if matches := decisionStepRegex.FindStringSubmatch(stepPath); matches != nil {
@@ -112,7 +125,13 @@ func parseStepPath(stepPath string) StepPathInfo {
 // For regular steps: "execution/step-{X}/"
 // For branch steps: "execution/step-{parentStep}-{true/false}-{branchIdx}/"
 // For decision step inner steps: "execution/step-{X}-decision/"
+// For sub-agent steps: "execution/step-{X}-sub-agent-{index}/"
 func getExecutionFolderPath(executionWorkspacePath string, stepPath string) string {
+	// Check if this is a sub-agent step
+	// Pattern: step-{X}-sub-agent-{index}
+	if strings.Contains(stepPath, "-sub-agent-") {
+		return fmt.Sprintf("%s/%s", executionWorkspacePath, stepPath)
+	}
 	pathInfo := parseStepPath(stepPath)
 	if pathInfo.IsBranchStep {
 		return fmt.Sprintf("%s/step-%d-%s-%d", executionWorkspacePath, pathInfo.ParentStepNumber, pathInfo.BranchType, pathInfo.BranchIndex)
@@ -128,7 +147,13 @@ func getExecutionFolderPath(executionWorkspacePath string, stepPath string) stri
 // getValidationFolderPath returns the validation folder path based on stepPath
 // For regular steps: "logs/step-{X}/"
 // For branch steps: "logs/step-{parentStep}-{true/false}-{branchIdx}/"
+// For sub-agent steps: "logs/step-{X}-sub-agent-{index}/"
 func getValidationFolderPath(validationWorkspacePath string, stepPath string) string {
+	// Check if this is a sub-agent step
+	// Pattern: step-{X}-sub-agent-{index}
+	if strings.Contains(stepPath, "-sub-agent-") {
+		return fmt.Sprintf("%s/logs/%s", validationWorkspacePath, stepPath)
+	}
 	pathInfo := parseStepPath(stepPath)
 	if pathInfo.IsBranchStep {
 		return fmt.Sprintf("%s/logs/step-%d-%s-%d", validationWorkspacePath, pathInfo.ParentStepNumber, pathInfo.BranchType, pathInfo.BranchIndex)
@@ -139,7 +164,13 @@ func getValidationFolderPath(validationWorkspacePath string, stepPath string) st
 // getExecutionFolderPathForLogs returns the execution logs folder path based on stepPath
 // For regular steps: "logs/step-{X}/execution/"
 // For branch steps: "logs/step-{parentStep}-{true/false}-{branchIdx}/execution/"
+// For sub-agent steps: "logs/step-{X}-sub-agent-{index}/execution/"
 func getExecutionFolderPathForLogs(validationWorkspacePath string, stepPath string) string {
+	// Check if this is a sub-agent step
+	// Pattern: step-{X}-sub-agent-{index}
+	if strings.Contains(stepPath, "-sub-agent-") {
+		return fmt.Sprintf("%s/logs/%s/execution", validationWorkspacePath, stepPath)
+	}
 	pathInfo := parseStepPath(stepPath)
 	if pathInfo.IsBranchStep {
 		return fmt.Sprintf("%s/logs/step-%d-%s-%d/execution", validationWorkspacePath, pathInfo.ParentStepNumber, pathInfo.BranchType, pathInfo.BranchIndex)
@@ -150,10 +181,26 @@ func getExecutionFolderPathForLogs(validationWorkspacePath string, stepPath stri
 // getLearningFolderPath returns the learning folder path based on stepPath
 // For regular steps: "learnings/step-{X}/"
 // For branch steps: "learnings/step-{parentStep}-{true/false}-{branchIdx}/"
+// For sub-agent steps: "learnings/step-{N}-sub-agent-{index}/"
 func getLearningFolderPath(baseWorkspacePath string, stepPath string) string {
+	// Check if this is a sub-agent step (pattern: step-{N}-sub-agent-{index})
+	if strings.Contains(stepPath, "-sub-agent-") {
+		// Return learnings path for sub-agents (e.g., "learnings/step-2-sub-agent-1/")
+		return fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepPath)
+	}
 	pathInfo := parseStepPath(stepPath)
 	if pathInfo.IsBranchStep {
-		return fmt.Sprintf("%s/learnings/step-%d-%s-%d", baseWorkspacePath, pathInfo.ParentStepNumber, pathInfo.BranchType, pathInfo.BranchIndex)
+		// Check if this is actually a sub-agent (BranchType empty and BranchIndex -1 indicates sub-agent)
+		// This is a safeguard in case the string check above didn't catch it
+		if pathInfo.BranchType == "" && pathInfo.BranchIndex == -1 && strings.Contains(stepPath, "-sub-agent-") {
+			return fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepPath)
+		}
+		// Only format as branch step if it's a real branch step (has BranchType)
+		if pathInfo.BranchType != "" {
+			return fmt.Sprintf("%s/learnings/step-%d-%s-%d", baseWorkspacePath, pathInfo.ParentStepNumber, pathInfo.BranchType, pathInfo.BranchIndex)
+		}
+		// If it's a branch step but no BranchType, it's likely a sub-agent - use stepPath as-is
+		return fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepPath)
 	}
 	return fmt.Sprintf("%s/learnings/step-%d", baseWorkspacePath, pathInfo.ParentStepNumber)
 }
@@ -177,7 +224,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) addCompletedStepIndex(progre
 // getLearningPathIdentifier returns a unique identifier for learning folder based on stepPath
 // For regular steps: "step-{X}"
 // For branch steps: "step-{parentStep}-{true/false}-{branchIdx}"
+// For sub-agent steps: "step-{N}-sub-agent-{index}"
 func getLearningPathIdentifier(stepPath string) string {
+	// Check if this is a sub-agent step (pattern: step-{N}-sub-agent-{index})
+	if strings.Contains(stepPath, "-sub-agent-") {
+		// Return the stepPath as-is for sub-agents (e.g., "step-2-sub-agent-1")
+		return stepPath
+	}
 	pathInfo := parseStepPath(stepPath)
 	if pathInfo.IsBranchStep {
 		return fmt.Sprintf("step-%d-%s-%d", pathInfo.ParentStepNumber, pathInfo.BranchType, pathInfo.BranchIndex)
@@ -516,6 +569,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 	isDecisionInnerStep bool, // true if this is the inner step of a decision step (skips final human feedback on success)
 	decisionContext *DecisionContext, // Optional: context from decision step that routed to this step (nil if not routed from decision)
 	decisionEvaluationQuestion string, // Optional: evaluation question for decision inner steps (used to format output for LLM evaluation)
+	isSubAgent bool, // true if this is a sub-agent from an orchestration step (never requests human feedback)
 ) (executionResult string, updatedContextFiles []string, err error) {
 	// Initialize updated context files as copy of previous context files
 	updatedContextFiles = make([]string, len(previousContextFiles))
@@ -565,6 +619,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 		learningsPath := fmt.Sprintf("%s/learnings", hcpo.GetWorkspacePath())
 		// Get execution folder path for this step (e.g., "execution/step-8" or "execution/step-3-true-0")
 		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+
 		templateVars := map[string]string{
 			"StepTitle":           ResolveVariables(step.Title, hcpo.variableValues),
 			"StepDescription":     ResolveVariables(step.Description, hcpo.variableValues),
@@ -1319,11 +1374,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 
 							// Request blocking human feedback after loop iteration validation failure (only in normal mode)
 							// FAST MODE & SKIP HUMAN INPUT MODE: Skip human feedback and auto-continue with next iteration
+							// SUB-AGENT: Never request human feedback (sub-agents run automatically)
 							isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
 							isSkipHumanInput := execCtx.SkipHumanInput
 							var humanFeedback string
 
-							if !isFastExecuteStep && !isSkipHumanInput {
+							if !isFastExecuteStep && !isSkipHumanInput && !isSubAgent {
 								// Normal mode: Request human feedback for guidance on next loop iteration
 								validationSummary := hcpo.formatValidationResponseForTemplate(validationResponse, fmt.Sprintf("Loop Iteration %d Validation Feedback", loopIterationCount))
 								approved, feedback, err := hcpo.requestHumanFeedback(ctx, stepIndex+1, totalSteps, validationSummary)
@@ -1341,7 +1397,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 									hcpo.GetLogger().Info(fmt.Sprintf("📝 Human feedback received for step %d loop iteration %d: %s", stepIndex+1, loopIterationCount, humanFeedback))
 								}
 							} else {
-								if isFastExecuteStep {
+								if isSubAgent {
+									hcpo.GetLogger().Info(fmt.Sprintf("🤖 Sub-agent: Skipping human feedback after loop iteration validation failure for step %d (sub-agents never request human feedback)", stepIndex+1))
+								} else if isFastExecuteStep {
 									hcpo.GetLogger().Info(fmt.Sprintf("⚡ Fast mode: Skipping human feedback after loop iteration validation failure for step %d (auto-continuing)", stepIndex+1))
 								} else {
 									hcpo.GetLogger().Info(fmt.Sprintf("⚡ Skip human input mode: Skipping human feedback after loop iteration validation failure for step %d (auto-continuing)", stepIndex+1))
@@ -1627,11 +1685,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 
 							// Request blocking human feedback after validation failure (only in normal mode)
 							// FAST MODE & SKIP HUMAN INPUT MODE: Skip human feedback and auto-continue with retry
+							// SUB-AGENT: Never request human feedback (sub-agents run automatically)
 							isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
 							isSkipHumanInput := execCtx.SkipHumanInput
 							var humanFeedback string
 
-							if !isFastExecuteStep && !isSkipHumanInput {
+							if !isFastExecuteStep && !isSkipHumanInput && !isSubAgent {
 								// Normal mode: Request human feedback for guidance on retry
 								validationSummary := hcpo.formatValidationResponseForTemplate(validationResponse, fmt.Sprintf("Validation Feedback (Retry Attempt %d)", retryAttempt+1))
 								approved, feedback, err := hcpo.requestHumanFeedback(ctx, stepIndex+1, totalSteps, validationSummary)
@@ -1649,7 +1708,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 									hcpo.GetLogger().Info(fmt.Sprintf("📝 Human feedback received for step %d retry (attempt %d/%d): %s", stepIndex+1, retryAttempt+1, maxRetryAttempts, humanFeedback))
 								}
 							} else {
-								if isFastExecuteStep {
+								if isSubAgent {
+									hcpo.GetLogger().Info(fmt.Sprintf("🤖 Sub-agent: Skipping human feedback after validation failure for step %d (sub-agents never request human feedback)", stepIndex+1))
+								} else if isFastExecuteStep {
 									hcpo.GetLogger().Info(fmt.Sprintf("⚡ Fast mode: Skipping human feedback after validation failure for step %d (auto-retrying)", stepIndex+1))
 								} else {
 									hcpo.GetLogger().Info(fmt.Sprintf("⚡ Skip human input mode: Skipping human feedback after validation failure for step %d (auto-retrying)", stepIndex+1))
@@ -1731,17 +1792,23 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 		// FAST MODE: Skip human feedback and auto-approve
 		// SKIP HUMAN INPUT MODE: Skip human feedback but keep learning enabled
 		// DECISION INNER STEP: Skip human feedback on success (decision step will handle routing)
+		// SUB-AGENT: Never request human feedback (sub-agents run automatically)
 		// NORMAL MODE & LOOP MODE: Always request human feedback before moving to next step
 		isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
 		isSkipHumanInput := execCtx.SkipHumanInput
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: Step %d human feedback check - execCtx: fastExecuteMode=%v, fastExecuteEndStep=%d, stepIndex=%d, isFastExecuteStep=%v, skipHumanInput=%v, isDecisionInnerStep=%v", stepIndex+1, execCtx.FastExecuteMode, execCtx.FastExecuteEndStep, stepIndex, isFastExecuteStep, isSkipHumanInput, isDecisionInnerStep))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: Step %d human feedback check - execCtx: fastExecuteMode=%v, fastExecuteEndStep=%d, stepIndex=%d, isFastExecuteStep=%v, skipHumanInput=%v, isDecisionInnerStep=%v, isSubAgent=%v", stepIndex+1, execCtx.FastExecuteMode, execCtx.FastExecuteEndStep, stepIndex, isFastExecuteStep, isSkipHumanInput, isDecisionInnerStep, isSubAgent))
 
 		var approved bool
 		var feedback string
 
-		// For decision inner steps that succeeded, skip human feedback (decision step will handle routing)
-		// Still allow human feedback if validation failed (handled in retry loop above)
-		if isDecisionInnerStep && validationResponse != nil && !isValidationFailure(validationResponse) {
+		// For sub-agents, never request human feedback (they run automatically as part of orchestration)
+		if isSubAgent {
+			hcpo.GetLogger().Info(fmt.Sprintf("🤖 Sub-agent %d - auto-approving without human feedback (sub-agents never request human feedback)", stepIndex+1))
+			approved = true
+			feedback = "" // No feedback for sub-agents
+		} else if isDecisionInnerStep && validationResponse != nil && !isValidationFailure(validationResponse) {
+			// For decision inner steps that succeeded, skip human feedback (decision step will handle routing)
+			// Still allow human feedback if validation failed (handled in retry loop above)
 			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Decision inner step %d succeeded - auto-approving without human feedback (decision step will handle routing)", stepIndex+1))
 			approved = true
 			feedback = "" // No feedback for decision inner steps
@@ -2332,6 +2399,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			false,          // isDecisionInnerStep = false (regular step)
 			decisionCtx,    // decisionContext - nil if not routed from decision step
 			"",             // decisionEvaluationQuestion - empty for regular steps
+			false,          // isSubAgent = false (regular step)
 		)
 		if err != nil {
 			// Check if this is a prerequisite navigation error

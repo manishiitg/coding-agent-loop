@@ -135,11 +135,10 @@ type PlanStep struct {
 	DecisionResult             *bool     `json:"decision_result,omitempty"`              // runtime: stores evaluation result
 	DecisionReason             string    `json:"decision_reason,omitempty"`              // runtime: stores evaluation reasoning
 	// Orchestration step fields (orchestrator with multiple sub-agents)
-	HasOrchestrationStep            bool                     `json:"has_orchestration_step,omitempty"`            // true if step is an orchestration orchestrator
-	OrchestrationStep               *PlanStep                `json:"orchestration_step,omitempty"`                // The main orchestrator step to execute
-	OrchestrationEvaluationQuestion string                   `json:"orchestration_evaluation_question,omitempty"` // Question to evaluate orchestration step output
-	OrchestrationRoutes             []PlanOrchestrationRoute `json:"orchestration_routes,omitempty"`              // Array of possible routes with conditions
-	NextStepID                      string                   `json:"next_step_id,omitempty"`                      // ID of step after orchestration completes (or "end")
+	HasOrchestrationStep bool                     `json:"has_orchestration_step,omitempty"` // true if step is an orchestration orchestrator
+	OrchestrationStep    *PlanStep                `json:"orchestration_step,omitempty"`     // The main orchestrator step to execute
+	OrchestrationRoutes  []PlanOrchestrationRoute `json:"orchestration_routes,omitempty"`   // Array of possible routes with conditions
+	NextStepID           string                   `json:"next_step_id,omitempty"`           // ID of step after orchestration completes (or "end")
 	// Prerequisite failure detection fields (optional - can be configured in plan or later via UI in step_config.json)
 	EnablePrerequisiteDetection *bool              `json:"enable_prerequisite_detection,omitempty"` // Enable prerequisite failure detection for this step (default: false)
 	PrerequisiteRules           []PrerequisiteRule `json:"prerequisite_rules,omitempty"`            // Array of prerequisite rules, each with one step dependency and one description
@@ -176,10 +175,9 @@ type PartialPlanStep struct {
 	DecisionStep               *PlanStep `json:"decision_step,omitempty"`                // Optional: Updated decision step
 	DecisionEvaluationQuestion string    `json:"decision_evaluation_question,omitempty"` // Optional: Updated decision evaluation question
 	// Orchestration step fields
-	HasOrchestrationStep            *bool                    `json:"has_orchestration_step,omitempty"`            // Optional: Updated has_orchestration_step
-	OrchestrationStep               *PlanStep                `json:"orchestration_step,omitempty"`                // Optional: Updated orchestration step
-	OrchestrationEvaluationQuestion string                   `json:"orchestration_evaluation_question,omitempty"` // Optional: Updated orchestration evaluation question
-	OrchestrationRoutes             []PlanOrchestrationRoute `json:"orchestration_routes,omitempty"`              // Optional: Updated orchestration routes
+	HasOrchestrationStep *bool                    `json:"has_orchestration_step,omitempty"` // Optional: Updated has_orchestration_step
+	OrchestrationStep    *PlanStep                `json:"orchestration_step,omitempty"`     // Optional: Updated orchestration step
+	OrchestrationRoutes  []PlanOrchestrationRoute `json:"orchestration_routes,omitempty"`   // Optional: Updated orchestration routes
 	// Routing fields (used by both conditional, decision, and routing steps)
 	IfTrueNextStepID  string `json:"if_true_next_step_id,omitempty"`  // Optional: Updated if_true_next_step_id
 	IfFalseNextStepID string `json:"if_false_next_step_id,omitempty"` // Optional: Updated if_false_next_step_id
@@ -661,10 +659,6 @@ func getAddOrchestrationStepSchema() string {
 				},
 				"required": ["id", "title", "description", "success_criteria", "has_loop", "context_output"]
 			},
-			"orchestration_evaluation_question": {
-				"type": "string",
-				"description": "REQUIRED: Question to evaluate the orchestration step's execution output and select which sub-agent to call (e.g., 'Based on the error type, which sub-agent should handle this?')"
-			},
 			"orchestration_routes": {
 				"type": "array",
 				"items": {
@@ -717,7 +711,7 @@ func getAddOrchestrationStepSchema() string {
 				"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string \"\" to insert at the beginning of the plan (before the first step)."
 			}
 		},
-		"required": ["id", "title", "orchestration_step", "orchestration_evaluation_question", "orchestration_routes", "next_step_id", "insert_after_step_id"]
+		"required": ["id", "title", "orchestration_step", "orchestration_routes", "next_step_id", "insert_after_step_id"]
 	}`
 }
 
@@ -1300,10 +1294,6 @@ func getUpdateOrchestrationStepSchema() string {
 				},
 				"required": ["id", "title", "description", "success_criteria", "has_loop", "context_output"]
 			},
-			"orchestration_evaluation_question": {
-				"type": "string",
-				"description": "OPTIONAL: Updated orchestration evaluation question. Only include if you want to change it. Question to evaluate the orchestration step's execution output and select which sub-agent to call (e.g., 'Based on the error type, which sub-agent should handle this?'). If omitted, the existing question is preserved."
-			},
 			"orchestration_routes": {
 				"type": "array",
 				"items": {
@@ -1508,9 +1498,6 @@ func mergePartialStepUpdate(existingStep PlanStep, partialUpdate PartialPlanStep
 	}
 	if partialUpdate.OrchestrationStep != nil {
 		merged.OrchestrationStep = partialUpdate.OrchestrationStep
-	}
-	if partialUpdate.OrchestrationEvaluationQuestion != "" {
-		merged.OrchestrationEvaluationQuestion = partialUpdate.OrchestrationEvaluationQuestion
 	}
 	if partialUpdate.OrchestrationRoutes != nil {
 		merged.OrchestrationRoutes = partialUpdate.OrchestrationRoutes
@@ -1780,15 +1767,6 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 			Field:    "orchestration_step",
 			OldValue: existingStep.OrchestrationStep,
 			NewValue: partialUpdate.OrchestrationStep,
-		})
-	}
-	if partialUpdate.OrchestrationEvaluationQuestion != "" {
-		changedFields = append(changedFields, "orchestration_evaluation_question")
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "orchestration_evaluation_question",
-			OldValue: existingStep.OrchestrationEvaluationQuestion,
-			NewValue: partialUpdate.OrchestrationEvaluationQuestion,
 		})
 	}
 	if partialUpdate.OrchestrationRoutes != nil {
@@ -2065,6 +2043,14 @@ func createUpdateDecisionStepExecutor(workspacePath string, logger loggerv2.Logg
 			return "", err
 		}
 
+		// Validate the updated step has all required fields for decision steps
+		// This ensures the agent gets immediate feedback if validation fails
+		if existingStep.HasDecisionStep {
+			if err := validateDecisionStepFields(existingStep); err != nil {
+				return "", fmt.Errorf(fmt.Sprintf("validation failed after update: %w", err), nil)
+			}
+		}
+
 		// Validate all steps after update
 		if err := validatePlanStepIDs(plan.Steps); err != nil {
 			return "", fmt.Errorf(fmt.Sprintf("plan validation failed after update: %w", err), nil)
@@ -2155,6 +2141,14 @@ func createUpdateOrchestrationStepExecutor(workspacePath string, logger loggerv2
 		_, changedFields, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
 		if err != nil {
 			return "", err
+		}
+
+		// Validate the updated step has all required fields for orchestration steps
+		// This ensures the agent gets immediate feedback if validation fails
+		if existingStep.HasOrchestrationStep {
+			if err := validateOrchestrationStepFields(existingStep); err != nil {
+				return "", fmt.Errorf(fmt.Sprintf("validation failed after update: %w", err), nil)
+			}
 		}
 
 		// Validate all steps after update
@@ -2333,6 +2327,57 @@ func createAddLoopStepExecutor(workspacePath string, logger loggerv2.Logger, rea
 	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "loop", unlockLearningsFunc)
 }
 
+// validateDecisionStepFields validates that a decision step has all required fields
+// Returns an error message suitable for returning as a tool response if validation fails
+func validateDecisionStepFields(step *PlanStep) error {
+	if step.DecisionStep == nil {
+		return fmt.Errorf("step (title: %q, ID: %s) has has_decision_step=true but is missing required decision_step field. Please provide the decision_step object with all required fields (id, title, description, success_criteria, has_loop, context_output)", step.Title, step.ID)
+	}
+	if step.DecisionStep.ID == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) has decision_step with missing required ID field. Please provide an ID for the decision_step", step.Title, step.ID)
+	}
+	if step.DecisionStep.Description == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) has decision_step with missing required description field. Please provide a description for the decision_step", step.Title, step.ID)
+	}
+	if step.DecisionStep.SuccessCriteria == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) has decision_step with missing required success_criteria field. Please provide success_criteria for the decision_step", step.Title, step.ID)
+	}
+	if step.DecisionEvaluationQuestion == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) has has_decision_step=true but is missing required decision_evaluation_question field. Please provide a question to evaluate the decision step's execution output", step.Title, step.ID)
+	}
+	if step.IfTrueNextStepID == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) has has_decision_step=true but is missing required if_true_next_step_id field. Please provide the ID of the step to route to after evaluation is true", step.Title, step.ID)
+	}
+	if step.IfFalseNextStepID == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) has has_decision_step=true but is missing required if_false_next_step_id field. Please provide the ID of the step to route to after evaluation is false", step.Title, step.ID)
+	}
+	return nil
+}
+
+// validateOrchestrationStepFields validates that an orchestration step has all required fields
+// Returns an error message suitable for returning as a tool response if validation fails
+func validateOrchestrationStepFields(step *PlanStep) error {
+	if step.OrchestrationStep == nil {
+		return fmt.Errorf("step (title: %q, ID: %s) has has_orchestration_step=true but is missing required orchestration_step field. Please provide the orchestration_step object with all required fields (id, title, description, success_criteria, has_loop, context_output)", step.Title, step.ID)
+	}
+	if step.OrchestrationStep.ID == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) has orchestration_step with missing required ID field. Please provide an ID for the orchestration_step", step.Title, step.ID)
+	}
+	if step.OrchestrationStep.Description == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) has orchestration_step with missing required description field. Please provide a description for the orchestration_step", step.Title, step.ID)
+	}
+	if step.OrchestrationStep.SuccessCriteria == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) has orchestration_step with missing required success_criteria field. Please provide success_criteria for the orchestration_step. This field is REQUIRED and must specify how to verify the orchestration step completed successfully", step.Title, step.ID)
+	}
+	if len(step.OrchestrationRoutes) == 0 {
+		return fmt.Errorf("step (title: %q, ID: %s) has has_orchestration_step=true but has no orchestration_routes defined. Please provide at least one orchestration route with conditions and sub-agent steps", step.Title, step.ID)
+	}
+	if step.NextStepID == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) has has_orchestration_step=true but is missing required next_step_id field. Please provide the ID of the step to connect to after orchestration completes, or 'end' to terminate the workflow", step.Title, step.ID)
+	}
+	return nil
+}
+
 // createSingleStepAdder is a shared executor that handles adding a single step to the plan
 // stepType is used for logging and validation purposes
 // unlockLearningsFunc is optional - if provided, it will be called after step addition to unlock learnings
@@ -2367,6 +2412,19 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		// Validate step has ID
 		if step.ID == "" {
 			return "", fmt.Errorf(fmt.Sprintf("step is missing required ID field. Step title: %q", step.Title), nil)
+		}
+
+		// Validate step type-specific required fields BEFORE writing to plan
+		// This allows the agent to correct errors immediately via tool response
+		if step.HasDecisionStep {
+			if err := validateDecisionStepFields(&step); err != nil {
+				return "", fmt.Errorf(fmt.Sprintf("validation failed: %w", err), nil)
+			}
+		}
+		if step.HasOrchestrationStep {
+			if err := validateOrchestrationStepFields(&step); err != nil {
+				return "", fmt.Errorf(fmt.Sprintf("validation failed: %w", err), nil)
+			}
 		}
 
 		// Read current plan
@@ -2574,7 +2632,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_orchestration_step",
-		"Update an orchestration step in the plan. Provide existing_step_id (required) to identify which orchestration step to update, and only include the fields you want to change (orchestration_step, orchestration_evaluation_question, orchestration_routes, next_step_id). The plan.json file is updated immediately when this tool is called.",
+		"Update an orchestration step in the plan. Provide existing_step_id (required) to identify which orchestration step to update, and only include the fields you want to change (orchestration_step, orchestration_routes, next_step_id). The plan.json file is updated immediately when this tool is called.",
 		orchestrationUpdateParams,
 		createUpdateOrchestrationStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
@@ -2650,7 +2708,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_orchestration_step",
-		"Add an orchestration step to the plan. Use this when you need an orchestrator that can choose between multiple sub-agents based on conditions. Orchestration steps EXECUTE a main orchestrator step, evaluate its output, and select one of multiple sub-agents to call. The main orchestrator loops until its success criteria are met. Sub-agents are private to the orchestration step and execute without validation. Provide: id, title, orchestration_step (the main orchestrator step), orchestration_evaluation_question, orchestration_routes (array of routes with conditions and sub-agent steps), next_step_id, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
+		"Add an orchestration step to the plan. Use this when you need an orchestrator that can choose between multiple sub-agents based on conditions. Orchestration steps EXECUTE a main orchestrator step, analyze the situation, and select one of multiple sub-agents to call based on step description and success criteria. The main orchestrator loops until its success criteria are met. Sub-agents are private to the orchestration step and execute without validation. Provide: id, title, orchestration_step (the main orchestrator step), orchestration_routes (array of routes with conditions and sub-agent steps), next_step_id, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
 		orchestrationParams,
 		createAddOrchestrationStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",
@@ -3979,7 +4037,7 @@ If plan changes affect step numbering:
 - **update_regular_step**: Update a regular step. Required: existing_step_id. Optional: title, description, success_criteria, context fields, loop fields, prerequisite fields. Only include fields you want to change.
 - **update_conditional_step**: Update a conditional step. Required: existing_step_id. Optional: condition_question, condition_context, if_true_steps, if_false_steps, next_step_ids. Only include fields you want to change.
 - **update_decision_step**: Update a decision step. Required: existing_step_id. Optional: decision_step, decision_evaluation_question, if_true_next_step_id, if_false_next_step_id. Only include fields you want to change.
-- **update_orchestration_step**: Update an orchestration step. Required: existing_step_id. Optional: orchestration_step, orchestration_evaluation_question, orchestration_routes, next_step_id. Only include fields you want to change.
+- **update_orchestration_step**: Update an orchestration step. Required: existing_step_id. Optional: orchestration_step, orchestration_routes, next_step_id. Only include fields you want to change.
 - **Effect**: plan.json updated immediately
 
 **delete_plan_steps**:
@@ -3991,7 +4049,7 @@ If plan changes affect step numbering:
 - **add_regular_step**: Add a regular execution step. Required: id, title, description, success_criteria, context_output, has_loop, insert_after_step_id
 - **add_conditional_step**: Add a conditional step with if/else branches. Required: id, title, condition_question, if_true_steps, if_false_steps, insert_after_step_id
 - **add_decision_step**: Add a decision step (execute step, then evaluate). Required: id, title, decision_step, decision_evaluation_question, if_true_next_step_id, if_false_next_step_id, insert_after_step_id
-- **add_orchestration_step**: Add an orchestration step (orchestrator with multiple sub-agents). Required: id, title, orchestration_step (main orchestrator), orchestration_evaluation_question, orchestration_routes (sub-agents), next_step_id, insert_after_step_id
+- **add_orchestration_step**: Add an orchestration step (orchestrator with multiple sub-agents). Required: id, title, orchestration_step (main orchestrator), orchestration_routes (sub-agents), next_step_id, insert_after_step_id
 - **add_loop_step**: Add a loop step (repeat until condition). Required: id, title, description, success_criteria, context_output, loop_condition, loop_description, insert_after_step_id
 - **CRITICAL**: insert_after_step_id is REQUIRED for all tools
   - Use step's id field from plan
@@ -4044,7 +4102,7 @@ Orchestration steps are orchestrator agents that coordinate multiple specialized
    - **success_criteria**: How to verify the orchestrator's goal is met
    - **context_output**: File name for the orchestrator's output
 
-2. **Evaluation**: After the orchestrator executes, an orchestration evaluation agent analyzes the output using orchestration_evaluation_question to:
+2. **Evaluation**: After the orchestrator executes, the orchestration agent analyzes the output to:
    - Check if success_criteria is met
    - If met → orchestration step completes successfully
    - If not met → proceed to route selection
@@ -4072,7 +4130,6 @@ Orchestration steps are orchestrator agents that coordinate multiple specialized
   - id: Stable step ID for the orchestration step
   - title: Title of the orchestration step
   - orchestration_step: The main orchestrator step (must include: id, title, description, success_criteria, context_dependencies, context_output, has_loop)
-  - orchestration_evaluation_question: Question to evaluate orchestrator output and select sub-agent (e.g., "Based on the error type, which sub-agent should handle this?")
   - orchestration_routes: Array of routes, each with:
     - route_id: Unique ID for the route
     - route_name: Human-readable name
@@ -4084,7 +4141,7 @@ Orchestration steps are orchestrator agents that coordinate multiple specialized
 **update_orchestration_step**:
 - **Purpose**: Update an orchestration step's orchestrator, evaluation question, routes, or next step
 - **Required**: existing_step_id
-- **Optional**: orchestration_step, orchestration_evaluation_question, orchestration_routes, next_step_id
+- **Optional**: orchestration_step, orchestration_routes, next_step_id
 - **Effect**: plan.json updated immediately
 
 **Key Differences from Other Step Types**:

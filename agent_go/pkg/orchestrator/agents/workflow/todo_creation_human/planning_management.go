@@ -656,8 +656,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 			if step.OrchestrationStep.ID == "" {
 				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has orchestration_step with missing required ID field", i, step.Title, step.ID), nil)
 			}
-			if step.OrchestrationEvaluationQuestion == "" {
-				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has has_orchestration_step=true but is missing required orchestration_evaluation_question field", i, step.Title, step.ID), nil)
+			if step.OrchestrationStep.Description == "" {
+				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has orchestration_step with missing required description field", i, step.Title, step.ID), nil)
+			}
+			if step.OrchestrationStep.SuccessCriteria == "" {
+				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has orchestration_step with missing required success_criteria field", i, step.Title, step.ID), nil)
 			}
 			if len(step.OrchestrationRoutes) == 0 {
 				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has has_orchestration_step=true but has no orchestration_routes defined", i, step.Title, step.ID), nil)
@@ -825,32 +828,31 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 
 		// Convert FlexibleContextOutput to string for TodoStep
 		todoSteps[i] = TodoStep{
-			ID:                              step.ID, // Copy ID from PlanStep for frontend matching
-			Title:                           step.Title,
-			Description:                     step.Description,
-			SuccessCriteria:                 step.SuccessCriteria,
-			ContextDependencies:             step.ContextDependencies,
-			ContextOutput:                   step.ContextOutput.String(), // Convert FlexibleContextOutput to string
-			HasLoop:                         step.HasLoop,
-			LoopCondition:                   step.LoopCondition,
-			MaxIterations:                   step.MaxIterations,
-			LoopDescription:                 step.LoopDescription,
-			HasCondition:                    step.HasCondition,
-			ConditionQuestion:               step.ConditionQuestion,
-			ConditionContext:                step.ConditionContext,
-			IfTrueSteps:                     ifTrueSteps,
-			IfFalseSteps:                    ifFalseSteps,
-			IfTrueNextStepID:                step.IfTrueNextStepID,
-			IfFalseNextStepID:               step.IfFalseNextStepID,
-			HasDecisionStep:                 step.HasDecisionStep,
-			DecisionStep:                    decisionTodoStep,
-			DecisionEvaluationQuestion:      step.DecisionEvaluationQuestion,
-			HasOrchestrationStep:            step.HasOrchestrationStep,
-			OrchestrationStep:               orchestrationTodoStep,
-			OrchestrationEvaluationQuestion: step.OrchestrationEvaluationQuestion,
-			OrchestrationRoutes:             orchestrationRoutes,
-			NextStepID:                      step.NextStepID,
-			AgentConfigs:                    agentConfigs, // Merged from step_config.json (validation enforced for loops)
+			ID:                         step.ID, // Copy ID from PlanStep for frontend matching
+			Title:                      step.Title,
+			Description:                step.Description,
+			SuccessCriteria:            step.SuccessCriteria,
+			ContextDependencies:        step.ContextDependencies,
+			ContextOutput:              step.ContextOutput.String(), // Convert FlexibleContextOutput to string
+			HasLoop:                    step.HasLoop,
+			LoopCondition:              step.LoopCondition,
+			MaxIterations:              step.MaxIterations,
+			LoopDescription:            step.LoopDescription,
+			HasCondition:               step.HasCondition,
+			ConditionQuestion:          step.ConditionQuestion,
+			ConditionContext:           step.ConditionContext,
+			IfTrueSteps:                ifTrueSteps,
+			IfFalseSteps:               ifFalseSteps,
+			IfTrueNextStepID:           step.IfTrueNextStepID,
+			IfFalseNextStepID:          step.IfFalseNextStepID,
+			HasDecisionStep:            step.HasDecisionStep,
+			DecisionStep:               decisionTodoStep,
+			DecisionEvaluationQuestion: step.DecisionEvaluationQuestion,
+			HasOrchestrationStep:       step.HasOrchestrationStep,
+			OrchestrationStep:          orchestrationTodoStep,
+			OrchestrationRoutes:        orchestrationRoutes,
+			NextStepID:                 step.NextStepID,
+			AgentConfigs:               agentConfigs, // Merged from step_config.json (validation enforced for loops)
 		}
 	}
 	return todoSteps, nil

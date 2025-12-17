@@ -322,6 +322,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 				false,    // isDecisionInnerStep = false (branch step)
 				nil,      // decisionContext = nil (branch steps are not routed from decision steps)
 				"",       // decisionEvaluationQuestion - empty for branch steps
+				false,    // isSubAgent = false (branch step, not a sub-agent)
 			)
 			if err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute branch step '%s': %v", branchStep.Title, err), nil)

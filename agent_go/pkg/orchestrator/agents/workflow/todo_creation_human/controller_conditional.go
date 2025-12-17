@@ -102,18 +102,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 		learningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
 		if err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning files from %s: %v - will proceed without learnings", stepLearningsPath, err))
-			learningHistory = "No learning history available."
+			learningHistory = ""
 		} else if len(learningFiles) > 0 {
 			// Format learnings for system prompt (separate from conditionContext)
-			formattedLearnings := hcpo.formatStepLearningFilesAsHistory(learningFiles)
+			formattedLearnings, _ := hcpo.formatStepLearningFilesAsHistory(learningFiles)
 			learningHistory = formattedLearnings
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Loaded %d learning file(s) for conditional agent system prompt (separate from conditionContext)", len(learningFiles)))
 		} else {
-			learningHistory = "No learning history available."
+			learningHistory = ""
 		}
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("📁 Step %d learnings folder is empty or does not exist: %s (proceeding without learnings)", stepNumber, stepLearningsPath))
-		learningHistory = "No learning history available."
+		learningHistory = ""
 	}
 
 	// Determine code execution mode: Priority: step config > orchestrator default
@@ -322,6 +322,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 				false,    // isDecisionInnerStep = false (branch step)
 				nil,      // decisionContext = nil (branch steps are not routed from decision steps)
 				"",       // decisionEvaluationQuestion - empty for branch steps
+				false,    // isSubAgent = false (branch step, not a sub-agent)
 			)
 			if err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute branch step '%s': %v", branchStep.Title, err), nil)

@@ -374,6 +374,62 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalLLMForStep(ste
 	return conditionalLLM, nil
 }
 
+// getOrchestrationAgentForStep returns the OrchestrationAgent to use for a specific step
+// Priority: step config orchestration_llm > default LLM config
+// Uses full OrchestrationAgent (with MCP tools) for orchestration evaluation
+// DEPRECATED: Use getOrchestrationAgentForStep from controller_routing.go instead
+func (hcpo *HumanControlledTodoPlannerOrchestrator) getRoutingAgentForStep(ctx context.Context, step TodoStep, stepIndex int, iteration int) (*HumanControlledTodoPlannerOrchestrationAgent, error) {
+	// This is a compatibility wrapper - delegate to the new function
+	return hcpo.getOrchestrationAgentForStep(ctx, step, stepIndex, iteration)
+}
+
+// getOrchestrationAgentForStep returns the OrchestrationAgent to use for a specific step
+// Priority: step config orchestration_llm > default LLM config
+// Uses full OrchestrationAgent (with MCP tools) for orchestration evaluation
+func (hcpo *HumanControlledTodoPlannerOrchestrator) getOrchestrationAgentForStep(ctx context.Context, step TodoStep, stepIndex int, iteration int) (*HumanControlledTodoPlannerOrchestrationAgent, error) {
+	eventBridge := hcpo.GetContextAwareBridge()
+	if eventBridge == nil {
+		return nil, fmt.Errorf("event bridge is required for orchestration agent")
+	}
+
+	// Determine LLM config: Priority: step config > orchestrator default
+	var llmConfig *orchestrator.LLMConfig
+	orchestratorLLMConfig := hcpo.GetLLMConfig()
+
+	if step.AgentConfigs != nil && step.AgentConfigs.ConditionalLLM != nil {
+		// Use conditional LLM config for orchestration (similar purpose - structured decision making)
+		conditionalLLMConfig := step.AgentConfigs.ConditionalLLM
+		llmConfig = &orchestrator.LLMConfig{
+			Provider:       conditionalLLMConfig.Provider,
+			ModelID:        conditionalLLMConfig.ModelID,
+			FallbackModels: []string{},
+			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional LLM for orchestration: %s/%s", conditionalLLMConfig.Provider, conditionalLLMConfig.ModelID))
+	} else {
+		// Use orchestrator default LLM config
+		llmConfig = orchestratorLLMConfig
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default orchestration LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID))
+	}
+
+	// Create agent name
+	agentName := fmt.Sprintf("orchestration-step-%d", stepIndex+1)
+
+	// Create orchestration agent using factory
+	orchestrationAgent, err := hcpo.createOrchestrationAgent(ctx, "orchestration", stepIndex, iteration, agentName, step.AgentConfigs, llmConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create orchestration agent: %w", err)
+	}
+
+	// Cast to orchestration agent type
+	orchestrationAgentTyped, ok := orchestrationAgent.(*HumanControlledTodoPlannerOrchestrationAgent)
+	if !ok {
+		return nil, fmt.Errorf("failed to cast agent to orchestration agent type")
+	}
+
+	return orchestrationAgentTyped, nil
+}
+
 // CreateTodoList orchestrates the human-controlled todo planning process
 // - Single execution (no iterations)
 // - Includes validation phase (runs later in the workflow)

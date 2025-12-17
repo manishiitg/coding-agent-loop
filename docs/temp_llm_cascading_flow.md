@@ -15,9 +15,9 @@ The Temporary LLM Cascading Flow provides automatic fallback to alternative LLM 
 
 | Component | File Path | Key Functions |
 |-----------|-----------|---------------|
-| **Retry Logic** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `isRetryAfterValidationFailure()`, retry loop (line 746) |
-| **LLM Selection** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) | LLM selection logic (lines 152-197) |
-| **Validation Check** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `isValidationFailure()` (line 746) |
+| **Retry Logic** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `isRetryAfterValidationFailure()`, retry loop (line 746) |
+| **LLM Selection** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) | LLM selection logic (lines 152-197) |
+| **Validation Check** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `isValidationFailure()` (line 746) |
 
 ---
 
@@ -71,7 +71,7 @@ graph TD
 
 ### Key Logic
 
-**File:** [`controller_execution.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go)
+**File:** [`controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go)
 
 ```go
 // Line 746: Validation failure check
@@ -88,7 +88,7 @@ if retryAttempt == 1 {
 }
 ```
 
-**File:** [`controller_agent_factory.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go)
+**File:** [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go)
 
 ```go
 // Lines 152-197: LLM selection logic

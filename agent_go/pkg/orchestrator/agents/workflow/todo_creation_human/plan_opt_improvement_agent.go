@@ -493,7 +493,16 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 	resetChangelogSession()
 
 	// Register all plan modification tools using shared function
-	if err := registerPlanModificationTools(mcpAgent, workspacePath, logger, readFile, writeFile, moveFile, "plan improvement agent"); err != nil {
+	// Pass unlock function to automatically unlock learnings when plan is modified
+	// Use base orchestrator to create unlock function (plan improvement agent only has base orchestrator)
+	// Note: For plan improvement agent, we use workspacePath (which is the original workspace root)
+	// since learnings are stored in the original workspace, not in run folders
+	var unlockLearningsFunc func(context.Context, string, int) error
+	if agent.baseOrchestrator != nil {
+		// Use workspacePath for unlock operations (learnings are in workspace root)
+		unlockLearningsFunc = createUnlockLearningsFunctionFromBase(agent.baseOrchestrator, workspacePath)
+	}
+	if err := registerPlanModificationTools(mcpAgent, workspacePath, logger, readFile, writeFile, moveFile, "plan improvement agent", unlockLearningsFunc); err != nil {
 		return "", nil, err
 	}
 
@@ -792,7 +801,16 @@ Before you answer questions or propose plan changes, you MUST gather evidence by
 		}
 		return "runs/{iteration}/logs/step-X/decision-evaluation.json"
 	}() + `** (contains decision routing logic)
-5. Read at least one learnings file from **learnings/** (shared) or **learnings/step-X/** (step-specific)
+5. If analyzing routing steps, read: **` + func() string {
+		if runPathRelative != "" {
+			return runPathRelative + `/logs/step-X/routing-evaluation.json`
+		}
+		if validatedRunPath != "" {
+			return validatedRunPath + `/logs/step-X/routing-evaluation.json`
+		}
+		return "runs/{iteration}/logs/step-X/routing-evaluation.json"
+	}() + `** (contains routing decisions and sub-agent selections)
+6. Read at least one learnings file from **learnings/** (shared) or **learnings/step-X/** (step-specific)
    - Check conversation history to determine execution mode (see "LEARNINGS FOLDER STRUCTURE" section above)
    - Read appropriate files based on mode: .md files (always) + code/*.go (Code Execution Mode) or scripts/*.py (Simple Mode)
 
@@ -824,6 +842,7 @@ When you respond, include a short **Files inspected** list (paths only).
    - **Validation Logs**: Check runs/{iteration}/logs/step-X/validation-{N}.json for validation responses (numbered for multiple validation attempts)
    - **Execution Logs**: Check runs/{iteration}/logs/step-X/execution/ for detailed execution results and conversation history
    - **Decision Steps**: Check runs/{iteration}/logs/step-X/decision-evaluation.json for decision routing logic and runs/{iteration}/logs/step-X/execution/decision-inner-step.json for inner step execution
+   - **Routing Steps**: Check runs/{iteration}/logs/step-X/routing-evaluation.json for routing decisions and runs/{iteration}/logs/step-X/execution/routing-main-step.json for main orchestrator execution
    - **Logs Structure**: Each step has logs/step-X/ folder containing validation and execution logs with attempt/iteration numbers`
 	}() + learningsLocationNote + `
 3. **Propose Changes** → Use human_feedback to describe proposed modifications:
@@ -850,11 +869,15 @@ When you respond, include a short **Files inspected** list (paths only).
 
 | Tool | Purpose |
 |------|---------|
-| update_plan_steps | Update existing steps (existing_step_id required) |
+| update_regular_step | Update a regular step (existing_step_id required) |
+| update_conditional_step | Update a conditional step (existing_step_id required) |
+| update_decision_step | Update a decision step (existing_step_id required) |
+| update_routing_step | Update a routing step (existing_step_id required) |
 | delete_plan_steps | Delete steps by ID |
 | add_regular_step | Add a regular execution step |
 | add_conditional_step | Add a conditional step with if/else branches |
 | add_decision_step | Add a decision step (execute step, then evaluate) |
+| add_routing_step | Add a routing step (orchestrator with multiple sub-agents) |
 | add_loop_step | Add a loop step (repeat until condition) |
 
 **Conditional Tools**:
@@ -912,7 +935,13 @@ The human_feedback tool returns user's response as TEXT. You must interpret:
 - **logs/step-{X}/execution/decision-inner-step.json** - Inner step execution result (execution_result from the step executed before evaluation)
 - **execution/step-{X}-decision/** - Execution outputs from the inner step
 
-**Usage**: Check validation-{N}.json for validation failures, execution-attempt-*.json for execution results, decision-evaluation.json for decision routing logic, and conversation.json for full LLM conversation context.
+**Routing Steps**: 
+- **logs/step-{X}/routing-evaluation.json** - Routing evaluation result (selected_route_id, reasoning, success_criteria_met)
+- **logs/step-{X}/execution/routing-main-step.json** - Main orchestrator step execution result
+- **logs/step-{X}/execution/routing-sub-agent-{route_id}.json** - Sub-agent execution results for each route
+- **execution/step-{X}-routing/** - Execution outputs from routing step iterations
+
+**Usage**: Check validation-{N}.json for validation failures, execution-attempt-*.json for execution results, decision-evaluation.json for decision routing logic, routing-evaluation.json for routing decisions, and conversation.json for full LLM conversation context.
 
 ## READING EXECUTION OUTPUT FILES
 
@@ -1052,7 +1081,9 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) planImprovementUser
 6. **Conversation History**: %s/%s/logs/step-X/execution/execution-attempt-{N}-iteration-{M}-conversation.json - Full LLM conversation (original JSON structure)
 
 **Decision Steps** (if present): %s/%s/logs/step-X/decision-evaluation.json, %s/%s/logs/step-X/execution/decision-inner-step.json, %s/%s/execution/step-X-decision/ (see system prompt for details)
-`, runPathRelative, workspacePath, workspacePath, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative)
+
+**Routing Steps** (if present): %s/%s/logs/step-X/routing-evaluation.json, %s/%s/logs/step-X/execution/routing-main-step.json, %s/%s/execution/step-X-routing/ (see system prompt for details)
+`, runPathRelative, workspacePath, workspacePath, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative)
 	} else if validatedRunPath != "" {
 		dataSourcesSection = fmt.Sprintf(`
 ## AVAILABLE DATA SOURCES (Validated Run Path: %s)
@@ -1066,8 +1097,10 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) planImprovementUser
 
 **Decision Steps** (if present): %s/runs/%s/logs/step-X/decision-evaluation.json, %s/runs/%s/logs/step-X/execution/decision-inner-step.json, %s/runs/%s/execution/step-X-decision/ (see system prompt for details)
 
+**Routing Steps** (if present): %s/runs/%s/logs/step-X/routing-evaluation.json, %s/runs/%s/logs/step-X/execution/routing-main-step.json, %s/runs/%s/execution/step-X-routing/ (see system prompt for details)
+
 The run path has been validated and confirmed by the user. All data is available in runs/%s/ folder.
-`, validatedRunPath, workspacePath, workspacePath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, validatedRunPath)
+`, validatedRunPath, workspacePath, workspacePath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, validatedRunPath)
 	} else {
 		dataSourcesSection = fmt.Sprintf(`
 ## AVAILABLE DATA SOURCES
@@ -1080,6 +1113,8 @@ The run path has been validated and confirmed by the user. All data is available
 6. **Conversation History**: %s/runs/{iteration}/logs/step-X/execution/execution-attempt-{N}-iteration-{M}-conversation.json - Full LLM conversation (original JSON structure)
 
 **Decision Steps** (if present): %s/runs/{iteration}/logs/step-X/decision-evaluation.json, %s/runs/{iteration}/logs/step-X/execution/decision-inner-step.json, %s/runs/{iteration}/execution/step-X-decision/ (see system prompt for details)
+
+**Routing Steps** (if present): %s/runs/{iteration}/logs/step-X/routing-evaluation.json, %s/runs/{iteration}/logs/step-X/execution/routing-main-step.json, %s/runs/{iteration}/execution/step-X-routing/ (see system prompt for details)
 
 Use list_workspace_files to explore runs/ folder and find the specific iteration and step logs you need to analyze.
 `, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath)

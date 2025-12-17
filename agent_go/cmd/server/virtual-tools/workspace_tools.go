@@ -122,10 +122,26 @@ func emitWorkspaceFileOperation(ctx context.Context, operation, filepath, folder
 	turn := getTurnFromContext(ctx)
 	serverName := getServerNameFromContext(ctx)
 
-	fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Emitting event operation=%s, filepath=%s, folder=%s, turn=%d, serverName=%s\n",
-		operation, filepath, folder, turn, serverName)
+	// Determine if this file should be highlighted in the UI
+	// Exclude logs/ folder and its subfolders from highlighting
+	shouldHighlight := true
+	if filepath != "" {
+		// Check if filepath contains logs/ (at start or as subfolder)
+		if strings.HasPrefix(filepath, "logs/") || strings.Contains(filepath, "/logs/") {
+			shouldHighlight = false
+		}
+	}
+	if folder != "" {
+		// Check if folder path contains logs/
+		if strings.HasPrefix(folder, "logs/") || strings.Contains(folder, "/logs/") {
+			shouldHighlight = false
+		}
+	}
 
-	eventData := events.NewWorkspaceFileOperationEvent(operation, filepath, folder, turn, serverName)
+	fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Emitting event operation=%s, filepath=%s, folder=%s, turn=%d, serverName=%s, shouldHighlight=%v\n",
+		operation, filepath, folder, turn, serverName, shouldHighlight)
+
+	eventData := events.NewWorkspaceFileOperationEvent(operation, filepath, folder, turn, serverName, shouldHighlight)
 	agentEvent := &events.AgentEvent{
 		Type:      events.WorkspaceFileOperation,
 		Timestamp: eventData.Timestamp,

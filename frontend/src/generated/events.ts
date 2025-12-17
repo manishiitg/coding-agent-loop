@@ -1331,7 +1331,6 @@ export interface TodoStep {
   decision_response?: DecisionResponse;
   has_orchestration_step?: boolean;
   orchestration_step?: TodoStep;
-  orchestration_evaluation_question?: string;
   orchestration_routes?: OrchestrationRoute[];
   orchestration_response?: OrchestrationResponse;
   next_step_id?: string;

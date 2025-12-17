@@ -3334,9 +3334,6 @@
         "orchestration_step": {
           "$ref": "#/$defs/TodoStep"
         },
-        "orchestration_evaluation_question": {
-          "type": "string"
-        },
         "orchestration_routes": {
           "items": {
             "$ref": "#/$defs/OrchestrationRoute"

@@ -191,11 +191,12 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
       )}
 
       {/* Input Data content - template variables passed to agent */}
+      {/* Commented out: Only show final result, not inputs */}
+      {/* 
       {event.input_data && Object.keys(event.input_data).length > 0 && (
         <div className="mt-3">
           <div className={`text-xs font-medium ${colors.textSecondary} mb-2`}>Input Data:</div>
           <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
-            {/* Step Number - Highlighted */}
             {event.input_data.step_number && (
               <div className="mb-3 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded">
                 <div className="text-xs font-bold text-blue-700 dark:text-blue-300">
@@ -207,9 +208,7 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
               {Object.entries(event.input_data)
                 .filter(([key]) => key !== 'step_number')
                 .filter(([, value]) => {
-                  // Filter out empty values: null, undefined, empty string
                   if (value === null || value === undefined || value === '') return false;
-                  // For string values, check if trimmed string is empty
                   if (typeof value === 'string' && value.trim() === '') return false;
                   return true;
                 })
@@ -227,6 +226,7 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
           </div>
         </div>
       )}
+      */}
 
       {/* Result content - always visible with markdown rendering */}
       {event.result && (

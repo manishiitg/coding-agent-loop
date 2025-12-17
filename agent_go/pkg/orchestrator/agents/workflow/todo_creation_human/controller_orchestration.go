@@ -42,9 +42,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 	if step.OrchestrationStep == nil {
 		return false, "", fmt.Errorf("orchestration step %d (%s) is missing required orchestration_step field", stepIndex+1, step.Title)
 	}
-	if step.OrchestrationEvaluationQuestion == "" {
-		return false, "", fmt.Errorf("orchestration step %d (%s) is missing required orchestration_evaluation_question field", stepIndex+1, step.Title)
-	}
 	if len(step.OrchestrationRoutes) == 0 {
 		return false, "", fmt.Errorf("orchestration step %d (%s) has no orchestration routes defined", stepIndex+1, step.Title)
 	}
@@ -102,8 +99,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 		// Prepare main orchestration step
 		mainOrchestrationStep := *step.OrchestrationStep
 
-		// Execute using OrchestrationOrchestratorAgent (not executeSingleStep)
-		executionResult, updatedConversationHistory, err := hcpo.executeOrchestrationOrchestratorStep(
+		// Execute using OrchestrationOrchestratorAgent with structured output (includes evaluation)
+		orchestrationResponse, updatedConversationHistory, err := hcpo.executeOrchestrationOrchestratorStep(
 			ctx,
 			mainOrchestrationStep,
 			stepIndex,
@@ -111,7 +108,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			iteration,
 			orchestrationContext,
 			step.OrchestrationRoutes,
-			step.OrchestrationEvaluationQuestion,
 			orchestrationProgress.ConversationHistory,
 			allSteps,
 			execCtx,
@@ -121,7 +117,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			return false, "", fmt.Errorf("failed to execute main orchestration step '%s': %w", step.OrchestrationStep.Title, err)
 		}
 
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Main orchestration step completed. Output length: %d chars", len(executionResult)))
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Main orchestration step completed. Success criteria met: %t, Selected route: %s", orchestrationResponse.SuccessCriteriaMet, orchestrationResponse.SelectedRouteID))
 
 		// Update orchestration progress with conversation history
 		orchestrationProgress.MainStepExecuted = true
@@ -140,12 +136,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, mainStepPath)
 			executionResultFilePath := fmt.Sprintf("%s/orchestration-main-step.json", executionLogsFolderPath)
 			executionResponse := map[string]interface{}{
-				"step_index":            stepIndex + 1,
-				"step_path":             mainStepPath,
-				"orchestration_step_id": step.ID,
-				"iteration":             orchestrationIteration + 1,
-				"execution_result":      executionResult,
-				"timestamp":             time.Now().Format(time.RFC3339),
+				"step_index":             stepIndex + 1,
+				"step_path":              mainStepPath,
+				"orchestration_step_id":  step.ID,
+				"iteration":              orchestrationIteration + 1,
+				"orchestration_response": orchestrationResponse,
+				"timestamp":              time.Now().Format(time.RFC3339),
 			}
 
 			executionJSON, err := json.MarshalIndent(executionResponse, "", "  ")
@@ -158,40 +154,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 					hcpo.GetLogger().Info(fmt.Sprintf("💾 Orchestration main step execution response saved to: %s", executionResultFilePath))
 				}
 			}
-		}
-
-		// 2. Evaluate orchestration step output using OrchestrationAgent
-		hcpo.GetLogger().Info(fmt.Sprintf("🤔 Evaluating orchestration step output with question: %s", step.OrchestrationEvaluationQuestion))
-
-		// Get orchestration agent for evaluation
-		orchestrationAgent, err := hcpo.getOrchestrationAgentForStep(ctx, *step, stepIndex, iteration)
-		if err != nil {
-			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to get orchestration agent for step %d: %v", stepIndex+1, err), nil)
-			return false, "", fmt.Errorf("failed to get orchestration agent for orchestration step: %w", err)
-		}
-
-		// Get learning history for orchestration evaluation
-		learningHistory, err := hcpo.readLearningHistory(ctx, stepIndex, orchestrationStepPath)
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning history for orchestration step %d: %v (continuing without learnings)", stepIndex+1, err))
-			learningHistory = ""
-		}
-
-		// Evaluate using OrchestrationAgent
-		orchestrationResponse, err := orchestrationAgent.EvaluateOrchestration(
-			ctx,
-			executionResult,
-			step.OrchestrationEvaluationQuestion,
-			step.OrchestrationRoutes,
-			step.OrchestrationStep.SuccessCriteria, // Use main orchestration step's success criteria
-			stepIndex,
-			iteration,
-			learningHistory,
-			orchestrationProgress.ConversationHistory,
-		)
-		if err != nil {
-			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate orchestration step %d: %v", stepIndex+1, err), nil)
-			return false, "", fmt.Errorf("failed to evaluate orchestration step: %w", err)
 		}
 
 		// Store structured response in the step for event emission
@@ -222,17 +184,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			validationFolderPath := getValidationFolderPath(validationWorkspacePath, orchestrationStepPath)
 			orchestrationEvaluationFilePath := fmt.Sprintf("%s/orchestration-evaluation.json", validationFolderPath)
 			orchestrationEvaluationResponse := map[string]interface{}{
-				"step_index":                        stepIndex + 1,
-				"step_path":                         orchestrationStepPath,
-				"orchestration_step_id":             step.ID,
-				"iteration":                         orchestrationIteration + 1,
-				"orchestration_evaluation_question": step.OrchestrationEvaluationQuestion,
-				"selected_route_id":                 orchestrationResponse.SelectedRouteID,
-				"reasoning":                         orchestrationResponse.Reasoning,
-				"success_criteria_met":              orchestrationResponse.SuccessCriteriaMet,
-				"success_reasoning":                 orchestrationResponse.SuccessReasoning,
-				"next_step_id":                      step.NextStepID,
-				"timestamp":                         time.Now().Format(time.RFC3339),
+				"step_index":            stepIndex + 1,
+				"step_path":             orchestrationStepPath,
+				"orchestration_step_id": step.ID,
+				"iteration":             orchestrationIteration + 1,
+				"selected_route_id":     orchestrationResponse.SelectedRouteID,
+				"reasoning":             orchestrationResponse.Reasoning,
+				"success_criteria_met":  orchestrationResponse.SuccessCriteriaMet,
+				"success_reasoning":     orchestrationResponse.SuccessReasoning,
+				"next_step_id":          step.NextStepID,
+				"timestamp":             time.Now().Format(time.RFC3339),
 			}
 
 			orchestrationJSON, err := json.MarshalIndent(orchestrationEvaluationResponse, "", "  ")
@@ -341,29 +302,26 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			// Re-evaluate orchestration with validation response
 			hcpo.GetLogger().Info(fmt.Sprintf("🤔 Re-evaluating orchestration step with validation response"))
 
-			// Get learning history for orchestration evaluation
-			learningHistory, err := hcpo.readLearningHistory(ctx, stepIndex, orchestrationStepPath)
-			if err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning history for orchestration step %d: %v (continuing without learnings)", stepIndex+1, err))
-				learningHistory = ""
-			}
-
-			// Re-evaluate using OrchestrationAgent with updated conversation history
-			orchestrationResponse, err = orchestrationAgent.EvaluateOrchestration(
+			// Re-execute orchestration orchestrator agent with updated conversation history (includes validation response)
+			orchestrationResponse, updatedConversationHistory, err = hcpo.executeOrchestrationOrchestratorStep(
 				ctx,
-				executionResult,
-				step.OrchestrationEvaluationQuestion,
-				step.OrchestrationRoutes,
-				step.OrchestrationStep.SuccessCriteria,
+				mainOrchestrationStep,
 				stepIndex,
+				mainStepPath,
 				iteration,
-				learningHistory,
+				orchestrationContext,
+				step.OrchestrationRoutes,
 				orchestrationProgress.ConversationHistory,
+				allSteps,
+				execCtx,
 			)
 			if err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to re-evaluate orchestration step %d: %v", stepIndex+1, err), nil)
 				return false, "", fmt.Errorf("failed to re-evaluate orchestration step: %w", err)
 			}
+
+			// Update conversation history with latest
+			orchestrationProgress.ConversationHistory = updatedConversationHistory
 
 			// Store updated structured response
 			step.OrchestrationResponse = orchestrationResponse
@@ -464,11 +422,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			return false, "", fmt.Errorf("orchestration step %d: success criteria not met but no route selected", stepIndex+1)
 		}
 
-		// Find the selected route
+		// Find the selected route and capture its index
 		var selectedRoute *OrchestrationRoute
+		subAgentIndex := 0 // Will be set when route is found
 		for i := range step.OrchestrationRoutes {
 			if step.OrchestrationRoutes[i].RouteID == orchestrationResponse.SelectedRouteID {
 				selectedRoute = &step.OrchestrationRoutes[i]
+				subAgentIndex = i + 1 // Use 1-based index for path (route 0 -> sub-agent-1, route 1 -> sub-agent-2, etc.)
 				break
 			}
 		}
@@ -477,7 +437,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			return false, "", fmt.Errorf("orchestration step %d: selected route ID '%s' not found in orchestration routes", stepIndex+1, orchestrationResponse.SelectedRouteID)
 		}
 
-		hcpo.GetLogger().Info(fmt.Sprintf("🔀 Executing sub-agent: %s (route: %s)", selectedRoute.SubAgentStep.Title, selectedRoute.RouteID))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔀 Executing sub-agent: %s (route: %s, index: %d)", selectedRoute.SubAgentStep.Title, selectedRoute.RouteID, subAgentIndex))
 
 		// Prepare sub-agent step with validation disabled
 		subAgentStep := selectedRoute.SubAgentStep
@@ -487,35 +447,39 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 		val := true
 		subAgentStep.AgentConfigs.DisableValidation = &val
 
-		// Build context for sub-agent
-		// Include: previous main workflow steps + main orchestration step output + route-specific context
-		subAgentContextFiles := make([]string, len(previousContextFiles))
-		copy(subAgentContextFiles, previousContextFiles)
+		// Sub-agents don't receive previous steps history - they work independently based on orchestrator instructions
 
-		// Add main orchestration step output as context (if available)
-		// Write execution result to a file and add it to context
-		if executionResult != "" {
-			// Main orchestration step output is available in executionResult
-			// Write it to a file and add the file path to context
-			var validationWorkspacePath string
-			if hcpo.selectedRunFolder != "" {
-				validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
-			} else {
-				validationWorkspacePath = hcpo.GetWorkspacePath()
+		// Modify sub-agent step with orchestrator-provided instructions, success criteria, and context settings
+		if orchestrationResponse.InstructionsToSubAgent != "" {
+			subAgentStep.Description = orchestrationResponse.InstructionsToSubAgent
+			hcpo.GetLogger().Info(fmt.Sprintf("📝 Using orchestrator-provided instructions for sub-agent (replacing step description)"))
+		}
+		if orchestrationResponse.SuccessCriteriaForSubAgent != "" {
+			subAgentStep.SuccessCriteria = orchestrationResponse.SuccessCriteriaForSubAgent
+			hcpo.GetLogger().Info(fmt.Sprintf("📝 Using orchestrator-provided success criteria for sub-agent (replacing step success criteria)"))
+		}
+		if orchestrationResponse.ContextDependenciesForSubAgent != "" {
+			// Parse comma-separated context dependencies into array
+			deps := strings.Split(orchestrationResponse.ContextDependenciesForSubAgent, ",")
+			subAgentStep.ContextDependencies = make([]string, 0, len(deps))
+			for _, dep := range deps {
+				dep = strings.TrimSpace(dep)
+				if dep != "" {
+					subAgentStep.ContextDependencies = append(subAgentStep.ContextDependencies, dep)
+				}
 			}
-			executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, mainStepPath)
-			orchestrationOutputFile := fmt.Sprintf("%s/orchestration_output.txt", executionLogsFolderPath)
-			if err := hcpo.WriteWorkspaceFile(ctx, orchestrationOutputFile, executionResult); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write orchestration output to file: %v", err))
-			} else {
-				// Add the file path to context files
-				subAgentContextFiles = append(subAgentContextFiles, orchestrationOutputFile)
-				hcpo.GetLogger().Info(fmt.Sprintf("📝 Including main orchestration step output in sub-agent context (file: %s, length: %d chars)", orchestrationOutputFile, len(executionResult)))
-			}
+			hcpo.GetLogger().Info(fmt.Sprintf("📝 Using orchestrator-provided context dependencies for sub-agent (replacing step context dependencies): %v", subAgentStep.ContextDependencies))
+		}
+		if orchestrationResponse.ContextOutputForSubAgent != "" {
+			subAgentStep.ContextOutput = orchestrationResponse.ContextOutputForSubAgent
+			hcpo.GetLogger().Info(fmt.Sprintf("📝 Using orchestrator-provided context output for sub-agent (replacing step context output): %s", orchestrationResponse.ContextOutputForSubAgent))
 		}
 
-		// Execute sub-agent
-		subAgentPath := fmt.Sprintf("step-%d-route-%s", stepIndex+1, selectedRoute.RouteID)
+		// Execute sub-agent (without previous steps history - sub-agents don't need it)
+		// Use format: step-{N}-sub-agent-{index} (e.g., "step-2-sub-agent-1")
+		// Index is derived from the route's position in the orchestration routes array (1-based)
+		subAgentPath := fmt.Sprintf("step-%d-sub-agent-%d", stepIndex+1, subAgentIndex)
+		// Pass empty previousContextFiles to skip building previous steps summary for sub-agents
 		subAgentExecutionResult, updatedSubAgentContextFiles, err := hcpo.executeSingleStep(
 			ctx,
 			subAgentStep,
@@ -523,7 +487,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			subAgentPath,
 			1, // totalSteps = 1 for single sub-agent
 			iteration,
-			subAgentContextFiles,
+			[]string{}, // Empty - sub-agents don't need previous steps history
 			progress,
 			true, // isBranchStep = true (sub-agent is like a branch step)
 			execCtx,
@@ -531,6 +495,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			false, // isDecisionInnerStep = false
 			nil,   // decisionContext = nil
 			"",    // decisionEvaluationQuestion - empty
+			true,  // isSubAgent = true (sub-agents never request human feedback)
 		)
 		if err != nil {
 			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute sub-agent '%s': %v", selectedRoute.SubAgentStep.Title, err), nil)
@@ -641,7 +606,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 }
 
 // executeOrchestrationOrchestratorStep executes the main orchestration step using OrchestrationOrchestratorAgent
-// This agent focuses on orchestration and delegation, not direct execution
+// Returns structured OrchestrationResponse with routing decisions and success criteria evaluation
 func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestratorStep(
 	ctx context.Context,
 	step TodoStep,
@@ -650,11 +615,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 	iteration int,
 	previousContextFiles []string,
 	orchestrationRoutes []OrchestrationRoute,
-	evaluationQuestion string,
 	conversationHistory []llmtypes.MessageContent,
 	allSteps []TodoStep,
 	execCtx *ExecutionContext,
-) (string, []llmtypes.MessageContent, error) {
+) (*OrchestrationResponse, []llmtypes.MessageContent, error) {
 	// Prepare template variables similar to executeSingleStep
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
@@ -685,17 +649,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 
 	// Prepare template variables
 	templateVars := map[string]string{
-		"StepTitle":                       ResolveVariables(step.Title, hcpo.variableValues),
-		"StepDescription":                 ResolveVariables(step.Description, hcpo.variableValues),
-		"StepSuccessCriteria":             ResolveVariables(step.SuccessCriteria, hcpo.variableValues),
-		"StepContextOutput":               ResolveVariables(step.ContextOutput, hcpo.variableValues),
-		"WorkspacePath":                   executionWorkspacePath,
-		"IsCodeExecutionMode":             fmt.Sprintf("%v", isCodeExecutionMode),
-		"StepNumber":                      stepPath,
-		"StepExecutionPath":               stepExecutionPath,
-		"PreviousStepsSummary":            previousStepsSummary,
-		"OrchestrationRoutes":             routesDescription,
-		"OrchestrationEvaluationQuestion": evaluationQuestion,
+		"StepTitle":            ResolveVariables(step.Title, hcpo.variableValues),
+		"StepDescription":      ResolveVariables(step.Description, hcpo.variableValues),
+		"StepSuccessCriteria":  ResolveVariables(step.SuccessCriteria, hcpo.variableValues),
+		"StepContextOutput":    ResolveVariables(step.ContextOutput, hcpo.variableValues),
+		"WorkspacePath":        executionWorkspacePath,
+		"IsCodeExecutionMode":  fmt.Sprintf("%v", isCodeExecutionMode),
+		"StepNumber":           stepPath,
+		"StepExecutionPath":    stepExecutionPath,
+		"PreviousStepsSummary": previousStepsSummary,
+		"OrchestrationRoutes":  routesDescription,
 	}
 
 	// Add context dependencies
@@ -717,16 +680,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 	// Get orchestration orchestrator agent
 	orchestrationOrchestratorAgent, err := hcpo.getOrchestrationOrchestratorAgentForStep(ctx, step, stepIndex, iteration)
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to get orchestration orchestrator agent: %w", err)
+		return nil, nil, fmt.Errorf("failed to get orchestration orchestrator agent: %w", err)
 	}
 
-	// Execute the agent with conversation history to maintain context across iterations
-	executionResult, updatedConversationHistory, err := orchestrationOrchestratorAgent.Execute(ctx, templateVars, conversationHistory)
+	// Execute the agent with structured output (includes evaluation and routing decisions)
+	orchestrationResponse, updatedConversationHistory, err := orchestrationOrchestratorAgent.ExecuteStructured(ctx, templateVars, conversationHistory)
 	if err != nil {
-		return "", nil, fmt.Errorf("orchestration orchestrator agent execution failed: %w", err)
+		return nil, nil, fmt.Errorf("orchestration orchestrator agent execution failed: %w", err)
 	}
 
-	return executionResult, updatedConversationHistory, nil
+	return orchestrationResponse, updatedConversationHistory, nil
 }
 
 // getOrchestrationOrchestratorAgentForStep returns the OrchestrationOrchestratorAgent to use for the main orchestration step

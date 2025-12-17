@@ -20,14 +20,16 @@ interface EventNode {
 }
 
 // Performance optimization: Limit events processed to prevent browser freeze
-const MAX_EVENTS_TO_PROCESS = 300; // Process max 300 events at a time (reduced from 500 for better performance)
-const INITIAL_VISIBLE_EVENTS = 30; // Show first 30 events (reduced from 50 for better performance)
+const MAX_EVENTS_TO_PROCESS = 1000; // Process max 1000 events at a time (matches memory limit in useChatStore)
+const INITIAL_VISIBLE_EVENTS = 100; // Show first 100 events initially (users can load more)
 
 export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact = false }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
-  // Performance: Limit visible events to prevent browser freeze
-  const [visibleEventCount, setVisibleEventCount] = useState(INITIAL_VISIBLE_EVENTS);
+  // Track start index for loading older events (starts from end, moves backward)
+  // startIndex represents the index in displayEvents where we start showing events
+  // Initially set to show last INITIAL_VISIBLE_EVENTS events (most recent)
+  const [startIndex, setStartIndex] = useState<number | null>(null);
   // Track last event count to detect new events
   const lastEventCountRef = React.useRef<number>(0);
   
@@ -44,30 +46,36 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     return events.slice(-MAX_EVENTS_TO_PROCESS);
   }, [events]);
   
-  // Ensure we always show latest events when new ones arrive
-  // If user has loaded more events, keep showing latest (they'll see new events automatically)
+  // Initialize startIndex when displayEvents changes (new events or first load)
   React.useEffect(() => {
     const currentEventCount = displayEvents.length;
     const previousEventCount = lastEventCountRef.current;
     
-    // If new events arrived and we're showing fewer than available, ensure we show at least INITIAL_VISIBLE_EVENTS
-    if (currentEventCount > previousEventCount && visibleEventCount < INITIAL_VISIBLE_EVENTS) {
-      // New events arrived - ensure we show at least the initial count (latest events)
-      setVisibleEventCount(INITIAL_VISIBLE_EVENTS);
+    // If new events arrived (count increased), reset to show latest events
+    if (currentEventCount > previousEventCount) {
+      // New events arrived - reset to show latest INITIAL_VISIBLE_EVENTS
+      setStartIndex(Math.max(0, displayEvents.length - INITIAL_VISIBLE_EVENTS));
+    } else if (startIndex === null) {
+      // First load - initialize to show latest INITIAL_VISIBLE_EVENTS
+      setStartIndex(Math.max(0, displayEvents.length - INITIAL_VISIBLE_EVENTS));
+    } else if (currentEventCount < previousEventCount) {
+      // Events were cleared/reset - reset startIndex
+      setStartIndex(Math.max(0, displayEvents.length - INITIAL_VISIBLE_EVENTS));
     }
     
     lastEventCountRef.current = currentEventCount;
-  }, [displayEvents.length, visibleEventCount]);
+  }, [displayEvents.length, startIndex]);
   
-  // Limit visible events for rendering - show LATEST events (at bottom of list)
-  // ALWAYS takes the last N events (most recent) - ensures latest events are always visible
+  // Limit visible events for rendering - show events starting from startIndex
+  // When startIndex is 0, shows all events from beginning
+  // When startIndex > 0, shows events from that position to end (older events are hidden)
   const visibleEvents = React.useMemo(() => {
-    // Take the last N events (most recent) from displayEvents
-    // displayEvents is already the most recent MAX_EVENTS_TO_PROCESS events
-    // slice(-N) ensures we ALWAYS get the LATEST events, never older ones
-    // These will be rendered at the bottom (chronological order: oldest to newest)
-    return displayEvents.slice(-visibleEventCount);
-  }, [displayEvents, visibleEventCount]);
+    if (startIndex === null || displayEvents.length === 0) {
+      return [];
+    }
+    // Show events from startIndex to end (includes older events when startIndex decreases)
+    return displayEvents.slice(startIndex);
+  }, [displayEvents, startIndex]);
 
   // Extract parent_id from event data
   const getParentId = React.useCallback((event: PollingEvent): string | undefined => {
@@ -417,14 +425,21 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
   }, [visibleEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId, getHierarchyLevel]);
 
   // Load more events handler (must be before return)
-  // Loads OLDER events (going back in time) - smaller increments for better performance
+  // Loads OLDER events (going back in time) by decreasing startIndex
   const handleLoadMore = React.useCallback(() => {
-    setVisibleEventCount(prev => Math.min(prev + 30, displayEvents.length));
-  }, [displayEvents.length]);
+    setStartIndex(prev => {
+      if (prev === null) return 0;
+      // Load 50 more older events (move startIndex backward)
+      const newStartIndex = Math.max(0, prev - 50);
+      return newStartIndex;
+    });
+  }, []);
 
-  const hasMoreEvents = visibleEventCount < displayEvents.length;
+  // Check if there are older events to load (startIndex > 0 means there are events before current view)
+  const hasMoreEvents = startIndex !== null && startIndex > 0;
   const totalEventsCount = events.length;
-  const showingCount = Math.min(visibleEventCount, displayEvents.length);
+  const showingCount = visibleEvents.length;
+  const remainingCount = startIndex !== null ? startIndex : 0;
 
   if (eventTree.length === 0) {
     return (
@@ -454,7 +469,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
               onClick={handleLoadMore}
               className="px-4 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-md transition-colors"
             >
-              Load Older Events ({displayEvents.length - visibleEventCount} remaining)
+              Load Older Events ({remainingCount} remaining)
             </button>
           </div>
         )}

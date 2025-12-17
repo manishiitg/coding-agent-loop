@@ -49,3 +49,9 @@ h) check if external package is even required
 
 21. see how we can integrate learning locking and make it more automatic
 22. we should have a human notification tool also.
+
+23.. in basic event we should show the user message also
+
+24. learn skills?
+
+25. if we store learninvs via step id, we don't need to worry about moving steps, etc.

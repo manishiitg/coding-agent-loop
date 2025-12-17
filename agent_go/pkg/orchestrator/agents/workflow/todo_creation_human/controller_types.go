@@ -29,11 +29,15 @@ type OrchestrationRoute struct {
 
 // OrchestrationResponse represents the structured output from orchestration evaluation
 type OrchestrationResponse struct {
-	SelectedRouteID                     string `json:"selected_route_id"`                       // Which route was selected
-	Reasoning                           string `json:"reasoning"`                               // Why this route was chosen
-	SuccessCriteriaMet                  bool   `json:"success_criteria_met"`                    // Whether main orchestrator's success criteria is met
-	SuccessReasoning                    string `json:"success_reasoning,omitempty"`             // Reasoning for success criteria evaluation
-	SuccessCriteriaVerifiedByValidation bool   `json:"success_criteria_verified_by_validation"` // Whether validation confirmed success criteria is met
+	SelectedRouteID                     string `json:"selected_route_id"`                            // Which route was selected
+	Reasoning                           string `json:"reasoning"`                                    // Why this route was chosen
+	SuccessCriteriaMet                  bool   `json:"success_criteria_met"`                         // Whether main orchestrator's success criteria is met
+	SuccessReasoning                    string `json:"success_reasoning,omitempty"`                  // Reasoning for success criteria evaluation
+	SuccessCriteriaVerifiedByValidation bool   `json:"success_criteria_verified_by_validation"`      // Whether validation confirmed success criteria is met
+	InstructionsToSubAgent              string `json:"instructions_to_sub_agent,omitempty"`          // Instructions to pass to the selected sub-agent (replaces step description, required if selected_route_id is provided)
+	SuccessCriteriaForSubAgent          string `json:"success_criteria_for_sub_agent,omitempty"`     // Success criteria to pass to the selected sub-agent (replaces step success criteria, required if selected_route_id is provided)
+	ContextDependenciesForSubAgent      string `json:"context_dependencies_for_sub_agent,omitempty"` // Context dependencies to pass to the selected sub-agent (replaces step context dependencies, optional)
+	ContextOutputForSubAgent            string `json:"context_output_for_sub_agent,omitempty"`       // Context output file name to pass to the selected sub-agent (replaces step context output, optional)
 }
 
 // OrchestrationStepProgress tracks orchestration step execution progress
@@ -185,13 +189,12 @@ type TodoStep struct {
 	DecisionReason             string            `json:"decision_reason,omitempty"`              // runtime: stores evaluation reasoning (backward compatibility)
 	DecisionResponse           *DecisionResponse `json:"decision_response,omitempty"`            // runtime: stores structured decision evaluation response
 	// Orchestration step fields (orchestrator with multiple sub-agents)
-	HasOrchestrationStep            bool                   `json:"has_orchestration_step,omitempty"`            // true if step is an orchestration orchestrator
-	OrchestrationStep               *TodoStep              `json:"orchestration_step,omitempty"`                // The main orchestrator step to execute
-	OrchestrationEvaluationQuestion string                 `json:"orchestration_evaluation_question,omitempty"` // Question to evaluate orchestration step output
-	OrchestrationRoutes             []OrchestrationRoute   `json:"orchestration_routes,omitempty"`              // Array of possible routes with conditions
-	OrchestrationResponse           *OrchestrationResponse `json:"orchestration_response,omitempty"`            // runtime: stores selected route and success evaluation
-	NextStepID                      string                 `json:"next_step_id,omitempty"`                      // ID of step after orchestration completes (or "end")
-	AgentConfigs                    *AgentConfigs          `json:"agent_configs,omitempty"`                     // per-agent configuration (LLM, max turns, toggles)
+	HasOrchestrationStep  bool                   `json:"has_orchestration_step,omitempty"` // true if step is an orchestration orchestrator
+	OrchestrationStep     *TodoStep              `json:"orchestration_step,omitempty"`     // The main orchestrator step to execute
+	OrchestrationRoutes   []OrchestrationRoute   `json:"orchestration_routes,omitempty"`   // Array of possible routes with conditions
+	OrchestrationResponse *OrchestrationResponse `json:"orchestration_response,omitempty"` // runtime: stores selected route and success evaluation
+	NextStepID            string                 `json:"next_step_id,omitempty"`           // ID of step after orchestration completes (or "end")
+	AgentConfigs          *AgentConfigs          `json:"agent_configs,omitempty"`          // per-agent configuration (LLM, max turns, toggles)
 }
 
 // TodoStepsExtractedEvent represents the event when todo steps are extracted from a plan

@@ -72,23 +72,23 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
-  const { id, title, routing_evaluation_question, routing_step, routing_routes, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun, workspacePath, selectedRunFolder } = data
+  const { id, title, orchestration_step, orchestration_routes, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun, workspacePath, selectedRunFolder } = data
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
   
-  // Extract description and success criteria from step and routing_step
+  // Extract description and success criteria from step and orchestration_step
   const routingDescription = step?.description
   const routingSuccessCriteria = step?.success_criteria
-  const mainStepDescription = routing_step?.description
-  const mainStepSuccessCriteria = routing_step?.success_criteria
+  const mainStepDescription = orchestration_step?.description
+  const mainStepSuccessCriteria = orchestration_step?.success_criteria
 
-  // Context inputs and outputs from the MAIN STEP (routing_step) - this is what actually executes
-  const contextInputs = useMemo(() => routing_step?.context_dependencies || [], [routing_step?.context_dependencies])
+  // Context inputs and outputs from the MAIN STEP (orchestration_step) - this is what actually executes
+  const contextInputs = useMemo(() => orchestration_step?.context_dependencies || [], [orchestration_step?.context_dependencies])
   const contextOutputs = useMemo(() => {
-    const output = routing_step?.context_output
+    const output = orchestration_step?.context_output
     if (!output) return []
     return Array.isArray(output) ? output : [output]
-  }, [routing_step?.context_output])
+  }, [orchestration_step?.context_output])
   const hasContext = contextInputs.length > 0 || contextOutputs.length > 0
 
   // Get preset for config badges
@@ -392,15 +392,10 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
     let height = 120 // Base height
     if (routingDescription) height += 30
     if (routingSuccessCriteria) height += 50
-    if (routing_step) height += 40
+    if (orchestration_step) height += 40
     if (hasContext) height += 40
-    // Add height for routing routes section (with conditions)
-    if (routing_routes && routing_routes.length > 0) {
-      // Each route takes ~60px (route name + condition text)
-      height += 30 + (routing_routes.length * 60) // Header + routes
-    }
     return Math.max(height, 200) // Minimum height
-  }, [routing_step, routingDescription, routingSuccessCriteria, routing_routes, hasContext])
+  }, [orchestration_step, routingDescription, routingSuccessCriteria, hasContext])
 
   return (
     <div className={`relative w-[360px] ${changeType ? changeHighlightStyles[changeType] : ''}`}>
@@ -481,10 +476,10 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
         )}
       </div>
 
-      {/* Routing Badge - Top */}
+      {/* Orchestrator Badge - Top */}
       <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-600 dark:bg-blue-700 text-white text-[11px] font-semibold shadow-lg">
         <GitBranch className="w-3.5 h-3.5" />
-        <span>Routing</span>
+        <span>Orchestrator</span>
       </div>
 
       {/* Change badge */}
@@ -522,7 +517,7 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
             {statusIcons[status]}
           </div>
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white leading-tight text-center mb-1.5">
-            {title || `Routing ${stepIndex + 1}`}
+            {title || `Orchestrator ${stepIndex + 1}`}
           </h3>
           
           {/* Routing step description (main step) */}
@@ -543,30 +538,41 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
           )}
           
           {/* Main orchestrator step info */}
-          {routing_step && (
+          {orchestration_step && (
             <div className="mt-1.5 p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700/60">
               <p className="text-[10px] text-gray-700 dark:text-gray-300 font-semibold mb-1.5">
-                Orchestrator: {routing_step.title || 'Untitled Step'}
+                Orchestrator: {orchestration_step.title || 'Untitled Step'}
               </p>
-              {/* Main step description */}
-              {mainStepDescription && (
+              {/* Main step description - REQUIRED */}
+              {mainStepDescription ? (
                 <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-relaxed">
                   {mainStepDescription}
                 </p>
+              ) : (
+                <p className="text-[10px] text-red-600 dark:text-red-400 italic">
+                  ⚠️ Description is required
+                </p>
               )}
-              {/* Main step success criteria */}
-              {mainStepSuccessCriteria && (
+              {/* Main step success criteria - REQUIRED */}
+              {mainStepSuccessCriteria ? (
                 <div className="flex gap-1.5 mt-2 p-2 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50">
                   <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0 mt-0.5" />
                   <p className="text-[10px] text-green-700 dark:text-green-300 leading-relaxed">
                     {mainStepSuccessCriteria}
                   </p>
                 </div>
+              ) : (
+                <div className="flex gap-1.5 mt-2 p-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50">
+                  <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-red-700 dark:text-red-300 leading-relaxed italic">
+                    ⚠️ Success criteria is required
+                  </p>
+                </div>
               )}
             </div>
           )}
 
-          {/* Context Files - from main step (routing_step) */}
+          {/* Context Files - from main step (orchestration_step) */}
           {hasContext && (
             <div className="space-y-1.5 mt-2">
               {contextInputs.length > 0 && (
@@ -619,36 +625,12 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
               )}
             </div>
           )}
-
-          {/* Routing Routes with Conditions */}
-          {routing_routes && routing_routes.length > 0 && (
-            <div className="mt-3 space-y-2">
-              <p className="text-[10px] text-gray-700 dark:text-gray-300 font-semibold mb-1.5">
-                Routes:
-              </p>
-              {routing_routes.map((route) => (
-                <div 
-                  key={route.route_id}
-                  className="p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50"
-                >
-                  <p className="text-[10px] text-gray-700 dark:text-gray-300 font-semibold mb-1">
-                    {route.route_name || route.route_id}
-                  </p>
-                  {route.condition && (
-                    <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-relaxed">
-                      {route.condition}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
         {/* Output handles - one for each route (or single handle if no routes) */}
-        {routing_routes && routing_routes.length > 0 ? (
-          routing_routes.map((route, index) => {
-            const totalRoutes = routing_routes.length
+        {orchestration_routes && orchestration_routes.length > 0 ? (
+          orchestration_routes.map((route, index) => {
+            const totalRoutes = orchestration_routes.length
             const positionPercent = totalRoutes === 1 
               ? 50 
               : 20 + (index * (60 / (totalRoutes - 1))) // Distribute handles from 20% to 80%
@@ -672,15 +654,6 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
           />
         )}
       </div>
-
-      {/* Evaluation Question below the card */}
-      {routing_evaluation_question && (
-        <div className="mt-3 mx-4">
-          <p className="text-[11px] text-gray-600 dark:text-gray-400 text-center leading-relaxed p-3 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700">
-            {routing_evaluation_question}
-          </p>
-        </div>
-      )}
 
       {/* Config Footer */}
       <div className="mt-2 mx-4">

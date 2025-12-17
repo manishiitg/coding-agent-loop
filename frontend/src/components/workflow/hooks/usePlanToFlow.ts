@@ -86,9 +86,8 @@ export interface LoopNodeData extends Record<string, unknown> {
 export interface RoutingNodeData extends Record<string, unknown> {
   id: string
   title: string
-  routing_evaluation_question?: string
-  routing_step?: PlanStep
-  routing_routes?: Array<{ route_id: string; route_name: string; condition: string; sub_agent_step: PlanStep; context_to_pass?: string }>
+  orchestration_step?: PlanStep
+  orchestration_routes?: Array<{ route_id: string; route_name: string; condition: string; sub_agent_step: PlanStep; context_to_pass?: string }>
   status: 'pending' | 'executing' | 'evaluating' | 'routing' | 'completed'
   stepIndex: number
   step: PlanStep
@@ -407,9 +406,9 @@ function stepToNode(
       // For decision nodes, prefer decision_evaluation_question over generic title
       return step.title || step.decision_evaluation_question || `Decision ${stepIndex + 1}`
     }
-    if (step.has_routing_step) {
-      // For routing nodes, prefer routing_evaluation_question over generic title
-      return step.title || step.routing_evaluation_question || `Routing ${stepIndex + 1}`
+    if (step.has_orchestration_step) {
+      // For orchestration nodes, use step title or fallback
+      return step.title || `Orchestrator ${stepIndex + 1}`
     }
     // For regular steps, use step.title or fallback
     // For nested branch steps, use a more descriptive fallback
@@ -461,16 +460,15 @@ function stepToNode(
     }
   }
 
-  if (step.has_routing_step) {
+  if (step.has_orchestration_step) {
     return {
       id: nodeId,
       type: 'routing',
       position: { x: 0, y: 0 },
       data: {
         ...baseData,
-        routing_evaluation_question: step.routing_evaluation_question,
-        routing_step: step.routing_step,
-        routing_routes: step.routing_routes
+        orchestration_step: step.orchestration_step,
+        orchestration_routes: step.orchestration_routes
         // Note: status is inherited from baseData (computed based on completedStepIndices)
       } as RoutingNodeData
     }
@@ -1125,16 +1123,16 @@ function processSteps(
     // Routing steps execute a main orchestrator step, then route to sub-agents based on evaluation
     // After sub-agents complete, they return to the main orchestrator for re-evaluation
     // The routing step connects to next_step_id when success criteria is met
-    if (step.has_routing_step) {
+    if (step.has_orchestration_step) {
       const routingEdges: WorkflowEdge[] = []
       const routingSubAgentNodes: WorkflowNode[] = []
       
       // Use learning/evaluation node as source if it exists, otherwise use routing node
       const sourceNodeId = (typeof lastExitNodeId === 'string' ? lastExitNodeId : node.id)
       
-      // Create nodes for sub-agents (private to routing step)
-      if (step.routing_routes && step.routing_routes.length > 0) {
-        step.routing_routes.forEach((route) => {
+      // Create nodes for sub-agents (private to orchestration step)
+      if (step.orchestration_routes && step.orchestration_routes.length > 0) {
+        step.orchestration_routes.forEach((route) => {
           if (route.sub_agent_step) {
             const subAgentNodeId = `${node.id}-sub-agent-${route.route_id}`
             

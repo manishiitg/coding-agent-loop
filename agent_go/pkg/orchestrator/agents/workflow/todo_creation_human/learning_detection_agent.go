@@ -50,7 +50,6 @@ func (hctplda *HumanControlledTodoPlannerLearningDetectionAgent) ExecuteStructur
 	stepSuccessCriteria := templateVars["StepSuccessCriteria"]
 	stepContextDependencies := templateVars["StepContextDependencies"]
 	stepContextOutput := templateVars["StepContextOutput"]
-	taskObjective := templateVars["TaskObjective"]
 
 	// Build schema for structured output
 	schema := `{
@@ -75,10 +74,10 @@ func (hctplda *HumanControlledTodoPlannerLearningDetectionAgent) ExecuteStructur
 	}`
 
 	// Build system prompt with task context
-	systemPrompt := hctplda.buildSystemPrompt(stepTitle, stepDescription, stepSuccessCriteria, stepContextDependencies, stepContextOutput, taskObjective)
+	systemPrompt := hctplda.buildSystemPrompt(stepTitle, stepDescription, stepSuccessCriteria, stepContextDependencies, stepContextOutput)
 
 	// Build user message with task context
-	userMessage := hctplda.buildUserMessage(previousLearningsContent, currentLearningsContent, stepTitle, stepDescription, stepSuccessCriteria, stepContextDependencies, stepContextOutput, taskObjective)
+	userMessage := hctplda.buildUserMessage(previousLearningsContent, currentLearningsContent, stepTitle, stepDescription, stepSuccessCriteria, stepContextDependencies, stepContextOutput)
 
 	// Create input processor that returns the user message
 	inputProcessor := func(map[string]string) string {
@@ -105,7 +104,7 @@ func (hctplda *HumanControlledTodoPlannerLearningDetectionAgent) ExecuteStructur
 }
 
 // buildSystemPrompt builds the system prompt for learning detection with task context
-func (hctplda *HumanControlledTodoPlannerLearningDetectionAgent) buildSystemPrompt(stepTitle, stepDescription, stepSuccessCriteria, stepContextDependencies, stepContextOutput, taskObjective string) string {
+func (hctplda *HumanControlledTodoPlannerLearningDetectionAgent) buildSystemPrompt(stepTitle, stepDescription, stepSuccessCriteria, stepContextDependencies, stepContextOutput string) string {
 	return fmt.Sprintf(`# Learning Detection Agent
 
 You are an expert learning detection agent specialized in analyzing learning content to determine if genuinely new knowledge was generated AND if it helps with task execution.
@@ -157,8 +156,6 @@ Return **false** if you see:
 
 ## 🎯 TASK CONTEXT
 
-**Overall Objective**: %s
-
 **Step Title**: %s
 **Step Description**: %s
 **Success Criteria**: %s
@@ -185,26 +182,18 @@ You MUST return structured JSON with:
 - **reasoning**: string - Detailed explanation that addresses BOTH: (1) whether new content exists, and (2) whether it helps with the step's task. Reference the step's title, description, and success criteria.
 - **confidence**: float (0.0-1.0) - Your confidence in the detection
 
-Focus on semantic differences AND task relevance, not just text changes.`, taskObjective, stepTitle, stepDescription, stepSuccessCriteria, stepContextDependencies, stepContextOutput)
+Focus on semantic differences AND task relevance, not just text changes.`, stepTitle, stepDescription, stepSuccessCriteria, stepContextDependencies, stepContextOutput)
 }
 
 // buildUserMessage builds the user message with old and new learning content and task context
 // Parameters contain the actual combined content of all learning files, not file paths
-func (hctplda *HumanControlledTodoPlannerLearningDetectionAgent) buildUserMessage(previousLearningsContent, currentLearningsContent, stepTitle, stepDescription, stepSuccessCriteria, stepContextDependencies, stepContextOutput, taskObjective string) string {
+func (hctplda *HumanControlledTodoPlannerLearningDetectionAgent) buildUserMessage(previousLearningsContent, currentLearningsContent, stepTitle, stepDescription, stepSuccessCriteria, stepContextDependencies, stepContextOutput string) string {
 	var builder strings.Builder
 
 	builder.WriteString("Compare the following learning content to determine if new learning occurred that helps with task execution:\n\n")
 
 	// Add task context first so agent understands what to evaluate against
 	builder.WriteString("## TASK CONTEXT\n\n")
-	builder.WriteString("**Overall Objective**: ")
-	if taskObjective != "" {
-		builder.WriteString(taskObjective)
-	} else {
-		builder.WriteString("(Not provided)")
-	}
-	builder.WriteString("\n\n")
-
 	builder.WriteString("**Step Title**: ")
 	if stepTitle != "" {
 		builder.WriteString(stepTitle)

@@ -10,6 +10,9 @@ import (
 
 // executeConditionalStep executes a conditional step by evaluating the condition and executing the chosen branch
 // depth: current nesting depth (0 = main plan, 1 = first level conditional, 2 = second level conditional)
+//
+// NOTE: This function works with TodoStep which uses boolean flags (has_condition).
+// The step type is already validated by the main execution loop before calling this function.
 func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 	ctx context.Context,
 	step TodoStep,
@@ -86,35 +89,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 	hcpo.GetLogger().Info(fmt.Sprintf("📋 Condition context length: %d characters (only last execution output)", len(conditionContext)))
 
 	// Read learnings separately (passed as separate learningHistory variable, not in conditionContext)
-	stepNumber := stepIndex + 1 // Convert to 1-based
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	stepLearningsPath := fmt.Sprintf("%s/learnings/step-%d", baseWorkspacePath, stepNumber)
-
-	// Check if learnings folder exists and has files
-	learningsFolderEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepNumber)
-	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check if step learnings folder is empty for step %d: %v, proceeding without learnings", stepNumber, err))
-	}
-
-	learningHistory := ""
-	if !learningsFolderEmpty {
-		// Read learning files from step folder
-		learningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning files from %s: %v - will proceed without learnings", stepLearningsPath, err))
-			learningHistory = ""
-		} else if len(learningFiles) > 0 {
-			// Format learnings for system prompt (separate from conditionContext)
-			formattedLearnings, _ := hcpo.formatStepLearningFilesAsHistory(learningFiles)
-			learningHistory = formattedLearnings
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Loaded %d learning file(s) for conditional agent system prompt (separate from conditionContext)", len(learningFiles)))
-		} else {
-			learningHistory = ""
-		}
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("📁 Step %d learnings folder is empty or does not exist: %s (proceeding without learnings)", stepNumber, stepLearningsPath))
-		learningHistory = ""
-	}
+	learningHistory, _ := hcpo.LoadStepLearningHistory(ctx, step.ID, stepIndex, conditionalStepPath, "conditional")
 
 	// Determine code execution mode: Priority: step config > orchestrator default
 	var isCodeExecutionMode bool
@@ -307,6 +282,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 			copy(combinedBranchContextFiles, branchContextFiles)
 			combinedBranchContextFiles = append(combinedBranchContextFiles, previousBranchContextFiles...)
 
+			// Match branch step's own step config from step_config.json (mandatory - no inheritance from parent)
+			_ = ApplyStepConfigFromFile(ctx, &branchStep, hcpo)
+			// Ignore error - use defaults if config loading fails
+
 			branchExecutionResult, updatedBranchContextFiles, err := hcpo.executeSingleStep(
 				ctx,
 				branchStep,
@@ -342,6 +321,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 
 			// Update context files with branch step's output (for executeSingleStep context dependencies)
 			branchContextFiles = updatedBranchContextFiles
+
+			// Check if branch step signaled early workflow termination
+			// Branch steps can signal termination by including "WORKFLOW_END" or "END_WORKFLOW" in their output
+			branchOutputUpper := strings.ToUpper(branchExecutionResult)
+			if strings.Contains(branchOutputUpper, "WORKFLOW_END") || strings.Contains(branchOutputUpper, "END_WORKFLOW") {
+				hcpo.GetLogger().Info(fmt.Sprintf("🏁 Branch step '%s' signaled workflow termination - ending workflow early", branchStep.Title))
+				// Return a special error that the caller can detect to signal termination
+				return fmt.Errorf("WORKFLOW_END: branch step '%s' signaled workflow termination", branchStep.Title)
+			}
 
 			// Track execution result for use by subsequent conditional steps
 			branchExecutionResults = append(branchExecutionResults, branchExecutionResult)

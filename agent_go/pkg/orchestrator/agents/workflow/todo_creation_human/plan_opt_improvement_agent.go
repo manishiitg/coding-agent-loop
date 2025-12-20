@@ -107,7 +107,7 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 
 	// Step-specific learnings are always enabled - folders are at workspace root
 	// The learningsPath already covers these since they're under learnings/
-	pim.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings enabled - agent can access step-specific folders in learnings/step-*/ (covered by learnings/ read/write path)"))
+	pim.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings enabled - agent can access step-specific folders in learnings/{step_id}/ (covered by learnings/ read/write path)"))
 
 	// Write paths: learnings folder for updating learnings, plan modifications via custom tools
 	// Plan modifications are done via custom tools (not workspace tools), and the tool executors handle file writing directly
@@ -259,7 +259,7 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, orig
 	// Create execution results summary based on the selected run folder.
 	// Execution/logs live under runs/<run>/..., while plan/learnings are at workspace root.
 	executionResultsSummary := fmt.Sprintf(
-		"Workspace root: %s\nSelected run folder: %s\n\nRun folder contains:\n- %s/execution/ - step execution outputs\n- %s/logs/ - validation and execution logs\n\nUse list_workspace_files to explore:\n- Execution result files in %s/execution/\n- Detailed logs in %s/logs/step-X/ including:\n  * validation-{N}.json - validation responses for each validation attempt\n  * execution/execution-attempt-{N}-iteration-{M}.json - execution results with retry/loop information\n  * execution/execution-attempt-{N}-iteration-{M}-conversation.json - full conversation history for each execution attempt\n\nLearnings are stored at workspace root:\n- learnings/\n- learnings/step-X/ (and branch folders like learnings/step-3-true-0/)\n\nPlan is stored at:\n- planning/plan.json",
+		"Workspace root: %s\nSelected run folder: %s\n\nRun folder contains:\n- %s/execution/ - step execution outputs\n- %s/logs/ - validation and execution logs\n\nUse list_workspace_files to explore:\n- Execution result files in %s/execution/\n- Detailed logs in %s/logs/step-X/ including:\n  * validation-{N}.json - validation responses for each validation attempt\n  * execution/execution-attempt-{N}-iteration-{M}.json - execution results with retry/loop information\n  * execution/execution-attempt-{N}-iteration-{M}-conversation.json - full conversation history for each execution attempt\n\nLearnings are stored at workspace root:\n- learnings/\n- learnings/{step_id}/ (regular steps, using step IDs from plan.json)\n- learnings/{step_id}/ (branch steps, using step IDs from plan.json where step_id is the branch step's own ID)\n- learnings/{step_id}/ (orchestration sub-agents, using step IDs from plan.json where step_id is the sub-agent's own ID)\n\nPlan is stored at:\n- planning/plan.json",
 		originalWorkspacePath,
 		validatedRunPath,
 		validatedRunPath,
@@ -422,9 +422,14 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 	workspacePath := templateVars["WorkspacePath"]
 	planJSON := templateVars["PlanJSON"]
 	executionResultsSummary := templateVars["ExecutionResultsSummary"]
-	validatedRunPath := templateVars["ValidatedRunPath"]
 	runPathRelative := templateVars["RunPathRelative"]
+	validatedRunPath := templateVars["ValidatedRunPath"]
 	runWorkspacePath := templateVars["RunWorkspacePath"]
+
+	// runPathRelative is required for correct log/execution context; fail fast if missing
+	if strings.TrimSpace(runPathRelative) == "" {
+		return "", nil, fmt.Errorf("RunPathRelative is required for plan improvement but was empty")
+	}
 
 	// Provide default allowed paths if not present
 	allowedPaths := templateVars["AllowedPaths"]
@@ -693,384 +698,190 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) planImprovementSyst
 	runPathRelative := templateVars["RunPathRelative"]
 	runWorkspacePath := templateVars["RunWorkspacePath"]
 
-	learningsLocationNote := `
-## LEARNING FILES LOCATION
-
-When step-specific learnings are enabled, learning files are stored in step-specific folders:
-- Shared learnings: {WorkspacePath}/learnings/
-- Regular step learnings: {WorkspacePath}/learnings/step-{X}/
-- Branch step learnings: {WorkspacePath}/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (e.g., step-3-true-0/, step-3-false-1/)
-
-Check BOTH shared and step-specific folders (including branch step folders) when analyzing learnings. Use list_workspace_files to discover all step-specific folders recursively.
-
-## WHAT ARE LEARNINGS?
-
-**Learnings are hints and best practices** extracted from previous step executions:
-- **Purpose**: Learnings provide guidance to the execution agent (LLM) on how to execute a step
-- **Content**: They contain patterns, approaches, code snippets, and lessons learned from past executions
-- **Usage**: The execution agent reads learnings before executing a step to understand:
-  - What worked well in previous attempts
-  - Common patterns or approaches that succeeded
-  - Code snippets or commands that were effective
-  - Best practices discovered through execution
-- **Not executable code**: Learnings are reference material, not scripts that run automatically
-- **When analyzing learnings**: Consider whether the learnings align with the current plan steps and if they provide useful guidance for execution
-
-## LEARNINGS FOLDER STRUCTURE (EXECUTION MODE DEPENDENT)
-
-**Learnings folder structure depends on execution mode** (Simple Mode vs Code Execution Mode):
-
-### Simple Mode (MCP tools only):
-- **Markdown files**: learnings/step-{X}/*.md - Tool patterns and workflows
-- **Python scripts**: learnings/step-{X}/scripts/*.py - Python scripts that worked
-- **Shared learnings**: learnings/*.md and learnings/scripts/*.py
-
-### Code Execution Mode (MCP tools + Go code):
-- **Markdown files**: learnings/step-{X}/*.md - Tool patterns and workflows
-- **Go code**: learnings/step-{X}/code/*.go - Go code patterns that worked
-- **Shared learnings**: learnings/*.md and learnings/code/*.go
-
-**How to determine execution mode**:
-- Check conversation history in logs/step-X/execution/execution-attempt-{N}-iteration-{M}-conversation.json
-- If write_code tool was called → Code Execution Mode (look in code/ subfolder)
-- If no write_code tool calls → Simple Mode (look in scripts/ subfolder for Python scripts)
-
-**When analyzing learnings**:
-- Check both .md files (always present) AND the appropriate code folder (scripts/ or code/) based on execution mode
-- If unsure which mode was used, check conversation history first to determine which subfolder to examine
-`
-
-	validatedRunPath := templateVars["ValidatedRunPath"]
-	runPathNote := ""
-	if runPathRelative != "" || runWorkspacePath != "" || validatedRunPath != "" {
-		// Prefer the explicit runPathRelative if provided.
-		runPath := runPathRelative
-		if runPath == "" {
-			runPath = validatedRunPath
-		}
-		runPathNote = fmt.Sprintf(`
+	runPathNote := fmt.Sprintf(`
 ## VALIDATED RUN PATH
 The user has specified the run path to analyze: **%s**
 Execution results and logs are under: **%s/execution/** and **%s/logs/** (relative to workspace root)
 Run workspace absolute path: **%s**
-`, runPath, runPath, runPath, runWorkspacePath)
-	}
+`, runPathRelative, runPathRelative, runPathRelative, runWorkspacePath)
 
 	return `# Plan Improvement Agent
 
-## PURPOSE
-Analyze plan.json, execution results, and logs to improve the plan. You can update plan.json directly using plan modification tools, and update learnings files using write_workspace_file, but **ALWAYS get user confirmation via human_feedback FIRST** before making any changes.` + runPathNote + `
+Analyze execution results and logs to identify and fix plan issues. Update plan.json directly after user confirmation.` + runPathNote + `
 
-## CRITICAL RULE: ALWAYS CONFIRM BEFORE UPDATING
-**⚠️ YOU MUST USE human_feedback FIRST before making any plan changes**
-- ALWAYS use human_feedback tool FIRST to describe proposed changes and get user approval
-- Only after user approval, use plan modification tools to update plan.json
-- Never call plan modification tools without first getting confirmation via human_feedback
+---
 
-## FIRST ACTION (MANDATORY)
-Use 'human_feedback' to ask: "What would you like to improve in the plan?"
-**WAIT** for response before doing anything else.
+## ⚠️ CRITICAL RULES
 
-## MANDATORY EVIDENCE GATHERING (BEFORE ANY CONCLUSIONS)
-Before you answer questions or propose plan changes, you MUST gather evidence by reading files:
-1. Read the current plan: **planning/plan.json**
-2. Read at least one execution output from: **` + func() string {
-		if runPathRelative != "" {
-			return runPathRelative + `/execution/`
-		}
-		if validatedRunPath != "" {
-			return validatedRunPath + `/execution/`
-		}
-		return "runs/{iteration}/execution/"
-	}() + `**
-3. Read at least one validation log from: **` + func() string {
-		if runPathRelative != "" {
-			return runPathRelative + `/logs/step-X/validation-{N}.json`
-		}
-		if validatedRunPath != "" {
-			return validatedRunPath + `/logs/step-X/validation-{N}.json`
-		}
-		return "runs/{iteration}/logs/step-X/validation-{N}.json"
-	}() + `**
-4. If analyzing decision steps, read: **` + func() string {
-		if runPathRelative != "" {
-			return runPathRelative + `/logs/step-X/decision-evaluation.json`
-		}
-		if validatedRunPath != "" {
-			return validatedRunPath + `/logs/step-X/decision-evaluation.json`
-		}
-		return "runs/{iteration}/logs/step-X/decision-evaluation.json"
-	}() + `** (contains decision routing logic)
-5. If analyzing routing steps, read: **` + func() string {
-		if runPathRelative != "" {
-			return runPathRelative + `/logs/step-X/routing-evaluation.json`
-		}
-		if validatedRunPath != "" {
-			return validatedRunPath + `/logs/step-X/routing-evaluation.json`
-		}
-		return "runs/{iteration}/logs/step-X/routing-evaluation.json"
-	}() + `** (contains routing decisions and sub-agent selections)
-6. Read at least one learnings file from **learnings/** (shared) or **learnings/step-X/** (step-specific)
-   - Check conversation history to determine execution mode (see "LEARNINGS FOLDER STRUCTURE" section above)
-   - Read appropriate files based on mode: .md files (always) + code/*.go (Code Execution Mode) or scripts/*.py (Simple Mode)
+| Rule | Description |
+|------|-------------|
+| **1. Confirm First** | ALWAYS use human_feedback BEFORE any plan changes |
+| **2. Start with Question** | First action: Ask "What would you like to improve?" via human_feedback |
+| **3. Gather Evidence** | Read files BEFORE proposing changes (plan, logs, execution results, learnings) |
+| **4. File-Verifiable Criteria** | Success criteria must be file-verifiable AND evidence-based (counts, lists, samples), not just status flags or external state |
+| **5. Evidence-Based Criteria** | Avoid status-only criteria like 'status: \"success\"' or 'all checks passed' as the sole requirement – they can be gamed by flipping a flag. Require concrete evidence that is hard to fake. |
 
-When you respond, include a short **Files inspected** list (paths only).
+---
 
-## WORKFLOW
-1. **Ask User** → Use human_feedback first to understand what needs improvement
-2. **Analyze** → Review plan structure, execution results, and detailed logs` + func() string {
-		if runPathRelative != "" {
-			return fmt.Sprintf(`
-   - **Run Path**: %s/ (validated and confirmed by user)
-   - **Execution Results**: Check %s/execution/ for step execution outputs
-   - **Validation Logs**: Check %s/logs/step-X/validation-{N}.json for validation responses (numbered for multiple validation attempts)
-   - **Execution Logs**: Check %s/logs/step-X/execution/ for detailed execution results and conversation history
-   - **Decision Steps**: Check %s/logs/step-X/decision-evaluation.json for decision routing logic and %s/logs/step-X/execution/decision-inner-step.json for inner step execution
-   - **Logs Structure**: Each step has logs/step-X/ folder containing validation and execution logs with attempt/iteration numbers`, validatedRunPath, validatedRunPath, validatedRunPath, validatedRunPath, validatedRunPath, validatedRunPath)
-		}
-		if validatedRunPath != "" {
-			return fmt.Sprintf(`
-   - **Run Path**: %s/ (validated and confirmed by user)
-   - **Execution Results**: Check %s/execution/ for step execution outputs
-   - **Validation Logs**: Check %s/logs/step-X/validation-{N}.json for validation responses (numbered for multiple validation attempts)
-   - **Execution Logs**: Check %s/logs/step-X/execution/ for detailed execution results and conversation history
-   - **Decision Steps**: Check %s/logs/step-X/decision-evaluation.json for decision routing logic and %s/logs/step-X/execution/decision-inner-step.json for inner step execution
-   - **Logs Structure**: Each step has logs/step-X/ folder containing validation and execution logs with attempt/iteration numbers`, validatedRunPath, validatedRunPath, validatedRunPath, validatedRunPath, validatedRunPath, validatedRunPath)
-		}
-		return `
-   - **Execution Results**: Check runs/{iteration}/execution/ for step execution outputs
-   - **Validation Logs**: Check runs/{iteration}/logs/step-X/validation-{N}.json for validation responses (numbered for multiple validation attempts)
-   - **Execution Logs**: Check runs/{iteration}/logs/step-X/execution/ for detailed execution results and conversation history
-   - **Decision Steps**: Check runs/{iteration}/logs/step-X/decision-evaluation.json for decision routing logic and runs/{iteration}/logs/step-X/execution/decision-inner-step.json for inner step execution
-   - **Routing Steps**: Check runs/{iteration}/logs/step-X/routing-evaluation.json for routing decisions and runs/{iteration}/logs/step-X/execution/routing-main-step.json for main orchestrator execution
-   - **Logs Structure**: Each step has logs/step-X/ folder containing validation and execution logs with attempt/iteration numbers`
-	}() + learningsLocationNote + `
-3. **Propose Changes** → Use human_feedback to describe proposed modifications:
-   - What should be changed (step ID, description, success criteria, learnings, etc.)
-   - Why it should be changed (based on execution results/logs)
-   - How it should be changed (specific modifications needed)
-4. **Interpret Response** → User approval ("yes", "go ahead") = proceed with plan modification tools; Questions = answer; Rejection = adjust
-5. **Update Plan & Learnings** → After approval:
-   - Use plan modification tools to update plan.json directly
-   - Use write_workspace_file to update learnings files if needed
+## 📋 EVIDENCE CHECKLIST
+Before proposing changes, read:
+1. ✅ Current plan: planning/plan.json
+2. ✅ Execution outputs: ` + runPathRelative + `/execution/
+3. ✅ Validation logs: ` + runPathRelative + `/logs/step-X/validation-N.json
+4. ✅ Learnings (shared + step-specific): learnings/ and learnings/{step_id}/
 
-## AVAILABLE TOOLS
+Include **Files inspected:** list in responses.
 
+---
+
+## 🧩 HOW TO ANALYZE AND IMPROVE PLANS
+
+### 1. Root Cause Analysis
+- **Don't treat symptoms**: If step 5 fails validation, check if steps 1-4 produced correct outputs
+- **Trace backwards**: Failed verification → check what was verified → check what produced the data
+- **Check assumptions**: Does step description match what actually happened in logs?
+
+### 2. Common Issues to Check
+
+| Issue | Where to Look | Fix |
+|-------|---------------|-----|
+| **Weak success criteria** | Compare criteria to validation logs | Make file-verifiable with specific content checks |
+| **Missing verification** | Check if critical operations are verified | Add verification step + decision routing |
+| **Wrong step sequence** | Review context_dependencies and execution order | Reorder steps, fix dependencies |
+| **Incomplete descriptions** | Compare step description to conversation history | Add missing details execution agent needs |
+| **Outdated learnings** | Check learnings vs current execution patterns | Update or remove obsolete guidance |
+
+### 3. Decision Step Analysis
+For decision steps that route incorrectly:
+- Read logs/step-X/decision-evaluation.json - see what LLM decided and why
+- Check decision_evaluation_question - does it force re-verification from evidence?
+- Verify success_criteria encode **logical correctness**, not just "file exists"
+
+### 4. Validation Failures
+When validation fails repeatedly:
+- Read logs/step-X/validation-N.json for each attempt
+- Check if failure is due to:
+  - Weak success criteria (too vague)
+  - Wrong file reference (file name mismatch)
+  - Unrealistic criteria (requires external state validation agent can't check)
+
+### 5. Learnings Quality
+Good learnings are:
+- **Specific**: "Use jq '.items[] | select(.status == \"active\")'" not "filter the data"
+- **Contextual**: When to use approach X vs Y
+- **Current**: Reflect latest successful patterns, not outdated attempts
+
+---
+
+## 🔄 WORKFLOW
+
+| Step | Action |
+|------|--------|
+| **1. Ask User** | Use human_feedback: "What would you like to improve?" |
+| **2. Gather Evidence** | Read plan, logs, execution outputs, learnings (see checklist above) |
+| **3. Analyze** | Apply root cause analysis, identify issues |
+| **4. Propose** | Use human_feedback: describe what/why/how to change |
+| **5. Interpret** | "yes"/"ok" = proceed; questions = answer; "no" = adjust |
+| **6. Update** | After approval: use plan modification tools + write learnings |
+
+---
+
+## 🛠️ TOOLS
+
+### Workspace Tools
 | Tool | Purpose |
 |------|---------|
-| human_feedback | **REQUIRED FIRST** - Get user confirmation before making any plan changes |
-| read_workspace_file | Read files to analyze execution results and logs |
-| list_workspace_files | Explore folder structure to find execution results and logs |
-| write_workspace_file | Write/update files in learnings folder (for updating learnings based on analysis) |
+| human_feedback | **REQUIRED FIRST** - Get approval before plan changes |
+| read_workspace_file | Read logs, execution results, learnings |
+| list_workspace_files | Explore folder structure |
+| write_workspace_file | Update learnings files |
 
-## PLAN MODIFICATION TOOLS (USE AFTER CONFIRMATION)
-
-**These tools update plan.json immediately when called. Use them ONLY after getting user approval via human_feedback.**
-
-| Tool | Purpose |
+### Plan Modification Tools (After Approval Only)
+| Tool | Use For |
 |------|---------|
-| update_regular_step | Update a regular step (existing_step_id required) |
-| update_conditional_step | Update a conditional step (existing_step_id required) |
-| update_decision_step | Update a decision step (existing_step_id required) |
-| update_routing_step | Update a routing step (existing_step_id required) |
-| delete_plan_steps | Delete steps by ID |
-| add_regular_step | Add a regular execution step |
-| add_conditional_step | Add a conditional step with if/else branches |
-| add_decision_step | Add a decision step (execute step, then evaluate) |
-| add_routing_step | Add a routing step (orchestrator with multiple sub-agents) |
-| add_loop_step | Add a loop step (repeat until condition) |
+| update_regular_step, update_conditional_step, update_decision_step, update_routing_step | Update existing steps |
+| add_regular_step, add_conditional_step, add_decision_step, add_routing_step, add_loop_step | Add new steps |
+| delete_plan_steps | Remove steps |
+| convert_step_to_conditional, add_branch_steps, update_branch_steps, delete_branch_steps | Manage conditionals |
 
-**Conditional Tools**:
-| Tool | Purpose |
+### Response Interpretation
+| User Response | Your Action |
+|---------------|-------------|
+| "yes", "ok", "proceed" | Execute plan changes immediately |
+| Questions/clarifications | Answer conversationally, NO tool calls |
+| "no", "change X instead" | Revise proposal, ask again |
+| Unclear | Ask for clarification via human_feedback |
+
+---
+
+## 📊 LOGS STRUCTURE
+
+**Location**: ` + runPathRelative + `/logs/step-X/
+
+| File | Contains |
+|------|----------|
+| validation-N.json | Validation attempts and failures |
+| execution/execution-attempt-N-iteration-M.json | Execution results with retry info |
+| execution/execution-attempt-N-iteration-M-conversation.json | Full LLM conversation (tool calls, responses) |
+| decision-evaluation.json | Decision routing logic (for decision steps) |
+| routing-evaluation.json | Route selection reasoning (for routing steps) |
+
+---
+
+## ✅ SUCCESS CRITERIA RULES
+
+**CRITICAL**: Validation agent has NO MCP tools - only reads/lists files.
+
+### Anti-gaming principle
+The execution agent creates both the evidence and any status fields in the same files. If success criteria only checks for a status like 'status: \"success\"' or 'all checks passed', the agent can satisfy it by flipping flags without doing the real work.
+
+To avoid this, success criteria MUST:
+- Be file-verifiable, and
+- Require concrete evidence (counts, lists, data samples, consistency checks) that would be hard to fake.
+
+### Rules
+| Rule | Example |
 |------|---------|
-| convert_step_to_conditional | Add if/else branches (max 2 levels deep) |
-| add_branch_steps | Add steps to if_true or if_false branch |
-| update_branch_steps | Update steps in a branch |
-| delete_branch_steps | Delete steps from a branch |
-| update_conditional_step | Update condition question/context |
-| convert_conditional_to_regular | Remove conditional, make regular step |
+| **File-verifiable only** | ✅ File 'results.json' contains a 'databases' array and 'database_count' field equal to the array length <br> ❌ API returns 200 (validation agent can't call APIs) |
+| **Check evidence, not just status** | ✅ File 'verification.json' lists tab names, row counts per tab, and sample dates that can be recomputed and checked <br> ❌ File 'verification.json' only has 'status: \"passed\"' |
+| **For verification steps** | ✅ Encode that ALL checks pass when recomputed from the raw evidence (counts, lists, samples), not just that a 'passed' flag exists <br> ❌ "verification file exists" or "all checks show passed" with no underlying evidence |
 
-### Human Confirmation Workflow (CRITICAL)
+---
 
-**Step 1: Request Confirmation**
-- ALWAYS use human_feedback tool FIRST
-- Clearly describe:
-  - What changes (which steps to update/delete/add)
-  - Why (how changes address feedback based on execution results/logs)
-  - Impact (what will change)
+## 📚 LEARNINGS
 
-**Step 2: Interpret Response**
-The human_feedback tool returns user's response as TEXT. You must interpret:
+**Location**: learnings/ (shared) + learnings/{step_id}/ (step-specific, using step IDs from plan.json)
 
-- **Approval indicators**: "yes", "approved", "go ahead", "proceed", "ok", "sounds good", "do it"
-  - **Action**: Immediately proceed with plan modification tools in same turn
-  
-- **Questions/clarification**: User asks questions or seeks clarification
-  - **Action**: Respond conversationally, don't call plan update tools
-  
-- **Rejection/modifications**: "no", "don't", "change", "modify", or requests different changes
-  - **Action**: Adjust approach, ask again with human_feedback or respond conversationally
-  
-- **Unclear responses**: Response is ambiguous
-  - **Action**: Use human_feedback again to ask for clarification
+**Structure depends on execution mode**:
+- **Simple Mode**: .md files + scripts/*.py
+- **Code Execution Mode**: .md files + code/*.go
 
-**Step 3: Execute Changes**
-- After approval, you can call multiple plan modification tools in same turn
-- Tools update plan.json immediately (no merging needed)
-- Unchanged steps are preserved automatically
+Check conversation history for write_code tool calls to determine mode.
 
-## EXECUTION LOGS AND VALIDATION DATA
+**Quality criteria**:
+- Specific (exact commands/code that worked)
+- Contextual (when to use each approach)
+- Current (reflect latest successful patterns)
 
-**Logs Location**: runs/{iteration}/logs/step-{X}/
+---
 
-**Files Stored**:
-- **logs/step-{X}/validation.json** (or validation-2.json, validation-3.json, etc.) - Validation responses (numbered for multiple validation attempts)
-- **logs/step-{X}/execution/execution-attempt-{N}-iteration-{M}.json** - Execution results with retry/loop info
-- **logs/step-{X}/execution/execution-attempt-{N}-iteration-{M}-conversation.json** - Full conversation history (original JSON structure: []llmtypes.MessageContent, not formatted markdown)
+## 📋 FINAL REMINDERS
 
-**Branch Steps**: logs/step-{parentStep}-{true/false}-{branchIdx}/ (same file structure)
-
-**Decision Steps**: 
-- **logs/step-{X}/decision-evaluation.json** - Decision evaluation result (decision_result, decision_reasoning, if_true_next_step_id, if_false_next_step_id)
-- **logs/step-{X}/execution/decision-inner-step.json** - Inner step execution result (execution_result from the step executed before evaluation)
-- **execution/step-{X}-decision/** - Execution outputs from the inner step
-
-**Routing Steps**: 
-- **logs/step-{X}/routing-evaluation.json** - Routing evaluation result (selected_route_id, reasoning, success_criteria_met)
-- **logs/step-{X}/execution/routing-main-step.json** - Main orchestrator step execution result
-- **logs/step-{X}/execution/routing-sub-agent-{route_id}.json** - Sub-agent execution results for each route
-- **execution/step-{X}-routing/** - Execution outputs from routing step iterations
-
-**Usage**: Check validation-{N}.json for validation failures, execution-attempt-*.json for execution results, decision-evaluation.json for decision routing logic, routing-evaluation.json for routing decisions, and conversation.json for full LLM conversation context.
-
-## READING EXECUTION OUTPUT FILES
-
-Execution output files are stored in logs folders. Use search_large_output tool (if enabled) or read_workspace_file to read them.
-
-### Conversation History File Structure
-
-**File location**: logs/step-{X}/execution/execution-attempt-{N}-iteration-{M}-conversation.json
-
-**JSON Structure**:
-{
-  "step_index": 1,
-  "step_path": "step-1",
-  "retry_attempt": 1,
-  "loop_iteration": 0,
-  "conversation_history": [
-    {
-      "Role": "ai",  // or "role": "ai" (depending on serialization)
-      "Parts": [     // or "parts": [] (depending on serialization)
-        {
-          "FunctionCall": {  // Tool call structure
-            "Name": "tool_name",
-            "Arguments": "{...}"
-          }
-          // OR alternative structure:
-          // "type": "tool_call",
-          // "content": {
-          //   "function_name": "tool_name",
-          //   "function_args": "{...}"
-          // }
-        }
-      ]
-    }
-  ],
-  "timestamp": "2025-01-27T14:30:25Z"
-}
-
-**To extract tool names from conversation history:**
-- Use search_large_output with operation="query" and jq query: .conversation_history[] | select(.Role == "ai" or .role == "ai") | .Parts[]? // .parts[]? | select(.FunctionCall != null or .type == "tool_call") | (.FunctionCall.Name // .content.function_name)
-- Or read the file and parse manually to find all tool calls in assistant messages
-
-### Execution Result File Structure
-
-**File location**: logs/step-{X}/execution/execution-attempt-{N}-iteration-{M}.json
-
-**JSON Structure**:
-{
-  "step_index": 1,
-  "step_path": "step-1",
-  "retry_attempt": 1,
-  "loop_iteration": 0,
-  "execution_result": "The actual execution output text...",
-  "timestamp": "2025-01-27T14:30:25Z"
-}
-
-**To read execution result:**
-- Use search_large_output with operation="query" and jq query: .execution_result
-- Or use read_workspace_file to read the entire file
-
-## SUCCESS CRITERIA REQUIREMENTS
-
-Success criteria MUST be **file-verifiable** (validation agent checks files):
-
-✅ **GOOD**: "File 'results.md' contains 'Deployment successful'"
-✅ **GOOD**: "Context output contains '10 databases found'"
-❌ **BAD**: "Task completed successfully" (no file reference)
-❌ **BAD**: "Deployment is working" (not verifiable)
-
-**For loops**: Loop condition must also be file-verifiable with progress indicators.
-
-### Validation Agent Capabilities (IMPORTANT FOR PLAN IMPROVEMENTS)
-
-**CRITICAL**: When suggesting improvements to success criteria, remember that:
-- **Validation agent does NOT have access to MCP tools** - it cannot call external APIs, databases, or services
-- **Validation agent only has basic workspace tools** - it can only:
-  - Read workspace files (read_workspace_file)
-  - List workspace files (list_workspace_files)
-  - Check file existence and content
-- **Validation is file-based only** - success criteria must be verifiable by checking file contents, not by calling tools or services
-- **When improving success criteria**: Ensure they reference specific files and file content patterns that can be checked without MCP tools
-- **Examples of good success criteria**:
-  - ✅ "File 'deployment_status.json' exists and contains 'status: completed'"
-  - ✅ "Context output file 'step_1_results.md' contains '10 databases found' and lists all database names"
-  - ❌ "API endpoint returns 200 status" (requires MCP tool - validation agent can't check this)
-  - ❌ "Database connection is successful" (requires MCP tool - validation agent can't check this)
-
-### Execution Agent Modes (IMPORTANT FOR PLAN ANALYSIS)
-
-**Execution agents operate in two modes:**
-
-1. **Simple Mode** (default):
-   - Uses only MCP tools (no Go code execution)
-   - All operations via tool calls (read_workspace_file, MCP server tools, etc.)
-   - Standard tool-based execution
-
-2. **Code Execution Mode**:
-   - Can use both MCP tools AND Go code execution (via write_code tool)
-   - More flexible - can write custom Go code for complex operations
-   - Code execution allows programmatic logic, loops, error handling
-   - Workspace path handling: code receives base path as os.Args[1], uses relative paths
-
-**When analyzing execution results:**
-- Check conversation history to see if write_code tool was used (indicates code execution mode)
-- Code execution mode may have different capabilities and error patterns
-- Consider execution mode when suggesting plan improvements (e.g., complex logic might benefit from code execution mode)
-
-## RULES
-- **Access**: Only ` + templateVars["AllowedPaths"] + ` (cannot list root ".")
-- **CONFIRMATION REQUIRED**: Always use human_feedback FIRST before modifying plan.json
-- **Plan Updates**: After user approval, you can use plan modification tools to update plan.json directly
-- **Learnings Updates**: You can update learnings files using write_workspace_file (write access to learnings/ folder)
-- **Paths**: Relative to workspace path
-- **Step-Specific Learnings**: When analyzing learnings, check:
-  * Shared folders: learnings/
-  * Regular step folders: learnings/step-{X}/ (at workspace root, not inside runs/)
-  * Branch step folders: learnings/step-{parentStep}-{true/false}-{branchIdx}/ (at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
+- **Folder access**: Only ` + templateVars["AllowedPaths"] + `
+- **All paths relative** to workspace root
+- **Confirmation required**: human_feedback BEFORE plan changes
+- **Tools update immediately**: plan.json and learnings/ written on tool call
 `
 }
 
 // planImprovementUserMessageProcessor creates the user message for plan improvement
 func (agent *HumanControlledTodoPlannerPlanImprovementAgent) planImprovementUserMessageProcessor(templateVars map[string]string) string {
-	validatedRunPath := templateVars["ValidatedRunPath"]
 	workspacePath := templateVars["WorkspacePath"]
 	runPathRelative := templateVars["RunPathRelative"]
 
 	dataSourcesSection := ""
-	// Prefer runPathRelative when available (avoids double "runs/runs" and matches controller conventions).
-	if runPathRelative != "" {
-		dataSourcesSection = fmt.Sprintf(`
+	// Run path is always provided (validated before execution).
+	dataSourcesSection = fmt.Sprintf(`
 ## AVAILABLE DATA SOURCES (Selected Run Path: %s)
 
 1. **Plan**: %s/planning/plan.json
@@ -1084,41 +895,6 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) planImprovementUser
 
 **Routing Steps** (if present): %s/%s/logs/step-X/routing-evaluation.json, %s/%s/logs/step-X/execution/routing-main-step.json, %s/%s/execution/step-X-routing/ (see system prompt for details)
 `, runPathRelative, workspacePath, workspacePath, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative)
-	} else if validatedRunPath != "" {
-		dataSourcesSection = fmt.Sprintf(`
-## AVAILABLE DATA SOURCES (Validated Run Path: %s)
-
-1. **Plan**: %s/planning/plan.json
-2. **Learnings**: %s/learnings/ (structure depends on execution mode - see system prompt for details)
-3. **Execution Results**: %s/runs/%s/execution/ - Step execution outputs
-4. **Validation Logs**: %s/runs/%s/logs/step-X/validation.json (or validation-2.json, validation-3.json, etc.)
-5. **Execution Logs**: %s/runs/%s/logs/step-X/execution/execution-attempt-{N}-iteration-{M}.json - Execution results
-6. **Conversation History**: %s/runs/%s/logs/step-X/execution/execution-attempt-{N}-iteration-{M}-conversation.json - Full LLM conversation (original JSON structure)
-
-**Decision Steps** (if present): %s/runs/%s/logs/step-X/decision-evaluation.json, %s/runs/%s/logs/step-X/execution/decision-inner-step.json, %s/runs/%s/execution/step-X-decision/ (see system prompt for details)
-
-**Routing Steps** (if present): %s/runs/%s/logs/step-X/routing-evaluation.json, %s/runs/%s/logs/step-X/execution/routing-main-step.json, %s/runs/%s/execution/step-X-routing/ (see system prompt for details)
-
-The run path has been validated and confirmed by the user. All data is available in runs/%s/ folder.
-`, validatedRunPath, workspacePath, workspacePath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, workspacePath, validatedRunPath, validatedRunPath)
-	} else {
-		dataSourcesSection = fmt.Sprintf(`
-## AVAILABLE DATA SOURCES
-
-1. **Plan**: %s/planning/plan.json
-2. **Learnings**: %s/learnings/ (structure depends on execution mode - see system prompt for details)
-3. **Execution Results**: %s/runs/{iteration}/execution/ - Step execution outputs
-4. **Validation Logs**: %s/runs/{iteration}/logs/step-X/validation.json (or validation-2.json, validation-3.json, etc.)
-5. **Execution Logs**: %s/runs/{iteration}/logs/step-X/execution/execution-attempt-{N}-iteration-{M}.json - Execution results
-6. **Conversation History**: %s/runs/{iteration}/logs/step-X/execution/execution-attempt-{N}-iteration-{M}-conversation.json - Full LLM conversation (original JSON structure)
-
-**Decision Steps** (if present): %s/runs/{iteration}/logs/step-X/decision-evaluation.json, %s/runs/{iteration}/logs/step-X/execution/decision-inner-step.json, %s/runs/{iteration}/execution/step-X-decision/ (see system prompt for details)
-
-**Routing Steps** (if present): %s/runs/{iteration}/logs/step-X/routing-evaluation.json, %s/runs/{iteration}/logs/step-X/execution/routing-main-step.json, %s/runs/{iteration}/execution/step-X-routing/ (see system prompt for details)
-
-Use list_workspace_files to explore runs/ folder and find the specific iteration and step logs you need to analyze.
-`, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath)
-	}
 
 	return `# Plan Improvement Task
 

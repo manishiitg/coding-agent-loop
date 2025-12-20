@@ -10,7 +10,10 @@ import (
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	mcpagent "mcpagent/agent"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
+	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -110,7 +113,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) detectNewLearningWithLLM(
 		"StepDescription":          step.Description,
 		"StepSuccessCriteria":      step.SuccessCriteria,
 		"StepContextOutput":        step.ContextOutput,
-		"TaskObjective":            hcpo.GetObjective(),
 	}
 
 	// Add context dependencies as comma-separated string
@@ -337,7 +339,7 @@ func extractConsolidatedFilePath(output string) string {
 		return path
 	}
 	// If no "Updated: " prefix, try to find a file path pattern
-	// Look for common patterns like "learnings/step-X/..._learning.md"
+	// Look for common patterns like "learnings/{step_id}/..._learning.md"
 	if strings.Contains(output, "_learning.md") {
 		// Try to extract the path
 		parts := strings.Fields(output)
@@ -508,8 +510,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) unlockStepLearningsAndResetM
 // This function can be passed to planning agent executors
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createUnlockLearningsFunction() func(context.Context, string, int) error {
 	return func(ctx context.Context, stepID string, stepIndex int) error {
-		// Calculate learning path identifier (1-based)
-		learningPathIdentifier := fmt.Sprintf("step-%d", stepIndex+1)
+		// Use step ID for learning path identifier (new format)
+		learningPathIdentifier := stepID
 
 		// Calculate step path (relative to workspace)
 		stepPath := fmt.Sprintf("planning/step-%d", stepIndex+1)
@@ -523,8 +525,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createUnlockLearningsFunctio
 // This is used when only BaseOrchestrator is available (e.g., in PlanImprovementManager)
 func createUnlockLearningsFunctionFromBase(bo *orchestrator.BaseOrchestrator, workspacePath string) func(context.Context, string, int) error {
 	return func(ctx context.Context, stepID string, stepIndex int) error {
-		// Calculate learning path identifier (1-based)
-		learningPathIdentifier := fmt.Sprintf("step-%d", stepIndex+1)
+		// Use step ID for learning path identifier (new format)
+		learningPathIdentifier := stepID
 
 		// Unlock in step config
 		configs, err := ReadStepConfigs(ctx, bo, workspacePath, workspacePath)
@@ -772,40 +774,34 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningDetectionAgent
 	// Detection agent should not offload its outputs to prevent issues with learning content comparison
 	disabled := false
 	config.EnableLargeOutputVirtualTools = &disabled
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling large output virtual tools (context offloading) for learning detection agent"))
+	hcpo.GetLogger().Info("🔧 Disabling large output virtual tools (context offloading) for learning detection agent")
 
-	// Create agent
-	agent := NewHumanControlledTodoPlannerLearningDetectionAgent(config, hcpo.GetLogger(), hcpo.GetTracer(), hcpo.GetContextAwareBridge())
+	// Detection agent doesn't need tools (pure LLM analysis)
+	toolsToRegister := []llmtypes.Tool{}
+	executorsToUse := make(map[string]interface{})
 
-	// Initialize agent
-	if err := agent.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize learning detection agent: %w", err)
+	// Use base factory! (This handles all setup automatically)
+	agentInterface, err := hcpo.CreateAndSetupStandardAgentWithConfig(
+		ctx,
+		config,
+		"learning_detection",
+		0, // step
+		0, // iteration
+		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+			return NewHumanControlledTodoPlannerLearningDetectionAgent(cfg, logger, tracer, eventBridge)
+		},
+		toolsToRegister, // Empty - detection agent doesn't use tools
+		executorsToUse,  // Empty - detection agent doesn't use tools
+		false,           // Don't overwrite system prompt - detection agent manages its own prompt
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create and setup learning detection agent: %w", err)
 	}
 
-	// Connect event bridge
-	eventBridge := hcpo.GetContextAwareBridge()
-	if eventBridge == nil {
-		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
-	}
-
-	baseAgent := agent.GetBaseAgent()
-	if baseAgent == nil {
-		return nil, fmt.Errorf("base agent is nil for %s", agentName)
-	}
-
-	mcpAgent := baseAgent.Agent()
-	if mcpAgent == nil {
-		return nil, fmt.Errorf("MCP agent is nil for %s", agentName)
-	}
-
-	// Connect agent to orchestrator's main event bridge
-	baseAgentName := baseAgent.GetName()
-	if cab, ok := eventBridge.(*orchestrator.ContextAwareEventBridge); ok {
-		cab.SetOrchestratorContext("learning_detection", 0, baseAgentName)
-		mcpAgent.AddEventListener(cab)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Context-aware bridge connected to learning detection agent (%s)", baseAgentName))
-	} else {
-		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
+	// Type assert to specific agent type
+	agent, ok := agentInterface.(*HumanControlledTodoPlannerLearningDetectionAgent)
+	if !ok {
+		return nil, fmt.Errorf("failed to type assert learning detection agent")
 	}
 
 	return agent, nil

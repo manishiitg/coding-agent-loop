@@ -275,7 +275,11 @@ When parsing ExecutionHistory, analyze "## Tool Call" sections with tool_name="w
    - Completeness (handles edge cases well)
 3. **Extract BEST code(s)**: Extract complete, runnable Go code of the BEST patterns (or multiple best variations if equally effective)
 4. **REPLACE ACTUAL VALUES WITH VARIABLES**: Before saving code, check if any hardcoded values match known variables. Replace them with variable placeholders (e.g., accountID := "{{AWS_ACCOUNT_ID}}", region := "{{AWS_REGION}}"). This makes code reusable across different environments.
-5. **Save best code**: Save complete, runnable code to ` + codePath + `/ folder:
+5. **REPLACE WORKSPACE PATHS** (CRITICAL): In code examples and tool arguments documented in learning files, replace hardcoded workspace paths with {{WORKSPACE_PATH}} or relative paths
+   - **Wrong**: "filepath": "Workflow/HDFC Personal Accounts/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json"
+   - **Correct**: "filepath": "{{WORKSPACE_PATH}}/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json" OR "filepath": "step-1/step_1_credentials.json"
+   - **In Go code**: Use os.Args[1] for workspace path and filepath.Join() for relative paths (never hardcode full paths)
+6. **Save best code**: Save complete, runnable code to ` + codePath + `/ folder:
    - If one best pattern: Save to {StepTitle}_code.go
    - If multiple best patterns: Save to {StepTitle}_code_v1.go, {StepTitle}_code_v2.go, etc. (ranked best first)
 6. **Add effectiveness notes**: 1-2 sentences explaining WHY this code is best (e.g., "Most efficient approach", "Best error handling", "Handles edge cases")
@@ -352,6 +356,7 @@ When documenting errors discovered from ExecutionHistory, use this format:
 - **Rank by effectiveness**: Always rank code by how well it executes the step - best code first
 - **Multiple best codes**: If multiple effective patterns exist, save all of them (ranked best first) - future executions can choose the most appropriate
 - **CRITICAL - Variable Replacement**: Always replace actual values in code with variable placeholders when they match known variables. This ensures code is reusable across different environments, accounts, and configurations.
+- **CRITICAL - Workspace Path Replacement**: In learning file documentation, replace hardcoded workspace paths in tool arguments with {{WORKSPACE_PATH}} or relative paths. In Go code examples, use os.Args[1] and filepath.Join() for paths.
 - **ONLY save best code**: Only save code that is truly effective - don't save mediocre or inefficient code just because it worked
 - **Keep descriptions concise and focused on efficiency**
 - **CRITICAL - File Content Must Be Short**: Write learning files that are brief, precise, and to the point. Avoid verbose explanations, long paragraphs, or unnecessary details. Each code pattern entry should be 1-2 lines maximum. Focus on actionable information only.
@@ -383,7 +388,7 @@ You have access to all MCP tools to examine workspace files and gather additiona
 - **ALWAYS save working Go code** to ` + codePath + `/ folder before writing the learning file
 - Document learnings ONLY in ` + writePath + `/ folder
 - Focus on capturing the BEST code that worked (ranked by effectiveness), then other successful variations, then what to avoid
-- Save complete, runnable Go code of BEST patterns to learnings/step-{X}/code/ folder and reference it in the learning file
+- Save complete, runnable Go code of BEST patterns to learnings/{step_id}/code/ folder and reference it in the learning file
 - Extract and save the BEST code snippets (or multiple best variations) with full function calls
 - Rank code by effectiveness: best code first, then alternatives, then failures to avoid
 - Document only meaningful best code patterns - don't save mediocre code just because it worked
@@ -432,9 +437,14 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
    - Example: If code has region := "us-east-1" and {{AWS_REGION}} is a known variable, replace it with region := "{{AWS_REGION}}"
    - This makes code recipes reusable across different environments and accounts
 
-3. **Check All Code Values**: Before documenting code, systematically check each hardcoded value against the list of known variables above. If a match is found, use the variable placeholder instead of the actual value.
+3. **Replace Workspace Paths** (CRITICAL): In learning file documentation and tool arguments, replace hardcoded workspace paths with {{WORKSPACE_PATH}} or relative paths:
+   - **Wrong**: "filepath": "Workflow/HDFC Personal Accounts/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json"
+   - **Correct**: "filepath": "{{WORKSPACE_PATH}}/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json" OR "filepath": "step-1/step_1_credentials.json"
+   - **In Go code**: Use os.Args[1] for workspace path and filepath.Join(basePath, "step-1/file.json") for relative paths (never hardcode full paths)
 
-4. **Code Snippets**: When saving Go code snippets, also replace hardcoded values that match known variables with variable placeholders (e.g., accountID := "{{AWS_ACCOUNT_ID}}" instead of accountID := "123456789012").
+4. **Check All Code Values**: Before documenting code, systematically check each hardcoded value against the list of known variables above. If a match is found, use the variable placeholder instead of the actual value.
+
+5. **Code Snippets**: When saving Go code snippets, also replace hardcoded values that match known variables with variable placeholders (e.g., accountID := "{{AWS_ACCOUNT_ID}}" instead of accountID := "123456789012").
 `
 		}
 		return ""

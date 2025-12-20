@@ -68,7 +68,7 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) => {
-  const { id, title, description, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun } = data
+  const { id, title, description, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting } = data
 
   // Get preset for config badges
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -252,26 +252,25 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
   const hasHumanTools = humanToolsInfo.enabled > 0
   const hasLargeOutput = stepConfig?.agent_configs?.enable_large_output_virtual_tools !== false // Default is enabled
 
-  // Button is disabled if executing, can't run (previous steps not done), or no callback
-  const isRunDisabled = isExecuting || !canRun || !onRunFromStep
+  // Button is disabled if executing or no callback
+  const isRunDisabled = isExecuting || !onRunFromStep
 
   // Handle run from this step button click
   const handleRunClick = useCallback((e: MouseEvent) => {
     e.stopPropagation() // Prevent node selection
     e.preventDefault() // Prevent any default behavior
-    console.log('[ConditionalNode] Run button clicked:', { stepIndex, stepId: step.id, onRunFromStep: !!onRunFromStep, isExecuting, canRun, isRunDisabled })
-    if (onRunFromStep && !isExecuting && canRun) {
+    console.log('[ConditionalNode] Run button clicked:', { stepIndex, stepId: step.id, onRunFromStep: !!onRunFromStep, isExecuting, isRunDisabled })
+    if (onRunFromStep && !isExecuting) {
       console.log('[ConditionalNode] Calling onRunFromStep with:', stepIndex, step.id || `step-${stepIndex}`)
       onRunFromStep(stepIndex, step.id || `step-${stepIndex}`)
     } else {
       console.warn('[ConditionalNode] Cannot run step:', { 
         hasCallback: !!onRunFromStep, 
         isExecuting, 
-        canRun, 
         isRunDisabled 
       })
     }
-  }, [onRunFromStep, isExecuting, canRun, stepIndex, step.id, isRunDisabled])
+  }, [onRunFromStep, isExecuting, stepIndex, step.id, isRunDisabled])
 
   // Handle settings icon click - opens the sidebar
   const handleSettingsClick = useCallback((e: MouseEvent) => {
@@ -306,9 +305,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
             title={
               isExecuting 
                 ? 'Execution in progress...' 
-                : !canRun 
-                  ? 'Complete previous steps first' 
-                  : `Run step ${stepIndex + 1} only`
+                : `Run step ${stepIndex + 1} only`
             }
           >
             <Play className="w-3.5 h-3.5" />

@@ -41,7 +41,7 @@ const (
 	TodoPlannerLearningDetectionAgentType    AgentType = "todo_planner_learning_detection"     // Detects if new learnings were generated after learning phase
 	TodoPlannerPlanToolOptimizationAgentType AgentType = "todo_planner_plan_tool_optimization" // Optimizes tool selections in step_config.json based on learnings
 	ConditionalAgentType                     AgentType = "conditional"                         // Conditional decision agent for evaluating step conditions
-	OrchestrationAgentType                   AgentType = "orchestration"                       // Orchestration evaluation agent for orchestration step decisions
+	OrchestrationAgentType                   AgentType = "orchestration"                       // DEPRECATED: Legacy orchestration agent type (no longer used). Current orchestration uses OrchestrationOrchestratorAgent which handles execution, evaluation, and routing in one step.
 )
 
 // BaseAgentInterface defines the interface for base agent operations

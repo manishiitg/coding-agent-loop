@@ -348,6 +348,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) initializeFreshProgress(ctx 
 // by removing any existing execution artifacts from previous runs
 // Also deletes all branch step folders for this step (e.g., step-3-if-true-0, step-3-if-false-1, etc.)
 // Also deletes decision step folder if it exists (e.g., step-8-decision)
+// Also deletes all sub-agent step folders for this step (e.g., step-2-sub-agent-1, step-2-sub-agent-2, etc.)
 func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ctx context.Context, stepNumber int) error {
 	// Validate that run folder is set (required for building correct path)
 	if hcpo.selectedRunFolder == "" {
@@ -392,7 +393,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 	decisionStepFolder := fmt.Sprintf("step-%d-decision", stepNumber)
 	decisionFoldersDeleted := 0
 
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Searching for branch step folders with prefix '%s' and decision step folder '%s' in execution directory", branchStepPrefix, decisionStepFolder))
+	// Also delete all sub-agent step folders for this step (e.g., step-2-sub-agent-1, step-2-sub-agent-2, etc.)
+	// This ensures that when resuming from a step before an orchestration step, all sub-agent executions are cleaned up
+	subAgentStepPrefix := fmt.Sprintf("step-%d-sub-agent-", stepNumber)
+	subAgentFoldersDeleted := 0
+	subAgentFoldersFound := []string{}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Searching for branch step folders with prefix '%s', decision step folder '%s', and sub-agent step folders with prefix '%s' in execution directory", branchStepPrefix, decisionStepFolder, subAgentStepPrefix))
 
 	// List all files/folders in the execution directory
 	files, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, executionWorkspacePath)
@@ -401,7 +408,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("📁 Found %d items in execution directory", len(files)))
 
-		// Find and delete all branch step folders that match the pattern
+		// Find and delete all branch step folders, decision step folders, and sub-agent step folders that match the pattern
 		for _, file := range files {
 			// Check if this is a branch step folder for the current step
 			// Pattern: step-{N}-if-true-{idx} or step-{N}-if-false-{idx}
@@ -441,11 +448,31 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 				} else {
 					hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted decision step logs folder: %s", file))
 				}
+			} else if strings.HasPrefix(file, subAgentStepPrefix) {
+				// Check if this is a sub-agent step folder for the current step
+				// Pattern: step-{N}-sub-agent-{index}
+				subAgentFoldersFound = append(subAgentFoldersFound, file)
+				subAgentFolderPath := fmt.Sprintf("%s/%s", executionWorkspacePath, file)
+				hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleting sub-agent step folder: %s", file))
+				if err := hcpo.CleanupDirectory(ctx, subAgentFolderPath, fmt.Sprintf("execution/%s", file)); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete sub-agent step folder %s: %w", file, err))
+				} else {
+					subAgentFoldersDeleted++
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted sub-agent step folder: %s", file))
+				}
+				// Also delete corresponding sub-agent step logs folder
+				subAgentLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)
+				hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleting sub-agent step logs folder: %s", file))
+				if err := hcpo.CleanupDirectory(ctx, subAgentLogsFolderPath, fmt.Sprintf("logs/%s", file)); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete sub-agent step logs folder %s: %w", file, err))
+				} else {
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted sub-agent step logs folder: %s", file))
+				}
 			}
 		}
 
-		if len(branchFoldersFound) == 0 && decisionFoldersDeleted == 0 {
-			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ No branch step or decision step folders found for step %d", stepNumber))
+		if len(branchFoldersFound) == 0 && decisionFoldersDeleted == 0 && len(subAgentFoldersFound) == 0 {
+			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ No branch step, decision step, or sub-agent step folders found for step %d", stepNumber))
 		}
 	}
 
@@ -454,6 +481,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 	}
 	if decisionFoldersDeleted > 0 {
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Deleted decision step folder for step %d: %s", stepNumber, decisionStepFolder))
+	}
+	if subAgentFoldersDeleted > 0 {
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Deleted %d/%d sub-agent step folder(s) for step %d: %v", subAgentFoldersDeleted, len(subAgentFoldersFound), stepNumber, subAgentFoldersFound))
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Deleted execution folder for step %d", stepNumber))

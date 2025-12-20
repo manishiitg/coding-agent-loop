@@ -35,7 +35,6 @@ planning/changelog
 📏 Max Depth:.. if there a single path only.. can we prefix auto?
 
 12. multiple chats?
-h) check if external package is even required
 
 16. diff patch tool, corrupts json
 
@@ -52,6 +51,14 @@ h) check if external package is even required
 
 23.. in basic event we should show the user message also
 
-24. learn skills?
-
 25. if we store learninvs via step id, we don't need to worry about moving steps, etc.
+
+26. learnings vs skills? 
+
+27. learning in background?
+
+28. need to simply tool filter.
+
+29. have non llm validation??
+
+30. in code exec mode, when we get error, don't put the entire code again. just put error

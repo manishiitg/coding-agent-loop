@@ -85,8 +85,9 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 	writePaths := []string{targetPath} // Write access to learnings folder for consolidation
 
 	// Step-specific learnings are at workspace root, not inside runs/
-	// Step-specific folders are directly in learnings/step-*/
-	lcm.GetLogger().Info(fmt.Sprintf("🔍 Step-specific learnings are at workspace root (learnings/step-*/)"))
+	// Step-specific folders use step IDs: learnings/{step_id}/
+	// All steps (regular, branch, sub-agent) use learnings/{step_id}/ where step_id is the step's own unique ID
+	lcm.GetLogger().Info(fmt.Sprintf("🔍 Step-specific learnings are at workspace root (using step IDs from plan.json)"))
 
 	lcm.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	lcm.GetLogger().Info(fmt.Sprintf("🔍 Setting folder guard for learning consolidation agent - Read paths: %v, Write paths: %v (read/write access to learnings/ folder only)", readPaths, writePaths))
@@ -357,14 +358,15 @@ Your main goal is to analyze all learning files, identify consolidation opportun
 
 ## 🎯 CONSOLIDATION PROCESS
 
-1. **Discover All Learning Files**: **STEP-SPECIFIC LEARNINGS MODE**: Learning files are stored in step-specific folders within runs/ directory.
-   - First, scan the runs/ directory: Use 'list_workspace_files' with folder="runs" to discover run folders
-   - For each run folder found, look for step-specific learning folders (at same level as execution/, not inside it):
-     * Regular steps: learnings/step-{X}/ folders (each step has its own folder, at workspace root)
-     * Branch steps: learnings/step-{parentStep}-{true/false}-{branchIdx}/ folders (e.g., step-3-true-0/, step-3-false-1/)
+1. **Discover All Learning Files**: **STEP-SPECIFIC LEARNINGS MODE**: Learning files are stored in step-specific folders at workspace root (not inside runs/).
+   - First, scan the learnings/ directory: Use 'list_workspace_files' with folder="learnings" to discover step-specific folders
+   - Step-specific learning folders use step IDs from plan.json (not step numbers):
+     * Regular steps: learnings/{step_id}/ folders (each step has its own folder, at workspace root)
+     * Branch steps: learnings/{step_id}/ folders (where step_id is the branch step's own ID from plan.json)
+     * Orchestration sub-agents: learnings/{step_id}/ folders (where step_id is the sub-agent step's own ID from sub_agent_step.id)
    - **CRITICAL**: Consolidate within EACH step folder separately - do NOT merge patterns across different step folders
-   - **CRITICAL**: Each step folder (step-1/, step-2/, step-3-true-0/, step-3-false-1/, etc.) should be consolidated independently
-   - **CRITICAL**: Branch step folders are separate from parent step folders - do NOT merge step-3/ with step-3-true-0/
+   - **CRITICAL**: Each step folder should be consolidated independently
+   - **CRITICAL**: Branch step folders are separate from parent step folders - do NOT merge parent step folder with branch step folders
    - For each step folder found:
      * List files in the step folder (look for *_learning.md files)
      * If consolidating 'learnings/': Also check step folder's scripts/ subfolder (look for *_script.py files)
@@ -378,12 +380,12 @@ Your main goal is to analyze all learning files, identify consolidation opportun
    - Identify tool names, arguments, code patterns, and approaches
 
 3. **Identify Consolidation Opportunities**:
-   - **CRITICAL STEP-SPECIFIC RULE**: Consolidate patterns ONLY within the SAME step folder (e.g., step-1/, step-2/, step-3-true-0/, etc.)
-   - **NEVER merge across step folders**: Do NOT merge patterns from step-1/ with patterns from step-2/
-   - **NEVER merge branch with parent**: Do NOT merge patterns from step-3/ with patterns from step-3-true-0/ or step-3-false-1/
+   - **CRITICAL STEP-SPECIFIC RULE**: Consolidate patterns ONLY within the SAME step folder (using step IDs from plan.json)
+   - **NEVER merge across step folders**: Do NOT merge patterns from different step folders
+   - **NEVER merge branch with parent**: Do NOT merge patterns from parent step folder with branch step folders
    - **NEVER merge across runs**: Do NOT merge patterns from different run folders
    - **Duplicate Patterns**: Same tool calls/approaches appearing in multiple learning files WITHIN THE SAME STEP FOLDER
-     - Example: Same tool call pattern in multiple files within learnings/step-1/
+     - Example: Same tool call pattern in multiple files within learnings/{step_id}/
    - **Similar Patterns**: Overlapping tool usage or same approach with minor variations WITHIN THE SAME STEP FOLDER
      - Example: Same tools but different argument values within the same step folder
    - **Outdated Patterns**: Low success rate (<50%) with many failures, or patterns superseded by better ones WITHIN THE SAME STEP FOLDER
@@ -553,10 +555,11 @@ func (agent *HumanControlledTodoPlannerLearningConsolidationAgent) consolidation
 **YOUR TASKS**:
 
 1. **Discover all learning files**: **STEP-SPECIFIC LEARNINGS MODE**
-   - First, scan runs/ directory: Use 'list_workspace_files' with folder="runs" to discover run folders
-   - For each run folder found, look for step-specific learning folders (at same level as execution/, not inside it):
-     * Regular steps: learnings/step-{X}/ folders (at workspace root, e.g., step-1/, step-2/)
-     * Branch steps: learnings/step-{parentStep}-{true/false}-{branchIdx}/ folders (at workspace root, e.g., step-3-true-0/, step-3-false-1/)
+   - First, scan learnings/ directory: Use 'list_workspace_files' with folder="learnings" to discover step-specific folders
+   - Step-specific learning folders use step IDs from plan.json (at workspace root, not inside runs/):
+     * Regular steps: learnings/{step_id}/ folders (where step_id is the step's 'id' field from plan.json)
+     * Branch steps: learnings/{step_id}/ folders (where step_id is the branch step's own 'id' field from plan.json)
+     * Orchestration sub-agents: learnings/{step_id}/ folders (where step_id is the sub-agent step's own 'id' field from sub_agent_step.id)
    - **CRITICAL**: Consolidate within EACH step folder separately (step-1/, step-2/, step-3-true-0/, etc.)
    - **CRITICAL**: Branch step folders are separate from parent step folders - do NOT merge step-3/ with step-3-true-0/
    - For each step folder found:

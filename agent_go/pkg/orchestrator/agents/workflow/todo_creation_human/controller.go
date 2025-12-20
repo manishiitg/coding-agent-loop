@@ -233,30 +233,65 @@ func NewHumanControlledTodoPlannerOrchestrator(
 // agentName: custom agent name for this specific use case (e.g., "conditional-step-evaluation", "decision-step-evaluation")
 // phase: orchestrator phase for context (e.g., "conditional_evaluation", "decision_evaluation")
 func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(ctx context.Context, step TodoStep, stepIndex int, agentName, phase string) *HumanControlledTodoPlannerConditionalAgent {
-	// Check if step has step-specific conditional agent config
-	if step.AgentConfigs != nil && step.AgentConfigs.ConditionalLLM != nil {
-		stepID := step.ID
-		if stepID == "" {
-			stepID = fmt.Sprintf("step-%s", step.Title)
+	stepID := step.ID
+	if stepID == "" {
+		stepID = fmt.Sprintf("step-%s", step.Title)
+	}
+
+	// Check if step has step-specific config (conditional LLM or code execution mode)
+	hasStepSpecificConfig := step.AgentConfigs != nil && (step.AgentConfigs.ConditionalLLM != nil || step.AgentConfigs.UseCodeExecutionMode != nil)
+
+	if hasStepSpecificConfig {
+		// Determine code execution mode for cache key
+		var isCodeExecutionMode bool
+		if step.AgentConfigs != nil && step.AgentConfigs.UseCodeExecutionMode != nil {
+			isCodeExecutionMode = *step.AgentConfigs.UseCodeExecutionMode
+		} else {
+			isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
 		}
 
-		// Check cache first (use stepID as cache key, but agent name can vary)
+		// Include code execution mode in cache key to avoid using wrong cached agent
+		cacheKey := fmt.Sprintf("%s-codeexec-%v", stepID, isCodeExecutionMode)
+
+		// Check cache first
 		hcpo.stepConditionalAgentMutex.RLock()
-		cachedAgent, exists := hcpo.stepConditionalAgentCache[stepID]
+		cachedAgent, exists := hcpo.stepConditionalAgentCache[cacheKey]
 		hcpo.stepConditionalAgentMutex.RUnlock()
 
 		if exists && cachedAgent != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using cached step-specific conditional agent for step '%s' (ID: %s)", step.Title, stepID))
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using cached step-specific conditional agent for step '%s' (ID: %s, code exec: %v)", step.Title, stepID, isCodeExecutionMode))
 			return cachedAgent
 		}
 
-		// Create new conditional agent for this step using factory pattern
-		conditionalLLMConfig := step.AgentConfigs.ConditionalLLM
-		llmConfig := &orchestrator.LLMConfig{
-			Provider:       conditionalLLMConfig.Provider,
-			ModelID:        conditionalLLMConfig.ModelID,
-			FallbackModels: []string{},                  // Use empty fallback for step-specific configs
-			APIKeys:        hcpo.GetLLMConfig().APIKeys, // Preserve API keys from orchestrator
+		// Create LLM config: use conditional LLM if specified, otherwise use execution LLM
+		var llmConfig *orchestrator.LLMConfig
+		orchestratorLLMConfig := hcpo.GetLLMConfig()
+
+		if step.AgentConfigs.ConditionalLLM != nil {
+			conditionalLLMConfig := step.AgentConfigs.ConditionalLLM
+			llmConfig = &orchestrator.LLMConfig{
+				Provider:       conditionalLLMConfig.Provider,
+				ModelID:        conditionalLLMConfig.ModelID,
+				FallbackModels: []string{},
+				APIKeys:        orchestratorLLMConfig.APIKeys,
+			}
+		} else if step.AgentConfigs.ExecutionLLM != nil && step.AgentConfigs.ExecutionLLM.Provider != "" && step.AgentConfigs.ExecutionLLM.ModelID != "" {
+			executionLLMConfig := step.AgentConfigs.ExecutionLLM
+			llmConfig = &orchestrator.LLMConfig{
+				Provider:       executionLLMConfig.Provider,
+				ModelID:        executionLLMConfig.ModelID,
+				FallbackModels: []string{},
+				APIKeys:        orchestratorLLMConfig.APIKeys,
+			}
+		} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
+			llmConfig = &orchestrator.LLMConfig{
+				Provider:       hcpo.presetExecutionLLM.Provider,
+				ModelID:        hcpo.presetExecutionLLM.ModelID,
+				FallbackModels: []string{},
+				APIKeys:        orchestratorLLMConfig.APIKeys,
+			}
+		} else {
+			llmConfig = orchestratorLLMConfig
 		}
 
 		// Use provided agent name, or fallback to default format
@@ -278,7 +313,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(c
 			stepIndex,         // step index
 			0,                 // iteration
 			actualAgentName,   // agent name (from parameter)
-			step.AgentConfigs, // step config
+			step.AgentConfigs, // step config (includes UseCodeExecutionMode)
 			llmConfig,         // conditional LLM config
 		)
 		if err != nil {
@@ -293,12 +328,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(c
 			return hcpo.conditionalAgent // Fallback to default
 		}
 
-		// Cache the conditional agent
+		// Cache the conditional agent with code execution mode in key
 		hcpo.stepConditionalAgentMutex.Lock()
-		hcpo.stepConditionalAgentCache[stepID] = stepConditionalAgent
+		hcpo.stepConditionalAgentCache[cacheKey] = stepConditionalAgent
 		hcpo.stepConditionalAgentMutex.Unlock()
 
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created step-specific conditional agent for step '%s' (ID: %s): %s/%s", step.Title, stepID, conditionalLLMConfig.Provider, conditionalLLMConfig.ModelID))
+		if step.AgentConfigs.ConditionalLLM != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created step-specific conditional agent for step '%s' (ID: %s, code exec: %v): %s/%s", step.Title, stepID, isCodeExecutionMode, step.AgentConfigs.ConditionalLLM.Provider, step.AgentConfigs.ConditionalLLM.ModelID))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created step-specific conditional agent for step '%s' (ID: %s, code exec: %v): using execution LLM", step.Title, stepID, isCodeExecutionMode))
+		}
 		return stepConditionalAgent
 	}
 
@@ -318,20 +357,29 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalLLMForStep(ste
 	logger := hcpo.GetLogger()
 	tracer := hcpo.GetTracer()
 
-	// Determine LLM config: Priority: step config > orchestrator default
+	// Determine LLM config: Priority: step execution_llm > preset execution_llm > orchestrator default
 	var llmConfig *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 
-	if step.AgentConfigs != nil && step.AgentConfigs.ConditionalLLM != nil {
-		// Use step-specific conditional LLM config
-		conditionalLLMConfig := step.AgentConfigs.ConditionalLLM
+	if step.AgentConfigs != nil && step.AgentConfigs.ExecutionLLM != nil && step.AgentConfigs.ExecutionLLM.Provider != "" && step.AgentConfigs.ExecutionLLM.ModelID != "" {
+		// Use step-specific execution LLM config
+		executionLLMConfig := step.AgentConfigs.ExecutionLLM
 		llmConfig = &orchestrator.LLMConfig{
-			Provider:       conditionalLLMConfig.Provider,
-			ModelID:        conditionalLLMConfig.ModelID,
+			Provider:       executionLLMConfig.Provider,
+			ModelID:        executionLLMConfig.ModelID,
 			FallbackModels: []string{},
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys
 		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional LLM: %s/%s", conditionalLLMConfig.Provider, conditionalLLMConfig.ModelID))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution LLM for conditional LLM: %s/%s", executionLLMConfig.Provider, executionLLMConfig.ModelID))
+	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
+		// Use preset execution LLM as fallback
+		llmConfig = &orchestrator.LLMConfig{
+			Provider:       hcpo.presetExecutionLLM.Provider,
+			ModelID:        hcpo.presetExecutionLLM.ModelID,
+			FallbackModels: []string{},
+			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution LLM for conditional LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
 	} else {
 		// Use orchestrator default LLM config
 		llmConfig = orchestratorLLMConfig
@@ -372,62 +420,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalLLMForStep(ste
 	}
 
 	return conditionalLLM, nil
-}
-
-// getOrchestrationAgentForStep returns the OrchestrationAgent to use for a specific step
-// Priority: step config orchestration_llm > default LLM config
-// Uses full OrchestrationAgent (with MCP tools) for orchestration evaluation
-// DEPRECATED: Use getOrchestrationAgentForStep from controller_routing.go instead
-func (hcpo *HumanControlledTodoPlannerOrchestrator) getRoutingAgentForStep(ctx context.Context, step TodoStep, stepIndex int, iteration int) (*HumanControlledTodoPlannerOrchestrationAgent, error) {
-	// This is a compatibility wrapper - delegate to the new function
-	return hcpo.getOrchestrationAgentForStep(ctx, step, stepIndex, iteration)
-}
-
-// getOrchestrationAgentForStep returns the OrchestrationAgent to use for a specific step
-// Priority: step config orchestration_llm > default LLM config
-// Uses full OrchestrationAgent (with MCP tools) for orchestration evaluation
-func (hcpo *HumanControlledTodoPlannerOrchestrator) getOrchestrationAgentForStep(ctx context.Context, step TodoStep, stepIndex int, iteration int) (*HumanControlledTodoPlannerOrchestrationAgent, error) {
-	eventBridge := hcpo.GetContextAwareBridge()
-	if eventBridge == nil {
-		return nil, fmt.Errorf("event bridge is required for orchestration agent")
-	}
-
-	// Determine LLM config: Priority: step config > orchestrator default
-	var llmConfig *orchestrator.LLMConfig
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
-
-	if step.AgentConfigs != nil && step.AgentConfigs.ConditionalLLM != nil {
-		// Use conditional LLM config for orchestration (similar purpose - structured decision making)
-		conditionalLLMConfig := step.AgentConfigs.ConditionalLLM
-		llmConfig = &orchestrator.LLMConfig{
-			Provider:       conditionalLLMConfig.Provider,
-			ModelID:        conditionalLLMConfig.ModelID,
-			FallbackModels: []string{},
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional LLM for orchestration: %s/%s", conditionalLLMConfig.Provider, conditionalLLMConfig.ModelID))
-	} else {
-		// Use orchestrator default LLM config
-		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default orchestration LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID))
-	}
-
-	// Create agent name
-	agentName := fmt.Sprintf("orchestration-step-%d", stepIndex+1)
-
-	// Create orchestration agent using factory
-	orchestrationAgent, err := hcpo.createOrchestrationAgent(ctx, "orchestration", stepIndex, iteration, agentName, step.AgentConfigs, llmConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create orchestration agent: %w", err)
-	}
-
-	// Cast to orchestration agent type
-	orchestrationAgentTyped, ok := orchestrationAgent.(*HumanControlledTodoPlannerOrchestrationAgent)
-	if !ok {
-		return nil, fmt.Errorf("failed to cast agent to orchestration agent type")
-	}
-
-	return orchestrationAgentTyped, nil
 }
 
 // CreateTodoList orchestrates the human-controlled todo planning process

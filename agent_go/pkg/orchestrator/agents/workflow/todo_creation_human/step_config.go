@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	loggerv2 "mcpagent/logger/v2"
 )
 
 // StepConfig represents a single step's configuration in step_config.json
@@ -123,7 +124,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) WriteStepConfigs(ctx context
 // MatchStepConfigs matches new plan steps with existing configs by ID only
 // Returns a map of step index -> matched AgentConfigs
 // Returns an error if any step is missing a required ID field
-func MatchStepConfigs(newSteps []PlanStep, oldConfigs []StepConfig) (map[int]*AgentConfigs, error) {
+func MatchStepConfigs(newSteps []PlanStepInterface, oldConfigs []StepConfig) (map[int]*AgentConfigs, error) {
 	result := make(map[int]*AgentConfigs)
 
 	// Create lookup map: ID -> config
@@ -137,15 +138,15 @@ func MatchStepConfigs(newSteps []PlanStep, oldConfigs []StepConfig) (map[int]*Ag
 
 	// Match new steps to old configs by ID only
 	// Steps always have IDs from backend - throw error if missing
-	for i := range newSteps {
+	for i, step := range newSteps {
 		// Use existing step ID (required) - steps always have IDs from plan.json
-		stepID := newSteps[i].ID
+		stepID := step.GetID()
 		if stepID == "" {
 			// This should never happen - steps always have IDs from backend
 			// Throw error to match frontend behavior and catch bugs early
 			stepTitle := "unknown"
-			if newSteps[i].Title != "" {
-				stepTitle = newSteps[i].Title
+			if step.GetTitle() != "" {
+				stepTitle = step.GetTitle()
 			}
 			return nil, fmt.Errorf(fmt.Sprintf("step at index %d is missing required ID field. Step title: %q", i, stepTitle), nil)
 		}
@@ -186,6 +187,81 @@ func MatchStepConfigByID(stepID string, oldConfigs []StepConfig) *AgentConfigs {
 		if oldConfigs[i].ID == stepID {
 			return oldConfigs[i].AgentConfigs
 		}
+	}
+
+	return nil
+}
+
+// MergeAgentConfigFields merges all fields from source config into target config.
+// Only non-nil fields from source are copied to target.
+// This ensures step-specific configs from step_config.json override defaults.
+func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID string, logger loggerv2.Logger) {
+	if source == nil {
+		return
+	}
+
+	if target == nil {
+		logger.Warn(fmt.Sprintf("⚠️ Cannot merge config for step %s: target is nil", stepID))
+		return
+	}
+
+	if source.UseCodeExecutionMode != nil {
+		target.UseCodeExecutionMode = source.UseCodeExecutionMode
+		logger.Info(fmt.Sprintf("🔧 Using step config (ID: %s) - use_code_execution_mode: %v", stepID, *source.UseCodeExecutionMode))
+	}
+	if source.LockLearnings != nil {
+		target.LockLearnings = source.LockLearnings
+	}
+	if source.DisableLearning != nil {
+		target.DisableLearning = source.DisableLearning
+	}
+	if source.ExecutionLLM != nil {
+		target.ExecutionLLM = source.ExecutionLLM
+	}
+	if source.ValidationLLM != nil {
+		target.ValidationLLM = source.ValidationLLM
+	}
+	if source.LearningLLM != nil {
+		target.LearningLLM = source.LearningLLM
+	}
+	if source.SelectedServers != nil {
+		target.SelectedServers = source.SelectedServers
+	}
+	if source.SelectedTools != nil {
+		target.SelectedTools = source.SelectedTools
+	}
+}
+
+// ApplyStepConfigFromFile loads step_config.json and applies matched config to the step.
+// If step has no AgentConfigs, it creates one and copies all matched fields.
+// If step already has AgentConfigs, it merges only the fields from matched config.
+// Returns error if config file cannot be read.
+func ApplyStepConfigFromFile(
+	ctx context.Context,
+	step *TodoStep,
+	orchestrator *HumanControlledTodoPlannerOrchestrator,
+) error {
+	if step.ID == "" {
+		return nil // No ID, skip config matching
+	}
+
+	stepConfigs, err := orchestrator.ReadStepConfigs(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to read step configs: %w", err)
+	}
+
+	matchedConfig := MatchStepConfigByID(step.ID, stepConfigs)
+	if matchedConfig == nil {
+		return nil // No matched config, use defaults
+	}
+
+	// Initialize AgentConfigs if not present
+	if step.AgentConfigs == nil {
+		step.AgentConfigs = matchedConfig
+		orchestrator.GetLogger().Info(fmt.Sprintf("✅ Applied full config for step %s (ID: %s)", step.Title, step.ID))
+	} else {
+		// Merge matched config into existing config
+		MergeAgentConfigFields(step.AgentConfigs, matchedConfig, step.ID, orchestrator.GetLogger())
 	}
 
 	return nil

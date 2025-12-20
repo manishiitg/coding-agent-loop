@@ -267,6 +267,14 @@ const DAGRE_CONFIG = {
 - Full text display (no truncation/ellipsis)
 - Dynamically centered input handle
 
+**OrchestratorNode:**
+- Displays all orchestration routes including sub-agent routes
+- Shows "End Workflow" as a special route option (always available)
+- Routes displayed in a blue info box with route names and conditions
+- "End" route shown with red indicator to distinguish from sub-agent routes
+- Output handles for each route (blue) plus "end" handle (red)
+- Edge to "end" node uses red color and "End" label when orchestrator chooses to terminate
+
 **LoopNode:**
 - Dashed border with cyan accent
 - Loop icon badge (top-left)
@@ -678,3 +686,7 @@ All components use CSS variables for theme-aware colors:
 | No localStorage for observer ID | ✅ |
 | Stop button works for all execution paths | ✅ |
 | No redundant state (single source of truth) | ✅ |
+| "End" route displayed in OrchestratorNode | ✅ |
+| "End" handle on orchestrator nodes (red) | ✅ |
+| Routes list shows "End Workflow" option | ✅ |
+| Edge to "end" uses red color and label | ✅ |

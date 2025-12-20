@@ -157,6 +157,12 @@ func (agent *HumanControlledTodoPlannerLearningPhaseConsolidationAgent) consolid
      * **Same Pattern**: Same tool/function names = same pattern (normalize to {{VARS}} for comparison)
      * **Different Pattern**: Different tool/function names = different pattern
      * **Normalization**: When comparing, normalize both patterns to {{VARS}} format first
+   - **Workspace Path Normalization** (CRITICAL):
+     * **Replace hardcoded workspace paths** in tool arguments with {{WORKSPACE_PATH}} variable or relative paths
+     * **Example - Wrong**: "filepath": "Workflow/HDFC Personal Accounts/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json"
+     * **Example - Correct**: "filepath": "{{WORKSPACE_PATH}}/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json" OR "filepath": "step-1/step_1_credentials.json"
+     * **Why**: Hardcoded paths break reusability across different workspace locations
+     * **Apply to**: All file paths in tool arguments (filepath, path, input_path, output_path, etc.)
    - **Merge Duplicate Patterns**:
      * When same pattern appears in multiple files: **Keep the version with highest score** (highest [Runs + Success%])
      * Do NOT sum Runs or recalculate - preserve the best-performing version

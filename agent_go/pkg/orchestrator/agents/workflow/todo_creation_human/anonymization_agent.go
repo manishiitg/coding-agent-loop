@@ -84,8 +84,8 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 	readPaths := []string{learningsPath}
 	writePaths := []string{learningsPath}
 
-	// Step-specific learnings are always enabled - folders are at workspace root
-	am.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings enabled - agent can access and modify step-specific folders in learnings/step-*/"))
+	// Step-specific learnings are always enabled - folders are at workspace root using step IDs
+	am.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings enabled - agent can access and modify step-specific folders in learnings/ (using step IDs from plan.json)"))
 
 	am.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	am.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for anonymization agent - Read paths: %v, Write paths: %v (learnings folder)", readPaths, writePaths))
@@ -377,10 +377,11 @@ func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationSystemPr
 	learningsLocationNote := `
 ## LEARNING FILES LOCATION
 
-Learning files are stored in step-specific folders:
+Learning files are stored in step-specific folders using step IDs from plan.json:
 - Shared learnings: {WorkspacePath}/learnings/
-- Regular step learnings: {WorkspacePath}/learnings/step-{X}/ (at workspace root, not inside runs/)
-- Branch step learnings: {WorkspacePath}/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
+- Regular step learnings: {WorkspacePath}/learnings/{step_id}/ (where step_id is the step's 'id' field from plan.json, at workspace root, not inside runs/)
+- Branch step learnings: {WorkspacePath}/learnings/{step_id}/ (where step_id is the branch step's own 'id' field from plan.json, at workspace root, not inside runs/)
+- Orchestration sub-agent learnings: {WorkspacePath}/learnings/{step_id}/ (where step_id is the sub-agent step's own 'id' field from sub_agent_step.id, at workspace root, not inside runs/)
 
 You must scan BOTH shared and step-specific folders (including branch step folders). Use list_workspace_files to discover all step-specific folders recursively.
 `
@@ -421,8 +422,9 @@ This makes learnings reusable across different environments, accounts, and confi
 
 2. **Scan Learnings Folder** - Use list_workspace_files tool to scan the learnings folder recursively:
    - **Shared folders**: Scan learnings/ (including subdirectories)
-   - **Regular step folders**: Scan learnings/step-{X}/ (all regular step folders, at workspace root, not inside runs/)
-   - **Branch step folders**: Scan learnings/step-{parentStep}-{true/false}-{branchIdx}/ (all branch step folders, at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
+   - **Regular step folders**: Scan learnings/{step_id}/ (all regular step folders using step IDs from plan.json, at workspace root, not inside runs/)
+   - **Branch step folders**: Scan learnings/{step_id}/ (all branch step folders using step IDs from plan.json, where step_id is the branch step's own ID, at workspace root, not inside runs/)
+   - **Orchestration sub-agent folders**: Scan learnings/{step_id}/ (all sub-agent folders using step IDs from plan.json, where step_id is the sub-agent's own ID, at workspace root, not inside runs/)
    - Scan all .md files in shared, regular step, and branch step folders
    - Scan all .py files in learnings/scripts/ and step-specific folders (if scripts folder exists)
    - Scan all .go files in learnings/code/ and step-specific folders (if code folder exists)
@@ -522,9 +524,9 @@ This makes learnings reusable across different environments, accounts, and confi
    - Newly detected hardcoded values should be anonymized with appropriate variable names
 
 6. **File Types**: Process all:
-   - Markdown files (.md) in learnings/, learnings/step-{X}/, and learnings/step-{X}-{true/false}-{Y}/ (learning documentation)
-   - Python files (.py) in learnings/scripts/ and step-specific folders (regular and branch step folders)
-   - Markdown files (.md) in learnings/, learnings/step-{X}/, and learnings/step-{X}-{true/false}-{Y}/ (code execution learning documentation)
+   - Markdown files (.md) in learnings/ and learnings/{step_id}/ (learning documentation, using step IDs from plan.json where step_id is the step's own ID)
+   - Python files (.py) in learnings/scripts/ and step-specific folders (regular, branch, and orchestration sub-agent step folders)
+   - Markdown files (.md) in learnings/ and learnings/{step_id}/ (code execution learning documentation, using step IDs from plan.json where step_id is the step's own ID)
    - Go files (.go) in learnings/code/ and step-specific folders (regular and branch step folders)
 
 ### **Available Tools:**
@@ -553,8 +555,9 @@ This makes learnings reusable across different environments, accounts, and confi
 func (agent *HumanControlledTodoPlannerAnonymizationAgent) anonymizationUserMessageProcessor(templateVars map[string]string) string {
 	learningsFoldersNote := `
 - **Shared Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/
-- **Regular Step Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (at workspace root, not inside runs/, e.g., step-1/, step-2/)
-- **Branch Step Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
+- **Regular Step Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/{step_id}/ (using step IDs from plan.json, at workspace root, not inside runs/)
+- **Branch Step Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/{step_id}/ (using step IDs from plan.json, where step_id is the branch step's own ID, at workspace root, not inside runs/)
+- **Orchestration Sub-Agent Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/{step_id}/ (using step IDs from plan.json, where step_id is the sub-agent's own ID, at workspace root, not inside runs/)
 - **IMPORTANT**: Scan BOTH shared, regular step, and branch step folders. Use list_workspace_files to discover all step folders recursively.
 `
 
@@ -594,9 +597,9 @@ These variables are available for replacement. When you find actual values in le
 1. **Scan learnings folders**: Use list_workspace_files to find all files:
    - **Shared folders**: .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/ (including subdirectories)
    - **Shared folders**: .md and .go files in ` + templateVars["WorkspacePath"] + `/learnings/ (including subdirectories)
-   - **Regular step folders**: .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (all regular step folders, at workspace root, not inside runs/)
-   - **Branch step folders**: .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (all branch step folders, at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
-   - **Regular step folders**: .md and .go files in ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (all regular step folders, at workspace root, not inside runs/)
+   - **Regular step folders**: .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/{step_id}/ (all regular step folders using step IDs from plan.json, at workspace root, not inside runs/)
+   - **Branch step folders**: .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/{step_id}/ (all branch step folders using step IDs from plan.json, where step_id is the branch step's own ID, at workspace root, not inside runs/)
+   - **Regular step folders**: .md and .go files in ` + templateVars["WorkspacePath"] + `/learnings/{step_id}/ (all regular step folders using step IDs from plan.json, at workspace root, not inside runs/)
    - **Branch step folders**: .md and .go files in ` + templateVars["WorkspacePath"] + `/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (all branch step folders, at workspace root, not inside runs/)
    - Use list_workspace_files recursively to discover all step folders (regular and branch)
 
@@ -634,9 +637,9 @@ These variables are available for replacement. When you find actual values in le
    - Make replacements in place (overwrite files)
 
 7. **Process all file types**:
-   - .md files in learnings/, learnings/step-{X}/, and learnings/step-{X}-{true/false}-{Y}/
-   - .py files in learnings/scripts/ and step-specific folders (regular and branch step folders)
-   - .md files in learnings/, learnings/step-{X}/, and learnings/step-{X}-{true/false}-{Y}/
+   - .md files in learnings/ and learnings/{step_id}/ (using step IDs from plan.json where step_id is the step's own ID)
+   - .py files in learnings/scripts/ and step-specific folders (regular, branch, and orchestration sub-agent step folders)
+   - .md files in learnings/ and learnings/{step_id}/ (using step IDs from plan.json where step_id is the step's own ID)
    - .go files in learnings/code/ and step-specific folders (regular and branch step folders)
 
 **Remember**: 

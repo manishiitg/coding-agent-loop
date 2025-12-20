@@ -71,31 +71,30 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
 }
 
 export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
-  const { id, title, loop_condition, max_iterations, current_iteration, status, stepIndex, changeType, step, workspacePath, selectedRunFolder, onRunFromStep, onOpenSidebar, isExecuting, canRun } = data
+  const { id, title, loop_condition, max_iterations, current_iteration, status, stepIndex, changeType, step, workspacePath, selectedRunFolder, onRunFromStep, onOpenSidebar, isExecuting } = data
   const { availableLLMs } = useLLMStore()
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
 
-  // Button is disabled if executing, can't run (previous steps not done), or no callback
-  const isRunDisabled = isExecuting || !canRun || !onRunFromStep
+  // Button is disabled if executing or no callback
+  const isRunDisabled = isExecuting || !onRunFromStep
 
   // Handle run from this step button click
   const handleRunClick = useCallback((e: MouseEvent) => {
     e.stopPropagation() // Prevent node selection
     e.preventDefault() // Prevent any default behavior
-    console.log('[LoopNode] Run button clicked:', { stepIndex, stepId: step.id, onRunFromStep: !!onRunFromStep, isExecuting, canRun, isRunDisabled })
-    if (onRunFromStep && !isExecuting && canRun) {
+    console.log('[LoopNode] Run button clicked:', { stepIndex, stepId: step.id, onRunFromStep: !!onRunFromStep, isExecuting, isRunDisabled })
+    if (onRunFromStep && !isExecuting) {
       console.log('[LoopNode] Calling onRunFromStep with:', stepIndex, step.id || `step-${stepIndex}`)
       onRunFromStep(stepIndex, step.id || `step-${stepIndex}`)
     } else {
       console.warn('[LoopNode] Cannot run step:', { 
         hasCallback: !!onRunFromStep, 
         isExecuting, 
-        canRun, 
         isRunDisabled 
       })
     }
-  }, [onRunFromStep, isExecuting, canRun, stepIndex, step.id, isRunDisabled])
+  }, [onRunFromStep, isExecuting, stepIndex, step.id, isRunDisabled])
 
   // Handle settings icon click - opens the sidebar
   const handleSettingsClick = useCallback((e: MouseEvent) => {
@@ -458,9 +457,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
               title={
                 isExecuting 
                   ? 'Execution in progress...' 
-                  : !canRun 
-                    ? 'Complete previous steps first' 
-                    : `Run step ${stepIndex + 1} only`
+                  : `Run step ${stepIndex + 1} only`
               }
             >
               <Play className="w-4 h-4" />

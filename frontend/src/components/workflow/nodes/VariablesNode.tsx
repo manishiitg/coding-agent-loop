@@ -1,6 +1,6 @@
 import { memo, useCallback, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { Variable, Layers, CheckCircle, Circle, Play } from 'lucide-react'
+import { Variable, Layers, CheckCircle, Circle, Play, Check } from 'lucide-react'
 import type { VariablesManifest, VariableGroup } from '../../../services/api-types'
 import { useWorkflowStore, useSelectedGroupId } from '../../../stores/useWorkflowStore'
 
@@ -43,12 +43,18 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
   const { manifest, onOpenSidebar, isLoading } = data
   const currentRunningGroupId = useWorkflowStore(state => state.currentRunningGroupId)
   const selectedGroupId = useSelectedGroupId()
+  const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds) // Multi-select group IDs from checkboxes
   
   const variableCount = manifest?.variables?.length || 0
   const totalGroups = manifest?.groups?.length || (variableCount > 0 ? 1 : 0)
   const enabledGroups = getEnabledGroups(manifest)
   const enabledCount = enabledGroups.length
   const isMultiGroup = hasMultipleGroups(manifest)
+  
+  // Count how many groups are selected via checkboxes
+  const selectedCount = selectedGroupIds.length > 0 
+    ? selectedGroupIds.filter(id => manifest?.groups?.some(g => g.group_id === id && g.enabled)).length
+    : 0
   
   // Handle node click to open sidebar
   const handleClick = useCallback((e: MouseEvent) => {
@@ -134,7 +140,10 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
         {isMultiGroup && (
           <span className="ml-auto flex items-center gap-1 text-xs text-purple-600 dark:text-purple-400">
             <Layers className="w-3 h-3" />
-            {enabledCount}/{totalGroups} Groups
+            {selectedCount > 0 ? `${selectedCount}/${enabledCount}` : enabledCount}/{totalGroups} Groups
+            {selectedCount > 0 && (
+              <Check className="w-3 h-3 text-green-600 dark:text-green-400" />
+            )}
           </span>
         )}
       </div>
@@ -148,14 +157,17 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
             : enabledGroups
           return allGroups.map((group) => {
             const isRunning = currentRunningGroupId === group.group_id
-            const isSelected = selectedGroupId === group.group_id
+            const isSelected = selectedGroupId === group.group_id // Legacy: single group selection from folder path
+            const isChecked = selectedGroupIds.includes(group.group_id) // New: multi-select from checkboxes
+            const showSelected = isSelected || isChecked // Show as selected if either is true
+            
             return (
             <div 
               key={group.group_id} 
               className={`space-y-1.5 ${
                 isRunning 
                   ? 'bg-blue-50 dark:bg-blue-900/30 rounded p-1.5 border border-blue-200 dark:border-blue-700' 
-                  : isSelected
+                  : showSelected
                   ? 'bg-purple-50 dark:bg-purple-900/30 rounded p-1.5 border-2 border-purple-300 dark:border-purple-600'
                   : ''
               }`}
@@ -164,15 +176,20 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
               <div className="flex items-center gap-1.5 text-xs">
                 {isRunning ? (
                   <Play className="w-3 h-3 text-blue-600 dark:text-blue-400 animate-pulse" />
+                ) : isChecked ? (
+                  // When checked via checkbox, show checkmark only (simplified UI)
+                  <Check className="w-3 h-3 text-green-600 dark:text-green-400" />
                 ) : group.enabled ? (
+                  // When not checked but enabled, show enabled indicator
                   <CheckCircle className="w-3 h-3 text-green-600 dark:text-green-400" />
                 ) : (
+                  // When disabled, show empty circle
                   <Circle className="w-3 h-3 text-gray-400 dark:text-gray-500" />
                 )}
                 <span className={`font-mono font-semibold ${
                   isRunning 
                     ? 'text-blue-700 dark:text-blue-300' 
-                    : isSelected
+                    : showSelected
                     ? 'text-purple-700 dark:text-purple-300'
                     : 'text-purple-600 dark:text-purple-400'
                 }`}>
@@ -183,7 +200,12 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
                     Running...
                   </span>
                 )}
-                {!isRunning && isSelected && (
+                {!isRunning && isChecked && (
+                  <span className="ml-auto text-[10px] text-green-600 dark:text-green-400 font-medium">
+                    Selected
+                  </span>
+                )}
+                {!isRunning && !isChecked && isSelected && (
                   <span className="ml-auto text-[10px] text-purple-600 dark:text-purple-400 font-medium">
                     Selected
                   </span>
@@ -226,7 +248,10 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
           <div className="flex flex-wrap gap-1.5">
             {manifest.groups.slice(0, 6).map((group) => {
               const isRunning = currentRunningGroupId === group.group_id
-              const isSelected = selectedGroupId === group.group_id
+              const isSelected = selectedGroupId === group.group_id // Legacy: single group selection
+              const isChecked = selectedGroupIds.includes(group.group_id) // New: multi-select from checkboxes
+              const showSelected = isSelected || isChecked
+              
               return (
               <div 
                 key={group.group_id}
@@ -234,19 +259,24 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
                   flex items-center gap-1 px-1.5 py-0.5 rounded text-xs
                   ${isRunning
                     ? 'bg-blue-200 dark:bg-blue-700/50 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-600'
-                    : isSelected
+                    : showSelected
                     ? 'bg-purple-300 dark:bg-purple-700/70 text-purple-800 dark:text-purple-200 border-2 border-purple-400 dark:border-purple-500'
                     : group.enabled 
                     ? 'bg-purple-200 dark:bg-purple-700/50 text-purple-700 dark:text-purple-300' 
                     : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 opacity-60'}
                 `}
-                title={isRunning ? 'Currently Running' : isSelected ? 'Selected in Toolbar' : group.enabled ? 'Enabled' : 'Disabled'}
+                title={isRunning ? 'Currently Running' : isChecked ? 'Selected for Execution' : isSelected ? 'Selected in Toolbar' : group.enabled ? 'Enabled' : 'Disabled'}
               >
                 {isRunning ? (
                   <Play className="w-3 h-3 animate-pulse" />
+                ) : isChecked ? (
+                  // When checked, show checkmark only (simplified)
+                  <Check className="w-3 h-3" />
                 ) : group.enabled ? (
+                  // When not checked but enabled, show enabled indicator
                   <CheckCircle className="w-3 h-3" />
                 ) : (
+                  // When disabled, show empty circle
                   <Circle className="w-3 h-3" />
                 )}
                 <span className="font-mono">{group.group_id}</span>

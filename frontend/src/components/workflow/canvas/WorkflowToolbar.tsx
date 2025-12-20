@@ -21,7 +21,9 @@ import {
   X,
   Brain,
   MessageSquare,
-  Circle
+  Circle,
+  Layers,
+  ArrowUpCircle
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useAppStore } from '../../../stores'
@@ -33,7 +35,10 @@ import type { ExecutionOptions } from '../../../services/api-types'
 import { agentApi } from '../../../services/api'
 import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import LLMOverrideModal from '../LLMOverrideModal'
+import BulkStepConfigModal from '../BulkStepConfigModal'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
+import type { PlanStep } from '../../../utils/stepConfigMatching'
+import { isConditionalStep } from '../../../utils/stepConfigMatching'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
@@ -77,6 +82,7 @@ interface WorkflowToolbarProps {
   onProgressChange?: (completedStepIndices: number[]) => void  // Callback when step progress changes
   showChatArea?: boolean
   onToggleChatArea?: () => void
+  onBulkUpdateSteps?: (updates: Array<{ stepId: string; updates: Partial<PlanStep> }>) => Promise<void>  // Bulk update function
   className?: string
 }
 
@@ -97,6 +103,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   onProgressChange,
   showChatArea = false,
   onToggleChatArea,
+  onBulkUpdateSteps,
   className = ''
 }) => {
   // Workspace store for opening folders
@@ -137,6 +144,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   
   // LLM Override modal state
   const [showLLMOverrideModal, setShowLLMOverrideModal] = useState(false)
+  
+  // Migration state
+  const [isMigrating, setIsMigrating] = useState(false)
+  
+  // Bulk Step Config modal state
+  const [showBulkStepConfigModal, setShowBulkStepConfigModal] = useState(false)
   
   // Helper function to find a folder in the file tree
   const findFolderInTree = (fileList: PlannerFile[], targetPath: string): PlannerFile | null => {
@@ -204,12 +217,17 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
   }, [presetQueryId, loadSavedSettings])
 
-  // Save settings when they change
+  // Get selected group IDs from store
+  const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
+  const toggleGroupSelection = useWorkflowStore(state => state.toggleGroupSelection)
+  const setSelectedGroupIds = useWorkflowStore(state => state.setSelectedGroupIds)
+  
+  // Save settings when they change (including selectedGroupIds)
   useEffect(() => {
     if (presetQueryId) {
       saveSettings(presetQueryId)
     }
-  }, [presetQueryId, selectedRunFolder, selectedExecutionMode, selectedStartPoint, saveSettings])
+  }, [presetQueryId, selectedRunFolder, selectedExecutionMode, selectedStartPoint, selectedGroupIds, saveSettings])
 
   // Load run folders when workspace path changes
   useEffect(() => {
@@ -286,6 +304,24 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Get current execution mode info
   const currentModeInfo = EXECUTION_MODE_OPTIONS.find(m => m.id === selectedExecutionMode) || EXECUTION_MODE_OPTIONS[0]
 
+  // Helper to format the selected run folder display text
+  const getSelectedRunFolderDisplay = useMemo(() => {
+    if (selectedRunFolder === 'new') {
+      return 'New Run'
+    }
+    if (!selectedRunFolder) {
+      return 'Select...'
+    }
+    // Check if it's an iteration without a group path (all groups mode)
+    if (!selectedRunFolder.includes('/group-') && variablesManifest?.groups) {
+      const enabledGroups = variablesManifest.groups.filter(g => g.enabled)
+      if (enabledGroups.length > 1) {
+        return `${selectedRunFolder} (All Groups)`
+      }
+    }
+    return selectedRunFolder
+  }, [selectedRunFolder, variablesManifest])
+
   // Build merged list of iterations and groups
   // Combines existing folders with groups from manifest
   const iterationGroups = useMemo(() => {
@@ -343,47 +379,56 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       }
     })
 
-    // Add groups from manifest that don't have folders yet
+    // Add ALL groups from manifest to ALL iterations
+    // This ensures users can see and select all groups from any iteration
     if (variablesManifest?.groups && variablesManifest.groups.length > 0) {
-      // Find the highest iteration number from existing folders
-      let maxIteration = 0
+      // Get all existing iterations (from folders)
+      const existingIterations = new Set<string>()
       runFolders.forEach((folder) => {
-        const match = folder.name.match(/iteration-(\d+)/)
+        const match = folder.name.match(/^(iteration-\d+)/)
         if (match) {
-          const num = parseInt(match[1], 10)
-          if (num > maxIteration) {
-            maxIteration = num
-          }
+          existingIterations.add(match[1])
         }
       })
       
-      // Use the latest iteration, or iteration-1 if none exist
-      // This is the default iteration for groups that haven't been run yet
-      const defaultIteration = maxIteration > 0 ? `iteration-${maxIteration}` : 'iteration-1'
+      // If no iterations exist, create iteration-1
+      if (existingIterations.size === 0) {
+        existingIterations.add('iteration-1')
+      }
 
+      // For each group in manifest, ensure it appears in all iterations
       variablesManifest.groups.forEach((group) => {
-        // Check if this group already exists in items (has a folder)
-        const existingItem = items.find(item => item.groupId === group.group_id)
-        if (!existingItem) {
-          // Group doesn't have a folder yet - add it to the default iteration
-          const item: GroupItem = {
-            id: `${defaultIteration}/${group.group_id}`,
-            name: group.group_id,
-            iteration: defaultIteration,
-            groupId: group.group_id,
-            progress: null,
-            exists: false,
-            enabled: group.enabled
+        // Update enabled status for existing groups
+        items.forEach(item => {
+          if (item.groupId === group.group_id) {
+            item.enabled = group.enabled
           }
-          items.push(item)
-          if (!iterationMap.has(defaultIteration)) {
-            iterationMap.set(defaultIteration, [])
+        })
+
+        // For each iteration, check if this group is already present
+        existingIterations.forEach((iteration) => {
+          const groupExistsInIteration = items.some(
+            item => item.groupId === group.group_id && item.iteration === iteration
+          )
+          
+          if (!groupExistsInIteration) {
+            // Group doesn't exist in this iteration - add it
+            const item: GroupItem = {
+              id: `${iteration}/${group.group_id}`,
+              name: group.group_id,
+              iteration,
+              groupId: group.group_id,
+              progress: null,
+              exists: false, // No folder exists for this group in this iteration
+              enabled: group.enabled
+            }
+            items.push(item)
+            if (!iterationMap.has(iteration)) {
+              iterationMap.set(iteration, [])
+            }
+            iterationMap.get(iteration)!.push(item)
           }
-          iterationMap.get(defaultIteration)!.push(item)
-        } else {
-          // Update enabled status from manifest for existing group
-          existingItem.enabled = group.enabled
-        }
+        })
       })
     }
 
@@ -442,7 +487,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         const parentStep = plan.steps?.[parentStepIndex]
         
         // Only process conditional steps
-        if (!parentStep || !parentStep.has_condition) {
+        if (!parentStep || !isConditionalStep(parentStep)) {
           return
         }
         
@@ -591,6 +636,35 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setIsExecutionModeDropdownOpen(false)
   }, [setExecutionMode])
   
+  // Handle plan migration
+  const handleMigratePlan = useCallback(async () => {
+    if (!workspacePath) {
+      alert('Workspace path is required')
+      return
+    }
+
+    if (!confirm('Migrate plan.json to new type-safe format? A backup will be created automatically.')) {
+      return
+    }
+
+    setIsMigrating(true)
+    try {
+      const result = await agentApi.migratePlan(workspacePath)
+      if (result.success) {
+        alert(`Migration completed successfully!\n\n${result.message}\n\nBackup saved at: ${result.backup_path || 'N/A'}`)
+        // Optionally reload the plan
+        window.location.reload()
+      } else {
+        alert(`Migration failed: ${result.message}`)
+      }
+    } catch (error) {
+      console.error('Migration error:', error)
+      alert(`Migration failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setIsMigrating(false)
+    }
+  }, [workspacePath])
+
   // Handle selecting start point from dropdown
   const handleSelectStartPoint = useCallback((option: StartPointOption) => {
     if (option.id === 'resume_branch' && option.branchStep) {
@@ -780,8 +854,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                     title="Select iteration folder"
                   >
                     <FolderOpen className="w-3.5 h-3.5" />
-                    <span className="max-w-[80px] truncate">
-                      {isLoadingRunFolders ? 'Loading...' : selectedRunFolder === 'new' ? 'New Run' : selectedRunFolder}
+                    <span className="max-w-[120px] truncate" title={getSelectedRunFolderDisplay}>
+                      {isLoadingRunFolders ? 'Loading...' : getSelectedRunFolderDisplay}
                     </span>
                     <ChevronDown className={`w-3 h-3 transition-transform ${isIterationDropdownOpen ? 'rotate-180' : ''}`} />
                   </button>
@@ -825,6 +899,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                               iterationGroups.sortedIterations.map((iteration) => {
                                 const groups = iterationGroups.iterationMap.get(iteration) || []
                                 const hasGroups = groups.some(g => g.groupId !== null)
+                                const enabledGroups = groups.filter(g => g.enabled !== false)
+                                const hasMultipleGroups = enabledGroups.length > 1
+                                const isAllGroupsSelected = selectedRunFolder === iteration && !selectedRunFolder.includes('/group-')
                                 
                                 return (
                                   <div key={iteration}>
@@ -835,7 +912,50 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                       </div>
                                     ) : null}
                                     
-                                    {/* Groups under this iteration */}
+                                    {/* "All Groups" option - only show if there are multiple enabled groups */}
+                                    {hasMultipleGroups && (() => {
+                                      // Count how many groups from this iteration are selected
+                                      const selectedCount = enabledGroups.filter(g => selectedGroupIds.includes(g.groupId!)).length
+                                      
+                                      return (
+                                        <div
+                                          className={`
+                                            group flex items-center gap-1 px-1
+                                            ${isAllGroupsSelected 
+                                              ? 'bg-purple-100 dark:bg-purple-900/30' 
+                                              : ''
+                                            }
+                                          `}
+                                        >
+                                          <button
+                                            onClick={() => {
+                                              handleSelectRunFolder(iteration)
+                                              // When "All Groups" is selected, select all enabled groups
+                                              if (!isAllGroupsSelected) {
+                                                const allGroupIds = enabledGroups.map(g => g.groupId!).filter(Boolean) as string[]
+                                                setSelectedGroupIds(allGroupIds)
+                                              }
+                                            }}
+                                            className={`
+                                              flex-1 text-left px-3 py-2 rounded-md text-sm flex items-center gap-2 font-medium
+                                              ${isAllGroupsSelected 
+                                                ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' 
+                                                : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                                              }
+                                            `}
+                                            title={`Run all ${enabledGroups.length} enabled groups in ${iteration}`}
+                                          >
+                                            <Layers className="w-4 h-4" />
+                                            <span className="flex-1">
+                                              All Groups ({selectedCount > 0 ? `${selectedCount}/${enabledGroups.length}` : enabledGroups.length})
+                                            </span>
+                                            {isAllGroupsSelected && <Check className="w-4 h-4 ml-auto" />}
+                                          </button>
+                                        </div>
+                                      )
+                                    })()}
+                                    
+                                    {/* Groups under this iteration - show ALL groups from manifest, not just ones with folders */}
                                     {groups.map((group) => {
                                       const progress = group.progress
                                       const completedCount = progress?.completed_step_indices?.length || 0
@@ -843,6 +963,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                       const hasProgress = progress && completedCount > 0
                                       const isSelected = selectedRunFolder === group.id
                                       const isDisabled = group.enabled === false
+                                      const isGroupChecked = group.groupId ? selectedGroupIds.includes(group.groupId) : false
                                       
                                       return (
                                         <div
@@ -862,8 +983,31 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                             }
                                           }}
                                         >
+                                          {/* Checkbox for group selection (only show if group has an ID and multiple groups exist) */}
+                                          {group.groupId && hasMultipleGroups && (
+                                            <input
+                                              type="checkbox"
+                                              checked={isGroupChecked}
+                                              onChange={(e) => {
+                                                e.stopPropagation()
+                                                if (group.groupId) {
+                                                  toggleGroupSelection(group.groupId)
+                                                }
+                                              }}
+                                              onClick={(e) => e.stopPropagation()}
+                                              disabled={isDisabled || isRunning}
+                                              className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 focus:ring-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                              title={isDisabled ? 'Group is disabled' : isGroupChecked ? 'Deselect group' : 'Select group for execution'}
+                                            />
+                                          )}
                                           <button
-                                            onClick={() => handleSelectRunFolder(group.id)}
+                                            onClick={() => {
+                                              handleSelectRunFolder(group.id)
+                                              // When clicking a specific group, also toggle its checkbox if "All Groups" mode
+                                              if (isAllGroupsSelected && group.groupId) {
+                                                toggleGroupSelection(group.groupId)
+                                              }
+                                            }}
                                             className={`
                                               flex-1 text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
                                               ${isSelected 
@@ -875,9 +1019,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                             `}
                                             title={isDisabled ? 'Group is disabled' : group.exists ? undefined : 'Group not run yet'}
                                           >
+                                            {/* Only show folder icon if folder exists - checkbox is the primary indicator for selection */}
                                             {group.exists ? (
                                               <FolderOpen className="w-4 h-4" />
+                                            ) : hasMultipleGroups ? (
+                                              // When checkboxes are present, don't show circle icon (checkbox is the indicator)
+                                              null
                                             ) : (
+                                              // Only show circle if no checkboxes (single group mode)
                                               <Circle className="w-4 h-4" />
                                             )}
                                             <span className="flex-1 font-mono text-xs">
@@ -1439,6 +1588,33 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </button>
         )}
         
+        {/* Bulk Step Config Button */}
+        {hasPlan && plan && onBulkUpdateSteps && (
+          <button
+            onClick={() => setShowBulkStepConfigModal(true)}
+            className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            title="Bulk configure all steps"
+          >
+            <Settings className="w-3.5 h-3.5" />
+          </button>
+        )}
+        
+        {/* Migrate Plan Button */}
+        {hasPlan && workspacePath && (
+          <button
+            onClick={handleMigratePlan}
+            disabled={isMigrating}
+            className="p-1.5 rounded-md bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Migrate plan to new type-safe format"
+          >
+            {isMigrating ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <ArrowUpCircle className="w-3.5 h-3.5" />
+            )}
+          </button>
+        )}
+        
         <div className="w-px h-5 bg-gray-200 dark:bg-gray-700 mx-0.5" />
         
         <button
@@ -1482,6 +1658,16 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       isOpen={showLLMOverrideModal}
       onClose={() => setShowLLMOverrideModal(false)}
     />
+    
+    {/* Bulk Step Config Modal */}
+    {onBulkUpdateSteps && (
+      <BulkStepConfigModal
+        isOpen={showBulkStepConfigModal}
+        onClose={() => setShowBulkStepConfigModal(false)}
+        plan={plan || null}
+        onBulkUpdate={onBulkUpdateSteps}
+      />
+    )}
     </>
   )
 }

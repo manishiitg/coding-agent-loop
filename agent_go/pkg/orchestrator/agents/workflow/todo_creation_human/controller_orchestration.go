@@ -13,18 +13,20 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-const (
-	maxOrchestrationIterations = 10 // Maximum iterations for orchestration step loop
-)
-
 // executeOrchestrationStep executes an orchestration step by:
 //  1. Looping until success criteria is met:
-//     a. Execute main orchestration step (with sub-agent output in context if available)
-//     b. Evaluate success criteria + route selection using OrchestrationAgent
-//     c. If success criteria met → return success
-//     d. If not met → execute selected sub-agent → loop back
+//     a. Execute main orchestration step using OrchestrationOrchestratorAgent (with sub-agent output in context if available)
+//     - OrchestrationOrchestratorAgent.ExecuteStructured() handles both execution AND evaluation in one step
+//     - It evaluates success criteria, selects routes, and provides instructions to sub-agents
+//     b. If success criteria met → call validation → return success
+//     c. If not met → execute selected sub-agent → loop back
 //  2. Return success status and next step ID
 //
+// Note: The orchestration flow uses OrchestrationOrchestratorAgent which combines execution and evaluation.
+// There is no separate "evaluation agent" - evaluation is built into the orchestrator agent.
+//
+// NOTE: This function works with TodoStep which uses boolean flags (has_orchestration_step).
+// The step type is already validated by the main execution loop before calling this function.
 // Returns: (successCriteriaMet bool, nextStepID string, error)
 func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 	ctx context.Context,
@@ -74,6 +76,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 	hcpo.GetLogger().Info(fmt.Sprintf("📊 Orchestration step progress: iteration=%d, success_criteria_met=%t, selected_route=%s",
 		orchestrationProgress.IterationCount, orchestrationProgress.SuccessCriteriaMet, orchestrationProgress.SelectedRouteID))
 
+	// Determine max iterations: use step-specific if provided, otherwise use orchestrator default
+	maxOrchestrationIterations := hcpo.GetMaxTurns()
+	stepConfig := step.OrchestrationStep.AgentConfigs
+	if stepConfig != nil && stepConfig.OrchestrationMaxIterations != nil {
+		maxOrchestrationIterations = *stepConfig.OrchestrationMaxIterations
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific orchestration max iterations: %d (orchestrator default was: %d)", maxOrchestrationIterations, hcpo.GetMaxTurns()))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default orchestration max iterations: %d (no step-specific config)", maxOrchestrationIterations))
+	}
+
 	// Main orchestration loop: execute until success criteria is met
 	for orchestrationIteration := orchestrationProgress.IterationCount; orchestrationIteration < maxOrchestrationIterations; orchestrationIteration++ {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Orchestration step iteration %d/%d", orchestrationIteration+1, maxOrchestrationIterations))
@@ -99,7 +111,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 		// Prepare main orchestration step
 		mainOrchestrationStep := *step.OrchestrationStep
 
-		// Execute using OrchestrationOrchestratorAgent with structured output (includes evaluation)
+		// Reload orchestration progress to get latest conversation history (including validation feedback if any)
+		// This ensures we have the most up-to-date conversation history when looping back after validation failure
+		if updatedProgress, exists := progress.OrchestrationSteps[stepIndex]; exists {
+			orchestrationProgress = updatedProgress
+		}
+
+		// Execute using OrchestrationOrchestratorAgent with structured output
+		// OrchestrationOrchestratorAgent.ExecuteStructured() handles both execution and evaluation in one step
 		orchestrationResponse, updatedConversationHistory, err := hcpo.executeOrchestrationOrchestratorStep(
 			ctx,
 			mainOrchestrationStep,
@@ -169,7 +188,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 
 		// Save progress
 		if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save orchestration step progress: %w", err))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save orchestration step progress: %v", err))
 		}
 
 		// Store orchestration evaluation result to logs (if enabled)
@@ -189,7 +208,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 				"orchestration_step_id": step.ID,
 				"iteration":             orchestrationIteration + 1,
 				"selected_route_id":     orchestrationResponse.SelectedRouteID,
-				"reasoning":             orchestrationResponse.Reasoning,
 				"success_criteria_met":  orchestrationResponse.SuccessCriteriaMet,
 				"success_reasoning":     orchestrationResponse.SuccessReasoning,
 				"next_step_id":          step.NextStepID,
@@ -212,27 +230,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 		if orchestrationResponse.SuccessCriteriaMet {
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration step success criteria met after %d iterations", orchestrationIteration+1))
 
-			// Check if validation has already verified success
-			if orchestrationResponse.SuccessCriteriaVerifiedByValidation {
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Validation confirmed success criteria is met"))
-				orchestrationProgress.SuccessCriteriaMet = true
-				progress.OrchestrationSteps[stepIndex] = orchestrationProgress
-
-				// Note: Learning was already triggered in a previous iteration when validation first verified success
-				// No need to trigger learning again here
-
-				// Emit orchestration_finished event
-				// TODO: Add orchestration_finished event emission
-
-				// Emit step_finished event
-				hcpo.emitStepFinishedEvent(ctx, *step, stepIndex, orchestrationStepPath, false)
-
-				// Return success
-				return true, step.NextStepID, nil
-			}
-
-			// Success criteria met but not yet verified by validation - call validation as sub-agent
-			hcpo.GetLogger().Info(fmt.Sprintf("🔍 Success criteria met, calling validation to verify"))
+			// Success criteria met - call validation to verify
+			hcpo.GetLogger().Info("🔍 Success criteria met, calling validation to verify")
 
 			// Prepare validation template variables
 			var validationWorkspacePath string
@@ -297,51 +296,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 					},
 				},
 			}
+			// Add validation response to conversation history
 			orchestrationProgress.ConversationHistory = append(orchestrationProgress.ConversationHistory, validationMessage)
 
-			// Re-evaluate orchestration with validation response
-			hcpo.GetLogger().Info(fmt.Sprintf("🤔 Re-evaluating orchestration step with validation response"))
-
-			// Re-execute orchestration orchestrator agent with updated conversation history (includes validation response)
-			orchestrationResponse, updatedConversationHistory, err = hcpo.executeOrchestrationOrchestratorStep(
-				ctx,
-				mainOrchestrationStep,
-				stepIndex,
-				mainStepPath,
-				iteration,
-				orchestrationContext,
-				step.OrchestrationRoutes,
-				orchestrationProgress.ConversationHistory,
-				allSteps,
-				execCtx,
-			)
-			if err != nil {
-				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to re-evaluate orchestration step %d: %v", stepIndex+1, err), nil)
-				return false, "", fmt.Errorf("failed to re-evaluate orchestration step: %w", err)
-			}
-
-			// Update conversation history with latest
-			orchestrationProgress.ConversationHistory = updatedConversationHistory
-
-			// Store updated structured response
-			step.OrchestrationResponse = orchestrationResponse
-
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration step re-evaluated: success_criteria_met=%t, success_criteria_verified_by_validation=%t",
-				orchestrationResponse.SuccessCriteriaMet, orchestrationResponse.SuccessCriteriaVerifiedByValidation))
-
-			// Update orchestration progress
-			orchestrationProgress.SuccessCriteriaMet = orchestrationResponse.SuccessCriteriaMet
-			// ConversationHistory is already updated above when validation message was added
-			progress.OrchestrationSteps[stepIndex] = orchestrationProgress
-
-			// Save progress
-			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save orchestration step progress: %w", err))
-			}
-
 			// Check if validation verified success
-			if orchestrationResponse.SuccessCriteriaVerifiedByValidation {
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Validation verified success criteria - proceeding to next step"))
+			if validationResponse.IsSuccessCriteriaMet {
+				hcpo.GetLogger().Info("✅ Validation verified success criteria - proceeding to next step")
 				orchestrationProgress.SuccessCriteriaMet = true
 				progress.OrchestrationSteps[stepIndex] = orchestrationProgress
 
@@ -367,7 +327,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 					isLearningDisabled = false
 				}
 				// LOCK LEARNINGS: Check if learnings are locked
-				isLearningsLocked := step.OrchestrationStep.AgentConfigs != nil && step.OrchestrationStep.AgentConfigs.LockLearnings != nil && *step.OrchestrationStep.AgentConfigs.LockLearnings
+				// EXCEPTION: If learnings are locked but learnings don't exist, still run learning to create initial learnings
+				orchestrationStepID := step.OrchestrationStep.ID
+				shouldSkipLearningDueToLock, _ := hcpo.ShouldSkipLearningDueToLock(ctx, step.OrchestrationStep, orchestrationStepID, stepIndex, orchestrationStepPath)
 				// TEMP LLM OVERRIDE: Check if learning should be skipped based on which tempLLM was used
 				shouldSkipLearningDueToTempOverride := false
 				usedTempLLM := "" // Orchestration steps don't use temp LLM, but check for consistency
@@ -380,8 +342,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 				}
 
 				// Trigger success learning if enabled
-				if !isFastExecuteStep && !isLearningDisabled && !isLearningsLocked && !shouldSkipLearningDueToTempOverride {
-					learningPathIdentifier := getLearningPathIdentifier(orchestrationStepPath)
+				if !isFastExecuteStep && !isLearningDisabled && !shouldSkipLearningDueToLock && !shouldSkipLearningDueToTempOverride {
+					learningPathIdentifier := getLearningPathIdentifier(step.OrchestrationStep.ID, orchestrationStepPath)
 					totalSteps := len(allSteps)
 					hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running success learning analysis for orchestration step %s", orchestrationStepPath))
 					err := hcpo.runSuccessLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, step.OrchestrationStep, orchestrationProgress.ConversationHistory, validationResponse, isCodeExecutionMode)
@@ -395,7 +357,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 						hcpo.GetLogger().Info(fmt.Sprintf("⚡ Fast mode: Skipping learning agents for orchestration step %d", stepIndex+1))
 					} else if isLearningDisabled {
 						hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled: Skipping learning agents for orchestration step %d", stepIndex+1))
-					} else if isLearningsLocked {
+					} else if shouldSkipLearningDueToLock {
 						hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping learning agents for orchestration step %d (using existing learnings)", stepIndex+1))
 					} else if shouldSkipLearningDueToTempOverride {
 						hcpo.GetLogger().Info(fmt.Sprintf("🔧 Temp LLM override: Skipping learning agents for orchestration step %d", stepIndex+1))
@@ -412,14 +374,100 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 				return true, step.NextStepID, nil
 			}
 
-			// Validation did not confirm success - proceed to route selection
-			hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Validation did not confirm success - proceeding to route selection"))
-			// Fall through to route selection logic below
+			// Validation did not confirm success - trigger failure learning, then restart orchestrator from the beginning with validation feedback
+			hcpo.GetLogger().Info("⚠️ Validation did not confirm success - triggering failure learning, then restarting orchestrator from beginning with validation feedback")
+
+			// Note: Validation message was already added to conversation history at line 298
+			// Update progress to ensure conversation history (with validation feedback) is saved
+			progress.OrchestrationSteps[stepIndex] = orchestrationProgress
+
+			// Save progress
+			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save orchestration step progress: %v", err))
+			}
+
+			// Trigger failure learning if enabled (even when validation fails)
+			// Determine code execution mode
+			var isCodeExecutionMode bool
+			if step.OrchestrationStep.AgentConfigs != nil && step.OrchestrationStep.AgentConfigs.UseCodeExecutionMode != nil {
+				isCodeExecutionMode = *step.OrchestrationStep.AgentConfigs.UseCodeExecutionMode
+			} else {
+				isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
+			}
+
+			// Check learning flags (similar to success learning)
+			isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
+			isLearningDisabledStep := step.OrchestrationStep.AgentConfigs != nil && step.OrchestrationStep.AgentConfigs.DisableLearning != nil && *step.OrchestrationStep.AgentConfigs.DisableLearning
+			isLearningDetailLevelNone := false
+			if step.OrchestrationStep.AgentConfigs != nil && step.OrchestrationStep.AgentConfigs.LearningDetailLevel == "none" {
+				isLearningDetailLevelNone = true
+			}
+			isLearningDisabled := isLearningDisabledStep || isLearningDetailLevelNone
+			// CODE EXECUTION MODE: Force learning enabled regardless of step config
+			if isCodeExecutionMode && isLearningDisabled {
+				hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing learning for orchestration step %d (overriding step config)", stepIndex+1))
+				isLearningDisabled = false
+			}
+			// LOCK LEARNINGS: Check if learnings are locked
+			// EXCEPTION: If learnings are locked but learnings don't exist, still run learning to create initial learnings
+			orchestrationStepID := step.OrchestrationStep.ID
+			shouldSkipLearningDueToLock, _ := hcpo.ShouldSkipLearningDueToLock(ctx, step.OrchestrationStep, orchestrationStepID, stepIndex, orchestrationStepPath)
+			// TEMP LLM OVERRIDE: Check if learning should be skipped based on which tempLLM was used
+			shouldSkipLearningDueToTempOverride := false
+			usedTempLLM := "" // Orchestration steps don't use temp LLM, but check for consistency
+			if hcpo.executionOptions != nil && usedTempLLM != "" {
+				if usedTempLLM == "tempLLM1" && hcpo.executionOptions.SkipLearningWhenTempLLM1 {
+					shouldSkipLearningDueToTempOverride = true
+				} else if usedTempLLM == "tempLLM2" && hcpo.executionOptions.SkipLearningWhenTempLLM2 {
+					shouldSkipLearningDueToTempOverride = true
+				}
+			}
+
+			// Trigger failure learning if enabled
+			if !isFastExecuteStep && !isLearningDisabled && !shouldSkipLearningDueToLock && !shouldSkipLearningDueToTempOverride {
+				learningPathIdentifier := getLearningPathIdentifier(step.OrchestrationStep.ID, orchestrationStepPath)
+				totalSteps := len(allSteps)
+				hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running failure learning analysis for orchestration step %s (validation failed)", orchestrationStepPath))
+				_, _, err := hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, step.OrchestrationStep, orchestrationProgress.ConversationHistory, validationResponse, isCodeExecutionMode)
+				if err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for orchestration step %s: %v", orchestrationStepPath, err))
+				} else {
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Failure learning analysis completed for orchestration step %s", orchestrationStepPath))
+				}
+			} else {
+				if isFastExecuteStep {
+					hcpo.GetLogger().Info(fmt.Sprintf("⚡ Fast mode: Skipping learning agents for orchestration step %d", stepIndex+1))
+				} else if isLearningDisabled {
+					hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled: Skipping learning agents for orchestration step %d", stepIndex+1))
+				} else if shouldSkipLearningDueToLock {
+					hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping learning agents for orchestration step %d (using existing learnings)", stepIndex+1))
+				} else if shouldSkipLearningDueToTempOverride {
+					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Temp LLM override: Skipping learning agents for orchestration step %d", stepIndex+1))
+				}
+			}
+
+			// Loop back to start of orchestration step (increment iteration)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔄 Restarting orchestration step from beginning (iteration %d/%d) with validation feedback", orchestrationIteration+2, maxOrchestrationIterations))
+			continue // Loop back to start of for loop
 		}
 
-		// 4. Success criteria not met - execute selected sub-agent
+		// 4. Success criteria not met - either continue working yourself, delegate to sub-agent, or end workflow
 		if orchestrationResponse.SelectedRouteID == "" {
-			return false, "", fmt.Errorf("orchestration step %d: success criteria not met but no route selected", stepIndex+1)
+			// Orchestrator is continuing to work itself - loop back to continue in next iteration
+			hcpo.GetLogger().Info(fmt.Sprintf("🔄 Orchestrator continuing to work itself (iteration %d/%d) - no sub-agent needed", orchestrationIteration+2, maxOrchestrationIterations))
+			// Update progress and continue loop
+			orchestrationProgress.IterationCount = orchestrationIteration + 1
+			orchestrationProgress.SuccessCriteriaMet = false
+			orchestrationProgress.SelectedRouteID = ""
+			progress.OrchestrationSteps[stepIndex] = orchestrationProgress
+
+			// Save progress
+			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save orchestration step progress: %v", err))
+			}
+
+			// Continue loop to next iteration
+			continue
 		}
 
 		// Find the selected route and capture its index
@@ -437,6 +485,23 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			return false, "", fmt.Errorf("orchestration step %d: selected route ID '%s' not found in orchestration routes", stepIndex+1, orchestrationResponse.SelectedRouteID)
 		}
 
+		// Check if the selected route is "end" - terminate workflow immediately
+		if strings.ToLower(selectedRoute.RouteID) == "end" {
+			hcpo.GetLogger().Info("🏁 Orchestrator chose to end workflow (route: 'end') - terminating workflow early")
+			// Mark orchestration step as completed with success
+			orchestrationProgress.SuccessCriteriaMet = true
+			orchestrationProgress.SelectedRouteID = "end"
+			progress.OrchestrationSteps[stepIndex] = orchestrationProgress
+
+			// Save progress
+			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save orchestration step progress after end route selection: %v", err))
+			}
+
+			// Return success with "end" to terminate workflow
+			return true, "end", nil
+		}
+
 		hcpo.GetLogger().Info(fmt.Sprintf("🔀 Executing sub-agent: %s (route: %s, index: %d)", selectedRoute.SubAgentStep.Title, selectedRoute.RouteID, subAgentIndex))
 
 		// Prepare sub-agent step with validation disabled
@@ -447,16 +512,27 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 		val := true
 		subAgentStep.AgentConfigs.DisableValidation = &val
 
+		// Match sub-agent's own step config from step_config.json (mandatory - no inheritance from parent)
+		_ = ApplyStepConfigFromFile(ctx, &subAgentStep, hcpo)
+		// Ignore error - use defaults if config loading fails
+		// Preserve DisableValidation = true (already set above)
+
 		// Sub-agents don't receive previous steps history - they work independently based on orchestrator instructions
 
 		// Modify sub-agent step with orchestrator-provided instructions, success criteria, and context settings
 		if orchestrationResponse.InstructionsToSubAgent != "" {
-			subAgentStep.Description = orchestrationResponse.InstructionsToSubAgent
-			hcpo.GetLogger().Info(fmt.Sprintf("📝 Using orchestrator-provided instructions for sub-agent (replacing step description)"))
+			// Append orchestrator instructions to original description (preserve plan context)
+			originalDescription := subAgentStep.Description
+			if originalDescription != "" {
+				subAgentStep.Description = fmt.Sprintf("%s\n\n## Orchestrator Instructions\n\n%s", originalDescription, orchestrationResponse.InstructionsToSubAgent)
+			} else {
+				subAgentStep.Description = orchestrationResponse.InstructionsToSubAgent
+			}
+			hcpo.GetLogger().Info("📝 Appending orchestrator-provided instructions to sub-agent step description")
 		}
 		if orchestrationResponse.SuccessCriteriaForSubAgent != "" {
 			subAgentStep.SuccessCriteria = orchestrationResponse.SuccessCriteriaForSubAgent
-			hcpo.GetLogger().Info(fmt.Sprintf("📝 Using orchestrator-provided success criteria for sub-agent (replacing step success criteria)"))
+			hcpo.GetLogger().Info("📝 Using orchestrator-provided success criteria for sub-agent (replacing step success criteria)")
 		}
 		if orchestrationResponse.ContextDependenciesForSubAgent != "" {
 			// Parse comma-separated context dependencies into array
@@ -524,7 +600,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 
 		// Save progress
 		if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save orchestration step progress after sub-agent: %w", err))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save orchestration step progress after sub-agent: %v", err))
 		}
 
 		// Update context files for next iteration
@@ -558,7 +634,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 		isLearningDisabled = false
 	}
 	// LOCK LEARNINGS: Check if learnings are locked
-	isLearningsLocked := step.OrchestrationStep.AgentConfigs != nil && step.OrchestrationStep.AgentConfigs.LockLearnings != nil && *step.OrchestrationStep.AgentConfigs.LockLearnings
+	// EXCEPTION: If learnings are locked but learnings don't exist, still run learning to create initial learnings
+	orchestrationStepID := step.OrchestrationStep.ID
+	shouldSkipLearningDueToLock, _ := hcpo.ShouldSkipLearningDueToLock(ctx, step.OrchestrationStep, orchestrationStepID, stepIndex, orchestrationStepPath)
 	// TEMP LLM OVERRIDE: Check if learning should be skipped based on which tempLLM was used
 	shouldSkipLearningDueToTempOverride := false
 	usedTempLLM := "" // Orchestration steps don't use temp LLM, but check for consistency
@@ -571,8 +649,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 	}
 
 	// Trigger failure learning if enabled
-	if !isFastExecuteStep && !isLearningDisabled && !isLearningsLocked && !shouldSkipLearningDueToTempOverride {
-		learningPathIdentifier := getLearningPathIdentifier(orchestrationStepPath)
+	if !isFastExecuteStep && !isLearningDisabled && !shouldSkipLearningDueToLock && !shouldSkipLearningDueToTempOverride {
+		learningPathIdentifier := getLearningPathIdentifier(step.OrchestrationStep.ID, orchestrationStepPath)
 		totalSteps := len(allSteps)
 
 		// Create a minimal validation response indicating failure for learning purposes
@@ -595,7 +673,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			hcpo.GetLogger().Info(fmt.Sprintf("⚡ Fast mode: Skipping learning agents for orchestration step %d", stepIndex+1))
 		} else if isLearningDisabled {
 			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled: Skipping learning agents for orchestration step %d", stepIndex+1))
-		} else if isLearningsLocked {
+		} else if shouldSkipLearningDueToLock {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping learning agents for orchestration step %d (using existing learnings)", stepIndex+1))
 		} else if shouldSkipLearningDueToTempOverride {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Temp LLM override: Skipping learning agents for orchestration step %d", stepIndex+1))
@@ -677,8 +755,39 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 		templateVars["VariableValues"] = variableValues
 	}
 
-	// Get orchestration orchestrator agent
-	orchestrationOrchestratorAgent, err := hcpo.getOrchestrationOrchestratorAgentForStep(ctx, step, stepIndex, iteration)
+	// Set folder guard paths: allow reads from learnings and execution, writes only to current step folder
+	baseWorkspacePath := hcpo.GetWorkspacePath()
+	learningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
+	// READ: learnings folder + execution folder (to read previous step results)
+	// WRITE: only the specific step folder (execution/step-{X}-orchestration/ or execution/step-{X}-orchestration-{N}/)
+	readPaths := []string{learningsPath, executionWorkspacePath}
+	writePaths := []string{stepExecutionPath}
+	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for orchestration orchestrator agent - Read paths: %v, Write paths: %v (can read learnings/ and execution/, can only write to %s)", readPaths, writePaths, stepPath))
+
+	// Get orchestration orchestrator agent with tempLLM logic
+	// Determine retryAttempt from orchestrationIteration (1-based: first iteration = 1, second = 2, etc.)
+	retryAttempt := iteration + 1
+
+	// Determine if this is a retry after validation failure by checking conversation history
+	isRetryAfterValidationFailure := false
+	for _, msg := range conversationHistory {
+		// Check message content for validation feedback
+		for _, part := range msg.Parts {
+			// Extract text from TextContent type
+			if textContent, ok := part.(llmtypes.TextContent); ok {
+				if strings.Contains(textContent.Text, "Validation agent completed") {
+					isRetryAfterValidationFailure = true
+					break
+				}
+			}
+		}
+		if isRetryAfterValidationFailure {
+			break
+		}
+	}
+
+	orchestrationOrchestratorAgent, err := hcpo.getOrchestrationOrchestratorAgentForStep(ctx, step, stepIndex, iteration, retryAttempt, isRetryAfterValidationFailure, allSteps)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get orchestration orchestrator agent: %w", err)
 	}
@@ -693,18 +802,99 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 }
 
 // getOrchestrationOrchestratorAgentForStep returns the OrchestrationOrchestratorAgent to use for the main orchestration step
-func (hcpo *HumanControlledTodoPlannerOrchestrator) getOrchestrationOrchestratorAgentForStep(ctx context.Context, step TodoStep, stepIndex int, iteration int) (*HumanControlledTodoPlannerOrchestrationOrchestratorAgent, error) {
+// Includes tempLLM logic similar to execution agents
+func (hcpo *HumanControlledTodoPlannerOrchestrator) getOrchestrationOrchestratorAgentForStep(ctx context.Context, step TodoStep, stepIndex int, iteration int, retryAttempt int, isRetryAfterValidationFailure bool, allSteps []TodoStep) (*HumanControlledTodoPlannerOrchestrationOrchestratorAgent, error) {
 	eventBridge := hcpo.GetContextAwareBridge()
 	if eventBridge == nil {
 		return nil, fmt.Errorf("event bridge is required for orchestration orchestrator agent")
 	}
 
-	// Determine LLM config: Priority: step config > orchestrator default
+	// Determine LLM config with cascading fallback: tempLLM1 → tempLLM2 → step LLM
+	// Priority: tempLLM1 (attempt 1) > tempLLM2 (attempt 2) > step config > preset default > orchestrator default
+	// Exception: If retrying after validation failure and fallbackToOriginalLLMOnFailure is enabled, skip temp overrides
+	// NEW: Only use tempLLM if step learnings folder has files (has existing learnings to improve upon)
 	var llmConfig *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
+	shouldSkipTempOverride := isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure
 
-	if step.AgentConfigs != nil && step.AgentConfigs.ConditionalLLM != nil {
-		// Use conditional LLM config for orchestration (similar purpose - structured decision making)
+	// Get step ID for orchestration learnings:
+	// Orchestration learnings are stored using the inner orchestration step ID (step.OrchestrationStep.ID),
+	// which is also what getLearningPathIdentifier uses. Use that ID for tempLLM gating so we align with
+	// readLearningHistory / learning phases.
+	stepID := ""
+	if step.OrchestrationStep != nil && step.OrchestrationStep.ID != "" {
+		stepID = step.OrchestrationStep.ID
+	}
+
+	// If inner step ID is not available, use stepPath as fallback (never fall back to parent wrapper ID)
+	stepPath := fmt.Sprintf("step-%d", stepIndex+1)
+	if stepID == "" {
+		stepID = stepPath // Fallback: use stepPath as identifier
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not determine inner orchestration step ID for step %d, using stepPath as fallback", stepIndex+1))
+	}
+
+	// Check if learnings folder has files
+	learningsFolderEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, stepIndex, stepPath)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check if orchestration step %s learnings folder is empty: %v, assuming empty (will skip tempLLM)", stepID, err))
+		learningsFolderEmpty = true // Conservative: assume empty on error, skip tempLLM
+	}
+
+	// Cascading LLM selection based on retry attempt:
+	// - retryAttempt == 1: Use tempLLM1 (if available AND learnings folder has files)
+	// - retryAttempt == 2: Use tempLLM2 (if tempLLM1 was used and tempLLM2 is available AND learnings folder has files)
+	// - retryAttempt >= 3: Use step LLM (step config > preset > orchestrator)
+	hasTempLLM1 := hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != ""
+	hasTempLLM2 := hcpo.tempOverrideLLM2 != nil && hcpo.tempOverrideLLM2.Provider != "" && hcpo.tempOverrideLLM2.ModelID != ""
+
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Orchestration LLM selection - retryAttempt=%d, isRetryAfterValidationFailure=%v, fallbackToOriginalLLMOnFailure=%v, shouldSkipTempOverride=%v, hasTempLLM1=%v, hasTempLLM2=%v, learningsFolderEmpty=%v", retryAttempt, isRetryAfterValidationFailure, hcpo.fallbackToOriginalLLMOnFailure, shouldSkipTempOverride, hasTempLLM1, hasTempLLM2, learningsFolderEmpty))
+
+	if shouldSkipTempOverride && (hasTempLLM1 || hasTempLLM2) {
+		hcpo.GetLogger().Info("🔄 Validation failed - skipping temp override LLM and falling back to original LLM (fallback_to_original_llm_on_failure enabled)")
+	}
+
+	if learningsFolderEmpty && (hasTempLLM1 || hasTempLLM2) {
+		hcpo.GetLogger().Info(fmt.Sprintf("📚 Orchestration step %s has no learnings - skipping temp override LLM and using original LLM (learnings folder is empty)", stepPath))
+	}
+
+	// Cascading logic: tempLLM1 → tempLLM2 → step LLM
+	// Only use tempLLM if learnings folder has files (has existing learnings to improve upon)
+	// Note: shouldSkipTempOverride only applies to tempLLM1, not tempLLM2
+	// tempLLM2 is part of the cascading fallback strategy and should be used even after tempLLM1 fails
+
+	// Check tempLLM2 FIRST (on attempt 2 OR new loop iteration after failure) - it's part of the cascading fallback and should take priority
+	// Use tempLLM2 when: (1) retryAttempt == 2 (normal retry), OR (2) isRetryAfterValidationFailure && retryAttempt == 1 (new loop iteration after failure)
+	shouldUseTempLLM2 := !learningsFolderEmpty && hasTempLLM2 && (retryAttempt == 2 || (isRetryAfterValidationFailure && retryAttempt == 1))
+	if shouldUseTempLLM2 {
+		// Second attempt or new loop iteration after failure: Use tempLLM2
+		llmConfig = &orchestrator.LLMConfig{
+			Provider:       hcpo.tempOverrideLLM2.Provider,
+			ModelID:        hcpo.tempOverrideLLM2.ModelID,
+			FallbackModels: []string{},                    // Use empty fallback for temp override
+			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 2 for orchestration orchestrator (attempt %d, learnings folder has files): %s/%s", retryAttempt, hcpo.tempOverrideLLM2.Provider, hcpo.tempOverrideLLM2.ModelID))
+	} else if !shouldSkipTempOverride && !learningsFolderEmpty && retryAttempt == 1 && hasTempLLM1 {
+		// First attempt: Use tempLLM1
+		llmConfig = &orchestrator.LLMConfig{
+			Provider:       hcpo.tempOverrideLLM.Provider,
+			ModelID:        hcpo.tempOverrideLLM.ModelID,
+			FallbackModels: []string{},                    // Use empty fallback for temp override
+			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 1 for orchestration orchestrator (attempt %d, learnings folder has files): %s/%s", retryAttempt, hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID))
+	} else if step.AgentConfigs != nil && step.AgentConfigs.ExecutionLLM != nil && step.AgentConfigs.ExecutionLLM.Provider != "" && step.AgentConfigs.ExecutionLLM.ModelID != "" {
+		// Use execution LLM config for orchestration (orchestration orchestrator is execution-like - orchestrates and delegates)
+		executionLLMConfig := step.AgentConfigs.ExecutionLLM
+		llmConfig = &orchestrator.LLMConfig{
+			Provider:       executionLLMConfig.Provider,
+			ModelID:        executionLLMConfig.ModelID,
+			FallbackModels: []string{},
+			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution LLM for orchestration orchestrator: %s/%s", executionLLMConfig.Provider, executionLLMConfig.ModelID))
+	} else if step.AgentConfigs != nil && step.AgentConfigs.ConditionalLLM != nil {
+		// Fallback to conditional LLM config for orchestration (similar purpose - structured decision making)
 		conditionalLLMConfig := step.AgentConfigs.ConditionalLLM
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       conditionalLLMConfig.Provider,
@@ -713,6 +903,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getOrchestrationOrchestrator
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional LLM for orchestration orchestrator: %s/%s", conditionalLLMConfig.Provider, conditionalLLMConfig.ModelID))
+	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
+		// Use preset execution LLM as default for orchestration orchestrator (similar to execution agents)
+		llmConfig = &orchestrator.LLMConfig{
+			Provider:       hcpo.presetExecutionLLM.Provider,
+			ModelID:        hcpo.presetExecutionLLM.ModelID,
+			FallbackModels: []string{},                    // Use empty fallback for preset defaults
+			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution LLM for orchestration orchestrator: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
 	} else {
 		// Use orchestrator default LLM config
 		llmConfig = orchestratorLLMConfig

@@ -74,7 +74,7 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
-  const { id, title, decision_evaluation_question, decision_step, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun, workspacePath, selectedRunFolder } = data
+  const { id, title, decision_evaluation_question, decision_step, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder } = data
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
   
@@ -266,16 +266,16 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
   const hasLargeOutput = stepConfig?.agent_configs?.enable_large_output_virtual_tools !== false
 
   // Button states
-  const isRunDisabled = isExecuting || !canRun || !onRunFromStep
+  const isRunDisabled = isExecuting || !onRunFromStep
 
   // Handle run from this step button click
   const handleRunClick = useCallback((e: MouseEvent) => {
     e.stopPropagation()
     e.preventDefault()
-    if (onRunFromStep && !isExecuting && canRun) {
+    if (onRunFromStep && !isExecuting) {
       onRunFromStep(stepIndex, step.id || `step-${stepIndex}`)
     }
-  }, [onRunFromStep, isExecuting, canRun, stepIndex, step.id])
+  }, [onRunFromStep, isExecuting, stepIndex, step.id])
 
   // Handle settings icon click
   const handleSettingsClick = useCallback((e: MouseEvent) => {
@@ -419,9 +419,7 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
             title={
               isExecuting 
                 ? 'Execution in progress...' 
-                : !canRun 
-                  ? 'Complete previous steps first' 
-                  : `Run step ${stepIndex + 1} only`
+                : `Run step ${stepIndex + 1} only`
             }
           >
             <Play className="w-3.5 h-3.5" />
@@ -608,6 +606,15 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
             </div>
           )}
         </div>
+
+        {/* Retry handle - for validation loop-back */}
+        <Handle
+          type="target"
+          position={Position.Top}
+          id="retry"
+          className="!w-2 !h-2 !bg-amber-500 !border-2 !border-white dark:!border-gray-900"
+          style={{ left: '33%' }}
+        />
 
         {/* True handle - top right area */}
         <Handle 

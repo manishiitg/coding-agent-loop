@@ -15,6 +15,7 @@ import (
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/database"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
 )
 
 // getWorkspaceAPIURL returns the workspace API base URL from environment or default
@@ -1574,5 +1575,1606 @@ func (api *StreamingAPI) handleDeleteStepLearnings(w http.ResponseWriter, r *htt
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleMigratePlan handles migrating plan.json to new type-safe format
+// This endpoint reads plan.json, validates it can be converted to typed format,
+// creates a backup, and confirms the migration is ready
+func (api *StreamingAPI) handleMigratePlan(w http.ResponseWriter, r *http.Request) {
+	// Enable CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workspacePath := r.URL.Query().Get("workspace_path")
+	if workspacePath == "" {
+		http.Error(w, "workspace_path parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	planPath := workspacePath + "/planning/plan.json"
+
+	// Read existing plan using workspace API
+	pathSegments := strings.Split(planPath, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath
+	req, err := http.NewRequestWithContext(r.Context(), "GET", apiURL, nil)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create request: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to call workspace API: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read response: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		http.Error(w, "plan.json not found", http.StatusNotFound)
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, fmt.Sprintf("Workspace API returned status %d: %s", resp.StatusCode, string(body)), http.StatusInternalServerError)
+		return
+	}
+
+	// Parse workspace API response
+	var apiResp virtualtools.WorkspaceAPIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to parse API response: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if !apiResp.Success {
+		http.Error(w, fmt.Sprintf("Workspace API error: %s", apiResp.Error), http.StatusInternalServerError)
+		return
+	}
+
+	// Extract content
+	var planContent string
+	if fileContent, ok := apiResp.Data.(virtualtools.WorkspaceFileContent); ok {
+		planContent = fileContent.Content
+	} else if dataMap, ok := apiResp.Data.(map[string]interface{}); ok {
+		if content, ok := dataMap["content"].(string); ok {
+			planContent = content
+		}
+	}
+
+	if planContent == "" {
+		http.Error(w, "Failed to extract plan content from API response", http.StatusInternalServerError)
+		return
+	}
+
+	// Parse plan as legacy format
+	var legacyPlan struct {
+		Steps []map[string]interface{} `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(planContent), &legacyPlan); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to parse plan.json: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Create backup first
+	backupPath := planPath + ".backup." + time.Now().Format("20060102-150405")
+	backupPathSegments := strings.Split(backupPath, "/")
+	backupEncodedSegments := make([]string, len(backupPathSegments))
+	for i, segment := range backupPathSegments {
+		backupEncodedSegments[i] = url.PathEscape(segment)
+	}
+	backupEncodedPath := strings.Join(backupEncodedSegments, "/")
+
+	backupRequestBody := map[string]interface{}{
+		"content": planContent,
+	}
+	backupBodyJSON, _ := json.Marshal(backupRequestBody)
+
+	backupURL := getWorkspaceAPIURL() + "/api/documents/" + backupEncodedPath
+	backupReq, err := http.NewRequestWithContext(r.Context(), "PUT", backupURL, strings.NewReader(string(backupBodyJSON)))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create backup request: %v", err), http.StatusInternalServerError)
+		return
+	}
+	backupReq.Header.Set("Content-Type", "application/json")
+
+	backupResp, err := client.Do(backupReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create backup: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer backupResp.Body.Close()
+
+	if backupResp.StatusCode != http.StatusOK && backupResp.StatusCode != http.StatusCreated {
+		backupBody, _ := io.ReadAll(backupResp.Body)
+		http.Error(w, fmt.Sprintf("Failed to create backup (status %d): %s", backupResp.StatusCode, string(backupBody)), http.StatusInternalServerError)
+		return
+	}
+
+	// Now convert to typed format and write in new format
+	// Parse as PlanningResponse to use the conversion functions
+	var planResponse struct {
+		Steps []map[string]interface{} `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(planContent), &planResponse); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to parse plan for conversion: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Helper function to migrate a single step (recursive for nested steps)
+	var migrateStep func(map[string]interface{}) (map[string]interface{}, error)
+	migrateStep = func(stepMap map[string]interface{}) (map[string]interface{}, error) {
+		// Create a copy to avoid modifying original
+		migrated := make(map[string]interface{})
+		for k, v := range stepMap {
+			migrated[k] = v
+		}
+
+		// Determine type from boolean flags
+		// Check all possible boolean representations (bool, string "true"/"false", etc.)
+		var stepType string
+
+		// Helper to check boolean value
+		checkBool := func(key string) bool {
+			val, exists := migrated[key]
+			if !exists {
+				return false
+			}
+			// Try bool first
+			if b, ok := val.(bool); ok {
+				return b
+			}
+			// Try string "true"/"false"
+			if s, ok := val.(string); ok {
+				return s == "true" || s == "True" || s == "TRUE"
+			}
+			// Try number (1 = true, 0 = false)
+			if n, ok := val.(float64); ok {
+				return n != 0
+			}
+			return false
+		}
+
+		// Determine type by checking both boolean flags AND presence of type-specific fields
+		// This handles cases where boolean flags might be missing or false
+		stepID, _ := migrated["id"].(string)
+		stepTitle, _ := migrated["title"].(string)
+
+		hasDecisionFlag := checkBool("has_decision_step")
+		hasDecisionField := migrated["decision_step"] != nil
+		hasOrchestrationFlag := checkBool("has_orchestration_step")
+		hasOrchestrationField := migrated["orchestration_step"] != nil || migrated["orchestration_routes"] != nil
+		hasConditionFlag := checkBool("has_condition")
+		hasConditionField := migrated["if_true_steps"] != nil || migrated["if_false_steps"] != nil
+
+		if hasDecisionFlag || hasDecisionField {
+			stepType = "decision"
+		} else if hasOrchestrationFlag || hasOrchestrationField {
+			stepType = "orchestration"
+		} else if hasConditionFlag || hasConditionField {
+			stepType = "conditional"
+		} else {
+			stepType = "regular"
+		}
+
+		// Debug logging
+		api.logger.Info(fmt.Sprintf("🔍 Migrating step %q (ID: %s): type=%s (decision: flag=%v field=%v, orchestration: flag=%v field=%v, conditional: flag=%v field=%v)",
+			stepTitle, stepID, stepType,
+			hasDecisionFlag, hasDecisionField,
+			hasOrchestrationFlag, hasOrchestrationField,
+			hasConditionFlag, hasConditionField))
+
+		// Remove boolean flags
+		delete(migrated, "has_condition")
+		delete(migrated, "has_decision_step")
+		delete(migrated, "has_orchestration_step")
+
+		// Add type field
+		migrated["type"] = stepType
+
+		// Recursively migrate nested steps
+		// Decision step: migrate decision_step
+		if decisionStep, ok := migrated["decision_step"].(map[string]interface{}); ok {
+			migratedDecisionStep, err := migrateStep(decisionStep)
+			if err != nil {
+				return nil, fmt.Errorf("failed to migrate decision_step: %w", err)
+			}
+			migrated["decision_step"] = migratedDecisionStep
+		}
+
+		// Orchestration step: migrate orchestration_step and routes
+		if orchestrationStep, ok := migrated["orchestration_step"].(map[string]interface{}); ok {
+			migratedOrchestrationStep, err := migrateStep(orchestrationStep)
+			if err != nil {
+				return nil, fmt.Errorf("failed to migrate orchestration_step: %w", err)
+			}
+			migrated["orchestration_step"] = migratedOrchestrationStep
+		}
+
+		// Orchestration routes: migrate sub_agent_step in each route
+		if routes, ok := migrated["orchestration_routes"].([]interface{}); ok {
+			migratedRoutes := make([]interface{}, len(routes))
+			for i, route := range routes {
+				if routeMap, ok := route.(map[string]interface{}); ok {
+					migratedRoute := make(map[string]interface{})
+					for k, v := range routeMap {
+						migratedRoute[k] = v
+					}
+					if subAgentStep, ok := routeMap["sub_agent_step"].(map[string]interface{}); ok {
+						migratedSubAgentStep, err := migrateStep(subAgentStep)
+						if err != nil {
+							return nil, fmt.Errorf("failed to migrate sub_agent_step in route %d: %w", i, err)
+						}
+						migratedRoute["sub_agent_step"] = migratedSubAgentStep
+					}
+					migratedRoutes[i] = migratedRoute
+				} else {
+					migratedRoutes[i] = route
+				}
+			}
+			migrated["orchestration_routes"] = migratedRoutes
+		}
+
+		// Conditional step: migrate if_true_steps and if_false_steps
+		if ifTrueSteps, ok := migrated["if_true_steps"].([]interface{}); ok {
+			migratedIfTrueSteps := make([]interface{}, len(ifTrueSteps))
+			for i, step := range ifTrueSteps {
+				if stepMap, ok := step.(map[string]interface{}); ok {
+					migratedStep, err := migrateStep(stepMap)
+					if err != nil {
+						return nil, fmt.Errorf("failed to migrate if_true_steps[%d]: %w", i, err)
+					}
+					migratedIfTrueSteps[i] = migratedStep
+				} else {
+					migratedIfTrueSteps[i] = step
+				}
+			}
+			migrated["if_true_steps"] = migratedIfTrueSteps
+		}
+
+		if ifFalseSteps, ok := migrated["if_false_steps"].([]interface{}); ok {
+			migratedIfFalseSteps := make([]interface{}, len(ifFalseSteps))
+			for i, step := range ifFalseSteps {
+				if stepMap, ok := step.(map[string]interface{}); ok {
+					migratedStep, err := migrateStep(stepMap)
+					if err != nil {
+						return nil, fmt.Errorf("failed to migrate if_false_steps[%d]: %w", i, err)
+					}
+					migratedIfFalseSteps[i] = migratedStep
+				} else {
+					migratedIfFalseSteps[i] = step
+				}
+			}
+			migrated["if_false_steps"] = migratedIfFalseSteps
+		}
+
+		return migrated, nil
+	}
+
+	// Migrate all steps
+	migratedSteps := make([]interface{}, 0, len(planResponse.Steps))
+	for i, stepMap := range planResponse.Steps {
+		migratedStep, err := migrateStep(stepMap)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to migrate step %d: %v", i, err), http.StatusInternalServerError)
+			return
+		}
+		migratedSteps = append(migratedSteps, migratedStep)
+	}
+
+	// Create new format plan
+	newPlan := map[string]interface{}{
+		"steps": migratedSteps,
+	}
+
+	newPlanJSON, err := json.MarshalIndent(newPlan, "", "  ")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to marshal migrated plan: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Write migrated plan
+	planPathSegments := strings.Split(planPath, "/")
+	planEncodedSegments := make([]string, len(planPathSegments))
+	for i, segment := range planPathSegments {
+		planEncodedSegments[i] = url.PathEscape(segment)
+	}
+	planEncodedPath := strings.Join(planEncodedSegments, "/")
+
+	planRequestBody := map[string]interface{}{
+		"content": string(newPlanJSON),
+	}
+	planBodyJSON, _ := json.Marshal(planRequestBody)
+
+	planURL := getWorkspaceAPIURL() + "/api/documents/" + planEncodedPath
+	planReq, err := http.NewRequestWithContext(r.Context(), "PUT", planURL, strings.NewReader(string(planBodyJSON)))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create plan write request: %v", err), http.StatusInternalServerError)
+		return
+	}
+	planReq.Header.Set("Content-Type", "application/json")
+
+	planResp, err := client.Do(planReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write migrated plan: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer planResp.Body.Close()
+
+	if planResp.StatusCode != http.StatusOK && planResp.StatusCode != http.StatusCreated {
+		planBody, _ := io.ReadAll(planResp.Body)
+		http.Error(w, fmt.Sprintf("Failed to write migrated plan (status %d): %s", planResp.StatusCode, string(planBody)), http.StatusInternalServerError)
+		return
+	}
+
+	// Migration complete - plan is now in new format with type fields
+	response := map[string]interface{}{
+		"success":     true,
+		"message":     "Plan migrated to new format successfully. All steps now have 'type' field.",
+		"backup_path": backupPath,
+		"steps_count": len(planResponse.Steps),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// ============================================================================
+// Plan and Step Config Backend API Handlers
+// ============================================================================
+
+// PlanUpdateRequest represents a request to update a plan step
+type PlanUpdateRequest struct {
+	WorkspacePath string                 `json:"workspace_path"`
+	StepID        string                 `json:"step_id"`
+	Updates       map[string]interface{} `json:"updates"`
+}
+
+// StepConfigUpdateRequest represents a request to update step config
+type StepConfigUpdateRequest struct {
+	WorkspacePath string                 `json:"workspace_path"`
+	StepID        string                 `json:"step_id"`
+	AgentConfigs  map[string]interface{} `json:"agent_configs"`
+}
+
+// BatchUpdateRequest represents a batch update request
+type BatchUpdateRequest struct {
+	WorkspacePath string       `json:"workspace_path"`
+	Updates       []StepUpdate `json:"updates"`
+}
+
+// StepUpdate represents a single step update in batch request
+type StepUpdate struct {
+	StepID        string                 `json:"step_id"`
+	PlanUpdates   map[string]interface{} `json:"plan_updates,omitempty"`
+	ConfigUpdates map[string]interface{} `json:"config_updates,omitempty"`
+}
+
+// DeleteStepRequest represents a request to delete a step
+type DeleteStepRequest struct {
+	WorkspacePath string `json:"workspace_path"`
+	StepID        string `json:"step_id"`
+}
+
+// AddStepRequest represents a request to add a new step
+type AddStepRequest struct {
+	WorkspacePath     string                 `json:"workspace_path"`
+	Step              map[string]interface{} `json:"step"`
+	InsertAfterStepID string                 `json:"insert_after_step_id,omitempty"`
+	ParentStepID      string                 `json:"parent_step_id,omitempty"`
+	BranchType        string                 `json:"branch_type,omitempty"` // "if_true" or "if_false"
+}
+
+// readPlanFromWorkspace reads plan.json from workspace using workspace API
+func readPlanFromWorkspace(ctx context.Context, workspacePath string) (*todo_creation_human.PlanningResponse, error) {
+	planPath := workspacePath + "/planning/plan.json"
+
+	// URL-encode the filepath segments
+	pathSegments := strings.Split(planPath, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	// Read file from workspace API
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("plan.json not found")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse workspace API response
+	var apiResp virtualtools.WorkspaceAPIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, fmt.Errorf("failed to parse API response: %w", err)
+	}
+
+	if !apiResp.Success {
+		return nil, fmt.Errorf("workspace API error: %s", apiResp.Error)
+	}
+
+	// Extract content
+	var planContent string
+	if fileContent, ok := apiResp.Data.(virtualtools.WorkspaceFileContent); ok {
+		planContent = fileContent.Content
+	} else if dataMap, ok := apiResp.Data.(map[string]interface{}); ok {
+		if content, ok := dataMap["content"].(string); ok {
+			planContent = content
+		}
+	}
+
+	if planContent == "" {
+		return nil, fmt.Errorf("failed to extract plan content from API response")
+	}
+
+	// Parse plan
+	var plan todo_creation_human.PlanningResponse
+	if err := json.Unmarshal([]byte(planContent), &plan); err != nil {
+		return nil, fmt.Errorf("failed to parse plan.json: %w", err)
+	}
+
+	return &plan, nil
+}
+
+// writePlanToWorkspace writes plan.json to workspace using workspace API
+func writePlanToWorkspace(ctx context.Context, workspacePath string, plan *todo_creation_human.PlanningResponse) error {
+	planPath := workspacePath + "/planning/plan.json"
+
+	// Marshal plan to JSON
+	planJSON, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal plan: %w", err)
+	}
+
+	// URL-encode the filepath segments
+	pathSegments := strings.Split(planPath, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	// Prepare request body
+	requestBody := map[string]interface{}{
+		"content": string(planJSON),
+	}
+	requestBodyJSON, err := json.Marshal(requestBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	// Write file via workspace API
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath
+	req, err := http.NewRequestWithContext(ctx, "PUT", apiURL, strings.NewReader(string(requestBodyJSON)))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// readStepConfigFromWorkspace reads step_config.json from workspace using workspace API
+func readStepConfigFromWorkspace(ctx context.Context, workspacePath string) ([]todo_creation_human.StepConfig, error) {
+	configPath := workspacePath + "/planning/step_config.json"
+
+	// URL-encode the filepath segments
+	pathSegments := strings.Split(configPath, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	// Read file from workspace API
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// File doesn't exist - return empty array
+	if resp.StatusCode == http.StatusNotFound {
+		return []todo_creation_human.StepConfig{}, nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse workspace API response
+	var apiResp virtualtools.WorkspaceAPIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, fmt.Errorf("failed to parse API response: %w", err)
+	}
+
+	if !apiResp.Success {
+		return nil, fmt.Errorf("workspace API error: %s", apiResp.Error)
+	}
+
+	// Extract content
+	var configContent string
+	if fileContent, ok := apiResp.Data.(virtualtools.WorkspaceFileContent); ok {
+		configContent = fileContent.Content
+	} else if dataMap, ok := apiResp.Data.(map[string]interface{}); ok {
+		if content, ok := dataMap["content"].(string); ok {
+			configContent = content
+		}
+	}
+
+	if configContent == "" {
+		return []todo_creation_human.StepConfig{}, nil
+	}
+
+	// Parse step config
+	configs, err := todo_creation_human.ParseStepConfigContent(configContent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse step_config.json: %w", err)
+	}
+
+	return configs, nil
+}
+
+// writeStepConfigToWorkspace writes step_config.json to workspace using workspace API
+func writeStepConfigToWorkspace(ctx context.Context, workspacePath string, configs []todo_creation_human.StepConfig) error {
+	configPath := workspacePath + "/planning/step_config.json"
+
+	// Create config file in object format
+	configFile := todo_creation_human.StepConfigFile{
+		Steps: configs,
+	}
+
+	// Marshal to JSON
+	configJSON, err := json.MarshalIndent(configFile, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal step_config.json: %w", err)
+	}
+
+	// URL-encode the filepath segments
+	pathSegments := strings.Split(configPath, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	// Prepare request body
+	requestBody := map[string]interface{}{
+		"content": string(configJSON),
+	}
+	requestBodyJSON, err := json.Marshal(requestBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	// Write file via workspace API
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath
+	req, err := http.NewRequestWithContext(ctx, "PUT", apiURL, strings.NewReader(string(requestBodyJSON)))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// findStepInPlan recursively finds a step by ID in the plan
+// Returns the step and a path to it (indices for nested steps)
+func findStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string) (todo_creation_human.PlanStepInterface, []int) {
+	var findInSteps func(steps []todo_creation_human.PlanStepInterface, targetID string, path []int) (todo_creation_human.PlanStepInterface, []int)
+
+	findInSteps = func(steps []todo_creation_human.PlanStepInterface, targetID string, path []int) (todo_creation_human.PlanStepInterface, []int) {
+		for i, step := range steps {
+			currentPath := append(path, i)
+
+			if step.GetID() == targetID {
+				return step, currentPath
+			}
+
+			// Check nested steps based on step type
+			switch s := step.(type) {
+			case *todo_creation_human.ConditionalPlanStep:
+				// Check if_true_steps
+				if found, foundPath := findInSteps(s.IfTrueSteps, targetID, currentPath); found != nil {
+					return found, foundPath
+				}
+				// Check if_false_steps
+				if found, foundPath := findInSteps(s.IfFalseSteps, targetID, currentPath); found != nil {
+					return found, foundPath
+				}
+			case *todo_creation_human.DecisionPlanStep:
+				// Check decision_step
+				if s.DecisionStep != nil {
+					if s.DecisionStep.GetID() == targetID {
+						return s.DecisionStep, append(currentPath, -1) // -1 indicates decision_step
+					}
+					// Recursively check nested steps in decision_step
+					if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{s.DecisionStep}, targetID, currentPath); found != nil {
+						return found, foundPath
+					}
+				}
+			case *todo_creation_human.OrchestrationPlanStep:
+				// Check orchestration_step
+				if s.OrchestrationStep != nil {
+					if s.OrchestrationStep.GetID() == targetID {
+						return s.OrchestrationStep, append(currentPath, -2) // -2 indicates orchestration_step
+					}
+					// Recursively check nested steps in orchestration_step
+					if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{s.OrchestrationStep}, targetID, currentPath); found != nil {
+						return found, foundPath
+					}
+				}
+				// Check orchestration_routes
+				for j, route := range s.OrchestrationRoutes {
+					if route.SubAgentStep != nil {
+						if route.SubAgentStep.GetID() == targetID {
+							return route.SubAgentStep, append(currentPath, -3, j) // -3 indicates orchestration_routes
+						}
+						// Recursively check nested steps in sub_agent_step
+						if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{route.SubAgentStep}, targetID, currentPath); found != nil {
+							return found, foundPath
+						}
+					}
+				}
+			}
+		}
+		return nil, nil
+	}
+
+	return findInSteps(plan.Steps, stepID, []int{})
+}
+
+// stripAgentConfigsFromStep removes agent_configs field from a step (defensive validation)
+func stripAgentConfigsFromStep(step todo_creation_human.PlanStepInterface) {
+	// This is a defensive function - since we're working with typed steps,
+	// agent_configs shouldn't be in plan.json anyway, but we'll handle it
+	// by ensuring it's not present when marshaling
+	// The actual stripping happens during JSON marshaling/unmarshaling
+	// since typed steps don't have agent_configs field
+}
+
+// updateStepInPlan applies partial updates to a step in the plan
+func updateStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string, updates map[string]interface{}) error {
+	step, path := findStepInPlan(plan, stepID)
+	if step == nil {
+		return fmt.Errorf("step with ID %q not found", stepID)
+	}
+
+	// Validate: reject if updates contains agent_configs
+	if _, hasAgentConfigs := updates["agent_configs"]; hasAgentConfigs {
+		return fmt.Errorf("agent_configs cannot be updated via plan update endpoint - use update-step-config endpoint instead")
+	}
+
+	// Convert step to map for easier manipulation, then back to typed step
+	// We need to marshal/unmarshal to apply updates
+	stepJSON, err := json.Marshal(step)
+	if err != nil {
+		return fmt.Errorf("failed to marshal step: %w", err)
+	}
+
+	var stepMap map[string]interface{}
+	if err := json.Unmarshal(stepJSON, &stepMap); err != nil {
+		return fmt.Errorf("failed to unmarshal step: %w", err)
+	}
+
+	// Apply updates (merge)
+	for k, v := range updates {
+		// Skip agent_configs if somehow present
+		if k == "agent_configs" {
+			continue
+		}
+		stepMap[k] = v
+	}
+
+	// Remove agent_configs if present (defensive)
+	delete(stepMap, "agent_configs")
+
+	// Determine step type and unmarshal back to typed step
+	stepType, ok := stepMap["type"].(string)
+	if !ok {
+		stepType = string(step.StepType())
+	}
+
+	// Re-marshal to JSON and unmarshal to typed step
+	updatedStepJSON, err := json.Marshal(stepMap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal updated step: %w", err)
+	}
+
+	var updatedStep todo_creation_human.PlanStepInterface
+	switch stepType {
+	case "regular":
+		var s todo_creation_human.RegularPlanStep
+		if err := json.Unmarshal(updatedStepJSON, &s); err != nil {
+			return fmt.Errorf("failed to unmarshal regular step: %w", err)
+		}
+		updatedStep = &s
+	case "conditional":
+		var s todo_creation_human.ConditionalPlanStep
+		if err := json.Unmarshal(updatedStepJSON, &s); err != nil {
+			return fmt.Errorf("failed to unmarshal conditional step: %w", err)
+		}
+		updatedStep = &s
+	case "decision":
+		var s todo_creation_human.DecisionPlanStep
+		if err := json.Unmarshal(updatedStepJSON, &s); err != nil {
+			return fmt.Errorf("failed to unmarshal decision step: %w", err)
+		}
+		updatedStep = &s
+	case "orchestration":
+		var s todo_creation_human.OrchestrationPlanStep
+		if err := json.Unmarshal(updatedStepJSON, &s); err != nil {
+			return fmt.Errorf("failed to unmarshal orchestration step: %w", err)
+		}
+		updatedStep = &s
+	default:
+		return fmt.Errorf("unknown step type: %s", stepType)
+	}
+
+	// Update step in plan using path
+	if len(path) == 1 {
+		// Top-level step
+		plan.Steps[path[0]] = updatedStep
+	} else {
+		// Nested step - need to navigate and update
+		// This is complex, so we'll use a helper function
+		return updateNestedStepInPlan(plan, path, updatedStep)
+	}
+
+	return nil
+}
+
+// updateNestedStepInPlan updates a nested step using its path
+func updateNestedStepInPlan(plan *todo_creation_human.PlanningResponse, path []int, updatedStep todo_creation_human.PlanStepInterface) error {
+	if len(path) < 2 {
+		return fmt.Errorf("invalid path for nested step")
+	}
+
+	// Navigate to parent step
+	parentStep := plan.Steps[path[0]]
+
+	// Handle different step types
+	switch s := parentStep.(type) {
+	case *todo_creation_human.ConditionalPlanStep:
+		if len(path) == 2 {
+			// Direct child in branch
+			branchIndex := path[1]
+			// Determine which branch (need to check if_true or if_false)
+			// For now, we'll need to search both branches
+			// This is a limitation - we'd need to track branch type in path
+			// For simplicity, try if_true first, then if_false
+			if branchIndex < len(s.IfTrueSteps) {
+				s.IfTrueSteps[branchIndex] = updatedStep
+				return nil
+			} else if branchIndex < len(s.IfTrueSteps)+len(s.IfFalseSteps) {
+				s.IfFalseSteps[branchIndex-len(s.IfTrueSteps)] = updatedStep
+				return nil
+			}
+			return fmt.Errorf("invalid branch index")
+		}
+		// Deeper nesting - recursively update
+		return updateNestedStepInPlanRecursive(s.IfTrueSteps, s.IfFalseSteps, path[1:], updatedStep)
+	case *todo_creation_human.DecisionPlanStep:
+		if len(path) == 2 && path[1] == -1 {
+			// decision_step
+			s.DecisionStep = updatedStep
+			return nil
+		}
+		// Deeper nesting in decision_step
+		if s.DecisionStep != nil {
+			// Recursively update in decision_step
+			return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.DecisionStep}, nil, path[1:], updatedStep)
+		}
+	case *todo_creation_human.OrchestrationPlanStep:
+		if len(path) == 2 && path[1] == -2 {
+			// orchestration_step
+			s.OrchestrationStep = updatedStep
+			return nil
+		}
+		if len(path) >= 3 && path[1] == -3 {
+			// orchestration_routes[path[2]].sub_agent_step
+			routeIndex := path[2]
+			if routeIndex >= 0 && routeIndex < len(s.OrchestrationRoutes) {
+				if len(path) == 3 {
+					s.OrchestrationRoutes[routeIndex].SubAgentStep = updatedStep
+					return nil
+				}
+				// Deeper nesting in sub_agent_step
+				return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.OrchestrationRoutes[routeIndex].SubAgentStep}, nil, path[2:], updatedStep)
+			}
+		}
+	}
+
+	return fmt.Errorf("failed to update nested step")
+}
+
+// updateNestedStepInPlanRecursive recursively updates nested steps
+func updateNestedStepInPlanRecursive(ifTrueSteps, ifFalseSteps []todo_creation_human.PlanStepInterface, path []int, updatedStep todo_creation_human.PlanStepInterface) error {
+	if len(path) == 0 {
+		return fmt.Errorf("empty path")
+	}
+
+	index := path[0]
+
+	// Try if_true_steps first
+	if index >= 0 && index < len(ifTrueSteps) {
+		if len(path) == 1 {
+			ifTrueSteps[index] = updatedStep
+			return nil
+		}
+		// Deeper nesting
+		step := ifTrueSteps[index]
+		switch s := step.(type) {
+		case *todo_creation_human.ConditionalPlanStep:
+			return updateNestedStepInPlanRecursive(s.IfTrueSteps, s.IfFalseSteps, path[1:], updatedStep)
+		case *todo_creation_human.DecisionPlanStep:
+			if s.DecisionStep != nil {
+				return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.DecisionStep}, nil, path[1:], updatedStep)
+			}
+		case *todo_creation_human.OrchestrationPlanStep:
+			if s.OrchestrationStep != nil {
+				return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.OrchestrationStep}, nil, path[1:], updatedStep)
+			}
+		}
+	}
+
+	// Try if_false_steps
+	if ifFalseSteps != nil {
+		adjustedIndex := index - len(ifTrueSteps)
+		if adjustedIndex >= 0 && adjustedIndex < len(ifFalseSteps) {
+			if len(path) == 1 {
+				ifFalseSteps[adjustedIndex] = updatedStep
+				return nil
+			}
+			// Deeper nesting
+			step := ifFalseSteps[adjustedIndex]
+			switch s := step.(type) {
+			case *todo_creation_human.ConditionalPlanStep:
+				return updateNestedStepInPlanRecursive(s.IfTrueSteps, s.IfFalseSteps, path[1:], updatedStep)
+			case *todo_creation_human.DecisionPlanStep:
+				if s.DecisionStep != nil {
+					return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.DecisionStep}, nil, path[1:], updatedStep)
+				}
+			case *todo_creation_human.OrchestrationPlanStep:
+				if s.OrchestrationStep != nil {
+					return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.OrchestrationStep}, nil, path[1:], updatedStep)
+				}
+			}
+		}
+	}
+
+	return fmt.Errorf("failed to find step at path")
+}
+
+// handleUpdatePlanStep handles updating a plan step
+func (api *StreamingAPI) handleUpdatePlanStep(w http.ResponseWriter, r *http.Request) {
+	// Enable CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req PlanUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.WorkspacePath == "" {
+		http.Error(w, "workspace_path is required", http.StatusBadRequest)
+		return
+	}
+	if req.StepID == "" {
+		http.Error(w, "step_id is required", http.StatusBadRequest)
+		return
+	}
+	if req.Updates == nil {
+		http.Error(w, "updates is required", http.StatusBadRequest)
+		return
+	}
+
+	// Read plan
+	plan, err := readPlanFromWorkspace(r.Context(), req.WorkspacePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read plan: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Update step
+	if err := updateStepInPlan(plan, req.StepID, req.Updates); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update step: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Write updated plan
+	if err := writePlanToWorkspace(r.Context(), req.WorkspacePath, plan); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write plan: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Find updated step to return
+	updatedStep, _ := findStepInPlan(plan, req.StepID)
+	if updatedStep == nil {
+		http.Error(w, "Step not found after update", http.StatusInternalServerError)
+		return
+	}
+
+	// Convert step to JSON for response
+	stepJSON, err := json.Marshal(updatedStep)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to marshal step: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	var stepMap map[string]interface{}
+	if err := json.Unmarshal(stepJSON, &stepMap); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to unmarshal step: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"success": true,
+		"message": "Step updated successfully",
+		"data": map[string]interface{}{
+			"step": stepMap,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleUpdateStepConfig handles updating step config (agent_configs)
+func (api *StreamingAPI) handleUpdateStepConfig(w http.ResponseWriter, r *http.Request) {
+	// Enable CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req StepConfigUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.WorkspacePath == "" {
+		http.Error(w, "workspace_path is required", http.StatusBadRequest)
+		return
+	}
+	if req.StepID == "" {
+		http.Error(w, "step_id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Read step configs
+	configs, err := readStepConfigFromWorkspace(r.Context(), req.WorkspacePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read step configs: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Find existing config or create new one
+	existingIndex := -1
+	for i, config := range configs {
+		if config.ID == req.StepID {
+			existingIndex = i
+			break
+		}
+	}
+
+	// Convert agent_configs map to AgentConfigs struct
+	var agentConfigs *todo_creation_human.AgentConfigs
+	if req.AgentConfigs != nil && len(req.AgentConfigs) > 0 {
+		// Marshal to JSON and unmarshal to typed struct
+		configJSON, err := json.Marshal(req.AgentConfigs)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to marshal agent_configs: %v", err), http.StatusBadRequest)
+			return
+		}
+		var ac todo_creation_human.AgentConfigs
+		if err := json.Unmarshal(configJSON, &ac); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to unmarshal agent_configs: %v", err), http.StatusBadRequest)
+			return
+		}
+		agentConfigs = &ac
+	}
+
+	if existingIndex >= 0 {
+		// Update existing config
+		if agentConfigs != nil {
+			// Merge with existing config (partial update)
+			existingConfig := configs[existingIndex]
+			if existingConfig.AgentConfigs != nil {
+				// Deep merge - convert both to maps, merge, then convert back
+				existingJSON, _ := json.Marshal(existingConfig.AgentConfigs)
+				newJSON, _ := json.Marshal(agentConfigs)
+				var existingMap, newMap map[string]interface{}
+				json.Unmarshal(existingJSON, &existingMap)
+				json.Unmarshal(newJSON, &newMap)
+				// Merge maps
+				for k, v := range newMap {
+					if v != nil {
+						existingMap[k] = v
+					}
+				}
+				// Convert back to AgentConfigs
+				mergedJSON, _ := json.Marshal(existingMap)
+				json.Unmarshal(mergedJSON, &agentConfigs)
+			}
+			configs[existingIndex] = todo_creation_human.StepConfig{
+				ID:           req.StepID,
+				AgentConfigs: agentConfigs,
+			}
+		} else {
+			// Remove config if agentConfigs is nil
+			configs = append(configs[:existingIndex], configs[existingIndex+1:]...)
+		}
+	} else {
+		// Add new config
+		if agentConfigs != nil {
+			configs = append(configs, todo_creation_human.StepConfig{
+				ID:           req.StepID,
+				AgentConfigs: agentConfigs,
+			})
+		}
+	}
+
+	// Write updated configs
+	if err := writeStepConfigToWorkspace(r.Context(), req.WorkspacePath, configs); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write step config: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Return updated config
+	responseConfig := map[string]interface{}{}
+	if agentConfigs != nil {
+		configJSON, _ := json.Marshal(agentConfigs)
+		json.Unmarshal(configJSON, &responseConfig)
+	}
+
+	response := map[string]interface{}{
+		"success": true,
+		"message": "Step config updated successfully",
+		"data": map[string]interface{}{
+			"step_id":       req.StepID,
+			"agent_configs": responseConfig,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleBatchUpdateSteps handles batch updating multiple steps
+func (api *StreamingAPI) handleBatchUpdateSteps(w http.ResponseWriter, r *http.Request) {
+	// Enable CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req BatchUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.WorkspacePath == "" {
+		http.Error(w, "workspace_path is required", http.StatusBadRequest)
+		return
+	}
+	if len(req.Updates) == 0 {
+		http.Error(w, "updates array cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	// Read plan and configs
+	plan, err := readPlanFromWorkspace(r.Context(), req.WorkspacePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read plan: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	configs, err := readStepConfigFromWorkspace(r.Context(), req.WorkspacePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read step configs: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	updatedStepsCount := 0
+	updatedConfigsCount := 0
+	var errors []map[string]interface{}
+
+	// Process each update
+	for _, update := range req.Updates {
+		if update.StepID == "" {
+			errors = append(errors, map[string]interface{}{
+				"step_id": "",
+				"error":   "step_id is required",
+			})
+			continue
+		}
+
+		// Update plan if needed
+		if update.PlanUpdates != nil && len(update.PlanUpdates) > 0 {
+			if err := updateStepInPlan(plan, update.StepID, update.PlanUpdates); err != nil {
+				errors = append(errors, map[string]interface{}{
+					"step_id": update.StepID,
+					"error":   fmt.Sprintf("failed to update plan: %v", err),
+				})
+			} else {
+				updatedStepsCount++
+			}
+		}
+
+		// Update config if needed
+		if update.ConfigUpdates != nil && len(update.ConfigUpdates) > 0 {
+			// Find or create config
+			existingIndex := -1
+			for i, config := range configs {
+				if config.ID == update.StepID {
+					existingIndex = i
+					break
+				}
+			}
+
+			// Convert to AgentConfigs
+			configJSON, _ := json.Marshal(update.ConfigUpdates)
+			var agentConfigs todo_creation_human.AgentConfigs
+			if err := json.Unmarshal(configJSON, &agentConfigs); err != nil {
+				errors = append(errors, map[string]interface{}{
+					"step_id": update.StepID,
+					"error":   fmt.Sprintf("failed to parse config updates: %v", err),
+				})
+			} else {
+				if existingIndex >= 0 {
+					// Merge with existing
+					if configs[existingIndex].AgentConfigs != nil {
+						existingJSON, _ := json.Marshal(configs[existingIndex].AgentConfigs)
+						newJSON, _ := json.Marshal(&agentConfigs)
+						var existingMap, newMap map[string]interface{}
+						json.Unmarshal(existingJSON, &existingMap)
+						json.Unmarshal(newJSON, &newMap)
+						for k, v := range newMap {
+							if v != nil {
+								existingMap[k] = v
+							}
+						}
+						mergedJSON, _ := json.Marshal(existingMap)
+						json.Unmarshal(mergedJSON, &agentConfigs)
+					}
+					configs[existingIndex] = todo_creation_human.StepConfig{
+						ID:           update.StepID,
+						AgentConfigs: &agentConfigs,
+					}
+				} else {
+					configs = append(configs, todo_creation_human.StepConfig{
+						ID:           update.StepID,
+						AgentConfigs: &agentConfigs,
+					})
+				}
+				updatedConfigsCount++
+			}
+		}
+	}
+
+	// Write both files
+	if updatedStepsCount > 0 {
+		if err := writePlanToWorkspace(r.Context(), req.WorkspacePath, plan); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to write plan: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if updatedConfigsCount > 0 {
+		if err := writeStepConfigToWorkspace(r.Context(), req.WorkspacePath, configs); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to write step config: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Determine success status: true if at least some updates succeeded, even if some failed
+	success := updatedStepsCount > 0 || updatedConfigsCount > 0 || len(errors) == 0
+	message := "Batch update completed"
+	if len(errors) > 0 {
+		if updatedStepsCount > 0 || updatedConfigsCount > 0 {
+			message = fmt.Sprintf("Batch update completed with %d error(s)", len(errors))
+		} else {
+			message = fmt.Sprintf("Batch update failed: %d error(s)", len(errors))
+		}
+	}
+
+	response := map[string]interface{}{
+		"success": success,
+		"message": message,
+		"data": map[string]interface{}{
+			"updated_steps":   updatedStepsCount,
+			"updated_configs": updatedConfigsCount,
+		},
+	}
+
+	// Include errors in response if any occurred
+	if len(errors) > 0 {
+		response["data"].(map[string]interface{})["errors"] = errors
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleDeleteStep handles deleting a step from plan and config
+func (api *StreamingAPI) handleDeleteStep(w http.ResponseWriter, r *http.Request) {
+	// Enable CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req DeleteStepRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.WorkspacePath == "" {
+		http.Error(w, "workspace_path is required", http.StatusBadRequest)
+		return
+	}
+	if req.StepID == "" {
+		http.Error(w, "step_id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Read plan
+	plan, err := readPlanFromWorkspace(r.Context(), req.WorkspacePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read plan: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Find and remove step from plan
+	// For simplicity, we'll search and remove from top-level steps only
+	// Nested step deletion would require more complex logic
+	removedFromPlan := false
+	for i, step := range plan.Steps {
+		if step.GetID() == req.StepID {
+			plan.Steps = append(plan.Steps[:i], plan.Steps[i+1:]...)
+			removedFromPlan = true
+			break
+		}
+	}
+
+	// Write updated plan if step was removed
+	if removedFromPlan {
+		if err := writePlanToWorkspace(r.Context(), req.WorkspacePath, plan); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to write plan: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Read and update configs
+	configs, err := readStepConfigFromWorkspace(r.Context(), req.WorkspacePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read step configs: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Remove config if exists
+	removedFromConfig := false
+	for i, config := range configs {
+		if config.ID == req.StepID {
+			configs = append(configs[:i], configs[i+1:]...)
+			removedFromConfig = true
+			break
+		}
+	}
+
+	// Write updated configs if config was removed
+	if removedFromConfig {
+		if err := writeStepConfigToWorkspace(r.Context(), req.WorkspacePath, configs); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to write step config: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	response := map[string]interface{}{
+		"success": true,
+		"message": "Step deleted successfully",
+		"data": map[string]interface{}{
+			"deleted_step_id": req.StepID,
+			"deleted_config":  removedFromConfig,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleAddStep handles adding a new step to the plan
+func (api *StreamingAPI) handleAddStep(w http.ResponseWriter, r *http.Request) {
+	// Enable CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req AddStepRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.WorkspacePath == "" {
+		http.Error(w, "workspace_path is required", http.StatusBadRequest)
+		return
+	}
+	if req.Step == nil {
+		http.Error(w, "step is required", http.StatusBadRequest)
+		return
+	}
+
+	// Read plan
+	plan, err := readPlanFromWorkspace(r.Context(), req.WorkspacePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read plan: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Remove agent_configs from step if present (validation)
+	delete(req.Step, "agent_configs")
+
+	// Determine step type and unmarshal to typed step
+	stepType, ok := req.Step["type"].(string)
+	if !ok {
+		http.Error(w, "step must have 'type' field (regular, conditional, decision, or orchestration)", http.StatusBadRequest)
+		return
+	}
+
+	// Marshal step map to JSON and unmarshal to typed step
+	stepJSON, err := json.Marshal(req.Step)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to marshal step: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	var newStep todo_creation_human.PlanStepInterface
+	switch stepType {
+	case "regular":
+		var s todo_creation_human.RegularPlanStep
+		if err := json.Unmarshal(stepJSON, &s); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to parse regular step: %v", err), http.StatusBadRequest)
+			return
+		}
+		newStep = &s
+	case "conditional":
+		var s todo_creation_human.ConditionalPlanStep
+		if err := json.Unmarshal(stepJSON, &s); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to parse conditional step: %v", err), http.StatusBadRequest)
+			return
+		}
+		newStep = &s
+	case "decision":
+		var s todo_creation_human.DecisionPlanStep
+		if err := json.Unmarshal(stepJSON, &s); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to parse decision step: %v", err), http.StatusBadRequest)
+			return
+		}
+		newStep = &s
+	case "orchestration":
+		var s todo_creation_human.OrchestrationPlanStep
+		if err := json.Unmarshal(stepJSON, &s); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to parse orchestration step: %v", err), http.StatusBadRequest)
+			return
+		}
+		newStep = &s
+	default:
+		http.Error(w, fmt.Sprintf("Unknown step type: %s", stepType), http.StatusBadRequest)
+		return
+	}
+
+	// Insert step at appropriate position
+	if req.InsertAfterStepID != "" {
+		// Find step to insert after
+		for i, step := range plan.Steps {
+			if step.GetID() == req.InsertAfterStepID {
+				// Insert after this step
+				plan.Steps = append(plan.Steps[:i+1], append([]todo_creation_human.PlanStepInterface{newStep}, plan.Steps[i+1:]...)...)
+				break
+			}
+		}
+	} else if req.ParentStepID != "" {
+		// Insert into nested step (conditional branch)
+		parentStep, _ := findStepInPlan(plan, req.ParentStepID)
+		if parentStep == nil {
+			http.Error(w, fmt.Sprintf("Parent step %q not found", req.ParentStepID), http.StatusBadRequest)
+			return
+		}
+
+		if conditionalStep, ok := parentStep.(*todo_creation_human.ConditionalPlanStep); ok {
+			if req.BranchType == "if_true" {
+				conditionalStep.IfTrueSteps = append(conditionalStep.IfTrueSteps, newStep)
+			} else if req.BranchType == "if_false" {
+				conditionalStep.IfFalseSteps = append(conditionalStep.IfFalseSteps, newStep)
+			} else {
+				http.Error(w, "branch_type must be 'if_true' or 'if_false' when parent_step_id is provided", http.StatusBadRequest)
+				return
+			}
+		} else {
+			http.Error(w, "Parent step must be a conditional step for nested insertion", http.StatusBadRequest)
+			return
+		}
+	} else {
+		// Add to end
+		plan.Steps = append(plan.Steps, newStep)
+	}
+
+	// Write updated plan
+	if err := writePlanToWorkspace(r.Context(), req.WorkspacePath, plan); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write plan: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Convert step to JSON for response
+	stepResponseJSON, err := json.Marshal(newStep)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to marshal step: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	var stepMap map[string]interface{}
+	if err := json.Unmarshal(stepResponseJSON, &stepMap); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to unmarshal step: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"success": true,
+		"message": "Step added successfully",
+		"data": map[string]interface{}{
+			"step": stepMap,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }

@@ -114,14 +114,17 @@ func (cl *ConditionalLLM) Close() error {
 func GetPrompt(context, question string) string {
 	return `You are a decision assistant. Analyze the context and return a true/false decision with reasoning.
 
-Context: ` + context + `
+Context:
+` + context + `
 
-Question: ` + question + `
+Question:
+` + question + `
 
 Instructions:
-1. You mainly need to determine answer to the question based on question.
-2. Yes = true , No = false
-3. Provide clear reasoning for your decision
+1. Base your answer ONLY on the evidence in the context and any described output files.
+2. Yes = true, No = false.
+3. Return result = true ONLY if ALL required conditions clearly hold with no contradictions or missing information. If ANY required condition fails or is ambiguous, return result = false.
+4. Provide clear, concise reasoning that cites the specific evidence you used.
 
 Return ONLY valid JSON: {"result": true/false, "reason": "your reasoning here"}`
 }

@@ -8,7 +8,8 @@
       "Bash(done)",
       "Bash(go run:*)",
       "Bash(go vet:*)",
-      "Bash(gofmt:*)"
+      "Bash(gofmt:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []

@@ -29,15 +29,13 @@ type OrchestrationRoute struct {
 
 // OrchestrationResponse represents the structured output from orchestration evaluation
 type OrchestrationResponse struct {
-	SelectedRouteID                     string `json:"selected_route_id"`                            // Which route was selected
-	Reasoning                           string `json:"reasoning"`                                    // Why this route was chosen
-	SuccessCriteriaMet                  bool   `json:"success_criteria_met"`                         // Whether main orchestrator's success criteria is met
-	SuccessReasoning                    string `json:"success_reasoning,omitempty"`                  // Reasoning for success criteria evaluation
-	SuccessCriteriaVerifiedByValidation bool   `json:"success_criteria_verified_by_validation"`      // Whether validation confirmed success criteria is met
-	InstructionsToSubAgent              string `json:"instructions_to_sub_agent,omitempty"`          // Instructions to pass to the selected sub-agent (replaces step description, required if selected_route_id is provided)
-	SuccessCriteriaForSubAgent          string `json:"success_criteria_for_sub_agent,omitempty"`     // Success criteria to pass to the selected sub-agent (replaces step success criteria, required if selected_route_id is provided)
-	ContextDependenciesForSubAgent      string `json:"context_dependencies_for_sub_agent,omitempty"` // Context dependencies to pass to the selected sub-agent (replaces step context dependencies, optional)
-	ContextOutputForSubAgent            string `json:"context_output_for_sub_agent,omitempty"`       // Context output file name to pass to the selected sub-agent (replaces step context output, optional)
+	SelectedRouteID                string `json:"selected_route_id"`                            // Which route was selected (can be "end" to terminate workflow, empty to continue working, or a route ID)
+	SuccessCriteriaMet             bool   `json:"success_criteria_met"`                         // Whether main orchestrator's success criteria is met
+	SuccessReasoning               string `json:"success_reasoning,omitempty"`                  // Reasoning for success criteria evaluation
+	InstructionsToSubAgent         string `json:"instructions_to_sub_agent,omitempty"`          // Instructions to pass to the selected sub-agent (replaces step description, required if selected_route_id is provided)
+	SuccessCriteriaForSubAgent     string `json:"success_criteria_for_sub_agent,omitempty"`     // Success criteria to pass to the selected sub-agent (replaces step success criteria, required if selected_route_id is provided)
+	ContextDependenciesForSubAgent string `json:"context_dependencies_for_sub_agent,omitempty"` // Context dependencies to pass to the selected sub-agent (replaces step context dependencies, optional)
+	ContextOutputForSubAgent       string `json:"context_output_for_sub_agent,omitempty"`       // Context output file name to pass to the selected sub-agent (replaces step context output, optional)
 }
 
 // OrchestrationStepProgress tracks orchestration step execution progress

@@ -28,10 +28,22 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 
 	// LOCK LEARNINGS: Check if learnings are locked (prevents learning agent from running but still uses existing learnings)
 	// Note: Lock learnings takes precedence - even in code execution mode, if learnings are locked, skip learning agent
+	// EXCEPTION: If learnings are locked but learnings don't exist, still run learning to create initial learnings
 	isLearningsLocked := step.AgentConfigs != nil && step.AgentConfigs.LockLearnings != nil && *step.AgentConfigs.LockLearnings
 	if isLearningsLocked {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping success learning analysis for %s/%d (using existing learnings)", learningPathIdentifier, totalSteps))
-		return nil
+		// Check if learnings folder exists and has content
+		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, step.ID, stepIndex, stepPath)
+		if err != nil {
+			// If we can't check, assume empty and run learning
+			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked but cannot check if learnings exist - running learning to create initial learnings for %s/%d", learningPathIdentifier, totalSteps))
+		} else if learningsEmpty {
+			// Learnings are locked but folder is empty - run learning to create initial learnings
+			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked but folder is empty - running learning to create initial learnings for %s/%d", learningPathIdentifier, totalSteps))
+		} else {
+			// Learnings are locked and learnings exist - skip learning
+			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping success learning analysis for %s/%d (using existing learnings)", learningPathIdentifier, totalSteps))
+			return nil
+		}
 	}
 
 	// Skip learning if "none" is selected or learning is disabled
@@ -105,7 +117,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 	// Calculate run workspace path - learnings are at the same level as execution/, not inside it
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	// StepExecutionPath should be runWorkspacePath (runs/{runFolder}), not execution path
-	// This allows learnings to be at learnings/step-{X}/ or learnings/step-{X}-{branch}/ (at workspace root, not inside runs/)
+	// Learnings are stored at workspace root using step IDs: learnings/{step_id}/
+	// All steps (regular, branch, sub-agent) use learnings/{step_id}/ where step_id is the step's own unique ID
 	successLearningTemplateVars["StepExecutionPath"] = runWorkspacePath
 	successLearningTemplateVars["StepNumber"] = learningPathIdentifier // Use learning path identifier instead of numeric step number
 
@@ -226,10 +239,22 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 
 	// LOCK LEARNINGS: Check if learnings are locked (prevents learning agent from running but still uses existing learnings)
 	// Note: Lock learnings takes precedence - even in code execution mode, if learnings are locked, skip learning agent
+	// EXCEPTION: If learnings are locked but learnings don't exist, still run learning to create initial learnings
 	isLearningsLocked := step.AgentConfigs != nil && step.AgentConfigs.LockLearnings != nil && *step.AgentConfigs.LockLearnings
 	if isLearningsLocked {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping failure learning analysis for %s/%d (using existing learnings)", learningPathIdentifier, totalSteps))
-		return "", "", nil
+		// Check if learnings folder exists and has content
+		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, step.ID, stepIndex, stepPath)
+		if err != nil {
+			// If we can't check, assume empty and run learning
+			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked but cannot check if learnings exist - running learning to create initial learnings for %s/%d", learningPathIdentifier, totalSteps))
+		} else if learningsEmpty {
+			// Learnings are locked but folder is empty - run learning to create initial learnings
+			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked but folder is empty - running learning to create initial learnings for %s/%d", learningPathIdentifier, totalSteps))
+		} else {
+			// Learnings are locked and learnings exist - skip learning
+			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping failure learning analysis for %s/%d (using existing learnings)", learningPathIdentifier, totalSteps))
+			return "", "", nil
+		}
 	}
 
 	// Skip learning if "none" is selected or learning is disabled
@@ -303,7 +328,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 	// Calculate run workspace path - learnings are at the same level as execution/, not inside it
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	// StepExecutionPath should be runWorkspacePath (runs/{runFolder}), not execution path
-	// This allows learnings to be at learnings/step-{X}/ or learnings/step-{X}-{branch}/ (at workspace root, not inside runs/)
+	// Learnings are stored at workspace root using step IDs: learnings/{step_id}/
+	// All steps (regular, branch, sub-agent) use learnings/{step_id}/ where step_id is the step's own unique ID
 	failureLearningTemplateVars["StepExecutionPath"] = runWorkspacePath
 	failureLearningTemplateVars["StepNumber"] = learningPathIdentifier // Use learning path identifier instead of numeric step number
 

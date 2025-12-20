@@ -457,6 +457,8 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     clearStoreEvents()
     lastProcessedEventIndexRef.current = -1
     setManualStatus(null)
+    // Also clear current step tracking so future executions start clean
+    setCurrentStepId(null)
   }, [clearStoreEvents])
 
   return {

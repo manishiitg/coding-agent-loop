@@ -82,6 +82,7 @@ import type {
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
   DecisionEvaluatedEvent,
+  PreValidationCompletedEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,
@@ -193,6 +194,7 @@ export type EventTypeString =
   | 'step_token_usage'
   | 'step_progress_updated'
   | 'decision_evaluated'
+  | 'pre_validation_completed'
   | 'todo_steps_extracted'
   | 'variables_extracted'
   | 'independent_steps_selected'
@@ -307,6 +309,7 @@ export interface EventTypeToDataMap {
   'step_token_usage': StepTokenUsageEvent;
   'step_progress_updated': StepProgressUpdatedEvent;
   'decision_evaluated': DecisionEvaluatedEvent;
+  'pre_validation_completed': PreValidationCompletedEvent;
   'todo_steps_extracted': TodoStepsExtractedEvent;
   'variables_extracted': VariablesExtractedEvent;
   'independent_steps_selected': IndependentStepsSelectedEvent;
@@ -596,6 +599,7 @@ export type {
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
   DecisionEvaluatedEvent,
+  PreValidationCompletedEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,

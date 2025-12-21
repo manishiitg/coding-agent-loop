@@ -108,6 +108,7 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 	variableValues := templateVars["VariableValues"]
 	prerequisiteRulesInfo := templateVars["PrerequisiteRulesInfo"]
 	decisionEvaluationQuestion := templateVars["DecisionEvaluationQuestion"]
+	validationSchema := templateVars["ValidationSchema"] // Validation schema JSON string
 
 	// Define the system prompt template
 	templateStr := `# Execution-Only Agent
@@ -292,6 +293,23 @@ Example patterns:
 
 Print "✅ PASS: [criterion]" for each success, "❌ FAIL: [reason]" + os.Exit(1) for failures.
 {{end}}
+{{if .ValidationSchema}}
+
+## ✅ Expected File Structure (Validation Schema)
+
+**CRITICAL**: Your output files MUST match the validation schema structure below. Pre-validation will check these requirements automatically.
+
+**Validation Schema** (JSON):
+{{printf "%s" .ValidationSchema}}
+
+**IMPORTANT**:
+- Create files with the exact structure specified in the validation schema
+- Ensure all required fields exist at the specified JSON paths
+- Match the expected data types (string, array, number, etc.)
+- Files must be created in your step execution folder: {{.StepExecutionPath}}/
+- The validation schema defines the exact file names and JSON structure expected
+- The validation schema paths (like $.plan_introduction.objective) tell you the exact nested structure required
+{{end}}
 
 ## 📤 Output Format
 **Status**: [COMPLETED/FAILED/IN_PROGRESS]  
@@ -348,6 +366,7 @@ Validation agent will verify your work - focus on execution and evidence.`
 		"PreviousStepsSummary":       previousStepsSummary,
 		"PrerequisiteRulesInfo":      prerequisiteRulesInfo,
 		"DecisionEvaluationQuestion": decisionEvaluationQuestion,
+		"ValidationSchema":           validationSchema, // Validation schema JSON string
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution-only system prompt template: %v", err)

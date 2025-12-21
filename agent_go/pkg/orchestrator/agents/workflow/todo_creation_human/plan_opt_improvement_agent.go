@@ -761,9 +761,16 @@ For decision steps that route incorrectly:
 When validation fails repeatedly:
 - Read logs/step-X/validation-N.json for each attempt
 - Check if failure is due to:
-  - Weak success criteria (too vague)
-  - Wrong file reference (file name mismatch)
-  - Unrealistic criteria (requires external state validation agent can't check)
+  - Weak success criteria (too vague) → Use update_success_criteria tool to make it more specific and execution-based
+  - Missing or incorrect validation schema → Use update_validation_schema tool to add/update structured validation rules
+  - Wrong file reference (file name mismatch) → Update validation schema file_name or success criteria
+  - Unrealistic criteria (requires external state validation agent can't check) → Make criteria file-verifiable only
+- **Pre-validation failures**: If pre-validation fails (structural checks), the validation schema needs updating
+  - Use update_validation_schema tool to fix file existence, JSON structure, or consistency checks
+  - Pre-validation runs before LLM validation and blocks it if structural checks fail
+- **LLM validation failures**: If pre-validation passes but LLM validation fails, focus on success criteria
+  - Use update_success_criteria tool to emphasize execution history verification
+  - Success criteria should focus on what work was actually done, not just file structure
 
 ### 5. Learnings Quality
 Good learnings are:
@@ -800,6 +807,8 @@ Good learnings are:
 | Tool | Use For |
 |------|---------|
 | update_regular_step, update_conditional_step, update_decision_step, update_routing_step | Update existing steps |
+| update_validation_schema | Update validation schema for an existing step (fast code-based pre-validation rules) |
+| update_success_criteria | Update success criteria for an existing step (execution-based validation focus) |
 | add_regular_step, add_conditional_step, add_decision_step, add_routing_step, add_loop_step | Add new steps |
 | delete_plan_steps | Remove steps |
 | convert_step_to_conditional, add_branch_steps, update_branch_steps, delete_branch_steps | Manage conditionals |
@@ -831,6 +840,17 @@ Good learnings are:
 ## ✅ SUCCESS CRITERIA RULES
 
 **CRITICAL**: Validation agent has NO MCP tools - only reads/lists files.
+
+### Two-Layer Validation System
+The system uses a two-layer validation approach:
+1. **Pre-Validation (Code)**: Fast structural checks - file existence, JSON structure, consistency
+   - Handled by validation_schema field (mandatory for all steps)
+   - Use update_validation_schema tool to update these rules
+   - Blocks LLM validation if structural checks fail
+2. **LLM Validation**: Deep authenticity checks - execution history verification, anti-hallucination
+   - Handled by success_criteria field (execution-based validation focus)
+   - Use update_success_criteria tool to update these rules
+   - Focuses on proving work was actually done, not just file structure
 
 ### Anti-gaming principle
 The execution agent creates both the evidence and any status fields in the same files. If success criteria only checks for a status like 'status: \"success\"' or 'all checks passed', the agent can satisfy it by flipping flags without doing the real work.
@@ -894,7 +914,7 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) planImprovementUser
 **Decision Steps** (if present): %s/%s/logs/step-X/decision-evaluation.json, %s/%s/logs/step-X/execution/decision-inner-step.json, %s/%s/execution/step-X-decision/ (see system prompt for details)
 
 **Routing Steps** (if present): %s/%s/logs/step-X/routing-evaluation.json, %s/%s/logs/step-X/execution/routing-main-step.json, %s/%s/execution/step-X-routing/ (see system prompt for details)
-`, runPathRelative, workspacePath, workspacePath, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative)
+`, runPathRelative, workspacePath, workspacePath, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative)
 
 	return `# Plan Improvement Task
 

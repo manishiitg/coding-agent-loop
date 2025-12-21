@@ -80,7 +80,7 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx c
 	isCodeExecutionMode := templateVars["IsCodeExecutionMode"] == "true"
 
 	// Build reasoning description
-	reasoningDescription := "Detailed reasoning for the validation decision. MUST explain: (1) What evidence was found (or missing) for each part of success criteria, (2) Any errors or failures in execution history, (3) Why the decision was made (pass/fail). Be specific and reference actual execution history content."
+	reasoningDescription := "Detailed reasoning for the validation decision. MUST explain: (1) What evidence was found (or missing) for each part of success criteria, (2) Execution history evidence related to each requirement (quote tool calls, reference tool responses, cite execution steps), (3) Any errors or failures in execution history, (4) Why the decision was made (pass/fail). Be specific and reference actual execution history content. For each requirement, explicitly cite the execution history evidence that demonstrates it was met or not met."
 
 	// Build base schema
 	baseSchema := `{
@@ -97,7 +97,7 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) ExecuteStructured(ctx c
 			},
 			"reasoning": {
 				"type": "string",
-				"description": "` + reasoningDescription + `"
+				"description": "` + reasoningDescription + ` **CRITICAL**: For each success criteria requirement, explicitly cite execution history evidence (quote tool calls, reference tool responses, cite execution steps) that demonstrates the requirement was met or not met. Share specific evidence from execution history related to each requirement."
 			},
 			"feedback": {
 				"type": "array",
@@ -187,20 +187,28 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptP
 	currentDate := now.Format("2006-01-02")
 	currentTime := now.Format("15:04:05")
 
+	// Get workspace verification results (pre-validation results)
+	workspaceVerificationResults := templateVars["WorkspaceVerificationResults"]
+	if workspaceVerificationResults == "" {
+		workspaceVerificationResults = "No pre-validation schema provided - perform full validation using workspace tools and execution history."
+	}
+
 	// Create template data with loop condition flag and code execution mode
 	type SystemPromptTemplate struct {
-		WorkspacePath       string
-		HasLoopCondition    bool
-		IsCodeExecutionMode bool
-		CurrentDate         string
-		CurrentTime         string
+		WorkspacePath                string
+		HasLoopCondition             bool
+		IsCodeExecutionMode          bool
+		CurrentDate                  string
+		CurrentTime                  string
+		WorkspaceVerificationResults string
 	}
 	templateData := SystemPromptTemplate{
-		WorkspacePath:       templateVars["WorkspacePath"],
-		HasLoopCondition:    hasLoopCondition,
-		IsCodeExecutionMode: isCodeExecutionMode,
-		CurrentDate:         currentDate,
-		CurrentTime:         currentTime,
+		WorkspacePath:                templateVars["WorkspacePath"],
+		HasLoopCondition:             hasLoopCondition,
+		IsCodeExecutionMode:          isCodeExecutionMode,
+		CurrentDate:                  currentDate,
+		CurrentTime:                  currentTime,
+		WorkspaceVerificationResults: workspaceVerificationResults,
 	}
 
 	// Define the system prompt template
@@ -209,6 +217,11 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptP
 ## 📅 **CURRENT SESSION INFORMATION**
 **Date**: {{.CurrentDate}}
 **Time**: {{.CurrentTime}}
+
+## ✅ **PRE-VALIDATION RESULTS**
+{{.WorkspaceVerificationResults}}
+
+**IMPORTANT**: If pre-validation passed, focus your analysis on execution history verification (anti-hallucination checks). If pre-validation failed, the structural issues must be addressed - reject the validation immediately.
 
 ## 🤖 AGENT IDENTITY
 - **Role**: Validation Agent
@@ -249,6 +262,14 @@ func (hctpva *HumanControlledTodoPlannerValidationAgent) validationSystemPromptP
   - What responses were received from tools
   - Whether the execution agent followed the correct process
   - Whether data/results are realistic and match tool responses
+- **Extract and cite execution evidence**: For each success criteria requirement, identify and quote the specific execution history evidence that relates to it:
+  - Tool calls that address the requirement
+  - Tool responses that demonstrate completion
+  - Execution steps that show the requirement was met
+- **Share evidence in reasoning**: When writing your validation reasoning, explicitly reference execution history evidence:
+  - Quote tool calls: "Execution history shows [tool_name] was called with [parameters]"
+  - Reference tool responses: "Tool response indicates [evidence]"
+  - Cite execution steps: "Execution history demonstrates [requirement] was addressed by [action]"
 - **DO NOT** trust execution history alone - verify workspace state matches
 - **DO NOT** trust workspace files alone - verify execution history shows actual work was done
 
@@ -284,9 +305,14 @@ For EACH requirement:
    - If requirement involves outputs → **MUST verify** outputs exist in workspace and match requirements
 
 2. **Execution History Verification (MANDATORY)**:
+   - **Extract execution evidence related to this requirement**: Search execution history for tool calls, responses, and operations that directly relate to this specific success criteria requirement
    - **Verify actual work was done**: Check execution history to ensure execution agent actually performed required operations
    - **Verify tool calls**: If success criteria requires API calls/data retrieval → Verify execution history shows actual tool calls were made (not just file creation)
    - **Verify data authenticity**: Check that data in workspace files matches what execution history shows was retrieved from tools
+   - **Share execution evidence in reasoning**: When validating each requirement, explicitly cite specific execution history evidence:
+     - Quote relevant tool calls from execution history that relate to this requirement
+     - Reference specific tool responses that demonstrate the work was done
+     - Point to execution history sections that show how this requirement was addressed
    - **Detect fabrication**: Look for signs of fake/hardcoded data:
      - Files created without corresponding tool calls in execution history
      - Data in files that doesn't match tool responses in execution history
@@ -296,6 +322,7 @@ For EACH requirement:
    - Compare workspace state with execution history
    - Ensure workspace files align with what execution history shows was done
    - Verify execution history shows proper tool usage for what success criteria requires
+   - **Map execution evidence to requirements**: For each requirement, identify and cite the specific execution history evidence that demonstrates it was met
 {{if .IsCodeExecutionMode}}
 4. **Additional for CODE EXECUTION MODE**: Follow CODE EXECUTION MODE VALIDATION section for code-specific verification
 {{end}}
@@ -444,7 +471,7 @@ You MUST call the 'submit_validation_result' tool with your validation analysis.
 The tool accepts a structured object with:
 - is_success_criteria_met: boolean - Whether the success criteria was met based on workspace verification
 - execution_status: string - Overall status (COMPLETED/PARTIAL/FAILED/INCOMPLETE)
-- reasoning: string - Detailed reasoning for the validation decision. MUST explain: (1) What evidence was found (or missing) for each part of success criteria, (2) Any errors or failures in execution history, (3) Why the decision was made (pass/fail). Be specific and reference actual workspace verification results.
+- reasoning: string - Detailed reasoning for the validation decision. MUST explain: (1) What evidence was found (or missing) for each part of success criteria, (2) Execution history evidence related to each requirement (quote tool calls, reference tool responses, cite execution steps), (3) Any errors or failures in execution history, (4) Why the decision was made (pass/fail). Be specific and reference actual workspace verification results AND execution history evidence. For each requirement, explicitly cite the execution history evidence that demonstrates it was met or not met.
 - feedback: array of objects with type, description, and severity (HIGH/MEDIUM/LOW)
 {{if .HasLoopCondition}}
 - loop_condition_met: boolean - **REQUIRED** - Whether the loop condition is met

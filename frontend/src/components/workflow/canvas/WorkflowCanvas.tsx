@@ -279,22 +279,25 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     handleOpenSidebarRef.current = handleOpenSidebar
   }, [handleOpenSidebar])
 
+  // Memoize callbacks to prevent usePlanToFlow from recalculating on every render
+  const handleRunFromStepCallback = useCallback((stepIndex: number, stepId: string) => {
+    if (handleRunFromStepRef.current) {
+      handleRunFromStepRef.current(stepIndex, stepId)
+    }
+  }, [])
+
+  const handleOpenSidebarCallback = useCallback((nodeId: string) => {
+    if (handleOpenSidebarRef.current) {
+      handleOpenSidebarRef.current(nodeId)
+    }
+  }, [])
+
   // Convert plan to React Flow nodes and edges (with change highlights and run callback)
   const { nodes: initialNodes, edges: initialEdges } = usePlanToFlow(plan, { 
     // Prerequisite edges are always shown (default: true in usePlanToFlow)
     changes,  // Pass changes to highlight modified nodes
-    onRunFromStep: (stepIndex: number, stepId: string) => {
-      // Call the ref function if it's available
-      if (handleRunFromStepRef.current) {
-        handleRunFromStepRef.current(stepIndex, stepId)
-      }
-    },
-    onOpenSidebar: (nodeId: string) => {
-      // Call the ref function if it's available
-      if (handleOpenSidebarRef.current) {
-        handleOpenSidebarRef.current(nodeId)
-      }
-    },
+    onRunFromStep: handleRunFromStepCallback,
+    onOpenSidebar: handleOpenSidebarCallback,
     isExecuting,
     completedStepIndices,  // Pass completed steps for enabling/disabling run buttons
     stepStatusMap: stepStatusMap,  // Pass step status map from events
@@ -684,53 +687,80 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [nodes, setViewport, getNode])
 
-  // Track previous status map to detect status changes
+  // Track previous stepStatusMap to detect actual changes
   const prevStepStatusMapRef = React.useRef<Map<string, 'pending' | 'running' | 'completed' | 'failed'>>(new Map())
 
-  // Update node status based on step status map from events
+  // Update node status based on maps from events (only when stepStatusMap actually changes)
   React.useEffect(() => {
-    if (stepStatusMap.size > 0) {
-      setNodes(nds => 
-        nds.map(node => {
-          // Only update status for step-type nodes (step, conditional, loop, decision)
-          // Validation and learning nodes have different status types
-          if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
-            const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
-            const stepId = nodeData?.step?.id || node.id
-            const stepStatus = stepStatusMap.get(stepId)
-            
-            if (stepStatus) {
-              if (node.type === 'step') {
-                return {
-                  ...node,
-                  data: { ...node.data, status: stepStatus } as StepNodeData
-                } as WorkflowNode
-              } else if (node.type === 'conditional') {
-                return {
-                  ...node,
-                  data: { ...node.data, status: stepStatus } as ConditionalNodeData
-                } as WorkflowNode
-              } else if (node.type === 'loop') {
-                return {
-                  ...node,
-                  data: { ...node.data, status: stepStatus } as LoopNodeData
-                } as WorkflowNode
-              } else if (node.type === 'decision') {
-                return {
-                  ...node,
-                  data: { ...node.data, status: stepStatus } as DecisionNodeData
-                } as WorkflowNode
-              }
+    // Check if stepStatusMap actually changed by comparing entries
+    const hasChanged = stepStatusMap.size !== prevStepStatusMapRef.current.size ||
+      Array.from(stepStatusMap.entries()).some(([stepId, status]) => 
+        prevStepStatusMapRef.current.get(stepId) !== status
+      )
+
+    if (!hasChanged) {
+      return // No actual changes, skip update
+    }
+
+    setNodes(nds => {
+      let hasUpdates = false
+      const updatedNodes = nds.map(node => {
+        // Only update status for step-type nodes (step, conditional, loop, decision)
+        // Validation and learning nodes have different status types
+        if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
+          const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
+          const stepId = nodeData?.step?.id || node.id
+          const stepStatus = stepStatusMap.get(stepId)
+          const currentStatus = nodeData?.status
+          
+          // Only update if status actually changed
+          if (stepStatus && stepStatus !== currentStatus) {
+            hasUpdates = true
+            if (node.type === 'step') {
+              return {
+                ...node,
+                data: { 
+                  ...node.data, 
+                  status: stepStatus
+                } as StepNodeData
+              } as WorkflowNode
+            } else if (node.type === 'conditional') {
+              return {
+                ...node,
+                data: { 
+                  ...node.data, 
+                  status: stepStatus
+                } as ConditionalNodeData
+              } as WorkflowNode
+            } else if (node.type === 'loop') {
+              return {
+                ...node,
+                data: { 
+                  ...node.data, 
+                  status: stepStatus
+                } as LoopNodeData
+              } as WorkflowNode
+            } else if (node.type === 'decision') {
+              return {
+                ...node,
+                data: { 
+                  ...node.data, 
+                  status: stepStatus
+                } as DecisionNodeData
+              } as WorkflowNode
             }
           }
-          return node
-        })
-      )
-      
-      // Update previous status map (for tracking changes, if needed later)
-      prevStepStatusMapRef.current = new Map(stepStatusMap)
-    }
-  }, [stepStatusMap, setNodes, nodes.length])
+        }
+        return node
+      })
+
+      // Only return new array if there were actual updates
+      return hasUpdates ? updatedNodes : nds
+    })
+    
+    // Update previous status map (for tracking changes)
+    prevStepStatusMapRef.current = new Map(stepStatusMap)
+  }, [stepStatusMap, setNodes])
 
   // Handle node selection - disabled: nodes no longer open sidebar on click
   // Sidebar is now opened via settings icon button on nodes

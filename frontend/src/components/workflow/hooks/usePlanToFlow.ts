@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import dagre from 'dagre'
-import type { PlanStep, PlanningResponse, AgentConfigs, AgentLLMConfig, PrerequisiteRule } from '../../../utils/stepConfigMatching'
+import type { PlanStep, PlanningResponse, AgentConfigs, AgentLLMConfig, PrerequisiteRule, ValidationSchema } from '../../../utils/stepConfigMatching'
 import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
 import type { VariablesManifest } from '../../../services/api-types'
@@ -30,6 +30,7 @@ export interface StepNodeData extends Record<string, unknown> {
   canRun?: boolean  // Deprecated: always true (all steps can run regardless of previous completion)
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
+  validation_schema?: ValidationSchema  // Validation schema from plan.json
 }
 
 export interface ConditionalNodeData extends Record<string, unknown> {
@@ -48,6 +49,7 @@ export interface ConditionalNodeData extends Record<string, unknown> {
   canRun?: boolean  // Deprecated: always true (all steps can run regardless of previous completion)
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
+  validation_schema?: ValidationSchema  // Validation schema from plan.json
 }
 
 export interface DecisionNodeData extends Record<string, unknown> {
@@ -65,6 +67,7 @@ export interface DecisionNodeData extends Record<string, unknown> {
   canRun?: boolean  // Deprecated: always true (all steps can run regardless of previous completion)
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
+  validation_schema?: ValidationSchema  // Validation schema from plan.json (from decision_step)
 }
 
 export interface LoopNodeData extends Record<string, unknown> {
@@ -82,6 +85,7 @@ export interface LoopNodeData extends Record<string, unknown> {
   canRun?: boolean  // Deprecated: always true (all steps can run regardless of previous completion)
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
+  validation_schema?: ValidationSchema  // Validation schema from plan.json
 }
 
 export interface OrchestratorNodeData extends Record<string, unknown> {
@@ -99,6 +103,7 @@ export interface OrchestratorNodeData extends Record<string, unknown> {
   canRun?: boolean  // Deprecated: always true (all steps can run regardless of previous completion)
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
+  validation_schema?: ValidationSchema  // Validation schema from plan.json (from orchestration_step)
 }
 
 export interface ValidationNodeData extends Record<string, unknown> {
@@ -431,7 +436,8 @@ function stepToNode(
     step,
     changeType,
     workspacePath,
-    selectedRunFolder
+    selectedRunFolder,
+    validation_schema: step.validation_schema
   }
 
   if (isConditionalStep(step)) {
@@ -456,7 +462,9 @@ function stepToNode(
       data: {
         ...baseData,
         decision_evaluation_question: step.decision_evaluation_question,
-        decision_step: step.decision_step
+        decision_step: step.decision_step,
+        // Use validation_schema from decision_step (inner step) if available, otherwise from wrapper
+        validation_schema: step.decision_step?.validation_schema || step.validation_schema
         // Note: status is inherited from baseData (computed based on completedStepIndices)
       } as DecisionNodeData
     }
@@ -470,7 +478,9 @@ function stepToNode(
       data: {
         ...baseData,
         orchestration_step: step.orchestration_step,
-        orchestration_routes: step.orchestration_routes
+        orchestration_routes: step.orchestration_routes,
+        // Use validation_schema from orchestration_step (inner step) if available, otherwise from wrapper
+        validation_schema: step.orchestration_step?.validation_schema || step.validation_schema
         // Note: status is inherited from baseData (computed based on completedStepIndices)
       } as OrchestratorNodeData
     }
@@ -1212,6 +1222,7 @@ function processSteps(
                 stepIndex: parentStepIndex,
                 step: subAgentStep,
                 changeType,
+                validation_schema: subAgentStep.validation_schema, // Include validation schema for sub-agent
                 workspacePath,
                 selectedRunFolder
               } as StepNodeData

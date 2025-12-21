@@ -260,6 +260,92 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepProgressUpdatedEvent
 	}
 }
 
+// emitPreValidationCompletedEvent emits a pre-validation completed event
+func (hcpo *HumanControlledTodoPlannerOrchestrator) emitPreValidationCompletedEvent(ctx context.Context, step TodoStep, stepIndex int, stepPath string, isBranchStep bool, workspaceResults *WorkspaceVerificationResult) {
+	bridge := hcpo.GetContextAwareBridge()
+	if bridge == nil {
+		return
+	}
+
+	stepTitle := step.Title
+	if stepTitle == "" {
+		stepTitle = fmt.Sprintf("Step %d", stepIndex+1)
+	}
+	stepId := step.ID
+	if stepId == "" {
+		stepId = fmt.Sprintf("step-%d", stepIndex+1)
+	}
+
+	// Convert FileCheckResult to FileCheckResultForEvent
+	filesChecked := make([]FileCheckResultForEvent, 0, len(workspaceResults.FilesChecked))
+	for _, fileCheck := range workspaceResults.FilesChecked {
+		jsonChecks := make([]JSONCheckResultForEvent, 0, len(fileCheck.JSONChecks))
+		for _, jsonCheck := range fileCheck.JSONChecks {
+			jsonChecks = append(jsonChecks, JSONCheckResultForEvent{
+				Path:      jsonCheck.Path,
+				Passed:    jsonCheck.Passed,
+				CheckType: jsonCheck.CheckType,
+				ErrorMsg:  jsonCheck.ErrorMsg,
+			})
+		}
+		filesChecked = append(filesChecked, FileCheckResultForEvent{
+			FileName:   fileCheck.FileName,
+			Exists:     fileCheck.Exists,
+			IsJSON:     fileCheck.IsJSON,
+			JSONChecks: jsonChecks,
+		})
+	}
+
+	// Convert ValidationError to ValidationErrorForEvent
+	errors := make([]ValidationErrorForEvent, 0, len(workspaceResults.Summary.Errors))
+	for _, err := range workspaceResults.Summary.Errors {
+		errors = append(errors, ValidationErrorForEvent{
+			File:      err.File,
+			Path:      err.Path,
+			CheckType: err.CheckType,
+			Expected:  err.Expected,
+			Actual:    err.Actual,
+			Message:   err.Message,
+		})
+	}
+
+	preValidationEvent := &PreValidationCompletedEvent{
+		BaseEventData: events.BaseEventData{
+			Timestamp: time.Now(),
+			Component: "orchestrator",
+		},
+		StepID:        stepId,
+		StepIndex:     stepIndex,
+		StepTitle:     stepTitle,
+		StepPath:      stepPath,
+		IsBranchStep:  isBranchStep,
+		OverallPass:   workspaceResults.OverallPass,
+		TotalChecks:   workspaceResults.Summary.TotalChecks,
+		PassedChecks:  workspaceResults.Summary.PassedChecks,
+		FailedChecks:  workspaceResults.Summary.FailedChecks,
+		FilesChecked:  filesChecked,
+		Errors:        errors,
+		RunFolder:     hcpo.selectedRunFolder,
+		WorkspacePath: hcpo.GetWorkspacePath(),
+	}
+
+	agentEvent := &events.AgentEvent{
+		Type:      events.EventType("pre_validation_completed"),
+		Timestamp: time.Now(),
+		Data:      preValidationEvent,
+	}
+
+	if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit pre-validation completed event: %v", err))
+	} else {
+		status := "✅ PASSED"
+		if !workspaceResults.OverallPass {
+			status = "❌ FAILED"
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted pre_validation_completed event for step %d: %s (%s - %d/%d checks passed)", stepIndex+1, stepTitle, status, workspaceResults.Summary.PassedChecks, workspaceResults.Summary.TotalChecks))
+	}
+}
+
 // cleanupProgressFromStep removes completed step indices from targetStepIndex onward and cleans up branch steps
 func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupProgressFromStep(ctx context.Context, targetStepIndex int, progress *StepProgress) error {
 	if progress == nil {

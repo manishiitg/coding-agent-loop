@@ -134,6 +134,7 @@ export interface EventDataUnion {
   step_token_usage?: StepTokenUsageEvent;
   step_progress_updated?: StepProgressUpdatedEvent;
   decision_evaluated?: DecisionEvaluatedEvent;
+  pre_validation_completed?: PreValidationCompletedEvent;
   todo_steps_extracted?: TodoStepsExtractedEvent;
   variables_extracted?: VariablesExtractedEvent;
   independent_steps_selected?: IndependentStepsSelectedEvent;
@@ -1472,6 +1473,52 @@ export interface BranchStepProgress {
   branch_executed?: string;
   completed_steps?: string[];
 }
+export interface PreValidationCompletedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  step_id?: string;
+  step_index?: number;
+  step_title?: string;
+  step_path?: string;
+  is_branch_step?: boolean;
+  overall_pass?: boolean;
+  total_checks?: number;
+  passed_checks?: number;
+  failed_checks?: number;
+  files_checked?: Array<{
+    file_name?: string;
+    exists?: boolean;
+    is_json?: boolean;
+    json_checks?: Array<{
+      path?: string;
+      passed?: boolean;
+      check_type?: string;
+      error_msg?: string;
+    }>;
+  }>;
+  errors?: Array<{
+    file?: string;
+    path?: string;
+    check_type?: string;
+    expected?: string;
+    actual?: string;
+    message?: string;
+  }>;
+  run_folder?: string;
+  workspace_path?: string;
+}
+
 export interface DecisionEvaluatedEvent {
   timestamp?: string;
   trace_id?: string;

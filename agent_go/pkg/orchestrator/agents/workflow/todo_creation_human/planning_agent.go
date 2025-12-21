@@ -124,29 +124,61 @@ type PrerequisiteRule struct {
 	Description   string `json:"description"`     // User description of when to detect prerequisite failures for this specific step (e.g., "if login session is missing or expired, go back to step 0")
 }
 
+// ValidationSchema represents structured validation rules for step outputs
+type ValidationSchema struct {
+	Files []FileValidationRule `json:"files,omitempty"`
+}
+
+// FileValidationRule represents validation rules for a specific file
+type FileValidationRule struct {
+	FileName   string                `json:"file_name"`             // e.g., "results.json"
+	MustExist  bool                  `json:"must_exist"`            // File must exist
+	JSONChecks []JSONValidationCheck `json:"json_checks,omitempty"` // JSON structure checks
+}
+
+// JSONValidationCheck represents a validation check on JSON content
+type JSONValidationCheck struct {
+	Path             string           `json:"path"`                        // JSONPath, e.g., "$.status", "$.databases[0].name"
+	MustExist        bool             `json:"must_exist"`                  // Key/path must exist
+	ValueType        string           `json:"value_type,omitempty"`        // "string", "number", "boolean", "array", "object"
+	MinLength        *int             `json:"min_length,omitempty"`        // For arrays/strings
+	MaxLength        *int             `json:"max_length,omitempty"`        // For arrays/strings
+	Pattern          string           `json:"pattern,omitempty"`           // Regex for format validation
+	MinValue         *float64         `json:"min_value,omitempty"`         // For numbers
+	MaxValue         *float64         `json:"max_value,omitempty"`         // For numbers
+	ConsistencyCheck *ConsistencyRule `json:"consistency_check,omitempty"` // Compare with other fields
+}
+
+// ConsistencyRule represents a consistency check between fields
+type ConsistencyRule struct {
+	Type            string `json:"type"`              // "equals", "greater_than", "less_than", "array_length", "in_array"
+	CompareWithPath string `json:"compare_with_path"` // JSONPath to compare with
+}
+
 // AgentConfigs represents per-agent configuration for a step
 type AgentConfigs struct {
-	ExecutionLLM                  *AgentLLMConfig    `json:"execution_llm,omitempty"`
-	ValidationLLM                 *AgentLLMConfig    `json:"validation_llm,omitempty"`
-	LearningLLM                   *AgentLLMConfig    `json:"learning_llm,omitempty"`
-	ConditionalLLM                *AgentLLMConfig    `json:"conditional_llm,omitempty"`                   // Step-specific conditional LLM for conditional step evaluation
-	ExecutionMaxTurns             *int               `json:"execution_max_turns,omitempty"`               // default: 100
-	ValidationMaxTurns            *int               `json:"validation_max_turns,omitempty"`              // default: 100
-	LearningMaxTurns              *int               `json:"learning_max_turns,omitempty"`                // default: 100
-	OrchestrationMaxIterations    *int               `json:"orchestration_max_iterations,omitempty"`      // default: orchestrator max turns (typically 100)
-	DisableValidation             *bool              `json:"disable_validation,omitempty"`                // skip validation entirely (nil = not set/enabled, true = disabled, false = explicitly enabled)
-	DisableLearning               *bool              `json:"disable_learning,omitempty"`                  // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
-	LockLearnings                 *bool              `json:"lock_learnings,omitempty"`                    // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
-	LearningAfterLoopIteration    bool               `json:"learning_after_loop_iteration,omitempty"`     // run learning after each loop iteration
-	LearningDetailLevel           string             `json:"learning_detail_level,omitempty"`             // "exact", "general", or "none" (default: "exact")
-	SelectedServers               []string           `json:"selected_servers,omitempty"`                  // step-level MCP server selection (subset of preset servers)
-	SelectedTools                 []string           `json:"selected_tools,omitempty"`                    // step-level tool selection (format: "server:tool" or "server:*" for all tools)
-	EnabledCustomToolCategories   []string           `json:"enabled_custom_tool_categories,omitempty"`    // e.g., ["workspace_tools", "human_tools"] - enables all tools in category
-	EnabledCustomTools            []string           `json:"enabled_custom_tools,omitempty"`              // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
-	EnableLargeOutputVirtualTools *bool              `json:"enable_large_output_virtual_tools,omitempty"` // Enable/disable large output tools (default: true if nil)
-	UseCodeExecutionMode          *bool              `json:"use_code_execution_mode,omitempty"`           // Step-level code execution mode override (nil = use preset default, true/false = override)
-	EnablePrerequisiteDetection   *bool              `json:"enable_prerequisite_detection,omitempty"`     // Enable prerequisite failure detection for this step (default: false)
-	PrerequisiteRules             []PrerequisiteRule `json:"prerequisite_rules,omitempty"`                // Array of prerequisite rules, each with one step dependency and one description
+	ExecutionLLM                           *AgentLLMConfig    `json:"execution_llm,omitempty"`
+	ValidationLLM                          *AgentLLMConfig    `json:"validation_llm,omitempty"`
+	LearningLLM                            *AgentLLMConfig    `json:"learning_llm,omitempty"`
+	ConditionalLLM                         *AgentLLMConfig    `json:"conditional_llm,omitempty"`                              // Step-specific conditional LLM for conditional step evaluation
+	ExecutionMaxTurns                      *int               `json:"execution_max_turns,omitempty"`                          // default: 100
+	ValidationMaxTurns                     *int               `json:"validation_max_turns,omitempty"`                         // default: 100
+	LearningMaxTurns                       *int               `json:"learning_max_turns,omitempty"`                           // default: 100
+	OrchestrationMaxIterations             *int               `json:"orchestration_max_iterations,omitempty"`                 // default: orchestrator max turns (typically 100)
+	DisableValidation                      *bool              `json:"disable_validation,omitempty"`                           // skip validation entirely (nil = not set/enabled, true = disabled, false = explicitly enabled)
+	SkipLLMValidationIfPreValidationPasses *bool              `json:"skip_llm_validation_if_pre_validation_passes,omitempty"` // if true, skip LLM validation when pre-validation passes (assume validation success)
+	DisableLearning                        *bool              `json:"disable_learning,omitempty"`                             // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
+	LockLearnings                          *bool              `json:"lock_learnings,omitempty"`                               // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
+	LearningAfterLoopIteration             bool               `json:"learning_after_loop_iteration,omitempty"`                // run learning after each loop iteration
+	LearningDetailLevel                    string             `json:"learning_detail_level,omitempty"`                        // "exact", "general", or "none" (default: "exact")
+	SelectedServers                        []string           `json:"selected_servers,omitempty"`                             // step-level MCP server selection (subset of preset servers)
+	SelectedTools                          []string           `json:"selected_tools,omitempty"`                               // step-level tool selection (format: "server:tool" or "server:*" for all tools)
+	EnabledCustomToolCategories            []string           `json:"enabled_custom_tool_categories,omitempty"`               // e.g., ["workspace_tools", "human_tools"] - enables all tools in category
+	EnabledCustomTools                     []string           `json:"enabled_custom_tools,omitempty"`                         // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
+	EnableLargeOutputVirtualTools          *bool              `json:"enable_large_output_virtual_tools,omitempty"`            // Enable/disable large output tools (default: true if nil)
+	UseCodeExecutionMode                   *bool              `json:"use_code_execution_mode,omitempty"`                      // Step-level code execution mode override (nil = use preset default, true/false = override)
+	EnablePrerequisiteDetection            *bool              `json:"enable_prerequisite_detection,omitempty"`                // Enable prerequisite failure detection for this step (default: false)
+	PrerequisiteRules                      []PrerequisiteRule `json:"prerequisite_rules,omitempty"`                           // Array of prerequisite rules, each with one step dependency and one description
 }
 
 // ============================================================================
@@ -173,6 +205,7 @@ type CommonStepFields struct {
 	ContextOutput               FlexibleContextOutput `json:"context_output"`                          // Use flexible type to handle string or array
 	EnablePrerequisiteDetection *bool                 `json:"enable_prerequisite_detection,omitempty"` // Enable prerequisite failure detection for this step (default: false)
 	PrerequisiteRules           []PrerequisiteRule    `json:"prerequisite_rules,omitempty"`            // Array of prerequisite rules, each with one step dependency and one description
+	ValidationSchema            *ValidationSchema     `json:"validation_schema,omitempty"`             // Optional structured validation schema for step outputs
 }
 
 // PlanStepInterface is the interface that all step types must implement
@@ -186,6 +219,7 @@ type PlanStepInterface interface {
 	GetContextOutput() FlexibleContextOutput
 	GetEnablePrerequisiteDetection() *bool
 	GetPrerequisiteRules() []PrerequisiteRule
+	GetValidationSchema() *ValidationSchema
 	StepType() StepType
 	// GetCommonFields returns a copy of common fields for convenience
 	GetCommonFields() CommonStepFields
@@ -212,6 +246,7 @@ func (r *RegularPlanStep) GetEnablePrerequisiteDetection() *bool {
 	return r.EnablePrerequisiteDetection
 }
 func (r *RegularPlanStep) GetPrerequisiteRules() []PrerequisiteRule { return r.PrerequisiteRules }
+func (r *RegularPlanStep) GetValidationSchema() *ValidationSchema   { return r.ValidationSchema }
 func (r *RegularPlanStep) StepType() StepType                       { return StepTypeRegular }
 func (r *RegularPlanStep) GetCommonFields() CommonStepFields        { return r.CommonStepFields }
 
@@ -252,6 +287,7 @@ func (c *ConditionalPlanStep) GetEnablePrerequisiteDetection() *bool {
 	return nil // Not supported on conditional wrappers
 }
 func (c *ConditionalPlanStep) GetPrerequisiteRules() []PrerequisiteRule { return nil } // Not supported on conditional wrappers
+func (c *ConditionalPlanStep) GetValidationSchema() *ValidationSchema   { return c.ValidationSchema }
 func (c *ConditionalPlanStep) StepType() StepType                       { return StepTypeConditional }
 func (c *ConditionalPlanStep) GetCommonFields() CommonStepFields {
 	// Return common fields but override prerequisite fields (not supported on conditional wrappers)
@@ -264,6 +300,7 @@ func (c *ConditionalPlanStep) GetCommonFields() CommonStepFields {
 		ContextOutput:               c.ContextOutput,
 		EnablePrerequisiteDetection: nil, // Not supported on conditional wrappers
 		PrerequisiteRules:           nil, // Not supported on conditional wrappers
+		ValidationSchema:            c.ValidationSchema,
 	}
 }
 
@@ -360,7 +397,14 @@ func (d *DecisionPlanStep) GetEnablePrerequisiteDetection() *bool {
 	return nil // Not supported on decision wrappers
 }
 func (d *DecisionPlanStep) GetPrerequisiteRules() []PrerequisiteRule { return nil } // Not supported on decision wrappers
-func (d *DecisionPlanStep) StepType() StepType                       { return StepTypeDecision }
+func (d *DecisionPlanStep) GetValidationSchema() *ValidationSchema {
+	// Return validation schema from inner DecisionStep if it exists
+	if d.DecisionStep != nil {
+		return d.DecisionStep.GetValidationSchema()
+	}
+	return nil
+}
+func (d *DecisionPlanStep) StepType() StepType { return StepTypeDecision }
 func (d *DecisionPlanStep) GetCommonFields() CommonStepFields {
 	return CommonStepFields{
 		ID:                          d.ID,
@@ -371,6 +415,7 @@ func (d *DecisionPlanStep) GetCommonFields() CommonStepFields {
 		ContextOutput:               "",  // Not used for decision wrapper
 		EnablePrerequisiteDetection: nil, // Not supported on decision wrappers
 		PrerequisiteRules:           nil, // Not supported on decision wrappers
+		ValidationSchema:            d.GetValidationSchema(),
 	}
 }
 
@@ -453,7 +498,14 @@ func (o *OrchestrationPlanStep) GetEnablePrerequisiteDetection() *bool {
 	return nil // Not supported on orchestration wrappers
 }
 func (o *OrchestrationPlanStep) GetPrerequisiteRules() []PrerequisiteRule { return nil } // Not supported on orchestration wrappers
-func (o *OrchestrationPlanStep) StepType() StepType                       { return StepTypeOrchestration }
+func (o *OrchestrationPlanStep) GetValidationSchema() *ValidationSchema {
+	// Return validation schema from inner OrchestrationStep if it exists
+	if o.OrchestrationStep != nil {
+		return o.OrchestrationStep.GetValidationSchema()
+	}
+	return nil
+}
+func (o *OrchestrationPlanStep) StepType() StepType { return StepTypeOrchestration }
 func (o *OrchestrationPlanStep) GetCommonFields() CommonStepFields {
 	return CommonStepFields{
 		ID:                          o.ID,
@@ -464,6 +516,7 @@ func (o *OrchestrationPlanStep) GetCommonFields() CommonStepFields {
 		ContextOutput:               "",  // Not used for orchestration wrapper
 		EnablePrerequisiteDetection: nil, // Not supported on orchestration wrappers
 		PrerequisiteRules:           nil, // Not supported on orchestration wrappers
+		ValidationSchema:            o.GetValidationSchema(),
 	}
 }
 
@@ -665,9 +718,10 @@ type PartialPlanStep struct {
 	OrchestrationStep   map[string]interface{}   `json:"orchestration_step,omitempty"`   // Optional: Updated orchestration step - will be converted to PlanStepInterface
 	OrchestrationRoutes []PlanOrchestrationRoute `json:"orchestration_routes,omitempty"` // Optional: Updated orchestration routes
 	// Routing fields (used by both conditional, decision, and routing steps)
-	IfTrueNextStepID  string `json:"if_true_next_step_id,omitempty"`  // Optional: Updated if_true_next_step_id
-	IfFalseNextStepID string `json:"if_false_next_step_id,omitempty"` // Optional: Updated if_false_next_step_id
-	NextStepID        string `json:"next_step_id,omitempty"`          // Optional: Updated next_step_id (for routing steps)
+	IfTrueNextStepID  string            `json:"if_true_next_step_id,omitempty"`  // Optional: Updated if_true_next_step_id
+	IfFalseNextStepID string            `json:"if_false_next_step_id,omitempty"` // Optional: Updated if_false_next_step_id
+	NextStepID        string            `json:"next_step_id,omitempty"`          // Optional: Updated next_step_id (for routing steps)
+	ValidationSchema  *ValidationSchema `json:"validation_schema,omitempty"`     // Optional: Updated validation schema
 }
 
 // planFileMutex ensures thread-safe access to plan.json
@@ -944,7 +998,7 @@ func getAddRegularStepSchema() string {
 			},
 			"success_criteria": {
 				"type": "string",
-				"description": "REQUIRED: Detailed explanation of how to verify this step was completed successfully. MUST be file-verifiable AND evidence-based. CRITICAL ANTI-GAMING RULES: (1) NEVER use 'status: success/passed' as the ONLY criterion - validation can be gamed by simply changing a status field. (2) Always require EVIDENCE that can be independently verified (counts, lists, specific data values, checksums). (3) For verification steps: require raw evidence (e.g., actual row counts, tab names, sample data) that validation can recompute - not just summary status flags. GOOD EXAMPLES: 'File step_1_results.json contains a databases array with at least 5 entries, and database_count field equals the array length', 'File verification.json includes: (a) list of all tab names found, (b) row count per tab, (c) sample of 3 date values per tab - all date samples must be integers 1-31'. BAD EXAMPLES (avoid): 'File contains status: success', 'All checks show passed status' - these can be faked without doing real work."
+				"description": "REQUIRED: Detailed explanation of how to verify this step was completed successfully. Focus on EXECUTION-BASED validation - what work was actually done, not just file structure. Pre-validation handles file/field existence checks automatically. Your criteria should describe: (1) What evidence proves the execution agent actually performed the work (e.g., 'Agent read source files and processed data', 'Agent made API calls and received responses', 'Agent transformed data according to business rules'). (2) What outcomes demonstrate successful execution (e.g., 'Data was correctly transformed', 'All required operations completed', 'External system was updated'). (3) Evidence that can be verified against execution history (tool calls, file reads, data transformations). GOOD EXAMPLES: 'Execution history shows agent read source_data.json, processed all entries, and created transformed_data.json with correct structure', 'Agent successfully authenticated with API (tool calls show auth requests), retrieved data, and wrote results.json', 'Agent verified data integrity by reading source files, computing checksums, and comparing values'. BAD EXAMPLES (avoid): 'File contains status: success' (too vague, can be faked), 'File exists' (pre-validation handles this), 'All fields present' (pre-validation handles this)."
 			},
 			"context_dependencies": {
 				"type": "array",
@@ -996,9 +1050,48 @@ func getAddRegularStepSchema() string {
 			"insert_after_step_id": {
 				"type": "string",
 				"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string \"\" to insert at the beginning of the plan (before the first step)."
+			},
+			"validation_schema": {
+				"type": "object",
+				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. You MUST generate this by parsing the success_criteria and extracting file names, field requirements, and validation rules. This enables pre-validation before LLM validation (improves speed by 50-70%). Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath like $.field_name), must_exist: boolean, value_type?: string (string/number/boolean/array/object), min_length?: number, max_length?: number, pattern?: string (regex), min_value?: number, max_value?: number, consistency_check?: {type: string (array_length/equals/greater_than/less_than), compare_with_path: string}}]}]}. Example: If success_criteria mentions 'File results.json contains status field and count field equals items array length', generate schema with file_name: 'results.json', json_checks for $.status and $.count with consistency_check.",
+				"properties": {
+					"files": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"file_name": {"type": "string"},
+								"must_exist": {"type": "boolean"},
+								"json_checks": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"path": {"type": "string"},
+											"must_exist": {"type": "boolean"},
+											"value_type": {"type": "string"},
+											"min_length": {"type": "number"},
+											"max_length": {"type": "number"},
+											"pattern": {"type": "string"},
+											"min_value": {"type": "number"},
+											"max_value": {"type": "number"},
+											"consistency_check": {
+												"type": "object",
+												"properties": {
+													"type": {"type": "string"},
+													"compare_with_path": {"type": "string"}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
 			}
 		},
-		"required": ["id", "title", "description", "success_criteria", "context_dependencies", "context_output", "has_loop", "insert_after_step_id"]
+		"required": ["id", "title", "description", "success_criteria", "context_dependencies", "context_output", "has_loop", "insert_after_step_id", "validation_schema"]
 	}`
 }
 
@@ -1052,9 +1145,48 @@ func getAddConditionalStepSchema() string {
 						"success_criteria": {"type": "string"},
 						"context_dependencies": {"type": "array", "items": {"type": "string"}},
 						"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create"},
-						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."}
+						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
+						"validation_schema": {
+							"type": "object",
+							"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string, min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}",
+							"properties": {
+								"files": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"file_name": {"type": "string"},
+											"must_exist": {"type": "boolean"},
+											"json_checks": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"path": {"type": "string"},
+														"must_exist": {"type": "boolean"},
+														"value_type": {"type": "string"},
+														"min_length": {"type": "number"},
+														"max_length": {"type": "number"},
+														"pattern": {"type": "string"},
+														"min_value": {"type": "number"},
+														"max_value": {"type": "number"},
+														"consistency_check": {
+															"type": "object",
+															"properties": {
+																"type": {"type": "string"},
+																"compare_with_path": {"type": "string"}
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
 					},
-					"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output"]
+					"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output", "validation_schema"]
 				},
 				"description": "REQUIRED: Array of steps to execute if condition is true. Can be empty array [] to skip this branch and continue directly to the next step in the main plan. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', or 'orchestration') and an 'id' field."
 			},
@@ -1070,9 +1202,48 @@ func getAddConditionalStepSchema() string {
 						"success_criteria": {"type": "string"},
 						"context_dependencies": {"type": "array", "items": {"type": "string"}},
 						"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create"},
-						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."}
+						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
+						"validation_schema": {
+							"type": "object",
+							"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string, min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}",
+							"properties": {
+								"files": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"file_name": {"type": "string"},
+											"must_exist": {"type": "boolean"},
+											"json_checks": {
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"path": {"type": "string"},
+														"must_exist": {"type": "boolean"},
+														"value_type": {"type": "string"},
+														"min_length": {"type": "number"},
+														"max_length": {"type": "number"},
+														"pattern": {"type": "string"},
+														"min_value": {"type": "number"},
+														"max_value": {"type": "number"},
+														"consistency_check": {
+															"type": "object",
+															"properties": {
+																"type": {"type": "string"},
+																"compare_with_path": {"type": "string"}
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
 					},
-					"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output"]
+					"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output", "validation_schema"]
 				},
 				"description": "REQUIRED: Array of steps to execute if condition is false. Can be empty array [] to skip this branch and continue directly to the next step in the main plan. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', or 'orchestration') and an 'id' field."
 			},
@@ -1120,9 +1291,48 @@ func getAddDecisionStepSchema() string {
 					"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
 					"loop_condition": {"type": "string", "description": "OPTIONAL: Condition that must be met to exit the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
 					"max_iterations": {"type": "integer", "description": "OPTIONAL: Maximum number of loop iterations allowed. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-					"loop_description": {"type": "string", "description": "OPTIONAL: Describe what happens in EACH ITERATION of the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."}
+					"loop_description": {"type": "string", "description": "OPTIONAL: Describe what happens in EACH ITERATION of the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
+					"validation_schema": {
+						"type": "object",
+						"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string, min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}",
+						"properties": {
+							"files": {
+								"type": "array",
+								"items": {
+									"type": "object",
+									"properties": {
+										"file_name": {"type": "string"},
+										"must_exist": {"type": "boolean"},
+										"json_checks": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"path": {"type": "string"},
+													"must_exist": {"type": "boolean"},
+													"value_type": {"type": "string"},
+													"min_length": {"type": "number"},
+													"max_length": {"type": "number"},
+													"pattern": {"type": "string"},
+													"min_value": {"type": "number"},
+													"max_value": {"type": "number"},
+													"consistency_check": {
+														"type": "object",
+														"properties": {
+															"type": {"type": "string"},
+															"compare_with_path": {"type": "string"}
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
 				},
-				"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output"]
+				"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output", "validation_schema"]
 			},
 			"decision_evaluation_question": {
 				"type": "string",
@@ -1207,9 +1417,48 @@ func getAddOrchestrationStepSchema() string {
 								"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
 								"loop_condition": {"type": "string"},
 								"max_iterations": {"type": "integer"},
-								"loop_description": {"type": "string"}
+								"loop_description": {"type": "string"},
+								"validation_schema": {
+									"type": "object",
+									"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string, min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}",
+									"properties": {
+										"files": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"file_name": {"type": "string"},
+													"must_exist": {"type": "boolean"},
+													"json_checks": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"path": {"type": "string"},
+																"must_exist": {"type": "boolean"},
+																"value_type": {"type": "string"},
+																"min_length": {"type": "number"},
+																"max_length": {"type": "number"},
+																"pattern": {"type": "string"},
+																"min_value": {"type": "number"},
+																"max_value": {"type": "number"},
+																"consistency_check": {
+																	"type": "object",
+																	"properties": {
+																		"type": {"type": "string"},
+																		"compare_with_path": {"type": "string"}
+																	}
+																}
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+								}
 							},
-							"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output"]
+							"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output", "validation_schema"]
 						},
 						"context_to_pass": {
 							"type": "string",
@@ -1988,6 +2237,77 @@ func getConvertConditionalToRegularSchema() string {
 	}`
 }
 
+// getUpdateValidationSchemaSchema returns the JSON schema for update_validation_schema tool
+func getUpdateValidationSchemaSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"existing_step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the step in the existing plan that you want to update. Use the step's id field from the plan."
+			},
+			"validation_schema": {
+				"type": "object",
+				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. You MUST generate this by parsing the success_criteria and extracting file names, field requirements, and validation rules. This enables pre-validation before LLM validation (improves speed by 50-70%). Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath like $.field_name), must_exist: boolean, value_type?: string (string/number/boolean/array/object), min_length?: number, max_length?: number, pattern?: string (regex), min_value?: number, max_value?: number, consistency_check?: {type: string (array_length/equals/greater_than/less_than), compare_with_path: string}}]}]}. Example: If success_criteria mentions 'File results.json contains status field and count field equals items array length', generate schema with file_name: 'results.json', json_checks for $.status and $.count with consistency_check.",
+				"properties": {
+					"files": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"file_name": {"type": "string"},
+								"must_exist": {"type": "boolean"},
+								"json_checks": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"path": {"type": "string"},
+											"must_exist": {"type": "boolean"},
+											"value_type": {"type": "string"},
+											"min_length": {"type": "number"},
+											"max_length": {"type": "number"},
+											"pattern": {"type": "string"},
+											"min_value": {"type": "number"},
+											"max_value": {"type": "number"},
+											"consistency_check": {
+												"type": "object",
+												"properties": {
+													"type": {"type": "string"},
+													"compare_with_path": {"type": "string"}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"required": ["existing_step_id", "validation_schema"]
+	}`
+}
+
+// getUpdateSuccessCriteriaSchema returns the JSON schema for update_success_criteria tool
+func getUpdateSuccessCriteriaSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"existing_step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the step in the existing plan that you want to update. Use the step's id field from the plan."
+			},
+			"success_criteria": {
+				"type": "string",
+				"description": "REQUIRED: Detailed explanation of how to verify this step was completed successfully. Focus on EXECUTION-BASED validation - what work was actually done, not just file structure. Pre-validation handles file/field existence checks automatically. Your criteria should describe: (1) What evidence proves the execution agent actually performed the work (e.g., 'Agent read source files and processed data', 'Agent made API calls and received responses', 'Agent transformed data according to business rules'). (2) What outcomes demonstrate successful execution (e.g., 'Data was correctly transformed', 'All required operations completed', 'External system was updated'). (3) Evidence that can be verified against execution history (tool calls, file reads, data transformations). GOOD EXAMPLES: 'Execution history shows agent read source_data.json, processed all entries, and created transformed_data.json with correct structure', 'Agent successfully authenticated with API (tool calls show auth requests), retrieved data, and wrote results.json', 'Agent verified data integrity by reading source files, computing checksums, and comparing values'. BAD EXAMPLES (avoid): 'File contains status: success' (too vague, can be faked), 'File exists' (pre-validation handles this), 'All fields present' (pre-validation handles this)."
+			}
+		},
+		"required": ["existing_step_id", "success_criteria"]
+	}`
+}
+
 // readPlanFromFile reads plan.json from the workspace using BaseOrchestrator's ReadWorkspaceFile
 func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error)) (*PlanningResponse, error) {
 	planPath := filepath.Join(workspacePath, "planning", "plan.json")
@@ -2175,6 +2495,26 @@ func unmarshalStepsFromJSON(stepsData []json.RawMessage) ([]PlanStepInterface, e
 	return steps, nil
 }
 
+// updateValidationSchemaOnStep updates validation schema on any step type
+func updateValidationSchemaOnStep(step PlanStepInterface, schema *ValidationSchema) {
+	switch s := step.(type) {
+	case *RegularPlanStep:
+		s.ValidationSchema = schema
+	case *ConditionalPlanStep:
+		s.ValidationSchema = schema
+	case *DecisionPlanStep:
+		// For DecisionPlanStep, validation schema is on the inner DecisionStep
+		if s.DecisionStep != nil {
+			updateValidationSchemaOnStep(s.DecisionStep, schema)
+		}
+	case *OrchestrationPlanStep:
+		// For OrchestrationPlanStep, validation schema is on the inner OrchestrationStep
+		if s.OrchestrationStep != nil {
+			updateValidationSchemaOnStep(s.OrchestrationStep, schema)
+		}
+	}
+}
+
 // mergePartialStepUpdate merges a PartialPlanStep update into an existing PlanStepInterface
 // Uses type switches to handle each step type appropriately
 func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate PartialPlanStep) PlanStepInterface {
@@ -2216,6 +2556,10 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		if partialUpdate.PrerequisiteRules != nil {
 			updated.PrerequisiteRules = partialUpdate.PrerequisiteRules
 		}
+		if partialUpdate.ValidationSchema != nil {
+			updated.ValidationSchema = partialUpdate.ValidationSchema
+		}
+		// Validation schema is LLM-generated only - no code-based auto-generation
 		return &updated
 
 	case *ConditionalPlanStep:
@@ -2257,6 +2601,9 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		if partialUpdate.IfFalseNextStepID != "" {
 			updated.IfFalseNextStepID = partialUpdate.IfFalseNextStepID
 		}
+		if partialUpdate.ValidationSchema != nil {
+			updated.ValidationSchema = partialUpdate.ValidationSchema
+		}
 		return &updated
 
 	case *DecisionPlanStep:
@@ -2279,6 +2626,10 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		}
 		if partialUpdate.IfFalseNextStepID != "" {
 			updated.IfFalseNextStepID = partialUpdate.IfFalseNextStepID
+		}
+		if partialUpdate.ValidationSchema != nil && updated.DecisionStep != nil {
+			// Update validation schema on the inner DecisionStep (can be any step type)
+			updateValidationSchemaOnStep(updated.DecisionStep, partialUpdate.ValidationSchema)
 		}
 		return &updated
 
@@ -2304,6 +2655,10 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		}
 		if partialUpdate.NextStepID != "" {
 			updated.NextStepID = partialUpdate.NextStepID
+		}
+		if partialUpdate.ValidationSchema != nil && updated.OrchestrationStep != nil {
+			// Update validation schema on the inner OrchestrationStep (can be any step type)
+			updateValidationSchemaOnStep(updated.OrchestrationStep, partialUpdate.ValidationSchema)
 		}
 		return &updated
 
@@ -2631,6 +2986,26 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 			Field:    "next_step_id",
 			OldValue: oldNextStepID,
 			NewValue: partialUpdate.NextStepID,
+		})
+	}
+	if partialUpdate.ValidationSchema != nil {
+		changedFields = append(changedFields, "validation_schema")
+		oldSchema := existingStep.GetValidationSchema()
+		oldSchemaJSON := "nil"
+		if oldSchema != nil {
+			oldSchemaBytes, _ := json.Marshal(oldSchema)
+			oldSchemaJSON = string(oldSchemaBytes)
+		}
+		newSchemaJSON := "nil"
+		if partialUpdate.ValidationSchema != nil {
+			newSchemaBytes, _ := json.Marshal(partialUpdate.ValidationSchema)
+			newSchemaJSON = string(newSchemaBytes)
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "validation_schema",
+			OldValue: oldSchemaJSON,
+			NewValue: newSchemaJSON,
 		})
 	}
 
@@ -3256,6 +3631,8 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 			return "", fmt.Errorf(fmt.Sprintf("step is missing required ID field. Step title: %q", typedStep.GetTitle()), nil)
 		}
 
+		// Validation schema is LLM-generated only - no code-based auto-generation
+
 		// Validate step type-specific required fields BEFORE writing to plan
 		// This allows the agent to correct errors immediately via tool response
 		switch stepType {
@@ -3703,6 +4080,37 @@ func registerPlanModificationTools(
 		"workflow",
 	); err != nil {
 		return fmt.Errorf(fmt.Sprintf("failed to register delete_orchestration_route tool: %w", err), nil)
+	}
+
+	// Register validation schema and success criteria update tools
+	updateValidationSchemaSchema := getUpdateValidationSchemaSchema()
+	updateValidationSchemaParams, err := parseSchemaForToolParameters(updateValidationSchemaSchema)
+	if err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to parse update_validation_schema schema: %w", err), nil)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"update_validation_schema",
+		"Update the validation schema for an existing step in the plan. Provide existing_step_id (required) and validation_schema (required). The validation schema enables fast code-based pre-validation before LLM validation. The plan.json file is updated immediately when this tool is called.",
+		updateValidationSchemaParams,
+		createUpdateValidationSchemaExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to register update_validation_schema tool: %w", err), nil)
+	}
+
+	updateSuccessCriteriaSchema := getUpdateSuccessCriteriaSchema()
+	updateSuccessCriteriaParams, err := parseSchemaForToolParameters(updateSuccessCriteriaSchema)
+	if err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to parse update_success_criteria schema: %w", err), nil)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"update_success_criteria",
+		"Update the success criteria for an existing step in the plan. Provide existing_step_id (required) and success_criteria (required). Success criteria should focus on EXECUTION-BASED validation - what work was actually done, not just file structure. The plan.json file is updated immediately when this tool is called.",
+		updateSuccessCriteriaParams,
+		createUpdateSuccessCriteriaExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to register update_success_criteria tool: %w", err), nil)
 	}
 
 	if logger != nil {
@@ -5031,6 +5439,178 @@ func createConvertConditionalToRegularExecutor(workspacePath string, logger logg
 	}
 }
 
+// createUpdateValidationSchemaExecutor creates an executor function for update_validation_schema tool
+func createUpdateValidationSchemaExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Convert args to JSON and unmarshal to extract validation schema
+		stepJSON, err := json.Marshal(args)
+		if err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("failed to marshal step: %w", err), nil)
+		}
+
+		var updateData struct {
+			ExistingStepID   string            `json:"existing_step_id"`
+			ValidationSchema *ValidationSchema `json:"validation_schema"`
+		}
+		if err := json.Unmarshal(stepJSON, &updateData); err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("failed to parse update data: %w", err), nil)
+		}
+
+		if updateData.ExistingStepID == "" {
+			return "", fmt.Errorf(fmt.Sprintf("existing_step_id is required"), nil)
+		}
+		if updateData.ValidationSchema == nil {
+			return "", fmt.Errorf(fmt.Sprintf("validation_schema is required"), nil)
+		}
+
+		// Create PartialPlanStep with only validation schema
+		partialUpdate := PartialPlanStep{
+			ExistingStepID:   updateData.ExistingStepID,
+			ValidationSchema: updateData.ValidationSchema,
+		}
+
+		// Read current plan
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+		}
+
+		// Track changes for changelog
+		fieldChanges := make([]PlanFieldChange, 0)
+
+		// Update the step
+		stepIndex, changedFields, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
+		if err != nil {
+			return "", err
+		}
+
+		// Validate all steps after update
+		if err := validatePlanStepIDs(plan.Steps); err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("plan validation failed after update: %w", err), nil)
+		}
+
+		// Write updated plan
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+		}
+
+		// Write changelog entry
+		detailsJSON, _ := json.Marshal(map[string]interface{}{
+			"step_id":        updateData.ExistingStepID,
+			"changed_fields": changedFields,
+		})
+		changelogEntry := PlanChangeLogEntry{
+			Timestamp:   time.Now().Format(time.RFC3339),
+			ChangeType:  "update",
+			StepIDs:     []string{updateData.ExistingStepID},
+			Description: fmt.Sprintf("Updated validation schema for step: %s", updateData.ExistingStepID),
+			Details:     string(detailsJSON),
+			Changes:     fieldChanges,
+		}
+		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
+			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
+		}
+
+		// Unlock learnings for updated step
+		if unlockLearningsFunc != nil && stepIndex >= 0 {
+			if err := unlockLearningsFunc(ctx, updateData.ExistingStepID, stepIndex); err != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Failed to unlock learnings for updated step %s: %v", updateData.ExistingStepID, err))
+			} else {
+				logger.Info(fmt.Sprintf("🔓 Unlocked learnings for updated step %s (plan was modified)", updateData.ExistingStepID))
+			}
+		}
+
+		logger.Info(fmt.Sprintf("✅ Updated validation schema for step '%s' in plan", updateData.ExistingStepID))
+		return fmt.Sprintf("Successfully updated validation schema for step '%s' in the plan", updateData.ExistingStepID), nil
+	}
+}
+
+// createUpdateSuccessCriteriaExecutor creates an executor function for update_success_criteria tool
+func createUpdateSuccessCriteriaExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Convert args to JSON and unmarshal to extract success criteria
+		stepJSON, err := json.Marshal(args)
+		if err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("failed to marshal step: %w", err), nil)
+		}
+
+		var updateData struct {
+			ExistingStepID  string `json:"existing_step_id"`
+			SuccessCriteria string `json:"success_criteria"`
+		}
+		if err := json.Unmarshal(stepJSON, &updateData); err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("failed to parse update data: %w", err), nil)
+		}
+
+		if updateData.ExistingStepID == "" {
+			return "", fmt.Errorf(fmt.Sprintf("existing_step_id is required"), nil)
+		}
+		if updateData.SuccessCriteria == "" {
+			return "", fmt.Errorf(fmt.Sprintf("success_criteria is required"), nil)
+		}
+
+		// Create PartialPlanStep with only success criteria
+		partialUpdate := PartialPlanStep{
+			ExistingStepID:  updateData.ExistingStepID,
+			SuccessCriteria: updateData.SuccessCriteria,
+		}
+
+		// Read current plan
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+		}
+
+		// Track changes for changelog
+		fieldChanges := make([]PlanFieldChange, 0)
+
+		// Update the step
+		stepIndex, changedFields, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
+		if err != nil {
+			return "", err
+		}
+
+		// Validate all steps after update
+		if err := validatePlanStepIDs(plan.Steps); err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("plan validation failed after update: %w", err), nil)
+		}
+
+		// Write updated plan
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+		}
+
+		// Write changelog entry
+		detailsJSON, _ := json.Marshal(map[string]interface{}{
+			"step_id":        updateData.ExistingStepID,
+			"changed_fields": changedFields,
+		})
+		changelogEntry := PlanChangeLogEntry{
+			Timestamp:   time.Now().Format(time.RFC3339),
+			ChangeType:  "update",
+			StepIDs:     []string{updateData.ExistingStepID},
+			Description: fmt.Sprintf("Updated success criteria for step: %s", updateData.ExistingStepID),
+			Details:     string(detailsJSON),
+			Changes:     fieldChanges,
+		}
+		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
+			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
+		}
+
+		// Unlock learnings for updated step
+		if unlockLearningsFunc != nil && stepIndex >= 0 {
+			if err := unlockLearningsFunc(ctx, updateData.ExistingStepID, stepIndex); err != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Failed to unlock learnings for updated step %s: %v", updateData.ExistingStepID, err))
+			} else {
+				logger.Info(fmt.Sprintf("🔓 Unlocked learnings for updated step %s (plan was modified)", updateData.ExistingStepID))
+			}
+		}
+
+		logger.Info(fmt.Sprintf("✅ Updated success criteria for step '%s' in plan", updateData.ExistingStepID))
+		return fmt.Sprintf("Successfully updated success criteria for step '%s' in the plan", updateData.ExistingStepID), nil
+	}
+}
+
 // NOTE: Learning folders are named using step IDs (e.g., learnings/{step_id}/),
 // so folders don't need to be renamed when steps are reordered - the step ID stays the same.
 
@@ -5300,11 +5880,11 @@ Use existing variables only—don't create new placeholders. Plans must work acr
 ### 5. Embedding Verification
 For **critical operations** (external systems, data changes, money):
 1. Plan an explicit **verification step** immediately after the action
-2. **Verification step success criteria MUST require raw evidence** (counts, lists, samples) - NOT just status flags
+2. **Verification step success criteria MUST focus on execution evidence** - what verification work was actually done (e.g., "Agent read source data and recomputed values", "Agent compared results against expected patterns") - NOT just status flags or file structure
 3. Add a **decision step** with strict decision_evaluation_question that says: "recompute from the raw evidence, ignore any status fields"
 4. Route to fix/retry on failure, proceed on success
 
-**Why evidence-based criteria matter**: The execution agent creates both evidence AND status. If criteria only check status, the agent can "pass" by writing ` + "`" + `"passed"` + "`" + ` without doing real work. Evidence-based criteria force the agent to actually gather real data.
+**Why execution-based criteria matter**: The execution agent creates both evidence AND status. If criteria only check status or file structure, the agent can "pass" by writing status flags or creating empty files. Focus on execution history - did the agent actually do the verification work?
 
 ### 6. Iterating from Feedback/Logs
 When feedback says "this failed" or logs show issues:
@@ -5430,28 +6010,73 @@ Do NOT rely on any single 'status' field; recompute from the detailed evidence s
 
 ## ✅ SUCCESS CRITERIA FORMAT
 
-**Purpose**: Validation agent verifies step completion by checking file contents AND cross-referencing with execution history.
+**Purpose**: Validation agent verifies step completion by analyzing EXECUTION HISTORY and AUTHENTICITY, not just file structure. Pre-validation handles file/field existence checks automatically.
 
-### Rules
-1. Reference **file names only** (not paths)
-2. Describe **what must be true in the file**, not just existence
-3. **CRITICAL: Require EVIDENCE, not just status flags** - validation can be gamed by editing status fields
-4. For verification steps: require **raw evidence** (counts, lists, samples) that can be independently recomputed
+### Two-Layer Validation
+1. **Pre-validation (Code)**: Automatically checks file existence, field presence, data types, and structural consistency based on validation_schema
+2. **LLM Validation**: Focuses on execution history verification - did the agent actually do the work?
+
+### Rules for Success Criteria
+1. **Focus on execution, not structure**: Describe what work was done, not just what files/fields exist
+2. **Reference execution evidence**: Mention tool calls, file reads, data processing, API interactions that prove work was done
+3. **Require authenticity checks**: Evidence that can be verified against execution history (e.g., "Agent read source files", "API calls were made", "Data was transformed")
+4. **Avoid structural checks**: Don't say "file contains field X" - pre-validation handles this. Instead say "agent processed data and created file with field X"
+5. **For verification steps**: Require evidence of actual verification work (e.g., "Agent recomputed values and compared", "Agent read source data and validated")
+
+### Validation Schema (Optional - LLM-Generated)
+You MUST include a validation_schema field in ALL step definitions. This enables fast code-based pre-validation (improves speed by 50-70%) and allows the validation agent to focus on execution history verification.
+
+**REQUIRED**: Generate validation_schema by parsing success_criteria when creating steps. This enables fast pre-validation before LLM validation runs.
+
+**How to generate validation_schema:**
+1. Extract file names mentioned in success_criteria (e.g., "verification.json", "results.json")
+2. Extract field/key names that must exist (e.g., "status", "count", "tab_names")
+3. Identify value types (arrays, objects, strings, numbers)
+4. Extract length/count requirements (e.g., "at least 3 entries", "minimum 5")
+5. Identify consistency checks (e.g., "count equals array length", "database_count matches databases array length")
+
+**Validation schema structure:**
+- files: Array of file validation rules
+  - file_name: Name of file to check (e.g., "verification.json")
+  - must_exist: Whether file must exist (typically true)
+  - json_checks: Array of JSON path checks
+    - path: JSONPath expression (e.g., "$.tab_names", "$.database_count")
+    - must_exist: Whether path must exist (typically true)
+    - value_type: Expected type ("string", "number", "boolean", "array", "object")
+    - min_length/max_length: For arrays/strings (e.g., min_length: 3)
+    - min_value/max_value: For numbers (e.g., min_value: 1)
+    - pattern: Regex pattern for strings (e.g., "^\\d{4}-\\d{2}-\\d{2}T" for ISO dates)
+    - consistency_check: Compare with another field
+      - type: "array_length" (count equals array length), "equals", "greater_than", "less_than"
+      - compare_with_path: JSONPath to compare with (e.g., "$.databases")
+
+**Example generation:**
+Success criteria: "File verification.json includes tab_names array with at least 3 entries, row_counts object, and database_count equals databases array length"
+
+You should generate:
+- file_name: "verification.json", must_exist: true
+- json_checks:
+  - path: "$.tab_names", must_exist: true, value_type: "array", min_length: 3
+  - path: "$.row_counts", must_exist: true, value_type: "object"
+  - path: "$.database_count", must_exist: true, value_type: "number"
+  - path: "$.database_count" with consistency_check: type "array_length", compare_with_path: "$.databases"
 
 ### ⚠️ Anti-Gaming Principle
-The execution agent creates both evidence AND status in the same file. If success criteria only checks status flags, the agent can "pass" by simply writing ` + "`" + `"status": "passed"` + "`" + ` without doing real work.
+The execution agent creates both evidence AND status in the same file. If success criteria only checks status flags or file structure, the agent can "pass" by simply writing ` + "`" + `"status": "passed"` + "`" + ` or creating empty files without doing real work.
 
-**Solution**: Always require evidence that would be HARD TO FAKE:
-- Specific counts that must match (e.g., "array length equals count field")
-- Lists of specific items (e.g., "tab_names array contains exactly these names")
-- Sample data that can be spot-checked (e.g., "includes 3 sample dates from each tab")
+**Solution**: Focus on EXECUTION EVIDENCE that proves work was actually done:
+- Tool call history showing actual work (e.g., "Agent read source files", "API calls were made")
+- Data processing evidence (e.g., "Agent transformed data according to rules", "Agent computed values")
+- Execution patterns that can't be faked (e.g., "Agent verified by reading and comparing", "Agent processed all entries")
+- Note: File structure checks (counts, field existence, types) are handled by pre-validation - focus on execution authenticity
 
 ### Examples
-| ✅ Good (Evidence-Based) | ❌ Bad (Status-Only, Gameable) |
-|--------------------------|-------------------------------|
-| File 'results.json' contains databases array with ≥5 entries AND database_count equals array length | File 'results.json' contains 'status: "success"' |
-| File 'verification.json' includes: tab_names array, row_counts object, sample_dates array (3 per tab) - all dates must be integers 1-31 | File 'verification.json' shows all checks passed |
-| File 'sheet_update.json' contains rows_written count AND sample of first 3 row IDs actually written | File 'sheet_update.json' has 'status: "completed"' |
+| ✅ Good (Execution-Based) | ❌ Bad (Status/Structure-Only, Gameable) |
+|--------------------------|------------------------------------------|
+| Execution history shows agent read source_data.json, processed all entries, and created transformed_data.json with correct structure | File 'results.json' contains 'status: "success"' |
+| Agent successfully authenticated with API (tool calls show auth requests), retrieved data, and wrote results.json | File 'verification.json' shows all checks passed |
+| Agent verified data integrity by reading source files, computing checksums, and comparing values | File 'sheet_update.json' has 'status: "completed"' |
+| Agent read source files, transformed data according to business rules, and created output with all required fields | File contains required fields (pre-validation handles this) |
 
 ### Verification Steps (Special Guidance)
 When a step's purpose is to **verify or validate** something:

@@ -62,7 +62,8 @@ import {
   TodoStepsExtractedEventDisplay,
   StepExecutionEventDisplay,
   StepProgressUpdatedEventDisplay,
-  DecisionEvaluatedEventDisplay
+  DecisionEvaluatedEventDisplay,
+  PreValidationCompletedEventDisplay
 } from './orchestrator'
 import { StepTokenUsageEventDisplay } from './orchestrator/StepTokenUsageEvent'
 import { VariablesExtractedEventDisplay } from './orchestrator/VariablesExtractedEvent'
@@ -531,6 +532,18 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     return (
       <CompactWrapper>
         <DecisionEvaluatedEventDisplay 
+          event={getEventData(event)} 
+          compact={compact}
+        />
+      </CompactWrapper>
+    )
+  }
+
+  // Pre-Validation Completed Event
+  if (isEventType(event, 'pre_validation_completed')) {
+    return (
+      <CompactWrapper>
+        <PreValidationCompletedEventDisplay 
           event={getEventData(event)} 
           compact={compact}
         />

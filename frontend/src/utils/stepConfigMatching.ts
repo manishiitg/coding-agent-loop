@@ -16,6 +16,7 @@ export interface AgentConfigs {
   validation_max_turns?: number;
   learning_max_turns?: number;
   disable_validation?: boolean;
+  skip_llm_validation_if_pre_validation_passes?: boolean; // If true, skip LLM validation when pre-validation passes (assume validation success)
   disable_learning?: boolean;
   lock_learnings?: boolean; // If true, prevents learning agent from running but still uses existing learnings
   learning_after_loop_iteration?: boolean;
@@ -126,6 +127,34 @@ export function matchStepConfigs(
   return result;
 }
 
+// Validation schema types
+export interface ValidationSchema {
+  files?: FileValidationRule[];
+}
+
+export interface FileValidationRule {
+  file_name: string;
+  must_exist: boolean;
+  json_checks?: JSONValidationCheck[];
+}
+
+export interface JSONValidationCheck {
+  path: string;                      // JSONPath, e.g., "$.status", "$.databases[0].name"
+  must_exist: boolean;               // Key/path must exist
+  value_type?: string;                // "string", "number", "boolean", "array", "object"
+  min_length?: number;               // For arrays/strings
+  max_length?: number;               // For arrays/strings
+  pattern?: string;                   // Regex for format validation
+  min_value?: number;                // For numbers
+  max_value?: number;                // For numbers
+  consistency_check?: ConsistencyRule; // Compare with other fields
+}
+
+export interface ConsistencyRule {
+  type: string;                      // "equals", "greater_than", "less_than", "array_length", "in_array"
+  compare_with_path: string;         // JSONPath to compare with
+}
+
 // Common fields shared by all step types
 interface CommonStepFields {
   id: string;                        // Stable step ID (required, always provided by backend)
@@ -136,6 +165,7 @@ interface CommonStepFields {
   context_output?: string | string[];
   enable_prerequisite_detection?: boolean;
   prerequisite_rules?: PrerequisiteRule[];
+  validation_schema?: ValidationSchema; // Optional structured validation schema for step outputs
   agent_configs?: AgentConfigs;       // Merged from step_config.json
 }
 

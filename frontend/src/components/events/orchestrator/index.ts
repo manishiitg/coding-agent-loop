@@ -8,6 +8,7 @@ export { StepEditPanel } from './StepEditPanel'
 export { StepExecutionEventDisplay } from './StepExecutionEvent'
 export { StepProgressUpdatedEventDisplay } from './StepProgressUpdatedEvent'
 export { DecisionEvaluatedEventDisplay } from './DecisionEvaluatedEvent'
+export { PreValidationCompletedEventDisplay } from './PreValidationCompletedEvent'
 
 // Unified Orchestrator Agent Event Components
 export { OrchestratorAgentStartEventDisplay } from '../system/OrchestratorAgentStartEvent'

@@ -193,6 +193,7 @@ type TodoStep struct {
 	OrchestrationResponse *OrchestrationResponse `json:"orchestration_response,omitempty"` // runtime: stores selected route and success evaluation
 	NextStepID            string                 `json:"next_step_id,omitempty"`           // ID of step after orchestration completes (or "end")
 	AgentConfigs          *AgentConfigs          `json:"agent_configs,omitempty"`          // per-agent configuration (LLM, max turns, toggles)
+	ValidationSchema      *ValidationSchema      `json:"validation_schema,omitempty"`      // validation schema for pre-validation (from plan.json)
 }
 
 // TodoStepsExtractedEvent represents the event when todo steps are extracted from a plan

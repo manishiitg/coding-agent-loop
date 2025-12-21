@@ -241,6 +241,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 				validationWorkspacePath = hcpo.GetWorkspacePath()
 			}
 
+			// Get execution path for orchestration step (files to validate are in the step's execution folder)
+			runWorkspacePath := validationWorkspacePath
+			executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
+			orchestrationStepExecutionPath := getExecutionFolderPath(executionWorkspacePath, mainStepPath)
+
 			validationTemplateVars := map[string]string{
 				"StepTitle":           step.OrchestrationStep.Title,
 				"StepDescription":     step.OrchestrationStep.Description,
@@ -261,19 +266,93 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			validationTemplateVars["LoopCondition"] = ""
 			validationTemplateVars["DecisionReasoning"] = ""
 
-			// Create validation agent
-			validationAgentName := fmt.Sprintf("orchestration-validation-step-%d", stepIndex+1)
-			validationAgent, err := hcpo.createValidationAgent(ctx, "validation", stepIndex+1, validationAgentName, step.OrchestrationStep.AgentConfigs)
+			// Run pre-validation (code-based structural checks)
+			// Pass validation schema directly from orchestration step (no need to read plan.json)
+			// Use orchestrationStepExecutionPath (step's execution folder) instead of validationWorkspacePath (run folder)
+			// Files to validate are in the step's execution folder, not the run folder root
+			var validationSchema *ValidationSchema
+			if step.OrchestrationStep != nil {
+				validationSchema = step.OrchestrationStep.ValidationSchema
+			}
+			workspaceResults, err := RunPreValidation(ctx, validationSchema, orchestrationStepExecutionPath, hcpo.BaseOrchestrator)
 			if err != nil {
-				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to create validation agent for orchestration step %d: %v", stepIndex+1, err), nil)
-				return false, "", fmt.Errorf("failed to create validation agent for orchestration step: %w", err)
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation error for orchestration step %d: %v - blocking LLM validation", stepIndex+1, err))
+				// Pre-validation error means we can't verify structure - block LLM validation
+				workspaceResults = &WorkspaceVerificationResult{
+					OverallPass:  false, // Block on pre-validation errors
+					FilesChecked: []FileCheckResult{},
+					Summary: ValidationSummary{
+						TotalChecks:  0,
+						PassedChecks: 0,
+						FailedChecks: 1,
+						Errors: []ValidationError{
+							{
+								File:      "",
+								Path:      "",
+								CheckType: "pre_validation_error",
+								Expected:  "pre-validation to run successfully",
+								Actual:    "error occurred",
+								Message:   fmt.Sprintf("Pre-validation failed to run: %v", err),
+							},
+						},
+					},
+				}
 			}
 
-			// Call validation
-			validationResponse, _, err := validationAgent.(*HumanControlledTodoPlannerValidationAgent).ExecuteStructured(ctx, validationTemplateVars, []llmtypes.MessageContent{})
-			if err != nil {
-				hcpo.GetLogger().Error(fmt.Sprintf("❌ Validation failed for orchestration step %d: %v", stepIndex+1, err), nil)
-				return false, "", fmt.Errorf("validation failed for orchestration step: %w", err)
+			// Format pre-validation results and add to template variables
+			validationTemplateVars["WorkspaceVerificationResults"] = formatWorkspaceResults(workspaceResults)
+
+			// Emit pre-validation completed event
+			hcpo.emitPreValidationCompletedEvent(ctx, *step, stepIndex, orchestrationStepPath, false, workspaceResults)
+
+			var validationResponse *ValidationResponse
+
+			// If pre-validation failed, reject immediately without calling LLM validation
+			if !workspaceResults.OverallPass {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation failed for orchestration step %d - rejecting immediately without LLM validation", stepIndex+1))
+				// Create a failed validation response immediately
+				validationResponse = &ValidationResponse{
+					IsSuccessCriteriaMet: false,
+					ExecutionStatus:      "FAILED",
+					Reasoning:            formatWorkspaceResults(workspaceResults) + "\n\nPre-validation failed - structural issues must be fixed before execution can be validated.",
+					Feedback: []ValidationFeedback{
+						{
+							Type:        "structural_validation",
+							Description: "Pre-validation failed - output structure does not meet requirements",
+							Severity:    "HIGH",
+						},
+					},
+				}
+			} else {
+				// Pre-validation passed - check if we should skip LLM validation
+				skipLLMValidation := step.OrchestrationStep.AgentConfigs != nil && step.OrchestrationStep.AgentConfigs.SkipLLMValidationIfPreValidationPasses != nil && *step.OrchestrationStep.AgentConfigs.SkipLLMValidationIfPreValidationPasses
+
+				if skipLLMValidation {
+					// Skip LLM validation and assume validation success
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration step %d pre-validation passed - skipping LLM validation (assume success)", stepIndex+1))
+					validationResponse = &ValidationResponse{
+						IsSuccessCriteriaMet: true,
+						ExecutionStatus:      "COMPLETED",
+						Reasoning:            formatWorkspaceResults(workspaceResults) + "\n\nPre-validation passed - LLM validation skipped (configured to skip when pre-validation passes).",
+						Feedback:             []ValidationFeedback{},
+					}
+				} else {
+					// Pre-validation passed - proceed to LLM validation
+					// Create validation agent
+					validationAgentName := fmt.Sprintf("orchestration-validation-step-%d", stepIndex+1)
+					validationAgent, err := hcpo.createValidationAgent(ctx, "validation", stepIndex+1, validationAgentName, step.OrchestrationStep.AgentConfigs)
+					if err != nil {
+						hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to create validation agent for orchestration step %d: %v", stepIndex+1, err), nil)
+						return false, "", fmt.Errorf("failed to create validation agent for orchestration step: %w", err)
+					}
+
+					// Call validation
+					validationResponse, _, err = validationAgent.(*HumanControlledTodoPlannerValidationAgent).ExecuteStructured(ctx, validationTemplateVars, []llmtypes.MessageContent{})
+					if err != nil {
+						hcpo.GetLogger().Error(fmt.Sprintf("❌ Validation failed for orchestration step %d: %v", stepIndex+1, err), nil)
+						return false, "", fmt.Errorf("validation failed for orchestration step: %w", err)
+					}
+				}
 			}
 
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Validation completed: is_success_criteria_met=%t, status=%s", validationResponse.IsSuccessCriteriaMet, validationResponse.ExecutionStatus))

@@ -707,6 +707,20 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 			hcpo.GetLogger().Info(fmt.Sprintf("📝 Added previous steps summary to template variables for step %d (%d previous steps)", stepIndex+1, len(previousContextFiles)))
 		}
 
+		// Add validation schema to template variables so execution agent knows expected file structure
+		if step.ValidationSchema != nil {
+			validationSchemaJSON, err := json.MarshalIndent(step.ValidationSchema, "", "  ")
+			if err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal validation schema for step %d: %v", stepIndex+1, err))
+				templateVars["ValidationSchema"] = ""
+			} else {
+				templateVars["ValidationSchema"] = string(validationSchemaJSON)
+				hcpo.GetLogger().Info(fmt.Sprintf("📋 Added validation schema to template variables for step %d", stepIndex+1))
+			}
+		} else {
+			templateVars["ValidationSchema"] = ""
+		}
+
 		// Validate loop condition is provided when has_loop is true
 		if hasLoop(step) {
 			if step.LoopCondition == "" {
@@ -1232,22 +1246,98 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 					// Prerequisite detection is handled by execution agent tool (detect_prerequisite_failure)
 					// No need to pass prerequisite info to validation agent
 
-					// Check for context cancellation before validation
-					select {
-					case <-ctx.Done():
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled before validation for step %d", stepIndex+1))
-						return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("step execution canceled: %w", ctx.Err()), nil)
-					default:
+					// Run pre-validation (code-based structural checks)
+					// Pass validation schema directly from step (no need to read plan.json)
+					// Use stepExecutionPath (step's execution folder) instead of validationWorkspacePath (run folder)
+					// Files to validate are in the step's execution folder, not the run folder root
+					workspaceResults, err := RunPreValidation(ctx, step.ValidationSchema, stepExecutionPath, hcpo.BaseOrchestrator)
+					if err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation error for step %d: %v - blocking LLM validation", stepIndex+1, err))
+						// Pre-validation error means we can't verify structure - block LLM validation
+						workspaceResults = &WorkspaceVerificationResult{
+							OverallPass:  false, // Block on pre-validation errors
+							FilesChecked: []FileCheckResult{},
+							Summary: ValidationSummary{
+								TotalChecks:  0,
+								PassedChecks: 0,
+								FailedChecks: 1,
+								Errors: []ValidationError{
+									{
+										File:      "",
+										Path:      "",
+										CheckType: "pre_validation_error",
+										Expected:  "pre-validation to run successfully",
+										Actual:    "error occurred",
+										Message:   fmt.Sprintf("Pre-validation failed to run: %v", err),
+									},
+								},
+							},
+						}
 					}
 
-					// Validate this step's execution using structured output
-					validationResponse, _, err = validationAgent.(*HumanControlledTodoPlannerValidationAgent).ExecuteStructured(ctx, validationTemplateVars, []llmtypes.MessageContent{})
-					if err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step %d validation failed (attempt %d): %v", stepIndex+1, retryAttempt, err))
-						if retryAttempt >= maxRetryAttempts {
-							break // Exit retry loop - will proceed to human feedback with nil validationResponse
+					// Format pre-validation results and add to template variables
+					validationTemplateVars["WorkspaceVerificationResults"] = formatWorkspaceResults(workspaceResults)
+
+					// Emit pre-validation completed event
+					hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, isBranchStep, workspaceResults)
+
+					// If pre-validation failed, reject immediately without calling LLM validation
+					if !workspaceResults.OverallPass {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation failed for step %d - rejecting immediately without LLM validation", stepIndex+1))
+						// Create a failed validation response immediately
+						validationResponse = &ValidationResponse{
+							IsSuccessCriteriaMet: false,
+							ExecutionStatus:      "FAILED",
+							Reasoning:            formatWorkspaceResults(workspaceResults) + "\n\nPre-validation failed - structural issues must be fixed before execution can be validated.",
+							Feedback: []ValidationFeedback{
+								{
+									Type:        "structural_validation",
+									Description: "Pre-validation failed - output structure does not meet requirements",
+									Severity:    "HIGH",
+								},
+							},
 						}
-						continue // Retry on next attempt
+						if hasLoop(step) {
+							validationResponse.LoopConditionMet = false
+							validationResponse.LoopReasoning = "Loop condition cannot be evaluated due to pre-validation failure"
+						}
+					} else {
+						// Pre-validation passed - check if we should skip LLM validation
+						skipLLMValidation := step.AgentConfigs != nil && step.AgentConfigs.SkipLLMValidationIfPreValidationPasses != nil && *step.AgentConfigs.SkipLLMValidationIfPreValidationPasses
+
+						if skipLLMValidation {
+							// Skip LLM validation and assume validation success
+							hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d pre-validation passed - skipping LLM validation (assume success)", stepIndex+1))
+							validationResponse = &ValidationResponse{
+								IsSuccessCriteriaMet: true,
+								ExecutionStatus:      "COMPLETED",
+								Reasoning:            formatWorkspaceResults(workspaceResults) + "\n\nPre-validation passed - LLM validation skipped (configured to skip when pre-validation passes).",
+								Feedback:             []ValidationFeedback{},
+							}
+							if hasLoop(step) {
+								validationResponse.LoopConditionMet = true
+								validationResponse.LoopReasoning = "Loop condition met (pre-validation passed, LLM validation skipped)"
+							}
+						} else {
+							// Pre-validation passed - proceed to LLM validation
+							// Check for context cancellation before validation
+							select {
+							case <-ctx.Done():
+								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled before validation for step %d", stepIndex+1))
+								return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("step execution canceled: %w", ctx.Err()), nil)
+							default:
+							}
+
+							// Validate this step's execution using structured output
+							validationResponse, _, err = validationAgent.(*HumanControlledTodoPlannerValidationAgent).ExecuteStructured(ctx, validationTemplateVars, []llmtypes.MessageContent{})
+							if err != nil {
+								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step %d validation failed (attempt %d): %v", stepIndex+1, retryAttempt, err))
+								if retryAttempt >= maxRetryAttempts {
+									break // Exit retry loop - will proceed to human feedback with nil validationResponse
+								}
+								continue // Retry on next attempt
+							}
+						}
 					}
 
 					hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d validation completed successfully (attempt %d)", stepIndex+1, retryAttempt))

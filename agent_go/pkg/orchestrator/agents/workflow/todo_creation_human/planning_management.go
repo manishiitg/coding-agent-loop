@@ -555,6 +555,7 @@ func convertTypedStepToTodoStep(typedStep PlanStepInterface, stepConfigs []StepC
 			MaxIterations:       step.MaxIterations,
 			LoopDescription:     step.LoopDescription,
 			AgentConfigs:        agentConfigs,
+			ValidationSchema:    step.ValidationSchema, // Copy validation schema from plan step
 		}, nil
 
 	case *ConditionalPlanStep:
@@ -605,6 +606,7 @@ func convertTypedStepToTodoStep(typedStep PlanStepInterface, stepConfigs []StepC
 			IfTrueNextStepID:    step.IfTrueNextStepID,
 			IfFalseNextStepID:   step.IfFalseNextStepID,
 			AgentConfigs:        agentConfigs,
+			ValidationSchema:    step.ValidationSchema, // Copy validation schema from plan step
 		}, nil
 
 	case *DecisionPlanStep:
@@ -619,6 +621,14 @@ func convertTypedStepToTodoStep(typedStep PlanStepInterface, stepConfigs []StepC
 			decisionTodoStep = innerTodoStep
 		}
 
+		// Get validation schema from inner DecisionStep (if it exists)
+		var validationSchema *ValidationSchema
+		if decisionTodoStep != nil {
+			validationSchema = decisionTodoStep.ValidationSchema
+		} else if step.GetValidationSchema() != nil {
+			validationSchema = step.GetValidationSchema()
+		}
+
 		return &TodoStep{
 			ID:                         step.ID,
 			Title:                      step.Title,
@@ -628,6 +638,7 @@ func convertTypedStepToTodoStep(typedStep PlanStepInterface, stepConfigs []StepC
 			IfTrueNextStepID:           step.IfTrueNextStepID,
 			IfFalseNextStepID:          step.IfFalseNextStepID,
 			AgentConfigs:               agentConfigs,
+			ValidationSchema:           validationSchema, // Use validation schema from inner step or wrapper
 		}, nil
 
 	case *OrchestrationPlanStep:
@@ -674,6 +685,14 @@ func convertTypedStepToTodoStep(typedStep PlanStepInterface, stepConfigs []StepC
 			}
 		}
 
+		// Get validation schema from inner OrchestrationStep (if it exists)
+		var validationSchema *ValidationSchema
+		if orchestrationTodoStep != nil {
+			validationSchema = orchestrationTodoStep.ValidationSchema
+		} else if step.GetValidationSchema() != nil {
+			validationSchema = step.GetValidationSchema()
+		}
+
 		return &TodoStep{
 			ID:                   step.ID,
 			Title:                step.Title,
@@ -682,6 +701,7 @@ func convertTypedStepToTodoStep(typedStep PlanStepInterface, stepConfigs []StepC
 			OrchestrationRoutes:  orchestrationRoutes,
 			NextStepID:           step.NextStepID,
 			AgentConfigs:         agentConfigs,
+			ValidationSchema:     validationSchema, // Use validation schema from inner step or wrapper
 		}, nil
 
 	default:

@@ -293,8 +293,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
   }, [isDropdownOpen, isLoadingPhases, otherPhases.length])
 
-  // Calculate progress info
-  const completedStepIndices = getCompletedStepIndices()
+  // Calculate progress info - memoize to prevent unnecessary recalculations
+  const completedStepIndices = useMemo(() => {
+    const indices = getCompletedStepIndices()
+    return indices.slice().sort((a, b) => a - b) // Sort and create new array for stability
+  }, [getCompletedStepIndices])
+  
   const hasExistingProgress = stepProgress !== null && completedStepIndices.length > 0
   const completedStepCount = completedStepIndices.length
 
@@ -562,7 +566,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       return (a.stepNumber ?? 0) - (b.stepNumber ?? 0)
     })
     
-    console.log(`[WorkflowToolbar] Generated ${options.length} start point options:`, options.map(o => ({ id: o.id, label: o.label, hasBranchStep: !!o.branchStep })))
+    // Only log when options actually change (not on every render)  
+    // Removed console.log to prevent excessive logging - uncomment for debugging
+    // console.log(`[WorkflowToolbar] Generated ${options.length} start point options:`, options.map(o => ({ id: o.id, label: o.label, hasBranchStep: !!o.branchStep })))
     return options
   }, [completedStepIndices, totalSteps, completedStepCount, plan, stepProgress])
 

@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle, Lock } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle, Lock, ShieldCheck } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -75,7 +75,8 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
 }
 
 export const StepNode = memo(({ data, selected }: StepNodeProps) => {
-  const { id, title, description, success_criteria, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder } = data
+  const { id, title, description, success_criteria, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder, validation_schema } = data
+  
   const { availableLLMs } = useLLMStore()
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
@@ -551,6 +552,29 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
             <p className="text-xs text-green-700 dark:text-green-300 leading-relaxed">
               {success_criteria}
             </p>
+          </div>
+        )}
+
+        {/* Validation Schema */}
+        {validation_schema && validation_schema.files && validation_schema.files.length > 0 && (
+          <div className="flex gap-2 p-2.5 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50">
+            <ShieldCheck className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <div className="text-xs font-semibold text-blue-700 dark:text-blue-300">
+                Validation Schema
+              </div>
+              <div className="text-[10px] mt-0.5 text-blue-600 dark:text-blue-400">
+                {validation_schema.files.length} file{validation_schema.files.length !== 1 ? 's' : ''} to validate
+                {validation_schema.files.map((file, idx) => {
+                  const checkCount = file.json_checks?.length || 0
+                  return (
+                    <div key={idx} className="mt-1">
+                      • {file.file_name} {checkCount > 0 && `(${checkCount} check${checkCount !== 1 ? 's' : ''})`}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
           </div>
         )}
 

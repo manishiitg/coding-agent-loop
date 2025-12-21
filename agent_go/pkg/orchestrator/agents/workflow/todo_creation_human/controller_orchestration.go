@@ -305,13 +305,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 				orchestrationProgress.SuccessCriteriaMet = true
 				progress.OrchestrationSteps[stepIndex] = orchestrationProgress
 
-				// Determine code execution mode
-				var isCodeExecutionMode bool
-				if step.OrchestrationStep.AgentConfigs != nil && step.OrchestrationStep.AgentConfigs.UseCodeExecutionMode != nil {
-					isCodeExecutionMode = *step.OrchestrationStep.AgentConfigs.UseCodeExecutionMode
-				} else {
-					isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
+				// Determine code execution mode using helper method
+				var orchestrationStepConfig *AgentConfigs
+				if step.OrchestrationStep != nil {
+					orchestrationStepConfig = step.OrchestrationStep.AgentConfigs
 				}
+				isCodeExecutionMode := hcpo.getCodeExecutionMode(orchestrationStepConfig)
 
 				// Check learning flags (similar to regular steps)
 				isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
@@ -387,13 +386,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			}
 
 			// Trigger failure learning if enabled (even when validation fails)
-			// Determine code execution mode
-			var isCodeExecutionMode bool
-			if step.OrchestrationStep.AgentConfigs != nil && step.OrchestrationStep.AgentConfigs.UseCodeExecutionMode != nil {
-				isCodeExecutionMode = *step.OrchestrationStep.AgentConfigs.UseCodeExecutionMode
-			} else {
-				isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
+			// Determine code execution mode using helper method
+			var orchestrationStepConfig *AgentConfigs
+			if step.OrchestrationStep != nil {
+				orchestrationStepConfig = step.OrchestrationStep.AgentConfigs
 			}
+			isCodeExecutionMode := hcpo.getCodeExecutionMode(orchestrationStepConfig)
 
 			// Check learning flags (similar to success learning)
 			isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
@@ -612,13 +610,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 
 	// Max iterations reached without success
 	// Trigger failure learning before returning error
-	// Determine code execution mode
-	var isCodeExecutionMode bool
-	if step.OrchestrationStep.AgentConfigs != nil && step.OrchestrationStep.AgentConfigs.UseCodeExecutionMode != nil {
-		isCodeExecutionMode = *step.OrchestrationStep.AgentConfigs.UseCodeExecutionMode
-	} else {
-		isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
+	// Determine code execution mode using helper method
+	var orchestrationStepConfig *AgentConfigs
+	if step.OrchestrationStep != nil {
+		orchestrationStepConfig = step.OrchestrationStep.AgentConfigs
 	}
+	isCodeExecutionMode := hcpo.getCodeExecutionMode(orchestrationStepConfig)
 
 	// Check learning flags (similar to regular steps)
 	isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
@@ -701,13 +698,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 
-	// Determine code execution mode
-	var isCodeExecutionMode bool
-	if step.AgentConfigs != nil && step.AgentConfigs.UseCodeExecutionMode != nil {
-		isCodeExecutionMode = *step.AgentConfigs.UseCodeExecutionMode
+	// Determine code execution mode using helper method
+	// Note: This function receives the inner OrchestrationStep (which is a TodoStep itself),
+	// not the wrapper step. So the config is in step.AgentConfigs, not step.OrchestrationStep.AgentConfigs
+	var orchestrationStepConfig *AgentConfigs
+	if step.OrchestrationStep != nil {
+		// This is the wrapper step - get config from inner step
+		orchestrationStepConfig = step.OrchestrationStep.AgentConfigs
 	} else {
-		isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
+		// This is the inner step itself - get config directly from step.AgentConfigs
+		orchestrationStepConfig = step.AgentConfigs
 	}
+	isCodeExecutionMode := hcpo.getCodeExecutionMode(orchestrationStepConfig)
 
 	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
 
@@ -809,21 +811,43 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getOrchestrationOrchestrator
 		return nil, fmt.Errorf("event bridge is required for orchestration orchestrator agent")
 	}
 
-	// Determine LLM config with cascading fallback: tempLLM1 → tempLLM2 → step LLM
-	// Priority: tempLLM1 (attempt 1) > tempLLM2 (attempt 2) > step config > preset default > orchestrator default
-	// Exception: If retrying after validation failure and fallbackToOriginalLLMOnFailure is enabled, skip temp overrides
-	// NEW: Only use tempLLM if step learnings folder has files (has existing learnings to improve upon)
-	var llmConfig *orchestrator.LLMConfig
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
-	shouldSkipTempOverride := isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure
+	// Get orchestration step config
+	// Note: This function receives the inner OrchestrationStep (which is a TodoStep itself),
+	// not the wrapper step. So the config is in step.AgentConfigs, not step.OrchestrationStep.AgentConfigs
+	var orchestrationStepConfig *AgentConfigs
+	if step.OrchestrationStep != nil {
+		// This is the wrapper step - get config from inner step
+		orchestrationStepConfig = step.OrchestrationStep.AgentConfigs
+		if orchestrationStepConfig != nil && orchestrationStepConfig.UseCodeExecutionMode != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Orchestration step config found (from wrapper) - UseCodeExecutionMode: %v (step ID: %s)", *orchestrationStepConfig.UseCodeExecutionMode, step.OrchestrationStep.ID))
+		} else if orchestrationStepConfig != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Orchestration step config found (from wrapper) but UseCodeExecutionMode is nil (step ID: %s)", step.OrchestrationStep.ID))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Orchestration step config is nil (from wrapper) (step ID: %s)", step.OrchestrationStep.ID))
+		}
+	} else {
+		// This is the inner step itself - get config directly from step.AgentConfigs
+		orchestrationStepConfig = step.AgentConfigs
+		if orchestrationStepConfig != nil && orchestrationStepConfig.UseCodeExecutionMode != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Orchestration step config found (from inner step) - UseCodeExecutionMode: %v (step ID: %s)", *orchestrationStepConfig.UseCodeExecutionMode, step.ID))
+		} else if orchestrationStepConfig != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Orchestration step config found (from inner step) but UseCodeExecutionMode is nil (step ID: %s)", step.ID))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Orchestration step config is nil (from inner step) (step ID: %s)", step.ID))
+		}
+	}
 
 	// Get step ID for orchestration learnings:
-	// Orchestration learnings are stored using the inner orchestration step ID (step.OrchestrationStep.ID),
-	// which is also what getLearningPathIdentifier uses. Use that ID for tempLLM gating so we align with
-	// readLearningHistory / learning phases.
+	// Orchestration learnings are stored using the inner orchestration step ID.
+	// Note: This function receives the inner OrchestrationStep (which is a TodoStep itself),
+	// not the wrapper step. So we use step.ID directly.
 	stepID := ""
-	if step.OrchestrationStep != nil && step.OrchestrationStep.ID != "" {
+	if step.OrchestrationStep != nil {
+		// This is the wrapper step - get ID from inner step
 		stepID = step.OrchestrationStep.ID
+	} else {
+		// This is the inner step itself - use step.ID directly
+		stepID = step.ID
 	}
 
 	// If inner step ID is not available, use stepPath as fallback (never fall back to parent wrapper ID)
@@ -840,89 +864,35 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getOrchestrationOrchestrator
 		learningsFolderEmpty = true // Conservative: assume empty on error, skip tempLLM
 	}
 
-	// Cascading LLM selection based on retry attempt:
-	// - retryAttempt == 1: Use tempLLM1 (if available AND learnings folder has files)
-	// - retryAttempt == 2: Use tempLLM2 (if tempLLM1 was used and tempLLM2 is available AND learnings folder has files)
-	// - retryAttempt >= 3: Use step LLM (step config > preset > orchestrator)
-	hasTempLLM1 := hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != ""
-	hasTempLLM2 := hcpo.tempOverrideLLM2 != nil && hcpo.tempOverrideLLM2.Provider != "" && hcpo.tempOverrideLLM2.ModelID != ""
+	// Use selectExecutionLLM helper for cascading fallback: tempLLM1 → tempLLM2 → step ExecutionLLM → preset ExecutionLLM → orchestrator default
+	// This handles all the tempLLM logic, learnings folder checks, and retry attempt logic
+	orchestratorLLMConfig := hcpo.GetLLMConfig()
+	llmConfig := hcpo.selectExecutionLLM(ctx, orchestrationStepConfig, isRetryAfterValidationFailure, retryAttempt, stepID, stepPath, learningsFolderEmpty)
 
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Orchestration LLM selection - retryAttempt=%d, isRetryAfterValidationFailure=%v, fallbackToOriginalLLMOnFailure=%v, shouldSkipTempOverride=%v, hasTempLLM1=%v, hasTempLLM2=%v, learningsFolderEmpty=%v", retryAttempt, isRetryAfterValidationFailure, hcpo.fallbackToOriginalLLMOnFailure, shouldSkipTempOverride, hasTempLLM1, hasTempLLM2, learningsFolderEmpty))
-
-	if shouldSkipTempOverride && (hasTempLLM1 || hasTempLLM2) {
-		hcpo.GetLogger().Info("🔄 Validation failed - skipping temp override LLM and falling back to original LLM (fallback_to_original_llm_on_failure enabled)")
-	}
-
-	if learningsFolderEmpty && (hasTempLLM1 || hasTempLLM2) {
-		hcpo.GetLogger().Info(fmt.Sprintf("📚 Orchestration step %s has no learnings - skipping temp override LLM and using original LLM (learnings folder is empty)", stepPath))
-	}
-
-	// Cascading logic: tempLLM1 → tempLLM2 → step LLM
-	// Only use tempLLM if learnings folder has files (has existing learnings to improve upon)
-	// Note: shouldSkipTempOverride only applies to tempLLM1, not tempLLM2
-	// tempLLM2 is part of the cascading fallback strategy and should be used even after tempLLM1 fails
-
-	// Check tempLLM2 FIRST (on attempt 2 OR new loop iteration after failure) - it's part of the cascading fallback and should take priority
-	// Use tempLLM2 when: (1) retryAttempt == 2 (normal retry), OR (2) isRetryAfterValidationFailure && retryAttempt == 1 (new loop iteration after failure)
-	shouldUseTempLLM2 := !learningsFolderEmpty && hasTempLLM2 && (retryAttempt == 2 || (isRetryAfterValidationFailure && retryAttempt == 1))
-	if shouldUseTempLLM2 {
-		// Second attempt or new loop iteration after failure: Use tempLLM2
-		llmConfig = &orchestrator.LLMConfig{
-			Provider:       hcpo.tempOverrideLLM2.Provider,
-			ModelID:        hcpo.tempOverrideLLM2.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for temp override
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+	// Additional fallback for orchestration orchestrator: if no ExecutionLLM found, try ConditionalLLM
+	// This is specific to orchestration orchestrator (similar purpose - structured decision making)
+	// Only use ConditionalLLM if we got orchestrator default (meaning no step/preset ExecutionLLM was found, and no tempLLM was used)
+	if orchestrationStepConfig != nil && orchestrationStepConfig.ExecutionLLM == nil && orchestrationStepConfig.ConditionalLLM != nil {
+		// Check if we got orchestrator default (no tempLLM, no step ExecutionLLM, no preset ExecutionLLM)
+		// If so, use ConditionalLLM as an additional fallback before orchestrator default
+		if llmConfig.Provider == orchestratorLLMConfig.Provider && llmConfig.ModelID == orchestratorLLMConfig.ModelID {
+			conditionalLLMConfig := orchestrationStepConfig.ConditionalLLM
+			llmConfig = &orchestrator.LLMConfig{
+				Provider:       conditionalLLMConfig.Provider,
+				ModelID:        conditionalLLMConfig.ModelID,
+				FallbackModels: []string{},
+				APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys
+			}
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional LLM for orchestration orchestrator (fallback when ExecutionLLM not available): %s/%s", conditionalLLMConfig.Provider, conditionalLLMConfig.ModelID))
 		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 2 for orchestration orchestrator (attempt %d, learnings folder has files): %s/%s", retryAttempt, hcpo.tempOverrideLLM2.Provider, hcpo.tempOverrideLLM2.ModelID))
-	} else if !shouldSkipTempOverride && !learningsFolderEmpty && retryAttempt == 1 && hasTempLLM1 {
-		// First attempt: Use tempLLM1
-		llmConfig = &orchestrator.LLMConfig{
-			Provider:       hcpo.tempOverrideLLM.Provider,
-			ModelID:        hcpo.tempOverrideLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for temp override
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 1 for orchestration orchestrator (attempt %d, learnings folder has files): %s/%s", retryAttempt, hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID))
-	} else if step.AgentConfigs != nil && step.AgentConfigs.ExecutionLLM != nil && step.AgentConfigs.ExecutionLLM.Provider != "" && step.AgentConfigs.ExecutionLLM.ModelID != "" {
-		// Use execution LLM config for orchestration (orchestration orchestrator is execution-like - orchestrates and delegates)
-		executionLLMConfig := step.AgentConfigs.ExecutionLLM
-		llmConfig = &orchestrator.LLMConfig{
-			Provider:       executionLLMConfig.Provider,
-			ModelID:        executionLLMConfig.ModelID,
-			FallbackModels: []string{},
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution LLM for orchestration orchestrator: %s/%s", executionLLMConfig.Provider, executionLLMConfig.ModelID))
-	} else if step.AgentConfigs != nil && step.AgentConfigs.ConditionalLLM != nil {
-		// Fallback to conditional LLM config for orchestration (similar purpose - structured decision making)
-		conditionalLLMConfig := step.AgentConfigs.ConditionalLLM
-		llmConfig = &orchestrator.LLMConfig{
-			Provider:       conditionalLLMConfig.Provider,
-			ModelID:        conditionalLLMConfig.ModelID,
-			FallbackModels: []string{},
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional LLM for orchestration orchestrator: %s/%s", conditionalLLMConfig.Provider, conditionalLLMConfig.ModelID))
-	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
-		// Use preset execution LLM as default for orchestration orchestrator (similar to execution agents)
-		llmConfig = &orchestrator.LLMConfig{
-			Provider:       hcpo.presetExecutionLLM.Provider,
-			ModelID:        hcpo.presetExecutionLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for preset defaults
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution LLM for orchestration orchestrator: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
-	} else {
-		// Use orchestrator default LLM config
-		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default orchestration orchestrator LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID))
 	}
 
 	// Create agent name
 	agentName := fmt.Sprintf("orchestration-orchestrator-step-%d", stepIndex+1)
 
 	// Create orchestration orchestrator agent using factory
-	orchestrationOrchestratorAgent, err := hcpo.createOrchestrationOrchestratorAgent(ctx, "orchestration_orchestrator", stepIndex, iteration, agentName, step.AgentConfigs, llmConfig)
+	// orchestrationStepConfig already set above
+	orchestrationOrchestratorAgent, err := hcpo.createOrchestrationOrchestratorAgent(ctx, "orchestration_orchestrator", stepIndex, iteration, agentName, orchestrationStepConfig, llmConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create orchestration orchestrator agent: %w", err)
 	}

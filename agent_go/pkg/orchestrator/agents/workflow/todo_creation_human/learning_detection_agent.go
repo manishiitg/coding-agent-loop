@@ -51,6 +51,20 @@ func (hctplda *HumanControlledTodoPlannerLearningDetectionAgent) ExecuteStructur
 	stepContextDependencies := templateVars["StepContextDependencies"]
 	stepContextOutput := templateVars["StepContextOutput"]
 
+	// Validate that we have content to compare (defensive check)
+	previousTrimmed := strings.TrimSpace(previousLearningsContent)
+	currentTrimmed := strings.TrimSpace(currentLearningsContent)
+
+	// If current is empty, return error (previous can be empty for first iteration, which is handled in detectNewLearningWithLLM)
+	if currentTrimmed == "" {
+		return nil, conversationHistory, fmt.Errorf("current learning content is empty - cannot perform learning detection")
+	}
+
+	// If both are empty, return error (should not happen if called from detectNewLearningWithLLM)
+	if previousTrimmed == "" && currentTrimmed == "" {
+		return nil, conversationHistory, fmt.Errorf("both previous and current learning contents are empty - cannot perform learning detection")
+	}
+
 	// Build schema for structured output
 	schema := `{
 		"type": "object",
@@ -76,8 +90,8 @@ func (hctplda *HumanControlledTodoPlannerLearningDetectionAgent) ExecuteStructur
 	// Build system prompt with task context
 	systemPrompt := hctplda.buildSystemPrompt(stepTitle, stepDescription, stepSuccessCriteria, stepContextDependencies, stepContextOutput)
 
-	// Build user message with task context
-	userMessage := hctplda.buildUserMessage(previousLearningsContent, currentLearningsContent, stepTitle, stepDescription, stepSuccessCriteria, stepContextDependencies, stepContextOutput)
+	// Build user message with task context (use trimmed versions to ensure no whitespace-only content)
+	userMessage := hctplda.buildUserMessage(previousTrimmed, currentTrimmed, stepTitle, stepDescription, stepSuccessCriteria, stepContextDependencies, stepContextOutput)
 
 	// Create input processor that returns the user message
 	inputProcessor := func(map[string]string) string {

@@ -62,3 +62,5 @@ planning/changelog
 29. have non llm validation??
 
 30. in code exec mode, when we get error, don't put the entire code again. just put error
+
+31. chcke user message we send for execution agent

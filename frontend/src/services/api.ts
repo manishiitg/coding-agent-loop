@@ -707,13 +707,6 @@ export const agentApi = {
     return response.data
   },
 
-  // Migrate plan.json to new type-safe format
-  migratePlan: async (workspacePath: string): Promise<{ success: boolean; message: string; backup_path?: string; steps_count?: number }> => {
-    const response = await api.post('/api/workflow/migrate-plan', null, {
-      params: { workspace_path: workspacePath }
-    })
-    return response.data
-  },
 
   // Plan and Step Config API
   // Update a plan step (plan.json fields only, no agent_configs)

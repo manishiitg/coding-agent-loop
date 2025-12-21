@@ -750,6 +750,24 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 				// Merge configs from step_config.json into existing configs
 				MergeAgentConfigFields(todoStep.AgentConfigs, agentConfigs, step.GetID(), hcpo.GetLogger())
 			}
+
+			// For orchestration steps: also apply config to inner OrchestrationStep.AgentConfigs
+			// The inner step is what's actually used during execution, so it needs the config too
+			// Note: The inner step may have already gotten its config during recursive conversion,
+			// but we ensure the outer step's matched config is also applied to the inner step
+			if todoStep.HasOrchestrationStep && todoStep.OrchestrationStep != nil {
+				if todoStep.OrchestrationStep.AgentConfigs == nil {
+					// Initialize inner step config and copy all fields from outer step config
+					todoStep.OrchestrationStep.AgentConfigs = &AgentConfigs{}
+					MergeAgentConfigFields(todoStep.OrchestrationStep.AgentConfigs, agentConfigs, todoStep.OrchestrationStep.ID, hcpo.GetLogger())
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Applied config to inner orchestration step '%s' (ID: %s) from outer step config (ID: %s)", todoStep.OrchestrationStep.Title, todoStep.OrchestrationStep.ID, step.GetID()))
+				} else {
+					// Merge configs from step_config.json into existing inner step configs
+					// This ensures outer step config overrides inner step config if both exist
+					MergeAgentConfigFields(todoStep.OrchestrationStep.AgentConfigs, agentConfigs, todoStep.OrchestrationStep.ID, hcpo.GetLogger())
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Merged config into inner orchestration step '%s' (ID: %s) from outer step config (ID: %s)", todoStep.OrchestrationStep.Title, todoStep.OrchestrationStep.ID, step.GetID()))
+				}
+			}
 		}
 
 		// Log config matching results for nested steps

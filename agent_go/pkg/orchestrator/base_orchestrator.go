@@ -131,11 +131,11 @@ func NewBaseOrchestrator(
 			summaryKeepLastMessages = keepLast
 		}
 	}
-	summarizeOnFixedTokenThreshold := true // Default to enabled with 200k token threshold
+	summarizeOnFixedTokenThreshold := true // Default to enabled with 100k token threshold
 	if envVal := os.Getenv("SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD"); envVal == "false" {
 		summarizeOnFixedTokenThreshold = false
 	}
-	fixedTokenThreshold := 200000 // Default to 200k tokens
+	fixedTokenThreshold := 100000 // Default to 100k tokens
 	if envVal := os.Getenv("FIXED_TOKEN_THRESHOLD"); envVal != "" {
 		if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
 			fixedTokenThreshold = threshold

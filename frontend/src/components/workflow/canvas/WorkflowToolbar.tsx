@@ -23,7 +23,6 @@ import {
   MessageSquare,
   Circle,
   Layers,
-  ArrowUpCircle
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useAppStore } from '../../../stores'
@@ -145,8 +144,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // LLM Override modal state
   const [showLLMOverrideModal, setShowLLMOverrideModal] = useState(false)
   
-  // Migration state
-  const [isMigrating, setIsMigrating] = useState(false)
   
   // Bulk Step Config modal state
   const [showBulkStepConfigModal, setShowBulkStepConfigModal] = useState(false)
@@ -636,34 +633,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setIsExecutionModeDropdownOpen(false)
   }, [setExecutionMode])
   
-  // Handle plan migration
-  const handleMigratePlan = useCallback(async () => {
-    if (!workspacePath) {
-      alert('Workspace path is required')
-      return
-    }
-
-    if (!confirm('Migrate plan.json to new type-safe format? A backup will be created automatically.')) {
-      return
-    }
-
-    setIsMigrating(true)
-    try {
-      const result = await agentApi.migratePlan(workspacePath)
-      if (result.success) {
-        alert(`Migration completed successfully!\n\n${result.message}\n\nBackup saved at: ${result.backup_path || 'N/A'}`)
-        // Optionally reload the plan
-        window.location.reload()
-      } else {
-        alert(`Migration failed: ${result.message}`)
-      }
-    } catch (error) {
-      console.error('Migration error:', error)
-      alert(`Migration failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
-    } finally {
-      setIsMigrating(false)
-    }
-  }, [workspacePath])
 
   // Handle selecting start point from dropdown
   const handleSelectStartPoint = useCallback((option: StartPointOption) => {
@@ -1596,22 +1565,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             title="Bulk configure all steps"
           >
             <Settings className="w-3.5 h-3.5" />
-          </button>
-        )}
-        
-        {/* Migrate Plan Button */}
-        {hasPlan && workspacePath && (
-          <button
-            onClick={handleMigratePlan}
-            disabled={isMigrating}
-            className="p-1.5 rounded-md bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Migrate plan to new type-safe format"
-          >
-            {isMigrating ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <ArrowUpCircle className="w-3.5 h-3.5" />
-            )}
           </button>
         )}
         

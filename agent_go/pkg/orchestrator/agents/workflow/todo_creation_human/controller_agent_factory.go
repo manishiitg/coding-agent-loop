@@ -951,14 +951,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createOrchestrationOrchestra
 	}
 
 	// Code execution mode: Priority: step config > orchestrator default
-	var isCodeExecutionMode bool
-	if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
-		isCodeExecutionMode = *stepConfig.UseCodeExecutionMode
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode for orchestration orchestrator agent: %v", isCodeExecutionMode))
-	} else {
-		isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator code execution mode for orchestration orchestrator agent: %v", isCodeExecutionMode))
-	}
+	// Use helper method for consistency
+	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
 	config.UseCodeExecutionMode = isCodeExecutionMode
 
 	// Set EnableLargeOutputVirtualTools if specified

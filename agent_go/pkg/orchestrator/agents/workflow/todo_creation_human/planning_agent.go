@@ -43,6 +43,48 @@ type PlanOrchestrationRoute struct {
 	ContextToPass string            `json:"context_to_pass,omitempty"` // Optional: specific context to pass to sub-agent
 }
 
+// UnmarshalJSON implements custom unmarshaling for PlanOrchestrationRoute
+// This is needed to properly handle the SubAgentStep field which is a PlanStepInterface
+func (r *PlanOrchestrationRoute) UnmarshalJSON(data []byte) error {
+	// First, unmarshal into a temporary struct to extract SubAgentStep as raw JSON
+	var temp struct {
+		RouteID       string          `json:"route_id"`
+		RouteName     string          `json:"route_name"`
+		Condition     string          `json:"condition"`
+		SubAgentStep  json.RawMessage `json:"sub_agent_step"`
+		ContextToPass string          `json:"context_to_pass,omitempty"`
+	}
+
+	if err := json.Unmarshal(data, &temp); err != nil {
+		return fmt.Errorf("failed to unmarshal orchestration route: %w", err)
+	}
+
+	// Copy basic fields
+	r.RouteID = temp.RouteID
+	r.RouteName = temp.RouteName
+	r.Condition = temp.Condition
+	r.ContextToPass = temp.ContextToPass
+
+	// Unmarshal nested SubAgentStep
+	if len(temp.SubAgentStep) > 0 {
+		// Check if it's null
+		subAgentStepStr := string(temp.SubAgentStep)
+		if subAgentStepStr != "null" {
+			step, err := unmarshalStepFromJSON(temp.SubAgentStep)
+			if err != nil {
+				return fmt.Errorf("failed to unmarshal sub_agent_step: %w", err)
+			}
+			r.SubAgentStep = step
+		} else {
+			r.SubAgentStep = nil
+		}
+	} else {
+		r.SubAgentStep = nil
+	}
+
+	return nil
+}
+
 // UnmarshalJSON implements custom unmarshaling for FlexibleContextOutput
 // Handles both string and array formats to prevent parsing errors
 func (f *FlexibleContextOutput) UnmarshalJSON(data []byte) error {
@@ -592,27 +634,6 @@ func (pr PlanningResponse) MarshalJSON() ([]byte, error) {
 		"steps": wrappedSteps,
 	})
 }
-
-// MigratedPlanningResponse represents the new type-safe format for plan.json
-// This is used after migration - it includes a "type" field for each step
-type MigratedPlanningResponse struct {
-	Steps []MigratedPlanStep `json:"steps"`
-}
-
-// MigratedPlanStep represents a step in the new format with type discriminator
-type MigratedPlanStep struct {
-	Type string          `json:"type"` // "regular", "conditional", "decision", "orchestration"
-	Data json.RawMessage `json:"-"`    // The actual step data (will be embedded)
-	// Embed the step data directly (we'll handle this in custom marshaling)
-	*RegularPlanStep
-	*ConditionalPlanStep
-	*DecisionPlanStep
-	*OrchestrationPlanStep
-}
-
-// MigratePlanToNewFormat is deprecated - migration is now handled via API endpoint
-// This function is kept for reference but should not be used
-// Use the /api/workflow/migrate-plan endpoint instead
 
 // PartialPlanStep represents a partial update to a plan step (used only in tool schemas)
 // NOTE: This struct works with typed steps (PlanStepInterface).
@@ -5088,6 +5109,7 @@ func planningSystemPromptProcessorForUpdate(templateVars map[string]string) stri
 | **4. Valid Context Flow** | Each step's context_dependencies may include outputs from one or more earlier steps, but MUST NOT reference outputs from steps that execute after it |
 | **5. Preserve Step IDs** | When updating plans, keep existing step id values stable whenever possible; only assign new IDs for truly new steps—do NOT delete and re-add steps just to change IDs |
 | **6. Evidence-Based Criteria** | Success criteria must require VERIFIABLE EVIDENCE (counts, lists, data samples), not just status flags. Criteria like 'status: passed' can be gamed by simply editing the flag. |
+| **7. Step Folder Isolation** | Each step or sub-agent has write access ONLY to its own step folder. It CANNOT write to other folders. This is a critical security and isolation rule—remember this when creating plans and designing step outputs. |
 
 ---
 

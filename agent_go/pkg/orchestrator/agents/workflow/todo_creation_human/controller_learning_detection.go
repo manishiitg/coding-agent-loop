@@ -91,10 +91,31 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) detectNewLearningWithLLM(
 		return false, "No current learning files found (learning may not have written files)", 0.5, nil
 	}
 
+	// Validate that currentLearningsContent is not empty after formatting
+	// (files might exist but be empty or formatting might have failed)
+	currentLearningsContentTrimmed := strings.TrimSpace(currentLearningsContent)
+	if currentLearningsContentTrimmed == "" {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Current learning files exist but formatted content is empty for %s - treating as no new learning", learningPathIdentifier))
+		return false, "Current learning files exist but formatted content is empty", 0.5, nil
+	}
+
+	// Validate previous learnings content
+	previousLearningsContentTrimmed := strings.TrimSpace(previousLearningsContent)
+
 	// If no previous learnings, this is the first iteration - treat as new learning
-	if previousLearningsContent == "" {
+	if previousLearningsContentTrimmed == "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("📄 No previous learnings found for %s - treating as new learning (first iteration)", learningPathIdentifier))
 		return true, "First iteration - no previous learnings", 1.0, nil
+	}
+
+	// Log content sizes for debugging
+	hcpo.GetLogger().Info(fmt.Sprintf("📊 Learning detection content sizes for %s - Previous: %d chars, Current: %d chars",
+		learningPathIdentifier, len(previousLearningsContentTrimmed), len(currentLearningsContentTrimmed)))
+
+	// Validate that both contents are non-empty before calling LLM
+	if previousLearningsContentTrimmed == "" && currentLearningsContentTrimmed == "" {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Both previous and current learning contents are empty for %s - cannot compare, treating as no new learning", learningPathIdentifier))
+		return false, "Both previous and current learning contents are empty - cannot compare", 0.5, nil
 	}
 
 	// Both previous and current learnings exist - use LLM to compare them
@@ -106,9 +127,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) detectNewLearningWithLLM(
 	}
 
 	// Prepare template variables with step context
+	// Use trimmed versions to ensure we're not passing whitespace-only content
 	templateVars := map[string]string{
-		"PreviousLearningsContent": previousLearningsContent,
-		"CurrentLearningsContent":  currentLearningsContent,
+		"PreviousLearningsContent": previousLearningsContentTrimmed,
+		"CurrentLearningsContent":  currentLearningsContentTrimmed,
 		"StepTitle":                step.Title,
 		"StepDescription":          step.Description,
 		"StepSuccessCriteria":      step.SuccessCriteria,

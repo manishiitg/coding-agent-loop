@@ -520,8 +520,11 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 		return "", fmt.Errorf(fmt.Sprintf("failed to read step_config.json: %w", err), nil)
 	}
 
+	// Get preset code execution mode for filtering
+	presetCodeExecMode := ptom.GetUseCodeExecutionMode()
+
 	// Create mapping of step IDs to their current tool configurations
-	currentToolConfigsMap := createCurrentToolConfigsMapping(stepConfigs, existingPlan)
+	currentToolConfigsMap := createCurrentToolConfigsMapping(stepConfigs, existingPlan, presetCodeExecMode)
 	currentToolConfigsJSONBytes, err := json.MarshalIndent(currentToolConfigsMap, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf(fmt.Sprintf("failed to marshal current tool configs mapping to JSON: %w", err), nil)
@@ -534,7 +537,7 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	}
 
 	// Create minimal plan with essential step information (including tool counts)
-	minimalPlan := createMinimalPlan(existingPlan, toolConfigsLookup)
+	minimalPlan := createMinimalPlan(existingPlan, toolConfigsLookup, stepConfigs, presetCodeExecMode)
 	planJSONBytes, err := json.MarshalIndent(minimalPlan, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf(fmt.Sprintf("failed to marshal minimal plan to JSON: %w", err), nil)
@@ -609,17 +612,16 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 		return "", fmt.Errorf("failed to register update_step_config_tools tool: %w", err)
 	}
 
-	// Create mapping of step IDs to their learnings folder paths based on code execution mode
-	presetCodeExecMode := ptom.GetUseCodeExecutionMode()
+	// Create mapping of step IDs to their learnings folder paths (excluding code exec mode steps)
 	stepLearningsFolderMapping := createStepLearningsFolderMapping(stepConfigs, existingPlan, presetCodeExecMode, ptom.GetWorkspacePath())
 	stepLearningsFolderMappingJSONBytes, err := json.MarshalIndent(stepLearningsFolderMapping, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf(fmt.Sprintf("failed to marshal step learnings folder mapping to JSON: %w", err), nil)
 	}
-	ptom.GetLogger().Info(fmt.Sprintf("✅ Created learnings folder mapping for %d steps (based on code execution mode)", len(stepLearningsFolderMapping)))
+	ptom.GetLogger().Info(fmt.Sprintf("✅ Created learnings folder mapping for %d steps (excluding code exec mode steps)", len(stepLearningsFolderMapping)))
 
-	// Create mapping of step IDs to their logs folder paths
-	stepLogsFolderMapping := createStepLogsFolderMapping(existingPlan, ptom.GetWorkspacePath())
+	// Create mapping of step IDs to their logs folder paths (excluding code exec mode steps)
+	stepLogsFolderMapping := createStepLogsFolderMapping(existingPlan, stepConfigs, presetCodeExecMode, ptom.GetWorkspacePath())
 	stepLogsFolderMappingJSONBytes, err := json.MarshalIndent(stepLogsFolderMapping, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf(fmt.Sprintf("failed to marshal step logs folder mapping to JSON: %w", err), nil)
@@ -697,6 +699,33 @@ type MinimalPlanStep struct {
 	HasConfig        bool `json:"has_config,omitempty"`         // Whether step has any tool configuration
 }
 
+// isCodeExecutionModeEnabled checks if code execution mode is enabled for given agent configs
+// Returns true if agentConfigs explicitly has UseCodeExecutionMode=true OR if preset is enabled and agentConfigs doesn't explicitly disable it
+// This follows the same logic as getCodeExecutionMode in controller_agent_factory.go but as a standalone helper
+func isCodeExecutionModeEnabled(agentConfigs *AgentConfigs, presetCodeExecMode bool) bool {
+	// If step has explicit code exec mode setting, use it
+	if agentConfigs != nil && agentConfigs.UseCodeExecutionMode != nil {
+		return *agentConfigs.UseCodeExecutionMode
+	}
+
+	// Otherwise, use preset default
+	return presetCodeExecMode
+}
+
+// isStepCodeExecutionModeEnabled checks if a step has code execution mode enabled by looking up its config
+func isStepCodeExecutionModeEnabled(stepID string, stepConfigs []StepConfig, presetCodeExecMode bool) bool {
+	// Find step config by ID
+	var agentConfigs *AgentConfigs
+	for i := range stepConfigs {
+		if stepConfigs[i].ID == stepID {
+			agentConfigs = stepConfigs[i].AgentConfigs
+			break
+		}
+	}
+
+	return isCodeExecutionModeEnabled(agentConfigs, presetCodeExecMode)
+}
+
 // MinimalPlan represents a plan with essential step information for tool optimization
 type MinimalPlan struct {
 	Steps []MinimalPlanStep `json:"steps"`
@@ -704,13 +733,30 @@ type MinimalPlan struct {
 
 // createMinimalPlan creates a minimal plan with essential step information from the full plan
 // Recursively handles branch steps (if_true_steps, if_false_steps)
+// Excludes steps that have code execution mode enabled
 // currentToolConfigsMap: pre-computed mapping of step IDs to their current tool configurations
-func createMinimalPlan(fullPlan *PlanningResponse, currentToolConfigsMap map[string]*StepCurrentToolConfig) *MinimalPlan {
+// stepConfigs: step configurations to check for code execution mode
+// presetCodeExecMode: preset code execution mode setting
+func createMinimalPlan(fullPlan *PlanningResponse, currentToolConfigsMap map[string]*StepCurrentToolConfig, stepConfigs []StepConfig, presetCodeExecMode bool) *MinimalPlan {
 	var minimalSteps []MinimalPlanStep
 
 	var extractSteps func(steps []PlanStepInterface)
 	extractSteps = func(steps []PlanStepInterface) {
 		for _, step := range steps {
+			// Skip steps with code execution mode enabled
+			if isStepCodeExecutionModeEnabled(step.GetID(), stepConfigs, presetCodeExecMode) {
+				// Still process branch steps even if parent is skipped
+				if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
+					if len(conditionalStep.IfTrueSteps) > 0 {
+						extractSteps(conditionalStep.IfTrueSteps)
+					}
+					if len(conditionalStep.IfFalseSteps) > 0 {
+						extractSteps(conditionalStep.IfFalseSteps)
+					}
+				}
+				continue
+			}
+
 			// Get current tool configuration for this step
 			currentConfig := currentToolConfigsMap[step.GetID()]
 			toolCount := 0
@@ -766,38 +812,35 @@ func createMinimalPlan(fullPlan *PlanningResponse, currentToolConfigsMap map[str
 type StepLearningsFolderMapping struct {
 	StepID        string `json:"step_id"`
 	LearningsPath string `json:"learnings_path"` // Always "learnings/"
-	IsCodeExec    bool   `json:"is_code_exec"`   // true if step uses code execution mode
 }
 
 // createStepLearningsFolderMapping creates a mapping of step IDs to their learnings folder paths
-// based on UseCodeExecutionMode setting in step_config.json
 // Returns step-specific paths using step IDs from plan.json:
 //   - Regular steps: learnings/{step_id}/ format (at workspace root, not inside runs/)
 //   - Branch steps: learnings/{step_id}/ format (where step_id is the branch step's own ID, at workspace root, not inside runs/)
 //   - Orchestration sub-agents: learnings/{step_id}/ format (where step_id is the sub-agent's own ID, at workspace root, not inside runs/)
 //
+// Excludes steps that have code execution mode enabled
 // Recursively handles branch steps (if_true_steps, if_false_steps)
 func createStepLearningsFolderMapping(stepConfigs []StepConfig, plan *PlanningResponse, presetCodeExecMode bool, workspacePath string) []StepLearningsFolderMapping {
-	// Create lookup map: step ID -> AgentConfigs
-	idConfigMap := make(map[string]*AgentConfigs)
-	for i := range stepConfigs {
-		if stepConfigs[i].ID != "" {
-			idConfigMap[stepConfigs[i].ID] = stepConfigs[i].AgentConfigs
-		}
-	}
-
 	var mappings []StepLearningsFolderMapping
 
 	// Helper function to extract mappings with branch context
 	var extractMappings func(steps []PlanStepInterface, parentStepID string, branchType string, branchIndex int)
 	extractMappings = func(steps []PlanStepInterface, parentStepID string, branchType string, branchIndex int) {
 		for branchIdx, step := range steps {
-			agentConfigs := idConfigMap[step.GetID()]
-
-			// Determine code execution mode: step config > preset default
-			isCodeExec := presetCodeExecMode
-			if agentConfigs != nil && agentConfigs.UseCodeExecutionMode != nil {
-				isCodeExec = *agentConfigs.UseCodeExecutionMode
+			// Skip steps with code execution mode enabled
+			if isStepCodeExecutionModeEnabled(step.GetID(), stepConfigs, presetCodeExecMode) {
+				// Still process branch steps even if parent is skipped
+				if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
+					if len(conditionalStep.IfTrueSteps) > 0 {
+						extractMappings(conditionalStep.IfTrueSteps, parentStepID, "true", branchIdx)
+					}
+					if len(conditionalStep.IfFalseSteps) > 0 {
+						extractMappings(conditionalStep.IfFalseSteps, parentStepID, "false", branchIdx)
+					}
+				}
+				continue
 			}
 
 			// Determine learnings folder (always use step-specific paths with step IDs)
@@ -807,7 +850,6 @@ func createStepLearningsFolderMapping(stepConfigs []StepConfig, plan *PlanningRe
 			mappings = append(mappings, StepLearningsFolderMapping{
 				StepID:        step.GetID(),
 				LearningsPath: learningsPath,
-				IsCodeExec:    isCodeExec,
 			})
 
 			// Recursively extract branch steps (nested conditionals)
@@ -847,8 +889,9 @@ type StepLogsFolderMapping struct {
 //   - Branch steps: logs/step-{parentStep}-{true/false}-{branchIdx}/ format
 //   - Checks both runs/{iteration}/logs/ and logs/ at workspace root
 //
+// Excludes steps that have code execution mode enabled
 // Recursively handles branch steps (if_true_steps, if_false_steps)
-func createStepLogsFolderMapping(plan *PlanningResponse, workspacePath string) []StepLogsFolderMapping {
+func createStepLogsFolderMapping(plan *PlanningResponse, stepConfigs []StepConfig, presetCodeExecMode bool, workspacePath string) []StepLogsFolderMapping {
 	var mappings []StepLogsFolderMapping
 	stepNumber := 0
 
@@ -856,6 +899,20 @@ func createStepLogsFolderMapping(plan *PlanningResponse, workspacePath string) [
 	var extractMappings func(steps []PlanStepInterface, parentStepNumber int, branchType string, branchIndex int)
 	extractMappings = func(steps []PlanStepInterface, parentStepNumber int, branchType string, branchIndex int) {
 		for branchIdx, step := range steps {
+			// Skip steps with code execution mode enabled
+			if isStepCodeExecutionModeEnabled(step.GetID(), stepConfigs, presetCodeExecMode) {
+				// Still process branch steps even if parent is skipped
+				if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
+					if len(conditionalStep.IfTrueSteps) > 0 {
+						extractMappings(conditionalStep.IfTrueSteps, parentStepNumber, "true", branchIdx)
+					}
+					if len(conditionalStep.IfFalseSteps) > 0 {
+						extractMappings(conditionalStep.IfFalseSteps, parentStepNumber, "false", branchIdx)
+					}
+				}
+				continue
+			}
+
 			// Determine logs folder (always use step-specific paths)
 			var logsPathBase string
 			if branchType != "" {
@@ -1069,8 +1126,9 @@ func extractToolsFromLogsPath(
 }
 
 // createCurrentToolConfigsMapping creates a mapping of step IDs to their current tool configurations from step_config.json
+// Excludes steps that have code execution mode enabled
 // Recursively handles branch steps (if_true_steps, if_false_steps)
-func createCurrentToolConfigsMapping(stepConfigs []StepConfig, plan *PlanningResponse) []StepCurrentToolConfig {
+func createCurrentToolConfigsMapping(stepConfigs []StepConfig, plan *PlanningResponse, presetCodeExecMode bool) []StepCurrentToolConfig {
 	// Create lookup map: step ID -> AgentConfigs
 	idConfigMap := make(map[string]*AgentConfigs)
 	for i := range stepConfigs {
@@ -1084,6 +1142,20 @@ func createCurrentToolConfigsMapping(stepConfigs []StepConfig, plan *PlanningRes
 	var extractConfigs func(steps []PlanStepInterface)
 	extractConfigs = func(steps []PlanStepInterface) {
 		for _, step := range steps {
+			// Skip steps with code execution mode enabled
+			if isStepCodeExecutionModeEnabled(step.GetID(), stepConfigs, presetCodeExecMode) {
+				// Still process branch steps even if parent is skipped
+				if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
+					if len(conditionalStep.IfTrueSteps) > 0 {
+						extractConfigs(conditionalStep.IfTrueSteps)
+					}
+					if len(conditionalStep.IfFalseSteps) > 0 {
+						extractConfigs(conditionalStep.IfFalseSteps)
+					}
+				}
+				continue
+			}
+
 			agentConfigs := idConfigMap[step.GetID()]
 			hasConfig := agentConfigs != nil && (len(agentConfigs.SelectedServers) > 0 ||
 				len(agentConfigs.SelectedTools) > 0 ||

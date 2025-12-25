@@ -22,7 +22,6 @@ import {
   Brain,
   MessageSquare,
   Circle,
-  Layers,
   CheckSquare,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -221,25 +220,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const setSelectedGroupIds = useWorkflowStore(state => state.setSelectedGroupIds)
   const clearSelectedGroupIds = useWorkflowStore(state => state.clearSelectedGroupIds)
   
-  // Helper function to get first 5 characters of first variable value for a group
-  const getFirstVariablePreview = useCallback((groupId: string | null): string | null => {
-    if (!groupId || !variablesManifest) return null
-    
-    // Find the group in manifest
-    const group = variablesManifest.groups?.find(g => g.group_id === groupId)
-    if (!group || !group.values) return null
-    
-    // Get first variable name from manifest
-    const firstVariable = variablesManifest.variables?.[0]
-    if (!firstVariable) return null
-    
-    // Get value from group
-    const value = group.values[firstVariable.name]
-    if (!value) return null
-    
-    // Return first 5 characters (or less if shorter)
-    return value.substring(0, 5)
-  }, [variablesManifest])
   
   // Save settings when they change (including selectedGroupIds)
   useEffect(() => {
@@ -342,15 +322,63 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     if (!selectedRunFolder) {
       return 'Select...'
     }
-    // Check if it's an iteration without a group path (all groups mode)
-    if (!selectedRunFolder.includes('/group-') && variablesManifest?.groups) {
-      const enabledGroups = variablesManifest.groups.filter(g => g.enabled)
-      if (enabledGroups.length > 1) {
-        return `${selectedRunFolder} (All Groups)`
+    
+    // Check if it's a group path (e.g., "iteration-1/group-1" or "iteration-1/production")
+    const isGroupPath = selectedRunFolder.includes('/') && selectedRunFolder.split('/').length === 2
+    if (isGroupPath) {
+      // Extract iteration and group folder name
+      const parts = selectedRunFolder.split('/')
+      const iteration = parts[0] // e.g., "iteration-14"
+      const groupFolderName = parts[1] // e.g., "group-1" or "siddharth"
+      
+      // Find the group in manifest to get display name
+      if (variablesManifest?.groups) {
+        const group = variablesManifest.groups.find(g => {
+          // Check if group_id matches or if display_name (sanitized) matches
+          if (groupFolderName.startsWith('group-')) {
+            return g.group_id === groupFolderName
+          } else {
+            // Display name - need to match sanitized version
+            const sanitizedDisplayName = groupFolderName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
+            const groupSanitized = g.display_name?.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
+            return groupSanitized === sanitizedDisplayName
+          }
+        })
+        
+        if (group && group.display_name) {
+          // Show full path with original display name: "iteration-14/Siddharth"
+          // Use the original display name from manifest, not the sanitized folder name
+          return `${iteration}/${group.display_name}`
+        } else if (group) {
+          // No display name, use group_id: "iteration-14/group-1"
+          return `${iteration}/${group.group_id}`
+        }
+      }
+      
+      // Fallback: show the full path as-is
+      return selectedRunFolder
+    }
+    
+    // It's just an iteration folder - check if groups are selected via checkboxes
+    if (selectedGroupIds.length > 0 && variablesManifest?.groups) {
+      // Find selected groups from manifest
+      const selectedGroups = variablesManifest.groups.filter(g => selectedGroupIds.includes(g.group_id))
+      if (selectedGroups.length > 0) {
+        // Show display names or group_ids of selected groups
+        const groupNames = selectedGroups.map(g => g.display_name || g.group_id)
+        if (groupNames.length === 1) {
+          return groupNames[0]
+        } else if (groupNames.length <= 3) {
+          return groupNames.join(', ')
+        } else {
+          return `${groupNames.slice(0, 2).join(', ')} +${groupNames.length - 2}`
+        }
       }
     }
+    
+    // Just show the iteration folder name
     return selectedRunFolder
-  }, [selectedRunFolder, variablesManifest])
+  }, [selectedRunFolder, selectedGroupIds, variablesManifest])
 
   // Build merged list of iterations and groups
   // Combines existing folders with groups from manifest
@@ -358,6 +386,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     interface GroupItem {
       id: string  // Full path like "iteration-1/group-5" or just "iteration-1"
       name: string  // Display name like "group-5" or "iteration-1"
+      displayName?: string  // Optional user-friendly name from manifest
       iteration: string  // e.g., "iteration-1"
       groupId: string | null  // e.g., "group-5" or null if no group
       progress: StepProgress | null
@@ -371,18 +400,33 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     // Add existing folders
     runFolders.forEach((folder) => {
       const parts = folder.name.split('/')
-      if (parts.length === 2 && parts[1].startsWith('group-')) {
-        // Group folder: iteration-X/group-Y
+      if (parts.length === 2) {
+        // Group folder: iteration-X/group-Y or iteration-X/display-name
         const iteration = parts[0]
-        const groupId = parts[1]
+        const folderName = parts[1] // Could be "group-1" or "siddharth" (display name)
+        
+        // Try to find matching group - check if it's a group_id or a display name
+        let manifestGroup = variablesManifest?.groups?.find(g => g.group_id === folderName)
+        if (!manifestGroup && variablesManifest?.groups) {
+          // Not a group_id - try to match by sanitized display name
+          const sanitizeForMatch = (name: string) => name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
+          const folderNameSanitized = sanitizeForMatch(folderName)
+          manifestGroup = variablesManifest.groups.find(g => {
+            if (!g.display_name) return false
+            return sanitizeForMatch(g.display_name) === folderNameSanitized
+          })
+        }
+        
+        const groupId = manifestGroup?.group_id || folderName
         const item: GroupItem = {
-          id: folder.name,
+          id: folder.name, // Keep original folder name (could be display name or group_id)
           name: groupId,
+          displayName: manifestGroup?.display_name,
           iteration,
           groupId,
           progress: folder.progress || null,
           exists: true,
-          enabled: true  // Default, will be updated from manifest if available
+          enabled: manifestGroup?.enabled ?? true
         }
         items.push(item)
         if (!iterationMap.has(iteration)) {
@@ -428,10 +472,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
       // For each group in manifest, ensure it appears in all iterations
       variablesManifest.groups.forEach((group) => {
-        // Update enabled status for existing groups
+        // Update enabled status and display name for existing groups
         items.forEach(item => {
           if (item.groupId === group.group_id) {
             item.enabled = group.enabled
+            item.displayName = group.display_name
           }
         })
 
@@ -443,9 +488,24 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           
           if (!groupExistsInIteration) {
             // Group doesn't exist in this iteration - add it
+            // Use display name (sanitized) for folder path if available, otherwise use group_id
+            // This matches the backend folder creation logic
+            const sanitizeDisplayName = (displayName: string | undefined): string => {
+              if (!displayName) return ''
+              return displayName
+                .toLowerCase()
+                .replace(/[^a-z0-9-]/g, '-')
+                .replace(/-+/g, '-')
+                .trim()
+                .replace(/^-+|-+$/g, '')
+            }
+            const folderName = group.display_name && sanitizeDisplayName(group.display_name)
+              ? sanitizeDisplayName(group.display_name)
+              : group.group_id
             const item: GroupItem = {
-              id: `${iteration}/${group.group_id}`,
+              id: `${iteration}/${folderName}`,
               name: group.group_id,
+              displayName: group.display_name,
               iteration,
               groupId: group.group_id,
               progress: null,
@@ -672,7 +732,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setIsDropdownOpen(false)
     if (!isRunning) {
       // For plan-improvement and other phases that need run folder, pass execution options
-      if (phaseId === 'plan-improvement' || phaseId === 'plan-tool-optimization' || phaseId === 'plan-learnings-alignment') {
+      if (phaseId === 'plan-improvement' || phaseId === 'plan-tool-optimization') {
         // Build execution options to include selected_run_folder
         const executionOptions = buildExecutionOptions()
         console.log('[WorkflowToolbar] Starting', phaseId, 'with execution options:', executionOptions)
@@ -927,7 +987,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                 const hasGroups = groups.some(g => g.groupId !== null)
                                 const enabledGroups = groups.filter(g => g.enabled !== false)
                                 const hasMultipleGroups = enabledGroups.length > 1
-                                const isAllGroupsSelected = selectedRunFolder === iteration && !selectedRunFolder.includes('/group-')
                                 
                                 return (
                                   <div key={iteration}>
@@ -966,48 +1025,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                       </div>
                                     ) : null}
                                     
-                                    {/* "All Groups" option - only show if there are multiple enabled groups */}
-                                    {hasMultipleGroups && (() => {
-                                      // Count how many groups from this iteration are selected
-                                      const selectedCount = enabledGroups.filter(g => selectedGroupIds.includes(g.groupId!)).length
-                                      
-                                      return (
-                                        <div
-                                          className={`
-                                            group flex items-center gap-1 px-1
-                                            ${isAllGroupsSelected 
-                                              ? 'bg-purple-100 dark:bg-purple-900/30' 
-                                              : ''
-                                            }
-                                          `}
-                                        >
-                                          <button
-                                            onClick={() => {
-                                              handleSelectRunFolder(iteration)
-                                              // When "All Groups" is selected, select all enabled groups
-                                              if (!isAllGroupsSelected) {
-                                                const allGroupIds = enabledGroups.map(g => g.groupId!).filter(Boolean) as string[]
-                                                setSelectedGroupIds(allGroupIds)
-                                              }
-                                            }}
-                                            className={`
-                                              flex-1 text-left px-3 py-2 rounded-md text-sm flex items-center gap-2 font-medium
-                                              ${isAllGroupsSelected 
-                                                ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' 
-                                                : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
-                                              }
-                                            `}
-                                            title={`Run all ${enabledGroups.length} enabled groups in ${iteration}`}
-                                          >
-                                            <Layers className="w-4 h-4" />
-                                            <span className="flex-1">
-                                              All Groups ({selectedCount > 0 ? `${selectedCount}/${enabledGroups.length}` : enabledGroups.length})
-                                            </span>
-                                            {isAllGroupsSelected && <Check className="w-4 h-4 ml-auto" />}
-                                          </button>
-                                        </div>
-                                      )
-                                    })()}
                                     
                                     {/* Groups under this iteration - show ALL groups from manifest, not just ones with folders */}
                                     {/* Filter out iteration folders (groupId === null) since we already show the iteration header */}
@@ -1019,7 +1036,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                       const isSelected = selectedRunFolder === group.id
                                       const isDisabled = group.enabled === false
                                       const isGroupChecked = group.groupId ? selectedGroupIds.includes(group.groupId) : false
-                                      const firstVariablePreview = getFirstVariablePreview(group.groupId)
                                       
                                       return (
                                         <div
@@ -1059,10 +1075,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                           <button
                                             onClick={() => {
                                               handleSelectRunFolder(group.id)
-                                              // When clicking a specific group, also toggle its checkbox if "All Groups" mode
-                                              if (isAllGroupsSelected && group.groupId) {
-                                                toggleGroupSelection(group.groupId)
-                                              }
                                             }}
                                             className={`
                                               flex-1 text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
@@ -1085,13 +1097,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                               // Only show circle if no checkboxes (single group mode)
                                               <Circle className="w-4 h-4" />
                                             )}
-                                            <span className="flex-1 font-mono text-xs flex items-center gap-1.5">
-                                              <span>{group.groupId || group.name}</span>
-                                              {firstVariablePreview && (
-                                                <span className="text-[10px] text-gray-500 dark:text-gray-400 font-normal">
-                                                  ({firstVariablePreview})
-                                                </span>
-                                              )}
+                                            <span className="flex-1 text-xs flex items-center gap-1.5">
+                                              <span className={group.displayName ? 'font-medium' : 'font-mono'}>
+                                                {group.displayName || group.groupId || group.name}
+                                              </span>
                                             </span>
                                             {hasProgress && (
                                               <span className="text-xs text-gray-500 dark:text-gray-400">

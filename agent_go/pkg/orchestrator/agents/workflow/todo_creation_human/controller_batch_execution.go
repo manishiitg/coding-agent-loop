@@ -221,7 +221,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 		}
 
 		// Determine run folder for this group
-		runFolder := hcpo.createGroupRunFolder(baseIterationFolder, group.GroupID, totalGroups)
+		// Use display_name if available (sanitized), otherwise fall back to group_id
+		// Special case: if single group and selectedRunFolder already contains a group path, use it directly
+		var runFolder string
+		if totalGroups == 1 && hcpo.selectedRunFolder != "" && strings.Contains(hcpo.selectedRunFolder, "/") {
+			// User explicitly selected a group folder (e.g., "iteration-13/siddharth")
+			// Use it directly instead of recreating the path
+			runFolder = hcpo.selectedRunFolder
+		} else {
+			// Multiple groups or no explicit group selection - create folder path
+			runFolder = hcpo.createGroupRunFolder(baseIterationFolder, group.GroupID, group.DisplayName, totalGroups)
+		}
 
 		// Check if folder exists (to determine if we need cleanup)
 		fullRunFolderPath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), runFolder)
@@ -343,7 +353,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) determineBaseIterationFolder
 		baseIterationFolder = hcpo.selectedRunFolder
 		// Extract iteration number from folder name
 		if strings.Contains(baseIterationFolder, "/") {
-			// Nested folder: extract iteration-X from "iteration-X/group-Y"
+			// Nested folder: extract iteration-X from "iteration-X/group-Y" or "iteration-X/display-name"
 			if _, err := fmt.Sscanf(baseIterationFolder, "iteration-%d/", &baseIterationNum); err != nil {
 				re := regexp.MustCompile(`iteration-(\d+)`)
 				matches := re.FindStringSubmatch(baseIterationFolder)
@@ -418,11 +428,59 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) findMaxIterationNumber(folde
 	return maxIteration
 }
 
+// sanitizeDisplayNameForFolder sanitizes a display name for use in folder paths
+// - Removes/replaces special characters that aren't safe for filesystem
+// - Normalizes whitespace and converts to lowercase
+// - Removes multiple consecutive dashes
+// - Falls back to empty string if result is invalid
+func (hcpo *HumanControlledTodoPlannerOrchestrator) sanitizeDisplayNameForFolder(displayName string) string {
+	if displayName == "" {
+		return ""
+	}
+
+	sanitized := strings.TrimSpace(displayName)
+
+	// Replace spaces with dashes
+	sanitized = strings.ReplaceAll(sanitized, " ", "-")
+
+	// Remove or replace special characters that aren't safe for folder names
+	// Keep: letters, numbers, dashes, underscores
+	// Remove: colons, slashes, backslashes, pipes, etc.
+	specialCharPattern := regexp.MustCompile(`[^a-zA-Z0-9\-_]`)
+	sanitized = specialCharPattern.ReplaceAllString(sanitized, "-")
+
+	// Normalize multiple consecutive dashes to single dash
+	multiDashPattern := regexp.MustCompile(`-+`)
+	sanitized = multiDashPattern.ReplaceAllString(sanitized, "-")
+
+	// Remove leading/trailing dashes
+	sanitized = strings.Trim(sanitized, "-")
+
+	// Convert to lowercase for consistency
+	sanitized = strings.ToLower(sanitized)
+
+	// If result is empty or too short, return empty (will fall back to group_id)
+	if sanitized == "" || len(sanitized) < 1 {
+		return ""
+	}
+
+	return sanitized
+}
+
 // createGroupRunFolder creates the run folder path for a specific group
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createGroupRunFolder(baseIterationFolder, groupID string, totalGroups int) string {
+// Uses display_name if available (sanitized), otherwise falls back to group_id
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createGroupRunFolder(baseIterationFolder, groupID, displayName string, totalGroups int) string {
 	if totalGroups > 1 {
 		// Multiple groups - use nested structure
-		return fmt.Sprintf("%s/%s", baseIterationFolder, groupID)
+		// Try to use sanitized display_name, fall back to group_id
+		folderName := groupID
+		if displayName != "" {
+			sanitized := hcpo.sanitizeDisplayNameForFolder(displayName)
+			if sanitized != "" {
+				folderName = sanitized
+			}
+		}
+		return fmt.Sprintf("%s/%s", baseIterationFolder, folderName)
 	}
 	// Single group - use base folder directly
 	return baseIterationFolder

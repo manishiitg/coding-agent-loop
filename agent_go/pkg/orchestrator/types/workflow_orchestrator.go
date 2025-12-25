@@ -71,12 +71,6 @@ func GetWorkflowConstants() WorkflowConstants {
 				Options:     []WorkflowPhaseOption{}, // No options for plan debugger phase
 			},
 			{
-				ID:          "plan-learnings-alignment",
-				Title:       "Plan-Learnings Alignment",
-				Description: "Check alignment between plan.json and learnings folder. Identifies orphaned learning files (for deleted steps), missing learnings (for new steps), and provides options to manage mismatches.",
-				Options:     []WorkflowPhaseOption{}, // No options for alignment phase
-			},
-			{
 				ID:          "plan-tool-optimization",
 				Title:       "Plan Tool Optimization",
 				Description: "Analyze plan.json and learnings folder to optimize tool selections in step_config.json. Compares configured tools vs actually used tools and updates step_config.json to include only tools that were used.",
@@ -127,15 +121,14 @@ type WorkflowOrchestrator struct {
 	*orchestrator.BaseOrchestrator
 
 	// Preset-level agent defaults (used when step config doesn't specify)
-	presetExecutionLLM              *todo_creation_human.AgentLLMConfig // Default for execution agents
-	presetValidationLLM             *todo_creation_human.AgentLLMConfig // Default for validation agents
-	presetLearningLLM               *todo_creation_human.AgentLLMConfig // Default for learning agents
-	presetLearningReadingLLM        *todo_creation_human.AgentLLMConfig // Default for learning reading agent
-	presetPlanningLLM               *todo_creation_human.AgentLLMConfig // Default for planning agent
-	presetVariableExtractionLLM     *todo_creation_human.AgentLLMConfig // Default for variable extraction agent
-	presetPlanImprovementLLM        *todo_creation_human.AgentLLMConfig // Default for plan improvement agent
-	presetPlanToolOptimizationLLM   *todo_creation_human.AgentLLMConfig // Default for plan tool optimization agent
-	presetPlanLearningsAlignmentLLM *todo_creation_human.AgentLLMConfig // Default for plan learnings alignment agent
+	presetExecutionLLM            *todo_creation_human.AgentLLMConfig // Default for execution agents
+	presetValidationLLM           *todo_creation_human.AgentLLMConfig // Default for validation agents
+	presetLearningLLM             *todo_creation_human.AgentLLMConfig // Default for learning agents
+	presetLearningReadingLLM      *todo_creation_human.AgentLLMConfig // Default for learning reading agent
+	presetPlanningLLM             *todo_creation_human.AgentLLMConfig // Default for planning agent
+	presetVariableExtractionLLM   *todo_creation_human.AgentLLMConfig // Default for variable extraction agent
+	presetPlanImprovementLLM      *todo_creation_human.AgentLLMConfig // Default for plan improvement agent
+	presetPlanToolOptimizationLLM *todo_creation_human.AgentLLMConfig // Default for plan tool optimization agent
 
 	// Frontend-provided execution options (when provided, skips interactive prompts)
 	executionOptions *todo_creation_human.ExecutionOptions
@@ -236,7 +229,7 @@ func NewWorkflowOrchestrator(
 	}
 
 	// Extract agent-specific defaults from preset LLM config
-	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetLearningReadingLLM, presetPlanningLLM, presetVariableExtractionLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM, presetPlanLearningsAlignmentLLM *todo_creation_human.AgentLLMConfig
+	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetLearningReadingLLM, presetPlanningLLM, presetVariableExtractionLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM *todo_creation_human.AgentLLMConfig
 	if presetLLMConfig != nil {
 		// Use agent-specific defaults if available, otherwise fall back to legacy single default
 		if presetLLMConfig.ExecutionLLM != nil && presetLLMConfig.ExecutionLLM.Provider != "" && presetLLMConfig.ExecutionLLM.ModelID != "" {
@@ -341,32 +334,19 @@ func NewWorkflowOrchestrator(
 				ModelID:  presetLLMConfig.ModelID,
 			}
 		}
-		if presetLLMConfig.PlanLearningsAlignmentLLM != nil && presetLLMConfig.PlanLearningsAlignmentLLM.Provider != "" && presetLLMConfig.PlanLearningsAlignmentLLM.ModelID != "" {
-			presetPlanLearningsAlignmentLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.PlanLearningsAlignmentLLM.Provider,
-				ModelID:  presetLLMConfig.PlanLearningsAlignmentLLM.ModelID,
-			}
-		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-			// Fall back to legacy single default for plan learnings alignment
-			presetPlanLearningsAlignmentLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.Provider,
-				ModelID:  presetLLMConfig.ModelID,
-			}
-		}
 	}
 
 	// Create workflow orchestrator instance
 	wo := &WorkflowOrchestrator{
-		BaseOrchestrator:                baseOrchestrator,
-		presetExecutionLLM:              presetExecutionLLM,
-		presetValidationLLM:             presetValidationLLM,
-		presetLearningLLM:               presetLearningLLM,
-		presetLearningReadingLLM:        presetLearningReadingLLM,
-		presetPlanningLLM:               presetPlanningLLM,
-		presetVariableExtractionLLM:     presetVariableExtractionLLM,
-		presetPlanImprovementLLM:        presetPlanImprovementLLM,
-		presetPlanToolOptimizationLLM:   presetPlanToolOptimizationLLM,
-		presetPlanLearningsAlignmentLLM: presetPlanLearningsAlignmentLLM,
+		BaseOrchestrator:              baseOrchestrator,
+		presetExecutionLLM:            presetExecutionLLM,
+		presetValidationLLM:           presetValidationLLM,
+		presetLearningLLM:             presetLearningLLM,
+		presetLearningReadingLLM:      presetLearningReadingLLM,
+		presetPlanningLLM:             presetPlanningLLM,
+		presetVariableExtractionLLM:   presetVariableExtractionLLM,
+		presetPlanImprovementLLM:      presetPlanImprovementLLM,
+		presetPlanToolOptimizationLLM: presetPlanToolOptimizationLLM,
 	}
 
 	return wo, nil
@@ -399,11 +379,6 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	if workflowStatus == "plan-improvement" {
 		wo.GetLogger().Info(fmt.Sprintf("📊 Routing to plan improvement phase (workflowStatus: %s)", workflowStatus))
 		return wo.runPlanImprovement(ctx, objective, selectedOptions)
-	}
-
-	if workflowStatus == "plan-learnings-alignment" {
-		wo.GetLogger().Info(fmt.Sprintf("🔍 Routing to plan-learnings alignment phase (workflowStatus: %s)", workflowStatus))
-		return wo.runPlanLearningsAlignment(ctx, objective, selectedOptions)
 	}
 
 	if workflowStatus == "plan-tool-optimization" {
@@ -495,28 +470,6 @@ func (wo *WorkflowOrchestrator) runPlanImprovement(ctx context.Context, objectiv
 	}
 
 	wo.GetLogger().Info(fmt.Sprintf("✅ Plan improvement completed successfully"))
-	return result, nil
-}
-
-// runPlanLearningsAlignment runs only the plan-learnings alignment check phase
-func (wo *WorkflowOrchestrator) runPlanLearningsAlignment(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Plan-Learnings Alignment Phase"))
-
-	// Create plan learnings alignment manager directly (independent from controller)
-	alignmentManager := todo_creation_human.NewPlanLearningsAlignmentManager(
-		wo.BaseOrchestrator,
-		wo.getSessionID(),
-		wo.getWorkflowID(),
-		wo.presetLearningLLM, // Pass learning LLM (primary LLM for plan learnings alignment)
-	)
-
-	// Run only alignment check
-	result, err := alignmentManager.CheckAlignmentOnly(ctx, wo.GetWorkspacePath())
-	if err != nil {
-		return "", fmt.Errorf("plan-learnings alignment check failed: %w", err)
-	}
-
-	wo.GetLogger().Info(fmt.Sprintf("✅ Plan-learnings alignment check completed successfully"))
 	return result, nil
 }
 
@@ -731,7 +684,6 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 					"planning",                             // Planning phase
 					database.WorkflowStatusPreVerification, // Execution phase
 					"plan-improvement",                     // Plan improvement phase
-					"plan-learnings-alignment",             // Plan-learnings alignment phase
 					"plan-tool-optimization",               // Plan tool optimization phase
 				}
 				valid := false

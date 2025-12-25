@@ -72,7 +72,7 @@ type ExecutionSetup struct {
 	// StartFromStep is the 0-based index to start execution from
 	StartFromStep int
 
-	// RunFolder is the target run folder path (e.g., "iteration-1" or "iteration-1/group-1")
+	// RunFolder is the target run folder path (e.g., "iteration-1" or "iteration-1/group-1" or "iteration-1/production" for display names)
 	RunFolder string
 
 	// GroupID is the current group ID for batch execution (empty for single execution)

@@ -31,8 +31,6 @@ type DetectionHistoryEntry struct {
 type ConsolidationHistoryEntry struct {
 	Iteration          int    `json:"iteration"`
 	Timestamp          string `json:"timestamp"`
-	Output             string `json:"output"`
-	NewLearningContent string `json:"new_learning_content,omitempty"` // Content from _learning_new.md before consolidation
 	FilesConsolidated  int    `json:"files_consolidated,omitempty"`
 	FilesDeleted       int    `json:"files_deleted,omitempty"`
 	PatternsMerged     int    `json:"patterns_merged,omitempty"`
@@ -40,6 +38,7 @@ type ConsolidationHistoryEntry struct {
 	OptimalPathsMarked int    `json:"optimal_paths_marked,omitempty"`
 	UnreliableMarked   int    `json:"unreliable_marked,omitempty"`
 	ConsolidatedFile   string `json:"consolidated_file,omitempty"`
+	// Note: Output and NewLearningContent removed - learning content is stored in files, not metadata
 }
 
 // LearningMetadata represents the learning metadata stored per step
@@ -54,7 +53,11 @@ type LearningMetadata struct {
 	DetectionHistory         []DetectionHistoryEntry     `json:"detection_history,omitempty"`
 	ConsolidationHistory     []ConsolidationHistoryEntry `json:"consolidation_history,omitempty"`
 	LastConsolidationAt      string                      `json:"last_consolidation_at,omitempty"`
-	LastConsolidationOutput  string                      `json:"last_consolidation_output,omitempty"`
+	// Auto-lock information
+	AutoLockedAt      string `json:"auto_locked_at,omitempty"`      // Timestamp when auto-lock was triggered
+	AutoLockReason    string `json:"auto_lock_reason,omitempty"`    // Reason: "consecutive_no_new_learning" or "maximum_learnings"
+	AutoLockIteration int    `json:"auto_lock_iteration,omitempty"` // Iteration number when auto-lock was triggered
+	// Note: LastConsolidationOutput removed - learning content is stored in files, not metadata
 }
 
 // detectNewLearningWithLLM runs the learning detection agent to compare old vs new learning files
@@ -73,47 +76,34 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) detectNewLearningWithLLM(
 	step PlanStepInterface,
 	usedTempLLM string,
 	validationPassed bool,
-	newLearningFilePath string, // Path to new learning file (if provided, consolidation will be performed)
-	isCodeExecutionMode bool, // Code execution mode for consolidation
+	isCodeExecutionMode bool, // Code execution mode (kept for future use, not used in detection)
 ) (bool, string, float64, error) {
 	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Running learning detection for %s", learningPathIdentifier))
 
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	stepLearningsPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier)
 
-	// Check if consolidation is needed (if newLearningFilePath is provided)
-	needsConsolidation := newLearningFilePath != "" && strings.TrimSpace(newLearningFilePath) != ""
+	// Get current learnings (what exists now after extraction agent has consolidated)
+	currentLearningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read current learning files: %v (treating as no new learning)", err))
+		return false, "Failed to read current learning files", 0.5, nil
+	}
 
-	var currentLearningsContentTrimmed string
-	if needsConsolidation {
-		// If consolidation is needed, don't read current learnings now
-		// The detection agent will perform consolidation first, then read the consolidated file
-		// Set empty content - agent will read consolidated file after consolidation
-		currentLearningsContentTrimmed = ""
-		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Consolidation will be performed by detection agent for %s", learningPathIdentifier))
-	} else {
-		// Get current learnings (what exists now after learning agent has run)
-		currentLearningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read current learning files: %v (treating as no new learning)", err))
-			return false, "Failed to read current learning files", 0.5, nil
-		}
+	// Combine current learning files into single content
+	currentLearningsContent, _ := hcpo.formatStepLearningFilesAsHistory(currentLearningFiles)
 
-		// Combine current learning files into single content
-		currentLearningsContent, _ := hcpo.formatStepLearningFilesAsHistory(currentLearningFiles)
+	// If no current learning files, the extraction agent may not have written any files
+	if len(currentLearningFiles) == 0 {
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 No current learning files found for %s - extraction agent may not have written files, treating as no new learning", learningPathIdentifier))
+		return false, "No current learning files found (extraction agent may not have written files)", 0.5, nil
+	}
 
-		// If no current learning files, the learning agent may not have written any files
-		if len(currentLearningFiles) == 0 {
-			hcpo.GetLogger().Info(fmt.Sprintf("📄 No current learning files found for %s - learning may not have written files, treating as no new learning", learningPathIdentifier))
-			return false, "No current learning files found (learning may not have written files)", 0.5, nil
-		}
-
-		// Validate that currentLearningsContent is not empty after formatting
-		currentLearningsContentTrimmed = strings.TrimSpace(currentLearningsContent)
-		if currentLearningsContentTrimmed == "" {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Current learning files exist but formatted content is empty for %s - treating as no new learning", learningPathIdentifier))
-			return false, "Current learning files exist but formatted content is empty", 0.5, nil
-		}
+	// Validate that currentLearningsContent is not empty after formatting
+	currentLearningsContentTrimmed := strings.TrimSpace(currentLearningsContent)
+	if currentLearningsContentTrimmed == "" {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Current learning files exist but formatted content is empty for %s - treating as no new learning", learningPathIdentifier))
+		return false, "Current learning files exist but formatted content is empty", 0.5, nil
 	}
 
 	// Validate previous learnings content
@@ -129,12 +119,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) detectNewLearningWithLLM(
 	hcpo.GetLogger().Info(fmt.Sprintf("📊 Learning detection content sizes for %s - Previous: %d chars, Current: %d chars",
 		learningPathIdentifier, len(previousLearningsContentTrimmed), len(currentLearningsContentTrimmed)))
 
-	// Validate that both contents are non-empty before calling LLM (skip if consolidation is needed - agent will read consolidated file)
-	if !needsConsolidation {
-		if previousLearningsContentTrimmed == "" && currentLearningsContentTrimmed == "" {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Both previous and current learning contents are empty for %s - cannot compare, treating as no new learning", learningPathIdentifier))
-			return false, "Both previous and current learning contents are empty - cannot compare", 0.5, nil
-		}
+	// Validate that both contents are non-empty before calling LLM
+	if previousLearningsContentTrimmed == "" && currentLearningsContentTrimmed == "" {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Both previous and current learning contents are empty for %s - cannot compare, treating as no new learning", learningPathIdentifier))
+		return false, "Both previous and current learning contents are empty - cannot compare", 0.5, nil
 	}
 
 	// Both previous and current learnings exist - use LLM to compare them
@@ -158,31 +146,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) detectNewLearningWithLLM(
 		"ValidationPassed":         fmt.Sprintf("%v", validationPassed),
 	}
 
-	// Add consolidation parameters if consolidation is needed
-	if needsConsolidation {
-		// Use step-specific learning detail level, default to "exact" if not set
-		learningDetailLevel := "exact"
-		if stepConfig != nil && stepConfig.LearningDetailLevel != "" {
-			learningDetailLevel = stepConfig.LearningDetailLevel
-		}
-
-		templateVars["NewLearningFilePath"] = newLearningFilePath
-		templateVars["WorkspacePath"] = baseWorkspacePath
-		templateVars["StepNumber"] = learningPathIdentifier
-		templateVars["LearningDetailLevel"] = learningDetailLevel
-		templateVars["IsCodeExecutionMode"] = fmt.Sprintf("%v", isCodeExecutionMode)
-
-		// Add step-specific paths
-		runWorkspacePath := fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
-		templateVars["StepExecutionPath"] = runWorkspacePath
-
-		// Add variable names if available
-		if variableNames := FormatVariableNames(hcpo.variablesManifest); variableNames != "" {
-			templateVars["VariableNames"] = variableNames
-		}
-
-		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Passing consolidation parameters to detection agent: NewLearningFilePath=%s, LearningDetailLevel=%s", newLearningFilePath, learningDetailLevel))
-	}
+	// Consolidation is now handled by extraction agents - no consolidation parameters needed
 
 	// Add context dependencies as comma-separated string
 	if len(step.GetContextDependencies()) > 0 {
@@ -227,7 +191,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) detectNewLearningWithLLM(
 }
 
 // updateLearningMetadata updates the learning metadata file with detection results
-// Returns true if auto-lock should be triggered (consecutive_no_new_learning >= 2)
+// Returns true if auto-lock should be triggered (consecutive_no_new_learning >= 2 OR total_iterations >= 5)
 func (hcpo *HumanControlledTodoPlannerOrchestrator) updateLearningMetadata(
 	ctx context.Context,
 	stepIndex int,
@@ -310,7 +274,29 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) updateLearningMetadata(
 		metadata.DetectionHistory = metadata.DetectionHistory[len(metadata.DetectionHistory)-maxHistoryEntries:]
 	}
 
-	// Write updated metadata
+	// Check if auto-lock should be triggered
+	// Condition 1: 3 consecutive iterations with no new learning (ConsecutiveNoNewLearning >= 2 means 2, 3, 4...)
+	// Condition 2: 5 maximum learnings (TotalIterations >= 5 means after 5 learning attempts, always lock)
+	shouldAutoLock := metadata.ConsecutiveNoNewLearning >= 2 || metadata.TotalIterations >= 5
+
+	if shouldAutoLock {
+		// Determine which condition triggered the auto-lock
+		var autoLockReason string
+		if metadata.TotalIterations >= 5 {
+			autoLockReason = "maximum_learnings"
+			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-lock threshold reached for %s: %d total iterations (maximum learnings reached)", learningPathIdentifier, metadata.TotalIterations))
+		} else {
+			autoLockReason = "consecutive_no_new_learning"
+			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-lock threshold reached for %s: %d consecutive iterations with no new learning", learningPathIdentifier, metadata.ConsecutiveNoNewLearning))
+		}
+
+		// Save auto-lock information to metadata
+		metadata.AutoLockedAt = time.Now().Format(time.RFC3339)
+		metadata.AutoLockReason = autoLockReason
+		metadata.AutoLockIteration = metadata.TotalIterations
+	}
+
+	// Write updated metadata (with auto-lock info if triggered)
 	metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		return false, fmt.Errorf("failed to marshal learning metadata: %w", err)
@@ -318,13 +304,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) updateLearningMetadata(
 
 	if err := hcpo.BaseOrchestrator.WriteWorkspaceFile(ctx, metadataPath, string(metadataJSON)); err != nil {
 		return false, fmt.Errorf("failed to write learning metadata: %w", err)
-	}
-
-	// Check if auto-lock should be triggered
-	shouldAutoLock := metadata.ConsecutiveNoNewLearning >= 2
-
-	if shouldAutoLock {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-lock threshold reached for %s: %d consecutive iterations with no new learning", learningPathIdentifier, metadata.ConsecutiveNoNewLearning))
 	}
 
 	return shouldAutoLock, nil
@@ -383,21 +362,19 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) updateConsolidationMetadata(
 		iteration = 1
 	}
 
-	// Create consolidation entry
+	// Create consolidation entry (without learning content - stored in files, not metadata)
 	consolidationEntry := ConsolidationHistoryEntry{
-		Iteration:          iteration,
-		Timestamp:          time.Now().Format(time.RFC3339),
-		Output:             consolidationOutput,
-		NewLearningContent: newLearningContent,
-		ConsolidatedFile:   extractConsolidatedFilePath(consolidationOutput),
+		Iteration:        iteration,
+		Timestamp:        time.Now().Format(time.RFC3339),
+		ConsolidatedFile: extractConsolidatedFilePath(consolidationOutput),
+		// Note: Output and NewLearningContent removed - learning content is stored in files, not metadata
 	}
 
 	// Add consolidation result to history
 	metadata.ConsolidationHistory = append(metadata.ConsolidationHistory, consolidationEntry)
 
-	// Update last consolidation fields
+	// Update last consolidation timestamp (output removed - learning content stored in files)
 	metadata.LastConsolidationAt = time.Now().Format(time.RFC3339)
-	metadata.LastConsolidationOutput = consolidationOutput
 
 	// Limit history to last 50 entries to prevent unbounded growth
 	const maxHistoryEntries = 50
@@ -774,6 +751,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningDetectionAgent
 
 	// Disable code execution mode for detection agent
 	config.UseCodeExecutionMode = false
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Learning detection agent: Code execution mode explicitly disabled (config.UseCodeExecutionMode = false)"))
 
 	// Disable large output virtual tools (context offloading) for learning detection agent
 	// Detection agent should not offload its outputs to prevent issues with learning content comparison

@@ -100,6 +100,7 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningSyste
 	// StepNumber is already the full learning path identifier (e.g., "step-3" or "step-3-true-0")
 	workspacePath := templateVars["WorkspacePath"]
 	stepNumber := templateVars["StepNumber"]
+	stepTitle := templateVars["StepTitle"]
 	writePath := workspacePath + "/learnings/" + stepNumber // Write to step-specific folder at workspace root (supports both regular and branch steps)
 	codePath := workspacePath + "/learnings/" + stepNumber + "/code"
 
@@ -107,21 +108,22 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningSyste
 
 ## 🤖 AGENT IDENTITY
 - **Role**: Code Execution Learning Agent (Best Code Pattern Extractor)
-- **PRIMARY PURPOSE**: Extract the BEST possible Go code (or multiple best variations) that executed the step in the most effective way, so future code generation can use optimal patterns
+- **PRIMARY PURPOSE**: Extract the BEST possible Go code that executed the step in the most effective way, so future code generation can use optimal patterns. Consolidate multiple variations into a single best code file.
 - **SECONDARY PURPOSE**: Document failed code patterns to avoid wasting time on ineffective approaches
 - **Mode**: Best code extraction and optimization (focus on what works BEST, not just what works)
 
 ## 🎯 **YOUR MODE (Priority Order):**
 1. **PRIMARY**: Identify and extract the BEST possible Go code that executed the step most effectively - look for code that is efficient, reliable, and well-structured
-2. **MULTIPLE VARIATIONS**: If multiple successful code patterns exist, extract ALL of them and rank them by effectiveness (best first)
+2. **CONSOLIDATE VARIATIONS**: If multiple successful code patterns exist, evaluate them and consolidate into ONE best code file (keep only the latest/best)
 3. **COMPLETE CODE**: Extract complete, runnable Go code snippets with full function calls, imports, and logic
 4. **SECONDARY**: Capture failed code patterns to avoid in future executions (TASK-SPECIFIC ONLY)
 5. **OUTPUT**: Create a library of best code examples that future executions can use directly or adapt
 
 **CRITICAL RULES**:
 - Each step gets its own learning file (format: {StepTitle}_learning.md)
-- Write ONLY new learning content extracted from current execution to _learning_new.md (temporary file)
-- Do NOT merge with existing files - detection agent handles that during consolidation
+- **CONSOLIDATE**: Extract new patterns from current execution AND merge with existing learnings (if provided)
+- **Update Scores**: Maintain [Runs: X | Success: Y%%] format, increment runs if pattern succeeded
+- **Mark Optimal**: Mark highest scoring pattern as ⭐ OPTIMAL, deprecate <50%% as ⚠️ UNRELIABLE
 - Prioritize code that is clean, efficient, handles errors well, and accomplishes the step goal in the best possible way
 
 ## 🧠 **CODE EXTRACTION PROCESS (Focus on Efficiency)**
@@ -131,24 +133,30 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningSyste
 **CRITICAL PRINCIPLE**: Only capture learnings that are SPECIFIC to executing this task better. General programming knowledge is NOT a learning.
 
 ### **Primary Goal:**
-**Extract the BEST possible Go code (or multiple best variations) for executing this step** - Identify which Go code patterns executed the step most effectively, efficiently, and reliably. Future executions should be able to use these best code examples directly or adapt them. Focus on finding the optimal code patterns, not just any working code.
+**Extract the BEST possible Go code for executing this step** - Identify which Go code pattern executed the step most effectively, efficiently, and reliably. Consolidate multiple variations into a single best code file. Future executions should be able to use this best code example directly or adapt it. Focus on finding the optimal code pattern, not just any working code.
 
 ### **Process (Best Code Focus):**
 1. **Understand the Step Goal** - What was this step trying to achieve?
 2. **Identify ALL Successful Code** - Find ALL Go code that successfully achieved the step goal
 3. **Evaluate and Rank** - Compare successful code patterns and identify which ones are BEST (most efficient, cleanest, most reliable, best error handling)
-4. **Extract Best Code(s)** - Extract complete, runnable code snippets of the BEST patterns (or multiple best variations if they're equally good)
-5. **Save Multiple Variations** - If multiple effective approaches exist, save all of them ranked by effectiveness (best first)
+4. **Extract Best Code** - Extract complete, runnable code snippet of the BEST pattern
+5. **Consolidate Code Files** - If multiple code files exist, keep only the latest/best one and delete old/duplicate files
 6. **Document Failures to Avoid** - What code patterns wasted time or failed? (brief)
 7. **Create Code Library** - Document the best code examples so future executions can use them directly
-8. **Write New Learning Content** - **USE TOOLS** to write learnings to files:
+8. **Consolidate & Write Learning File** - **USE TOOLS** to consolidate and write learnings:
+   - **CONSOLIDATION** (if existing learnings provided):
+     * Plan Alignment: Remove learnings that don't match current step description
+     * Pattern Matching: Match new patterns with existing (same code pattern = same pattern)
+     * Merge & Update: Update existing pattern scores OR add new patterns with initial scores
+     * Anonymize: Replace sensitive values with {{VARIABLE_NAME}}, normalize paths
+     * Compress: Remove redundancy, keep concise, focus on MCP tools
+     * Mark Optimal: Mark highest scoring pattern as ⭐ OPTIMAL, deprecate <50%% as ⚠️ UNRELIABLE
+     * **Code File Consolidation**: If multiple .go files exist in ` + codePath + `/ folder, keep only the LATEST/BEST one and delete old/duplicate files
    - **Priority**: BEST code patterns (the most effective code that worked)
-   - **Multiple Best Codes**: If multiple effective patterns exist, save all of them (ranked best first)
-   - **Code Snippets**: Save complete, runnable Go code to ` + codePath + `/ folder (one file per best pattern, or combined if variations are similar)
+   - **Code Snippets**: Save complete, runnable Go code to ` + codePath + `/` + stepTitle + `_code.go (single file - consolidate if multiple variations exist)
    - **Ranking**: Always rank code by effectiveness - best code first
    - **Secondary**: Failure patterns (what to avoid to save time)
-   - **CRITICAL**: Write ONLY new learning content extracted from current execution to _learning_new.md (temporary file)
-   - **NO MERGING**: Do NOT merge with existing files - detection agent handles that during consolidation
+   - **CRITICAL**: Write consolidated learnings to ` + writePath + `/` + stepTitle + `_learning.md (final file, not temporary)
 
 ### **How to Extract Go Code from ExecutionHistory:**
 The ExecutionHistory section contains the complete execution conversation. Parse it to extract BOTH successful and failed Go code from write_code tool calls that relate to achieving the step description:
@@ -282,9 +290,10 @@ When parsing ExecutionHistory, analyze "## Tool Call" sections with tool_name="w
    - **Wrong**: "filepath": "Workflow/HDFC Personal Accounts/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json"
    - **Correct**: "filepath": "{{WORKSPACE_PATH}}/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json" OR "filepath": "step-1/step_1_credentials.json"
    - **In Go code**: Use os.Args[1] for workspace path and filepath.Join() for relative paths (never hardcode full paths)
-6. **Save best code**: Save complete, runnable code to ` + codePath + `/ folder:
-   - If one best pattern: Save to {StepTitle}_code.go
-   - If multiple best patterns: Save to {StepTitle}_code_v1.go, {StepTitle}_code_v2.go, etc. (ranked best first)
+6. **Save best code**: Save complete, runnable code to ` + codePath + `/{StepTitle}_code.go (single file):
+   - **Consolidate**: If multiple code patterns exist, consolidate them into ONE best code file
+   - **Delete old files**: If multiple .go files exist in code/ folder, delete all old/duplicate files and keep only the latest/best one
+   - **Single file goal**: Only ONE code file should remain: {StepTitle}_code.go
 6. **Add effectiveness notes**: 1-2 sentences explaining WHY this code is best (e.g., "Most efficient approach", "Best error handling", "Handles edge cases")
 7. **Focus on generated tool function calls**: Prioritize code that calls generated tool functions (aws_tools, workspace_tools, etc.)
 8. **Rank in learning file**: Always list best code first, then other successful variations
@@ -328,7 +337,7 @@ When documenting errors discovered from ExecutionHistory, use this format:
    
 2. **ALTERNATIVE**: Separate AWS and Workspace Calls [Runs: 8 | Success: 75%] ✅
    **Why Alternative**: More modular but slightly less efficient
-   **Code saved to**: code/{StepTitle}_code_v2.go (complete runnable code)
+   **Note**: Alternative patterns are documented in learning file but code is consolidated into single file
    **Key features**: Separate functions, easier to debug, good for complex workflows
    **Output File Format**: [Document the JSON structure/format of output files created by this code]
 
@@ -354,17 +363,18 @@ When documenting errors discovered from ExecutionHistory, use this format:
 - **Priority 3**: Output file formats (JSON structure/format of files created by execution agent - especially files referenced in success criteria)
 - **Priority 4**: Failures to avoid (save time in future executions)
 - **Keep it actionable**: Future executions should be able to replicate success using code patterns
-- **Save BEST Go code**: When Go code worked, save the BEST code to ` + codePath + `/{StepTitle}_code.go (or multiple files if multiple best variations exist)
+- **Save BEST Go code**: When Go code worked, save the BEST code to ` + codePath + `/{StepTitle}_code.go (single file - consolidate multiple variations into one)
+- **Code File Consolidation**: If multiple .go files exist in code/ folder, keep only the LATEST/BEST one and delete old/duplicate files
 - **CRITICAL - Capture Output File Formats**: Document the exact JSON structure/format of output files created by the execution agent. Since success criteria files are mostly JSON, extract the complete JSON structure including field names, data types, required vs optional fields, and nested structure. This ensures future executions create files in the same format that will pass validation.
 - **Rank by effectiveness**: Always rank code by how well it executes the step - best code first
-- **Multiple best codes**: If multiple effective patterns exist, save all of them (ranked best first) - future executions can choose the most appropriate
+- **Consolidate code files**: If multiple code patterns exist, consolidate them into a single best code file - don't keep multiple files
 - **CRITICAL - Variable Replacement**: Always replace actual values in code with variable placeholders when they match known variables. This ensures code is reusable across different environments, accounts, and configurations.
 - **CRITICAL - Workspace Path Replacement**: In learning file documentation, replace hardcoded workspace paths in tool arguments with {{WORKSPACE_PATH}} or relative paths. In Go code examples, use os.Args[1] and filepath.Join() for paths.
 - **ONLY save best code**: Only save code that is truly effective - don't save mediocre or inefficient code just because it worked
 - **Keep descriptions concise and focused on efficiency**
 - **CRITICAL - File Content Must Be Short**: Write learning files that are brief, precise, and to the point. Avoid verbose explanations, long paragraphs, or unnecessary details. Each code pattern entry should be 1-2 lines maximum. Focus on actionable information only.
-- **NO SCORING**: Do not add [Runs: X | Success: Y%] scores - detection agent handles this during consolidation
-- **NO OPTIMAL MARKERS**: Do not mark ⭐ OPTIMAL paths - detection agent handles this during consolidation
+- **UPDATE SCORES**: Maintain [Runs: X | Success: Y%%] format - increment Runs if pattern succeeded, recalculate Success %%
+- **MARK OPTIMAL**: Mark highest scoring pattern as ⭐ OPTIMAL, deprecate <50%% success as ⚠️ UNRELIABLE
 
 ### **Available Tools:**
 You have access to all MCP tools to examine workspace files and gather additional context.
@@ -374,7 +384,7 @@ You have access to all MCP tools to examine workspace files and gather additiona
 **CRITICAL**: After writing the learning file, output ONLY the file path that was updated. Keep your response minimal and concise.
 
 **Output Format:**
-` + `Updated: ` + writePath + `/_learning_new.md` + `
+` + `Updated: ` + writePath + `/` + stepTitle + `_learning.md` + `
 
 **DO NOT provide:**
 - Comprehensive summaries
@@ -386,7 +396,7 @@ You have access to all MCP tools to examine workspace files and gather additiona
 - The file path that was written/updated
 
 **Key Requirements:**
-- **EXTRACTION ONLY**: Extract patterns from current execution, do NOT merge with existing files
+- **CONSOLIDATE**: Extract patterns from current execution AND merge with existing learnings (if provided)
 - **ALWAYS analyze BOTH success patterns AND failure patterns** from execution and validation
 - **ALWAYS save working Go code** to ` + codePath + `/ folder before writing the learning file
 - Document learnings ONLY in ` + writePath + `/ folder
@@ -395,8 +405,8 @@ You have access to all MCP tools to examine workspace files and gather additiona
 - Extract and save the BEST code snippets (or multiple best variations) with full function calls
 - Rank code by effectiveness: best code first, then alternatives, then failures to avoid
 - Document only meaningful best code patterns - don't save mediocre code just because it worked
-- **WRITE TO TEMP FILE**: Write extracted patterns to _learning_new.md (temporary file for detection agent)
-- **NO MERGING**: Do NOT read existing files or merge patterns - detection agent handles that during consolidation
+- **WRITE TO FINAL FILE**: Write consolidated learnings to ` + writePath + `/` + stepTitle + `_learning.md (final file, not temporary)
+- **UPDATE SCORES**: Maintain [Runs: X | Success: Y%%] format, mark optimal paths
 - **EXCLUDE WORKSPACE TOOLS**: Never include workspace management tools in success/failure patterns unless part of the code being learned
 
 `
@@ -408,12 +418,13 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningUserM
 	// StepNumber is already the full learning path identifier (e.g., "step-3" or "step-3-true-0")
 	workspacePath := templateVars["WorkspacePath"]
 	stepNumber := templateVars["StepNumber"]
+	stepTitle := templateVars["StepTitle"]
 	writePath := workspacePath + "/learnings/" + stepNumber // Write to step-specific folder at workspace root (supports both regular and branch steps)
 	codePath := workspacePath + "/learnings/" + stepNumber + "/code"
 
 	return `# Go Code Pattern Extraction Task (Focus on Execution Efficiency)
 
-**PRIMARY GOAL**: Extract the BEST possible Go code (or multiple best variations) that executed this step most effectively, so future code generation can use optimal patterns.
+**PRIMARY GOAL**: Extract the BEST possible Go code that executed this step most effectively, so future code generation can use optimal patterns. Consolidate multiple variations into a single best code file.
 
 **Focus on finding the BEST code - most efficient, cleanest, most reliable patterns. Extract complete, runnable code snippets. Priority: Best code first, then other successful variations, then failures to avoid.**
 
@@ -482,8 +493,8 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
 4. Failures to avoid come second (save time)
 5. Keep it actionable for future executions
 6. **Write short, precise content**: Each entry should be 1-2 lines maximum. No verbose explanations.
-7. **NO SCORING**: Do not add [Runs: X | Success: Y%] scores - detection agent handles this during consolidation
-8. **NO OPTIMAL MARKERS**: Do not mark ⭐ OPTIMAL paths - detection agent handles this during consolidation
+7. **UPDATE SCORES**: Maintain [Runs: X | Success: Y%%] format - increment Runs if pattern succeeded, recalculate Success %%
+8. **MARK OPTIMAL**: Mark highest scoring pattern as ⭐ OPTIMAL, deprecate <50%% success as ⚠️ UNRELIABLE
 
 **🔴 LEARNING FROM FAILURES (TASK-SPECIFIC ONLY):**
 
@@ -502,25 +513,38 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
 - ❌ Language-specific best practices that are general knowledge
 - **These are NOT learnings** - they're general programming knowledge the LLM already knows
 
-**File to create:**
-` + `- ` + writePath + `/_learning_new.md (temporary file for detection agent)
+**File to update:**
+` + `- ` + writePath + `/` + stepTitle + `_learning.md (final consolidated file)
 
 **CRITICAL FILE HANDLING INSTRUCTIONS:**
-1. **EXTRACTION ONLY**: Extract learnings from current execution (ExecutionHistory and ValidationResult above)
-   - Do NOT read existing learning files
-   - Do NOT merge with existing patterns
-   - Do NOT update scores or optimal paths
+1. **READ EXISTING LEARNINGS** (if provided in ExistingLearningsContent):
+   - Review existing patterns and scores
+   - Identify which patterns match new patterns from current execution
    
-2. **WRITE NEW FILE**: Write extracted patterns to: ` + writePath + `/_learning_new.md
-   - This is a temporary file that the detection agent will process during consolidation
-   - Include all patterns extracted from current execution (success + failure)
-   - Use same format as final learning file, but without scores or optimal markers
+2. **CONSOLIDATE & UPDATE**: 
+   - **Plan Alignment**: Remove learnings that don't match current step description
+   - **Pattern Matching**: Match new patterns with existing (same code pattern = same pattern)
+   - **Merge**: Update existing pattern scores OR add new patterns with initial scores
+   - **Anonymize**: Replace sensitive values with {{VARIABLE_NAME}}, normalize paths
+   - **Compress**: Remove redundancy, keep concise, focus on MCP tools
+   - **Mark Optimal**: Mark highest scoring pattern as ⭐ OPTIMAL, deprecate <50%% as ⚠️ UNRELIABLE
+   - **Code File Consolidation** (CRITICAL): 
+     * Check ` + codePath + `/ folder for existing .go files
+     * If multiple .go files exist, keep only the LATEST/BEST one (based on effectiveness and recency)
+     * Delete all old/duplicate code files using delete_workspace_file tool
+     * Goal: Only ONE code file should remain: ` + codePath + `/` + stepTitle + `_code.go
    
-3. **SAVE WORKING CODE**: If Go code worked, save the complete code to ` + codePath + `/` + templateVars["StepTitle"] + `_code.go using write_workspace_file tool, then reference it in the learning file
+3. **WRITE CONSOLIDATED FILE**: Write to ` + writePath + `/` + stepTitle + `_learning.md
+   - This is the FINAL consolidated file (not temporary)
+   - Include all consolidated patterns with updated scores
+   - Focus on MCP tool patterns, minimize workspace tool noise
    
-4. **EXCLUDE WORKSPACE TOOLS**: Never include workspace management tools (read_workspace_file, write_workspace_file, etc.) in success/failure patterns unless part of the code being learned
+4. **SAVE WORKING CODE**: If Go code worked, save the complete code to ` + codePath + `/` + stepTitle + `_code.go using write_workspace_file tool, then reference it in the learning file
+   - **IMPORTANT**: This will replace any existing code file - consolidation should have already cleaned up old files
+   
+5. **EXCLUDE WORKSPACE TOOLS**: Never include workspace management tools (read_workspace_file, write_workspace_file, etc.) in success/failure patterns unless part of the code being learned
 
-**After writing the file, output ONLY the file path** (e.g., "Updated: ` + writePath + `/_learning_new.md"). 
+**After writing the file, output ONLY the file path** (e.g., "Updated: ` + writePath + `/` + stepTitle + `_learning.md"). 
 
 **Keep response minimal** - just the file path. No summaries or analysis.
 `

@@ -531,19 +531,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) buildOtherAgentsCapabilities
 		// Resolve variables in agent information
 		routeName := ResolveVariables(route.RouteName, hcpo.variableValues)
 		condition := ResolveVariables(route.Condition, hcpo.variableValues)
-		agentTitle := ResolveVariables(route.SubAgentStep.GetTitle(), hcpo.variableValues)
-		agentDescription := ResolveVariables(route.SubAgentStep.GetDescription(), hcpo.variableValues)
-
-		// Truncate description if too long (keep first 300 characters)
-		description := agentDescription
-		if len(description) > 300 {
-			description = description[:300] + "..."
-		}
 
 		summary.WriteString(fmt.Sprintf("**%s** (Route ID: `%s`)\n", routeName, route.RouteID))
 		summary.WriteString(fmt.Sprintf("- **Specialization**: %s\n", condition))
-		summary.WriteString(fmt.Sprintf("- **Agent**: %s\n", agentTitle))
-		summary.WriteString(fmt.Sprintf("- **Description**: %s\n", description))
 		if route.ContextToPass != "" {
 			summary.WriteString(fmt.Sprintf("- **Context Focus**: %s\n", ResolveVariables(route.ContextToPass, hcpo.variableValues)))
 		}
@@ -567,6 +557,73 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) buildOtherAgentsCapabilities
 	summary.WriteString("The orchestrator will review your suggestion and may route the task to the appropriate agent.\n")
 
 	return summary.String()
+}
+
+// loadExecutionResultsFromLogs loads execution results from logs folder for previous steps
+// This is a shared/reusable function that can be called from anywhere in the controller
+// It's used when resuming from a step or running a single step, where execution results aren't in memory
+// Returns an array of execution results indexed by step index (0-based)
+// For each step, it finds the latest execution result file (highest attempt, then highest iteration)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) loadExecutionResultsFromLogs(ctx context.Context, allSteps []PlanStepInterface, currentStepIndex int) []string {
+	executionResults := make([]string, currentStepIndex)
+
+	// Determine validation workspace path
+	var validationWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	} else {
+		validationWorkspacePath = hcpo.GetWorkspacePath()
+	}
+
+	// Load execution results for each previous step
+	for i := 0; i < currentStepIndex && i < len(allSteps); i++ {
+		// Determine step path (similar to how it's done in executeSingleStep)
+		stepPath := fmt.Sprintf("step-%d", i+1)
+
+		// Get execution logs folder path
+		executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepPath)
+
+		// Try to find the latest execution result file
+		// Pattern: execution-attempt-{N}-iteration-{M}.json
+		// We'll try a few common attempts and iterations, looking for the latest one
+		var latestExecutionResult string
+		var latestAttempt, latestIteration int
+
+		for attempt := 1; attempt <= 10; attempt++ {
+			for iteration := 0; iteration <= 10; iteration++ {
+				executionResultFilePath := fmt.Sprintf("%s/execution-attempt-%d-iteration-%d.json", executionLogsFolderPath, attempt, iteration)
+				content, err := hcpo.ReadWorkspaceFile(ctx, executionResultFilePath)
+				if err != nil {
+					// File doesn't exist, try next
+					continue
+				}
+
+				// Parse JSON to extract execution_result
+				var executionData map[string]interface{}
+				if err := json.Unmarshal([]byte(content), &executionData); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse execution result from %s: %v", executionResultFilePath, err))
+					continue
+				}
+
+				// Extract execution_result field
+				if execResult, ok := executionData["execution_result"].(string); ok {
+					// Keep track of the latest one (highest attempt, then highest iteration)
+					if attempt > latestAttempt || (attempt == latestAttempt && iteration > latestIteration) {
+						latestExecutionResult = execResult
+						latestAttempt = attempt
+						latestIteration = iteration
+					}
+				}
+			}
+		}
+
+		if latestExecutionResult != "" {
+			executionResults[i] = latestExecutionResult
+			hcpo.GetLogger().Info(fmt.Sprintf("📖 Loaded execution result from logs for step %d (attempt %d, iteration %d)", i+1, latestAttempt, latestIteration))
+		}
+	}
+
+	return executionResults
 }
 
 // buildPreviousStepsSummary builds a formatted summary of previous completed steps
@@ -981,6 +1038,18 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 			// This ensures learning is only discovered once, even if validation fails and we retry
 			// Always reads fresh learnings (no caching)
 			var formattedLearningHistory string
+			var learningFilePaths string // File paths for user message when KeepLearningFull is false
+
+			// Determine KeepLearningFull flag early (before reading learning files)
+			// Priority: step config > environment variable > default (true)
+			agentConfigs := getAgentConfigs(step)
+			keepLearningFull := true
+			if agentConfigs != nil && agentConfigs.KeepLearningFull != nil {
+				keepLearningFull = *agentConfigs.KeepLearningFull
+			} else if envVal := os.Getenv("KEEP_LEARNING_FULL"); envVal != "" {
+				keepLearningFull = envVal == "true" || envVal == "1"
+			}
+
 			formattedLearningHistory, err = hcpo.readLearningHistory(
 				ctx,
 				stepIndex,
@@ -989,6 +1058,29 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 			)
 			if err != nil {
 				return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("failed to read learning history for step %d: %w", stepIndex+1, err), nil)
+			}
+
+			// Get learning file paths for user message (when KeepLearningFull is false)
+			if !keepLearningFull {
+				// Generate file paths list for user message
+				baseWorkspacePath := hcpo.GetWorkspacePath()
+				stepLearningsPath := getLearningFolderPathByStepID(baseWorkspacePath, step.GetID(), stepPath)
+				learningFiles, readErr := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
+				if readErr == nil && len(learningFiles) > 0 {
+					// Build list of file paths
+					var paths []string
+					for filename := range learningFiles {
+						// Construct full path relative to workspace
+						filePath := fmt.Sprintf("%s/%s", stepLearningsPath, filename)
+						paths = append(paths, filePath)
+					}
+					// Format as bullet list
+					if len(paths) > 0 {
+						learningFilePaths = strings.Join(paths, "\n- ")
+						learningFilePaths = "- " + learningFilePaths
+						hcpo.GetLogger().Info(fmt.Sprintf("📁 Generated %d learning file path(s) for user message", len(paths)))
+					}
+				}
 			}
 
 			// Track if validation failed after exhausting all retry attempts
@@ -1039,6 +1131,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 
 				// Add learning history to template vars for execution-only agent (reused for all retry attempts)
 				templateVars["LearningHistory"] = formattedLearningHistory
+
+				// Set KeepLearningFull feature flag (already determined above, just log and set template var)
+				if agentConfigs != nil && agentConfigs.KeepLearningFull != nil {
+					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step config KeepLearningFull: %v", keepLearningFull))
+				} else if envVal := os.Getenv("KEEP_LEARNING_FULL"); envVal != "" {
+					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using environment variable KEEP_LEARNING_FULL: %v", keepLearningFull))
+				} else {
+					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using default KeepLearningFull: true (full content in system prompt)"))
+				}
+				templateVars["KeepLearningFull"] = fmt.Sprintf("%t", keepLearningFull)
+				templateVars["LearningFilePaths"] = learningFilePaths // Set file paths for user message when KeepLearningFull is false
 
 				// Check for context cancellation before creating execution agent
 				select {
@@ -2389,6 +2492,22 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 	// This allows conditional steps to use execution results directly
 	previousExecutionResults := make([]string, 0)
 
+	// If starting from a step > 0 or running a single step, load execution results from logs for previous steps
+	// This ensures we have execution results available for buildPreviousStepsSummary
+	// Single step mode: if target step > 0, we need previous steps' results
+	// Resume mode: if startFromStep > 0, we need previous steps' results
+	stepsToLoad := startFromStep
+	if execCtx.RunSingleStepOnly && execCtx.SingleStepTarget > 0 {
+		// Use the higher of the two (in case both are set)
+		if execCtx.SingleStepTarget > stepsToLoad {
+			stepsToLoad = execCtx.SingleStepTarget
+		}
+	}
+	if stepsToLoad > 0 {
+		hcpo.GetLogger().Info(fmt.Sprintf("📖 Loading execution results from logs for steps 1-%d (resuming from step %d or single step mode)", stepsToLoad, stepsToLoad+1))
+		previousExecutionResults = hcpo.loadExecutionResultsFromLogs(ctx, breakdownSteps, stepsToLoad)
+	}
+
 	// Track decision context for steps routed from decision steps
 	// Key: target step index (0-based), Value: decision context
 	decisionContextMap := make(map[int]*DecisionContext)
@@ -2774,7 +2893,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 		if isOrchestrationStep(step) {
 			// Execute orchestration step - executes main step, evaluates output, routes to sub-agents, loops until success
 			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Starting orchestration step execution: %s", step.GetTitle()))
-			successCriteriaMet, nextStepID, err := hcpo.executeOrchestrationStep(ctx, step, i, progress, previousContextFiles, iteration, execCtx, breakdownSteps)
+			successCriteriaMet, nextStepID, err := hcpo.executeOrchestrationStep(ctx, step, i, progress, previousContextFiles, previousExecutionResults, iteration, execCtx, breakdownSteps)
 			if err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Orchestration step %d execution failed: %v", i+1, err), nil)
 				// Emit error event using centralized method

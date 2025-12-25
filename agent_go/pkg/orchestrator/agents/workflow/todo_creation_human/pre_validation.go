@@ -402,14 +402,22 @@ func validateJSONCheck(
 
 	// Validate consistency check
 	if check.ConsistencyCheck != nil {
-		consistencyResult := validateConsistency(ctx, check, jsonData)
-		if !consistencyResult.Passed {
-			return consistencyResult
+		// Skip consistency check if compare_with_path is empty (malformed schema)
+		// This allows other checks (like value_type) to still pass
+		comparePath := strings.TrimSpace(check.ConsistencyCheck.CompareWithPath)
+		if comparePath == "" {
+			// Malformed consistency check - skip it but don't fail
+			// The path exists and other checks can still validate it
+		} else {
+			consistencyResult := validateConsistency(ctx, check, jsonData)
+			if !consistencyResult.Passed {
+				return consistencyResult
+			}
+			if result.CheckType == "" {
+				result.CheckType = "consistency"
+			}
+			result.Passed = true
 		}
-		if result.CheckType == "" {
-			result.CheckType = "consistency"
-		}
-		result.Passed = true
 	}
 
 	// If no specific checks were performed but path exists and MustExist is true, it passes
@@ -613,12 +621,9 @@ func validateConsistency(
 		// For consistency checks, if we need the full array (like array_length), keep it
 		// Otherwise, take the first element
 		if check.ConsistencyCheck.Type == "array_length" {
-			// For array_length, currentValue should be a number, so take first element
-			if len(valuesSlice) > 0 {
-				currentValue = valuesSlice[0]
-			} else {
-				currentValue = valuesSlice
-			}
+			// For array_length, if Path points to an array, use its length
+			// Otherwise, currentValue should be a number, so take first element
+			currentValue = valuesSlice
 		} else if len(valuesSlice) > 0 {
 			currentValue = valuesSlice[0]
 		} else {
@@ -628,10 +633,21 @@ func validateConsistency(
 		currentValue = currentValues
 	}
 
+	// Validate comparison path before using it
+	comparePath := strings.TrimSpace(check.ConsistencyCheck.CompareWithPath)
+	if comparePath == "" {
+		result.ErrorMsg = fmt.Sprintf("Consistency check requires a valid 'compare_with_path', but it is empty or whitespace. Check type: %s", check.ConsistencyCheck.Type)
+		result.Expected = "non-empty JSONPath string"
+		result.Actual = "empty or whitespace"
+		return result
+	}
+
 	// Get the value at the comparison path
-	compareValues, err := jsonpath.Get(check.ConsistencyCheck.CompareWithPath, jsonData)
+	compareValues, err := jsonpath.Get(comparePath, jsonData)
 	if err != nil {
-		result.ErrorMsg = fmt.Sprintf("Failed to get value at comparison path %s: %v", check.ConsistencyCheck.CompareWithPath, err)
+		result.ErrorMsg = fmt.Sprintf("Failed to get value at comparison path '%s': %v", comparePath, err)
+		result.Expected = fmt.Sprintf("valid path that exists in JSON: %s", comparePath)
+		result.Actual = fmt.Sprintf("path error: %v", err)
 		return result
 	}
 
@@ -660,25 +676,37 @@ func validateConsistency(
 			return result
 		}
 	case "array_length":
-		// Current value should be a number, compare value should be an array
+		// Current value can be either:
+		// 1. A number (count field) - compare with array length
+		// 2. An array (if Path incorrectly points to array) - use its length
 		var currentNum float64
-		switch v := currentValue.(type) {
-		case float64:
-			currentNum = v
-		case int:
-			currentNum = float64(v)
-		case int64:
-			currentNum = float64(v)
-		default:
-			result.ErrorMsg = fmt.Sprintf("Array length check requires number at %s, got %T", check.Path, currentValue)
-			return result
+
+		// Check if currentValue is an array (Path points to array itself)
+		if currentArray, ok := currentValue.([]interface{}); ok {
+			// Path points to an array, use its length
+			currentNum = float64(len(currentArray))
+		} else {
+			// Try to extract number from currentValue
+			switch v := currentValue.(type) {
+			case float64:
+				currentNum = v
+			case int:
+				currentNum = float64(v)
+			case int64:
+				currentNum = float64(v)
+			case float32:
+				currentNum = float64(v)
+			default:
+				result.ErrorMsg = fmt.Sprintf("Array length check requires number or array at %s, got %T", check.Path, currentValue)
+				return result
+			}
 		}
 
 		var compareArray []interface{}
 		if arr, ok := compareValue.([]interface{}); ok {
 			compareArray = arr
 		} else {
-			result.ErrorMsg = fmt.Sprintf("Array length check requires array at %s, got %T", check.ConsistencyCheck.CompareWithPath, compareValue)
+			result.ErrorMsg = fmt.Sprintf("Array length check requires array at %s, got %T", comparePath, compareValue)
 			return result
 		}
 
@@ -720,7 +748,7 @@ func validateConsistency(
 		if arr, ok := compareValue.([]interface{}); ok {
 			compareArray = arr
 		} else {
-			result.ErrorMsg = fmt.Sprintf("In array check requires array at %s, got %T", check.ConsistencyCheck.CompareWithPath, compareValue)
+			result.ErrorMsg = fmt.Sprintf("In array check requires array at %s, got %T", comparePath, compareValue)
 			return result
 		}
 

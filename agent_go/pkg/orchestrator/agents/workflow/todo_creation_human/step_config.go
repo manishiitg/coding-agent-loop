@@ -226,6 +226,9 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	if source.SelectedTools != nil {
 		target.SelectedTools = source.SelectedTools
 	}
+	if source.KeepLearningFull != nil {
+		target.KeepLearningFull = source.KeepLearningFull
+	}
 }
 
 // ApplyStepConfigFromFile loads step_config.json and applies matched config to the step.

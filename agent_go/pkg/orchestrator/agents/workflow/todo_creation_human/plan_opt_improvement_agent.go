@@ -371,9 +371,9 @@ func (pim *PlanImprovementManager) requestAndValidateFullPath(ctx context.Contex
 		// Ask user for the path
 		var promptMessage string
 		if attempt == 1 {
-			promptMessage = fmt.Sprintf("Please provide the folder path to analyze (relative to runs/ folder).\n\nExamples:\n- 'iteration-11' - to analyze a specific iteration\n- 'iteration-11/group-7' - to analyze a specific group within an iteration\n\nThe path must contain an execution/ folder.\n\nThe workspace root is: %s", originalWorkspacePath)
+			promptMessage = fmt.Sprintf("Please provide the folder path to analyze (relative to runs/ folder).\n\nExamples:\n- 'iteration-11' - to analyze a specific iteration\n- 'iteration-11/group-7' - to analyze a specific group (using group ID)\n- 'iteration-11/production' - to analyze a specific group (using display name)\n\nThe path must contain an execution/ folder.\n\nThe workspace root is: %s", originalWorkspacePath)
 		} else {
-			promptMessage = fmt.Sprintf("The path you provided doesn't exist or doesn't contain an execution/ folder. Please provide a valid path relative to runs/ folder (attempt %d/%d).\n\nExamples: 'iteration-11' or 'iteration-11/group-7'\n\nThe workspace root is: %s", attempt, maxAttempts, originalWorkspacePath)
+			promptMessage = fmt.Sprintf("The path you provided doesn't exist or doesn't contain an execution/ folder. Please provide a valid path relative to runs/ folder (attempt %d/%d).\n\nExamples: 'iteration-11', 'iteration-11/group-7', or 'iteration-11/production'\n\nThe workspace root is: %s", attempt, maxAttempts, originalWorkspacePath)
 		}
 
 		// Request human feedback (blocking call)
@@ -768,7 +768,11 @@ Run workspace absolute path: **%s**
 
 	return `# Plan Improvement Agent
 
-Analyze execution results and logs to identify and fix plan issues. Update plan.json directly after user confirmation.` + runPathNote + `
+## 🤖 AGENT IDENTITY
+**Role**: Plan Improvement Agent (Post-Execution Analysis)
+**Task**: Analyze execution results and logs to identify and fix plan issues based on ACTUAL execution failures
+**When to Use**: After execution has run and steps have failed or produced incorrect results
+**Workflow**: Read execution logs → Identify root causes → Propose fixes → Get approval → Update plan.json` + runPathNote + `
 
 ---
 
@@ -817,6 +821,16 @@ For decision steps that route incorrectly:
 - Read logs/step-X/decision-evaluation.json - see what LLM decided and why
 - Check decision_evaluation_question - does it force re-verification from evidence?
 - Verify success_criteria encode **logical correctness**, not just "file exists"
+
+### 3b. Orchestration Step Analysis
+For orchestration steps that route incorrectly or fail:
+- Read logs/step-X/orchestration-evaluation.json - see what routes were selected and why
+- Read logs/step-X/execution/orchestration-main-step.json - see main orchestrator execution
+- Read logs/step-X/execution/step-X-orchestration/ - see sub-agent execution results
+- Check orchestration_step success_criteria - is it clear when orchestrator should complete vs delegate?
+- Review orchestration_routes conditions - do they clearly match different error/situation types?
+- Verify sub-agent success_criteria are file-verifiable and execution-based
+- Check if orchestrator is looping unnecessarily - may need better success_criteria or route conditions
 
 ### 4. Validation Failures
 When validation fails repeatedly:
@@ -867,12 +881,13 @@ Good learnings are:
 ### Plan Modification Tools (After Approval Only)
 | Tool | Use For |
 |------|---------|
-| update_regular_step, update_conditional_step, update_decision_step, update_routing_step | Update existing steps |
+| update_regular_step, update_conditional_step, update_decision_step, update_orchestration_step | Update existing steps |
 | update_validation_schema | Update validation schema for an existing step (fast code-based pre-validation rules) |
 | update_success_criteria | Update success criteria for an existing step (execution-based validation focus) |
-| add_regular_step, add_conditional_step, add_decision_step, add_routing_step, add_loop_step | Add new steps |
+| add_regular_step, add_conditional_step, add_decision_step, add_orchestration_step, add_loop_step | Add new steps |
 | delete_plan_steps | Remove steps |
 | convert_step_to_conditional, add_branch_steps, update_branch_steps, delete_branch_steps | Manage conditionals |
+| add_orchestration_route, update_orchestration_route, delete_orchestration_route | Manage orchestration routes (sub-agents) |
 
 ### Response Interpretation
 | User Response | Your Action |
@@ -894,7 +909,9 @@ Good learnings are:
 | execution/execution-attempt-N-iteration-M.json | Execution results with retry info |
 | execution/execution-attempt-N-iteration-M-conversation.json | Full LLM conversation (tool calls, responses) |
 | decision-evaluation.json | Decision routing logic (for decision steps) |
-| routing-evaluation.json | Route selection reasoning (for routing steps) |
+| orchestration-evaluation.json | Route selection reasoning (for orchestration steps) |
+| execution/orchestration-main-step.json | Main orchestrator execution results |
+| execution/step-X-orchestration/ | Sub-agent execution results (for orchestration steps) |
 
 ---
 
@@ -974,7 +991,7 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) planImprovementUser
 
 **Decision Steps** (if present): %s/%s/logs/step-X/decision-evaluation.json, %s/%s/logs/step-X/execution/decision-inner-step.json, %s/%s/execution/step-X-decision/ (see system prompt for details)
 
-**Routing Steps** (if present): %s/%s/logs/step-X/routing-evaluation.json, %s/%s/logs/step-X/execution/routing-main-step.json, %s/%s/execution/step-X-routing/ (see system prompt for details)
+**Orchestration Steps** (if present): %s/%s/logs/step-X/orchestration-evaluation.json, %s/%s/logs/step-X/execution/orchestration-main-step.json, %s/%s/execution/step-X-orchestration/ (see system prompt for details)
 `, runPathRelative, workspacePath, workspacePath, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative)
 
 	return `# Plan Improvement Task

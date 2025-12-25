@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
-import type { WorkflowPhase, StepProgress, ExecutionOptions, AgentLLMConfig, VariablesManifest } from '../services/api-types'
+import type { WorkflowPhase, StepProgress, ExecutionOptions, AgentLLMConfig, VariablesManifest, VariableGroup } from '../services/api-types'
 import { ExecutionStrategy } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { useChatStore } from './useChatStore'
@@ -342,8 +342,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       getStepSpecificPhases: () => {
         return get().phases.filter(p =>
           p.id === 'plan-tool-optimization' ||
-          p.id === 'plan-improvement' ||
-          p.id === 'plan-learnings-alignment'
+          p.id === 'plan-improvement'
         )
       },
 
@@ -705,13 +704,25 @@ export const useWorkflowStore = create<WorkflowStore>()(
               }
             } else {
               // No groups selected via checkboxes - check if folder path specifies a group
-              // Pattern: iteration-X/group-Y
+              // Pattern: iteration-X/group-Y or iteration-X/display-name
               let selectedGroupId: string | null = null
-              if (state.selectedRunFolder && state.selectedRunFolder !== 'new' && state.selectedRunFolder.includes('/group-')) {
-                // Extract group ID from path like "iteration-1/group-5"
+              if (state.selectedRunFolder && state.selectedRunFolder !== 'new' && state.selectedRunFolder.includes('/')) {
+                // Extract group folder name from path like "iteration-1/group-5" or "iteration-1/production"
                 const parts = state.selectedRunFolder.split('/')
-                if (parts.length === 2 && parts[1].startsWith('group-')) {
-                  selectedGroupId = parts[1] // e.g., "group-5"
+                if (parts.length === 2) {
+                  const groupFolderName = parts[1] // e.g., "group-5" or "production"
+                  // If it starts with "group-", extract the group ID; otherwise it's a display name
+                  if (groupFolderName.startsWith('group-')) {
+                    selectedGroupId = groupFolderName // e.g., "group-5"
+                  } else {
+                    // Display name - need to find matching group from manifest
+                    const group = state.variablesManifest?.groups?.find((g: VariableGroup) => {
+                      // Check if display_name matches (sanitized) or if group_id matches
+                      const sanitizedDisplayName = groupFolderName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
+                      return g.display_name?.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim() === sanitizedDisplayName || g.group_id === groupFolderName
+                    })
+                    selectedGroupId = group?.group_id || null
+                  }
                 }
               }
 
@@ -998,11 +1009,18 @@ export const useCompletedStepIndices = () => useWorkflowStore(state => state.ste
 export const useSelectedGroupId = () => {
   return useWorkflowStore(state => {
     // Extract group ID from selectedRunFolder if it contains a group path
-    // Pattern: iteration-X/group-Y
-    if (state.selectedRunFolder && state.selectedRunFolder !== 'new' && state.selectedRunFolder.includes('/group-')) {
+    // Pattern: iteration-X/group-Y or iteration-X/display-name
+    if (state.selectedRunFolder && state.selectedRunFolder !== 'new' && state.selectedRunFolder.includes('/')) {
       const parts = state.selectedRunFolder.split('/')
-      if (parts.length === 2 && parts[1].startsWith('group-')) {
-        return parts[1] // e.g., "group-5"
+      if (parts.length === 2) {
+        const groupFolderName = parts[1] // e.g., "group-5" or "production"
+        // If it starts with "group-", return it directly; otherwise it's a display name
+        if (groupFolderName.startsWith('group-')) {
+          return groupFolderName // e.g., "group-5"
+        }
+        // For display names, we'd need the manifest to resolve, but this function just returns the folder name
+        // The caller should handle display name resolution if needed
+        return groupFolderName
       }
     }
     return null

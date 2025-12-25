@@ -158,8 +158,10 @@ func extractIterationFoldersFromTypedChildren(children []virtualtools.WorkspaceF
 										}
 									}
 								}
-								// Check if this is a group subfolder (starts with iteration-X/group-)
-								if groupName != "" && strings.HasPrefix(groupName, name+"/") && strings.HasPrefix(strings.TrimPrefix(groupName, name+"/"), "group-") {
+								// Check if this is a group subfolder (nested under iteration-X)
+								// Accepts both "group-X" format (backward compatibility) and display names (e.g., "production", "staging")
+								if groupName != "" && strings.HasPrefix(groupName, name+"/") {
+									// Any nested folder under iteration-X is considered a group folder
 									hasGroups = true
 									groupFolders = append(groupFolders, groupName)
 								}
@@ -201,7 +203,7 @@ func extractIterationFoldersFromInterfaceArray(dataArray []interface{}, existing
 }
 
 // extractIterationFoldersFromChildren extracts iteration folder names from children array (interface{} version for backward compatibility)
-// Supports both top-level (iteration-X) and nested (iteration-X/group-Y) folders
+// Supports both top-level (iteration-X) and nested (iteration-X/group-Y or iteration-X/display-name) folders
 func extractIterationFoldersFromChildren(children []interface{}, existingFolders []string) []string {
 	for _, child := range children {
 		if childMap, ok := child.(map[string]interface{}); ok {
@@ -270,8 +272,10 @@ func extractIterationFoldersFromChildren(children []interface{}, existingFolders
 										} else if n, ok := groupMap["name"].(string); ok {
 											groupName = n
 										}
-										// Check if this is a group subfolder (starts with iteration-X/group-)
-										if groupName != "" && strings.HasPrefix(groupName, name+"/") && strings.HasPrefix(strings.TrimPrefix(groupName, name+"/"), "group-") {
+										// Check if this is a group subfolder (nested under iteration-X)
+										// Accepts both "group-X" format (backward compatibility) and display names (e.g., "production", "staging")
+										if groupName != "" && strings.HasPrefix(groupName, name+"/") {
+											// Any nested folder under iteration-X is considered a group folder
 											hasGroups = true
 											groupFolders = append(groupFolders, groupName)
 										}
@@ -931,9 +935,10 @@ func (api *StreamingAPI) handleGetProgress(w http.ResponseWriter, r *http.Reques
 
 // VariableGroup represents a single set of variable values (matches controller type)
 type VariableGroup struct {
-	GroupID string            `json:"group_id"`
-	Values  map[string]string `json:"values"`
-	Enabled bool              `json:"enabled"`
+	GroupID     string            `json:"group_id"`     // e.g., "group-1", "group-2" (used as fallback for folder names)
+	DisplayName string            `json:"display_name"` // Optional user-friendly name (e.g., "Production", "Staging")
+	Values      map[string]string `json:"values"`
+	Enabled     bool              `json:"enabled"`
 }
 
 // Variable represents a single variable definition

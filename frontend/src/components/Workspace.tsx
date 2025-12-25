@@ -584,8 +584,9 @@ export default function Workspace({
       for (const file of fileList) {
         if (file.type === 'folder') {
           // Check if this is an iteration folder (matches pattern: runs/iteration-* or iteration-*)
-          // Also handle group subfolders: runs/iteration-*/group-*
-          if (file.filepath.match(/^runs\/iteration-\d+(\/group-\d+)?$/) || file.filepath.match(/^iteration-\d+(\/group-\d+)?$/)) {
+          // Also handle group subfolders: runs/iteration-*/group-* or runs/iteration-*/display-name
+          // Accepts both "group-X" format and display names (any alphanumeric/dash folder name)
+          if (file.filepath.match(/^runs\/iteration-\d+(\/[a-zA-Z0-9_-]+)?$/) || file.filepath.match(/^iteration-\d+(\/[a-zA-Z0-9_-]+)?$/)) {
             iterationFolders.push(file.filepath)
           }
           
@@ -624,9 +625,10 @@ export default function Workspace({
     // Copy all non-iteration folders to keep them expanded
     for (const folder of currentExpanded) {
       // Check if this is NOT an iteration folder
-      // Match patterns: runs/iteration-*, iteration-*, or runs/iteration-*/group-*
-      const isIterationFolder = folder.match(/^runs\/iteration-\d+(\/group-\d+)?$/) || 
-                                 folder.match(/^iteration-\d+(\/group-\d+)?$/)
+      // Match patterns: runs/iteration-*, iteration-*, or runs/iteration-*/group-* or runs/iteration-*/display-name
+      // Accepts both "group-X" format and display names (any alphanumeric/dash folder name)
+      const isIterationFolder = folder.match(/^runs\/iteration-\d+(\/[a-zA-Z0-9_-]+)?$/) || 
+                                 folder.match(/^iteration-\d+(\/[a-zA-Z0-9_-]+)?$/)
       if (!isIterationFolder) {
         newExpanded.add(folder)
       }
@@ -645,9 +647,10 @@ export default function Workspace({
     if (matchingIterationPath) {
       newExpanded.add(matchingIterationPath)
       
-      // Check if this is a group path (e.g., "iteration-10/group-1")
+      // Check if this is a group path (e.g., "iteration-10/group-1" or "iteration-10/production")
       // If so, also expand the parent iteration folder to show all groups
-      const isGroupPath = selectedRunFolder.includes('/group-')
+      // A group path is any nested folder under iteration
+      const isGroupPath = selectedRunFolder.includes('/') && selectedRunFolder.split('/').length === 2
       if (isGroupPath) {
         // Extract parent iteration folder (e.g., "iteration-10" from "iteration-10/group-1")
         const parentIterationName = selectedRunFolder.split('/')[0]

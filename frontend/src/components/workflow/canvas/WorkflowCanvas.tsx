@@ -16,13 +16,14 @@ import { StepSidebar } from './StepSidebar'
 import { VariablesSidebar } from './VariablesSidebar'
 import { StepLegend } from './StepLegend'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
-import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type StepNodeData, type ConditionalNodeData, type LoopNodeData, type DecisionNodeData } from '../hooks/usePlanToFlow'
+import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type StepNodeData, type ConditionalNodeData, type LoopNodeData, type DecisionNodeData, type OrchestratorNodeData } from '../hooks/usePlanToFlow'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { useAppStore } from '../../../stores/useAppStore'
 import { agentApi } from '../../../services/api'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
+import { isConditionalStep } from '../../../utils/stepConfigMatching'
 import type { VariablesManifest } from '../../../services/api-types'
 
 // Duration to show highlights before clearing (in ms)
@@ -64,6 +65,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const { fitView, zoomIn, zoomOut, setViewport, getNode } = useReactFlow()
   const hasInitializedView = React.useRef(false)
+  // Store step ID to focus on after nodes update (from backend plan changes)
+  const pendingFocusStepIdRef = React.useRef<string | null>(null)
 
   // Track completed step indices from selected iteration (for enabling/disabling run buttons)
   const [completedStepIndices, setCompletedStepIndices] = React.useState<number[]>([])
@@ -98,7 +101,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [selectedRunFolder, stepProgress, getCompletedStepIndices])
 
   // Load plan data with change detection
-  const { plan, loading, error, changes, updateStep, deleteStep, refresh: loadPlanRefresh, clearChanges, savePlan, saveStepConfig, setChanges } = usePlanData(workspacePath)
+  const { plan, loading, error, changes, updateStep, deleteStep, refresh: loadPlanRefresh, clearChanges, setChanges } = usePlanData(workspacePath)
 
   // Load variables when workspace changes
   React.useEffect(() => {
@@ -150,7 +153,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const {
     status,
     stepStatusMap,
-    stopWorkflow
+    stopWorkflow,
+    currentStepId
   } = useWorkflowExecution()
   
   const isExecuting = status === 'running'
@@ -220,20 +224,50 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const handleOpenSidebar = useCallback(async (nodeId: string) => {
     setShowVariablesSidebar(false) // Close variables sidebar if open
     
-    // Refresh plan.json from API to ensure we have the latest data before opening sidebar
-    try {
-      console.log('[WorkflowCanvas] Refreshing plan.json before opening sidebar for node:', nodeId)
-      await loadPlanRefresh()
-      console.log('[WorkflowCanvas] Plan refreshed, opening sidebar for node:', nodeId)
-    } catch (error) {
-      console.error('[WorkflowCanvas] Failed to refresh plan before opening sidebar:', error)
-      // Continue anyway - we'll use existing plan data
+    // First, try to find and select the node immediately (before refresh)
+    const currentNode = nodesRef.current.find(n => n.id === nodeId)
+    if (currentNode) {
+      setSelectedNode(currentNode)
     }
     
-    // Open sidebar after refresh completes (plan will be updated, nodes will re-render)
-    // Use a small delay to ensure nodes have been updated from the refreshed plan
-    focusNode(nodeId, { topPadding: 150, selectNode: true, delay: 150 })
-    console.log('[WorkflowCanvas] Opened sidebar and positioned viewport for node:', nodeId)
+    // For sub-agent nodes, extract the step ID to find the node after refresh
+    let stepIdToFind: string | undefined
+    if (currentNode && currentNode.type === 'step') {
+      const stepData = currentNode.data as StepNodeData
+      stepIdToFind = stepData?.step?.id
+    }
+    
+    // Refresh plan.json from API to ensure we have the latest data before opening sidebar
+    try {
+      await loadPlanRefresh()
+    } catch (error) {
+      console.error('[WorkflowCanvas] Failed to refresh plan before opening sidebar:', error)
+    }
+    
+    // After refresh, ensure the node is still selected
+    setTimeout(() => {
+      // Try to find by node ID first
+      let updatedNode = nodesRef.current.find(n => n.id === nodeId)
+      
+      // If not found and we have a step ID, try finding by step ID (for sub-agents)
+      if (!updatedNode && stepIdToFind) {
+        updatedNode = nodesRef.current.find(n => {
+          if (n.type === 'step') {
+            const stepData = n.data as StepNodeData
+            return stepData?.step?.id === stepIdToFind
+          }
+          return false
+        }) as WorkflowNode | undefined
+      }
+      
+      if (updatedNode) {
+        setSelectedNode(updatedNode)
+        focusNode(updatedNode.id, { topPadding: 150, selectNode: false, delay: 0 })
+      } else {
+        // Fallback: try to focus on original nodeId anyway
+        focusNode(nodeId, { topPadding: 150, selectNode: false, delay: 0 })
+      }
+    }, 200)
   }, [focusNode, loadPlanRefresh])
 
   // Handle navigating to a step from legend (without opening sidebar)
@@ -247,22 +281,25 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     handleOpenSidebarRef.current = handleOpenSidebar
   }, [handleOpenSidebar])
 
+  // Memoize callbacks to prevent usePlanToFlow from recalculating on every render
+  const handleRunFromStepCallback = useCallback((stepIndex: number, stepId: string) => {
+    if (handleRunFromStepRef.current) {
+      handleRunFromStepRef.current(stepIndex, stepId)
+    }
+  }, [])
+
+  const handleOpenSidebarCallback = useCallback((nodeId: string) => {
+    if (handleOpenSidebarRef.current) {
+      handleOpenSidebarRef.current(nodeId)
+    }
+  }, [])
+
   // Convert plan to React Flow nodes and edges (with change highlights and run callback)
   const { nodes: initialNodes, edges: initialEdges } = usePlanToFlow(plan, { 
     // Prerequisite edges are always shown (default: true in usePlanToFlow)
     changes,  // Pass changes to highlight modified nodes
-    onRunFromStep: (stepIndex: number, stepId: string) => {
-      // Call the ref function if it's available
-      if (handleRunFromStepRef.current) {
-        handleRunFromStepRef.current(stepIndex, stepId)
-      }
-    },
-    onOpenSidebar: (nodeId: string) => {
-      // Call the ref function if it's available
-      if (handleOpenSidebarRef.current) {
-        handleOpenSidebarRef.current(nodeId)
-      }
-    },
+    onRunFromStep: handleRunFromStepCallback,
+    onOpenSidebar: handleOpenSidebarCallback,
     isExecuting,
     completedStepIndices,  // Pass completed steps for enabling/disabling run buttons
     stepStatusMap: stepStatusMap,  // Pass step status map from events
@@ -288,12 +325,22 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     })
     
     if (nodeToFocus) {
-      focusNode(nodeToFocus.id, { topPadding: 50, selectNode: true, delay: 100 })
+      // Focus viewport on the node without changing sidebar selection.
+      // This keeps the sidebar closed for execution events (currentStepId)
+      // and simply repositions the view when the sidebar is already open.
+      focusNode(nodeToFocus.id, { topPadding: 50, selectNode: false, delay: 100 })
       console.log('[WorkflowCanvas] Highlighted step node:', stepId, '-> node ID:', nodeToFocus.id)
     } else {
       console.warn('[WorkflowCanvas] Could not find node for stepId:', stepId)
     }
   }, [focusNode])
+
+  // Auto-focus on the current running step when it changes
+  React.useEffect(() => {
+    if (currentStepId) {
+      highlightStepNode(currentStepId)
+    }
+  }, [currentStepId, highlightStepNode])
 
   // Handle "run from step" button click on nodes - runs only the single step
   // Uses workflow store directly for execution options (single source of truth)
@@ -396,27 +443,14 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }), [loadPlanRefresh, plan, setChanges])
 
-  // Clear highlights after timeout and auto-focus on changed steps
+  // Store step ID to focus on when changes are detected (will focus after nodes update)
   React.useEffect(() => {
     if (changes?.hasChanges) {
-      // Auto-focus on first added or updated step when plan/step config is updated
+      // Store the step ID to focus on (will be used after nodes are updated)
       const stepToFocus = changes.added?.[0] || changes.updated?.[0]
       if (stepToFocus) {
-        // Find the node for this step
-        const node = nodesRef.current.find(n => {
-          if (n.type === 'step' || n.type === 'conditional' || n.type === 'loop' || n.type === 'decision') {
-            const nodeData = n.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
-            const nodeStepId = nodeData?.step?.id || n.id
-            return nodeStepId === stepToFocus
-          }
-          return false
-        })
-        
-        if (node) {
-          // Auto-focus on the changed step (position viewport, but don't open sidebar)
-          focusNode(node.id, { topPadding: 150, selectNode: false, delay: 300 })
-          console.log('[WorkflowCanvas] Auto-focused on step that was added/updated:', stepToFocus, node.id)
-        }
+        pendingFocusStepIdRef.current = stepToFocus
+        console.log('[WorkflowCanvas] Stored step ID to focus after nodes update:', stepToFocus)
       }
       
       // Clear any existing timeout
@@ -437,7 +471,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         clearTimeout(highlightTimeoutRef.current)
       }
     }
-  }, [changes, clearChanges, focusNode])
+  }, [changes, clearChanges])
 
   // Track previous nodes/edges to detect actual changes
   const prevNodesRef = React.useRef<typeof initialNodes>([])
@@ -515,10 +549,80 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         prevCount: prevNodesRef.current.length,
         newCount: initialNodes.length
       })
+      
+      // Check if we have a selected node - if so, preserve focus on it instead of resetting to start
+      const currentSelectedId = selectedNodeIdRef.current
+      const hasSelectedNode = currentSelectedId !== null && 
+        initialNodes.some(n => n.id === currentSelectedId)
+      
       setNodes(initialNodes)
-      // Reset view initialization flag when nodes actually change
-      hasInitializedView.current = false
+      
+      // Only reset view initialization flag if we don't have a selected node
+      // If we have a selected node, we'll re-focus on it after nodes update
+      if (!hasSelectedNode) {
+        hasInitializedView.current = false
+      }
+      
       prevNodesRef.current = initialNodes
+      
+      // After nodes are updated, check if we need to focus on a changed step (from backend updates)
+      // Use setTimeout to ensure nodes are fully rendered in React Flow
+      if (pendingFocusStepIdRef.current) {
+        const stepIdToFocus = pendingFocusStepIdRef.current
+        // Store focusNode in a local variable to avoid dependency issues
+        const focusNodeFn = focusNode
+        setTimeout(() => {
+          // Find the node for this step ID - prioritize step.id over node.id for accurate matching
+          // For orchestration steps: nodeData.step.id is the wrapper step ID (e.g., "orchestrate-hdfc-bank-login")
+          // For conditional steps: nodeData.step.id is the wrapper step ID
+          // For branch steps: nodeData.step.id is the actual step ID from plan.json (not the constructed node ID)
+          const nodeToFocus = initialNodes.find(n => {
+            if (n.type === 'step' || n.type === 'conditional' || n.type === 'loop' || n.type === 'decision' || n.type === 'orchestrator') {
+              const nodeData = n.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
+              // Match by step.id first (this is the actual step ID from plan.json - the wrapper step ID for orchestration/conditional)
+              // This matches what the backend sends in changed_step_ids
+              const stepId = nodeData?.step?.id
+              if (stepId === stepIdToFocus) {
+                return true
+              }
+              // Fallback: match by node.id only if step.id doesn't exist (shouldn't happen for valid steps)
+              if (!stepId && n.id === stepIdToFocus) {
+                return true
+              }
+              return false
+            }
+            return false
+          })
+          
+          if (nodeToFocus) {
+            // Focus on the changed step (position viewport, but don't open sidebar)
+            focusNodeFn(nodeToFocus.id, { topPadding: 150, selectNode: false, delay: 0 })
+            const nodeData = nodeToFocus.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
+            console.log('[WorkflowCanvas] Auto-focused on step that was changed by backend:', {
+              stepId: stepIdToFocus,
+              nodeId: nodeToFocus.id,
+              stepTitle: nodeData?.step?.title,
+              matchedBy: nodeData?.step?.id === stepIdToFocus ? 'step.id' : 'node.id'
+            })
+          } else {
+            console.warn('[WorkflowCanvas] Could not find node for changed step ID:', stepIdToFocus, {
+              availableNodes: initialNodes
+                .filter(n => n.type === 'step' || n.type === 'conditional' || n.type === 'loop' || n.type === 'decision' || n.type === 'orchestrator')
+                .map(n => {
+                  const nodeData = n.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
+                  return {
+                    nodeId: n.id,
+                    stepId: nodeData?.step?.id,
+                    stepTitle: nodeData?.step?.title
+                  }
+                })
+            })
+          }
+          
+          // Clear the pending focus
+          pendingFocusStepIdRef.current = null
+        }, 200) // Small delay to ensure React Flow has rendered the nodes
+      }
     }
     
     if (edgesChanged) {
@@ -529,7 +633,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       setEdges(initialEdges)
       prevEdgesRef.current = initialEdges
     }
-  }, [initialNodes, initialEdges, setNodes, setEdges])
+  }, [initialNodes, initialEdges, setNodes, setEdges, focusNode])
 
   // Store selected node ID in ref to track which node is selected
   const selectedNodeIdRef = React.useRef<string | null>(null)
@@ -543,6 +647,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Update selectedNode when nodes change (e.g., when plan is refreshed from backend)
   // This ensures the side panel shows updated step data when plan changes
+  // Also re-focuses on the selected node after nodes update (e.g., after saving step config)
   React.useEffect(() => {
     const selectedId = selectedNodeIdRef.current
     console.log('[WorkflowPlanUpdate] Checking selectedNode update', {
@@ -562,6 +667,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       // Selected node no longer exists (was deleted)
       console.log('[WorkflowPlanUpdate] Selected node no longer exists, clearing selection')
       setSelectedNode(null)
+      // Reset view initialization since selected node is gone
+      hasInitializedView.current = false
       return
     }
 
@@ -580,6 +687,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     const oldStep = oldData?.step
     const newStep = newData?.step
     
+    let shouldUpdate = false
     if (oldStep && newStep) {
       // Compare by JSON stringify to detect any changes
       const oldStepStr = JSON.stringify(oldStep)
@@ -591,18 +699,28 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           newStepKeys: Object.keys(newStep),
           agentConfigsChanged: JSON.stringify(oldStep.agent_configs || {}) !== JSON.stringify(newStep.agent_configs || {})
         })
-        setSelectedNode(updatedNode)
+        shouldUpdate = true
       } else {
         console.log('[WorkflowPlanUpdate] Selected node step data unchanged')
       }
     } else if (updatedNode !== currentSelected) {
       // Node structure changed (e.g., type changed)
       console.log('[WorkflowPlanUpdate] Node structure changed, updating selectedNode')
-      setSelectedNode(updatedNode)
+      shouldUpdate = true
     } else {
       console.log('[WorkflowPlanUpdate] Selected node unchanged')
     }
-  }, [nodes, selectedNode]) // Include selectedNode to compare, but logic prevents loops
+    
+    if (shouldUpdate) {
+      setSelectedNode(updatedNode)
+      // Re-focus on the selected node after update (e.g., after saving step config)
+      // This ensures the view stays focused on the same step when the sidebar is closed
+      setTimeout(() => {
+        focusNode(selectedId, { topPadding: 150, selectNode: false, delay: 0 })
+        console.log('[WorkflowPlanUpdate] Re-focused on selected node after update:', selectedId)
+      }, 100)
+    }
+  }, [nodes, selectedNode, focusNode]) // Include focusNode in dependencies
 
   // Set initial view to show start node (left side) on first load
   React.useEffect(() => {
@@ -642,64 +760,80 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [nodes, setViewport, getNode])
 
-  // Track previous status map to detect status changes
+  // Track previous stepStatusMap to detect actual changes
   const prevStepStatusMapRef = React.useRef<Map<string, 'pending' | 'running' | 'completed' | 'failed'>>(new Map())
 
-  // Update node status based on step status map from events
+  // Update node status based on maps from events (only when stepStatusMap actually changes)
   React.useEffect(() => {
-    if (stepStatusMap.size > 0) {
-      const prevStatusMap = prevStepStatusMapRef.current
-      
-      setNodes(nds => 
-        nds.map(node => {
-          // Only update status for step-type nodes (step, conditional, loop, decision)
-          // Validation and learning nodes have different status types
-          if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
-            const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
-            const stepId = nodeData?.step?.id || node.id
-            const stepStatus = stepStatusMap.get(stepId)
-            
-            if (stepStatus) {
-              // Detect if step just transitioned to 'running' (was not 'running' before)
-              const prevStatus = prevStatusMap.get(stepId)
-              if (stepStatus === 'running' && prevStatus !== 'running') {
-                // Auto-focus on the node when it starts running (position viewport, but don't open sidebar)
-                // This happens when the running label and loader are added to the node
-                focusNode(node.id, { topPadding: 150, selectNode: false, delay: 100 })
-                console.log('[WorkflowCanvas] Auto-focused on step that started running:', stepId, node.id)
-              }
-              
-              if (node.type === 'step') {
-                return {
-                  ...node,
-                  data: { ...node.data, status: stepStatus } as StepNodeData
-                } as WorkflowNode
-              } else if (node.type === 'conditional') {
-                return {
-                  ...node,
-                  data: { ...node.data, status: stepStatus } as ConditionalNodeData
-                } as WorkflowNode
-              } else if (node.type === 'loop') {
-                return {
-                  ...node,
-                  data: { ...node.data, status: stepStatus } as LoopNodeData
-                } as WorkflowNode
-              } else if (node.type === 'decision') {
-                return {
-                  ...node,
-                  data: { ...node.data, status: stepStatus } as DecisionNodeData
-                } as WorkflowNode
-              }
+    // Check if stepStatusMap actually changed by comparing entries
+    const hasChanged = stepStatusMap.size !== prevStepStatusMapRef.current.size ||
+      Array.from(stepStatusMap.entries()).some(([stepId, status]) => 
+        prevStepStatusMapRef.current.get(stepId) !== status
+      )
+
+    if (!hasChanged) {
+      return // No actual changes, skip update
+    }
+
+    setNodes(nds => {
+      let hasUpdates = false
+      const updatedNodes = nds.map(node => {
+        // Only update status for step-type nodes (step, conditional, loop, decision)
+        // Validation and learning nodes have different status types
+        if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
+          const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
+          const stepId = nodeData?.step?.id || node.id
+          const stepStatus = stepStatusMap.get(stepId)
+          const currentStatus = nodeData?.status
+          
+          // Only update if status actually changed
+          if (stepStatus && stepStatus !== currentStatus) {
+            hasUpdates = true
+            if (node.type === 'step') {
+              return {
+                ...node,
+                data: { 
+                  ...node.data, 
+                  status: stepStatus
+                } as StepNodeData
+              } as WorkflowNode
+            } else if (node.type === 'conditional') {
+              return {
+                ...node,
+                data: { 
+                  ...node.data, 
+                  status: stepStatus
+                } as ConditionalNodeData
+              } as WorkflowNode
+            } else if (node.type === 'loop') {
+              return {
+                ...node,
+                data: { 
+                  ...node.data, 
+                  status: stepStatus
+                } as LoopNodeData
+              } as WorkflowNode
+            } else if (node.type === 'decision') {
+              return {
+                ...node,
+                data: { 
+                  ...node.data, 
+                  status: stepStatus
+                } as DecisionNodeData
+              } as WorkflowNode
             }
           }
-          return node
-        })
-      )
-      
-      // Update previous status map (for tracking changes)
-      prevStepStatusMapRef.current = new Map(stepStatusMap)
-    }
-  }, [stepStatusMap, setNodes, nodes.length, focusNode])
+        }
+        return node
+      })
+
+      // Only return new array if there were actual updates
+      return hasUpdates ? updatedNodes : nds
+    })
+    
+    // Update previous status map (for tracking changes)
+    prevStepStatusMapRef.current = new Map(stepStatusMap)
+  }, [stepStatusMap, setNodes])
 
   // Handle node selection - disabled: nodes no longer open sidebar on click
   // Sidebar is now opened via settings icon button on nodes
@@ -754,52 +888,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const totalSteps = plan?.steps?.length || 0
 
 
-  // Recursively find and update a step by ID (including branch steps)
-  const findAndUpdateStep = useCallback(async (steps: PlanStep[], stepId: string, updates: Partial<PlanStep>): Promise<boolean> => {
-    for (let i = 0; i < steps.length; i++) {
-      if (steps[i].id === stepId) {
-        // Found the step - update it
-        steps[i] = {
-          ...steps[i],
-          ...updates
-        }
-        return true
-      }
-      
-      // Check branch steps recursively
-      const trueSteps = steps[i].if_true_steps
-      if (trueSteps && trueSteps.length > 0) {
-        if (await findAndUpdateStep(trueSteps, stepId, updates)) {
-          return true
-        }
-      }
-      const falseSteps = steps[i].if_false_steps
-      if (falseSteps && falseSteps.length > 0) {
-        if (await findAndUpdateStep(falseSteps, stepId, updates)) {
-          return true
-        }
-      }
-    }
-    return false
-  }, [])
-
-  // Helper function to check if updates contain plan-related fields (excluding agent_configs)
-  const hasPlanRelatedFields = useCallback((updates: Partial<PlanStep>): boolean => {
-    // List of all plan-related fields (everything except agent_configs)
-    const planFields = [
-      'id', 'title', 'description', 'success_criteria', 'context_dependencies', 'context_output',
-      'has_loop', 'loop_condition', 'max_iterations', 'loop_description',
-      'has_condition', 'condition_question', 'condition_context',
-      'if_true_steps', 'if_false_steps', 'if_true_next_step_id', 'if_false_next_step_id',
-      'condition_result', 'condition_reason',
-      'has_decision_step', 'decision_step', 'decision_evaluation_question',
-      'decision_result', 'decision_reason'
-    ]
-    
-    // Check if any plan-related field is in updates
-    return planFields.some(field => field in updates)
-  }, [])
-
   // Handle edit step
   const handleEditStep = useCallback(async (stepId: string, updates: Partial<PlanStep>) => {
     if (!plan) return
@@ -812,9 +900,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       stepIndex,
       foundStep: stepIndex >= 0,
       stepTitle: stepIndex >= 0 ? plan.steps[stepIndex]?.title : 'N/A',
-      stepHasCondition: stepIndex >= 0 ? plan.steps[stepIndex]?.has_condition : false,
+      stepHasCondition: stepIndex >= 0 ? (plan.steps[stepIndex] ? isConditionalStep(plan.steps[stepIndex]) : false) : false,
       hasAgentConfigs: 'agent_configs' in updates,
-      hasPlanFields: hasPlanRelatedFields(updates),
       updatesKeys: Object.keys(updates),
       isBranchStep: stepIndex < 0
     })
@@ -828,7 +915,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           foundStepId: foundStep.id,
           stepIndex,
           foundStepTitle: foundStep.title,
-          foundStepHasCondition: foundStep.has_condition
+          foundStepHasCondition: isConditionalStep(foundStep)
         })
         throw new Error(`Step ID mismatch: requested ${stepId} but found ${foundStep.id} at index ${stepIndex}`)
       }
@@ -838,41 +925,41 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       // Highlight the step node after saving config
       highlightStepNode(stepId)
     } else {
-      // Branch step - recursively find and update
-      if (!plan.steps) {
-        throw new Error('Plan has no steps')
+      // Branch step - use backend API (handles nested steps recursively)
+      if (!workspacePath) {
+        throw new Error('Workspace path is required')
       }
-      const updatedSteps = [...plan.steps]
-      const found = await findAndUpdateStep(updatedSteps, stepId, updates)
-      
-      if (found) {
-        // Only save plan.json if updates contain plan-related fields (not just agent_configs)
-        const shouldSavePlan = hasPlanRelatedFields(updates)
-        if (shouldSavePlan) {
-          const updatedPlan = {
-            ...plan,
-            steps: updatedSteps
-          }
-          await savePlan(updatedPlan)
-        }
-        
-        // If agent_configs is in updates, save to step_config.json
-        if ('agent_configs' in updates) {
-          await saveStepConfig(stepId, updates.agent_configs)
-        }
-        
-        // Highlight the step node after saving config
-        highlightStepNode(stepId)
-      } else {
-        console.error('[WorkflowCanvas] Step not found (including branch steps):', {
-          stepId,
-          totalSteps: plan.steps.length,
-          stepIds: plan.steps.map(s => ({ id: s.id, title: s.title }))
-        })
-        throw new Error(`Step with ID "${stepId}" not found in plan (including branch steps)`)
+
+      // Separate plan updates and config updates
+      const { agent_configs, ...planUpdates } = updates
+
+      // Send update instructions to backend
+      const promises: Promise<{ success: boolean; message: string; data?: unknown }>[] = []
+
+      // Update plan if there are plan-related fields
+      if (Object.keys(planUpdates).length > 0) {
+        promises.push(
+          agentApi.updatePlanStep(workspacePath, stepId, planUpdates)
+        )
       }
+
+      // Update config if agent_configs is provided
+      if (agent_configs !== undefined) {
+        promises.push(
+          agentApi.updateStepConfig(workspacePath, stepId, agent_configs)
+        )
+      }
+
+      // Wait for all updates to complete
+      await Promise.all(promises)
+
+      // Refresh plan from backend
+      await loadPlanRefresh()
+
+      // Highlight the step node after saving
+      highlightStepNode(stepId)
     }
-  }, [plan, updateStep, highlightStepNode, findAndUpdateStep, savePlan, saveStepConfig, hasPlanRelatedFields])
+  }, [plan, workspacePath, updateStep, highlightStepNode, loadPlanRefresh])
 
   // Handle delete step
   const handleDeleteStep = useCallback(async (stepId: string) => {
@@ -884,6 +971,55 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       setSelectedNode(null)
     }
   }, [plan, deleteStep])
+
+  // Handle bulk update steps
+  const handleBulkUpdateSteps = useCallback(async (updates: Array<{ stepId: string; updates: Partial<PlanStep> }>) => {
+    if (!plan || !workspacePath) {
+      throw new Error('No plan loaded or workspace path missing')
+    }
+
+    console.log('[WorkflowCanvas] handleBulkUpdateSteps:', {
+      updateCount: updates.length,
+      stepIds: updates.map(u => u.stepId)
+    })
+
+    // Prepare batch update request
+    const batchUpdates = updates.map(({ stepId, updates: stepUpdates }) => {
+      const { agent_configs, ...planUpdates } = stepUpdates
+      return {
+        stepId,
+        planUpdates: Object.keys(planUpdates).length > 0 ? planUpdates : undefined,
+        configUpdates: agent_configs !== undefined ? agent_configs : undefined
+      }
+    }).filter(u => u.planUpdates !== undefined || u.configUpdates !== undefined)
+
+    if (batchUpdates.length === 0) {
+      console.log('[WorkflowCanvas] No updates to apply in bulk update')
+      return
+    }
+
+    // Call backend batch update API
+    const result = await agentApi.batchUpdateSteps(workspacePath, batchUpdates)
+
+    // Log errors if any occurred
+    if (result.data?.errors && result.data.errors.length > 0) {
+      console.warn('[WorkflowCanvas] Batch update completed with errors:', {
+        updatedSteps: result.data.updated_steps,
+        updatedConfigs: result.data.updated_configs,
+        errors: result.data.errors
+      })
+      // Optionally show error notification to user
+      // You could add a toast notification here if needed
+    } else {
+      console.log('[WorkflowCanvas] Bulk update completed:', {
+        updatedSteps: result.data?.updated_steps || 0,
+        updatedConfigs: result.data?.updated_configs || 0
+      })
+    }
+
+    // Refresh plan from backend
+    await loadPlanRefresh()
+  }, [plan, workspacePath, loadPlanRefresh])
 
 
   // Handle fit view
@@ -986,6 +1122,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         presetQueryId={presetQueryId}
         onStartPhase={handleStartPhase}
         onStop={stopWorkflow}
+        onBulkUpdateSteps={handleBulkUpdateSteps}
         onCreatePlan={onCreatePlan || (() => {})}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
@@ -1036,6 +1173,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             nodes={nodes}
             selectedNodeId={selectedNode?.id || null}
             onStepClick={handleNavigateToStep}
+            workspacePath={workspacePath}
           />
         )}
         </div>

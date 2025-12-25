@@ -4,7 +4,7 @@ import { agentApi } from "../../../services/api";
 import { usePresetApplication } from "../../../stores/useGlobalPresetStore";
 import { useModeStore } from "../../../stores/useModeStore";
 import type { TodoStepsExtractedEvent } from "../../../generated/events-bridge";
-import type { TodoStepWithConfigs, AgentConfigs, StepConfig, PlanningResponse } from "../../../utils/stepConfigMatching";
+import type { TodoStepWithConfigs, AgentConfigs, StepConfig } from "../../../utils/stepConfigMatching";
 import type { PresetLLMConfig } from "../../../services/api-types";
 import ConfirmationDialog from "../../ui/ConfirmationDialog";
 import { Edit2, Trash2, Save, X, ChevronDown, ChevronRight, GitBranch, RefreshCw, CheckCircle2 } from "lucide-react";
@@ -261,15 +261,6 @@ export const TodoStepsExtractedEventDisplay: React.FC<
     return new Date(timestamp).toLocaleTimeString();
   };
 
-  // Get plan.json file path
-  const getPlanFilePath = useCallback((): string => {
-    const workspacePath = getWorkspacePath(event);
-    if (!workspacePath) {
-      throw new Error("workspace_path is required but not provided in TodoStepsExtractedEvent");
-    }
-    return `${workspacePath}/planning/plan.json`;
-  }, [event]);
-
   // Handle edit step (description and loop_description)
   const handleEditStep = async (stepIndex: number) => {
     setIsSavingStepEdit(true);
@@ -279,55 +270,52 @@ export const TodoStepsExtractedEventDisplay: React.FC<
         throw new Error("Workspace path is not available");
       }
 
-      const planFilePath = getPlanFilePath();
-      
-      // Read current plan.json
-      const planResponse = await agentApi.getPlannerFileContent(planFilePath);
-      if (!planResponse.success || !planResponse.data) {
-        throw new Error("Failed to read plan.json");
+      // Validate step index
+      if (stepIndex < 0 || stepIndex >= steps.length) {
+        throw new Error("Invalid step index");
       }
 
-      const plan: PlanningResponse = JSON.parse(planResponse.data.content);
-      
-      // Validate plan structure
-      if (!plan.steps || !Array.isArray(plan.steps) || stepIndex >= plan.steps.length) {
-        throw new Error("Invalid plan structure or step index");
+      const currentStep = steps[stepIndex];
+      if (!currentStep.id) {
+        throw new Error("Step is missing required ID field");
       }
 
-      // Update step description
-      plan.steps[stepIndex].description = editedStepDescription;
-      
-      // Update success criteria
-      plan.steps[stepIndex].success_criteria = editedSuccessCriteria;
-      
+      // Build updates object
+      const updates: Partial<{
+        description: string;
+        success_criteria: string;
+        loop_condition: string;
+        max_iterations: number;
+        loop_description: string;
+      }> = {
+        description: editedStepDescription,
+        success_criteria: editedSuccessCriteria,
+      };
+
       // Update loop fields if step has loop
-      if (plan.steps[stepIndex].has_loop) {
-        plan.steps[stepIndex].loop_condition = editedLoopCondition;
+      // Note: TodoStepWithConfigs uses boolean flags (has_loop) instead of type field
+      if (currentStep.has_loop) {
+        updates.loop_condition = editedLoopCondition;
         // Parse max_iterations as integer (default to 10 if invalid)
         const maxIterations = parseInt(editedMaxIterations, 10);
         if (!isNaN(maxIterations) && maxIterations > 0) {
-          plan.steps[stepIndex].max_iterations = maxIterations;
+          updates.max_iterations = maxIterations;
         } else if (editedMaxIterations.trim() === "") {
           // If empty, use default of 10
-          plan.steps[stepIndex].max_iterations = 10;
+          updates.max_iterations = 10;
         }
-        plan.steps[stepIndex].loop_description = editedLoopDescription;
+        updates.loop_description = editedLoopDescription;
       }
 
-      // Save updated plan.json
-      const updatedContent = JSON.stringify(plan, null, 2);
-      const updateParts = ['description', 'success criteria'];
-      if (plan.steps[stepIndex].has_loop) {
-        updateParts.push('loop condition', 'max iterations', 'loop description');
-      }
-      const saveResponse = await agentApi.updatePlannerFile(
-        planFilePath,
-        updatedContent,
-        `Updated step ${stepIndex + 1} ${updateParts.join(', ')}`
+      // Use new backend API to update step
+      const updateResponse = await agentApi.updatePlanStep(
+        workspacePath,
+        currentStep.id,
+        updates
       );
 
-      if (!saveResponse.success) {
-        throw new Error(saveResponse.message || "Failed to save plan.json");
+      if (!updateResponse.success) {
+        throw new Error(updateResponse.message || "Failed to update step");
       }
 
       // Update local state to reflect changes
@@ -337,9 +325,9 @@ export const TodoStepsExtractedEventDisplay: React.FC<
           ...updated[stepIndex],
           description: editedStepDescription,
           success_criteria: editedSuccessCriteria,
-          loop_condition: plan.steps[stepIndex].has_loop ? editedLoopCondition : updated[stepIndex].loop_condition,
-          max_iterations: plan.steps[stepIndex].has_loop ? plan.steps[stepIndex].max_iterations : updated[stepIndex].max_iterations,
-          loop_description: plan.steps[stepIndex].has_loop ? editedLoopDescription : updated[stepIndex].loop_description,
+          loop_condition: currentStep.has_loop ? editedLoopCondition : updated[stepIndex].loop_condition,
+          max_iterations: currentStep.has_loop ? (updates.max_iterations ?? updated[stepIndex].max_iterations) : updated[stepIndex].max_iterations,
+          loop_description: currentStep.has_loop ? editedLoopDescription : updated[stepIndex].loop_description,
         };
         return updated;
       });
@@ -368,49 +356,25 @@ export const TodoStepsExtractedEventDisplay: React.FC<
         throw new Error("Workspace path is not available");
       }
 
-      const planFilePath = getPlanFilePath();
-      
-      // Read current plan.json
-      const planResponse = await agentApi.getPlannerFileContent(planFilePath);
-      if (!planResponse.success || !planResponse.data) {
-        throw new Error("Failed to read plan.json");
+      // Validate step index
+      if (stepIndex < 0 || stepIndex >= steps.length) {
+        throw new Error("Invalid step index");
       }
 
-      const plan: PlanningResponse = JSON.parse(planResponse.data.content);
-      
-      // Validate plan structure
-      if (!plan.steps || !Array.isArray(plan.steps) || stepIndex >= plan.steps.length) {
-        throw new Error("Invalid plan structure or step index");
+      const stepToDeleteObj = steps[stepIndex];
+      if (!stepToDeleteObj.id) {
+        throw new Error("Step is missing required ID field");
       }
 
-      // Get deleted step's context_output for cleanup
-      const deletedStep = plan.steps[stepIndex];
-      const deletedContextOutput = deletedStep.context_output;
-
-      // Remove step from array
-      plan.steps.splice(stepIndex, 1);
-
-      // Clean up context_dependencies in remaining steps
-      if (deletedContextOutput) {
-        plan.steps.forEach((step: { context_dependencies?: string[] }) => {
-          if (step.context_dependencies && Array.isArray(step.context_dependencies)) {
-            step.context_dependencies = step.context_dependencies.filter(
-              (dep: string) => dep !== deletedContextOutput
-            );
-          }
-        });
-      }
-
-      // Save updated plan.json
-      const updatedContent = JSON.stringify(plan, null, 2);
-      const saveResponse = await agentApi.updatePlannerFile(
-        planFilePath,
-        updatedContent,
-        `Deleted step ${stepIndex + 1}`
+      // Use new backend API to delete step
+      // Backend will handle context_dependencies cleanup automatically
+      const deleteResponse = await agentApi.deleteStep(
+        workspacePath,
+        stepToDeleteObj.id
       );
 
-      if (!saveResponse.success) {
-        throw new Error(saveResponse.message || "Failed to save plan.json");
+      if (!deleteResponse.success) {
+        throw new Error(deleteResponse.message || "Failed to delete step");
       }
 
       // Update local state to remove deleted step
@@ -451,46 +415,15 @@ export const TodoStepsExtractedEventDisplay: React.FC<
     setEditedLoopDescription("");
   };
 
-  // Helper function to collect all step IDs recursively (including nested branch steps)
-  const collectAllStepIds = (steps: TodoStepWithConfigs[]): Set<string> => {
-    const ids = new Set<string>();
-    
-    const collectIds = (stepList: TodoStepWithConfigs[]) => {
-      for (const step of stepList) {
-        if (step.id) {
-          ids.add(step.id);
-        }
-        // Recursively collect IDs from branch steps
-        if (step.if_true_steps && step.if_true_steps.length > 0) {
-          collectIds(step.if_true_steps);
-        }
-        if (step.if_false_steps && step.if_false_steps.length > 0) {
-          collectIds(step.if_false_steps);
-        }
-      }
-    };
-    
-    collectIds(steps);
-    return ids;
-  };
-
   // Handle save step configuration
   // stepPath: optional path for branch steps (e.g., "step-2-if-true-0") - only used temporarily to extract parent step info, not saved
   const handleSaveStep = async (updatedStep: TodoStepWithConfigs, stepIndex: number, stepPath?: string) => {
     setIsSaving(true);
     try {
-      const stepConfigFilePath = getStepConfigFilePath();
-      
-      // Read current step_config.json (or create empty if doesn't exist)
-      let stepConfigs: StepConfig[] = [];
-      try {
-        const response = await agentApi.getPlannerFileContent(stepConfigFilePath);
-        if (response.success && response.data) {
-          stepConfigs = JSON.parse(response.data.content);
-        }
-      } catch {
-        // File doesn't exist yet - use empty array
-        console.log("step_config.json doesn't exist yet, creating new file");
+      // Get workspace path from event
+      const workspacePath = getWorkspacePath(event);
+      if (!workspacePath) {
+        throw new Error('Workspace path not found in event');
       }
 
       const stepTitle = updatedStep.title || '';
@@ -503,6 +436,7 @@ export const TodoStepsExtractedEventDisplay: React.FC<
         updatedStepTitle: updatedStep.title,
         hasTitle: !!updatedStep.title,
         hasId: !!updatedStep.id,
+        workspacePath,
       });
       
       // Steps always have IDs from backend - throw error if missing
@@ -515,93 +449,28 @@ export const TodoStepsExtractedEventDisplay: React.FC<
       
       const stepId = updatedStep.id;
       
-      // Match existing config by ID only
-      const existingConfigIndex = stepConfigs.findIndex(
-        (step) => step.id === stepId
-      );
-      
-      // Use step ID from plan.json (always present)
-      const finalId = stepId;
-      
-      console.log('[TodoStepsExtractedEvent] handleSaveStep - Using step ID:', {
-        finalId,
-        source: 'from plan.json',
-        existingConfigFound: existingConfigIndex >= 0,
-      });
-      
-      // Build step config object (ID is required)
-      const stepConfig: StepConfig = {
-        id: finalId,
-        title: stepTitle,
-        agent_configs: updatedStep.agent_configs,
-      };
-      
-      console.log('[TodoStepsExtractedEvent] handleSaveStep - Final stepConfig before save:', {
-        id: stepConfig.id,
-        title: stepConfig.title,
-        hasAgentConfigs: !!stepConfig.agent_configs,
-      });
-
-      if (existingConfigIndex >= 0) {
-        // Update existing step config
-        stepConfigs[existingConfigIndex] = stepConfig;
-      } else {
-        // Add new step config
-        stepConfigs.push(stepConfig);
-      }
-
-      // Cleanup: Remove orphaned step configs (IDs that no longer exist in plan.json)
-      // Collect all valid step IDs from current plan (including nested branch steps)
-      const validStepIds = collectAllStepIds(steps);
-      
-      // Filter out configs with IDs that don't exist in the current plan
-      const beforeCleanupCount = stepConfigs.length;
-      stepConfigs = stepConfigs.filter((config) => {
-        if (!config.id) {
-          // Remove configs without IDs (shouldn't happen, but be safe)
-          return false;
-        }
-        const isValid = validStepIds.has(config.id);
-        if (!isValid) {
-          console.log(`[TodoStepsExtractedEvent] Removing orphaned step config: ID="${config.id}", Title="${config.title || 'unknown'}"`);
-        }
-        return isValid;
-      });
-      
-      const removedCount = beforeCleanupCount - stepConfigs.length;
-      if (removedCount > 0) {
-        console.log(`[TodoStepsExtractedEvent] Cleaned up ${removedCount} orphaned step config(s) from step_config.json`);
-      }
-
-      // Write back to step_config.json in object format: { "steps": [...] }
-      const updatedContent = JSON.stringify({ steps: stepConfigs }, null, 2);
-      
       // Debug logging to verify what's being saved
       const stepType = stepPath ? 'branch step' : 'top-level step';
-      console.log(`[TodoStepsExtractedEvent] Saving step_config.json (${stepType}):`, {
+      console.log(`[TodoStepsExtractedEvent] Saving step config via API (${stepType}):`, {
         stepTitle,
         stepIndex,
-        stepId: stepConfig.id,
+        stepId,
         stepType,
         agent_configs: updatedStep.agent_configs,
         disable_learning: updatedStep.agent_configs?.disable_learning,
         disable_validation: updatedStep.agent_configs?.disable_validation,
         use_code_execution_mode: updatedStep.agent_configs?.use_code_execution_mode,
-        stepConfig: stepConfig,
-        stepConfig_disable_learning: stepConfig.agent_configs?.disable_learning,
-        stepConfig_disable_validation: stepConfig.agent_configs?.disable_validation,
-        stepConfig_use_code_execution_mode: stepConfig.agent_configs?.use_code_execution_mode,
-        fileContent: updatedContent.substring(0, 1000), // First 1000 chars for preview
       });
       
-      const updateResponse = await agentApi.updatePlannerFile(
-        stepConfigFilePath,
-        updatedContent,
-        `Updated step "${stepTitle}" agent configuration`
+      // Use new backend API to update step config
+      const updateResponse = await agentApi.updateStepConfig(
+        workspacePath,
+        stepId,
+        updatedStep.agent_configs
       );
 
       if (!updateResponse.success) {
-        throw new Error(updateResponse.message || "Failed to update step_config.json");
+        throw new Error(updateResponse.message || "Failed to update step config");
       }
 
 
@@ -763,6 +632,8 @@ export const TodoStepsExtractedEventDisplay: React.FC<
     let loop = 0;
     
     steps.forEach(step => {
+      // Note: steps here are TodoStepWithConfigs, not PlanStep, so we check boolean flags
+      // This is fine since TodoStepWithConfigs still uses boolean flags for API compatibility
       if (step.has_condition) conditional++;
       else if (step.has_loop) loop++;
       else regular++;

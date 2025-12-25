@@ -1,7 +1,7 @@
 import { StepNode } from './StepNode'
 import { ConditionalNode } from './ConditionalNode'
 import { DecisionNode } from './DecisionNode'
-import { RoutingNode } from './RoutingNode'
+import { OrchestratorNode } from './RoutingNode'
 import { LoopNode } from './LoopNode'
 import { ValidationNode } from './ValidationNode'
 import { LearningNode } from './LearningNode'
@@ -12,7 +12,7 @@ import { VariablesNode } from './VariablesNode'
 export { StepNode } from './StepNode'
 export { ConditionalNode } from './ConditionalNode'
 export { DecisionNode } from './DecisionNode'
-export { RoutingNode } from './RoutingNode'
+export { OrchestratorNode } from './RoutingNode'
 export { LoopNode } from './LoopNode'
 export { ValidationNode } from './ValidationNode'
 export { LearningNode } from './LearningNode'
@@ -26,7 +26,7 @@ export const nodeTypes = {
   step: StepNode,
   conditional: ConditionalNode,
   decision: DecisionNode,
-  routing: RoutingNode,
+  orchestrator: OrchestratorNode,
   loop: LoopNode,
   validation: ValidationNode,
   learning: LearningNode,

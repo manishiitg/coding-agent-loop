@@ -78,7 +78,7 @@ func init() {
 	rootCmd.PersistentFlags().String("langfuse-host", "https://cloud.langfuse.com", "Langfuse host URL")
 	rootCmd.PersistentFlags().Bool("debug", false, "enable debug logging")
 	rootCmd.PersistentFlags().Int("max-turns", 100, "maximum conversation turns per agent")
-	rootCmd.PersistentFlags().Float64("temperature", 0.2, "LLM temperature")
+	rootCmd.PersistentFlags().Float64("temperature", 0.0, "LLM temperature")
 
 	// Logging flags
 	rootCmd.PersistentFlags().String("log-file", "", "log file path (optional)")

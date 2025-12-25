@@ -35,6 +35,7 @@ import type {
   SlackTestResponse,
   SlackTestReplyResponse,
 } from './api-types'
+import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
 // Re-export types for other components to use
 export type {
@@ -702,6 +703,96 @@ export const agentApi = {
   updateVariableGroups: async (workspacePath: string, manifest: VariablesManifest): Promise<{ success: boolean; message: string }> => {
     const response = await api.put('/api/workflow/variable-groups', manifest, {
       params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
+
+  // Plan and Step Config API
+  // Update a plan step (plan.json fields only, no agent_configs)
+  updatePlanStep: async (
+    workspacePath: string,
+    stepId: string,
+    updates: Partial<Omit<PlanStep, 'agent_configs'>>
+  ): Promise<{ success: boolean; message: string; data?: { step: PlanStep } }> => {
+    const response = await api.post('/api/workflow/plan/update-step', {
+      workspace_path: workspacePath,
+      step_id: stepId,
+      updates: updates
+    })
+    return response.data
+  },
+
+  // Update step config (agent_configs in step_config.json)
+  updateStepConfig: async (
+    workspacePath: string,
+    stepId: string,
+    agentConfigs: AgentConfigs | undefined
+  ): Promise<{ success: boolean; message: string; data?: { step_id: string; agent_configs?: AgentConfigs } }> => {
+    const response = await api.post('/api/workflow/plan/update-step-config', {
+      workspace_path: workspacePath,
+      step_id: stepId,
+      agent_configs: agentConfigs
+    })
+    return response.data
+  },
+
+  // Batch update multiple steps
+  batchUpdateSteps: async (
+    workspacePath: string,
+    updates: Array<{
+      stepId: string
+      planUpdates?: Partial<Omit<PlanStep, 'agent_configs'>>
+      configUpdates?: Partial<AgentConfigs>
+    }>
+  ): Promise<{
+    success: boolean
+    message: string
+    data?: {
+      updated_steps: number
+      updated_configs: number
+      errors?: Array<{ step_id: string; error: string }>
+    }
+  }> => {
+    const response = await api.post('/api/workflow/plan/batch-update-steps', {
+      workspace_path: workspacePath,
+      updates: updates.map(u => ({
+        step_id: u.stepId,
+        plan_updates: u.planUpdates,
+        config_updates: u.configUpdates
+      }))
+    })
+    return response.data
+  },
+
+  // Delete a step from plan and config
+  deleteStep: async (
+    workspacePath: string,
+    stepId: string
+  ): Promise<{ success: boolean; message: string; data?: { deleted_step_id: string; deleted_config: boolean } }> => {
+    const response = await api.post('/api/workflow/plan/delete-step', {
+      workspace_path: workspacePath,
+      step_id: stepId
+    })
+    return response.data
+  },
+
+  // Add a new step to the plan
+  addStep: async (
+    workspacePath: string,
+    step: Omit<PlanStep, 'agent_configs'>,
+    options?: {
+      insertAfterStepId?: string
+      parentStepId?: string
+      branchType?: 'if_true' | 'if_false'
+    }
+  ): Promise<{ success: boolean; message: string; data?: { step: PlanStep } }> => {
+    const response = await api.post('/api/workflow/plan/add-step', {
+      workspace_path: workspacePath,
+      step: step,
+      insert_after_step_id: options?.insertAfterStepId,
+      parent_step_id: options?.parentStepId,
+      branch_type: options?.branchType
     })
     return response.data
   },

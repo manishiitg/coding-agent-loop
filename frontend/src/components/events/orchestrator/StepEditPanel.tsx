@@ -493,9 +493,9 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     }));
   };
 
-  // Update max turns
+  // Update max turns (only for execution - validation/learning are fixed at 25)
   const handleMaxTurnsChange = (
-    agentType: 'execution' | 'validation' | 'learning',
+    agentType: 'execution',
     value: number
   ) => {
     setAgentConfigs((prev) => {
@@ -617,6 +617,14 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     } else {
       // State is undefined - reset to default
       finalConfigs.disable_validation = undefined;
+    }
+
+    // Handle skip_llm_validation_if_pre_validation_passes: save if explicitly set by user
+    if (agentConfigs.skip_llm_validation_if_pre_validation_passes !== undefined) {
+      finalConfigs.skip_llm_validation_if_pre_validation_passes = agentConfigs.skip_llm_validation_if_pre_validation_passes;
+    } else {
+      // Not explicitly set - delete the field so it uses default (false)
+      delete finalConfigs.skip_llm_validation_if_pre_validation_passes;
     }
 
     // Handle use_code_execution_mode: save if explicitly set by user
@@ -1024,29 +1032,32 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                 })()}
               </div>
               {!agentConfigs.disable_validation ? (
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 min-w-0">
-                    <LLMSelectionDropdown
-                      availableLLMs={availableLLMs}
-                      selectedLLM={llmConfigToOption(agentConfigs.validation_llm) || getPresetDefaultLLM('validation') || getCurrentLLMOption()}
-                      onLLMSelect={handleValidationLLMSelect}
-                      inModal={false}
-                      openDirection="down"
-                    />
-                  </div>
+                <div className="space-y-2">
                   <div className="flex items-center gap-2">
-                    <label className="text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">Max Turns:</label>
-                    <select
-                      value={agentConfigs.validation_max_turns || 100}
-                      onChange={(e) => handleMaxTurnsChange('validation', parseInt(e.target.value))}
-                      className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-20"
-                    >
-                      {MAX_TURNS_OPTIONS.map((value) => (
-                        <option key={value} value={value}>
-                          {value}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="flex-1 min-w-0">
+                      <LLMSelectionDropdown
+                        availableLLMs={availableLLMs}
+                        selectedLLM={llmConfigToOption(agentConfigs.validation_llm) || getPresetDefaultLLM('validation') || getCurrentLLMOption()}
+                        onLLMSelect={handleValidationLLMSelect}
+                        inModal={false}
+                        openDirection="down"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={agentConfigs.skip_llm_validation_if_pre_validation_passes || false}
+                        onChange={(e) => {
+                          handleToggleChange('skip_llm_validation_if_pre_validation_passes', e.target.checked);
+                        }}
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                      <span className="text-xs text-gray-600 dark:text-gray-400">
+                        Skip LLM if pre-validation passes
+                      </span>
+                    </label>
                   </div>
                 </div>
               ) : (
@@ -1105,20 +1116,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                         inModal={false}
                         openDirection="down"
                       />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">Max Turns:</label>
-                      <select
-                        value={agentConfigs.learning_max_turns || 100}
-                        onChange={(e) => handleMaxTurnsChange('learning', parseInt(e.target.value))}
-                        className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-20"
-                      >
-                        {MAX_TURNS_OPTIONS.map((value) => (
-                          <option key={value} value={value}>
-                            {value}
-                          </option>
-                        ))}
-                      </select>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">

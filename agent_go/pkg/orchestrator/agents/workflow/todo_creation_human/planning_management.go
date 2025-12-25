@@ -9,8 +9,11 @@ import (
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	mcpagent "mcpagent/agent"
 	"mcpagent/events"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
+	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -30,38 +33,38 @@ type LearningFileInfo struct {
 
 // validateDecisionStep validates that a decision step has all required fields
 // Returns error if any required field is missing
-func validateDecisionStep(step PlanStep, stepIndex int) error {
-	if step.HasDecisionStep {
-		if step.DecisionStep == nil {
-			return fmt.Errorf(fmt.Sprintf("decision step at index %d (title: %q) is missing required decision_step field", stepIndex, step.Title), nil)
+func validateDecisionStepTyped(step PlanStepInterface, stepIndex int) error {
+	if decisionStep, ok := step.(*DecisionPlanStep); ok {
+		if decisionStep.DecisionStep == nil {
+			return fmt.Errorf(fmt.Sprintf("decision step at index %d (title: %q) is missing required decision_step field", stepIndex, step.GetTitle()), nil)
 		}
-		if step.DecisionStep.ID == "" {
-			return fmt.Errorf(fmt.Sprintf("decision step at index %d (title: %q) has decision_step with missing required ID field", stepIndex, step.Title), nil)
+		if decisionStep.DecisionStep.GetID() == "" {
+			return fmt.Errorf(fmt.Sprintf("decision step at index %d (title: %q) has decision_step with missing required ID field", stepIndex, step.GetTitle()), nil)
 		}
-		if step.DecisionEvaluationQuestion == "" {
-			return fmt.Errorf(fmt.Sprintf("decision step at index %d (title: %q) is missing required decision_evaluation_question field", stepIndex, step.Title), nil)
+		if decisionStep.DecisionEvaluationQuestion == "" {
+			return fmt.Errorf(fmt.Sprintf("decision step at index %d (title: %q) is missing required decision_evaluation_question field", stepIndex, step.GetTitle()), nil)
 		}
-		if step.IfTrueNextStepID == "" {
-			return fmt.Errorf(fmt.Sprintf("decision step at index %d (title: %q) is missing required if_true_next_step_id field", stepIndex, step.Title), nil)
+		if decisionStep.IfTrueNextStepID == "" {
+			return fmt.Errorf(fmt.Sprintf("decision step at index %d (title: %q) is missing required if_true_next_step_id field", stepIndex, step.GetTitle()), nil)
 		}
-		if step.IfFalseNextStepID == "" {
-			return fmt.Errorf(fmt.Sprintf("decision step at index %d (title: %q) is missing required if_false_next_step_id field", stepIndex, step.Title), nil)
+		if decisionStep.IfFalseNextStepID == "" {
+			return fmt.Errorf(fmt.Sprintf("decision step at index %d (title: %q) is missing required if_false_next_step_id field", stepIndex, step.GetTitle()), nil)
 		}
-		// Recursively validate nested decision step if it's also a decision step
-		if step.DecisionStep.HasDecisionStep {
-			if err := validateDecisionStep(*step.DecisionStep, stepIndex); err != nil {
-				return err
+		// Recursively validate nested decision step
+		if err := validateDecisionStepTyped(decisionStep.DecisionStep, stepIndex); err != nil {
+			return err
+		}
+		// Recursively validate nested branch steps in decision_step (if it's conditional)
+		if conditionalStep, ok := decisionStep.DecisionStep.(*ConditionalPlanStep); ok {
+			if len(conditionalStep.IfTrueSteps) > 0 {
+				if err := validateBranchStepIDs(conditionalStep.IfTrueSteps, decisionStep.DecisionStep.GetTitle(), "true"); err != nil {
+					return err
+				}
 			}
-		}
-		// Recursively validate nested branch steps in decision_step
-		if len(step.DecisionStep.IfTrueSteps) > 0 {
-			if err := validateBranchStepIDs(step.DecisionStep.IfTrueSteps, step.DecisionStep.Title, "true"); err != nil {
-				return err
-			}
-		}
-		if len(step.DecisionStep.IfFalseSteps) > 0 {
-			if err := validateBranchStepIDs(step.DecisionStep.IfFalseSteps, step.DecisionStep.Title, "false"); err != nil {
-				return err
+			if len(conditionalStep.IfFalseSteps) > 0 {
+				if err := validateBranchStepIDs(conditionalStep.IfFalseSteps, decisionStep.DecisionStep.GetTitle(), "false"); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -70,26 +73,28 @@ func validateDecisionStep(step PlanStep, stepIndex int) error {
 
 // validatePlanStepIDs recursively validates that all steps have IDs
 // Throws error if any step is missing an ID
-func validatePlanStepIDs(steps []PlanStep) error {
-	for i := range steps {
-		if steps[i].ID == "" {
-			return fmt.Errorf(fmt.Sprintf("step at index %d is missing required ID field. Step title: %q", i, steps[i].Title), nil)
+func validatePlanStepIDs(steps []PlanStepInterface) error {
+	for i, step := range steps {
+		if step.GetID() == "" {
+			return fmt.Errorf(fmt.Sprintf("step at index %d is missing required ID field. Step title: %q", i, step.GetTitle()), nil)
 		}
 
 		// Validate decision step fields
-		if err := validateDecisionStep(steps[i], i); err != nil {
+		if err := validateDecisionStepTyped(step, i); err != nil {
 			return err
 		}
 
-		// Recursively validate branch steps
-		if len(steps[i].IfTrueSteps) > 0 {
-			if err := validateBranchStepIDs(steps[i].IfTrueSteps, steps[i].Title, "true"); err != nil {
-				return err
+		// Recursively validate branch steps (for conditional steps)
+		if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
+			if len(conditionalStep.IfTrueSteps) > 0 {
+				if err := validateBranchStepIDs(conditionalStep.IfTrueSteps, step.GetTitle(), "true"); err != nil {
+					return err
+				}
 			}
-		}
-		if len(steps[i].IfFalseSteps) > 0 {
-			if err := validateBranchStepIDs(steps[i].IfFalseSteps, steps[i].Title, "false"); err != nil {
-				return err
+			if len(conditionalStep.IfFalseSteps) > 0 {
+				if err := validateBranchStepIDs(conditionalStep.IfFalseSteps, step.GetTitle(), "false"); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -97,21 +102,23 @@ func validatePlanStepIDs(steps []PlanStep) error {
 }
 
 // validateBranchStepIDs recursively validates that all branch steps have IDs
-func validateBranchStepIDs(steps []PlanStep, parentTitle, branchType string) error {
-	for i := range steps {
-		if steps[i].ID == "" {
-			return fmt.Errorf(fmt.Sprintf("branch step at index %d in %s branch of parent %q is missing required ID field. Step title: %q", i, branchType, parentTitle, steps[i].Title), nil)
+func validateBranchStepIDs(steps []PlanStepInterface, parentTitle, branchType string) error {
+	for i, step := range steps {
+		if step.GetID() == "" {
+			return fmt.Errorf(fmt.Sprintf("branch step at index %d in %s branch of parent %q is missing required ID field. Step title: %q", i, branchType, parentTitle, step.GetTitle()), nil)
 		}
 
 		// Recursively validate nested branch steps
-		if len(steps[i].IfTrueSteps) > 0 {
-			if err := validateBranchStepIDs(steps[i].IfTrueSteps, steps[i].Title, "true"); err != nil {
-				return err
+		if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
+			if len(conditionalStep.IfTrueSteps) > 0 {
+				if err := validateBranchStepIDs(conditionalStep.IfTrueSteps, step.GetTitle(), "true"); err != nil {
+					return err
+				}
 			}
-		}
-		if len(steps[i].IfFalseSteps) > 0 {
-			if err := validateBranchStepIDs(steps[i].IfFalseSteps, steps[i].Title, "false"); err != nil {
-				return err
+			if len(conditionalStep.IfFalseSteps) > 0 {
+				if err := validateBranchStepIDs(conditionalStep.IfFalseSteps, step.GetTitle(), "false"); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -159,8 +166,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 	}
 
 	// Determine user message based on mode
-	// - For CREATE mode: Use clear, action-oriented instruction
-	// - For UPDATE mode: Use human feedback if provided, otherwise clear instruction
+	// - For CREATE mode: concise, action-oriented instruction
+	// - For UPDATE mode: use human feedback if provided, otherwise a short update/fix instruction
 	var userMessage string
 	if existingPlan != nil {
 		// UPDATE mode: Use human feedback as user message (user's natural language feedback)
@@ -170,17 +177,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 			// Check if plan has validation errors
 			validationErr := validatePlanStepIDs(existingPlan.Steps)
 			if validationErr != nil {
-				// Fallback: Clear instruction for plan updates with validation error fix
-				userMessage = fmt.Sprintf("Review the existing plan and fix any validation errors. The plan has validation issues: %v. Use the plan modification tools (update_regular_step, update_conditional_step, update_decision_step, update_routing_step, delete_plan_steps, add_regular_step, add_conditional_step, add_decision_step, add_routing_step, add_loop_step) to fix validation errors and make any other changes. Always use human_feedback tool first to confirm changes with the user.", validationErr)
+				// Fallback: concise instruction for plan updates with validation error fix
+				userMessage = fmt.Sprintf(
+					"Review the existing plan, fix the following validation issues, and then update the plan based on the objective and my feedback: %v. "+
+						"Always use the human_feedback tool first to confirm any changes with me.",
+					validationErr,
+				)
 			} else {
-				// Fallback: Clear instruction for plan updates
-				userMessage = "Review the existing plan and update it based on the objective. Use the plan modification tools (update_regular_step, update_conditional_step, update_decision_step, update_routing_step, delete_plan_steps, add_regular_step, add_conditional_step, add_decision_step, add_routing_step, add_loop_step) to make changes. Always use human_feedback tool first to confirm changes with the user."
+				// Fallback: concise instruction for plan updates
+				userMessage = "Review the existing plan and update it based on the objective and my feedback. Always use the human_feedback tool first to confirm any changes with me."
 			}
 		}
 	} else {
-		// CREATE mode: Clear, action-oriented instruction for first-time plan generation
-		// System prompt contains all detailed guidelines - user message should be concise and directive
-		userMessage = "Generate a comprehensive structured plan to achieve the objective. Use type-specific tools (add_regular_step, add_conditional_step, add_decision_step, add_loop_step) to build the plan incrementally, starting with the first step."
+		// CREATE mode: concise, action-oriented instruction for first-time plan generation.
+		// Include the objective explicitly since it's no longer shown in the system prompt.
+		userMessage = fmt.Sprintf("Objective: %s\n\nGenerate a comprehensive structured plan to achieve this objective.", hcpo.GetObjective())
 	}
 
 	// Create fresh planning agent with proper context
@@ -202,6 +213,24 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 	resetChangelogSession()
 
 	workspacePath := hcpo.GetWorkspacePath()
+
+	// Store initial plan state BEFORE agent execution for changelog comparison
+	var initialPlan *PlanningResponse
+	if isUpdateMode && existingPlan != nil {
+		// Deep copy the existing plan to avoid mutations
+		planJSON, err := json.Marshal(existingPlan)
+		if err == nil {
+			var copiedPlan PlanningResponse
+			if err := json.Unmarshal(planJSON, &copiedPlan); err == nil {
+				initialPlan = &copiedPlan
+				hcpo.GetLogger().Info(fmt.Sprintf("📝 Stored initial plan state (%d steps) for changelog comparison", len(initialPlan.Steps)))
+			}
+		}
+	} else {
+		// CREATE mode - initial plan is empty
+		initialPlan = &PlanningResponse{Steps: []PlanStep{}}
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 Stored initial empty plan state for changelog comparison"))
+	}
 
 	// If CREATE mode and no plan exists, create empty plan.json
 	if !isUpdateMode {
@@ -313,6 +342,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 		return nil, updatedConversationHistory, fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
 	}
 
+	// Generate changelog from plan diff (AFTER agent execution, BEFORE human feedback)
+	// This captures ALL changes made during the agent execution in one comprehensive changelog entry
+	if err := generateChangelogFromPlanDiff(ctx, workspacePath, initialPlan, planResponse, hcpo.ReadWorkspaceFile, hcpo.WriteWorkspaceFile, hcpo.GetLogger()); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to generate changelog from plan diff: %v", err))
+		// Don't fail the entire operation if changelog generation fails
+	}
+
 	if !planUpdateToolCalled {
 		// No tools called - conversational response
 		if isUpdateMode {
@@ -368,34 +404,23 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (read access to runs/ for execution logs, write access to learnings/ for folder syncing)", readPaths, writePaths))
 
-	// Determine LLM config: Priority: presetPlanningLLM > presetLearningLLM > orchestrator default
+	// Determine LLM config: Priority: presetLearningLLM > orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
-	if hcpo.presetPlanningLLM != nil && hcpo.presetPlanningLLM.Provider != "" && hcpo.presetPlanningLLM.ModelID != "" {
-		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:       hcpo.presetPlanningLLM.Provider,
-			ModelID:        hcpo.presetPlanningLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for preset defaults
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default planning LLM: %s/%s", hcpo.presetPlanningLLM.Provider, hcpo.presetPlanningLLM.ModelID))
-	} else if hcpo.presetLearningLLM != nil && hcpo.presetLearningLLM.Provider != "" && hcpo.presetLearningLLM.ModelID != "" {
-		// Fallback to learning LLM if planning LLM not set
+	if hcpo.presetLearningLLM != nil && hcpo.presetLearningLLM.Provider != "" && hcpo.presetLearningLLM.ModelID != "" {
+		// Use learning LLM for planning agent
 		llmConfigToUse = &orchestrator.LLMConfig{
 			Provider:       hcpo.presetLearningLLM.Provider,
 			ModelID:        hcpo.presetLearningLLM.ModelID,
 			FallbackModels: []string{},                    // Use empty fallback for preset defaults
 			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM as fallback for planning: %s/%s", hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM for planning: %s/%s", hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID))
 	} else {
 		llmConfigToUse = orchestratorLLMConfig
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default planning LLM: %s/%s", hcpo.GetProvider(), hcpo.GetModel()))
 	}
 
-	// Use CreateAndSetupStandardAgentWithCustomServers instead of CreateAndSetupStandardAgentWithCustomServersAndSystemPrompt
-	// because system prompt is passed directly to the planning agent's Execute() method
-	// Planning agent uses plan modification tools (registered in runPlanningPhase)
 	// Create agent config with custom LLM
 	agentConfig := hcpo.CreateStandardAgentConfigWithLLM("human-controlled-planning-agent", hcpo.GetMaxTurns(), agents.OutputFormatStructured, llmConfigToUse)
 	agentConfig.ServerNames = []string{mcpclient.NoServers} // No MCP servers needed - pure LLM planning agent
@@ -409,42 +434,27 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 	agentConfig.EnableLargeOutputVirtualTools = &disabled
 	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling large output virtual tools for planning agent"))
 
-	// Create agent using provided factory function
-	agent := NewHumanControlledTodoPlannerPlanningAgent(agentConfig, hcpo.GetLogger(), hcpo.GetTracer(), hcpo.GetContextAwareBridge())
+	// Planning agent uses plan modification tools (registered in runPlanningPhase, not here)
+	// Pass empty tools/executors - tools will be registered separately
+	toolsToRegister := []llmtypes.Tool{}
+	executorsToUse := make(map[string]interface{})
 
-	// Initialize and setup agent
-	if err := agent.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to initialize planning agent: %w", err), nil)
-	}
-
-	// Validate essentials and connect event bridge
-	eventBridge := hcpo.GetContextAwareBridge()
-	if eventBridge == nil {
-		return nil, fmt.Errorf(fmt.Sprintf("context-aware event bridge is nil for planning agent"), nil)
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Checking agent structure for planning agent"))
-	baseAgent := agent.GetBaseAgent()
-	if baseAgent == nil {
-		return nil, fmt.Errorf(fmt.Sprintf("base agent is nil for planning agent"), nil)
-	}
-
-	mcpAgent := baseAgent.Agent()
-	if mcpAgent == nil {
-		return nil, fmt.Errorf(fmt.Sprintf("MCP agent is nil for planning agent"), nil)
-	}
-
-	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
-	baseAgentName := baseAgent.GetName()
-	if cab, ok := eventBridge.(interface {
-		SetOrchestratorContext(phase string, step int, agentName string)
-	}); ok {
-		cab.SetOrchestratorContext(phase, step, baseAgentName)
-		mcpAgent.AddEventListener(eventBridge)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Reused context-aware bridge connected to %s (step %d, agent %s)", phase, step+1, baseAgentName))
-	} else {
-		mcpAgent.AddEventListener(eventBridge)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Connected event bridge to %s (step %d, iteration %d, agent %s)", phase, step+1, iteration+1, baseAgentName))
+	// Use base factory! (This handles all setup automatically)
+	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
+		ctx,
+		agentConfig,
+		phase,
+		step,
+		iteration,
+		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+			return NewHumanControlledTodoPlannerPlanningAgent(cfg, logger, tracer, eventBridge)
+		},
+		toolsToRegister, // Empty - tools registered separately in runPlanningPhase
+		executorsToUse,  // Empty - tools registered separately in runPlanningPhase
+		false,           // Don't overwrite system prompt - planning agent manages its own prompt
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create and setup planning agent: %w", err)
 	}
 
 	return agent, nil
@@ -500,106 +510,216 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) requestPlanApproval(
 	)
 }
 
-// convertPlanStepsToTodoSteps converts PlanStep to TodoStep format
+// populateStepRuntimeFieldsForSteps populates runtime fields for a slice of PlanStepInterface
 // Merges agent configs from step_config.json by step index matching
-// convertBranchSteps converts a slice of PlanStep to TodoStep (helper for recursive conversion)
+// convertBranchSteps populates runtime fields for branch steps (helper for recursive population)
 // stepConfigs: step configs array for matching branch step configs by ID
-func convertBranchSteps(planSteps []PlanStep, stepConfigs []StepConfig) ([]TodoStep, error) {
+// Uses type-safe conversion with PlanStepInterface and type switches
+func convertBranchSteps(planSteps []PlanStepInterface, stepConfigs []StepConfig) ([]PlanStepInterface, error) {
 	if len(planSteps) == 0 {
 		return nil, nil
 	}
-	todoSteps := make([]TodoStep, len(planSteps))
-	for i := range planSteps {
-		step := planSteps[i]
-		// Steps always have IDs from backend - match config by step ID
-		var agentConfigs *AgentConfigs
-		if step.ID == "" {
-			// This should never happen - steps always have IDs from backend
-			// Throw error to match frontend behavior and catch bugs early
-			stepTitle := "unknown"
-			if step.Title != "" {
-				stepTitle = step.Title
+	todoSteps := make([]PlanStepInterface, len(planSteps))
+	for i, step := range planSteps {
+		// Use type switch to handle different step types
+		todoStep, err := populateStepRuntimeFields(step, stepConfigs)
+		if err != nil {
+			return nil, fmt.Errorf(fmt.Sprintf("failed to populate runtime fields for step %d: %w", i, err), nil)
+		}
+		todoSteps[i] = todoStep
+	}
+	return todoSteps, nil
+}
+
+// populateRuntimeFields populates runtime fields (AgentConfigs, etc.) on plan steps in-place
+// This maintains type safety by working directly with plan step types
+func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig) error {
+	// Match config by step ID
+	var agentConfigs *AgentConfigs
+	stepID := typedStep.GetID()
+	if stepID == "" {
+		return fmt.Errorf(fmt.Sprintf("step is missing required ID field. Step title: %q", typedStep.GetTitle()), nil)
+	} else if stepConfigs != nil {
+		agentConfigs = MatchStepConfigByID(stepID, stepConfigs)
+	}
+
+	// Use type switch to handle different step types
+	switch step := typedStep.(type) {
+	case *RegularPlanStep:
+		// Regular step (may have loops)
+		// Merge prerequisite detection settings from PlanStep into AgentConfigs
+		if step.EnablePrerequisiteDetection != nil || len(step.PrerequisiteRules) > 0 {
+			if agentConfigs == nil {
+				agentConfigs = &AgentConfigs{}
 			}
-			return nil, fmt.Errorf(fmt.Sprintf("branch step at index %d is missing required ID field. Step title: %q", i, stepTitle), nil)
-		} else if stepConfigs != nil {
-			// Debug: Log what we're searching for
-			// Note: Can't use logger here, but we can add debug info later if needed
-			agentConfigs = MatchStepConfigByID(step.ID, stepConfigs)
-			// Config will be nil if not found (expected for new steps without saved configs)
-			// Config will be non-nil if found (branch step will use its own configs)
-		} else {
-			// stepConfigs is nil - branch step will use default configs
+			if agentConfigs.EnablePrerequisiteDetection == nil && step.EnablePrerequisiteDetection != nil {
+				agentConfigs.EnablePrerequisiteDetection = step.EnablePrerequisiteDetection
+			}
+			if len(agentConfigs.PrerequisiteRules) == 0 && len(step.PrerequisiteRules) > 0 {
+				agentConfigs.PrerequisiteRules = step.PrerequisiteRules
+			}
 		}
 
-		// Validation is required for loop steps to check loop conditions
-		// Ensure validation is not disabled for loop steps
+		// Validation is required for loop steps
 		if step.HasLoop && agentConfigs != nil && agentConfigs.DisableValidation != nil && *agentConfigs.DisableValidation {
-			// Create a copy of configs with validation enabled
 			enabledConfigs := *agentConfigs
 			val := false
 			enabledConfigs.DisableValidation = &val
 			agentConfigs = &enabledConfigs
 		}
 
-		// Recursively convert nested branch steps
-		var ifTrueSteps []TodoStep
+		// Populate runtime field directly on plan step
+		step.AgentConfigs = agentConfigs
+		return nil
+
+	case *ConditionalPlanStep:
+		// Conditional step: populate branch steps recursively
 		if len(step.IfTrueSteps) > 0 {
-			var err error
-			ifTrueSteps, err = convertBranchSteps(step.IfTrueSteps, stepConfigs)
-			if err != nil {
-				return nil, fmt.Errorf(fmt.Sprintf("failed to convert if_true branch steps: %w", err), nil)
+			for _, branchStep := range step.IfTrueSteps {
+				if err := populateRuntimeFields(branchStep, stepConfigs); err != nil {
+					return fmt.Errorf(fmt.Sprintf("failed to populate if_true branch step: %w", err), nil)
+				}
 			}
 		}
 
-		var ifFalseSteps []TodoStep
 		if len(step.IfFalseSteps) > 0 {
-			var err error
-			ifFalseSteps, err = convertBranchSteps(step.IfFalseSteps, stepConfigs)
-			if err != nil {
-				return nil, fmt.Errorf(fmt.Sprintf("failed to convert if_false branch steps: %w", err), nil)
+			for _, branchStep := range step.IfFalseSteps {
+				if err := populateRuntimeFields(branchStep, stepConfigs); err != nil {
+					return fmt.Errorf(fmt.Sprintf("failed to populate if_false branch step: %w", err), nil)
+				}
 			}
 		}
 
-		// Convert decision step if present
-		var decisionTodoStep *TodoStep
-		if step.HasDecisionStep && step.DecisionStep != nil {
-			decisionSteps, err := convertBranchSteps([]PlanStep{*step.DecisionStep}, stepConfigs)
-			if err != nil {
-				return nil, fmt.Errorf(fmt.Sprintf("failed to convert decision step: %w", err), nil)
+		// Conditional steps should never have validation - they only evaluate conditions
+		if agentConfigs == nil {
+			val := true
+			agentConfigs = &AgentConfigs{
+				DisableValidation: &val,
 			}
-			if len(decisionSteps) > 0 {
-				decisionTodoStep = &decisionSteps[0]
+		} else if agentConfigs.DisableValidation == nil || !*agentConfigs.DisableValidation {
+			val := true
+			disabledConfigs := *agentConfigs
+			disabledConfigs.DisableValidation = &val
+			agentConfigs = &disabledConfigs
+		}
+
+		// Populate runtime field directly on plan step
+		step.AgentConfigs = agentConfigs
+		return nil
+
+	case *DecisionPlanStep:
+		// Decision step: populate inner DecisionStep recursively
+		if step.DecisionStep != nil {
+			if err := populateRuntimeFields(step.DecisionStep, stepConfigs); err != nil {
+				return fmt.Errorf(fmt.Sprintf("failed to populate decision inner step: %w", err), nil)
 			}
 		}
 
-		todoSteps[i] = TodoStep{
-			ID:                         step.ID, // Copy ID from PlanStep for frontend matching
-			Title:                      step.Title,
-			Description:                step.Description,
-			SuccessCriteria:            step.SuccessCriteria,
-			ContextDependencies:        step.ContextDependencies,
-			ContextOutput:              step.ContextOutput.String(),
-			HasLoop:                    step.HasLoop,
-			LoopCondition:              step.LoopCondition,
-			MaxIterations:              step.MaxIterations,
-			LoopDescription:            step.LoopDescription,
-			HasCondition:               step.HasCondition,
-			ConditionQuestion:          step.ConditionQuestion,
-			ConditionContext:           step.ConditionContext,
-			IfTrueSteps:                ifTrueSteps,
-			IfFalseSteps:               ifFalseSteps,
-			IfTrueNextStepID:           step.IfTrueNextStepID,
-			IfFalseNextStepID:          step.IfFalseNextStepID,
-			HasDecisionStep:            step.HasDecisionStep,
-			DecisionStep:               decisionTodoStep,
-			DecisionEvaluationQuestion: step.DecisionEvaluationQuestion,
-			AgentConfigs:               agentConfigs, // Matched from step_config.json by ID
+		// Populate runtime field directly on plan step
+		step.AgentConfigs = agentConfigs
+		return nil
+
+	case *OrchestrationPlanStep:
+		// Orchestration step: populate inner OrchestrationStep recursively
+		if step.OrchestrationStep != nil {
+			if err := populateRuntimeFields(step.OrchestrationStep, stepConfigs); err != nil {
+				return fmt.Errorf(fmt.Sprintf("failed to populate orchestration inner step: %w", err), nil)
+			}
 		}
+
+		// Populate sub-agent steps in routes recursively
+		for i := range step.OrchestrationRoutes {
+			route := &step.OrchestrationRoutes[i]
+			if route.SubAgentStep != nil {
+				if err := populateRuntimeFields(route.SubAgentStep, stepConfigs); err != nil {
+					return fmt.Errorf(fmt.Sprintf("failed to populate sub-agent step for route '%s': %w", route.RouteID, err), nil)
+				}
+				// Sub-agents should have validation disabled
+				// Get the populated config from the sub-agent step
+				switch subStep := route.SubAgentStep.(type) {
+				case *RegularPlanStep:
+					if subStep.AgentConfigs == nil {
+						val := true
+						subStep.AgentConfigs = &AgentConfigs{
+							DisableValidation: &val,
+						}
+					} else if subStep.AgentConfigs.DisableValidation == nil || !*subStep.AgentConfigs.DisableValidation {
+						val := true
+						disabledConfigs := *subStep.AgentConfigs
+						disabledConfigs.DisableValidation = &val
+						subStep.AgentConfigs = &disabledConfigs
+					}
+				}
+			}
+		}
+
+		// Populate runtime field directly on plan step
+		step.AgentConfigs = agentConfigs
+		return nil
+
+	default:
+		return fmt.Errorf(fmt.Sprintf("unknown step type: %T", typedStep), nil)
 	}
-	return todoSteps, nil
 }
 
-func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(ctx context.Context, planSteps []PlanStep) ([]TodoStep, error) {
+// populateStepRuntimeFields populates runtime fields on a PlanStepInterface and returns it
+// This function populates AgentConfigs and other runtime fields from step_config.json
+// For execution, use plan steps directly with populated runtime fields
+func populateStepRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig) (PlanStepInterface, error) {
+	// Populate runtime fields on the plan step
+	if err := populateRuntimeFields(typedStep, stepConfigs); err != nil {
+		return nil, err
+	}
+
+	// Recursively populate runtime fields for nested steps
+	switch step := typedStep.(type) {
+	case *ConditionalPlanStep:
+		// Populate branch steps recursively
+		if len(step.IfTrueSteps) > 0 {
+			for _, branchStep := range step.IfTrueSteps {
+				if err := populateRuntimeFields(branchStep, stepConfigs); err != nil {
+					return nil, fmt.Errorf(fmt.Sprintf("failed to populate if_true branch step: %w", err), nil)
+				}
+			}
+		}
+		if len(step.IfFalseSteps) > 0 {
+			for _, branchStep := range step.IfFalseSteps {
+				if err := populateRuntimeFields(branchStep, stepConfigs); err != nil {
+					return nil, fmt.Errorf(fmt.Sprintf("failed to populate if_false branch step: %w", err), nil)
+				}
+			}
+		}
+
+	case *DecisionPlanStep:
+		// Populate inner DecisionStep
+		if step.DecisionStep != nil {
+			if err := populateRuntimeFields(step.DecisionStep, stepConfigs); err != nil {
+				return nil, fmt.Errorf(fmt.Sprintf("failed to populate decision inner step: %w", err), nil)
+			}
+		}
+
+	case *OrchestrationPlanStep:
+		// Populate inner OrchestrationStep
+		if step.OrchestrationStep != nil {
+			if err := populateRuntimeFields(step.OrchestrationStep, stepConfigs); err != nil {
+				return nil, fmt.Errorf(fmt.Sprintf("failed to populate orchestration inner step: %w", err), nil)
+			}
+		}
+		// Populate sub-agent steps in routes
+		for _, route := range step.OrchestrationRoutes {
+			if route.SubAgentStep != nil {
+				if err := populateRuntimeFields(route.SubAgentStep, stepConfigs); err != nil {
+					return nil, fmt.Errorf(fmt.Sprintf("failed to populate sub-agent step: %w", err), nil)
+				}
+			}
+		}
+	}
+
+	// Return the step with populated runtime fields
+	return typedStep, nil
+}
+
+func (hcpo *HumanControlledTodoPlannerOrchestrator) populateStepsRuntimeFields(ctx context.Context, planSteps []PlanStepInterface) ([]PlanStepInterface, error) {
 	// Read step configs from step_config.json
 	stepConfigs, err := hcpo.ReadStepConfigs(ctx)
 	if err != nil {
@@ -627,48 +747,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf("📋 Matched %d/%d step configs from step_config.json", len(matchedConfigs), len(planSteps)))
 
-	todoSteps := make([]TodoStep, len(planSteps))
+	todoSteps := make([]PlanStepInterface, len(planSteps))
 	for i, step := range planSteps {
-		// Validate decision step fields before conversion
-		if step.HasDecisionStep {
-			if step.DecisionStep == nil {
-				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has has_decision_step=true but is missing required decision_step field", i, step.Title, step.ID), nil)
-			}
-			if step.DecisionStep.ID == "" {
-				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has decision_step with missing required ID field", i, step.Title, step.ID), nil)
-			}
-			if step.DecisionEvaluationQuestion == "" {
-				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has has_decision_step=true but is missing required decision_evaluation_question field", i, step.Title, step.ID), nil)
-			}
-			if step.IfTrueNextStepID == "" {
-				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has has_decision_step=true but is missing required if_true_next_step_id field", i, step.Title, step.ID), nil)
-			}
-			if step.IfFalseNextStepID == "" {
-				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has has_decision_step=true but is missing required if_false_next_step_id field", i, step.Title, step.ID), nil)
-			}
-		}
-
-		// Validate orchestration step fields before conversion
-		if step.HasOrchestrationStep {
-			if step.OrchestrationStep == nil {
-				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has has_orchestration_step=true but is missing required orchestration_step field", i, step.Title, step.ID), nil)
-			}
-			if step.OrchestrationStep.ID == "" {
-				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has orchestration_step with missing required ID field", i, step.Title, step.ID), nil)
-			}
-			if step.OrchestrationStep.Description == "" {
-				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has orchestration_step with missing required description field", i, step.Title, step.ID), nil)
-			}
-			if step.OrchestrationStep.SuccessCriteria == "" {
-				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has orchestration_step with missing required success_criteria field", i, step.Title, step.ID), nil)
-			}
-			if len(step.OrchestrationRoutes) == 0 {
-				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has has_orchestration_step=true but has no orchestration_routes defined", i, step.Title, step.ID), nil)
-			}
-			if step.NextStepID == "" {
-				return nil, fmt.Errorf(fmt.Sprintf("step at index %d (title: %q, ID: %s) has has_orchestration_step=true but is missing required next_step_id field", i, step.Title, step.ID), nil)
-			}
-		}
+		// Step is already PlanStepInterface, no conversion needed
 
 		// Get matched config for this step (may be nil if no match)
 		var agentConfigs *AgentConfigs
@@ -676,197 +757,124 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) convertPlanStepsToTodoSteps(
 			agentConfigs = config
 			// Log code execution mode for debugging
 			if agentConfigs.UseCodeExecutionMode != nil {
-				hcpo.GetLogger().Info(fmt.Sprintf("📋 Step '%s' (ID: %s) matched config - use_code_execution_mode: %v", step.Title, step.ID, *agentConfigs.UseCodeExecutionMode))
+				hcpo.GetLogger().Info(fmt.Sprintf("📋 Step '%s' (ID: %s) matched config - use_code_execution_mode: %v", step.GetTitle(), step.GetID(), *agentConfigs.UseCodeExecutionMode))
 			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("📋 Step '%s' (ID: %s) matched config - use_code_execution_mode: nil (will use preset default)", step.Title, step.ID))
+				hcpo.GetLogger().Info(fmt.Sprintf("📋 Step '%s' (ID: %s) matched config - use_code_execution_mode: nil (will use preset default)", step.GetTitle(), step.GetID()))
 			}
 		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Step '%s' (ID: %s) has NO config match in step_config.json - will use preset defaults", step.Title, step.ID))
+			hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Step '%s' (ID: %s) has NO config match in step_config.json - will use preset defaults", step.GetTitle(), step.GetID()))
 		}
 
-		// Validation is required for loop steps to check loop conditions
-		// Ensure validation is not disabled for loop steps
-		if step.HasLoop && agentConfigs != nil && agentConfigs.DisableValidation != nil && *agentConfigs.DisableValidation {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step '%s' is a loop step but has validation disabled - enabling validation (required for loop condition checks)", step.Title))
-			// Create a copy of configs with validation enabled
-			enabledConfigs := *agentConfigs
-			val := false
-			enabledConfigs.DisableValidation = &val
-			agentConfigs = &enabledConfigs
+		// Populate runtime fields (this properly handles inner steps for decision/orchestration)
+		todoStep, err := populateStepRuntimeFields(step, stepConfigs)
+		if err != nil {
+			return nil, fmt.Errorf(fmt.Sprintf("failed to populate runtime fields for step %d (title: %q, ID: %s): %w", i, step.GetTitle(), step.GetID(), err), nil)
 		}
 
-		// Conditional steps should never have validation - they only evaluate conditions
-		// Ensure validation is disabled for conditional steps
-		if step.HasCondition {
-			if agentConfigs == nil {
-				// Create new configs with validation disabled
-				val := true
-				agentConfigs = &AgentConfigs{
-					DisableValidation: &val,
+		// Merge matched configs with existing configs (if any)
+		// This preserves any configs set during conversion and merges in step_config.json configs
+		if agentConfigs != nil {
+			existingConfigs := getAgentConfigs(todoStep)
+			if existingConfigs == nil {
+				// Set AgentConfigs on the step if it doesn't exist
+				switch s := todoStep.(type) {
+				case *RegularPlanStep:
+					s.AgentConfigs = agentConfigs
+				case *ConditionalPlanStep:
+					s.AgentConfigs = agentConfigs
+				case *DecisionPlanStep:
+					s.AgentConfigs = agentConfigs
+				case *OrchestrationPlanStep:
+					s.AgentConfigs = agentConfigs
 				}
-				hcpo.GetLogger().Info(fmt.Sprintf("🔧 Conditional step '%s' - created configs with validation disabled", step.Title))
-			} else if agentConfigs.DisableValidation == nil || !*agentConfigs.DisableValidation {
-				// Validation is not disabled - force disable it
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step '%s' is a conditional step but has validation enabled - disabling validation (conditional steps only evaluate conditions)", step.Title))
-				// Create a copy of configs with validation disabled
-				disabledConfigs := *agentConfigs
-				val := true
-				disabledConfigs.DisableValidation = &val
-				agentConfigs = &disabledConfigs
 			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Conditional step '%s' already has validation disabled", step.Title))
+				// Merge configs from step_config.json into existing configs
+				MergeAgentConfigFields(existingConfigs, agentConfigs, step.GetID(), hcpo.GetLogger())
 			}
-		}
 
-		// Convert branch steps recursively
-		var ifTrueSteps []TodoStep
-		if len(step.IfTrueSteps) > 0 {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔍 Converting %d if_true branch steps for step '%s' (ID: %s)", len(step.IfTrueSteps), step.Title, step.ID))
-			var err error
-			ifTrueSteps, err = convertBranchSteps(step.IfTrueSteps, stepConfigs)
-			if err != nil {
-				return nil, fmt.Errorf(fmt.Sprintf("failed to convert if_true branch steps for step '%s': %w", step.Title, err), nil)
-			}
-			// Log config matching results for branch steps
-			for _, branchStep := range ifTrueSteps {
-				if branchStep.AgentConfigs != nil {
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Branch step '%s' (ID: %s) matched config from step_config.json", branchStep.Title, branchStep.ID))
-				} else {
-					hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Branch step '%s' (ID: %s) has no config match - will use defaults", branchStep.Title, branchStep.ID))
-				}
-			}
-		}
-
-		var ifFalseSteps []TodoStep
-		if len(step.IfFalseSteps) > 0 {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔍 Converting %d if_false branch steps for step '%s' (ID: %s)", len(step.IfFalseSteps), step.Title, step.ID))
-			var err error
-			ifFalseSteps, err = convertBranchSteps(step.IfFalseSteps, stepConfigs)
-			if err != nil {
-				return nil, fmt.Errorf(fmt.Sprintf("failed to convert if_false branch steps for step '%s': %w", step.Title, err), nil)
-			}
-			// Log config matching results for branch steps
-			for _, branchStep := range ifFalseSteps {
-				if branchStep.AgentConfigs != nil {
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Branch step '%s' (ID: %s) matched config from step_config.json", branchStep.Title, branchStep.ID))
-				} else {
-					hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Branch step '%s' (ID: %s) has no config match - will use defaults", branchStep.Title, branchStep.ID))
-				}
-			}
-		}
-
-		// Convert decision step if present
-		var decisionTodoStep *TodoStep
-		if step.HasDecisionStep && step.DecisionStep != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔍 Converting decision step for step '%s' (ID: %s)", step.Title, step.ID))
-			decisionSteps, err := convertBranchSteps([]PlanStep{*step.DecisionStep}, stepConfigs)
-			if err != nil {
-				return nil, fmt.Errorf(fmt.Sprintf("failed to convert decision step for step '%s': %w", step.Title, err), nil)
-			}
-			if len(decisionSteps) > 0 {
-				decisionTodoStep = &decisionSteps[0]
-				if decisionTodoStep.AgentConfigs != nil {
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Decision step '%s' (ID: %s) matched config from step_config.json", decisionTodoStep.Title, decisionTodoStep.ID))
-				} else {
-					hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Decision step '%s' (ID: %s) has no config match - will use defaults", decisionTodoStep.Title, decisionTodoStep.ID))
-				}
-			}
-		}
-
-		// Convert orchestration step if present
-		var orchestrationTodoStep *TodoStep
-		var orchestrationRoutes []OrchestrationRoute
-		if step.HasOrchestrationStep && step.OrchestrationStep != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔍 Converting orchestration step for step '%s' (ID: %s)", step.Title, step.ID))
-			// Convert the main orchestration orchestrator step
-			orchestrationSteps, err := convertBranchSteps([]PlanStep{*step.OrchestrationStep}, stepConfigs)
-			if err != nil {
-				return nil, fmt.Errorf(fmt.Sprintf("failed to convert orchestration step for step '%s': %w", step.Title, err), nil)
-			}
-			if len(orchestrationSteps) > 0 {
-				orchestrationTodoStep = &orchestrationSteps[0]
-				if orchestrationTodoStep.AgentConfigs != nil {
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration step '%s' (ID: %s) matched config from step_config.json", orchestrationTodoStep.Title, orchestrationTodoStep.ID))
-				} else {
-					hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Orchestration step '%s' (ID: %s) has no config match - will use defaults", orchestrationTodoStep.Title, orchestrationTodoStep.ID))
-				}
-			}
-			// Convert orchestration routes (sub-agents)
-			orchestrationRoutes = make([]OrchestrationRoute, 0, len(step.OrchestrationRoutes))
-			for _, planRoute := range step.OrchestrationRoutes {
-				hcpo.GetLogger().Info(fmt.Sprintf("🔍 Converting orchestration route '%s' (route_id: %s) for step '%s'", planRoute.RouteName, planRoute.RouteID, step.Title))
-				// Convert sub-agent step
-				subAgentSteps, err := convertBranchSteps([]PlanStep{planRoute.SubAgentStep}, stepConfigs)
-				if err != nil {
-					return nil, fmt.Errorf(fmt.Sprintf("failed to convert sub-agent step for route '%s' in step '%s': %w", planRoute.RouteID, step.Title, err), nil)
-				}
-				if len(subAgentSteps) == 0 {
-					return nil, fmt.Errorf(fmt.Sprintf("failed to convert sub-agent step for route '%s' in step '%s': no step returned", planRoute.RouteID, step.Title), nil)
-				}
-				subAgentTodoStep := subAgentSteps[0]
-				// Sub-agents should have validation disabled
-				if subAgentTodoStep.AgentConfigs == nil {
-					val := true
-					subAgentTodoStep.AgentConfigs = &AgentConfigs{
-						DisableValidation: &val,
+			// For orchestration steps: also apply config to inner OrchestrationStep.AgentConfigs
+			// The inner step is what's actually used during execution, so it needs the config too
+			// Note: The inner step may have already gotten its config during recursive conversion,
+			// but we ensure the outer step's matched config is also applied to the inner step
+			if orchestrationStep, ok := step.(*OrchestrationPlanStep); ok && orchestrationStep.OrchestrationStep != nil {
+				innerStep := orchestrationStep.OrchestrationStep
+				innerConfigs := getAgentConfigs(innerStep)
+				if innerConfigs == nil {
+					// Initialize inner step config and copy all fields from outer step config
+					// We need to set AgentConfigs on the inner step based on its type
+					switch innerStep := innerStep.(type) {
+					case *RegularPlanStep:
+						innerStep.AgentConfigs = &AgentConfigs{}
+						MergeAgentConfigFields(innerStep.AgentConfigs, agentConfigs, innerStep.ID, hcpo.GetLogger())
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ Applied config to inner orchestration step '%s' (ID: %s) from outer step config (ID: %s)", innerStep.Title, innerStep.ID, step.GetID()))
+					case *ConditionalPlanStep:
+						innerStep.AgentConfigs = &AgentConfigs{}
+						MergeAgentConfigFields(innerStep.AgentConfigs, agentConfigs, innerStep.ID, hcpo.GetLogger())
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ Applied config to inner orchestration step '%s' (ID: %s) from outer step config (ID: %s)", innerStep.Title, innerStep.ID, step.GetID()))
+					case *DecisionPlanStep:
+						innerStep.AgentConfigs = &AgentConfigs{}
+						MergeAgentConfigFields(innerStep.AgentConfigs, agentConfigs, innerStep.ID, hcpo.GetLogger())
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ Applied config to inner orchestration step '%s' (ID: %s) from outer step config (ID: %s)", innerStep.Title, innerStep.ID, step.GetID()))
+					case *OrchestrationPlanStep:
+						innerStep.AgentConfigs = &AgentConfigs{}
+						MergeAgentConfigFields(innerStep.AgentConfigs, agentConfigs, innerStep.ID, hcpo.GetLogger())
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ Applied config to inner orchestration step '%s' (ID: %s) from outer step config (ID: %s)", innerStep.Title, innerStep.ID, step.GetID()))
 					}
-				} else if subAgentTodoStep.AgentConfigs.DisableValidation == nil || !*subAgentTodoStep.AgentConfigs.DisableValidation {
-					val := true
-					disabledConfigs := *subAgentTodoStep.AgentConfigs
-					disabledConfigs.DisableValidation = &val
-					subAgentTodoStep.AgentConfigs = &disabledConfigs
+				} else {
+					// Merge configs from step_config.json into existing inner step configs
+					// This ensures outer step config overrides inner step config if both exist
+					innerStepID := innerStep.GetID()
+					MergeAgentConfigFields(innerConfigs, agentConfigs, innerStepID, hcpo.GetLogger())
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Merged config into inner orchestration step '%s' (ID: %s) from outer step config (ID: %s)", innerStep.GetTitle(), innerStepID, step.GetID()))
 				}
-				orchestrationRoutes = append(orchestrationRoutes, OrchestrationRoute{
-					RouteID:       planRoute.RouteID,
-					RouteName:     planRoute.RouteName,
-					Condition:     planRoute.Condition,
-					SubAgentStep:  subAgentTodoStep,
-					ContextToPass: planRoute.ContextToPass,
-				})
 			}
 		}
 
-		// Convert FlexibleContextOutput to string for TodoStep
-		todoSteps[i] = TodoStep{
-			ID:                         step.ID, // Copy ID from PlanStep for frontend matching
-			Title:                      step.Title,
-			Description:                step.Description,
-			SuccessCriteria:            step.SuccessCriteria,
-			ContextDependencies:        step.ContextDependencies,
-			ContextOutput:              step.ContextOutput.String(), // Convert FlexibleContextOutput to string
-			HasLoop:                    step.HasLoop,
-			LoopCondition:              step.LoopCondition,
-			MaxIterations:              step.MaxIterations,
-			LoopDescription:            step.LoopDescription,
-			HasCondition:               step.HasCondition,
-			ConditionQuestion:          step.ConditionQuestion,
-			ConditionContext:           step.ConditionContext,
-			IfTrueSteps:                ifTrueSteps,
-			IfFalseSteps:               ifFalseSteps,
-			IfTrueNextStepID:           step.IfTrueNextStepID,
-			IfFalseNextStepID:          step.IfFalseNextStepID,
-			HasDecisionStep:            step.HasDecisionStep,
-			DecisionStep:               decisionTodoStep,
-			DecisionEvaluationQuestion: step.DecisionEvaluationQuestion,
-			HasOrchestrationStep:       step.HasOrchestrationStep,
-			OrchestrationStep:          orchestrationTodoStep,
-			OrchestrationRoutes:        orchestrationRoutes,
-			NextStepID:                 step.NextStepID,
-			AgentConfigs:               agentConfigs, // Merged from step_config.json (validation enforced for loops)
+		// Log config matching results for nested steps
+		switch s := todoStep.(type) {
+		case *DecisionPlanStep:
+			if s.DecisionStep != nil {
+				innerConfigs := getAgentConfigs(s.DecisionStep)
+				if innerConfigs != nil {
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Decision step '%s' (ID: %s) matched config from step_config.json", s.DecisionStep.GetTitle(), s.DecisionStep.GetID()))
+				}
+			}
+		case *OrchestrationPlanStep:
+			if s.OrchestrationStep != nil {
+				innerConfigs := getAgentConfigs(s.OrchestrationStep)
+				if innerConfigs != nil {
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration step '%s' (ID: %s) matched config from step_config.json", s.OrchestrationStep.GetTitle(), s.OrchestrationStep.GetID()))
+				}
+			}
+		case *ConditionalPlanStep:
+			for _, branchStep := range s.IfTrueSteps {
+				branchConfigs := getAgentConfigs(branchStep)
+				if branchConfigs != nil {
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Branch step '%s' (ID: %s) matched config from step_config.json", branchStep.GetTitle(), branchStep.GetID()))
+				}
+			}
+			for _, branchStep := range s.IfFalseSteps {
+				branchConfigs := getAgentConfigs(branchStep)
+				if branchConfigs != nil {
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Branch step '%s' (ID: %s) matched config from step_config.json", branchStep.GetTitle(), branchStep.GetID()))
+				}
+			}
 		}
+
+		todoSteps[i] = todoStep
 	}
 	return todoSteps, nil
 }
 
 // EmitTodoStepsExtractedEvent emits an event when todo steps are extracted from a plan
 // Public method that accepts BaseOrchestrator and other parameters
-func EmitTodoStepsExtractedEvent(ctx context.Context, bo *orchestrator.BaseOrchestrator, extractedSteps []TodoStep, planSource, extractionMethod, runFolder, workspacePath string) {
+func EmitTodoStepsExtractedEvent(ctx context.Context, bo *orchestrator.BaseOrchestrator, extractedSteps []PlanStepInterface, planSource, extractionMethod, runFolder, workspacePath string) {
 	EmitTodoStepsExtractedEventWithMetadata(ctx, bo, extractedSteps, planSource, extractionMethod, runFolder, workspacePath, nil)
 }
 
 // EmitTodoStepsExtractedEventWithMetadata emits an event when todo steps are extracted from a plan with optional metadata
 // Metadata can include changed_step_ids and deleted_step_ids for granular event handling
-func EmitTodoStepsExtractedEventWithMetadata(ctx context.Context, bo *orchestrator.BaseOrchestrator, extractedSteps []TodoStep, planSource, extractionMethod, runFolder, workspacePath string, metadata map[string]interface{}) {
+func EmitTodoStepsExtractedEventWithMetadata(ctx context.Context, bo *orchestrator.BaseOrchestrator, extractedSteps []PlanStepInterface, planSource, extractionMethod, runFolder, workspacePath string, metadata map[string]interface{}) {
 	if bo.GetContextAwareBridge() == nil {
 		return
 	}
@@ -923,16 +931,17 @@ func getMetadataKeys(metadata map[string]interface{}) []string {
 }
 
 // emitTodoStepsExtractedEvent is a private wrapper that uses receiver fields (for backward compatibility)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) emitTodoStepsExtractedEvent(ctx context.Context, extractedSteps []TodoStep, planSource string) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) emitTodoStepsExtractedEvent(ctx context.Context, extractedSteps []PlanStepInterface, planSource string) {
 	// Use default extraction method and workspace path from orchestrator
 	EmitTodoStepsExtractedEvent(ctx, hcpo.BaseOrchestrator, extractedSteps, planSource, "structured_breakdown_agent", "", hcpo.GetWorkspacePath())
 }
 
 // IsPlanModificationTool checks if a tool name is a plan modification tool
 func IsPlanModificationTool(name string) bool {
-	return name == "update_regular_step" || name == "update_conditional_step" || name == "update_decision_step" || name == "update_routing_step" || name == "delete_plan_steps" || name == "add_regular_step" || name == "add_conditional_step" || name == "add_decision_step" || name == "add_routing_step" || name == "add_loop_step" ||
+	return name == "update_regular_step" || name == "update_conditional_step" || name == "update_decision_step" || name == "update_routing_step" || name == "update_orchestration_step" || name == "delete_plan_steps" || name == "add_regular_step" || name == "add_conditional_step" || name == "add_decision_step" || name == "add_routing_step" || name == "add_orchestration_step" || name == "add_loop_step" ||
 		name == "convert_step_to_conditional" || name == "add_branch_steps" || name == "update_branch_steps" ||
-		name == "delete_branch_steps" || name == "convert_conditional_to_regular"
+		name == "delete_branch_steps" || name == "convert_conditional_to_regular" || name == "update_validation_schema" || name == "update_success_criteria" ||
+		name == "add_orchestration_route" || name == "update_orchestration_route" || name == "delete_orchestration_route"
 }
 
 // IsStepConfigModificationTool checks if a tool name is a step_config modification tool
@@ -999,7 +1008,7 @@ func ExtractChangedStepIDsFromMessages(messages []llmtypes.MessageContent) Chang
 				}
 
 				switch toolName {
-				case "update_regular_step", "update_conditional_step", "update_decision_step", "update_routing_step":
+				case "update_regular_step", "update_conditional_step", "update_decision_step", "update_routing_step", "update_orchestration_step":
 					// Extract existing_step_id from updated step
 					if stepID, ok := argsMap["existing_step_id"].(string); ok && stepID != "" {
 						changed.Updated = append(changed.Updated, stepID)
@@ -1015,7 +1024,7 @@ func ExtractChangedStepIDsFromMessages(messages []llmtypes.MessageContent) Chang
 						}
 					}
 
-				case "add_regular_step", "add_conditional_step", "add_decision_step", "add_routing_step", "add_loop_step":
+				case "add_regular_step", "add_conditional_step", "add_decision_step", "add_routing_step", "add_orchestration_step", "add_loop_step":
 					// Extract id from new step
 					if stepID, ok := argsMap["id"].(string); ok && stepID != "" {
 						changed.Added = append(changed.Added, stepID)
@@ -1086,6 +1095,51 @@ func ExtractChangedStepIDsFromMessages(messages []llmtypes.MessageContent) Chang
 					if stepID, ok := argsMap["existing_step_id"].(string); ok && stepID != "" {
 						changed.Updated = append(changed.Updated, stepID)
 					}
+
+				case "update_validation_schema", "update_success_criteria":
+					// Extract existing_step_id from updated step
+					if stepID, ok := argsMap["existing_step_id"].(string); ok && stepID != "" {
+						changed.Updated = append(changed.Updated, stepID)
+					}
+
+				case "add_orchestration_route":
+					// Extract parent_step_id (the orchestration step that contains the route)
+					if stepID, ok := argsMap["parent_step_id"].(string); ok && stepID != "" {
+						changed.Updated = append(changed.Updated, stepID)
+					}
+					// Extract sub_agent_step.id from new_route (sub-agents have their own step IDs)
+					// When a new route is added, the sub-agent step is effectively "added" to the plan
+					if newRouteRaw, ok := argsMap["new_route"].(map[string]interface{}); ok {
+						if subAgentStepRaw, ok := newRouteRaw["sub_agent_step"].(map[string]interface{}); ok {
+							if subAgentStepID, ok := subAgentStepRaw["id"].(string); ok && subAgentStepID != "" {
+								changed.Added = append(changed.Added, subAgentStepID)
+							}
+						}
+					}
+
+				case "update_orchestration_route":
+					// Extract parent_step_id (the orchestration step that contains the route)
+					if stepID, ok := argsMap["parent_step_id"].(string); ok && stepID != "" {
+						changed.Updated = append(changed.Updated, stepID)
+					}
+					// Extract sub_agent_step.id from sub_agent_step parameter (if provided)
+					// When a route's sub-agent is updated, the sub-agent step is effectively "updated"
+					if subAgentStepRaw, ok := argsMap["sub_agent_step"].(map[string]interface{}); ok {
+						if subAgentStepID, ok := subAgentStepRaw["id"].(string); ok && subAgentStepID != "" {
+							changed.Updated = append(changed.Updated, subAgentStepID)
+						}
+					}
+
+				case "delete_orchestration_route":
+					// Extract parent_step_id (the orchestration step that contains the route)
+					if stepID, ok := argsMap["parent_step_id"].(string); ok && stepID != "" {
+						changed.Updated = append(changed.Updated, stepID)
+					}
+					// Note: We can't extract the deleted sub-agent step ID from the tool call arguments alone
+					// because delete_orchestration_route only provides parent_step_id and deleted_route_id
+					// The sub-agent step ID would need to be read from the plan.json file, which is complex
+					// For now, we track the parent step as updated, which will refresh the frontend
+					// The frontend will see the deleted route (and its sub-agent node) when it refreshes the plan
 				}
 			}
 		}
@@ -1183,25 +1237,20 @@ func CheckAndEmitPlanUpdateEvent(
 		return
 	}
 
-	// Convert plan steps to TodoStep format for the event
-	// Note: We use a simplified conversion here since we don't have access to step_config.json
+	// Use plan steps directly for the event (no conversion needed)
 	// The frontend will merge step_config.json when it receives the event and refreshes
-	todoSteps := make([]TodoStep, len(plan.Steps))
+	// Convert orchestration routes to use PlanStepInterface directly
+	planSteps := make([]PlanStepInterface, len(plan.Steps))
 	for i, step := range plan.Steps {
-		todoSteps[i] = TodoStep{
-			ID:                  step.ID,
-			Title:               step.Title,
-			Description:         step.Description,
-			SuccessCriteria:     step.SuccessCriteria,
-			ContextDependencies: step.ContextDependencies,
-			ContextOutput:       string(step.ContextOutput), // Cast FlexibleContextOutput to string
-			HasLoop:             step.HasLoop,
-			LoopCondition:       step.LoopCondition,
-			MaxIterations:       step.MaxIterations,
-			LoopDescription:     step.LoopDescription,
-			HasCondition:        step.HasCondition,
-			ConditionQuestion:   step.ConditionQuestion,
-			ConditionContext:    step.ConditionContext,
+		// For orchestration steps, we need to convert routes to use PlanStepInterface
+		if orchestrationStep, ok := step.(*OrchestrationPlanStep); ok {
+			// Create a copy with updated routes
+			orchestrationRoutes := make([]PlanOrchestrationRoute, len(orchestrationStep.OrchestrationRoutes))
+			copy(orchestrationRoutes, orchestrationStep.OrchestrationRoutes)
+			// Routes already use PlanStepInterface, so no conversion needed
+			planSteps[i] = step
+		} else {
+			planSteps[i] = step
 		}
 	}
 
@@ -1219,9 +1268,9 @@ func CheckAndEmitPlanUpdateEvent(
 	}
 
 	// Emit the event with metadata
-	EmitTodoStepsExtractedEventWithMetadata(ctx, bo, todoSteps, "updated_plan", "agent_tool_modification", "", workspacePath, metadata)
+	EmitTodoStepsExtractedEventWithMetadata(ctx, bo, planSteps, "updated_plan", "agent_tool_modification", "", workspacePath, metadata)
 	bo.GetLogger().Info(fmt.Sprintf("✅ Emitted plan update event: %d steps (changed: %d added, %d updated, %d deleted)",
-		len(todoSteps), len(changedStepIDs.Added), len(changedStepIDs.Updated), len(changedStepIDs.Deleted)))
+		len(planSteps), len(changedStepIDs.Added), len(changedStepIDs.Updated), len(changedStepIDs.Deleted)))
 }
 
 // CreatePlanOnly runs only the planning phase (standalone, independent from CreateTodoList)
@@ -1307,7 +1356,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 		// Try to emit event immediately so UI can display the existing plan
 		// If conversion fails (invalid plan), log warning but continue - agent will fix it
 		// TODO: Commented out - not required for now
-		// breakdownSteps, err := hcpo.convertPlanStepsToTodoSteps(ctx, existingPlan.Steps)
+		// breakdownSteps, err := hcpo.populateStepsRuntimeFields(ctx, existingPlan.Steps)
 		// if err != nil {
 		// 	hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to convert existing plan steps for UI display: %v. Plan has validation errors - planning agent will fix them.", err))
 		// 	// Don't fail here - let the planning agent fix the invalid plan
@@ -1423,8 +1472,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 				return "", fmt.Errorf(fmt.Sprintf("new plan has no steps: planning agent returned empty steps array"), nil)
 			}
 
-			// Convert approved plan steps to TodoStep format
-			breakdownSteps, err := hcpo.convertPlanStepsToTodoSteps(ctx, approvedPlan.Steps)
+			// Populate runtime fields for approved plan steps
+			breakdownSteps, err := hcpo.populateStepsRuntimeFields(ctx, approvedPlan.Steps)
 			if err != nil {
 				return "", fmt.Errorf(fmt.Sprintf("failed to convert approved plan steps: %w", err), nil)
 			}
@@ -1462,7 +1511,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 	// This ensures the UI always sees the plan, even if event was emitted earlier
 	// TODO: Commented out - not required for now
 	// if approvedPlan != nil && !eventEmitted {
-	// 	breakdownSteps, err := hcpo.convertPlanStepsToTodoSteps(ctx, approvedPlan.Steps)
+	// 	breakdownSteps, err := hcpo.populateStepsRuntimeFields(ctx, approvedPlan.Steps)
 	// 	if err != nil {
 	// 		return "", fmt.Errorf(fmt.Sprintf("failed to convert approved plan steps: %w", err), nil)
 	// 	}
@@ -1487,7 +1536,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 		summary.WriteString("Planning completed successfully.\n\n")
 		summary.WriteString(fmt.Sprintf("Created plan with %d steps:\n", len(approvedPlan.Steps)))
 		for i, step := range approvedPlan.Steps {
-			summary.WriteString(fmt.Sprintf("%d. %s\n", i+1, step.Description))
+			summary.WriteString(fmt.Sprintf("%d. %s\n", i+1, step.GetDescription()))
 		}
 		return summary.String(), nil
 	}

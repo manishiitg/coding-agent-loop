@@ -519,6 +519,7 @@ func (em *ExecutionManager) PrepareForBatchGroup(
 	variableValues map[string]string,
 	isNewFolder bool, // true if folder was just created
 	baseExecCtx *ExecutionContext, // Base context to inherit settings from
+	isFirstGroup bool, // true if this is the first group in the batch
 ) (*ExecutionSetup, error) {
 	orch := em.orchestrator
 
@@ -539,6 +540,8 @@ func (em *ExecutionManager) PrepareForBatchGroup(
 	}
 
 	// Check execution strategy and resume step
+	// IMPORTANT: Resume step should ONLY apply to the first group
+	// Subsequent groups should always start from the beginning
 	resumeStep := 0
 	isStartFromBeginningStrategy := false
 	if orch.executionOptions != nil {
@@ -556,12 +559,18 @@ func (em *ExecutionManager) PrepareForBatchGroup(
 			strategy == ExecutionStrategyFastResumeFromStep ||
 			strategy == ExecutionStrategyRunSingleStep
 
-		orch.GetLogger().Info(fmt.Sprintf("🔍 Batch group cleanup: strategy=%s, ResumeFromStep=%d, isResumeStrategy=%v, isStartFromBeginningStrategy=%v",
-			strategy, orch.executionOptions.ResumeFromStep, isResumeStrategy, isStartFromBeginningStrategy))
+		orch.GetLogger().Info(fmt.Sprintf("🔍 Batch group cleanup: group=%s, isFirstGroup=%v, strategy=%s, ResumeFromStep=%d, isResumeStrategy=%v, isStartFromBeginningStrategy=%v",
+			groupID, isFirstGroup, strategy, orch.executionOptions.ResumeFromStep, isResumeStrategy, isStartFromBeginningStrategy))
 
-		if isResumeStrategy && orch.executionOptions.ResumeFromStep > 0 {
+		// Only use resume step for the first group
+		// All subsequent groups start from the beginning
+		if isFirstGroup && isResumeStrategy && orch.executionOptions.ResumeFromStep > 0 {
 			resumeStep = orch.executionOptions.ResumeFromStep
-			orch.GetLogger().Info(fmt.Sprintf("🔍 Batch group cleanup: detected resume from step %d (strategy: %s)", resumeStep, strategy))
+			orch.GetLogger().Info(fmt.Sprintf("🔍 Batch group cleanup: first group - detected resume from step %d (strategy: %s)", resumeStep, strategy))
+		} else if !isFirstGroup {
+			// Subsequent groups always start from beginning
+			resumeStep = 0
+			orch.GetLogger().Info(fmt.Sprintf("🔍 Batch group cleanup: subsequent group '%s' - always starting from beginning (ignoring ResumeFromStep)", groupID))
 		} else if orch.executionOptions.ResumeFromStep > 0 {
 			orch.GetLogger().Warn(fmt.Sprintf("⚠️ Batch group cleanup: ResumeFromStep=%d but strategy=%s is not a resume strategy, ignoring ResumeFromStep",
 				orch.executionOptions.ResumeFromStep, strategy))

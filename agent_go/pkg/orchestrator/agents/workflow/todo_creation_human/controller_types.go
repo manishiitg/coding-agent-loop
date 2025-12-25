@@ -1,11 +1,11 @@
 package todo_creation_human
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"mcpagent/events"
-
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // BranchStepProgress tracks branch execution progress for conditional steps
@@ -20,46 +20,31 @@ type DecisionEvaluationCount map[string]int
 
 // OrchestrationRoute represents a possible route/sub-agent (private to orchestration step)
 type OrchestrationRoute struct {
-	RouteID       string   `json:"route_id"`                  // Unique ID for this route
-	RouteName     string   `json:"route_name"`                // Human-readable name
-	Condition     string   `json:"condition"`                 // Condition description (e.g., "If error is authentication-related")
-	SubAgentStep  TodoStep `json:"sub_agent_step"`            // The sub-agent step to execute (private, not in main workflow)
-	ContextToPass string   `json:"context_to_pass,omitempty"` // Optional: specific context to pass to sub-agent
+	RouteID       string            `json:"route_id"`                  // Unique ID for this route
+	RouteName     string            `json:"route_name"`                // Human-readable name
+	Condition     string            `json:"condition"`                 // Condition description (e.g., "If error is authentication-related")
+	SubAgentStep  PlanStepInterface `json:"sub_agent_step"`            // The sub-agent step to execute (private, not in main workflow)
+	ContextToPass string            `json:"context_to_pass,omitempty"` // Optional: specific context to pass to sub-agent
 }
 
 // OrchestrationResponse represents the structured output from orchestration evaluation
 type OrchestrationResponse struct {
-	SelectedRouteID                     string `json:"selected_route_id"`                            // Which route was selected
-	Reasoning                           string `json:"reasoning"`                                    // Why this route was chosen
-	SuccessCriteriaMet                  bool   `json:"success_criteria_met"`                         // Whether main orchestrator's success criteria is met
-	SuccessReasoning                    string `json:"success_reasoning,omitempty"`                  // Reasoning for success criteria evaluation
-	SuccessCriteriaVerifiedByValidation bool   `json:"success_criteria_verified_by_validation"`      // Whether validation confirmed success criteria is met
-	InstructionsToSubAgent              string `json:"instructions_to_sub_agent,omitempty"`          // Instructions to pass to the selected sub-agent (replaces step description, required if selected_route_id is provided)
-	SuccessCriteriaForSubAgent          string `json:"success_criteria_for_sub_agent,omitempty"`     // Success criteria to pass to the selected sub-agent (replaces step success criteria, required if selected_route_id is provided)
-	ContextDependenciesForSubAgent      string `json:"context_dependencies_for_sub_agent,omitempty"` // Context dependencies to pass to the selected sub-agent (replaces step context dependencies, optional)
-	ContextOutputForSubAgent            string `json:"context_output_for_sub_agent,omitempty"`       // Context output file name to pass to the selected sub-agent (replaces step context output, optional)
-}
-
-// OrchestrationStepProgress tracks orchestration step execution progress
-type OrchestrationStepProgress struct {
-	MainStepExecuted   bool   `json:"main_step_executed"`          // Whether main orchestration step executed
-	SelectedRouteID    string `json:"selected_route_id,omitempty"` // Which route was selected
-	SubAgentCompleted  bool   `json:"sub_agent_completed"`         // Whether sub-agent completed
-	SuccessCriteriaMet bool   `json:"success_criteria_met"`        // Whether success criteria was met
-	IterationCount     int    `json:"iteration_count"`             // How many times main step re-executed
-	SubAgentOutput     string `json:"sub_agent_output,omitempty"`  // Last sub-agent output (for context in next iteration)
-	// ConversationHistory is stored in-memory only (not persisted) to maintain conversation context across iterations
-	ConversationHistory []llmtypes.MessageContent `json:"-"` // Conversation history for main orchestration orchestrator agent
+	SelectedRouteID                string `json:"selected_route_id"`                            // Which route was selected (can be "end" to terminate workflow, empty to continue working, or a route ID)
+	SuccessCriteriaMet             bool   `json:"success_criteria_met"`                         // Whether main orchestrator's success criteria is met
+	SuccessReasoning               string `json:"success_reasoning,omitempty"`                  // Reasoning for success criteria evaluation
+	InstructionsToSubAgent         string `json:"instructions_to_sub_agent,omitempty"`          // Instructions to pass to the selected sub-agent (replaces step description, required if selected_route_id is provided)
+	SuccessCriteriaForSubAgent     string `json:"success_criteria_for_sub_agent,omitempty"`     // Success criteria to pass to the selected sub-agent (replaces step success criteria, required if selected_route_id is provided)
+	ContextDependenciesForSubAgent string `json:"context_dependencies_for_sub_agent,omitempty"` // Context dependencies to pass to the selected sub-agent (replaces step context dependencies, optional)
+	ContextOutputForSubAgent       string `json:"context_output_for_sub_agent,omitempty"`       // Context output file name to pass to the selected sub-agent (replaces step context output, optional)
 }
 
 // StepProgress tracks which steps have been completed
 type StepProgress struct {
-	CompletedStepIndices     []int                             `json:"completed_step_indices"` // 0-based indices
-	TotalSteps               int                               `json:"total_steps"`
-	LastUpdated              time.Time                         `json:"last_updated"`
-	BranchSteps              map[int]BranchStepProgress        `json:"branch_steps,omitempty"`        // key is step index (0-based)
-	OrchestrationSteps       map[int]OrchestrationStepProgress `json:"orchestration_steps,omitempty"` // key is step index (0-based)
-	DecisionEvaluationCounts DecisionEvaluationCount           `json:"-"`                             // in-memory only: tracks decision step evaluations to prevent infinite loops (not persisted)
+	CompletedStepIndices     []int                      `json:"completed_step_indices"` // 0-based indices
+	TotalSteps               int                        `json:"total_steps"`
+	LastUpdated              time.Time                  `json:"last_updated"`
+	BranchSteps              map[int]BranchStepProgress `json:"branch_steps,omitempty"` // key is step index (0-based)
+	DecisionEvaluationCounts DecisionEvaluationCount    `json:"-"`                      // in-memory only: tracks decision step evaluations to prevent infinite loops (not persisted)
 }
 
 // BranchStepResumeTarget represents a branch step to resume from
@@ -159,53 +144,42 @@ const (
 	AllStepsCompletedActionSkipExecution    = "skip_execution"
 )
 
-// TodoStep represents a todo step in the execution
-type TodoStep struct {
-	ID                  string   `json:"id"` // Stable step ID (from PlanStep) - required for frontend matching
-	Title               string   `json:"title"`
-	Description         string   `json:"description"`
-	SuccessCriteria     string   `json:"success_criteria"`
-	ContextDependencies []string `json:"context_dependencies"`
-	ContextOutput       string   `json:"context_output"`
-	HasLoop             bool     `json:"has_loop"`                   // true if step needs to loop
-	LoopCondition       string   `json:"loop_condition"`             // condition description (same as success criteria) - REQUIRED when has_loop=true
-	MaxIterations       int      `json:"max_iterations,omitempty"`   // max iterations (default: 10)
-	LoopDescription     string   `json:"loop_description,omitempty"` // human-readable explanation
-	// Conditional branching fields
-	HasCondition      bool       `json:"has_condition"`                   // true if step has conditional branches
-	ConditionQuestion string     `json:"condition_question,omitempty"`    // question to ask ConditionalLLM
-	ConditionContext  string     `json:"condition_context,omitempty"`     // context to provide to ConditionalLLM
-	IfTrueSteps       []TodoStep `json:"if_true_steps,omitempty"`         // nested steps for true branch
-	IfFalseSteps      []TodoStep `json:"if_false_steps,omitempty"`        // nested steps for false branch
-	IfTrueNextStepID  string     `json:"if_true_next_step_id,omitempty"`  // ID of step to connect to after true branch completes (or "end" to end workflow)
-	IfFalseNextStepID string     `json:"if_false_next_step_id,omitempty"` // ID of step to connect to after false branch completes (or "end" to end workflow)
-	ConditionResult   *bool      `json:"condition_result,omitempty"`      // runtime: stores decision result
-	ConditionReason   string     `json:"condition_reason,omitempty"`      // runtime: stores LLM reasoning
-	// Decision step fields (execute step, evaluate output, route based on result)
-	HasDecisionStep            bool              `json:"has_decision_step,omitempty"`            // true if step executes a single step and routes based on result
-	DecisionStep               *TodoStep         `json:"decision_step,omitempty"`                // The single step to execute
-	DecisionEvaluationQuestion string            `json:"decision_evaluation_question,omitempty"` // Question to evaluate step output
-	DecisionResult             *bool             `json:"decision_result,omitempty"`              // runtime: stores evaluation result (backward compatibility)
-	DecisionReason             string            `json:"decision_reason,omitempty"`              // runtime: stores evaluation reasoning (backward compatibility)
-	DecisionResponse           *DecisionResponse `json:"decision_response,omitempty"`            // runtime: stores structured decision evaluation response
-	// Orchestration step fields (orchestrator with multiple sub-agents)
-	HasOrchestrationStep  bool                   `json:"has_orchestration_step,omitempty"` // true if step is an orchestration orchestrator
-	OrchestrationStep     *TodoStep              `json:"orchestration_step,omitempty"`     // The main orchestrator step to execute
-	OrchestrationRoutes   []OrchestrationRoute   `json:"orchestration_routes,omitempty"`   // Array of possible routes with conditions
-	OrchestrationResponse *OrchestrationResponse `json:"orchestration_response,omitempty"` // runtime: stores selected route and success evaluation
-	NextStepID            string                 `json:"next_step_id,omitempty"`           // ID of step after orchestration completes (or "end")
-	AgentConfigs          *AgentConfigs          `json:"agent_configs,omitempty"`          // per-agent configuration (LLM, max turns, toggles)
-}
+// TodoStep has been removed - use PlanStepInterface instead
+// All execution code now uses PlanStepInterface directly for type safety
 
 // TodoStepsExtractedEvent represents the event when todo steps are extracted from a plan
 type TodoStepsExtractedEvent struct {
 	events.BaseEventData
-	TotalStepsExtracted int        `json:"total_steps_extracted"`
-	ExtractedSteps      []TodoStep `json:"extracted_steps"`
-	ExtractionMethod    string     `json:"extraction_method"`
-	PlanSource          string     `json:"plan_source"`          // "existing_plan" or "new_plan"
-	WorkspacePath       string     `json:"workspace_path"`       // Workspace path for file operations (required)
-	RunFolder           string     `json:"run_folder,omitempty"` // Run folder name for run-specific configs
+	TotalStepsExtracted int                 `json:"total_steps_extracted"`
+	ExtractedSteps      []PlanStepInterface `json:"extracted_steps"`
+	ExtractionMethod    string              `json:"extraction_method"`
+	PlanSource          string              `json:"plan_source"`          // "existing_plan" or "new_plan"
+	WorkspacePath       string              `json:"workspace_path"`       // Workspace path for file operations (required)
+	RunFolder           string              `json:"run_folder,omitempty"` // Run folder name for run-specific configs
+}
+
+// MarshalJSON implements custom JSON marshaling for TodoStepsExtractedEvent
+// This is needed because PlanStepInterface is an interface and needs special handling
+func (e *TodoStepsExtractedEvent) MarshalJSON() ([]byte, error) {
+	type Alias TodoStepsExtractedEvent
+	aux := &struct {
+		ExtractedSteps []json.RawMessage `json:"extracted_steps"`
+		*Alias
+	}{
+		Alias: (*Alias)(e),
+	}
+
+	// Marshal each step to JSON
+	aux.ExtractedSteps = make([]json.RawMessage, len(e.ExtractedSteps))
+	for i, step := range e.ExtractedSteps {
+		stepJSON, err := json.Marshal(step)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal step %d: %w", i, err)
+		}
+		aux.ExtractedSteps[i] = stepJSON
+	}
+
+	return json.Marshal(aux)
 }
 
 // GetEventType returns the event type for TodoStepsExtractedEvent

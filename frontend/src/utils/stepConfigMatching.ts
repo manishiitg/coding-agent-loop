@@ -1,4 +1,4 @@
-import type { TodoStep } from '../generated/events-bridge';
+import type { TodoStep } from '../generated/event-types';
 
 // AgentLLMConfig represents LLM configuration for an agent
 export interface AgentLLMConfig {
@@ -16,6 +16,7 @@ export interface AgentConfigs {
   validation_max_turns?: number;
   learning_max_turns?: number;
   disable_validation?: boolean;
+  skip_llm_validation_if_pre_validation_passes?: boolean; // If true, skip LLM validation when pre-validation passes (assume validation success)
   disable_learning?: boolean;
   lock_learnings?: boolean; // If true, prevents learning agent from running but still uses existing learnings
   learning_after_loop_iteration?: boolean;
@@ -65,7 +66,19 @@ export interface TodoStepWithConfigs {
   decision_evaluation_question?: string;
   decision_result?: boolean;
   decision_reason?: string;
+  // Orchestration step fields (orchestrator with multiple sub-agents)
+  has_orchestration_step?: boolean;
+  orchestration_step?: TodoStepWithConfigs;
+  orchestration_routes?: Array<{
+    route_id: string;
+    route_name: string;
+    condition: string;
+    sub_agent_step: TodoStepWithConfigs;
+    context_to_pass?: string;
+  }>;
+  next_step_id?: string;
   agent_configs?: AgentConfigs;
+  validation_schema?: ValidationSchema; // Optional structured validation schema for step outputs
 }
 
 // StepConfig represents a single step's configuration in step_config.json
@@ -115,19 +128,60 @@ export function matchStepConfigs(
   return result;
 }
 
-// PlanStep interface for plan.json (matches backend PlanStep structure)
-export interface PlanStep {
+// Validation schema types
+export interface ValidationSchema {
+  files?: FileValidationRule[];
+}
+
+export interface FileValidationRule {
+  file_name: string;
+  must_exist: boolean;
+  json_checks?: JSONValidationCheck[];
+}
+
+export interface JSONValidationCheck {
+  path: string;                      // JSONPath, e.g., "$.status", "$.databases[0].name"
+  must_exist: boolean;               // Key/path must exist
+  value_type?: string;                // "string", "number", "boolean", "array", "object"
+  min_length?: number;               // For arrays/strings
+  max_length?: number;               // For arrays/strings
+  pattern?: string;                   // Regex for format validation
+  min_value?: number;                // For numbers
+  max_value?: number;                // For numbers
+  consistency_check?: ConsistencyRule; // Compare with other fields
+}
+
+export interface ConsistencyRule {
+  type: string;                      // "equals", "greater_than", "less_than", "array_length", "in_array"
+  compare_with_path: string;         // JSONPath to compare with
+}
+
+// Common fields shared by all step types
+interface CommonStepFields {
   id: string;                        // Stable step ID (required, always provided by backend)
   title: string;
   description?: string;
   success_criteria?: string;
   context_dependencies?: string[];
   context_output?: string | string[];
+  enable_prerequisite_detection?: boolean;
+  prerequisite_rules?: PrerequisiteRule[];
+  validation_schema?: ValidationSchema; // Optional structured validation schema for step outputs
+  agent_configs?: AgentConfigs;       // Merged from step_config.json
+}
+
+// Regular step (may have loops)
+export interface RegularPlanStep extends CommonStepFields {
+  type: 'regular';
   has_loop?: boolean;
   loop_condition?: string;
   max_iterations?: number;
   loop_description?: string;
-  has_condition?: boolean;
+}
+
+// Conditional step with branches
+export interface ConditionalPlanStep extends CommonStepFields {
+  type: 'conditional';
   condition_question?: string;
   condition_context?: string;
   if_true_steps?: PlanStep[];
@@ -136,20 +190,29 @@ export interface PlanStep {
   if_false_next_step_id?: string;     // ID of step to connect to after false branch completes (or "end" to end workflow)
   condition_result?: boolean;
   condition_reason?: string;
-  // Decision step fields (execute step, evaluate output, route based on result)
-  has_decision_step?: boolean;
+}
+
+// Decision step (execute step, evaluate output, route based on result)
+export interface DecisionPlanStep extends CommonStepFields {
+  type: 'decision';
   decision_step?: PlanStep;           // The single step to execute
   decision_evaluation_question?: string; // Question to evaluate step output
+  if_true_next_step_id?: string;      // ID of step to connect to if decision is true (or "end")
+  if_false_next_step_id?: string;     // ID of step to connect to if decision is false (or "end")
   decision_result?: boolean;          // runtime: stores evaluation result
   decision_reason?: string;           // runtime: stores evaluation reasoning
-  // Orchestration step fields (orchestrator with multiple sub-agents)
-  has_orchestration_step?: boolean;
+}
+
+// Orchestration step (orchestrator with multiple sub-agents)
+export interface OrchestrationPlanStep extends CommonStepFields {
+  type: 'orchestration';
   orchestration_step?: PlanStep;            // The main orchestrator step to execute
   orchestration_routes?: PlanRoutingRoute[]; // Array of possible routes with conditions
   next_step_id?: string;              // ID of step after orchestration completes (or "end")
-  agent_configs?: AgentConfigs;       // Merged from step_config.json
-  [key: string]: unknown;              // Allow other fields for flexibility
 }
+
+// Discriminated union type for all step types
+export type PlanStep = RegularPlanStep | ConditionalPlanStep | DecisionPlanStep | OrchestrationPlanStep;
 
 // PlanRoutingRoute represents a possible route/sub-agent for planning
 export interface PlanRoutingRoute {
@@ -165,6 +228,23 @@ export interface PlanningResponse {
   steps: PlanStep[];
   run_mode?: string;
   [key: string]: unknown;             // Allow other fields for flexibility
+}
+
+// Type guard functions for discriminated union
+export function isRegularStep(step: PlanStep): step is RegularPlanStep {
+  return step.type === 'regular';
+}
+
+export function isConditionalStep(step: PlanStep): step is ConditionalPlanStep {
+  return step.type === 'conditional';
+}
+
+export function isDecisionStep(step: PlanStep): step is DecisionPlanStep {
+  return step.type === 'decision';
+}
+
+export function isOrchestrationStep(step: PlanStep): step is OrchestrationPlanStep {
+  return step.type === 'orchestration';
 }
 
 

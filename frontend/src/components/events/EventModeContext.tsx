@@ -6,7 +6,7 @@ import { EventModeContext, type EventMode } from './EventContext';
 const ADVANCED_MODE_EVENTS = new Set([
   'llm_generation_start',
   'llm_generation_with_retry',
-  'system_prompt',
+  // 'system_prompt' - removed: now shown in basic mode
   'conversation_start',
   'conversation_turn',
   'cache_event',

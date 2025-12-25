@@ -365,6 +365,11 @@ func (api *StreamingAPI) initializeToolCache() {
 	// Get the existing cache manager
 	cacheManager := mcpcache.GetCacheManager(api.logger)
 
+	// Enable code generation so that missing code is regenerated when loading from cache
+	// This ensures MCP server code is available even if generated/ folder was cleared
+	cacheManager.SetCodeGenerationEnabled(true)
+	api.logger.Info("🔧 Code generation enabled in cache manager for automatic code regeneration")
+
 	// Load merged config (base + user additions)
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
@@ -618,7 +623,7 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 	api.lastDiscovery = time.Now()
 	api.logger.Info(fmt.Sprintf("✅ Background tool discovery completed: %d servers processed", discoveredServers))
 
-	// Start periodic refresh (every 10 minutes)
+	// Start periodic refresh (every 24 hours)
 	api.startPeriodicRefresh()
 }
 
@@ -631,7 +636,7 @@ func (api *StreamingAPI) startPeriodicRefresh() {
 		return // Already started
 	}
 
-	api.discoveryTicker = time.NewTicker(10 * time.Minute)
+	api.discoveryTicker = time.NewTicker(24 * time.Hour)
 	go func() {
 		for range api.discoveryTicker.C {
 			api.logger.Info("🔄 Starting periodic tool discovery refresh...")
@@ -639,7 +644,7 @@ func (api *StreamingAPI) startPeriodicRefresh() {
 		}
 	}()
 
-	api.logger.Info("⏰ Started periodic tool discovery refresh (every 10 minutes)")
+	api.logger.Info("⏰ Started periodic tool discovery refresh (every 24 hours)")
 }
 
 // stopPeriodicRefresh stops the periodic refresh

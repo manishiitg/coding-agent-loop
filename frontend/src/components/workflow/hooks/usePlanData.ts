@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { agentApi } from '../../../services/api'
 import type { PlanStep, PlanningResponse, StepConfig, AgentConfigs } from '../../../utils/stepConfigMatching'
+import { isConditionalStep, isDecisionStep, isOrchestrationStep } from '../../../utils/stepConfigMatching'
 
 // Types for plan change detection
 export type ChangeType = 'added' | 'updated' | 'deleted'
@@ -18,8 +19,12 @@ export interface UsePlanDataReturn {
   error: string | null
   changes: PlanChanges | null  // Latest detected changes (set via setChanges from granular events)
   loadPlan: () => Promise<void>  // Loads plan without comparison
+  /** @deprecated Legacy method - prefer using updateStep() which calls backend APIs. See method documentation for when to use. */
   savePlan: (plan: PlanningResponse) => Promise<void>
+  /** @deprecated Legacy method - prefer using agentApi.updateStepConfig(). See method documentation for when to use. */
   saveStepConfig: (stepId: string, agentConfigs: AgentConfigs | undefined) => Promise<void>
+  /** @deprecated Legacy method - prefer using agentApi.batchUpdateSteps(). See method documentation for when to use. */
+  batchSaveStepConfig: (stepConfigs: Array<{ stepId: string; agentConfigs: AgentConfigs | undefined }>) => Promise<void>
   updateStep: (stepIndex: number, updates: Partial<PlanStep>) => Promise<void>
   deleteStep: (stepIndex: number) => Promise<void>
   addStep: (step: PlanStep, afterIndex?: number) => Promise<void>
@@ -69,25 +74,49 @@ function mergeStepConfigs(
     }
   }
 
+  // Recursively merge configs into a single step (handles nested structures)
+  const mergeIntoStep = (step: PlanStep): PlanStep => {
+    const config = step.id ? configMap.get(step.id) : undefined
+    let mergedStep: PlanStep = {
+      ...step,
+      ...(config ? { agent_configs: config } : {})
+    }
+    
+    // Handle nested branch steps
+    if (isConditionalStep(step)) {
+      mergedStep = {
+        ...mergedStep,
+        if_true_steps: step.if_true_steps ? mergeIntoSteps(step.if_true_steps) : undefined,
+        if_false_steps: step.if_false_steps ? mergeIntoSteps(step.if_false_steps) : undefined,
+      } as PlanStep
+    }
+    
+    // Handle decision step
+    if (isDecisionStep(step)) {
+      mergedStep = {
+        ...mergedStep,
+        decision_step: step.decision_step ? mergeIntoStep(step.decision_step) : undefined,
+      } as PlanStep
+    }
+    
+    // Handle orchestration step
+    if (isOrchestrationStep(step)) {
+      mergedStep = {
+        ...mergedStep,
+        orchestration_step: step.orchestration_step ? mergeIntoStep(step.orchestration_step) : undefined,
+        orchestration_routes: step.orchestration_routes ? step.orchestration_routes.map(route => ({
+          ...route,
+          sub_agent_step: mergeIntoStep(route.sub_agent_step)
+        })) : undefined,
+      } as PlanStep
+    }
+    
+    return mergedStep
+  }
+
   // Recursively merge configs into steps
   const mergeIntoSteps = (steps: PlanStep[]): PlanStep[] => {
-    return steps.map(step => {
-      const config = step.id ? configMap.get(step.id) : undefined
-      const mergedStep: PlanStep = {
-        ...step,
-        ...(config ? { agent_configs: config } : {})
-      }
-      
-      // Handle nested branch steps
-      if (step.if_true_steps) {
-        mergedStep.if_true_steps = mergeIntoSteps(step.if_true_steps)
-      }
-      if (step.if_false_steps) {
-        mergedStep.if_false_steps = mergeIntoSteps(step.if_false_steps)
-      }
-      
-      return mergedStep
-    })
+    return steps.map(step => mergeIntoStep(step))
   }
 
   return {
@@ -239,7 +268,29 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     }
   }, [getPlanFilePath, getStepConfigFilePath, workspacePath])
 
-  // Save entire plan to workspace
+  /**
+   * LEGACY METHOD: Direct file save for plan.json
+   * 
+   * ⚠️ WARNING: This method bypasses backend validation and should be used sparingly.
+   * 
+   * ✅ USE THIS METHOD FOR:
+   *   - Initial plan creation (when creating a brand new plan.json file)
+   *   - One-time migrations or bulk imports
+   *   - Edge cases where backend API is unavailable
+   * 
+   * ❌ DO NOT USE THIS METHOD FOR:
+   *   - Normal step updates (use updateStep() instead, which calls backend APIs)
+   *   - Step configuration changes (use updateStepConfig API instead)
+   *   - Any operation that should be validated by the backend
+   * 
+   * The backend APIs (updatePlanStep, updateStepConfig, batchUpdateSteps, etc.) provide:
+   *   - Automatic validation
+   *   - Consistent data structure
+   *   - Prevention of agent_configs in plan.json
+   *   - Atomic operations
+   * 
+   * @deprecated Prefer using backend APIs (updateStep, deleteStep, addStep) for normal operations
+   */
   const savePlan = useCallback(async (updatedPlan: PlanningResponse) => {
     const planPath = getPlanFilePath()
     if (!planPath) {
@@ -265,7 +316,31 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     }
   }, [getPlanFilePath])
 
-  // Save step_config.json to workspace
+  /**
+   * LEGACY METHOD: Direct file save for step_config.json
+   * 
+   * ⚠️ WARNING: This method bypasses backend validation and should be used sparingly.
+   * 
+   * ✅ USE THIS METHOD FOR:
+   *   - Initial step config creation (when setting up a new workspace)
+   *   - One-time migrations or bulk imports
+   *   - Edge cases where backend API is unavailable
+   *   - TodoStepsExtractedEvent handler (if needed for backward compatibility)
+   * 
+   * ❌ DO NOT USE THIS METHOD FOR:
+   *   - Normal step config updates (use updateStepConfig API instead)
+   *   - Updates from WorkflowCanvas or StepSidebar (use updateStep() instead)
+   *   - Bulk operations (use batchUpdateSteps API instead)
+   *   - Any operation that should be validated by the backend
+   * 
+   * The backend API (updateStepConfig) provides:
+   *   - Automatic validation
+   *   - Consistent data structure
+   *   - Prevention of orphaned configs
+   *   - Atomic operations with plan.json updates
+   * 
+   * @deprecated Prefer using agentApi.updateStepConfig() for normal operations
+   */
   const saveStepConfig = useCallback(async (stepId: string, agentConfigs: AgentConfigs | undefined) => {
     const stepConfigPath = getStepConfigFilePath()
     if (!stepConfigPath) {
@@ -334,27 +409,110 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     }
   }, [getStepConfigFilePath])
 
-  // Helper function to check if updates contain plan-related fields (excluding agent_configs)
-  const hasPlanRelatedFields = useCallback((updates: Partial<PlanStep>): boolean => {
-    // List of all plan-related fields (everything except agent_configs)
-    const planFields = [
-      'id', 'title', 'description', 'success_criteria', 'context_dependencies', 'context_output',
-      'has_loop', 'loop_condition', 'max_iterations', 'loop_description',
-      'has_condition', 'condition_question', 'condition_context',
-      'if_true_steps', 'if_false_steps', 'if_true_next_step_id', 'if_false_next_step_id',
-      'condition_result', 'condition_reason',
-      'has_decision_step', 'decision_step', 'decision_evaluation_question',
-      'decision_result', 'decision_reason'
-    ]
-    
-    // Check if any plan-related field is in updates
-    return planFields.some(field => field in updates)
-  }, [])
+  /**
+   * LEGACY METHOD: Batch direct file save for step_config.json
+   * 
+   * ⚠️ WARNING: This method bypasses backend validation and should be used sparingly.
+   * 
+   * ✅ USE THIS METHOD FOR:
+   *   - Initial bulk step config creation (when setting up a new workspace)
+   *   - One-time migrations or bulk imports
+   *   - Edge cases where backend API is unavailable
+   * 
+   * ❌ DO NOT USE THIS METHOD FOR:
+   *   - Normal bulk operations (use batchUpdateSteps API instead)
+   *   - BulkStepConfigModal operations (now uses batchUpdateSteps API)
+   *   - Any operation that should be validated by the backend
+   * 
+   * The backend API (batchUpdateSteps) provides:
+   *   - Automatic validation
+   *   - Consistent data structure
+   *   - Prevention of orphaned configs
+   *   - Atomic operations with plan.json updates
+   *   - Better error handling and rollback
+   * 
+   * @deprecated Prefer using agentApi.batchUpdateSteps() for normal operations
+   */
+  const batchSaveStepConfig = useCallback(async (stepConfigs: Array<{ stepId: string; agentConfigs: AgentConfigs | undefined }>) => {
+    const stepConfigPath = getStepConfigFilePath()
+    if (!stepConfigPath) {
+      throw new Error('No workspace path provided')
+    }
+
+    try {
+      // Read existing step_config.json (or create empty if doesn't exist)
+      let existingConfigs: StepConfig[] = []
+      try {
+        const response = await agentApi.getPlannerFileContent(stepConfigPath)
+        if (response.success && response.data && response.data.content && typeof response.data.content === 'string') {
+          const rawContent = JSON.parse(response.data.content)
+          existingConfigs = normalizeStepConfigFile(rawContent)
+        }
+      } catch {
+        console.log('[usePlanData] step_config.json doesn\'t exist yet, creating new file')
+      }
+
+      // Create a map of existing configs by step ID
+      const configMap = new Map<string, StepConfig>()
+      existingConfigs.forEach(config => {
+        if (config.id) {
+          configMap.set(config.id, config)
+        }
+      })
+
+      // Update or add each step config
+      stepConfigs.forEach(({ stepId, agentConfigs }) => {
+        if (agentConfigs) {
+          // Update or add step config
+          const existingConfig = configMap.get(stepId)
+          if (existingConfig) {
+            // Merge with existing config
+            configMap.set(stepId, {
+              ...existingConfig,
+              agent_configs: {
+                ...existingConfig.agent_configs,
+                ...agentConfigs
+              }
+            })
+          } else {
+            // Add new config
+            configMap.set(stepId, {
+              id: stepId,
+              agent_configs: agentConfigs
+            })
+          }
+        } else {
+          // Remove config if agentConfigs is undefined
+          configMap.delete(stepId)
+        }
+      })
+
+      // Convert map back to array
+      const updatedConfigs = Array.from(configMap.values())
+
+      // Save updated step_config.json in object format: { "steps": [...] }
+      const content = JSON.stringify({ steps: updatedConfigs }, null, 2)
+      const response = await agentApi.updatePlannerFile(
+        stepConfigPath,
+        content,
+        `Batch updated step configs for ${stepConfigs.length} step(s)`
+      )
+
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to batch save step configs')
+      }
+
+      console.log('[usePlanData] Batch saved step_config.json for', stepConfigs.length, 'step(s)')
+    } catch (err) {
+      console.error('[usePlanData] Failed to batch save step configs:', err)
+      throw err
+    }
+  }, [getStepConfigFilePath])
 
   // Update a single step
   const updateStep = useCallback(async (stepIndex: number, updates: Partial<PlanStep>) => {
-    if (!plan) {
-      throw new Error('No plan loaded')
+    if (!plan || !workspacePath) {
+      throw new Error('No plan loaded or workspace path missing')
     }
 
     const updatedSteps = [...plan.steps]
@@ -363,31 +521,41 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     }
 
     const stepId = updatedSteps[stepIndex].id
-    updatedSteps[stepIndex] = {
-      ...updatedSteps[stepIndex],
-      ...updates
+    if (!stepId) {
+      throw new Error('Step is missing required ID field')
     }
 
-    // Only save plan.json if updates contain plan-related fields (not just agent_configs)
-    const shouldSavePlan = hasPlanRelatedFields(updates)
-    if (shouldSavePlan) {
-      const updatedPlan: PlanningResponse = {
-        ...plan,
-        steps: updatedSteps
-      }
-      await savePlan(updatedPlan)
+    // Separate plan updates and config updates
+    const { agent_configs, ...planUpdates } = updates
+
+    // Send update instructions to backend
+    const promises: Promise<{ success: boolean; message: string; data?: unknown }>[] = []
+
+    // Update plan if there are plan-related fields
+    if (Object.keys(planUpdates).length > 0) {
+      promises.push(
+        agentApi.updatePlanStep(workspacePath, stepId, planUpdates)
+      )
     }
 
-    // If agent_configs is in updates, save to step_config.json
-    if ('agent_configs' in updates) {
-      await saveStepConfig(stepId, updates.agent_configs)
+    // Update config if agent_configs is provided
+    if (agent_configs !== undefined) {
+      promises.push(
+        agentApi.updateStepConfig(workspacePath, stepId, agent_configs)
+      )
     }
-  }, [plan, savePlan, saveStepConfig, hasPlanRelatedFields])
+
+    // Wait for all updates to complete
+    await Promise.all(promises)
+
+    // Refresh plan from backend
+    await loadPlan()
+  }, [plan, workspacePath, loadPlan])
 
   // Delete a step
   const deleteStep = useCallback(async (stepIndex: number) => {
-    if (!plan) {
-      throw new Error('No plan loaded')
+    if (!plan || !workspacePath) {
+      throw new Error('No plan loaded or workspace path missing')
     }
 
     const updatedSteps = [...plan.steps]
@@ -395,59 +563,46 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
       throw new Error('Invalid step index')
     }
 
-    // Get the deleted step's context_output to clean up dependencies
-    const deletedStep = updatedSteps[stepIndex]
-    const deletedContextOutput = deletedStep.context_output
-
-    // Remove the step
-    updatedSteps.splice(stepIndex, 1)
-
-    // Clean up context_dependencies in remaining steps
-    if (deletedContextOutput) {
-      const outputToRemove = Array.isArray(deletedContextOutput) 
-        ? deletedContextOutput 
-        : [deletedContextOutput]
-      
-      updatedSteps.forEach(step => {
-        if (step.context_dependencies) {
-          step.context_dependencies = step.context_dependencies.filter(
-            dep => !outputToRemove.includes(dep)
-          )
-        }
-      })
+    const stepId = updatedSteps[stepIndex].id
+    if (!stepId) {
+      throw new Error('Step is missing required ID field')
     }
 
-    const updatedPlan: PlanningResponse = {
-      ...plan,
-      steps: updatedSteps
-    }
+    // Call backend API to delete step
+    await agentApi.deleteStep(workspacePath, stepId)
 
-    await savePlan(updatedPlan)
-  }, [plan, savePlan])
+    // Refresh plan from backend
+    await loadPlan()
+  }, [plan, workspacePath, loadPlan])
 
   // Add a new step
   const addStep = useCallback(async (step: PlanStep, afterIndex?: number) => {
-    if (!plan) {
-      throw new Error('No plan loaded')
+    if (!plan || !workspacePath) {
+      throw new Error('No plan loaded or workspace path missing')
     }
 
-    const updatedSteps = [...plan.steps]
-    
-    if (afterIndex !== undefined && afterIndex >= 0) {
-      // Insert after the specified index
-      updatedSteps.splice(afterIndex + 1, 0, step)
-    } else {
-      // Add to the end
-      updatedSteps.push(step)
+    // Remove agent_configs from step if present (validation)
+    const { agent_configs, ...stepWithoutConfig } = step
+
+    // Determine insert_after_step_id if afterIndex is provided
+    let insertAfterStepId: string | undefined
+    if (afterIndex !== undefined && afterIndex >= 0 && afterIndex < plan.steps.length) {
+      insertAfterStepId = plan.steps[afterIndex].id
     }
 
-    const updatedPlan: PlanningResponse = {
-      ...plan,
-      steps: updatedSteps
+    // Call backend API to add step
+    await agentApi.addStep(workspacePath, stepWithoutConfig, {
+      insertAfterStepId: insertAfterStepId
+    })
+
+    // If agent_configs was provided, update config separately
+    if (agent_configs !== undefined) {
+      await agentApi.updateStepConfig(workspacePath, step.id, agent_configs)
     }
 
-    await savePlan(updatedPlan)
-  }, [plan, savePlan])
+    // Refresh plan from backend
+    await loadPlan()
+  }, [plan, workspacePath, loadPlan])
 
   // Refresh plan (returns detected changes)
   const refresh = loadPlan
@@ -478,6 +633,7 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     loadPlan,
     savePlan,
     saveStepConfig,
+    batchSaveStepConfig,
     updateStep,
     deleteStep,
     addStep,

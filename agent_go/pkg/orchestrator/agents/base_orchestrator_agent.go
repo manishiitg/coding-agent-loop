@@ -15,6 +15,8 @@ import (
 	"mcpagent/llm"
 	"mcpagent/observability"
 
+	agentlogger "mcp-agent-builder-go/agent_go/pkg/logger"
+
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -128,6 +130,9 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.SummarizeOnFixedTokenThreshold,
 		boa.config.FixedTokenThreshold,
 		boa.config.SummaryKeepLastMessages,
+		boa.config.EnableContextEditing,        // Context editing configuration
+		boa.config.ContextEditingThreshold,     // Token threshold for context editing
+		boa.config.ContextEditingTurnThreshold, // Turn age threshold for context editing
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create base agent: %w", err)
@@ -611,15 +616,23 @@ func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 		}
 	}
 
-	// Convert loggerv2.Logger to loggerv2.Logger for llm.Config
-	var v2Logger loggerv2.Logger
-	if boa.logger != nil {
-		v2Logger = boa.logger
+	// Create a separate LLM logger that writes to llm_debug.log
+	// This separates LLM logs (including [GEMINI] logs from multi-llm-provider-go) from server logs
+	var llmLogger loggerv2.Logger
+	llmLoggerInstance, err := agentlogger.CreateLogger("logs/llm_debug.log", "debug", "text", false)
+	if err != nil {
+		// Fallback to the provided logger if LLM logger creation fails
+		if boa.logger != nil {
+			llmLogger = boa.logger
+		} else {
+			llmLogger = loggerv2.NewDefault()
+		}
 	} else {
-		v2Logger = loggerv2.NewDefault()
+		llmLogger = llmLoggerInstance
 	}
 
 	// Create LLM configuration
+	// Use llmLogger (separate file) for multi-llm-provider-go logs, not the server logger
 	config := llm.Config{
 		Provider:       llm.Provider(boa.config.Provider),
 		ModelID:        boa.config.Model,
@@ -628,7 +641,7 @@ func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 		TraceID:        traceID,
 		FallbackModels: fallbackModels,
 		MaxRetries:     boa.config.MaxRetries,
-		Logger:         v2Logger,
+		Logger:         llmLogger, // Use separate LLM logger for multi-llm-provider-go logs
 		APIKeys:        llmAPIKeys,
 	}
 

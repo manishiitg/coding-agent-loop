@@ -104,7 +104,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) shouldUseBatchExecution() bo
 // Uses ExecutionManager for centralized cleanup and progress management
 func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 	ctx context.Context,
-	breakdownSteps []TodoStep,
+	breakdownSteps []PlanStepInterface,
 	iteration int,
 	execCtx *ExecutionContext,
 ) (*BatchExecutionResult, error) {
@@ -239,6 +239,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 		}
 
 		// Use ExecutionManager to prepare and apply cleanup for this group
+		// Pass isFirstGroup=true only for the first group (groupIndex == 0)
+		// This ensures resume step only applies to first group, subsequent groups start from beginning
+		isFirstGroup := groupIndex == 0
 		groupSetup, err := execManager.PrepareForBatchGroup(
 			ctx,
 			group.GroupID,
@@ -246,7 +249,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 			len(breakdownSteps),
 			group.Values,
 			isNewFolder,
-			execCtx, // Inherit base execution context settings
+			execCtx,      // Inherit base execution context settings
+			isFirstGroup, // Only first group can use resume step
 		)
 		if err != nil {
 			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to prepare execution for group %s: %v", group.GroupID, err), nil)
@@ -305,6 +309,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 		result.CompletedGroups++
 		result.CompletedGroupIDs = append(result.CompletedGroupIDs, group.GroupID)
 		hcpo.emitBatchGroupEndEvent(ctx, group.GroupID, groupIndex, totalGroups, true, "", groupDuration, len(progress.CompletedStepIndices), len(breakdownSteps), runFolder, remainingGroups)
+
+		// If single step mode was active, stop batch execution after this group
+		// Single step mode should only run one group, not continue to additional groups
+		if groupSetup.Context.RunSingleStepOnly {
+			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Single step mode was active - stopping batch execution after group %s (skipping remaining %d group(s))", group.GroupID, remainingGroups))
+			break
+		}
 	}
 
 	result.Duration = time.Since(startTime)

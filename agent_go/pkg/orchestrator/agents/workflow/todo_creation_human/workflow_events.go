@@ -152,3 +152,51 @@ type IndependentStepsSelectedEvent struct {
 func (e *IndependentStepsSelectedEvent) GetEventType() events.EventType {
 	return events.IndependentStepsSelected
 }
+
+// PreValidationCompletedEvent represents the event when pre-validation completes
+type PreValidationCompletedEvent struct {
+	events.BaseEventData
+	StepID        string                    `json:"step_id"`          // Step ID from plan
+	StepIndex     int                       `json:"step_index"`       // 0-based step index
+	StepTitle     string                    `json:"step_title"`       // Step title
+	StepPath      string                    `json:"step_path"`        // Step path (e.g., "step-1" or "step-1-if-true-0")
+	IsBranchStep  bool                      `json:"is_branch_step"`   // Whether this is a branch step
+	OverallPass   bool                      `json:"overall_pass"`     // Whether pre-validation passed
+	TotalChecks   int                       `json:"total_checks"`     // Total number of checks performed
+	PassedChecks  int                       `json:"passed_checks"`    // Number of checks that passed
+	FailedChecks  int                       `json:"failed_checks"`    // Number of checks that failed
+	FilesChecked  []FileCheckResultForEvent `json:"files_checked"`    // Results for each file checked
+	Errors        []ValidationErrorForEvent `json:"errors,omitempty"` // Validation errors if any
+	RunFolder     string                    `json:"run_folder"`       // Run folder name (e.g., "iteration-1")
+	WorkspacePath string                    `json:"workspace_path"`   // Workspace path for file operations
+}
+
+// FileCheckResultForEvent is a simplified version of FileCheckResult for events
+type FileCheckResultForEvent struct {
+	FileName   string                    `json:"file_name"`   // Name of the file checked
+	Exists     bool                      `json:"exists"`      // Whether file exists
+	IsJSON     bool                      `json:"is_json"`     // Whether file is valid JSON
+	JSONChecks []JSONCheckResultForEvent `json:"json_checks"` // Results of JSON validation checks
+}
+
+// JSONCheckResultForEvent is a simplified version of JSONCheckResult for events
+type JSONCheckResultForEvent struct {
+	Path      string `json:"path"`                // JSONPath expression
+	Passed    bool   `json:"passed"`              // Whether check passed
+	CheckType string `json:"check_type"`          // Type of check (must_exist, value_type, etc.)
+	ErrorMsg  string `json:"error_msg,omitempty"` // Error message if check failed
+}
+
+// ValidationErrorForEvent is a simplified version of ValidationError for events
+type ValidationErrorForEvent struct {
+	File      string `json:"file"`       // File where error occurred
+	Path      string `json:"path"`       // JSONPath where error occurred
+	CheckType string `json:"check_type"` // Type of check that failed
+	Expected  string `json:"expected"`   // Expected value
+	Actual    string `json:"actual"`     // Actual value
+	Message   string `json:"message"`    // Error message
+}
+
+func (e *PreValidationCompletedEvent) GetEventType() events.EventType {
+	return events.EventType("pre_validation_completed")
+}

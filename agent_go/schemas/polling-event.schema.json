@@ -1,87 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
-    "AgentConfigs": {
-      "properties": {
-        "execution_llm": {
-          "$ref": "#/$defs/AgentLLMConfig"
-        },
-        "validation_llm": {
-          "$ref": "#/$defs/AgentLLMConfig"
-        },
-        "learning_llm": {
-          "$ref": "#/$defs/AgentLLMConfig"
-        },
-        "conditional_llm": {
-          "$ref": "#/$defs/AgentLLMConfig"
-        },
-        "execution_max_turns": {
-          "type": "integer"
-        },
-        "validation_max_turns": {
-          "type": "integer"
-        },
-        "learning_max_turns": {
-          "type": "integer"
-        },
-        "disable_validation": {
-          "type": "boolean"
-        },
-        "disable_learning": {
-          "type": "boolean"
-        },
-        "lock_learnings": {
-          "type": "boolean"
-        },
-        "learning_after_loop_iteration": {
-          "type": "boolean"
-        },
-        "learning_detail_level": {
-          "type": "string"
-        },
-        "selected_servers": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "selected_tools": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "enabled_custom_tool_categories": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "enabled_custom_tools": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "enable_large_output_virtual_tools": {
-          "type": "boolean"
-        },
-        "use_code_execution_mode": {
-          "type": "boolean"
-        },
-        "enable_prerequisite_detection": {
-          "type": "boolean"
-        },
-        "prerequisite_rules": {
-          "items": {
-            "$ref": "#/$defs/PrerequisiteRule"
-          },
-          "type": "array"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
     "AgentEndEvent": {
       "properties": {
         "timestamp": {
@@ -250,18 +169,6 @@
         "data": {
           "$ref": "#/$defs/EventDataUnion",
           "description": "The actual typed event data"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "AgentLLMConfig": {
-      "properties": {
-        "provider": {
-          "type": "string"
-        },
-        "model_id": {
-          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1274,6 +1181,128 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "ContextEditingCompletedEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "total_messages": {
+          "type": "integer"
+        },
+        "tool_response_count": {
+          "type": "integer"
+        },
+        "compacted_count": {
+          "type": "integer"
+        },
+        "total_tokens_saved": {
+          "type": "integer"
+        },
+        "token_threshold": {
+          "type": "integer"
+        },
+        "turn_threshold": {
+          "type": "integer"
+        },
+        "current_turn": {
+          "type": "integer"
+        },
+        "evaluations": {
+          "items": {
+            "$ref": "#/$defs/ToolResponseEvaluation"
+          },
+          "type": "array"
+        },
+        "already_compacted_count": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ContextEditingErrorEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "error": {
+          "type": "string"
+        },
+        "total_messages": {
+          "type": "integer"
+        },
+        "token_threshold": {
+          "type": "integer"
+        },
+        "turn_threshold": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ContextSummarizationCompletedEvent": {
       "properties": {
         "timestamp": {
@@ -1842,18 +1871,6 @@
       "additionalProperties": false,
       "type": "object"
     },
-    "DecisionResponse": {
-      "properties": {
-        "result": {
-          "type": "boolean"
-        },
-        "reasoning": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
     "DecisionResponseEvent": {
       "properties": {
         "result": {
@@ -2038,6 +2055,12 @@
         "context_summarization_error": {
           "$ref": "#/$defs/ContextSummarizationErrorEvent"
         },
+        "context_editing_completed": {
+          "$ref": "#/$defs/ContextEditingCompletedEvent"
+        },
+        "context_editing_error": {
+          "$ref": "#/$defs/ContextEditingErrorEvent"
+        },
         "large_tool_output_detected": {
           "$ref": "#/$defs/LargeToolOutputDetectedEvent"
         },
@@ -2115,6 +2138,9 @@
         },
         "decision_evaluated": {
           "$ref": "#/$defs/DecisionEvaluatedEvent"
+        },
+        "pre_validation_completed": {
+          "$ref": "#/$defs/PreValidationCompletedEvent"
         },
         "todo_steps_extracted": {
           "$ref": "#/$defs/TodoStepsExtractedEvent"
@@ -2229,6 +2255,9 @@
         },
         "batch_execution_end": {
           "$ref": "#/$defs/BatchExecutionEndEvent"
+        },
+        "prerequisite_navigation": {
+          "$ref": "#/$defs/PrerequisiteNavigationEvent"
         }
       },
       "additionalProperties": false,
@@ -2237,99 +2266,103 @@
     "EventType": {
       "type": "string",
       "enum": [
-        "tool_call_error",
-        "tool_response",
-        "large_tool_output_file_written",
-        "cache_error",
-        "performance",
-        "batch_execution_start",
-        "conversation_turn",
+        "mcp_server_connection_error",
+        "llm_messages",
+        "workspace_file_operation",
+        "orchestrator_start",
+        "batch_group_end",
+        "context_summarization_error",
         "structured_output_end",
+        "streaming_start",
+        "json_validation_start",
+        "json_validation_end",
+        "agent_processing",
+        "tool_call_error",
+        "context_cancelled",
+        "orchestrator_end",
+        "agent_end",
+        "llm_generation_start",
+        "system_prompt",
+        "token_limit_exceeded",
+        "decision_evaluated",
+        "todo_steps_extracted",
+        "streaming_connection_lost",
+        "cache_operation_start",
+        "conversation_start",
+        "context_summarization_completed",
+        "throttling_detected",
+        "comprehensive_cache",
+        "orchestrator_error",
+        "streaming_end",
+        "cache_write",
+        "cache_cleanup",
+        "llm_generation_error",
+        "tool_output",
+        "mcp_server_discovery",
+        "tool_call_progress",
+        "batch_execution_start",
+        "llm_generation_with_retry",
+        "max_turns_reached",
+        "large_tool_output_detected",
+        "large_tool_output_server_unavailable",
+        "debug",
+        "performance",
+        "batch_execution_end",
+        "tool_execution",
+        "tool_response",
+        "streaming_chunk",
+        "streaming_error",
+        "streaming_progress",
         "mcp_server_connection_end",
         "llm_token_usage",
-        "context_summarization_started",
-        "orchestrator_error",
-        "step_execution_failed",
-        "streaming_start",
-        "streaming_end",
-        "batch_group_start",
         "conversation_error",
-        "decision_evaluated",
-        "independent_steps_selected",
-        "mcp_server_selection",
-        "large_tool_output_detected",
-        "model_change",
-        "cache_cleanup",
-        "conversation_end",
-        "workspace_file_operation",
-        "mcp_server_connection",
-        "orchestrator_end",
-        "mcp_server_connection_start",
-        "batch_group_end",
-        "batch_execution_end",
-        "tool_call_start",
-        "mcp_server_discovery",
-        "context_cancelled",
-        "cache_miss",
-        "mcp_server_connection_error",
-        "llm_generation_with_retry",
-        "tool_call_end",
-        "user_message",
-        "unified_completion",
-        "structured_output_error",
-        "cache_hit",
-        "json_validation_start",
-        "conversation_thinking",
-        "tool_execution",
-        "error_detail",
-        "max_turns_reached",
-        "large_tool_output_server_unavailable",
-        "request_human_feedback",
-        "streaming_error",
-        "streaming_connection_lost",
-        "cache_write",
-        "agent_start",
-        "context_summarization_error",
-        "structured_output_start",
-        "cache_expired",
-        "json_validation_end",
-        "llm_generation_end",
-        "token_limit_exceeded",
-        "comprehensive_cache",
-        "smart_routing_end",
-        "orchestrator_agent_error",
+        "context_editing_error",
+        "large_tool_output_file_written",
+        "pre_validation_completed",
         "variables_extracted",
+        "request_human_feedback",
+        "structured_output_error",
+        "agent_start",
         "agent_error",
-        "llm_generation_start",
-        "throttling_detected",
-        "orchestrator_agent_end",
-        "step_execution_end",
-        "streaming_chunk",
-        "streaming_progress",
-        "cache_operation_start",
-        "llm_generation_error",
-        "token_usage",
-        "context_summarization_completed",
         "smart_routing_start",
-        "tool_call_progress",
-        "agent_processing",
-        "tool_output",
-        "orchestrator_start",
-        "debug",
-        "system_prompt",
-        "fallback_model_used",
-        "step_token_usage",
-        "todo_steps_extracted",
-        "llm_messages",
-        "conversation_start",
+        "cache_error",
+        "batch_group_start",
+        "conversation_end",
+        "mcp_server_connection",
+        "error_detail",
+        "context_editing_completed",
         "large_tool_output_file_write_error",
-        "fallback_attempt",
+        "fallback_model_used",
         "orchestrator_agent_start",
         "step_execution_start",
-        "step_progress_updated",
-        "blocking_human_feedback",
         "human_verification_response",
-        "agent_end"
+        "conversation_thinking",
+        "model_change",
+        "smart_routing_end",
+        "blocking_human_feedback",
+        "cache_hit",
+        "cache_expired",
+        "conversation_turn",
+        "tool_call_start",
+        "tool_call_end",
+        "user_message",
+        "context_summarization_started",
+        "unified_completion",
+        "orchestrator_agent_end",
+        "orchestrator_agent_error",
+        "llm_generation_end",
+        "mcp_server_selection",
+        "step_execution_end",
+        "step_execution_failed",
+        "prerequisite_navigation",
+        "structured_output_start",
+        "cache_miss",
+        "mcp_server_connection_start",
+        "token_usage",
+        "fallback_attempt",
+        "step_token_usage",
+        "step_progress_updated",
+        "independent_steps_selected"
       ]
     },
     "FallbackAttemptEvent": {
@@ -2457,6 +2490,27 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "FileCheckResultForEvent": {
+      "properties": {
+        "file_name": {
+          "type": "string"
+        },
+        "exists": {
+          "type": "boolean"
+        },
+        "is_json": {
+          "type": "boolean"
+        },
+        "json_checks": {
+          "items": {
+            "$ref": "#/$defs/JSONCheckResultForEvent"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "HumanVerificationResponseEvent": {
       "properties": {
         "timestamp": {
@@ -2562,6 +2616,24 @@
         },
         "execution_batch": {
           "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "JSONCheckResultForEvent": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "check_type": {
+          "type": "string"
+        },
+        "error_msg": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -3737,48 +3809,6 @@
       "additionalProperties": false,
       "type": "object"
     },
-    "OrchestrationResponse": {
-      "properties": {
-        "selected_route_id": {
-          "type": "string"
-        },
-        "reasoning": {
-          "type": "string"
-        },
-        "success_criteria_met": {
-          "type": "boolean"
-        },
-        "success_reasoning": {
-          "type": "string"
-        },
-        "success_criteria_verified_by_validation": {
-          "type": "boolean"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "OrchestrationRoute": {
-      "properties": {
-        "route_id": {
-          "type": "string"
-        },
-        "route_name": {
-          "type": "string"
-        },
-        "condition": {
-          "type": "string"
-        },
-        "sub_agent_step": {
-          "$ref": "#/$defs/TodoStep"
-        },
-        "context_to_pass": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
     "OrchestratorAgentEndEvent": {
       "properties": {
         "timestamp": {
@@ -4272,12 +4302,143 @@
       "additionalProperties": false,
       "type": "object"
     },
-    "PrerequisiteRule": {
+    "PreValidationCompletedEvent": {
       "properties": {
-        "depends_on_step": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
           "type": "string"
         },
-        "description": {
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "step_id": {
+          "type": "string"
+        },
+        "step_index": {
+          "type": "integer"
+        },
+        "step_title": {
+          "type": "string"
+        },
+        "step_path": {
+          "type": "string"
+        },
+        "is_branch_step": {
+          "type": "boolean"
+        },
+        "overall_pass": {
+          "type": "boolean"
+        },
+        "total_checks": {
+          "type": "integer"
+        },
+        "passed_checks": {
+          "type": "integer"
+        },
+        "failed_checks": {
+          "type": "integer"
+        },
+        "files_checked": {
+          "items": {
+            "$ref": "#/$defs/FileCheckResultForEvent"
+          },
+          "type": "array"
+        },
+        "errors": {
+          "items": {
+            "$ref": "#/$defs/ValidationErrorForEvent"
+          },
+          "type": "array"
+        },
+        "run_folder": {
+          "type": "string"
+        },
+        "workspace_path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "PrerequisiteNavigationEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "from_step_index": {
+          "type": "integer"
+        },
+        "to_step_index": {
+          "type": "integer"
+        },
+        "from_step_id": {
+          "type": "string"
+        },
+        "to_step_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "failure_type": {
           "type": "string"
         }
       },
@@ -5467,117 +5628,6 @@
       "additionalProperties": false,
       "type": "object"
     },
-    "TodoStep": {
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "title": {
-          "type": "string"
-        },
-        "description": {
-          "type": "string"
-        },
-        "success_criteria": {
-          "type": "string"
-        },
-        "context_dependencies": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "context_output": {
-          "type": "string"
-        },
-        "has_loop": {
-          "type": "boolean"
-        },
-        "loop_condition": {
-          "type": "string"
-        },
-        "max_iterations": {
-          "type": "integer"
-        },
-        "loop_description": {
-          "type": "string"
-        },
-        "has_condition": {
-          "type": "boolean"
-        },
-        "condition_question": {
-          "type": "string"
-        },
-        "condition_context": {
-          "type": "string"
-        },
-        "if_true_steps": {
-          "items": {
-            "$ref": "#/$defs/TodoStep"
-          },
-          "type": "array"
-        },
-        "if_false_steps": {
-          "items": {
-            "$ref": "#/$defs/TodoStep"
-          },
-          "type": "array"
-        },
-        "if_true_next_step_id": {
-          "type": "string"
-        },
-        "if_false_next_step_id": {
-          "type": "string"
-        },
-        "condition_result": {
-          "type": "boolean"
-        },
-        "condition_reason": {
-          "type": "string"
-        },
-        "has_decision_step": {
-          "type": "boolean"
-        },
-        "decision_step": {
-          "$ref": "#/$defs/TodoStep"
-        },
-        "decision_evaluation_question": {
-          "type": "string"
-        },
-        "decision_result": {
-          "type": "boolean"
-        },
-        "decision_reason": {
-          "type": "string"
-        },
-        "decision_response": {
-          "$ref": "#/$defs/DecisionResponse"
-        },
-        "has_orchestration_step": {
-          "type": "boolean"
-        },
-        "orchestration_step": {
-          "$ref": "#/$defs/TodoStep"
-        },
-        "orchestration_routes": {
-          "items": {
-            "$ref": "#/$defs/OrchestrationRoute"
-          },
-          "type": "array"
-        },
-        "orchestration_response": {
-          "$ref": "#/$defs/OrchestrationResponse"
-        },
-        "next_step_id": {
-          "type": "string"
-        },
-        "agent_configs": {
-          "$ref": "#/$defs/AgentConfigs"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
     "TodoStepsExtractedEvent": {
       "properties": {
         "timestamp": {
@@ -5618,9 +5668,7 @@
           "type": "integer"
         },
         "extracted_steps": {
-          "items": {
-            "$ref": "#/$defs/TodoStep"
-          },
+          "items": true,
           "type": "array"
         },
         "extraction_method": {
@@ -6178,6 +6226,36 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "ToolResponseEvaluation": {
+      "properties": {
+        "tool_name": {
+          "type": "string"
+        },
+        "token_count": {
+          "type": "integer"
+        },
+        "turn_age": {
+          "type": "integer"
+        },
+        "meets_token_threshold": {
+          "type": "boolean"
+        },
+        "meets_turn_threshold": {
+          "type": "boolean"
+        },
+        "was_compacted": {
+          "type": "boolean"
+        },
+        "skip_reason": {
+          "type": "string"
+        },
+        "tokens_saved": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ToolResponseEvent": {
       "properties": {
         "timestamp": {
@@ -6364,6 +6442,30 @@
           "type": "string"
         },
         "role": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ValidationErrorForEvent": {
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "check_type": {
+          "type": "string"
+        },
+        "expected": {
+          "type": "string"
+        },
+        "actual": {
+          "type": "string"
+        },
+        "message": {
           "type": "string"
         }
       },

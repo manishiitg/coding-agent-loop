@@ -26,11 +26,12 @@ import {
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useAppStore } from '../../../stores'
 import { useWorkflowStore, type ExecutionModeType, type RunFolder } from '../../../stores/useWorkflowStore'
+import { useChatStore } from '../../../stores/useChatStore'
 import type { PlannerFile, WorkflowPhase, StepProgress } from '../../../services/api-types'
 import type { PlanningResponse } from '../../../utils/stepConfigMatching'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
-import { agentApi } from '../../../services/api'
+import { agentApi, setCurrentObserverId } from '../../../services/api'
 import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import LLMOverrideModal from '../LLMOverrideModal'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
@@ -700,15 +701,45 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
   }, [deleteDialog.folderName, workspacePath, selectedRunFolder, setSelectedRunFolder, loadRunFolders, loadProgress, fetchFiles])
 
-  // Handle execution button click
+  // Handle execution button click - finds/reuses execution tab
   const handleExecute = useCallback(() => {
     if (!isRunning && executionPhase) {
+      const workflowStore = useWorkflowStore.getState()
+      
+      // Find existing execution phase tab
+      // Get execution tabs from generalized chat store
+      const chatStore = useChatStore.getState()
+      const allTabs = Object.values(chatStore.chatTabs)
+      const executionTabs = allTabs.filter(tab => 
+        tab.metadata?.mode === 'workflow' && tab.metadata?.phaseId === EXECUTION_PHASE_ID
+      )
+      const existingExecutionTab = executionTabs.length > 0 ? executionTabs[0] : null
+      
+      if (existingExecutionTab) {
+        // Reuse existing execution tab
+        console.log(`[WorkflowToolbar] Reusing existing execution tab: ${existingExecutionTab.tabId}`)
+        
+        // Switch to it if not already active
+        if (chatStore.activeTabId !== existingExecutionTab.tabId) {
+          chatStore.switchTab(existingExecutionTab.tabId)
+        }
+        
+        // Sync observer ID to API module
+        setCurrentObserverId(existingExecutionTab.observerId)
+        console.log(`[WorkflowToolbar] Synced observer ID: ${existingExecutionTab.observerId}`)
+      } else {
+        console.log('[WorkflowToolbar] No existing execution tab, creating new one')
+      }
+      
+      // Build execution options
       const options = buildExecutionOptions()
       console.log('[RESUME_DEBUG] 🚀 Starting execution with options:', JSON.stringify({
         execution_strategy: options.execution_strategy,
         resume_from_step: options.resume_from_step,
         resume_from_branch_step: options.resume_from_branch_step
       }, null, 2))
+      
+      // Start phase (will create new tab if none exists, or use existing if we switched to it)
       onStartPhase(executionPhase.id, options)
     }
   }, [isRunning, executionPhase, buildExecutionOptions, onStartPhase])

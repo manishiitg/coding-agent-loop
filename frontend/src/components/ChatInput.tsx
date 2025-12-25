@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect } from 'react'
-import { Send, Loader2, Square, Plus, Code2, Sparkles } from 'lucide-react'
+import { Send, Loader2, Square, Code2, Sparkles } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -11,137 +11,168 @@ import CommandSelectionDialog from './CommandSelectionDialog'
 import type { PlannerFile } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
-import { useModeStore } from '../stores/useModeStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
-import { usePresetState, usePresetApplication } from '../stores/useGlobalPresetStore'
+import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { agentApi } from '../services/api'
 
 interface ChatInputProps {
   // Handlers (callbacks only)
   onSubmit: (query: string) => void
   onStopStreaming: () => void
-  onNewChat: () => void
 }
 
 // Completely isolated input component that doesn't re-render when events change
 const ChatInputComponent: React.FC<ChatInputProps> = ({
   onSubmit,
-  onStopStreaming,
-  onNewChat
+  onStopStreaming
 }) => {
   // Store subscriptions
   const {
-    agentMode,
-    chatFileContext,
-    removeFileFromContext,
-    clearFileContext,
-    addFileToContext,
-    useCodeExecutionMode,
-    setUseCodeExecutionMode
+    agentMode
   } = useAppStore()
   
-  // Get current query from global preset store for consistency
-  const { setCurrentQuery: setGlobalCurrentQuery } = usePresetState()
+  const {
+    sessionId,
+    getActiveTab,
+    setTabConfig,
+    activeTabId
+  } = useChatStore()
+  
+  // Get active tab and its config (ChatInput is only rendered in chat mode)
+  const activeTab = getActiveTab()
+  const tabConfig = activeTab?.config
+  
+  // CRITICAL: Always use tab's status - never fall back to global to prevent mixing
+  // If no active tab, this is an error condition (tabs should always exist)
+  const isStreaming = activeTab?.isStreaming ?? false
+  const observerId = activeTab?.observerId ?? null
+  
+  // Warn if no active tab (tabs should always exist)
+  if (!activeTab) {
+    console.warn(`[ChatInput] No active tab - this should not happen in tab mode`)
+  }
+  
+  // Always use tab-specific config (ChatInput is only in chat mode)
+  const chatFileContext = tabConfig?.fileContext || []
+  const useCodeExecutionMode = tabConfig?.useCodeExecutionMode || false
+  
+  // File context operations (always update tab config)
+  const removeFileFromContext = useCallback((path: string) => {
+    if (activeTab) {
+      const newFileContext = chatFileContext.filter(f => f.path !== path)
+      setTabConfig(activeTab.tabId, { fileContext: newFileContext })
+    }
+  }, [activeTab, chatFileContext, setTabConfig])
+  
+  const clearFileContext = useCallback(() => {
+    if (activeTab) {
+      setTabConfig(activeTab.tabId, { fileContext: [] })
+    }
+  }, [activeTab, setTabConfig])
+  
+  const addFileToContext = useCallback((file: { name: string; path: string; type: 'file' | 'folder' }) => {
+    if (activeTab) {
+      const newFileContext = [...chatFileContext, file]
+      setTabConfig(activeTab.tabId, { fileContext: newFileContext })
+    }
+  }, [activeTab, chatFileContext, setTabConfig])
+  
+  const setUseCodeExecutionMode = useCallback((enabled: boolean) => {
+    if (activeTab) {
+      setTabConfig(activeTab.tabId, { useCodeExecutionMode: enabled })
+    }
+  }, [activeTab, setTabConfig])
+  
+  // Get preset info for chat mode
   const { getActivePreset, activePresetIds, customPresets, predefinedPresets } = usePresetApplication()
   
   // Local state for input to prevent global re-renders on every keystroke
+  // Sync with tab config
   const [localQuery, setLocalQuery] = useState('')
   
-  const { selectedModeCategory } = useModeStore()
-  
-  const {
-    isStreaming,
-    observerId,
-    sessionId
-  } = useChatStore()
+  // Sync localQuery with tab config when tab changes
+  useEffect(() => {
+    if (tabConfig) {
+      setLocalQuery(tabConfig.inputText)
+    }
+  }, [activeTabId, tabConfig])
   
   // State for summarization
   const [isSummarizing, setIsSummarizing] = useState(false)
   
   const {
-    enabledServers: availableServers,
-    selectedServers: manualSelectedServers,
-    toggleServer: onManualServerToggle,
-    selectAllServers: onSelectAllServers,
-    clearAllServers: onClearAllServers
+    enabledServers: availableServers
   } = useMCPStore()
+  
+  // Use tab-specific servers
+  const manualSelectedServers = tabConfig?.selectedServers || []
+  
+  // Server operations (always update tab config)
+  const onManualServerToggle = useCallback((server: string) => {
+    if (activeTab) {
+      const newServers = manualSelectedServers.includes(server)
+        ? manualSelectedServers.filter(s => s !== server)
+        : [...manualSelectedServers, server]
+      setTabConfig(activeTab.tabId, { selectedServers: newServers })
+    }
+  }, [activeTab, manualSelectedServers, setTabConfig])
+  
+  const onSelectAllServers = useCallback(() => {
+    if (activeTab) {
+      // availableServers is already an array of server names (strings)
+      setTabConfig(activeTab.tabId, { selectedServers: [...availableServers] })
+    }
+  }, [activeTab, availableServers, setTabConfig])
+  
+  const onClearAllServers = useCallback(() => {
+    if (activeTab) {
+      setTabConfig(activeTab.tabId, { selectedServers: [] })
+    }
+  }, [activeTab, setTabConfig])
   
   const {
     availableLLMs,
     getCurrentLLMOption,
-    setPrimaryConfig,
     refreshAvailableLLMs: onRefreshAvailableLLMs
   } = useLLMStore()
-  
+
   const { scrollToFile } = useWorkspaceStore()
 
-  // Wrapper for LLM selection to convert LLMOption to LLMConfiguration
+  // LLM selection (always update tab config)
   const onPrimaryLLMSelect = useCallback((llm: LLMOption) => {
-    // Get current config to preserve fallback models and cross-provider fallback
-    const currentPrimaryConfig = useLLMStore.getState().primaryConfig
-    
-    setPrimaryConfig({
-      ...currentPrimaryConfig, // ✅ Preserve all existing configuration
-      provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex',
-      model_id: llm.model
-    })
-  }, [setPrimaryConfig])
-
-  // Computed values
-  const primaryLLM = getCurrentLLMOption()
-  
-  // Check if a preset is active for the current mode
-  const chatActivePreset = getActivePreset(selectedModeCategory as 'chat' | 'workflow')
-  
-  // Sync localQuery with preset query when preset is selected in chat mode
-  useEffect(() => {
-    // Only sync in chat mode
-    if (selectedModeCategory === 'chat') {
-      const activePresetId = activePresetIds['chat']
-      
-      if (activePresetId) {
-        // Find the preset
-        const preset = customPresets.find(p => p.id === activePresetId) || 
-                      predefinedPresets.find(p => p.id === activePresetId)
-        
-        if (preset && preset.query) {
-          // Sync localQuery with preset query
-          setLocalQuery(preset.query)
-        }
-      } else {
-        // No preset active, clear localQuery
-        setLocalQuery('')
+    if (activeTab) {
+      // Get current config to preserve fallback models and cross-provider fallback
+      const currentConfig = tabConfig?.llmConfig || {
+        provider: 'openrouter',
+        model_id: '',
+        fallback_models: [],
+        cross_provider_fallback: undefined
       }
+      
+      const newConfig = {
+        ...currentConfig, // ✅ Preserve all existing configuration
+        provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex',
+        model_id: llm.model
+      }
+      
+      setTabConfig(activeTab.tabId, { llmConfig: newConfig })
     }
-  }, [selectedModeCategory, activePresetIds, customPresets, predefinedPresets])
+  }, [activeTab, tabConfig?.llmConfig, setTabConfig])
+
+  // Computed values - get LLM option from tab config
+  const primaryLLM = useMemo(() => {
+    if (tabConfig?.llmConfig) {
+      // Convert tab's LLM config to LLMOption format
+      const config = tabConfig.llmConfig
+      const allLLMs = availableLLMs
+      return allLLMs.find(llm => 
+        llm.provider === config.provider && llm.model === config.model_id
+      ) || getCurrentLLMOption()
+    }
+    return getCurrentLLMOption()
+  }, [tabConfig?.llmConfig, availableLLMs, getCurrentLLMOption])
   
-  const isRequiredFolderSelected = useMemo(() => {
-    if (selectedModeCategory !== 'workflow') return true; // No validation needed for other modes
-    
-    if (selectedModeCategory === 'workflow') {
-      // Workflow mode requires Workflow/ folder
-      const hasWorkflowFolder = chatFileContext.some((file: { type: string; path: string }) => 
-        file.type === 'folder' && file.path.startsWith('Workflow/')
-      );
-      return hasWorkflowFolder;
-    }
-    
-    return true;
-  }, [selectedModeCategory, chatFileContext])
-
-  // Helper function for dynamic button text based on agent mode
-  const getButtonText = useCallback(() => {
-    if (selectedModeCategory === 'workflow') return 'Start Workflow'
-    return 'Start Chat'
-  }, [selectedModeCategory])
-
-  // Helper function for dynamic tooltip text based on agent mode
-  const getButtonTooltip = useCallback(() => {
-    if (selectedModeCategory === 'workflow') return 'Start workflow execution with this preset'
-    return 'Start a new chat with this preset'
-  }, [selectedModeCategory])
-
-  // Preset folder selection (for workflow mode)
+  // Preset folder selection
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   
   // File selection dialog state
@@ -156,46 +187,65 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [commandSearchQuery, setCommandSearchQuery] = useState('')
   const [slashPosition, setSlashPosition] = useState(-1) // Position of / in text
 
-  // Handle preset folder selection - now handled by global store
-  // The global store's applyPreset method handles workspace selection and folder expansion
-  // No need to add to file context here as it's handled by workspace selection
-
-  // Debug logging for currentQuery prop changes
-
-  // Get active preset for current mode - directly reactive to store changes
-  const activePreset = useMemo(() => {
-    if (selectedModeCategory === 'workflow') {
-      const presetId = activePresetIds['workflow']
-      if (!presetId) return null
+  // Get active preset for chat mode (used for preset query sync and UI)
+  const chatActivePreset = getActivePreset('chat')
+  
+  // Sync localQuery with preset query when preset is selected
+  useEffect(() => {
+    const activePresetId = activePresetIds['chat']
+    
+    if (activePresetId) {
+      // Find the preset
+      const preset = customPresets.find(p => p.id === activePresetId) || 
+                    predefinedPresets.find(p => p.id === activePresetId)
       
-      // Find preset in custom or predefined presets
-      const customPreset = customPresets.find(p => p.id === presetId)
-      if (customPreset) return customPreset
-      
-      const predefinedPreset = predefinedPresets.find(p => p.id === presetId)
-      if (predefinedPreset) return predefinedPreset
-      
-      return null
+      if (preset && preset.query) {
+        // Sync localQuery with preset query
+        setLocalQuery(preset.query)
+      }
+    } else {
+      // No preset active, clear localQuery
+      setLocalQuery('')
     }
-    return null
-  }, [selectedModeCategory, activePresetIds, customPresets, predefinedPresets])
+  }, [activePresetIds, customPresets, predefinedPresets])
 
   // Consolidated query selection logic
   const queryToSubmit = useMemo(() => {
-    return selectedModeCategory === 'workflow' && activePreset 
-      ? activePreset.query 
-      : localQuery
-  }, [selectedModeCategory, activePreset, localQuery])
+    return localQuery
+  }, [localQuery])
 
   // Guard to prevent submission before observer is ready
+  // Use active tab's status: allow submission if not streaming (completion is fine, user can continue conversation)
   const canSubmit = useMemo(() => {
     return queryToSubmit?.trim() && !isStreaming && observerId
   }, [queryToSubmit, isStreaming, observerId])
+  
+  // Debug logging for submission issues
+  React.useEffect(() => {
+    const hasValidQuery = Boolean(localQuery?.trim())
+    const canSubmitValue = queryToSubmit?.trim() && !isStreaming && observerId
+    const submitButtonDisabledValue = !hasValidQuery || !observerId
+    
+    console.log('[ChatInput] Observer ID check:', {
+      activeTab: activeTab?.tabId,
+      tabObserverId: activeTab?.observerId,
+      effectiveObserverId: observerId,
+      canSubmit: canSubmitValue,
+      hasValidQuery,
+      submitButtonDisabled: submitButtonDisabledValue,
+      localQuery: localQuery?.substring(0, 50) // First 50 chars for debugging
+    })
+  }, [activeTab?.tabId, activeTab?.observerId, observerId, queryToSubmit, isStreaming, localQuery, canSubmit])
 
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value
-    setLocalQuery(newValue) // Only update local state - no global updates during typing
+    setLocalQuery(newValue) // Update local state
+    
+    // Also update tab config (debounced updates handled separately)
+    if (activeTab) {
+      setTabConfig(activeTab.tabId, { inputText: newValue })
+    }
 
     const cursorPosition = e.target.selectionStart || 0
     const textBeforeCursor = newValue.substring(0, cursorPosition)
@@ -293,7 +343,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     removedFiles.forEach(filePath => {
       removeFileFromContext(filePath)
     })
-  }, [chatFileContext, removeFileFromContext, showCommandDialog])
+  }, [chatFileContext, removeFileFromContext, showCommandDialog, activeTab, setTabConfig])
 
   // Handle manual summarization
   // If messageToSendAfter is provided, it will be sent as a user message after summarization completes
@@ -374,6 +424,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // Handle normal Enter to submit
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       e.preventDefault()
+      console.log('[ChatInput] Enter key pressed, handleKeyDown:', JSON.stringify({
+        queryToSubmit: queryToSubmit?.substring(0, 50),
+        queryToSubmitLength: queryToSubmit?.length,
+        canSubmit,
+        observerId,
+        isStreaming,
+        activeTab: activeTab?.tabId,
+        tabObserverId: activeTab?.observerId,
+        localQuery: localQuery?.substring(0, 50),
+        localQueryLength: localQuery?.length
+      }, null, 2))
       
       // Check for slash commands
       const trimmedQuery = queryToSubmit?.trim() || ''
@@ -409,12 +470,26 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
       
       if (canSubmit) {
+        console.log('[ChatInput] canSubmit is true, calling onSubmit:', queryToSubmit)
         // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
-        if (selectedModeCategory !== 'workflow' && observerId) {
+        if (observerId) {
           setLocalQuery('')
         }
         // Call onSubmit with the query directly - no global state coordination needed!
         onSubmit(queryToSubmit)
+      } else {
+        console.warn('[ChatInput] canSubmit is false, not submitting:', JSON.stringify({
+          hasQuery: Boolean(queryToSubmit?.trim()),
+          queryLength: queryToSubmit?.length,
+          isStreaming,
+          hasObserverId: Boolean(observerId),
+          observerIdValue: observerId,
+          tabObserverId: activeTab?.observerId,
+          canSubmit,
+          activeTab: activeTab?.tabId,
+          localQuery: localQuery?.substring(0, 50),
+          localQueryLength: localQuery?.length
+        }, null, 2))
       }
     }
     // Handle CTRL+Enter (Windows/Linux) or CMD+Enter (Mac) to add new line
@@ -433,10 +508,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [localQuery, onSubmit, showFileDialog, showCommandDialog, selectedModeCategory, observerId, canSubmit, queryToSubmit, sessionId, isSummarizing, isStreaming, handleSummarize, handleCompact])
+  }, [localQuery, onSubmit, showFileDialog, showCommandDialog, observerId, canSubmit, queryToSubmit, sessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTab?.tabId])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
+    
+    console.log('[ChatInput] handleSubmit called:', {
+      queryToSubmit,
+      canSubmit,
+      observerId,
+      isStreaming,
+      activeTab: activeTab?.tabId
+    })
     
     // Check for slash commands
     const trimmedQuery = queryToSubmit?.trim() || ''
@@ -471,15 +554,23 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return
     }
     
-    if (canSubmit && isRequiredFolderSelected) {
-      // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
-      if (selectedModeCategory !== 'workflow' && observerId) {
+    if (canSubmit) {
+      console.log('[ChatInput] Calling onSubmit with query:', queryToSubmit)
+      // Clear local state immediately for UI responsiveness when observer is ready
+      if (observerId) {
         setLocalQuery('')
       }
       // Call onSubmit with the query directly - no global state coordination needed!
       onSubmit(queryToSubmit)
+    } else {
+      console.warn('[ChatInput] Cannot submit:', {
+        hasQuery: Boolean(queryToSubmit?.trim()),
+        isStreaming,
+        hasObserverId: Boolean(observerId),
+        canSubmit
+      })
     }
-  }, [canSubmit, isRequiredFolderSelected, selectedModeCategory, observerId, queryToSubmit, onSubmit, sessionId, isSummarizing, isStreaming, handleSummarize])
+  }, [canSubmit, observerId, queryToSubmit, onSubmit, sessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, setLocalQuery, activeTab])
 
   // File selection handlers
   const handleCommandSelect = useCallback((command: string) => {
@@ -560,107 +651,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     textareaRef.current?.focus()
   }, [])
 
-  // State for editing preset query
-  const [isEditingQuery, setIsEditingQuery] = useState(false)
+  // Removed editing preset query functionality - not needed for chat mode
 
-  // Handle editing preset query
-  const handleEditQuery = useCallback(() => {
-    setIsEditingQuery(true)
-    // Set the current query to the preset query for editing
-    if (activePreset) {
-      setLocalQuery(activePreset.query)
-      setGlobalCurrentQuery(activePreset.query)
-      useAppStore.getState().setCurrentQuery(activePreset.query)
-      
-      // IMPORTANT: Ensure the preset's file context is preserved
-      // If the preset has a selected folder, make sure it's still in the file context
-      if (activePreset.selectedFolder) {
-        const folderPath = activePreset.selectedFolder.filepath
-        const folderName = folderPath.split('/').pop() || folderPath
-        
-        // Check if the folder is already in the file context
-        const isFolderInContext = chatFileContext.some((item: { path: string }) => item.path === folderPath)
-        
-        if (!isFolderInContext) {
-          // Re-add the folder to file context if it's missing
-          addFileToContext({
-            name: folderName,
-            path: folderPath,
-            type: 'folder'
-          })
-          
-          // Also ensure the workspace selection is preserved
-          useWorkspaceStore.getState().setSelectedFile({
-            name: folderName,
-            path: folderPath
-          })
-        }
-      }
-    }
-  }, [activePreset, setGlobalCurrentQuery, chatFileContext, addFileToContext])
-
-  // Handle canceling query edit
-  const handleCancelEdit = useCallback(() => {
-    setIsEditingQuery(false)
-    // Reset to preset query
-    if (activePreset) {
-      setLocalQuery(activePreset.query)
-      setGlobalCurrentQuery(activePreset.query)
-      useAppStore.getState().setCurrentQuery(activePreset.query)
-      
-      // IMPORTANT: Ensure the preset's file context is preserved when canceling edit
-      // If the preset has a selected folder, make sure it's still in the file context
-      if (activePreset.selectedFolder) {
-        const folderPath = activePreset.selectedFolder.filepath
-        const folderName = folderPath.split('/').pop() || folderPath
-        
-        // Check if the folder is already in the file context
-        const isFolderInContext = chatFileContext.some((item: { path: string }) => item.path === folderPath)
-        
-        if (!isFolderInContext) {
-          // Re-add the folder to file context if it's missing
-          addFileToContext({
-            name: folderName,
-            path: folderPath,
-            type: 'folder'
-          })
-          
-          // Also ensure the workspace selection is preserved
-          useWorkspaceStore.getState().setSelectedFile({
-            name: folderName,
-            path: folderPath
-          })
-        }
-      }
-    }
-  }, [activePreset, setGlobalCurrentQuery, chatFileContext, addFileToContext])
-
-  // Handle saving edited query
-  const handleSaveEdit = useCallback(() => {
-    setIsEditingQuery(false)
-    // The current query is already updated by the text input
-  }, [])
-
-  // Check if workflow mode requires preset selection
-  const isWorkflowReady = selectedModeCategory !== 'workflow' || (getActivePreset('workflow') && isRequiredFolderSelected)
+  // Check if query is valid
+  const hasValidQuery = Boolean(localQuery?.trim())
+  const submitButtonDisabled = !hasValidQuery || !observerId
   
-  // Preset modes require a non-empty preset query; chat modes require non-empty local input
-  const hasValidQuery =
-    selectedModeCategory === 'workflow'
-      ? Boolean(activePreset?.query?.trim())
-      : Boolean(localQuery?.trim())
-  
-  const readyForMode =
-    selectedModeCategory === 'workflow' ? isWorkflowReady :
-    true
-  const submitButtonDisabled = !hasValidQuery || !observerId || !readyForMode
-
-  // Memoized placeholder to prevent re-computation
+  // Memoized placeholder
   const placeholder = useMemo(() => {
-    return selectedModeCategory === 'workflow'
-      ? "Enter your objective for workflow execution... I'll create a todo-list and execute tasks sequentially!"
-      : "Ask me anything... I can use tools to help you! (Type /summarize to summarize, /compact to compact context, or 'text /command' to run command then send text)"
-  }, [selectedModeCategory])
+    return "Ask me anything... I can use tools to help you! (Type /summarize to summarize, /compact to compact context, or 'text /command' to run command then send text)"
+  }, [])
 
   return (
     <TooltipProvider>
@@ -673,32 +673,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             onRemoveFile={removeFileFromContext}
             onClearAll={clearFileContext}
             agentMode={agentMode}
-            isRequiredFolderSelected={isRequiredFolderSelected}
+            isRequiredFolderSelected={true}
           />
         </div>
       )}
 
-      {/* Validation message for Workflow mode - no preset selected */}
-      {selectedModeCategory === 'workflow' && !getActivePreset('workflow') && (
-        <div className="px-4">
-          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded px-1.5 py-0.5 mb-0">
-            <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">
-              ℹ️ Workflow mode requires a preset to be selected first. Use the mode selector to choose a preset.
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Validation message for Workflow mode - no Workflow folder selected */}
-      {selectedModeCategory === 'workflow' && getActivePreset('workflow') && !isRequiredFolderSelected && (
-        <div className="px-4">
-          <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded px-1.5 py-0.5 mb-0">
-            <span className="text-xs text-yellow-600 dark:text-yellow-400">
-              💡 Select a folder from Workflow/ directory to proceed with workflow
-            </span>
-          </div>
-        </div>
-      )}
 
       {/* Hint when no files in context */}
       {chatFileContext.length === 0 && (
@@ -715,131 +694,22 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">
         <form onSubmit={handleSubmit} className="space-y-2">
           <div className="space-y-1">
-            {/* Show compact preset info with action buttons for workflow mode */}
-            {selectedModeCategory === 'workflow' && activePreset && !isEditingQuery ? (
-              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md px-3 py-2">
-                <div className="flex items-center justify-between gap-2">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="flex items-center gap-2 flex-1 min-w-0 cursor-default">
-                        <div className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0"></div>
-                        <span className="text-sm font-medium text-blue-900 dark:text-blue-100 truncate">
-                          {activePreset.label}
-                        </span>
-                        <span className="text-xs text-blue-600 dark:text-blue-400 flex-shrink-0">
-                          ('Workflow')
-                        </span>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <div className="max-w-sm">
-                        <p className="font-medium mb-1">{activePreset.label}</p>
-                        <p className="text-sm">{activePreset.query}</p>
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                  
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    {/* Edit button - only show when not streaming */}
-                    {!isStreaming && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={handleEditQuery}
-                            className="px-2 py-0.5 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 hover:bg-blue-100 dark:hover:bg-blue-800/30 rounded transition-colors"
-                          >
-                            Edit
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Edit the preset query</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-                    
-                    {/* Dynamic button - Start or Stop based on streaming state */}
-                    {isStreaming ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={onStopStreaming}
-                            className="px-2 py-0.5 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
-                          >
-                            Stop
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Stop the current execution</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (canSubmit) {
-                                // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
-                                if (selectedModeCategory !== 'workflow' && observerId) {
-                                  setLocalQuery('')
-                                }
-                                onSubmit(queryToSubmit)
-                              }
-                            }}
-                            disabled={!observerId || !isRequiredFolderSelected}
-                            className="px-2 py-0.5 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-                          >
-                            {getButtonText()}
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>{getButtonTooltip()}</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              /* Show text input for chat mode or when editing preset query */
-              <Textarea
-                ref={textareaRef}
-                value={localQuery}
-                onChange={handleTextChange}
-                onKeyDown={handleKeyDown}
-                placeholder={placeholder}
-                className="min-h-[60px] max-h-[100px] resize-none text-sm"
-                disabled={isStreaming || !observerId}
-              />
-            )}
-            
-            {/* Show compact edit controls when editing preset query */}
-            {selectedModeCategory === 'workflow' && isEditingQuery && (
-              <div className="flex items-center gap-1 px-2 py-1 bg-gray-50 dark:bg-gray-800 rounded text-xs">
-                <span className="text-gray-600 dark:text-gray-400">Editing:</span>
-                <button
-                  type="button"
-                  onClick={handleSaveEdit}
-                  className="px-2 py-0.5 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
-                >
-                  Save
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCancelEdit}
-                  className="px-2 py-0.5 bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
+            {/* Show text input */}
+            <Textarea
+              ref={textareaRef}
+              value={localQuery}
+              onChange={handleTextChange}
+              onKeyDown={handleKeyDown}
+              placeholder={placeholder}
+              className="min-h-[60px] max-h-[100px] resize-none text-sm"
+              disabled={isStreaming || !observerId}
+              data-testid="chat-input-textarea"
+            />
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-2">
                 
-                {/* Agent Mode Selector - Only for Chat Mode and when no preset is active */}
-                {selectedModeCategory === 'chat' && !chatActivePreset && (
+                {/* Agent Mode Selector - Only show when no preset is active */}
+                {!chatActivePreset && (
                   <div className="flex items-center gap-2">
                     {/* Code Execution Mode Toggle */}
                     <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
@@ -849,6 +719,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             type="button"
                             onClick={() => setUseCodeExecutionMode(false)}
                             disabled={isStreaming}
+                            data-testid="agent-mode-simple"
                             className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
                               !useCodeExecutionMode
                                 ? 'agent-mode-selected rounded-l-md rounded-r-none'
@@ -869,6 +740,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             type="button"
                             onClick={() => setUseCodeExecutionMode(true)}
                             disabled={isStreaming}
+                            data-testid="agent-mode-code-exec"
                             className={`px-2 py-1 text-xs font-medium transition-colors ${
                               useCodeExecutionMode
                                 ? 'agent-mode-selected rounded-r-md rounded-l-none'
@@ -887,8 +759,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   </div>
                 )}
                 
-                {/* Server and LLM Selection for Chat mode - only show when no preset is active */}
-                {selectedModeCategory === 'chat' && !chatActivePreset && (
+                {/* Server and LLM Selection - only show when no preset is active */}
+                {!chatActivePreset && (
                   <div className="flex items-center gap-2">
                     <ServerSelectionDropdown
                       availableServers={availableServers}
@@ -921,28 +793,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   )}
                 </div>
               </div>
-              {/* Show old buttons only for chat mode */}
-              {selectedModeCategory === 'chat' && (
+              {/* Show old buttons */}
+              {(
                 <div className="flex items-center gap-2">
-                  {/* New Chat Button */}
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={onNewChat}
-                        disabled={isStreaming}
-                        className="px-3"
-                      >
-                        <Plus className="w-4 h-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Start a new chat (Ctrl+N / Cmd+N)</p>
-                    </TooltipContent>
-                  </Tooltip>
-                  
                   {isStreaming ? (
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -952,6 +805,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           onClick={onStopStreaming}
                           size="sm"
                           className="px-3"
+                          data-testid="chat-stop-button"
                         >
                           <Square className="w-4 h-4" />
                         </Button>
@@ -968,6 +822,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           disabled={submitButtonDisabled}
                           size="sm"
                           className="px-3"
+                          data-testid="chat-submit-button"
                         >
                           <Send className="w-4 h-4" />
                         </Button>

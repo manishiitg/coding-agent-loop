@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
 import debounce from 'lodash.debounce'
-import { agentApi, setCurrentObserverId } from '../services/api'
+import { agentApi, setCurrentObserverId, resetSessionId } from '../services/api'
 import type { PollingEvent, ActiveSessionInfo } from '../services/api-types'
 import type { AgentMode } from '../stores/types'
 import { ChatInput } from './ChatInput'
@@ -17,6 +17,7 @@ import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import { ChatHeader } from './ChatHeader'
+import type { ChatTab } from '../stores/useChatStore'
 
 interface ChatAreaProps {
   // New chat handler
@@ -27,6 +28,10 @@ interface ChatAreaProps {
   hideInput?: boolean
   // Compact mode for smaller font sizes (used in workflow layout)
   compact?: boolean
+  // Tab ID - if provided, use this tab's observer ID instead of global observer (works for both chat and workflow modes)
+  tabId?: string
+  // Observer ID - Optional: if not provided, ChatArea will show header but no events (allows mode/preset selection)
+  observerId?: string
 }
 
 import type { ExecutionOptions } from '../services/api-types'
@@ -45,7 +50,7 @@ export interface ChatAreaRef {
 
 // Inner component that can use the EventMode context
 const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
-  const { onNewChat, hideHeader = false, hideInput = false, compact = false } = props
+  const { onNewChat, hideHeader = false, hideInput = false, compact = false, tabId, observerId: propObserverId } = props
   
   // Store subscriptions
   const { 
@@ -112,6 +117,18 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     )
   }, [allTools, effectiveServers])
   
+  // Get active tab (works for both chat and workflow modes)
+  const { getActiveTab, getTab } = useChatStore()
+  const activeTab = tabId ? getTab(tabId) : getActiveTab()
+  
+  // Sync tab's observer ID to API module for request interceptor
+  useEffect(() => {
+    if (activeTab?.observerId) {
+      setCurrentObserverId(activeTab.observerId)
+      console.log(`[ChatArea] Synced tab observer ID to API: ${activeTab.observerId}`)
+    }
+  }, [activeTab?.observerId])
+
   const {
     // Chat state
     isStreaming,
@@ -127,6 +144,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     setLastEventCount,
     events,
     setEvents,
+    getTabEvents,
+    addTabEvents,
+    getTabLastEventIndex,
+    setTabLastEventIndex,
     setSessionId,
     setHasActiveChat,
     autoScroll,
@@ -154,9 +175,84 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     isAtBottom
   } = useChatStore()
 
+  // Subscribe to tabEvents directly from store to ensure reactivity
+  const tabEventsStore = useChatStore((state) => state.tabEvents)
+
   // Get active preset for workflow mode
   const activeWorkflowPreset = getActivePreset('workflow')
   const selectedWorkflowPreset = activeWorkflowPreset?.id || null
+  
+  // Get events for the active tab (per-tab event storage)
+  // Subscribe directly to tabEvents from store to ensure reactivity
+  // CRITICAL: Only show events for the active tab's observer ID to prevent cross-tab event mixing
+  // NEVER fall back to global events - always use tab-specific events to prevent mixing
+  // If propObserverId is not provided, effectiveObserverId will be undefined (allows header to render for mode/preset selection)
+  const effectiveObserverId = propObserverId
+  
+  const tabEvents = useMemo(() => {
+    if (effectiveObserverId) {
+      // CRITICAL: Use the observer ID from props if provided, ensuring correct isolation
+      // This prevents any issues with tab lookup or activeTab changes
+      const currentObserverId = effectiveObserverId
+      
+      // Only get events for this specific observer ID
+      const eventsForTab = tabEventsStore[currentObserverId] || []
+      
+      // Debug logging to help diagnose event filtering issues
+      const allObserverIds = Object.keys(tabEventsStore)
+      if (allObserverIds.length > 0) {
+        const chatStore = useChatStore.getState()
+        const observerIdToTabs = allObserverIds.map(id => {
+          const tabsUsingThisId = Object.values(chatStore.chatTabs)
+            .filter((t: ChatTab) => t.observerId === id)
+            .map((t: ChatTab) => t.tabId)
+          return { 
+            observerId: id, 
+            eventCount: tabEventsStore[id]?.length || 0,
+            tabsUsingThisId
+          }
+        })
+        
+        const duplicateObserverIds = observerIdToTabs.filter(item => item.tabsUsingThisId.length > 1)
+        if (duplicateObserverIds.length > 0) {
+          console.warn(`[ChatArea] WARNING: Multiple tabs sharing observer IDs:`, duplicateObserverIds)
+        }
+        
+        // Debug: Log event counts per observer
+        console.log(`[ChatArea] Event filtering - Looking for observerId: ${currentObserverId}`)
+        const observerDetails = observerIdToTabs.map(item => ({
+          observerId: item.observerId,
+          eventCount: item.eventCount,
+          tabs: item.tabsUsingThisId
+        }))
+        console.log(`[ChatArea] Available observerIds in store:`, JSON.stringify(observerDetails, null, 2))
+        console.log(`[ChatArea] Found ${eventsForTab.length} events for observerId: ${currentObserverId}`)
+        console.log(`[ChatArea] Events array:`, eventsForTab.map(e => ({ id: e.id, type: e.type, timestamp: e.timestamp })))
+        
+        // Check if the current observerId matches any in the store
+        const matchingObserver = observerDetails.find(item => item.observerId === currentObserverId)
+        if (!matchingObserver) {
+          console.warn(`[ChatArea] ⚠️ ObserverId ${currentObserverId} NOT FOUND in store! Available observerIds:`, observerDetails.map(item => item.observerId))
+        } else if (matchingObserver.eventCount !== eventsForTab.length) {
+          console.warn(`[ChatArea] ⚠️ Event count mismatch! Store says ${matchingObserver.eventCount} events, but found ${eventsForTab.length} events`)
+        }
+      }
+      return eventsForTab
+    }
+    
+    // No observer ID - return empty array (allows header to render for mode/preset selection)
+    console.log(`[ChatArea] No observerId provided, returning empty events array`)
+    return []
+  }, [effectiveObserverId, tabEventsStore])
+  
+  // Always use tab events - never fall back to global events to prevent cross-tab mixing
+  // If there are no tabs, return empty array (tabs should always exist in multi-tab mode)
+  const displayEvents = tabEvents
+  
+  // Debug: Log when displayEvents changes
+  useEffect(() => {
+    console.log(`[ChatArea] displayEvents changed - observerId: ${effectiveObserverId}, eventCount: ${displayEvents.length}`)
+  }, [displayEvents.length, effectiveObserverId])
 
   // Computed values
   const isRequiredFolderSelected = useMemo(() => {
@@ -185,26 +281,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   
 
   // Handle mode selection from dropdown
-  const handleModeSelect = (category: 'chat' | 'workflow') => {
-    if (category === selectedModeCategory) {
-      return
-    }
-
-    // Check if there's an active chat session
-    const hasActiveChat = events.length > 0 || isStreaming
-    
-    if (hasActiveChat) {
-      // Show mode switch dialog for confirmation
-      setPendingModeSwitch(category)
-      setShowModeSwitchDialog(true)
-    } else {
-      // Switch mode directly
-      handleModeSwitchWithPreset(category)
-      // Clear backend session and reset UI after mode switch
-      handleNewChat()
-    }
-  }
-
   // Handle mode switching with preset selection for Workflow
   const handleModeSwitchWithPreset = (category: 'chat' | 'workflow') => {
     if (category === 'chat') {
@@ -419,10 +495,20 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   }, [finalResponse, autoScroll, scrollToBottom])
 
 
-  // Update refs when values change
+  // Update refs when values change (for global observer)
   useEffect(() => {
-    lastEventIndexRef.current = lastEventIndex
-  }, [lastEventIndex])
+    if (!activeTab) {
+      lastEventIndexRef.current = lastEventIndex
+    }
+  }, [lastEventIndex, activeTab])
+  
+  // Update displayEvents when active tab changes
+  useEffect(() => {
+    if (activeTab?.observerId) {
+      const tabEvents = getTabEvents(activeTab.observerId)
+      console.log(`[ChatArea] Switched to tab ${activeTab.tabId}, loading ${tabEvents.length} events`)
+    }
+  }, [activeTab?.tabId, activeTab?.observerId, getTabEvents])
   
   useEffect(() => {
     totalEventsRef.current = totalEvents
@@ -552,6 +638,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
   // Initialize observer on mount (only if not loading from chat session)
   useEffect(() => {
+    // If we have an active tab, use its observer ID - don't initialize a new one
+    if (activeTab?.observerId) {
+      console.log('[INIT] Skipping observer initialization - using tab observer:', activeTab.observerId)
+      setCurrentObserverId(activeTab.observerId)
+      return
+    }
+    
     // Prevent duplicate initialization calls (React StrictMode in development)
     if (isInitializingObserverRef.current) {
       console.log('[INIT] Skipping observer initialization - already in progress')
@@ -592,7 +685,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     const initializeObserver = async () => {
       try {
         console.log(`[INIT] Attempting to register observer (attempt ${retryCount + 1}/${maxRetries + 1})`)
-        const response = await agentApi.registerObserver()
+        const sessionIdForObserver = activeTab?.sessionId || undefined
+        const response = await agentApi.registerObserver(sessionIdForObserver)
         
         if (response.observer_id) {
           console.log(`[INIT] Observer registered successfully: ${response.observer_id}`)
@@ -600,6 +694,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           
           // Sync observer ID to API module for request interceptor
           setCurrentObserverId(response.observer_id)
+          
+          // Note: Tab creation is handled by App.tsx on page load
+          // We don't create tabs here to avoid duplicates
+          // If no tabs exist, App.tsx will create a default one
           
           // Clear the requiresNewChat flag after successful initialization
           useAppStore.getState().clearRequiresNewChat()
@@ -659,31 +757,25 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     // Note: observerId is intentionally NOT in dependencies to prevent re-initialization loops
     // We check observerId inside the effect, but don't want to re-run when it changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatSessionId, requiresNewChat])
+  }, [chatSessionId, requiresNewChat, activeTab?.observerId])
 
   // Event batching for performance
   const eventBatchRef = useRef<PollingEvent[]>([])
   const batchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   
   // Debounced function to flush event batch
+  // CRITICAL: This should NOT be used - all events should be stored via addTabEvents in polling
+  // This function is kept for backward compatibility but should never be called in tab mode
   const flushEventBatch = useCallback(() => {
     if (eventBatchRef.current.length === 0) return
     
     const batch = [...eventBatchRef.current]
     eventBatchRef.current = []
     
-    // Process the batch of events
-    setEvents((prevEvents: PollingEvent[]) => {
-      const updatedEvents = [...prevEvents, ...batch]
-      
-      // Trigger cleanup if threshold exceeded (handled by setEvents)
-      return updatedEvents
-    })
-    
-    // Update counters
-    setTotalEvents(totalEventsRef.current + batch.length)
-    setLastEventCount(batch.length)
-  }, [setEvents, setTotalEvents, setLastEventCount])
+    // Tabs should always exist - this should never be called
+    // Log error and discard to prevent mixing
+    console.error(`[flushEventBatch] ERROR: This should not be called in tab mode. Discarding ${batch.length} events. Events should be stored via addTabEvents in polling.`)
+  }, [])
   
   // Create debounced flush function (100ms delay)
   const debouncedFlush = useMemo(
@@ -691,41 +783,101 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     [flushEventBatch]
   )
 
-  // Polling function to get events
+  // Polling function to get events for ALL active observers
   const pollEvents = useCallback(async () => {
-    const currentLastEventIndex = lastEventIndexRef.current
+    const chatStore = useChatStore.getState()
     
-    // Get observerId from store (may be more up-to-date than closure)
-    const currentObserverId = useChatStore.getState().observerId || observerId
+    // Get all tabs that should be polled (all tabs in current mode)
+    const allTabs = Object.values(chatStore.chatTabs).filter(tab => {
+      const mode = tab.metadata?.mode || 'chat'
+      return mode === selectedModeCategory || (selectedModeCategory === 'chat' && !tab.metadata?.mode)
+    })
     
-    if (!currentObserverId) {
-      console.log('[WorkflowPlanUpdate] Polling skipped - no observerId available')
+    // CRITICAL: Poll ALL tabs that have an observerId (regardless of streaming/sessionId status)
+    // This ensures we receive events for all tabs, even if they're not currently active
+    const tabsToPoll = allTabs.filter(tab => {
+      const currentTab = chatStore.getTab(tab.tabId)
+      return currentTab?.observerId !== null && currentTab?.observerId !== undefined
+    })
+    
+    // CRITICAL: Never use global observer when tabs exist - only poll tab-specific observers
+    // This prevents events from mixing between tabs
+    const observersToPoll: Array<{ observerId: string; tab: ChatTab | null }> = []
+    
+    // Add all tab observers
+    // CRITICAL: Get the current observerId from the store (it might have been updated)
+    tabsToPoll.forEach(tab => {
+      const currentTab = chatStore.getTab(tab.tabId)
+      const currentObserverId = currentTab?.observerId || tab.observerId
+      if (currentObserverId) {
+        observersToPoll.push({ observerId: currentObserverId, tab: currentTab || tab })
+      } else {
+        console.error(`[PollEvents] Tab ${tab.tabId} has no observer ID - skipping`)
+      }
+    })
+    
+    if (observersToPoll.length === 0) {
+      console.log('[PollEvents] No observers to poll')
       return
     }
-
-    try {
-      const response = await agentApi.getEvents(currentObserverId, currentLastEventIndex)
-
-      if (response.events.length > 0) {
+    
+    // Polling multiple observers (one per active tab)
+    console.log(`[PollEvents] Polling ${observersToPoll.length} observers:`, observersToPoll.map(o => ({ observerId: o.observerId, tabId: o.tab?.tabId })))
+    
+    // Poll each observer
+    for (const { observerId: currentObserverId, tab } of observersToPoll) {
+      // CRITICAL: Get the tab's current observerId from the store (it might have been updated)
+      // Use the tab's current observerId for polling and storage, not the snapshot
+      // Also verify the tab still exists and is still active
+      let effectiveObserverId = currentObserverId
+      let currentTab = tab
+      
+      if (tab) {
+        // Re-fetch the tab from store to ensure we have the latest observer ID
+        const fetchedTab = chatStore.getTab(tab.tabId)
+        if (!fetchedTab) {
+          console.warn(`[PollEvents] Tab ${tab.tabId} no longer exists, skipping`)
+          continue
+        }
+        currentTab = fetchedTab
+        effectiveObserverId = currentTab.observerId || currentObserverId
         
-        // Update last event index immediately
-        setLastEventIndex(response.last_event_index)
+        console.log(`[PollEvents] Polling tab ${currentTab.tabId} with observerId: ${effectiveObserverId} (original: ${currentObserverId})`)
         
-        // Filter events first (synchronous)
-        const newEvents = response.events.filter(event => {
-            // Detect request human feedback event and stop streaming
-            if (event.type === 'request_human_feedback') {
-              setIsStreaming(false)
-              setIsCompleted(false) // Not completed, just paused for human input
-              
-              // Disable auto-scroll when human feedback is requested
-              setAutoScroll(false)
-              
-              // Stop polling when human feedback is requested
-              if (pollingInterval) {
-                clearInterval(pollingInterval)
-                setPollingInterval(null)
-              }
+        // Double-check: verify this tab should still be polled
+        if (currentTab.isCompleted && !currentTab.isStreaming && !currentTab.sessionId) {
+          console.log(`[PollEvents] Skipping tab ${currentTab.tabId} - completed and not streaming`)
+          continue
+        }
+      }
+      
+      const currentLastEventIndex = currentTab 
+        ? getTabLastEventIndex(effectiveObserverId)
+        : lastEventIndexRef.current
+      
+      // Track which observer is currently being polled (for derived isStreaming)
+      chatStore.setCurrentlyPolledObserverId(effectiveObserverId)
+
+      try {
+        const sessionIdForEvents = currentTab?.sessionId || undefined
+        const response = await agentApi.getEvents(effectiveObserverId, currentLastEventIndex, sessionIdForEvents)
+
+        if (response.events.length > 0) {
+          console.log(`[PollEvents] Received ${response.events.length} events for observerId: ${effectiveObserverId}, tab: ${currentTab?.tabId || 'none'}`)
+          // Update last event index for this observer
+          if (currentTab) {
+            setTabLastEventIndex(effectiveObserverId, response.last_event_index)
+          } else {
+            setLastEventIndex(response.last_event_index)
+          }
+          
+          // Filter events first (synchronous)
+          const newEvents = response.events.filter(event => {
+            // Detect request human feedback event and stop streaming for this tab
+            if (event.type === 'request_human_feedback' && currentTab) {
+              const chatStore = useChatStore.getState()
+              chatStore.setTabStreaming(currentTab.tabId, false)
+              chatStore.setTabCompleted(currentTab.tabId, false) // Not completed, just paused
             }
             
             // Process workspace events using the centralized store
@@ -746,204 +898,163 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             return event.type !== 'user_message'
           })
           
-        // Process workflow-specific events (after filtering)
-        if (selectedModeCategory === 'workflow') {
-          const phases = useWorkflowStore.getState().phases
-          for (const event of response.events) {
-            // Handle todo list generation from workflow agent
-            // Note: orchestrator events removed, using agent_end events instead
-            if (event.type === 'agent_end') {
-              // Access the nested event data: event.data.data contains the actual AgentEndEvent
-              const agentEventData = event.data as { data?: { agent_type?: string; result?: string } }
-              const agentEvent = agentEventData?.data
-              if (agentEvent && agentEvent.agent_type === 'todo_planner') {
-                const result = agentEvent.result || ''
-                if (result) {
-                  // Get planning phase (second phase if available)
-                  const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
-                  
-                  // Only reset to planning phase if workflow hasn't been approved yet
-                  // This prevents resetting the phase after user approval
-                  if (currentWorkflowPhase === planningPhase) {
-                    // Workflow already in planning phase, keep it
-                  } else {
-                    setCurrentWorkflowPhase(planningPhase)
+          // Process workflow-specific events (after filtering)
+          if (selectedModeCategory === 'workflow' && currentTab?.metadata?.phaseId) {
+            const phases = useWorkflowStore.getState().phases
+            for (const event of response.events) {
+              // Handle todo list generation from workflow agent
+              if (event.type === 'agent_end') {
+                const agentEventData = event.data as { data?: { agent_type?: string; result?: string } }
+                const agentEvent = agentEventData?.data
+                if (agentEvent && agentEvent.agent_type === 'todo_planner') {
+                  const result = agentEvent.result || ''
+                  if (result) {
+                    const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
+                    if (currentWorkflowPhase !== planningPhase) {
+                      setCurrentWorkflowPhase(planningPhase)
+                    }
                   }
                 }
               }
-            }
 
-            // Handle workflow completion events
-            if (event.type === 'workflow_end') {
-              // Get completion phase (second phase = planning/execution)
-              const completionPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
-              setCurrentWorkflowPhase(completionPhase)
-            }
-          }
-        }
-          
-    // Add events to batch instead of immediately processing
-    eventBatchRef.current.push(...newEvents)
-          
-          // Trigger debounced flush
-          debouncedFlush()
-        
-        // Check for completion events and stop polling if detected
-        const completionEvents = response.events.filter((event: PollingEvent) => {
-          // Skip events we've already processed to avoid stopping on old completion events
-          if (processedCompletionEventsRef.current.has(event.id)) {
-            return false
-          }
-          
-          // Completion detection based on mode category
-          if (selectedModeCategory === 'workflow') {
-            // For workflow mode, check workflow-specific events
-            return event.type === 'workflow_end' ||
-                   event.type === 'request_human_feedback'
-          } else {
-            // For chat mode, check standard completion events
-            return event.type === 'unified_completion' ||
-                   event.type === 'agent_end' ||
-                   event.type === 'conversation_end' || 
-                   event.type === 'conversation_error' ||
-                   event.type === 'agent_error'
-          }
-        })
-        
-        if (completionEvents.length > 0) {
-          // Mark these completion events as processed to avoid reprocessing them
-          completionEvents.forEach(event => {
-            processedCompletionEventsRef.current.add(event.id)
-          })
-          
-          // Force flush any pending events before stopping polling
-          if (eventBatchRef.current.length > 0) {
-            flushEventBatch()
-          }
-          
-          if (pollingInterval) {
-            clearInterval(pollingInterval)
-            setPollingInterval(null)
-          }
-          setIsStreaming(false)
-          setIsCompleted(true)
-          setHasActiveChat(false)
-          
-          // Check for unified_completion event first - it takes precedence (only for chat mode)
-          let hasError = false
-          let finalResult = ''
-          
-          if (selectedModeCategory !== 'workflow') {
-            const unifiedCompletionEvent = completionEvents.find((event: PollingEvent) => 
-              event.type === 'unified_completion'
-            )
-            
-            if (unifiedCompletionEvent && unifiedCompletionEvent.data && typeof unifiedCompletionEvent.data === 'object') {
-              const data = unifiedCompletionEvent.data as Record<string, unknown>
-              
-              // Check status from unified_completion event
-              if (data.status === 'error' || data.status === 'failed') {
-                hasError = true
-                finalResult = (data.error as string) || (data.final_result as string) || 'Agent encountered an error.'
-              } else if (data.status === 'completed' && data.final_result) {
-                // Success case - use the final_result from unified_completion
-                hasError = false
-                finalResult = data.final_result as string
+              // Handle workflow completion events
+              if (event.type === 'workflow_end') {
+                const completionPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
+                setCurrentWorkflowPhase(completionPhase)
               }
             }
           }
           
-          // If no unified_completion event or no final result, check for individual error events
-          if (!finalResult) {
-            if (selectedModeCategory === 'workflow') {
-              // For workflow mode, check workflow-specific errors
-              hasError = completionEvents.some((event: PollingEvent) => 
-                event.type === 'agent_error' || 
-                event.type === 'workflow_error'
-              )
-            } else {
-              // For chat mode, check standard errors
-              hasError = completionEvents.some((event: PollingEvent) => 
-                event.type === 'conversation_error' || 
-                event.type === 'agent_error'
+          // Add events to the correct tab's event list
+          if (currentTab) {
+            // CRITICAL: Re-verify the tab's observer ID right before storing events
+            // This prevents storing events under the wrong observer ID if the tab's observer ID changed
+            const finalTab = chatStore.getTab(currentTab.tabId)
+            if (!finalTab) {
+              console.warn(`[PollEvents] Tab ${currentTab.tabId} no longer exists, skipping event storage`)
+              continue
+            }
+            
+            const finalObserverId = finalTab.observerId || effectiveObserverId
+            
+            // CRITICAL: Always store events under the observer ID we polled with
+            // The events we received are for the observer ID we polled with, not the tab's current observer ID
+            // If the tab's observer ID changed during polling, we still store under the polled ID
+            // This ensures events are stored under the correct observer ID that matches the events we received
+            const storageObserverId = effectiveObserverId
+            
+            // CRITICAL: Verify the observer ID we polled with matches the tab's current observer ID
+            // If they don't match, the tab's observer ID was updated during polling, which could cause event mixing
+            if (effectiveObserverId !== finalObserverId) {
+              console.warn(
+                `[PollEvents] Observer ID changed during polling for tab ${currentTab.tabId}! ` +
+                `Polled with: ${effectiveObserverId}, but tab now has: ${finalObserverId}. ` +
+                `Storing events under polled observer ID ${effectiveObserverId} to prevent mixing.`
               )
             }
             
-            if (hasError) {
-              finalResult = 'Agent encountered an error.'
+            // CRITICAL: Verify no other tab is using the observer ID we're storing under
+            // This prevents events from being stored under an observer ID that's shared by multiple tabs
+            const tabsUsingStorageObserverId = Object.values(chatStore.chatTabs)
+              .filter(t => t.observerId === storageObserverId && t.tabId !== currentTab.tabId)
+            
+            if (tabsUsingStorageObserverId.length > 0) {
+              console.error(
+                `[PollEvents] Observer ID ${storageObserverId} is shared by multiple tabs! ` +
+                `Tab ${currentTab.tabId} and tabs: ${tabsUsingStorageObserverId.map(t => t.tabId).join(', ')}. ` +
+                `This will cause events to mix between tabs. Skipping event storage.`
+              )
+              continue
             }
-          }
-          
-          if (hasError) {
-            // Error case - no final response set
-          } else if (finalResult) {
-            // We already have a final result from unified_completion
-            // Skip processing other completion events since we already have the result
-            return
+            
+            // CRITICAL: Verify the tab's current observer ID matches the storage observer ID
+            // If they don't match, update the tab's observer ID to match (events belong to the polled observer ID)
+            if (finalObserverId !== storageObserverId) {
+              console.warn(
+                `[PollEvents] Updating tab ${currentTab.tabId} observer ID from ${finalObserverId} to ${storageObserverId} ` +
+                `to match the observer ID we polled with (events belong to this observer ID)`
+              )
+              chatStore.updateTabObserverId(currentTab.tabId, storageObserverId)
+            }
+            
+            // Store events per tab (by observer ID)
+            // CRITICAL: Always use the observer ID we polled with, not the tab's current observer ID
+            // This ensures events are stored under the correct observer ID that matches the events we received
+            console.log(`[PollEvents] Storing ${newEvents.length} events for observerId: ${storageObserverId}, tab: ${currentTab.tabId}`)
+            addTabEvents(storageObserverId, newEvents)
+            
+            // Check for completion events for this tab
+            const completionEvents = newEvents.filter((event: PollingEvent) => {
+              if (processedCompletionEventsRef.current.has(event.id)) {
+                return false
+              }
+              
+              const mode = currentTab.metadata?.mode || 'chat'
+              if (mode === 'workflow') {
+                return event.type === 'workflow_end' || event.type === 'request_human_feedback'
+              } else {
+                return event.type === 'unified_completion' ||
+                       event.type === 'agent_end' ||
+                       event.type === 'conversation_end' || 
+                       event.type === 'conversation_error' ||
+                       event.type === 'agent_error'
+              }
+            })
+            
+            if (completionEvents.length > 0) {
+              completionEvents.forEach(event => {
+                processedCompletionEventsRef.current.add(event.id)
+              })
+              
+              // Mark this tab as completed
+              const chatStore = useChatStore.getState()
+              chatStore.setTabCompleted(currentTab.tabId, true)
+              chatStore.setTabStreaming(currentTab.tabId, false)
+              // Tab marked as completed
+            }
           } else {
-            // Extract final response from completion events - MODE CATEGORY SPECIFIC LOGIC
-            let foundFinalResponse = false
-            for (const event of completionEvents) {
-              let result: string | undefined
+            // No tab - this should not happen in tab mode
+            // Log error and discard events to prevent mixing
+            console.error(`[PollEvents] ERROR: No currentTab but polling returned events. Discarding ${newEvents.length} events.`)
+            
+            // Check for completion events (but don't store them)
+            const completionEvents = newEvents.filter((event: PollingEvent) => {
+              if (processedCompletionEventsRef.current.has(event.id)) {
+                return false
+              }
               
               if (selectedModeCategory === 'workflow') {
-                // For workflow mode, check workflow_end events
-                if (event.type === 'workflow_end' && event.data && typeof event.data === 'object') {
-                  if ('result' in event.data) {
-                    result = (event.data as { result?: string }).result
-                  } else if ('workflow_end' in event.data) {
-                    const workflowData = (event.data as { workflow_end?: { result?: string } }).workflow_end
-                    if (workflowData && workflowData.result) {
-                      result = workflowData.result
-                    }
-                  }
-                }
+                return event.type === 'workflow_end' || event.type === 'request_human_feedback'
               } else {
-                // For simple mode, check standard completion events
-                // Skip unified_completion events since we already handled them above
-                if (event.type === 'unified_completion') {
-                  continue
-                }
-                
-                // Check conversation_end events
-                if (event.type === 'conversation_end' && event.data && typeof event.data === 'object') {
-                  if ('result' in event.data) {
-                    result = (event.data as { result?: string }).result
-                  } else if ('conversation_end' in event.data) {
-                    const convData = (event.data as { conversation_end?: { result?: string } }).conversation_end
-                    if (convData && convData.result) {
-                      result = convData.result
-                    }
-                  }
-                }
+                return event.type === 'unified_completion' ||
+                       event.type === 'agent_end' ||
+                       event.type === 'conversation_end' || 
+                       event.type === 'conversation_error' ||
+                       event.type === 'agent_error'
               }
-              
-              
-              if (result && typeof result === 'string' && result.trim()) {
-                foundFinalResponse = true
-                break
-              }
-            }
+            })
             
-            // If no final response found in completion events, check if we have a preserved one
-            if (!foundFinalResponse && finalResponse) {
-              // No new final response found, keeping existing one
+            if (completionEvents.length > 0) {
+              completionEvents.forEach(event => {
+                processedCompletionEventsRef.current.add(event.id)
+              })
+              
+              if (pollingInterval) {
+                clearInterval(pollingInterval)
+                setPollingInterval(null)
+              }
+              setIsStreaming(false)
+              setIsCompleted(true)
+              setHasActiveChat(false)
             }
           }
         }
-      }
-    } catch (error) {
-      console.error('[POLL] Error polling events:', error)
-      if (error instanceof Error) {
-        console.error('[POLL] Error details:', error.message)
-      }
-      if (error && typeof error === 'object' && 'response' in error) {
-        const axiosError = error as { response?: { status?: number; data?: unknown } }
-        console.error('[POLL] HTTP status:', axiosError.response?.status)
-        console.error('[POLL] HTTP data:', axiosError.response?.data)
+      } catch (error) {
+        console.error(`[PollEvents] Error polling observer ${effectiveObserverId} (tab: ${currentTab?.tabId || 'global'}):`, error)
+        // Continue polling other observers even if one fails
       }
     }
-  }, [observerId, pollingInterval, setPollingInterval, setIsStreaming, setIsCompleted, setHasActiveChat, setLastEventIndex, finalResponse, agentMode, setCurrentWorkflowPhase, currentWorkflowPhase, debouncedFlush, flushEventBatch])
+  }, [selectedModeCategory, getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, pollingInterval, setIsStreaming, setIsCompleted, setHasActiveChat, currentWorkflowPhase, setCurrentWorkflowPhase, processedCompletionEventsRef, setPollingInterval])
 
 
   // Track if we're already processing to prevent infinite loops
@@ -1017,7 +1128,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               event_index: 0
             }))
             
-            setEvents(pollingEvents)
+            // CRITICAL: Always use tabEvents - no backward compatibility fallback
+            const originalObserverId = activeSession.observer_id
+            
+            if (originalObserverId) {
+              // Store in tabEvents using the observer ID from the session
+              addTabEvents(originalObserverId, pollingEvents)
+              setTabLastEventIndex(originalObserverId, pollingEvents.length > 0 ? pollingEvents.length - 1 : -1)
+            } else {
+              console.error(`[History] No observer ID in active session - cannot store events`)
+            }
             setTotalEvents(pollingEvents.length)
             setIsLoadingHistory(false)
             
@@ -1030,15 +1150,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               setIsCompleted(false)
               
               // Use the ORIGINAL observer ID from the active session, not the new one from reconnection
-              const originalObserverId = activeSession.observer_id
               
               // Start polling for new events with the ORIGINAL observer ID
+              const sessionIdForPolling = activeSession.session_id
               const interval = setInterval(async () => {
                 // Use the original observer ID that has the events
                 const currentLastEventIndex = lastEventIndexRef.current
                 
                 try {
-                  const response = await agentApi.getEvents(originalObserverId, currentLastEventIndex)
+                  const response = await agentApi.getEvents(originalObserverId, currentLastEventIndex, sessionIdForPolling)
                   
                   if (response.events.length > 0) {
                     
@@ -1047,6 +1167,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                     setTotalEvents(totalEventsRef.current + response.events.length)
                     setLastEventCount(response.events.length)
                     
+                    // CRITICAL: Always use tabEvents - no backward compatibility fallback
                     // Add new events to the events array
                     const newEvents = response.events.filter(event => {
                         // Detect request human feedback event and stop streaming
@@ -1071,7 +1192,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                         return true
                       })
                       
-                      setEvents((prevEvents: PollingEvent[]) => [...prevEvents, ...newEvents])
+                      // CRITICAL: Always use tabEvents - no backward compatibility fallback
+                      if (originalObserverId) {
+                        addTabEvents(originalObserverId, newEvents)
+                        setTabLastEventIndex(originalObserverId, response.last_event_index)
+                      } else {
+                        console.error(`[History] No observer ID - cannot store ${newEvents.length} events`)
+                      }
                   }
                 } catch (error) {
                   console.error('[POLL] Error polling events:', error)
@@ -1125,7 +1252,20 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               event_index: 0
             }))
             
-            setEvents(pollingEvents)
+            // CRITICAL: Always use tabEvents - no backward compatibility fallback
+            // For completed sessions, we need to find the observer ID from the session
+            // Try to get it from the first event's session_id or look up the tab that has this session
+            const chatStore = useChatStore.getState()
+            const tabWithSession = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === originalSessionId)
+            const sessionObserverId = tabWithSession?.observerId
+            
+            if (sessionObserverId) {
+              // Store in tabEvents using the observer ID from the tab
+              addTabEvents(sessionObserverId, pollingEvents)
+              setTabLastEventIndex(sessionObserverId, pollingEvents.length > 0 ? pollingEvents.length - 1 : -1)
+            } else {
+              console.error(`[History] No observer ID found for completed session ${originalSessionId} - cannot store events`)
+            }
             setTotalEvents(pollingEvents.length)
             setIsCompleted(true)
             setIsStreaming(false)
@@ -1159,11 +1299,20 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       setPollingInterval(null)
     }
     setIsStreaming(false)
+    
+    // Update active tab's streaming status
+    if (activeTab) {
+      const chatStore = useChatStore.getState()
+      chatStore.setTabStreaming(activeTab.tabId, false)
+      console.log(`[STOP] Updated tab ${activeTab.tabId} streaming status to false`)
+    }
 
     // Call backend to stop the agent execution (preserves conversation history)
-    if (observerId) {
+    // Use tab's session ID if available, otherwise use observer ID
+    const sessionId = activeTab?.sessionId || observerId
+    if (sessionId) {
       try {
-        await agentApi.stopSession(observerId)
+        await agentApi.stopSession(sessionId)
       } catch (error) {
         console.error('[STOP] Failed to stop session:', error)
       }
@@ -1174,16 +1323,25 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     console.log('[STOP] Resetting event polling index for next workflow/chat')
     setLastEventIndex(-1)
     setLastEventCount(0)
-  }, [pollingInterval, setPollingInterval, observerId, setIsStreaming, setLastEventIndex, setLastEventCount])
+  }, [pollingInterval, setPollingInterval, observerId, setIsStreaming, setLastEventIndex, setLastEventCount, activeTab])
 
   // Store execution options for use in the request
   const executionOptionsRef = useRef<ExecutionOptions | undefined>(undefined)
 
   // Wrapper function to submit query with the current local query
   const submitQueryWithQuery = useCallback(async (query: string, executionOptions?: ExecutionOptions) => {
+    console.log('[ChatArea] submitQueryWithQuery called:', {
+      query: query?.substring(0, 50),
+      hasQuery: Boolean(query?.trim()),
+      activeTab: activeTab?.tabId,
+      tabObserverId: activeTab?.observerId,
+      globalObserverId: null // Never use global observer ID in tab mode
+    })
+    
     // Store execution options for inclusion in the request
     executionOptionsRef.current = executionOptions
     if (!query?.trim()) {
+      console.warn('[ChatArea] submitQueryWithQuery: Empty query, returning early')
       return
     }
 
@@ -1199,9 +1357,75 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       return
     }
 
+    // If currently streaming, stop it first
+    if (isStreaming) {
+      await stopStreaming()
+    }
+    
+    // Note: Observer ID is not required for query submission
+    // It's only needed for event polling, which will be set up after the query starts
+    // The observer should be initialized automatically via useEffect
+    // If it's not available yet, we'll wait a bit for initialization, but won't block submission
+    let currentObserverId: string | null = null
+    
+    // CRITICAL: Always use tab's observer ID - never use global observer ID
+    // In chat mode, auto-create a tab if none exists
+    let currentTab = activeTab
+    if (!currentTab && selectedModeCategory === 'chat') {
+      const chatStore = useChatStore.getState()
+      const chatTabs = Object.values(chatStore.chatTabs).filter(tab => 
+        tab.metadata?.mode === 'chat' || !tab.metadata?.mode
+      )
+      
+      // If no chat tabs exist, create one automatically
+      if (chatTabs.length === 0) {
+        console.log('[SUBMIT] No chat tab exists, creating one automatically...')
+        const chatNumber = 1
+        const tabName = `Chat ${chatNumber}`
+        try {
+          const newTabId = await chatStore.createChatTab(tabName, { mode: 'chat' })
+          currentTab = chatStore.getTab(newTabId)
+          console.log(`[SUBMIT] Created new chat tab: ${newTabId}`)
+        } catch (error) {
+          console.error('[SUBMIT] Failed to create chat tab:', error)
+        }
+      } else {
+        // Use the active tab if one exists
+        currentTab = chatStore.getActiveTab() || chatTabs[0]
+      }
+    }
+    
+    // CRITICAL: Always use tab's observer ID - never fall back to global observer ID
+    // If no currentTab, this is an error condition (tabs should always exist)
+    if (currentTab) {
+      currentObserverId = currentTab.observerId
+      if (!currentObserverId) {
+        console.error(`[SUBMIT] Tab ${currentTab.tabId} has no observer ID - cannot submit query`)
+        return
+      }
+      console.log(`[SUBMIT] Using tab observer ID: ${currentObserverId}`)
+    } else {
+      // No current tab - check if tabs exist (they should)
+      const chatStore = useChatStore.getState()
+      const hasTabs = Object.keys(chatStore.chatTabs).length > 0
+      if (hasTabs) {
+        console.error(`[SUBMIT] No currentTab but tabs exist - this should not happen. Cannot submit query.`)
+        return
+      } else {
+        // No tabs at all - this is legacy mode (should not happen in production)
+        console.error(`[SUBMIT] No tabs and no currentTab - cannot submit query. Tabs should always exist.`)
+        return
+      }
+    }
+    
+    // Use tab's file context in chat mode, global file context otherwise
+    const effectiveFileContext = (selectedModeCategory === 'chat' && currentTab?.config) 
+      ? currentTab.config.fileContext 
+      : chatFileContext
+    
     // Add file context to the query for ALL agent types
-    const queryWithContext = chatFileContext.length > 0 
-      ? `${query.trim()}\n\n📁 Files in context: ${chatFileContext.map((file: { path: string }) => file.path).join(', ')}`
+    const queryWithContext = effectiveFileContext.length > 0 
+      ? `${query.trim()}\n\n📁 Files in context: ${effectiveFileContext.map((file: { path: string }) => file.path).join(', ')}`
       : query.trim()
     
     // Handle workflow mode - submit query directly to backend
@@ -1212,39 +1436,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       setCurrentQuery(queryWithContext)
       // Continue with normal agent execution below
     }
-
-    // If currently streaming, stop it first
-    if (isStreaming) {
-      await stopStreaming()
-    }
     
-    // Note: Observer ID is not required for query submission
-    // It's only needed for event polling, which will be set up after the query starts
-    // The observer should be initialized automatically via useEffect
-    // If it's not available yet, we'll wait a bit for initialization, but won't block submission
-    let currentObserverId = observerId
-    if (!currentObserverId) {
-      console.log('[SUBMIT] Observer ID not available yet, waiting briefly for initialization...')
-      // Wait up to 1 second for observer to be initialized (check every 100ms)
-      for (let i = 0; i < 10; i++) {
-        await new Promise(resolve => setTimeout(resolve, 100))
-        // Check observerId from the chat store directly
-        const storeObserverId = useChatStore.getState().observerId
-        if (storeObserverId) {
-          console.log(`[SUBMIT] Observer ID became available after ${(i + 1) * 100}ms: ${storeObserverId}`)
-          currentObserverId = storeObserverId
-          break
-        }
-      }
-      
-      if (!currentObserverId) {
-        console.warn('[SUBMIT] Observer ID not available yet, but proceeding with query submission.')
-        console.warn('[SUBMIT] Observer will be initialized automatically, and polling will start once it\'s ready.')
-        // Don't return - allow submission to proceed
-        // The observer initialization effect will handle setting it up
-      }
-    }
-
     // Use the query with file context that we prepared earlier
     const enhancedQuery = queryWithContext
     
@@ -1265,20 +1457,27 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       } as any
     }
     
-    // Add user message event to the events array
-    setEvents((prevEvents: PollingEvent[]) => [...prevEvents, userMessageEvent])
+    // Add user message event to the correct tab's events
+    // CRITICAL: Always use tabEvents - no backward compatibility fallback
+    if (currentTab?.observerId) {
+      addTabEvents(currentTab.observerId, [userMessageEvent])
+    } else {
+      console.error(`[SUBMIT] No currentTab - cannot store user message event. This should not happen.`)
+    }
     
     setCurrentQuery('') // Clear the query text after submission
 
-    // Clear any existing polling interval before starting a new one
-    if (pollingInterval) {
-      clearInterval(pollingInterval)
-      setPollingInterval(null)
-    }
+    // CRITICAL: Don't clear polling interval here - it polls ALL active tabs
+    // Clearing it would stop polling for other tabs that are still active
+    // The interval is managed globally and polls all tabs that need polling
 
     // Preserve the Final Result by adding it to events before clearing
     // Check both the current finalResponse state and any completion events in the events array
-    const hasCompletionEvent = events.some(event => 
+    // Use tab-specific events - no backward compatibility fallback
+    const eventsToCheck = currentTab?.observerId 
+      ? getTabEvents(currentTab.observerId)
+      : []
+    const hasCompletionEvent = eventsToCheck.some(event => 
       event.type === 'unified_completion' || event.type === 'agent_end'
     )
     
@@ -1295,7 +1494,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           }
         } as PollingEvent['data']
       }
-      setEvents((prevEvents: PollingEvent[]) => [...prevEvents, completionEvent])
+      // Add to tab-specific events - no backward compatibility fallback
+      // CRITICAL: Always use tabEvents to prevent mixing
+      if (currentTab?.observerId) {
+        addTabEvents(currentTab.observerId, [completionEvent])
+      } else {
+        console.error(`[SUBMIT] No currentTab - cannot store completion event. This should not happen.`)
+      }
     }
 
     // Clear the final response and completion state for the new query
@@ -1340,16 +1545,18 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       const { useCodeExecutionMode: storeCodeExecutionMode } = useAppStore.getState()
       
       // Determine final code execution mode value
-      // For chat mode: Use preset value if preset exists, otherwise use store value
+      // For chat mode: Use preset value if preset exists, otherwise use tab's config value
       // For workflow mode: Use preset value if available, otherwise undefined
       let useCodeExecutionMode: boolean | undefined
       if (correctAgentMode === 'simple') {
-        // In chat mode: If preset exists, use preset value; otherwise use store value
+        // In chat mode: If preset exists, use preset value; otherwise use tab's config
         if (presetUseCodeExecutionMode !== undefined) {
           useCodeExecutionMode = presetUseCodeExecutionMode
         } else {
-          // No preset, use store value (user's manual control via ChatInput toggle)
-          useCodeExecutionMode = storeCodeExecutionMode
+          // No preset, use tab's config value (user's manual control via ChatInput toggle)
+          useCodeExecutionMode = (selectedModeCategory === 'chat' && currentTab?.config) 
+            ? currentTab.config.useCodeExecutionMode 
+            : storeCodeExecutionMode
         }
       } else if (correctAgentMode === 'workflow') {
         // For workflow mode, use preset value if available
@@ -1368,9 +1575,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         finalType: typeof useCodeExecutionMode
       })
       
+      // Use tab's LLM config in chat mode, global config otherwise
+      const effectiveLLMConfig = (selectedModeCategory === 'chat' && currentTab?.config) 
+        ? currentTab.config.llmConfig 
+        : llmConfig
+      
       // Build llm_config with API keys from provider configs
       const llmConfigWithApiKeys = {
-        ...llmConfig,
+        ...effectiveLLMConfig,
         api_keys: {
           ...(openrouterConfig.api_key ? { openrouter: openrouterConfig.api_key } : {}),
           ...(openaiConfig.api_key ? { openai: openaiConfig.api_key } : {}),
@@ -1387,8 +1599,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         enabled_tools: enabledTools.map((tool: { name: string }) => tool.name),
         enabled_servers: effectiveServers,
         selected_tools: (selectedWorkflowPreset || getActivePreset('chat')) ? filteredPresetTools : undefined, // Only send when preset is active
-        provider: llmConfig.provider,
-        model_id: llmConfig.model_id,
+        provider: effectiveLLMConfig.provider,
+        model_id: effectiveLLMConfig.model_id,
         llm_config: llmConfigWithApiKeys,
         preset_query_id: selectedWorkflowPreset || undefined,
         // Send boolean value directly - don't use || undefined as it converts false to undefined
@@ -1409,33 +1621,100 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         enabled_servers_count: requestPayload.enabled_servers?.length || 0
       })
       
-      // Submit query to backend
-      const response = await agentApi.startQuery(requestPayload)
+      // CRITICAL: Sync the correct observer ID before submitting the query
+      // This ensures the backend receives the correct observer ID in the X-Observer-ID header
+      if (currentObserverId) {
+        setCurrentObserverId(currentObserverId)
+        console.log(`[SUBMIT] Synced observer ID to API module before query: ${currentObserverId}`)
+      } else {
+        console.warn('[SUBMIT] No observer ID available - query may fail or use a different observer')
+      }
+      
+      // CRITICAL: Ensure the tab has a session ID before submitting the query
+      // This ensures each tab gets its own session, not a shared global one
+      if (currentTab && !currentTab.sessionId) {
+        // Generate a new session ID for this tab
+        const newSessionId = globalThis.crypto.randomUUID()
+        const chatStore = useChatStore.getState()
+        chatStore.updateTabSessionId(currentTab.tabId, newSessionId)
+        console.log(`[SUBMIT] Generated new session ID for tab ${currentTab.tabId} before query: ${newSessionId}`)
+        // Update the session ID in the API module so the interceptor uses it
+        setSessionId(newSessionId)
+      } else if (currentTab?.sessionId) {
+        // Ensure the API module uses the tab's session ID
+        setSessionId(currentTab.sessionId)
+        console.log(`[SUBMIT] Using existing session ID for tab ${currentTab.tabId}: ${currentTab.sessionId}`)
+      }
+      
+      // Submit query to backend with explicit session ID
+      const sessionIdToUse = currentTab?.sessionId || undefined
+      const observerIdToUse = currentObserverId || undefined
+      const response = await agentApi.startQuery(requestPayload, sessionIdToUse, observerIdToUse)
 
       if (response.status === 'started' || response.status === 'workflow_started') {
-        // Update session ID for subsequent requests
-        // Use session_id from response (matches backend storage), fallback to query_id for backwards compatibility
-        if (response.session_id) {
-          setSessionId(response.session_id)
-        } else if (response.query_id) {
-          setSessionId(response.query_id)
-        }
-        
-        // Extract and set observer ID from response (backend returns it in the response)
-        // This ensures polling can start immediately without waiting for separate observer registration
+        // CRITICAL: Update observer ID FIRST before setting streaming status
+        // This ensures polling uses the correct observer ID
         if (response.observer_id) {
-          console.log('[SUBMIT] Setting observer ID from response:', response.observer_id)
-          setObserverId(response.observer_id)
-          // Sync observer ID to API module for request interceptor
-          setCurrentObserverId(response.observer_id)
+          // Safety check: Verify the backend returned the same observer ID we sent
+          if (currentObserverId && response.observer_id !== currentObserverId) {
+            console.warn(
+              `[SUBMIT] Observer ID mismatch! Sent: ${currentObserverId}, Received: ${response.observer_id}. ` +
+              `This indicates a potential bug - the backend should return the same ID that was sent.`
+            )
+          }
+          
+          console.log('[SUBMIT] Observer ID from response:', response.observer_id)
+          // CRITICAL: Don't update global observerId when submitting in tabs - only update tab-specific observer ID
+          // This prevents events from one tab appearing in another tab
+          // No backward compatibility - tabs should always exist
+          // Sync observer ID to API module for request interceptor (use tab's observer ID if available)
+          const observerIdToSync = currentTab ? response.observer_id : response.observer_id
+          setCurrentObserverId(observerIdToSync)
+          
+          // Update the tab's observerId FIRST before setting streaming status
+          // This ensures polling uses the correct observer ID
+          if (currentTab) {
+            const chatStore = useChatStore.getState()
+            const previousObserverId = currentTab.observerId
+            chatStore.updateTabObserverId(currentTab.tabId, response.observer_id)
+            
+            if (previousObserverId !== response.observer_id) {
+              console.log(
+                `[SUBMIT] Updated tab ${currentTab.tabId} observerId from ${previousObserverId} to ${response.observer_id}`
+              )
+            }
+          }
         } else {
           console.warn('[SUBMIT] No observer_id in response, will use existing observer or wait for initialization')
         }
         
+        // Update session ID for subsequent requests
+        // Use session_id from response (matches backend storage), fallback to query_id for backwards compatibility
+        const sessionId = response.session_id || response.query_id
+        if (sessionId) {
+          setSessionId(sessionId)
+          
+          // Update active tab's session ID and streaming status
+          // NOTE: Observer ID should already be updated above
+          if (currentTab) {
+            const chatStore = useChatStore.getState()
+            chatStore.updateTabSessionId(currentTab.tabId, sessionId)
+            chatStore.setTabStreaming(currentTab.tabId, true)
+            console.log(`[SUBMIT] Updated tab ${currentTab.tabId} with sessionId: ${sessionId}, observerId: ${currentTab.observerId}`)
+          }
+        }
+        
         // Start polling for events
-        // pollEvents will check for observerId from store and skip if not available
-        const interval = setInterval(pollEvents, 1000)
-        setPollingInterval(interval)
+        // CRITICAL: Only create a new polling interval if one doesn't exist
+        // This prevents multiple intervals when submitting in multiple tabs
+        // The single interval will poll all active tabs
+        if (!pollingInterval) {
+          console.log('[SUBMIT] Starting polling interval for events')
+          const interval = setInterval(pollEvents, 1000)
+          setPollingInterval(interval)
+        } else {
+          console.log('[SUBMIT] Polling interval already exists, reusing it')
+        }
       } else {
         console.error('[SUBMIT] Backend error:', response)
         setIsStreaming(false)
@@ -1447,7 +1726,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       setHasActiveChat(false)
     }
 
-  }, [correctAgentMode, selectedModeCategory, isRequiredFolderSelected, chatFileContext, isStreaming, stopStreaming, observerId, events, finalResponse, pollingInterval, setPollingInterval, setEvents, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setLastEventCount, setSessionId, llmConfig, openrouterConfig, openaiConfig, anthropicConfig, vertexConfig, bedrockConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, selectedWorkflowPreset, pollEvents, processedCompletionEventsRef])
+  }, [correctAgentMode, selectedModeCategory, isRequiredFolderSelected, chatFileContext, isStreaming, stopStreaming, finalResponse, pollingInterval, setPollingInterval, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setLastEventCount, setSessionId, llmConfig, openrouterConfig, openaiConfig, anthropicConfig, vertexConfig, bedrockConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, selectedWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, agentMode, currentPresetServers, addTabEvents, getTabEvents])
 
   // Handle new chat - clear backend session and reset all chat state
   const handleNewChat = useCallback(async () => {
@@ -1486,11 +1765,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     processedCompletionEventsRef.current.clear()
     
     // Clear guidance state
-    setSessionId(null)
+    // Reset session ID for the active tab (will generate a new one on next query)
+    resetSessionId()
     
     // Call the parent's new chat handler
     onNewChat()
-  }, [clearWorkflowState, resetChatState, onNewChat, observerId, setSessionId, selectedModeCategory, selectedWorkflowPreset, setCurrentWorkflowPhase])
+  }, [clearWorkflowState, resetChatState, onNewChat, observerId, selectedModeCategory, selectedWorkflowPreset, setCurrentWorkflowPhase, setEvents, setLastEventCount, setLastEventIndex, setTotalEvents])
 
   // Refresh workflow presets function
   const refreshWorkflowPresets = useCallback(async () => {
@@ -1511,7 +1791,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   }), [handleNewChat, resetChatState, refreshWorkflowPresets, submitQueryWithQuery, events, isStreaming, currentWorkflowPhase])
 
   return (
-    <div className="flex flex-col h-full min-w-0">
+    <div className="flex flex-col h-full min-w-0" data-testid="chat-area-container">
       {/* Preset Selection Overlay */}
       {showPresetSelection && pendingModeCategory && (
         <PresetSelectionOverlay
@@ -1540,9 +1820,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         chatSessionTitle={chatSessionTitle}
         chatSessionId={chatSessionId}
         sessionState={sessionState === 'not_found' ? 'not-found' : sessionState}
-        onModeSelect={handleModeSelect}
       />
       )}
+
 
       {/* Chat Content - Separated to prevent input re-renders */}
       <div ref={chatContentRef} className={`flex-1 overflow-y-auto overflow-x-hidden min-w-0 relative ${compact ? 'text-sm' : ''}`}>
@@ -1608,20 +1888,24 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             onWorkflowPhaseChange={setCurrentWorkflowPhase}
           >
             {/* Empty State - Show when no events and not in historical session */}
-            {!chatSessionId && events.length === 0 && !isStreaming && (
+            {!chatSessionId && displayEvents.length === 0 && !isStreaming && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             
-            <EventDisplay onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} />
+            {effectiveObserverId && (
+              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} />
+            )}
           </WorkflowModeHandler>
         ) : (
           <>
             {/* Empty State - Show when no events and not in historical session */}
-            {!chatSessionId && events.length === 0 && !isStreaming && (
+            {!chatSessionId && displayEvents.length === 0 && !isStreaming && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             
-            <EventDisplay onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} />
+            {effectiveObserverId && (
+              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} />
+            )}
           </>
         )}
         </div>
@@ -1632,7 +1916,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         <ChatInput
           onSubmit={submitQueryWithQuery}
           onStopStreaming={stopStreaming}
-          onNewChat={handleNewChat}
         />
       )}
       

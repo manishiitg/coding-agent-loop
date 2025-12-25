@@ -41,6 +41,8 @@ type ObserverStatusResponse struct {
 	CreatedAt    time.Time `json:"created_at"`
 	LastActivity time.Time `json:"last_activity"`
 	TotalEvents  int       `json:"total_events"`
+	SessionID    string    `json:"session_id,omitempty"`
+	AgentMode    string    `json:"agent_mode,omitempty"`
 }
 
 // --- POLLING API HANDLERS ---
@@ -148,12 +150,31 @@ func (api *StreamingAPI) handleGetObserverStatus(w http.ResponseWriter, r *http.
 	// Get total events for this observer
 	totalEvents, _ := api.eventStore.GetObserverStatus(observerID)
 
+	// Get session info if session ID exists
+	var sessionID string
+	var agentMode string
+	if observer.SessionID != "" {
+		sessionID = observer.SessionID
+		
+		// Try to get from active sessions first
+		if activeSession, exists := api.getActiveSession(sessionID); exists {
+			agentMode = activeSession.AgentMode
+		} else {
+			// If not active, check database
+			if chatSession, err := api.chatDB.GetChatSession(r.Context(), sessionID); err == nil {
+				agentMode = chatSession.AgentMode
+			}
+		}
+	}
+
 	response := ObserverStatusResponse{
 		ObserverID:   observer.ID,
 		Status:       observer.Status,
 		CreatedAt:    observer.CreatedAt,
 		LastActivity: observer.LastActivity,
 		TotalEvents:  totalEvents,
+		SessionID:    sessionID,
+		AgentMode:    agentMode,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {

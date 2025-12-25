@@ -1,9 +1,10 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import { agentApi, getSessionId } from '../../../services/api'
+import { agentApi, getSessionId, setCurrentObserverId } from '../../../services/api'
 import type { PollingEvent } from '../../../services/api-types'
 import { useLLMStore, useMCPStore, useChatStore } from '../../../stores'
 import { usePresetApplication } from '../../../stores/useGlobalPresetStore'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
+import { EXECUTION_PHASE_ID } from '../../../constants/workflow'
 
 export type WorkflowExecutionStatus =
   | 'idle'
@@ -41,17 +42,36 @@ export interface UseWorkflowExecutionReturn {
  * - isCompleted: whether execution completed (source of truth for 'completed' status)
  */
 export function useWorkflowExecution(): UseWorkflowExecutionReturn {
-  // Use selectors from useChatStore - single source of truth
-  const observerId = useChatStore(state => state.observerId)
-  const events = useChatStore(state => state.events)
-  const clearStoreEvents = useChatStore(state => state.clearEvents)
-  const isStreaming = useChatStore(state => state.isStreaming)
-  const isCompleted = useChatStore(state => state.isCompleted)
+  // Get active tab (for multi-tab support - works for both chat and workflow)
+  const activeTab = useChatStore(state => state.getActiveTab())
+  
+  // CRITICAL: Always use tab's observer ID - never fall back to global to prevent mixing
+  const tabObserverId = activeTab?.observerId
+  
+  // Get tab-specific events and status
+  const getTabEvents = useChatStore(state => state.getTabEvents)
+  const getTabStreamingStatus = useChatStore(state => state.getTabStreamingStatus)
+  
+  // Use tab-specific data - never fall back to global
+  const observerId = tabObserverId || null
+  const tabIsStreaming = activeTab ? getTabStreamingStatus(activeTab.tabId) : false
+  const isStreaming = tabIsStreaming
+  const isCompleted = activeTab?.isCompleted || false
+  const events = useMemo(() => {
+    return observerId ? getTabEvents(observerId) : []
+  }, [observerId, getTabEvents])
+  
+  // Warn if no active tab (tabs should always exist)
+  if (!activeTab) {
+    console.warn(`[useWorkflowExecution] No active tab - this should not happen in tab mode`)
+  }
   
   // Workflow store actions
   const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
   const loadRunFolders = useWorkflowStore(state => state.loadRunFolders)
   const loadProgress = useWorkflowStore(state => state.loadProgress)
+  const setTabStreaming = useChatStore(state => state.setTabStreaming)
+  const updateTabSessionId = useChatStore(state => state.updateTabSessionId)
 
   // Local state for workflow-specific tracking
   const [currentStepId, setCurrentStepId] = useState<string | null>(null)
@@ -301,18 +321,26 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     lastProcessedEventIndexRef.current = events.length - 1
   }, [events, setSelectedRunFolder, loadRunFolders, loadProgress])
 
-  // Start workflow - uses observerId from useChatStore
+  // Start workflow - CRITICAL: Always use tab's observer ID, never fall back to global
   const startWorkflow = useCallback(async (presetQueryId: string) => {
-    // Get current observer ID from store
-    const currentObserverId = useChatStore.getState().observerId
+    // Get active tab
+    const activeTab = useChatStore.getState().getActiveTab()
+    
+    // CRITICAL: Always use tab's observer ID - never fall back to global
+    const currentObserverId = activeTab?.observerId || null
 
     if (!currentObserverId) {
-      console.error('[useWorkflowExecution] No observer ID available. ChatArea should initialize it.')
-      setError('No observer ID available. Please wait for initialization.')
+      console.error('[useWorkflowExecution] No observer ID available. Active tab should have an observer ID.')
+      setError('No observer ID available. Please ensure you have an active tab.')
       return
     }
 
-    console.log(`[useWorkflowExecution] Starting workflow with observerId: ${currentObserverId}`)
+    console.log(`[useWorkflowExecution] Starting workflow with observerId: ${currentObserverId} (tab: ${activeTab?.tabId || 'unknown'})`)
+
+    // Sync observer ID to API module
+    if (activeTab) {
+      setCurrentObserverId(currentObserverId)
+    }
 
     setError(null)
     setManualStatus(null) // Clear any manual status
@@ -337,11 +365,18 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
         use_code_execution_mode: activePreset?.useCodeExecutionMode
       }
 
-      // Start the query - agentApi.startQuery will use observerId from localStorage/interceptor
+      // Start the query - agentApi.startQuery will use observerId from setCurrentObserverId
       const response = await agentApi.startQuery(requestPayload)
 
       if (response.status !== 'started' && response.status !== 'workflow_started') {
         throw new Error('Failed to start workflow')
+      }
+
+      // Update tab's session ID and streaming status if active tab exists
+      if (activeTab && response.session_id) {
+        updateTabSessionId(activeTab.tabId, response.session_id)
+        setTabStreaming(activeTab.tabId, true)
+        console.log(`[useWorkflowExecution] Updated tab ${activeTab.tabId} with sessionId: ${response.session_id}`)
       }
 
       console.log('[useWorkflowExecution] Workflow started successfully')
@@ -349,13 +384,19 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
       console.error('[useWorkflowExecution] Failed to start workflow:', err)
       setError(err instanceof Error ? err.message : 'Failed to start workflow')
       setManualStatus('failed')
+      
+      // Clear streaming status on error
+      if (activeTab) {
+        setTabStreaming(activeTab.tabId, false)
+      }
     }
-  }, [getActivePreset, currentPresetTools, enabledTools, effectiveServers, llmConfig, events.length])
+  }, [getActivePreset, currentPresetTools, enabledTools, effectiveServers, llmConfig, events.length, setTabStreaming, updateTabSessionId])
 
   // Run a specific step
   const runStep = useCallback(async (stepId: string, presetQueryId: string) => {
-    // Get current observer ID from store
-    const currentObserverId = useChatStore.getState().observerId
+    // CRITICAL: Always use tab's observer ID - never fall back to global
+    const activeTab = useChatStore.getState().getActiveTab()
+    const currentObserverId = activeTab?.observerId || null
 
     if (!currentObserverId) {
       console.error('[useWorkflowExecution] No observer ID available. ChatArea should initialize it.')
@@ -410,12 +451,26 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     setManualStatus('paused')
   }, [])
 
-  // Stop workflow
+  // Stop workflow - finds execution phase tab or uses active tab
   const stopWorkflow = useCallback(async () => {
+    const chatStore = useChatStore.getState()
+    
+    // Find execution phase tab (preferred) or use active tab
+    // Filter workflow tabs by phase ID
+    const allTabs = Object.values(chatStore.chatTabs)
+    const executionTabs = allTabs.filter(tab => 
+      tab.metadata?.mode === 'workflow' && tab.metadata?.phaseId === EXECUTION_PHASE_ID
+    )
+    const runningExecutionTab = executionTabs.find(tab => tab.isStreaming)
+    const executionTab = runningExecutionTab || executionTabs[0]
+    const activeTab = chatStore.getActiveTab()
+    
+    // Use execution tab if found, otherwise use active tab, otherwise fallback to global
+    const targetTab = executionTab || activeTab
+    
+    // Stop ChatArea's polling (same logic as ChatArea.stopStreaming)
     const storeState = useChatStore.getState()
     const pollingInterval = storeState.pollingInterval
-
-    // Stop ChatArea's polling (same logic as ChatArea.stopStreaming)
     if (pollingInterval) {
       clearInterval(pollingInterval)
       useChatStore.getState().setPollingInterval(null)
@@ -423,6 +478,12 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
 
     // Set streaming to false (this will update the button back to "Execute")
     useChatStore.getState().setIsStreaming(false)
+    
+    // Update tab's streaming status if target tab exists
+    if (targetTab) {
+      setTabStreaming(targetTab.tabId, false)
+      console.log(`[useWorkflowExecution] Stopped streaming for tab ${targetTab.tabId}`)
+    }
 
     // Reset event polling index so next workflow/chat starts fresh
     useChatStore.getState().setLastEventIndex(-1)
@@ -431,19 +492,27 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     // Clear current step tracking
     setCurrentStepId(null)
 
-    // Call backend to stop the session using session ID (not observer ID)
-    const sessionId = getSessionId()
+    // Call backend to stop the session using session ID
+    let sessionId: string | null = null
+    if (targetTab?.sessionId) {
+      // Use target tab's session ID
+      sessionId = targetTab.sessionId
+    } else {
+      // Fallback to global session ID
+      sessionId = getSessionId()
+    }
+    
     if (sessionId) {
       try {
         await agentApi.stopSession(sessionId)
-        console.log('[useWorkflowExecution] Session stopped and polling cleared')
+        console.log(`[useWorkflowExecution] Session ${sessionId} stopped${targetTab ? ` (tab: ${targetTab.tabId})` : ' (global)'}`)
       } catch (err) {
         console.error('[useWorkflowExecution] Failed to stop session:', err)
       }
     } else {
       console.warn('[useWorkflowExecution] No session ID available to stop session')
     }
-  }, [])
+  }, [setTabStreaming])
 
   // Resume workflow
   const resumeWorkflow = useCallback(async () => {
@@ -453,18 +522,25 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
   }, [manualStatus])
 
   // Clear events - delegates to useChatStore
+  // CRITICAL: Clear tab-specific events, not global events
   const clearEvents = useCallback(() => {
-    clearStoreEvents()
+    const activeTab = useChatStore.getState().getActiveTab()
+    if (activeTab?.observerId) {
+      const clearTabEvents = useChatStore.getState().clearTabEvents
+      clearTabEvents(activeTab.observerId)
+    } else {
+      console.warn(`[useWorkflowExecution] No active tab - cannot clear events`)
+    }
     lastProcessedEventIndexRef.current = -1
     setManualStatus(null)
-  }, [clearStoreEvents])
+  }, [])
 
   return {
     status: derivedStatus,
     currentStepId,
     stepStatusMap,
     events,
-    observerId,
+    observerId: observerId || '',
     error,
     startWorkflow,
     runStep,

@@ -233,6 +233,8 @@ export interface ObserverStatusResponse {
   created_at: string
   last_activity: string
   total_events: number
+  session_id?: string
+  agent_mode?: string
 }
 
 // Active Session Management Types

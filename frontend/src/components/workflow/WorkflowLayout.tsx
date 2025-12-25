@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback, useRef, useEffect } from 'react'
+import React, { useMemo, useCallback, useRef, useEffect, forwardRef } from 'react'
 import { WorkflowCanvas, type WorkflowCanvasRef } from './canvas'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
@@ -7,6 +7,31 @@ import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import ChatArea, { type ChatAreaRef } from '../ChatArea'
 import { ChatHeader } from '../ChatHeader'
+
+// Helper component to get observerId and render ChatArea
+// Always renders ChatArea (even without observerId) so it can handle initialization
+const ChatAreaWithObserverId = forwardRef<ChatAreaRef, { 
+  onNewChat: () => void
+  hideHeader?: boolean
+  hideInput?: boolean
+  compact?: boolean
+}>(({ onNewChat, hideHeader, hideInput, compact }, ref) => {
+  const activeTab = useChatStore.getState().getActiveTab()
+  const observerId = activeTab?.observerId
+  
+  // Always render ChatArea - it will handle the case when observerId is undefined
+  return (
+    <ChatArea
+      ref={ref}
+      onNewChat={onNewChat}
+      hideHeader={hideHeader}
+      hideInput={hideInput}
+      compact={compact}
+      tabId={useChatStore.getState().activeTabId || undefined}
+      observerId={observerId}
+    />
+  )
+})
 import { X } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import { type ExecutionOptions } from '../../services/api-types'
@@ -16,6 +41,7 @@ interface WorkflowLayoutProps {
   className?: string
   onCreatePlan?: () => void
   onNewChat: () => void
+  onRegisterStartPhase?: (handler: (phaseId: string, executionOptions?: ExecutionOptions) => Promise<void>) => void
 }
 
 /**
@@ -26,9 +52,10 @@ interface WorkflowLayoutProps {
 export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   className = '',
   onCreatePlan,
-  onNewChat
+  onNewChat,
+  onRegisterStartPhase
 }) => {
-  const { selectedModeCategory, setModeCategory } = useModeStore()
+  const { selectedModeCategory } = useModeStore()
   const { currentWorkflowPhase, setCurrentWorkflowPhase, events } = useChatStore()
   
   // Use workflow store for UI state (single source of truth)
@@ -36,6 +63,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const showChatArea = useWorkflowStore(state => state.showChatArea)
   const setActivePhase = useWorkflowStore(state => state.setActivePhase)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
+  
+  // Tab management (generalized for both chat and workflow)
+  const { createChatTab, getActiveTab } = useChatStore()
+  const getPhaseById = useWorkflowStore(state => state.getPhaseById)
   
   // Ref for the ChatArea component
   const chatAreaRef = useRef<ChatAreaRef>(null)
@@ -208,7 +239,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         }
       }
     }
-  }, [events, workspacePath, selectedRunFolder, fetchFiles])
+  }, [events, workspacePath, selectedRunFolder, fetchFiles, updateStepProgressFromEvent])
 
   // Handle phase start from toolbar (now accepts execution options directly)
   const handleStartPhase = useCallback(async (phaseId: string, executionOptions?: ExecutionOptions) => {
@@ -219,14 +250,31 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       return
     }
     
-    // Reset previous events before starting new phase
-    if (chatAreaRef?.current?.resetChatState) {
-      console.log('[WorkflowLayout] Clearing previous events for new phase')
-      chatAreaRef.current.resetChatState()
+    // Get phase name
+    const phase = getPhaseById(phaseId)
+    const phaseName = phase?.title || phaseId
+    
+    // Create new tab for this phase (instead of clearing events)
+    let tabId: string
+    try {
+      console.log('[WorkflowLayout] Creating new workflow tab for phase:', phaseId)
+      tabId = await createChatTab(phaseName, {
+        mode: 'workflow',
+        phaseId,
+        phaseName
+      })
+      console.log('[WorkflowLayout] Created workflow tab:', tabId)
+    } catch (error) {
+      console.error('[WorkflowLayout] Failed to create workflow tab:', error)
+      return
     }
     
-    // Reset the event tracking index since we cleared events
-    lastProcessedEventIndexRef.current = -1
+    // Get tab's observer ID
+    const tab = getActiveTab()
+    if (!tab) {
+      console.error('[WorkflowLayout] Failed to get active tab')
+      return
+    }
     
     // Update workflow status in database BEFORE submitting query
     // The backend reads the phase from the database, not from the query string
@@ -247,13 +295,21 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     const query = `Execute workflow phase: ${phaseId}`
     
     // Submit query through ChatArea with execution options as separate parameter
+    // Note: ChatArea will need to use the tab's observer ID (to be implemented in next step)
     if (chatAreaRef?.current?.submitQuery) {
       if (executionOptions) {
         console.log('[WorkflowLayout] Execution options:', executionOptions)
       }
       await chatAreaRef.current.submitQuery(query, executionOptions)
     }
-  }, [activePresetId, setCurrentWorkflowPhase, setActivePhase, setShowChatArea])
+  }, [activePresetId, setCurrentWorkflowPhase, setActivePhase, setShowChatArea, createChatTab, getPhaseById, getActiveTab])
+
+  // Register handleStartPhase with parent (App) so ChatTabs can call it
+  useEffect(() => {
+    if (onRegisterStartPhase) {
+      onRegisterStartPhase(handleStartPhase)
+    }
+  }, [onRegisterStartPhase, handleStartPhase])
 
   // Handle closing ChatArea
   const handleCloseChatArea = useCallback(() => {
@@ -286,7 +342,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           chatSessionTitle=""
           chatSessionId=""
           sessionState="active"
-          onModeSelect={(category) => setModeCategory(category)}
         />
         
         <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-gray-900">
@@ -316,7 +371,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         chatSessionTitle={activeWorkflowPreset?.label || ''}
         chatSessionId=""
         sessionState="active"
-        onModeSelect={(category) => setModeCategory(category)}
       />
 
       {/* Main Content */}
@@ -338,8 +392,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
         {/* ChatArea Panel - single instance, show/hide via CSS */}
         <div className={`${showChatArea ? 'w-1/2' : 'w-0 overflow-hidden'} border-l border-gray-200 dark:border-gray-700 flex flex-col h-full min-h-0 bg-white dark:bg-gray-900 relative z-20 transition-all duration-300`}>
-          {/* Close button overlay - only visible when panel is open */}
           {showChatArea && (
+            <>
+              {/* Close button overlay */}
             <button
               onClick={handleCloseChatArea}
               className="absolute top-2 right-2 z-30 p-1.5 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 shadow-sm"
@@ -347,16 +402,19 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             >
               <X className="w-4 h-4" />
             </button>
-          )}
           
-          {/* Single ChatArea component - always mounted, visibility controlled by CSS */}
-          <ChatArea
-            ref={chatAreaRef}
-            onNewChat={onNewChat}
-            hideHeader
-            hideInput
-            compact
-          />
+          {/* Single ChatArea component - takes remaining space */}
+          <div className="flex-1 min-h-0">
+                <ChatAreaWithObserverId
+              ref={chatAreaRef}
+              onNewChat={onNewChat}
+              hideHeader
+              hideInput
+              compact
+            />
+          </div>
+            </>
+          )}
         </div>
       </div>
     </div>

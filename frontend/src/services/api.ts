@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { useChatStore } from '../stores/useChatStore'
 import type {
   AgentQueryRequest,
   AgentQueryResponse,
@@ -85,22 +86,50 @@ export const workspaceApi = axios.create({
 })
 
 // --- Session ID Management ---
-let sessionIdRef: string | null = null
-
+// Session IDs are now stored per-tab in useChatStore, not globally
+// This function gets the session ID from the active tab
 export function getSessionId(): string {
-  if (!sessionIdRef) {
-    // Create a new session ID
-    sessionIdRef = crypto.randomUUID()
+  const activeTab = useChatStore.getState().getActiveTab()
+  
+  if (activeTab?.sessionId) {
+    return activeTab.sessionId
   }
-  return sessionIdRef
+  
+  // If no active tab or tab has no session ID, generate a new one for the tab
+  if (activeTab) {
+    const newSessionId = crypto.randomUUID()
+    useChatStore.getState().updateTabSessionId(activeTab.tabId, newSessionId)
+    console.log(`[API] Generated new session ID for tab ${activeTab.tabId}: ${newSessionId}`)
+    return newSessionId
+  }
+  
+  // Fallback: generate a temporary session ID (shouldn't happen in normal flow)
+  console.warn('[API] No active tab - generating temporary session ID')
+  return crypto.randomUUID()
 }
 
 export function resetSessionId(): void {
-  sessionIdRef = null
+  // Reset session ID for the active tab by setting it to empty string
+  // Note: The tab's sessionId field is string | null, but updateTabSessionId may expect string
+  // We'll clear it by setting to empty string or handle it differently
+  const activeTab = useChatStore.getState().getActiveTab()
+  if (activeTab) {
+    // Generate a new session ID instead of null to avoid type issues
+    const newSessionId = crypto.randomUUID()
+    useChatStore.getState().updateTabSessionId(activeTab.tabId, newSessionId)
+    console.log(`[API] Reset session ID for tab ${activeTab.tabId} - generated new: ${newSessionId}`)
+  }
 }
 
 export function setSessionId(sessionId: string): void {
-  sessionIdRef = sessionId
+  // Set session ID for the active tab
+  const activeTab = useChatStore.getState().getActiveTab()
+  if (activeTab) {
+    useChatStore.getState().updateTabSessionId(activeTab.tabId, sessionId)
+    console.log(`[API] Set session ID for tab ${activeTab.tabId}: ${sessionId}`)
+  } else {
+    console.warn('[API] No active tab - cannot set session ID')
+  }
 }
 
 // --- Observer ID Management ---
@@ -118,14 +147,21 @@ function getObserverId(): string {
 }
 
 // --- Axios request interceptor to inject session ID ---
+// Only adds session ID if not already provided in headers
 api.interceptors.request.use((config) => {
   config.headers = config.headers || {}
-  config.headers['X-Session-ID'] = getSessionId()
+  
+  // Only add session ID if not already provided
+  if (!config.headers['X-Session-ID']) {
+    config.headers['X-Session-ID'] = getSessionId()
+  }
 
-  // Add observer ID if available
-  const observerId = getObserverId()
-  if (observerId) {
-    config.headers['X-Observer-ID'] = observerId
+  // Add observer ID if available and not already provided
+  if (!config.headers['X-Observer-ID']) {
+    const observerId = getObserverId()
+    if (observerId) {
+      config.headers['X-Observer-ID'] = observerId
+    }
   }
 
   return config
@@ -134,24 +170,51 @@ api.interceptors.request.use((config) => {
 export const agentApi = {
   // Register a new observer
   registerObserver: async (sessionId?: string): Promise<RegisterObserverResponse> => {
-    const response = await api.post('/api/observer/register', {
-      session_id: sessionId || getSessionId()
-    })
-    const data = response.data
+    try {
+      const effectiveSessionId = sessionId || getSessionId()
+      console.log('[API] Registering observer with sessionId:', effectiveSessionId)
+      const response = await api.post('/api/observer/register', {
+        session_id: effectiveSessionId
+      }, {
+        headers: {
+          'X-Session-ID': effectiveSessionId
+        }
+      })
+      const data = response.data
 
-    // Note: Observer ID is now managed by useChatStore, not localStorage
-    // The caller (ChatArea) should call setCurrentObserverId after this
-    if (!data.observer_id) {
-      console.error('[API] No observer_id received from server')
+      console.log('[API] RegisterObserver response:', {
+        status: response.status,
+        data: data,
+        hasObserverId: !!data?.observer_id,
+        observerId: data?.observer_id
+      })
+
+      // Note: Observer ID is now managed by useChatStore, not localStorage
+      // The caller (ChatArea) should call setCurrentObserverId after this
+      if (!data?.observer_id) {
+        console.error('[API] ❌ No observer_id received from server. Response data:', data)
+        throw new Error('No observer_id in response from registerObserver API')
+      }
+
+      console.log('[API] ✅ Observer registered successfully:', data.observer_id)
+      return data
+    } catch (error) {
+      console.error('[API] ❌ registerObserver failed:', error)
+      if (error instanceof Error) {
+        throw error
+      }
+      throw new Error(`Failed to register observer: ${String(error)}`)
     }
-
-    return data
   },
 
   // Get events for an observer
-  getEvents: async (observerId: string, sinceIndex?: number): Promise<GetEventsResponse> => {
+  getEvents: async (observerId: string, sinceIndex?: number, sessionId?: string): Promise<GetEventsResponse> => {
     const params = sinceIndex !== undefined ? { since: sinceIndex } : {}
-    const response = await api.get(`/api/observer/${observerId}/events`, { params })
+    const headers: Record<string, string> = {}
+    if (sessionId) {
+      headers['X-Session-ID'] = sessionId
+    }
+    const response = await api.get(`/api/observer/${observerId}/events`, { params, headers })
     return response.data
   },
 
@@ -201,17 +264,21 @@ export const agentApi = {
   },
 
   // Start a new agent query
-  startQuery: async (request: AgentQueryRequest): Promise<AgentQueryResponse> => {
-    // Get the current observer ID (managed via setCurrentObserverId)
-    const observerId = getObserverId()
+  startQuery: async (request: AgentQueryRequest, sessionId?: string, observerId?: string): Promise<AgentQueryResponse> => {
+    // Use provided observer ID or get from current state
+    const effectiveObserverId = observerId || getObserverId()
 
-    // Create headers with observer ID if available
+    // Create headers with observer ID and session ID if provided
     const headers: Record<string, string> = {}
-    if (observerId) {
-      headers['X-Observer-ID'] = observerId
-      console.log(`[API] Starting query with observer ID: ${observerId}`)
+    if (effectiveObserverId) {
+      headers['X-Observer-ID'] = effectiveObserverId
+      console.log(`[API] Starting query with observer ID: ${effectiveObserverId}`)
     } else {
       console.warn('[API] No observer ID available for query')
+    }
+    if (sessionId) {
+      headers['X-Session-ID'] = sessionId
+      console.log(`[API] Starting query with session ID: ${sessionId}`)
     }
 
     const response = await api.post('/api/query', request, { headers })

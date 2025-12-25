@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
@@ -98,6 +101,10 @@ type EventDataUnion struct {
 	ContextSummarizationCompleted *events.ContextSummarizationCompletedEvent `json:"context_summarization_completed,omitempty"`
 	ContextSummarizationError     *events.ContextSummarizationErrorEvent     `json:"context_summarization_error,omitempty"`
 
+	// Context Editing Events
+	ContextEditingCompleted *events.ContextEditingCompletedEvent `json:"context_editing_completed,omitempty"`
+	ContextEditingError     *events.ContextEditingErrorEvent     `json:"context_editing_error,omitempty"`
+
 	// Large Output Events
 	LargeToolOutputDetected          *events.LargeToolOutputDetectedEvent          `json:"large_tool_output_detected,omitempty"`
 	LargeToolOutputFileWritten       *events.LargeToolOutputFileWrittenEvent       `json:"large_tool_output_file_written,omitempty"`
@@ -131,12 +138,13 @@ type EventDataUnion struct {
 	OrchestratorAgentError *events.OrchestratorAgentErrorEvent `json:"orchestrator_agent_error,omitempty"`
 
 	// Step Execution Events
-	StepStarted         *todo_creation_human.StepStartedEvent         `json:"step_execution_start,omitempty"`
-	StepFinished        *todo_creation_human.StepFinishedEvent        `json:"step_execution_end,omitempty"`
-	StepFailed          *todo_creation_human.StepFailedEvent          `json:"step_execution_failed,omitempty"`
-	StepTokenUsage      *todo_creation_human.StepTokenUsageEvent      `json:"step_token_usage,omitempty"`
-	StepProgressUpdated *todo_creation_human.StepProgressUpdatedEvent `json:"step_progress_updated,omitempty"`
-	DecisionEvaluated   *todo_creation_human.DecisionEvaluatedEvent   `json:"decision_evaluated,omitempty"`
+	StepStarted            *todo_creation_human.StepStartedEvent            `json:"step_execution_start,omitempty"`
+	StepFinished           *todo_creation_human.StepFinishedEvent           `json:"step_execution_end,omitempty"`
+	StepFailed             *todo_creation_human.StepFailedEvent             `json:"step_execution_failed,omitempty"`
+	StepTokenUsage         *todo_creation_human.StepTokenUsageEvent         `json:"step_token_usage,omitempty"`
+	StepProgressUpdated    *todo_creation_human.StepProgressUpdatedEvent    `json:"step_progress_updated,omitempty"`
+	DecisionEvaluated      *todo_creation_human.DecisionEvaluatedEvent      `json:"decision_evaluated,omitempty"`
+	PreValidationCompleted *todo_creation_human.PreValidationCompletedEvent `json:"pre_validation_completed,omitempty"`
 
 	// Todo/Planning Events
 	TodoStepsExtracted       *todo_creation_human.TodoStepsExtractedEvent       `json:"todo_steps_extracted,omitempty"`
@@ -193,6 +201,9 @@ type EventDataUnion struct {
 	BatchGroupStart     *events.BatchGroupStartEvent     `json:"batch_group_start,omitempty"`
 	BatchGroupEnd       *events.BatchGroupEndEvent       `json:"batch_group_end,omitempty"`
 	BatchExecutionEnd   *events.BatchExecutionEndEvent   `json:"batch_execution_end,omitempty"`
+
+	// Prerequisite Navigation Event
+	PrerequisiteNavigation *events.PrerequisiteNavigationEvent `json:"prerequisite_navigation,omitempty"`
 }
 
 // =============================================================================
@@ -248,6 +259,10 @@ var EventTypeMapping = map[events.EventType]string{
 	events.ContextSummarizationCompleted: "context_summarization_completed",
 	events.ContextSummarizationError:     "context_summarization_error",
 
+	// Context Editing Events
+	events.ContextEditingCompleted: "context_editing_completed",
+	events.ContextEditingError:     "context_editing_error",
+
 	// Large Output Events
 	events.LargeToolOutputDetected:                   "large_tool_output_detected",
 	events.LargeToolOutputFileWritten:                "large_tool_output_file_written",
@@ -280,12 +295,14 @@ var EventTypeMapping = map[events.EventType]string{
 	events.OrchestratorAgentError: "orchestrator_agent_error",
 
 	// Step Execution Events
-	events.StepExecutionStart:              "step_execution_start",
-	events.StepExecutionEnd:                "step_execution_end",
-	events.StepExecutionFailed:             "step_execution_failed",
-	events.StepTokenUsage:                  "step_token_usage",
-	events.StepProgressUpdated:             "step_progress_updated",
-	events.EventType("decision_evaluated"): "decision_evaluated",
+	events.StepExecutionStart:                    "step_execution_start",
+	events.StepExecutionEnd:                      "step_execution_end",
+	events.StepExecutionFailed:                   "step_execution_failed",
+	events.StepTokenUsage:                        "step_token_usage",
+	events.StepProgressUpdated:                   "step_progress_updated",
+	events.EventType("decision_evaluated"):       "decision_evaluated",
+	events.EventType("pre_validation_completed"): "pre_validation_completed",
+	events.PrerequisiteNavigation:                "prerequisite_navigation",
 
 	// Todo/Planning Events
 	events.TodoStepsExtracted:       "todo_steps_extracted",
@@ -356,6 +373,49 @@ func writeSchema(filename string, v any) error {
 
 	schema := r.Reflect(v)
 
+	// Debug: Check what fields were reflected
+	if props := schema.Properties; props != nil {
+		// Use reflection to check the struct type
+		vt := reflect.TypeOf(v)
+		if vt.Kind() == reflect.Struct || (vt.Kind() == reflect.Ptr && vt.Elem().Kind() == reflect.Struct) {
+			if vt.Kind() == reflect.Ptr {
+				vt = vt.Elem()
+			}
+			fmt.Printf("🔍 Debug: Struct %s has %d fields\n", vt.Name(), vt.NumField())
+
+			// Check for context_editing fields in the struct
+			hasContextEditing := false
+			for i := 0; i < vt.NumField(); i++ {
+				f := vt.Field(i)
+				if f.Name == "ContextEditingCompletedEvent" || f.Name == "ContextEditingErrorEvent" {
+					hasContextEditing = true
+					fmt.Printf("✅ Found field in struct: %s (JSON: %s)\n", f.Name, f.Tag.Get("json"))
+				}
+			}
+			if !hasContextEditing {
+				fmt.Printf("❌ ContextEditing fields NOT found in struct definition\n")
+			}
+		}
+
+		// Check if they're in the schema properties
+		propsJSON, _ := json.Marshal(schema)
+		var propsMap map[string]interface{}
+		json.Unmarshal(propsJSON, &propsMap)
+		if propsData, ok := propsMap["properties"].(map[string]interface{}); ok {
+			hasInSchema := false
+			for k := range propsData {
+				if k == "context_editing_completed" || k == "context_editing_error" {
+					hasInSchema = true
+					fmt.Printf("✅ Found in schema properties: %s\n", k)
+				}
+			}
+			if !hasInSchema {
+				fmt.Printf("❌ ContextEditing events NOT found in schema properties\n")
+				fmt.Printf("   Total properties in schema: %d\n", len(propsData))
+			}
+		}
+	}
+
 	// Ensure the output directory exists
 	dir := filepath.Dir(filename)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -369,9 +429,163 @@ func writeSchema(filename string, v any) error {
 	}
 	defer f.Close()
 
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	return enc.Encode(schema)
+	// Debug: Check OrderedMap directly before encoding
+	if props := schema.Properties; props != nil {
+		// Try to access the OrderedMap's internal data
+		propsBytes, _ := json.Marshal(props)
+		var propsMap map[string]interface{}
+		json.Unmarshal(propsBytes, &propsMap)
+		hasBeforeEncode := false
+		for k := range propsMap {
+			if k == "context_editing_completed" || k == "context_editing_error" {
+				hasBeforeEncode = true
+				fmt.Printf("✅ Found in OrderedMap before encode: %s\n", k)
+			}
+		}
+		if !hasBeforeEncode {
+			fmt.Printf("❌ NOT in OrderedMap before encode! Total: %d\n", len(propsMap))
+		}
+	}
+
+	// Convert OrderedMap to regular map via JSON round-trip to ensure proper serialization
+	schemaBytes, err := json.Marshal(schema)
+	if err != nil {
+		return fmt.Errorf("failed to marshal schema: %w", err)
+	}
+
+	var schemaMap map[string]interface{}
+	if err := json.Unmarshal(schemaBytes, &schemaMap); err != nil {
+		return fmt.Errorf("failed to unmarshal schema: %w", err)
+	}
+
+	// Debug: Verify the converted map has the events
+	if propsData, ok := schemaMap["properties"].(map[string]interface{}); ok {
+		hasInConvertedMap := false
+		allKeys := make([]string, 0, len(propsData))
+		for k := range propsData {
+			allKeys = append(allKeys, k)
+			if k == "context_editing_completed" || k == "context_editing_error" {
+				hasInConvertedMap = true
+				fmt.Printf("✅ Found in converted map: %s\n", k)
+			}
+		}
+		if !hasInConvertedMap {
+			fmt.Printf("❌ NOT in converted map! Total: %d\n", len(propsData))
+			// Show context keys that ARE in the map
+			ctxKeys := make([]string, 0)
+			for _, k := range allKeys {
+				if strings.Contains(k, "context") {
+					ctxKeys = append(ctxKeys, k)
+				}
+			}
+			fmt.Printf("   Context keys in converted map: %v\n", ctxKeys)
+		} else {
+			fmt.Printf("   Total keys in converted map: %d\n", len(propsData))
+		}
+	}
+
+	// Write the converted map with proper indentation using MarshalIndent
+	finalBytes, err := json.MarshalIndent(schemaMap, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal schema map: %w", err)
+	}
+
+	// Verify what we're about to write
+	var writeCheck map[string]interface{}
+	json.Unmarshal(finalBytes, &writeCheck)
+	if writeProps, ok := writeCheck["properties"].(map[string]interface{}); ok {
+		hasBeforeWrite := false
+		for k := range writeProps {
+			if k == "context_editing_completed" || k == "context_editing_error" {
+				hasBeforeWrite = true
+				fmt.Printf("✅ Found in bytes to write: %s\n", k)
+			}
+		}
+		if !hasBeforeWrite {
+			fmt.Printf("❌ NOT in bytes to write! Total: %d\n", len(writeProps))
+		}
+	}
+
+	// Write bytes directly
+	bytesWritten, err := f.Write(finalBytes)
+	if err != nil {
+		return fmt.Errorf("failed to write schema: %w", err)
+	}
+	fmt.Printf("📝 Wrote %d bytes to file\n", bytesWritten)
+
+	// Add newline
+	if _, err := f.WriteString("\n"); err != nil {
+		return fmt.Errorf("failed to write newline: %w", err)
+	}
+
+	// Sync to ensure data is written to disk
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("failed to sync file: %w", err)
+	}
+
+	// Close file before verification
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("failed to close file: %w", err)
+	}
+
+	// Immediately verify what's on disk
+	if verifyBytes, readErr := os.ReadFile(filename); readErr == nil {
+		fmt.Printf("📄 Read %d bytes from file for verification\n", len(verifyBytes))
+		// Check raw bytes first
+		if bytes.Contains(verifyBytes, []byte("context_editing_completed")) {
+			fmt.Printf("✅ Found 'context_editing_completed' in raw file bytes\n")
+		} else {
+			fmt.Printf("❌ 'context_editing_completed' NOT in raw file bytes\n")
+		}
+
+		var immediateCheck map[string]interface{}
+		if json.Unmarshal(verifyBytes, &immediateCheck) == nil {
+			if immediateProps, ok := immediateCheck["properties"].(map[string]interface{}); ok {
+				hasImmediate := false
+				for k := range immediateProps {
+					if k == "context_editing_completed" || k == "context_editing_error" {
+						hasImmediate = true
+						fmt.Printf("✅ Verified in parsed JSON: %s\n", k)
+					}
+				}
+				if !hasImmediate {
+					fmt.Printf("❌ NOT in parsed JSON! Total: %d\n", len(immediateProps))
+				}
+			}
+		}
+	}
+
+	// Verify what was actually written (after file is closed)
+	if writtenBytes, readErr := os.ReadFile(filename); readErr == nil {
+		var verifyMap map[string]interface{}
+		if json.Unmarshal(writtenBytes, &verifyMap) == nil {
+			if verifyProps, ok := verifyMap["properties"].(map[string]interface{}); ok {
+				hasInFile := false
+				allKeys := make([]string, 0, len(verifyProps))
+				for k := range verifyProps {
+					allKeys = append(allKeys, k)
+					if k == "context_editing_completed" || k == "context_editing_error" {
+						hasInFile = true
+						fmt.Printf("✅ Verified in written file: %s\n", k)
+					}
+				}
+				if !hasInFile {
+					fmt.Printf("❌ ERROR: ContextEditing events NOT in written file!\n")
+					fmt.Printf("   Total properties in file: %d\n", len(verifyProps))
+					// Show context-related keys that ARE in the file
+					ctxKeys := make([]string, 0)
+					for _, k := range allKeys {
+						if strings.Contains(k, "context") {
+							ctxKeys = append(ctxKeys, k)
+						}
+					}
+					fmt.Printf("   Context keys in file: %v\n", ctxKeys)
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // generateDiscriminatedUnionSchema generates a JSON schema with proper oneOf discriminated union
@@ -461,6 +675,10 @@ type UnifiedEvent struct {
 	ContextSummarizationCompletedEvent events.ContextSummarizationCompletedEvent `json:"context_summarization_completed"`
 	ContextSummarizationErrorEvent     events.ContextSummarizationErrorEvent     `json:"context_summarization_error"`
 
+	// Context Editing Events
+	ContextEditingCompletedEvent events.ContextEditingCompletedEvent `json:"context_editing_completed"`
+	ContextEditingErrorEvent     events.ContextEditingErrorEvent     `json:"context_editing_error"`
+
 	// Additional MCP Agent Events that exist in backend
 	ToolOutputEvent   events.ToolOutputEvent   `json:"tool_output"`
 	ToolResponseEvent events.ToolResponseEvent `json:"tool_response"`
@@ -488,11 +706,12 @@ type UnifiedEvent struct {
 	RequestHumanFeedbackEvent events.RequestHumanFeedbackEvent `json:"request_human_feedback"`
 
 	// Step Execution Events
-	StepStartedEvent         todo_creation_human.StepStartedEvent         `json:"step_execution_start"`
-	StepFinishedEvent        todo_creation_human.StepFinishedEvent        `json:"step_execution_end"`
-	StepFailedEvent          todo_creation_human.StepFailedEvent          `json:"step_execution_failed"`
-	StepTokenUsageEvent      todo_creation_human.StepTokenUsageEvent      `json:"step_token_usage"`
-	StepProgressUpdatedEvent todo_creation_human.StepProgressUpdatedEvent `json:"step_progress_updated"`
+	StepStartedEvent            todo_creation_human.StepStartedEvent            `json:"step_execution_start"`
+	StepFinishedEvent           todo_creation_human.StepFinishedEvent           `json:"step_execution_end"`
+	StepFailedEvent             todo_creation_human.StepFailedEvent             `json:"step_execution_failed"`
+	StepTokenUsageEvent         todo_creation_human.StepTokenUsageEvent         `json:"step_token_usage"`
+	StepProgressUpdatedEvent    todo_creation_human.StepProgressUpdatedEvent    `json:"step_progress_updated"`
+	PreValidationCompletedEvent todo_creation_human.PreValidationCompletedEvent `json:"pre_validation_completed"`
 
 	// Todo/Planning Events
 	TodoStepsExtractedEvent       todo_creation_human.TodoStepsExtractedEvent       `json:"todo_steps_extracted"`
@@ -510,6 +729,10 @@ type UnifiedEvent struct {
 	// Large Output Error Events
 	LargeToolOutputFileWriteErrorEvent    events.LargeToolOutputFileWriteErrorEvent    `json:"large_tool_output_file_write_error"`
 	LargeToolOutputServerUnavailableEvent events.LargeToolOutputServerUnavailableEvent `json:"large_tool_output_server_unavailable"`
+
+	// Nested types that need to be included in schema (not events themselves)
+	// TodoStep is used by frontend but not directly in events, so we include it here to ensure it's generated
+	TodoStep events.TodoStep `json:"todo_step,omitempty"`
 }
 
 // =============================================================================
@@ -520,14 +743,21 @@ func main() {
 	fmt.Println("Generating JSON schemas for event types...")
 
 	// Generate unified events schema (for backward compatibility)
-	if err := writeSchema("schemas/unified-events-complete.schema.json", UnifiedEvent{}); err != nil {
+	// Write to agent_go/schemas/ so frontend can find it
+	if err := writeSchema("agent_go/schemas/unified-events-complete.schema.json", UnifiedEvent{}); err != nil {
 		fmt.Printf("Error generating unified events schema: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Generate the new PollingEvent schema with proper wire format
+	// Generate to both root schemas/ and agent_go/schemas/ for compatibility
 	if err := generateDiscriminatedUnionSchema("schemas/polling-event.schema.json"); err != nil {
 		fmt.Printf("Error generating polling event schema: %v\n", err)
+		os.Exit(1)
+	}
+	// Also generate to agent_go/schemas/ for frontend to use
+	if err := generateDiscriminatedUnionSchema("agent_go/schemas/polling-event.schema.json"); err != nil {
+		fmt.Printf("Error generating polling event schema to agent_go/schemas: %v\n", err)
 		os.Exit(1)
 	}
 

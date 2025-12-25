@@ -3,13 +3,14 @@ import { devtools } from 'zustand/middleware'
 import type { WorkflowPhase, StepProgress, ExecutionOptions, AgentLLMConfig, VariablesManifest } from '../services/api-types'
 import { ExecutionStrategy } from '../services/api-types'
 import { agentApi } from '../services/api'
+import { useChatStore } from './useChatStore'
 
 // Execution mode options
 export type ExecutionModeType = 'human_approval' | 'fast_execution' | 'with_learning'
 
 // LocalStorage key prefix for persisting workflow settings
 const STORAGE_KEY_PREFIX = 'workflow_settings_'
-const getStorageKey = (presetId: string, setting: 'iteration' | 'execution_mode' | 'start_point') =>
+const getStorageKey = (presetId: string, setting: 'iteration' | 'execution_mode' | 'start_point' | 'selected_groups') =>
   `${STORAGE_KEY_PREFIX}${presetId}_${setting}`
 
 // Global localStorage key for temporary LLM overrides (persists across page refreshes)
@@ -67,6 +68,9 @@ interface WorkflowStore {
   // Variables manifest (for batch execution with multiple groups)
   variablesManifest: VariablesManifest | null
 
+  // Selected group IDs for execution (multi-select)
+  selectedGroupIds: string[] // Array of group IDs to execute
+
   // Current running group (for batch execution)
   currentRunningGroupId: string | null
 
@@ -86,7 +90,7 @@ interface WorkflowStore {
   setSelectedRunFolder: (folder: string) => void
 
   // Progress
-  loadProgress: (workspacePath: string, runFolder: string) => Promise<void>
+  loadProgress: (workspacePath: string, runFolder: string, forceLoad?: boolean) => Promise<void>
   loadFolderProgressOnDemand: (workspacePath: string, folderName: string) => Promise<void>
   getCompletedStepIndices: () => number[]
   updateStepProgressFromEvent: (progress: StepProgress) => void
@@ -110,6 +114,11 @@ interface WorkflowStore {
 
   // Variables manifest
   setVariablesManifest: (manifest: VariablesManifest | null) => void
+
+  // Selected group IDs
+  toggleGroupSelection: (groupId: string) => void
+  setSelectedGroupIds: (groupIds: string[]) => void
+  clearSelectedGroupIds: () => void
 
   // Current running group
   setCurrentRunningGroupId: (groupId: string | null) => void
@@ -264,6 +273,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       // Variables manifest
       variablesManifest: null,
+      selectedGroupIds: [],
 
       // Current running group
       currentRunningGroupId: null,
@@ -411,9 +421,20 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       // Load step progress for a run folder
-      loadProgress: async (workspacePath: string, runFolder: string) => {
+      // NOTE: During active execution (isStreaming=true), this will skip API calls
+      // and trust step_progress_updated events instead to avoid race conditions.
+      loadProgress: async (workspacePath: string, runFolder: string, forceLoad = false) => {
         if (!workspacePath || runFolder === 'new') {
           set({ stepProgress: null })
+          return
+        }
+
+        // During execution, skip API calls - trust events instead
+        // This prevents race conditions where API might return stale data
+        // before backend cleanup completes (e.g., when resuming from step 3)
+        const { isStreaming } = useChatStore.getState()
+        if (isStreaming && !forceLoad) {
+          console.log('[PROGRESS_DEBUG] Skipping loadProgress during execution - trusting step_progress_updated events')
           return
         }
 
@@ -421,8 +442,19 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
         try {
           const response = await agentApi.getProgress(workspacePath, runFolder)
+          console.log('[PROGRESS_DEBUG] Loaded progress response:', {
+            exists: response.exists,
+            hasProgress: !!response.progress,
+            completedStepIndices: response.progress?.completed_step_indices,
+            totalSteps: response.progress?.total_steps,
+            runFolder
+          })
           if (response.exists && response.progress) {
             set({ stepProgress: response.progress, isLoadingProgress: false })
+            console.log('[PROGRESS_DEBUG] Set stepProgress in store:', {
+              completedStepIndices: response.progress.completed_step_indices,
+              totalSteps: response.progress.total_steps
+            })
 
             // Update the folder info in state so we can show progress in the dropdown
             set(state => ({
@@ -649,29 +681,21 @@ export const useWorkflowStore = create<WorkflowStore>()(
         // Include save validation responses flag (always send to ensure backend knows user preference)
         options.save_validation_responses = state.saveValidationResponses
 
-        // Check if selectedRunFolder contains a specific group path
-        // Pattern: iteration-X/group-Y
-        let selectedGroupId: string | null = null
-        if (state.selectedRunFolder && state.selectedRunFolder !== 'new' && state.selectedRunFolder.includes('/group-')) {
-          // Extract group ID from path like "iteration-1/group-5"
-          const parts = state.selectedRunFolder.split('/')
-          if (parts.length === 2 && parts[1].startsWith('group-')) {
-            selectedGroupId = parts[1] // e.g., "group-5"
-          }
-        }
-
         // Include enabled group IDs from variables manifest (for batch execution)
-        // This ensures disabled groups are not executed even if the file is stale
+        // Priority: selectedGroupIds (from checkboxes) > folder path > all enabled groups
         if (state.variablesManifest) {
           if (state.variablesManifest.groups && state.variablesManifest.groups.length > 0) {
-            // If a specific group was selected via folder path, run only that group
-            if (selectedGroupId) {
-              // Verify the group exists in manifest
-              const groupExists = state.variablesManifest.groups.some(g => g.group_id === selectedGroupId)
-              if (groupExists) {
-                options.enabled_group_ids = [selectedGroupId]
+            // If specific groups were selected via checkboxes, use those
+            if (state.selectedGroupIds.length > 0) {
+              // Verify all selected groups exist in manifest and are enabled
+              const validGroupIds = state.selectedGroupIds.filter(groupId => {
+                const group = state.variablesManifest!.groups!.find(g => g.group_id === groupId)
+                return group && group.enabled
+              })
+              if (validGroupIds.length > 0) {
+                options.enabled_group_ids = validGroupIds
               } else {
-                // Fall back to all enabled groups
+                // Fall back to all enabled groups if selected groups are invalid
                 const enabledGroupIDs = state.variablesManifest.groups
                   .filter(g => g.enabled)
                   .map(g => g.group_id)
@@ -680,12 +704,39 @@ export const useWorkflowStore = create<WorkflowStore>()(
                 }
               }
             } else {
-              // No specific group selected - use all enabled groups
-              const enabledGroupIDs = state.variablesManifest.groups
-                .filter(g => g.enabled)
-                .map(g => g.group_id)
-              if (enabledGroupIDs.length > 0) {
-                options.enabled_group_ids = enabledGroupIDs
+              // No groups selected via checkboxes - check if folder path specifies a group
+              // Pattern: iteration-X/group-Y
+              let selectedGroupId: string | null = null
+              if (state.selectedRunFolder && state.selectedRunFolder !== 'new' && state.selectedRunFolder.includes('/group-')) {
+                // Extract group ID from path like "iteration-1/group-5"
+                const parts = state.selectedRunFolder.split('/')
+                if (parts.length === 2 && parts[1].startsWith('group-')) {
+                  selectedGroupId = parts[1] // e.g., "group-5"
+                }
+              }
+
+              if (selectedGroupId) {
+                // Verify the group exists in manifest
+                const groupExists = state.variablesManifest.groups.some(g => g.group_id === selectedGroupId)
+                if (groupExists) {
+                  options.enabled_group_ids = [selectedGroupId]
+                } else {
+                  // Fall back to all enabled groups
+                  const enabledGroupIDs = state.variablesManifest.groups
+                    .filter(g => g.enabled)
+                    .map(g => g.group_id)
+                  if (enabledGroupIDs.length > 0) {
+                    options.enabled_group_ids = enabledGroupIDs
+                  }
+                }
+              } else {
+                // No specific group selected - use all enabled groups
+                const enabledGroupIDs = state.variablesManifest.groups
+                  .filter(g => g.enabled)
+                  .map(g => g.group_id)
+                if (enabledGroupIDs.length > 0) {
+                  options.enabled_group_ids = enabledGroupIDs
+                }
               }
             }
           }
@@ -817,6 +868,29 @@ export const useWorkflowStore = create<WorkflowStore>()(
         set({ variablesManifest: manifest })
       },
 
+      // Toggle group selection (add if not selected, remove if selected)
+      toggleGroupSelection: (groupId: string) => {
+        const state = get()
+        const currentIds = state.selectedGroupIds
+        const isSelected = currentIds.includes(groupId)
+        
+        if (isSelected) {
+          set({ selectedGroupIds: currentIds.filter(id => id !== groupId) })
+        } else {
+          set({ selectedGroupIds: [...currentIds, groupId] })
+        }
+      },
+
+      // Set selected group IDs directly
+      setSelectedGroupIds: (groupIds: string[]) => {
+        set({ selectedGroupIds: groupIds })
+      },
+
+      // Clear all selected group IDs
+      clearSelectedGroupIds: () => {
+        set({ selectedGroupIds: [] })
+      },
+
       setCurrentRunningGroupId: (groupId: string | null) => {
         set({ currentRunningGroupId: groupId })
       },
@@ -854,6 +928,19 @@ export const useWorkflowStore = create<WorkflowStore>()(
               set({ selectedStartPoint: parsed })
             }
           }
+
+          // Load saved selected group IDs
+          const savedGroups = localStorage.getItem(getStorageKey(presetId, 'selected_groups'))
+          if (savedGroups) {
+            try {
+              const parsed = JSON.parse(savedGroups) as string[]
+              if (Array.isArray(parsed)) {
+                set({ selectedGroupIds: parsed })
+              }
+            } catch (e) {
+              console.error('[WorkflowStore] Failed to parse saved group IDs:', e)
+            }
+          }
         } catch (error) {
           console.error('[WorkflowStore] Failed to load settings from localStorage:', error)
         }
@@ -868,6 +955,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           localStorage.setItem(getStorageKey(presetId, 'iteration'), state.selectedRunFolder)
           localStorage.setItem(getStorageKey(presetId, 'execution_mode'), state.selectedExecutionMode)
           localStorage.setItem(getStorageKey(presetId, 'start_point'), String(state.selectedStartPoint))
+          localStorage.setItem(getStorageKey(presetId, 'selected_groups'), JSON.stringify(state.selectedGroupIds))
         } catch (error) {
           console.error('[WorkflowStore] Failed to save settings to localStorage:', error)
         }
@@ -885,6 +973,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           selectedStartPoint: 0,
           selectedBranchStep: null,
           variablesManifest: null,
+          selectedGroupIds: [],
           currentRunningGroupId: null,
           activePhase: null,
           showChatArea: false

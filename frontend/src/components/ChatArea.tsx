@@ -691,6 +691,46 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     [flushEventBatch]
   )
 
+  // Helper function to extract content from a user_message event
+  const extractUserMessageContent = useCallback((event: PollingEvent): string | null => {
+    if (event.type !== 'user_message') return null
+    
+    // Try to extract content from nested data structure
+    // Backend format: event.data.data.content
+    // Frontend format: event.data.data.content
+    try {
+      const eventData = event.data as { data?: { content?: string } }
+      return eventData?.data?.content || null
+    } catch {
+      return null
+    }
+  }, [])
+
+  // Helper function to check if a user_message event is a duplicate
+  const isDuplicateUserMessage = useCallback((event: PollingEvent, existingEvents: PollingEvent[]): boolean => {
+    if (event.type !== 'user_message') return false
+    
+    const eventContent = extractUserMessageContent(event)
+    if (!eventContent) return false
+    
+    // Check if we already have a user_message with the same content
+    // Allow a 10-second window for matching (handles timing differences)
+    const eventTime = event.timestamp ? new Date(event.timestamp).getTime() : Date.now()
+    
+    return existingEvents.some(existingEvent => {
+      if (existingEvent.type !== 'user_message') return false
+      
+      const existingContent = extractUserMessageContent(existingEvent)
+      if (!existingContent || existingContent !== eventContent) return false
+      
+      // Check if timestamps are within 10 seconds (likely the same message)
+      const existingTime = existingEvent.timestamp ? new Date(existingEvent.timestamp).getTime() : Date.now()
+      const timeDiff = Math.abs(eventTime - existingTime)
+      
+      return timeDiff < 10000 // 10 seconds
+    })
+  }, [extractUserMessageContent])
+
   // Polling function to get events
   const pollEvents = useCallback(async () => {
     const currentLastEventIndex = lastEventIndexRef.current
@@ -710,6 +750,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         
         // Update last event index immediately
         setLastEventIndex(response.last_event_index)
+        
+        // Get current events for duplicate checking
+        const currentEvents = useChatStore.getState().events
         
         // Filter events first (synchronous)
         const newEvents = response.events.filter(event => {
@@ -742,8 +785,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               console.log('[ChatArea] Event processed:', processed)
             }
             
-            // Only filter out user_message events from backend since we add them immediately in submitQuery
-            return event.type !== 'user_message'
+            // For user_message events, only filter out if it's a duplicate
+            // This allows backend user_message events (like at conversation start) to be displayed
+            if (event.type === 'user_message') {
+              return !isDuplicateUserMessage(event, currentEvents)
+            }
+            
+            return true
           })
           
         // Process workflow-specific events (after filtering)
@@ -1047,6 +1095,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                     setTotalEvents(totalEventsRef.current + response.events.length)
                     setLastEventCount(response.events.length)
                     
+                    // Get current events for duplicate checking
+                    const currentEventsForReconnect = useChatStore.getState().events
+                    
                     // Add new events to the events array
                     const newEvents = response.events.filter(event => {
                         // Detect request human feedback event and stop streaming
@@ -1064,9 +1115,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                           }
                         }
                         
-                        // Avoid duplicating user messages we inject on submit
+                        // For user_message events, only filter out if it's a duplicate
+                        // This allows backend user_message events (like at conversation start) to be displayed
                         if (event.type === 'user_message') {
-                          return false
+                          return !isDuplicateUserMessage(event, currentEventsForReconnect)
                         }
                         return true
                       })

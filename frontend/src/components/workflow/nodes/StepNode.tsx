@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle, Lock } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle, Lock, ShieldCheck, SkipForward } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -75,7 +75,8 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
 }
 
 export const StepNode = memo(({ data, selected }: StepNodeProps) => {
-  const { id, title, description, success_criteria, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun = true, workspacePath, selectedRunFolder } = data
+  const { id, title, description, success_criteria, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder, validation_schema } = data
+  
   const { availableLLMs } = useLLMStore()
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
@@ -83,40 +84,34 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
   // Check if this is a sub-agent (part of a routing step)
   const isSubAgent = useMemo(() => id.includes('-sub-agent-'), [id])
 
-  // Button is disabled if executing, can't run (previous steps not done), or no callback
-  const isRunDisabled = isExecuting || !canRun || !onRunFromStep
+  // Button is disabled if executing, no callback, or if it's a sub-agent (sub-agents cannot run independently)
+  const isRunDisabled = isExecuting || !onRunFromStep || isSubAgent
 
   // Handle run from this step button click
   const handleRunClick = useCallback((e: MouseEvent) => {
     e.stopPropagation() // Prevent node selection and sidebar opening
     e.preventDefault() // Prevent any default behavior
-    console.log('[StepNode] Run button clicked:', { stepIndex, stepId: step.id, onRunFromStep: !!onRunFromStep, isExecuting, canRun, isRunDisabled })
-    if (onRunFromStep && !isExecuting && canRun) {
+    console.log('[StepNode] Run button clicked:', { stepIndex, stepId: step.id, onRunFromStep: !!onRunFromStep, isExecuting, isRunDisabled })
+    if (onRunFromStep && !isExecuting) {
       console.log('[StepNode] Calling onRunFromStep with:', stepIndex, step.id || `step-${stepIndex}`)
       onRunFromStep(stepIndex, step.id || `step-${stepIndex}`)
     } else {
       console.warn('[StepNode] Cannot run step:', { 
         hasCallback: !!onRunFromStep, 
         isExecuting, 
-        canRun, 
         isRunDisabled 
       })
     }
-  }, [onRunFromStep, isExecuting, canRun, stepIndex, step.id, isRunDisabled])
+  }, [onRunFromStep, isExecuting, stepIndex, step.id, isRunDisabled])
 
   // Handle settings icon click - opens the sidebar
   const handleSettingsClick = useCallback((e: MouseEvent) => {
     e.stopPropagation() // Prevent node selection
     e.preventDefault() // Prevent any default behavior
-    console.log('[StepNode] Settings button clicked:', { nodeId: id, stepIndex, stepId: step.id, onOpenSidebar: !!onOpenSidebar })
     if (onOpenSidebar && typeof onOpenSidebar === 'function') {
-      // Use the node's actual ID (data.id) instead of step.id to ensure we find the correct node
-      console.log('[StepNode] Calling onOpenSidebar with node ID:', id)
       onOpenSidebar(id)
-    } else {
-      console.warn('[StepNode] onOpenSidebar callback not available')
     }
-  }, [onOpenSidebar, id, stepIndex, step.id])
+  }, [onOpenSidebar, id])
 
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const customPresets = useGlobalPresetStore(state => state.customPresets)
@@ -140,7 +135,19 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     enable_large_output_virtual_tools?: boolean
     enable_prerequisite_detection?: boolean
     prerequisite_rules?: Array<{ depends_on_step: string; description: string }>
+    skip_llm_validation_if_pre_validation_passes?: boolean
   } }
+  
+  // Backward-compatible prerequisite flags/rules (agent_configs takes priority over top-level fields)
+  type PrereqRule = { depends_on_step: string; description: string }
+  const prerequisiteEnabled =
+    stepConfig?.agent_configs?.enable_prerequisite_detection ??
+    (step as unknown as { enable_prerequisite_detection?: boolean }).enable_prerequisite_detection
+  const prerequisiteRules =
+    (stepConfig?.agent_configs?.prerequisite_rules ??
+      (step as unknown as { prerequisite_rules?: PrereqRule[] }).prerequisite_rules) as
+      | PrereqRule[]
+      | undefined
   
   // Get preset's default code execution mode
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
@@ -399,9 +406,10 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
 
   return (
     <div className={`
-      relative w-[340px] rounded-xl border-2 bg-white dark:bg-gray-900 shadow-lg overflow-hidden
+      relative w-[340px] rounded-xl border-2 bg-white dark:bg-gray-900 shadow-lg
+      ${isSubAgent ? 'overflow-visible' : 'overflow-hidden'}
       ${statusBorderColors[status]}
-      ${isSubAgent ? 'border-dashed border-cyan-400 dark:border-cyan-500 bg-cyan-50/30 dark:bg-cyan-900/10' : ''}
+      ${isSubAgent ? 'border-dashed border-cyan-400 dark:border-cyan-500' : ''}
       ${selected ? 'ring-2 ring-blue-500/40' : ''}
       ${changeType ? changeHighlightStyles[changeType] : ''}
     `}>
@@ -419,13 +427,6 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
         </div>
       )}
       
-      {/* Sub-Agent badge - positioned at top-left */}
-      {isSubAgent && (
-        <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-600 dark:bg-cyan-500 text-white text-[11px] font-semibold shadow-lg">
-          <span>Sub-Agent</span>
-        </div>
-      )}
-      
       {/* Change badge - positioned below status badge (or top-right if no status badge) */}
       {changeType && (
         <div className={`absolute ${status === 'running' || status === 'failed' ? 'top-6 right-0' : 'top-0 right-0'} z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-bl-lg rounded-tr-xl ${changeBadgeStyles[changeType].bg} text-white text-[10px] font-medium shadow-lg`}>
@@ -437,15 +438,14 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
       <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-900" />
       
       {/* Top handle for sub-agents (to receive connections from routing node bottom) */}
-      {isSubAgent && (
-        <Handle 
-          type="target" 
-          position={Position.Top} 
-          id="top"
-          className="!w-3 !h-3 !bg-cyan-400 dark:!bg-cyan-600 !border-2 !border-white dark:!border-gray-900" 
-          style={{ top: '-6px', left: '50%' }}
-        />
-      )}
+      {/* Always create the handle but only show it for sub-agents to avoid React Flow warnings */}
+      <Handle 
+        type="target" 
+        position={Position.Top} 
+        id="top"
+        className={`!w-3 !h-3 !border-2 !border-white dark:!border-gray-900 ${isSubAgent ? '!bg-cyan-400 dark:!bg-cyan-600' : '!bg-transparent pointer-events-none opacity-0'}`}
+        style={{ top: '-6px', left: '50%' }}
+      />
 
       {/* Header */}
       <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
@@ -477,8 +477,8 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
               title={
                 isExecuting 
                   ? 'Execution in progress...' 
-                  : !canRun 
-                    ? 'Complete previous steps first' 
+                  : isSubAgent
+                    ? 'Sub-agents cannot be run independently (run the parent routing step)'
                     : `Run step ${stepIndex + 1} only`
               }
             >
@@ -512,12 +512,12 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
             </div>
           )}
           {/* Prerequisite Detection Badge */}
-          {stepConfig?.agent_configs?.enable_prerequisite_detection && (
+          {prerequisiteEnabled && (
             <div 
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[10px] font-semibold border border-orange-200 dark:border-orange-800"
               title={
-                stepConfig.agent_configs.prerequisite_rules && stepConfig.agent_configs.prerequisite_rules.length > 0
-                  ? `Prerequisite detection enabled. ${stepConfig.agent_configs.prerequisite_rules.length} rule(s) configured`
+                prerequisiteRules && prerequisiteRules.length > 0
+                  ? `Prerequisite detection enabled. ${prerequisiteRules.length} rule(s) configured`
                   : 'Prerequisite detection enabled'
               }
             >
@@ -528,11 +528,19 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
           {/* Lock Learnings Badge */}
           {stepConfig?.agent_configs?.lock_learnings && !stepConfig?.agent_configs?.disable_learning && (
             <div 
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 text-[10px] font-semibold border border-purple-200 dark:border-purple-800"
+              className="flex items-center justify-center w-8 h-8 rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800"
               title="Learnings are locked - learning agent will not run but existing learnings will be used"
             >
               <Lock className="w-3.5 h-3.5" />
-              <span>Locked</span>
+            </div>
+          )}
+          {/* Validation Skipped Badge */}
+          {stepConfig?.agent_configs?.skip_llm_validation_if_pre_validation_passes && (
+            <div 
+              className="flex items-center justify-center w-8 h-8 rounded-md bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800"
+              title="LLM validation will be skipped if pre-validation passes"
+            >
+              <SkipForward className="w-3.5 h-3.5" />
             </div>
           )}
           {statusIcons[status]}
@@ -556,10 +564,33 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
           </div>
         )}
 
+        {/* Validation Schema */}
+        {validation_schema && validation_schema.files && validation_schema.files.length > 0 && (
+          <div className="flex gap-2 p-2.5 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50">
+            <ShieldCheck className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <div className="text-xs font-semibold text-blue-700 dark:text-blue-300">
+                Validation Schema
+              </div>
+              <div className="text-[10px] mt-0.5 text-blue-600 dark:text-blue-400">
+                {validation_schema.files.length} file{validation_schema.files.length !== 1 ? 's' : ''} to validate
+                {validation_schema.files.map((file, idx) => {
+                  const checkCount = file.json_checks?.length || 0
+                  return (
+                    <div key={idx} className="mt-1">
+                      • {file.file_name} {checkCount > 0 && `(${checkCount} check${checkCount !== 1 ? 's' : ''})`}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Prerequisite Rules */}
-        {stepConfig?.agent_configs?.enable_prerequisite_detection && stepConfig.agent_configs.prerequisite_rules && stepConfig.agent_configs.prerequisite_rules.length > 0 && (
+        {prerequisiteEnabled && prerequisiteRules && prerequisiteRules.length > 0 && (
           <div className="space-y-2">
-            {stepConfig.agent_configs.prerequisite_rules.map((rule, ruleIndex) => (
+            {prerequisiteRules.map((rule, ruleIndex) => (
               <div key={ruleIndex} className="flex items-start gap-2 p-2.5 rounded-lg bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/50">
                 <AlertTriangle className="w-3.5 h-3.5 text-orange-500 mt-0.5 flex-shrink-0" />
                 <div className="flex-1">

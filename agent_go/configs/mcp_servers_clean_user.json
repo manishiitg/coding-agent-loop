@@ -6,17 +6,6 @@
       "protocol": "http",
       "url": "https://mcp.context7.com/mcp"
     },
-    "documentation": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@smithery/cli@latest",
-        "run",
-        "@docfork/mcp",
-        "--key",
-        "20a84a69-e5ba-4968-9436-165e1d634ba2"
-      ]
-    },
     "google-sheets": {
       "command": "uvx",
       "args": ["mcp-google-sheets@latest"],

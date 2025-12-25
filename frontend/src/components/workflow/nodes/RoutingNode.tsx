@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, type ReactElement, type MouseEvent } from 'react'
+import { memo, useCallback, useMemo, useState, useEffect, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Play, Settings, Code, Terminal, AlertTriangle, Lock, ArrowDownToLine, ArrowUpFromLine, GitBranch } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
@@ -9,7 +9,7 @@ import { agentApi } from '../../../services/api'
 import { isValidJSON } from '../../../utils/event-helpers'
 import { getToolsByCategory } from '../../../utils/customToolNames'
 import { NodeConfigFooter } from './NodeConfigFooter'
-import type { RoutingNodeData } from '../hooks/usePlanToFlow'
+import type { OrchestratorNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 
 // Helper to parse tool entry (format: "category:tool" or "category:*")
@@ -38,8 +38,8 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
   return { enabled, total: allCategoryTools.length }
 }
 
-interface RoutingNodeProps {
-  data: RoutingNodeData
+interface OrchestratorNodeProps {
+  data: OrchestratorNodeData
   selected?: boolean
 }
 
@@ -47,7 +47,7 @@ const statusBorderColors: Record<string, string> = {
   pending: 'border-gray-300 dark:border-gray-600',
   executing: 'border-blue-500 dark:border-blue-600',
   evaluating: 'border-blue-500 dark:border-blue-600',
-  routing: 'border-blue-500 dark:border-blue-600',
+  orchestrating: 'border-blue-500 dark:border-blue-600',
   completed: 'border-green-500 dark:border-green-400'
 }
 
@@ -67,12 +67,12 @@ const statusIcons: Record<string, ReactElement | null> = {
   pending: null,
   executing: <Loader2 className="w-4 h-4 text-blue-500 dark:text-blue-400 animate-spin" />,
   evaluating: <Loader2 className="w-4 h-4 text-blue-500 dark:text-blue-400 animate-spin" />,
-  routing: <Loader2 className="w-4 h-4 text-blue-500 dark:text-blue-400 animate-spin" />,
+  orchestrating: <Loader2 className="w-4 h-4 text-blue-500 dark:text-blue-400 animate-spin" />,
   completed: <CheckCircle className="w-4 h-4 text-green-500" />
 }
 
-export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
-  const { id, title, orchestration_step, orchestration_routes, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun, workspacePath, selectedRunFolder } = data
+export const OrchestratorNode = memo(({ data, selected }: OrchestratorNodeProps) => {
+  const { id, title, orchestration_step, orchestration_routes, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder } = data
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
   
@@ -142,20 +142,7 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
   }, [stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs])
 
-  // Conditional LLM (for routing evaluation): step config > execution LLM > preset default
-  const conditionalLLM = useMemo(() => {
-    const presetLLMConfig = activePreset?.llmConfig
-    const stepConditionalLLM = stepConfig?.agent_configs?.conditional_llm
-    const presetExecutionLLM = presetLLMConfig?.execution_llm
-    const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id 
-      ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
-    
-    const llmConfig = stepConditionalLLM || presetExecutionLLM || presetDefaultLLM
-    if (!llmConfig?.provider || !llmConfig?.model_id) return null
-    
-    const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
-    return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
-  }, [stepConfig?.agent_configs?.conditional_llm, activePreset?.llmConfig, availableLLMs])
+  // Note: Conditional LLM removed - orchestrator nodes don't use evaluation LLM in backend
 
   // Learning LLM: step config > preset learning_llm > preset default
   const learningLLM = useMemo(() => {
@@ -177,10 +164,54 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
     return stepConfig?.agent_configs?.learning_detail_level || 'general'
   }, [stepConfig?.agent_configs?.learning_detail_level])
 
-  // Lock learnings
+  // Check if learnings exist in backend (for orchestration steps, use orchestration_step.ID)
+  const [learningsExist, setLearningsExist] = useState<boolean | null>(null) // null = checking, true/false = result
+  const stepIdForLearnings = orchestration_step?.id ?? step?.id
+
+  useEffect(() => {
+    // Only check if we have workspace path and step ID
+    if (!workspacePath || !stepIdForLearnings) {
+      setLearningsExist(false)
+      return
+    }
+
+    // Check if learnings folder exists and has content
+    const checkLearningsExist = async () => {
+      try {
+        const learningsPath = `${workspacePath}/learnings/${stepIdForLearnings}`
+        const files = await agentApi.getPlannerFiles(learningsPath, 100)
+        
+        // Check if there are any learning files (exclude .learning_metadata.json)
+        const hasLearningFiles = files && Array.isArray(files) && files.some((file: { filepath?: string; name?: string }) => {
+          const fileName = file.filepath || file.name || ''
+          return fileName.endsWith('.md') || (fileName.startsWith('code/') && fileName.endsWith('.go'))
+        })
+        
+        setLearningsExist(hasLearningFiles)
+      } catch (error) {
+        // If folder doesn't exist or error, assume no learnings
+        console.debug('[OrchestratorNode] Failed to check learnings:', error)
+        setLearningsExist(false)
+      }
+    }
+
+    checkLearningsExist()
+  }, [workspacePath, stepIdForLearnings])
+
+  // Lock learnings - check orchestration_step config first AND verify learnings exist (backend uses orchestration_step.ID for lock check)
+  const isLockedInConfig = useMemo(() => {
+    // For orchestration steps, backend checks lock status using orchestration_step.ID
+    // So we should check orchestration_step.agent_configs first
+    return orchestration_step?.agent_configs?.lock_learnings ?? stepConfig?.agent_configs?.lock_learnings ?? false
+  }, [orchestration_step?.agent_configs?.lock_learnings, stepConfig?.agent_configs?.lock_learnings])
+
   const lockLearnings = useMemo(() => {
-    return stepConfig?.agent_configs?.lock_learnings || false
-  }, [stepConfig?.agent_configs?.lock_learnings])
+    // Backend only considers learnings locked if BOTH:
+    // 1. lock_learnings is true in config
+    // 2. learnings actually exist
+    // If learnings don't exist, backend will still run learning to create initial learnings
+    return isLockedInConfig && (learningsExist === true)
+  }, [isLockedInConfig, learningsExist])
 
   // Execution max turns
   const executionMaxTurns = useMemo(() => {
@@ -253,16 +284,16 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
   const hasLargeOutput = stepConfig?.agent_configs?.enable_large_output_virtual_tools !== false
 
   // Button states
-  const isRunDisabled = isExecuting || !canRun || !onRunFromStep
+  const isRunDisabled = isExecuting || !onRunFromStep
 
   // Handle run from this step button click
   const handleRunClick = useCallback((e: MouseEvent) => {
     e.stopPropagation()
     e.preventDefault()
-    if (onRunFromStep && !isExecuting && canRun) {
+    if (onRunFromStep && !isExecuting) {
       onRunFromStep(stepIndex, step.id || `step-${stepIndex}`)
     }
-  }, [onRunFromStep, isExecuting, canRun, stepIndex, step.id])
+  }, [onRunFromStep, isExecuting, stepIndex, step.id])
 
   // Handle settings icon click
   const handleSettingsClick = useCallback((e: MouseEvent) => {
@@ -284,7 +315,7 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
     
     // Don't open if no workspace path or run folder selected
     if (!workspacePath || !selectedRunFolder || selectedRunFolder === 'new') {
-      console.warn('[RoutingNode] Cannot open file: missing workspacePath or selectedRunFolder')
+      console.warn('[OrchestratorNode] Cannot open file: missing workspacePath or selectedRunFolder')
       return
     }
     
@@ -375,7 +406,7 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
         setSelectedFile(null)
       }
     } catch (error) {
-      console.error('[RoutingNode] Error opening file:', error)
+      console.error('[OrchestratorNode] Error opening file:', error)
       const fileName = filePath.split('/').pop() || filePath
       const errorMessage = error instanceof Error ? error.message : 'Failed to fetch file content'
       setError(`Failed to open file: ${fileName}\n${errorMessage}\n\nPath: ${filePath}`)
@@ -416,9 +447,7 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
             title={
               isExecuting 
                 ? 'Execution in progress...' 
-                : !canRun 
-                  ? 'Complete previous steps first' 
-                  : `Run step ${stepIndex + 1} only`
+                : `Run step ${stepIndex + 1} only`
             }
           >
             <Play className="w-3.5 h-3.5" />
@@ -465,7 +494,7 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
           </div>
         )}
         {/* Lock Learnings Badge */}
-        {stepConfig?.agent_configs?.lock_learnings && !stepConfig?.agent_configs?.disable_learning && (
+        {lockLearnings && !(orchestration_step?.agent_configs?.disable_learning ?? stepConfig?.agent_configs?.disable_learning) && (
           <div 
             className="flex items-center gap-1 px-2 py-1 rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 text-[10px] font-semibold border border-purple-200 dark:border-purple-800"
             title="Learnings are locked - learning agent will not run but existing learnings will be used"
@@ -496,7 +525,7 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
           relative rounded-xl border-2 bg-white dark:bg-gray-900 shadow-lg overflow-visible
           ${statusBorderColors[status]}
           ${selected ? 'ring-2 ring-blue-500/40' : ''}
-          ${status === 'executing' || status === 'evaluating' || status === 'routing' ? 'animate-pulse' : ''}
+          ${status === 'executing' || status === 'evaluating' || status === 'orchestrating' ? 'animate-pulse' : ''}
         `}
         style={{
           minHeight: `${nodeHeight}px`,
@@ -572,6 +601,47 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
             </div>
           )}
 
+          {/* Routes Display */}
+          {orchestration_routes && orchestration_routes.length > 0 && (
+            <div className="mt-2 p-2.5 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50">
+              <p className="text-[10px] text-blue-700 dark:text-blue-300 font-semibold mb-1.5">
+                Available Routes:
+              </p>
+              <div className="space-y-1">
+                {orchestration_routes.map((route) => {
+                  const isEndRoute = route.route_id?.toLowerCase() === "end"
+                  return (
+                    <div key={route.route_id} className="flex items-start gap-1.5">
+                      <div className={`w-2 h-2 rounded-full mt-1 flex-shrink-0 ${
+                        isEndRoute 
+                          ? "bg-red-500 dark:bg-red-400" 
+                          : "bg-blue-500 dark:bg-blue-400"
+                      }`} />
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-[10px] font-medium ${
+                          isEndRoute
+                            ? "text-red-800 dark:text-red-200"
+                            : "text-blue-800 dark:text-blue-200"
+                        }`}>
+                          {route.route_name || route.route_id}
+                        </p>
+                        {route.condition && (
+                          <p className={`text-[9px] leading-relaxed mt-0.5 ${
+                            isEndRoute
+                              ? "text-red-600 dark:text-red-400"
+                              : "text-blue-600 dark:text-blue-400"
+                          }`}>
+                            {route.condition}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Context Files - from main step (orchestration_step) */}
           {hasContext && (
             <div className="space-y-1.5 mt-2">
@@ -627,33 +697,61 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
           )}
         </div>
 
-        {/* Output handles - one for each route (or single handle if no routes) */}
+        {/* Output handles - one for each route + "end" route option */}
         {orchestration_routes && orchestration_routes.length > 0 ? (
-          orchestration_routes.map((route, index) => {
-            const totalRoutes = orchestration_routes.length
-            const positionPercent = totalRoutes === 1 
-              ? 50 
-              : 20 + (index * (60 / (totalRoutes - 1))) // Distribute handles from 20% to 80%
-            return (
-              <Handle 
-                key={route.route_id}
-                type="source" 
-                position={Position.Bottom} 
-                id={route.route_id}
-                className="!w-3 !h-3 !bg-blue-500 dark:!bg-blue-600 !border-2 !border-white dark:!border-gray-900 !shadow-md"
-                style={{ left: `${positionPercent}%`, bottom: '-6px' }}
-              />
-            )
-          })
+          <>
+            {orchestration_routes.map((route, index) => {
+              // Calculate position: distribute routes from 20% to 80%, leaving space for "end" handle
+              const totalRoutes = orchestration_routes.length + 1 // +1 for "end" route
+              const positionPercent = 20 + (index * (60 / (totalRoutes - 1)))
+              return (
+                <Handle 
+                  key={route.route_id}
+                  type="source" 
+                  position={Position.Bottom} 
+                  id={route.route_id}
+                  className="!w-3 !h-3 !bg-blue-500 dark:!bg-blue-600 !border-2 !border-white dark:!border-gray-900 !shadow-md"
+                  style={{ left: `${positionPercent}%`, bottom: '-6px' }}
+                />
+              )
+            })}
+            {/* "end" route handle - always available as a route option */}
+            <Handle 
+              key="end"
+              type="source" 
+              position={Position.Bottom} 
+              id="end"
+              className="!w-3 !h-3 !bg-red-500 dark:!bg-red-600 !border-2 !border-white dark:!border-gray-900 !shadow-md"
+              style={{ 
+                left: `${20 + (orchestration_routes.length * (60 / (orchestration_routes.length))) }%`, 
+                bottom: '-6px' 
+              }}
+              title="End workflow route"
+            />
+          </>
         ) : (
-          <Handle 
-            type="source" 
-            position={Position.Bottom} 
-            className="!w-3 !h-3 !bg-blue-500 dark:!bg-blue-600 !border-2 !border-white dark:!border-gray-900 !shadow-md"
-            style={{ left: '50%', bottom: '-6px' }}
-          />
+          <>
+            <Handle 
+              type="source" 
+              position={Position.Bottom} 
+              className="!w-3 !h-3 !bg-blue-500 dark:!bg-blue-600 !border-2 !border-white dark:!border-gray-900 !shadow-md"
+              style={{ left: '40%', bottom: '-6px' }}
+            />
+            {/* "end" route handle - always available */}
+            <Handle 
+              type="source" 
+              position={Position.Bottom} 
+              id="end"
+              className="!w-3 !h-3 !bg-red-500 dark:!bg-red-600 !border-2 !border-white dark:!border-gray-900 !shadow-md"
+              style={{ left: '60%', bottom: '-6px' }}
+              title="End workflow route"
+            />
+          </>
         )}
       </div>
+
+      {/* Validation Schema - NOT SHOWN for orchestrator nodes (orchestrators skip pre-validation) */}
+      {/* Orchestrators don't produce files, so pre-validation is not applicable */}
 
       {/* Config Footer */}
       <div className="mt-2 mx-4">
@@ -671,21 +769,11 @@ export const RoutingNode = memo(({ data, selected }: RoutingNodeProps) => {
           hasHumanTools={hasHumanTools}
           hasLargeOutput={hasLargeOutput}
         />
-        {/* Conditional/Evaluation LLM badge */}
-        {conditionalLLM && (
-          <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800/30 border-t border-gray-200 dark:border-gray-700 rounded-b-lg">
-            <div className="flex flex-wrap gap-1.5 justify-center">
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 dark:bg-gray-800/50 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700/60" title="LLM used for routing evaluation">
-                Eval: {conditionalLLM}
-              </span>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )
 })
 
-RoutingNode.displayName = 'RoutingNode'
-export default RoutingNode
+OrchestratorNode.displayName = 'OrchestratorNode'
+export default OrchestratorNode
 

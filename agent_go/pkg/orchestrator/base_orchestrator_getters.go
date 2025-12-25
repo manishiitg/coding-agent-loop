@@ -173,3 +173,18 @@ func (bo *BaseOrchestrator) GetFixedTokenThreshold() int {
 func (bo *BaseOrchestrator) GetSummaryKeepLastMessages() int {
 	return bo.summaryKeepLastMessages
 }
+
+// GetEnableContextEditing returns whether context editing is enabled
+func (bo *BaseOrchestrator) GetEnableContextEditing() bool {
+	return bo.enableContextEditing
+}
+
+// GetContextEditingThreshold returns the token threshold for context editing
+func (bo *BaseOrchestrator) GetContextEditingThreshold() int {
+	return bo.contextEditingThreshold
+}
+
+// GetContextEditingTurnThreshold returns the turn age threshold for context editing
+func (bo *BaseOrchestrator) GetContextEditingTurnThreshold() int {
+	return bo.contextEditingTurnThreshold
+}

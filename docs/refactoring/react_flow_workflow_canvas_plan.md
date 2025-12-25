@@ -33,6 +33,8 @@ Replace the current workflow mode UI with a React Flow-based canvas that serves 
 - ✅ **Run from step button** - Direct play button on each step node
 - ✅ **Compact toolbar** - Reduced font and button sizes for better space usage
 - ✅ **Clickable file names** - Click context input/output files to open in workspace
+- ✅ **Pre-validation status display** - Shows pre-validation results in StepNode and LoopNode with pass/fail badges and check counts
+- ✅ **Pre-validation status display** - Shows pre-validation results in StepNode and LoopNode
 
 ### Remaining Work
 - 🔲 Test full workflow execution flow end-to-end
@@ -248,6 +250,12 @@ const DAGRE_CONFIG = {
 - Status-based colors (pending, running, completed, failed)
 - Shows title, description, success criteria
 - Theme-aware (dark mode support)
+- **Pre-Validation Status** - Shows pre-validation results when available
+  - Green badge with shield checkmark icon when passed
+  - Red badge with shield X icon when failed
+  - Displays check counts: "X/Y checks passed" or "X/Y checks passed (Z failed)"
+  - Appears after pre-validation completes (from `pre_validation_completed` events)
+  - Only shown for steps that have validation schema and have been validated
 - **Run button** - Play icon button in node header
   - Runs only that single step (uses `run_single_step` strategy)
   - Disabled if previous steps not completed (`canRun` prop)
@@ -267,12 +275,25 @@ const DAGRE_CONFIG = {
 - Full text display (no truncation/ellipsis)
 - Dynamically centered input handle
 
+**OrchestratorNode:**
+- Displays all orchestration routes including sub-agent routes
+- Shows "End Workflow" as a special route option (always available)
+- Routes displayed in a blue info box with route names and conditions
+- "End" route shown with red indicator to distinguish from sub-agent routes
+- Output handles for each route (blue) plus "end" handle (red)
+- Edge to "end" node uses red color and "End" label when orchestrator chooses to terminate
+
 **LoopNode:**
 - Dashed border with cyan accent
 - Loop icon badge (top-left)
 - Iteration counter badge (top-right): "2/10" or "×10"
 - Progress bar during execution
 - Full dark mode support
+- **Pre-Validation Status** - Shows pre-validation results when available (same as StepNode)
+  - Green badge with shield checkmark icon when passed
+  - Red badge with shield X icon when failed
+  - Displays check counts: "X/Y checks passed" or "X/Y checks passed (Z failed)"
+  - Appears after pre-validation completes (from `pre_validation_completed` events)
 - **Clickable file names** - Same file opening functionality as StepNode
   - Context input/output files are clickable
   - Opens files in workspace with same processing as workspace sidebar
@@ -391,7 +412,32 @@ const handleStartPhase = async (phaseId: string) => {
 }
 ```
 
-### 7. Auto-Refresh & Change Highlighting
+### 7. Pre-Validation Status Display
+
+**Pre-Validation Event Tracking:**
+- `useWorkflowExecution` hook tracks `pre_validation_completed` events
+- Stores pre-validation status in `preValidationStatusMap` (Map<stepId, PreValidationStatus>)
+- Status includes: `overallPass`, `totalChecks`, `passedChecks`, `failedChecks`
+
+**Node Display:**
+- StepNode and LoopNode display pre-validation status when available
+- Green badge (emerald) with ShieldCheck icon when passed
+- Red badge (red) with ShieldX icon when failed
+- Shows check counts: "X/Y checks passed" or "X/Y checks passed (Z failed)"
+- Appears in node content area, below success criteria
+- Only shown after pre-validation completes (real-time updates from events)
+
+**Event Flow:**
+```
+Backend emits pre_validation_completed event
+  └── useWorkflowExecution processes event
+  └── Updates preValidationStatusMap
+  └── WorkflowCanvas passes map to usePlanToFlow
+  └── Nodes receive preValidationStatus in data
+  └── StepNode/LoopNode render status badge
+```
+
+### 8. Auto-Refresh & Change Highlighting
 
 **Plan Change Detection (`usePlanData.ts`):**
 - Tracks previous plan state for comparison (merged plan.json + step_config.json)
@@ -442,7 +488,7 @@ The shared helper `CheckAndEmitPlanUpdateEvent()`:
 - Click to expand for full step list
 - Hint: "(view in React Flow canvas)"
 
-### 8. Execution Progress & Step Enabling
+### 9. Execution Progress & Step Enabling
 
 **Progress Tracking:**
 - Reads `steps_done.json` from selected iteration folder
@@ -678,3 +724,9 @@ All components use CSS variables for theme-aware colors:
 | No localStorage for observer ID | ✅ |
 | Stop button works for all execution paths | ✅ |
 | No redundant state (single source of truth) | ✅ |
+| "End" route displayed in OrchestratorNode | ✅ |
+| "End" handle on orchestrator nodes (red) | ✅ |
+| Routes list shows "End Workflow" option | ✅ |
+| Edge to "end" uses red color and label | ✅ |
+| Pre-validation status displayed in nodes | ✅ |
+| Pre-validation status updates in real-time | ✅ |

@@ -82,6 +82,7 @@ import type {
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
   DecisionEvaluatedEvent,
+  PrerequisiteNavigationEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,
@@ -128,6 +129,13 @@ import type {
   BatchExecutionEndEvent,
 } from './events-bridge';
 
+// Import event types that exist in events.ts but not in events-bridge.ts
+import type {
+  ContextEditingCompletedEvent,
+  ContextEditingErrorEvent,
+  PreValidationCompletedEvent,
+} from './events';
+
 // =============================================================================
 // EVENT TYPE CONSTANTS
 // =============================================================================
@@ -167,6 +175,8 @@ export type EventTypeString =
   | 'context_summarization_started'
   | 'context_summarization_completed'
   | 'context_summarization_error'
+  | 'context_editing_completed'
+  | 'context_editing_error'
   | 'large_tool_output_detected'
   | 'large_tool_output_file_written'
   | 'large_tool_output_file_write_error'
@@ -193,6 +203,8 @@ export type EventTypeString =
   | 'step_token_usage'
   | 'step_progress_updated'
   | 'decision_evaluated'
+  | 'prerequisite_navigation'
+  | 'pre_validation_completed'
   | 'todo_steps_extracted'
   | 'variables_extracted'
   | 'independent_steps_selected'
@@ -281,6 +293,8 @@ export interface EventTypeToDataMap {
   'context_summarization_started': ContextSummarizationStartedEvent;
   'context_summarization_completed': ContextSummarizationCompletedEvent;
   'context_summarization_error': ContextSummarizationErrorEvent;
+  'context_editing_completed': ContextEditingCompletedEvent;
+  'context_editing_error': ContextEditingErrorEvent;
   'large_tool_output_detected': LargeToolOutputDetectedEvent;
   'large_tool_output_file_written': LargeToolOutputFileWrittenEvent;
   'large_tool_output_file_write_error': LargeToolOutputFileWriteErrorEvent;
@@ -307,6 +321,8 @@ export interface EventTypeToDataMap {
   'step_token_usage': StepTokenUsageEvent;
   'step_progress_updated': StepProgressUpdatedEvent;
   'decision_evaluated': DecisionEvaluatedEvent;
+  'prerequisite_navigation': PrerequisiteNavigationEvent;
+  'pre_validation_completed': PreValidationCompletedEvent;
   'todo_steps_extracted': TodoStepsExtractedEvent;
   'variables_extracted': VariablesExtractedEvent;
   'independent_steps_selected': IndependentStepsSelectedEvent;
@@ -596,6 +612,7 @@ export type {
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
   DecisionEvaluatedEvent,
+  PrerequisiteNavigationEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,
@@ -611,3 +628,11 @@ export type {
   BatchGroupEndEvent,
   BatchExecutionEndEvent,
 } from './events-bridge';
+
+// Export nested types from events.ts (used by event types but not in events-bridge.ts)
+export type {
+  FileCheckResultForEvent,
+  JSONCheckResultForEvent,
+  ValidationErrorForEvent,
+  TodoStep,
+} from './events';

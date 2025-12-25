@@ -71,6 +71,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   const [showPresetModal, setShowPresetModal] = useState(false)
   const [showAPISamples, setShowAPISamples] = useState(false)
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null)
+  const [duplicatingPresetId, setDuplicatingPresetId] = useState<string | null>(null)
 
   // Preset click handler - now uses the global store
   const handlePresetClick = useCallback((preset: CustomPreset | PredefinedPreset) => {
@@ -149,18 +150,29 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
 
   const handleDuplicatePreset = useCallback(async (presetId: string, e: React.MouseEvent) => {
     e.stopPropagation()
+    e.preventDefault()
+    
+    if (duplicatingPresetId) {
+      return
+    }
+    
+    setDuplicatingPresetId(presetId)
     try {
       const duplicatedPreset = await duplicatePreset(presetId)
       if (duplicatedPreset) {
         setShowPresetDropdown(false)
         // Optionally apply the duplicated preset
         handlePresetClick(duplicatedPreset)
+      } else {
+        alert('Failed to duplicate preset: No preset was created.')
       }
     } catch (error) {
-      console.error('Failed to duplicate preset:', error)
-      alert('Failed to duplicate preset. Please try again.')
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      alert(`Failed to duplicate preset: ${errorMessage}`)
+    } finally {
+      setDuplicatingPresetId(null)
     }
-  }, [duplicatePreset, handlePresetClick])
+  }, [duplicatePreset, handlePresetClick, duplicatingPresetId])
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -425,11 +437,20 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                                       )}
                                       {/* Duplicate button - show for all custom presets */}
                                       <button
-                                        onClick={(e) => handleDuplicatePreset(preset.id, e)}
-                                        className="p-1 rounded hover:bg-blue-100 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
-                                        title="Duplicate preset"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          e.preventDefault()
+                                          handleDuplicatePreset(preset.id, e)
+                                        }}
+                                        disabled={duplicatingPresetId === preset.id || !!duplicatingPresetId}
+                                        className="p-1 rounded hover:bg-blue-100 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        title={duplicatingPresetId === preset.id ? "Duplicating..." : "Duplicate preset"}
                                       >
-                                        <Copy className="w-3 h-3" />
+                                        {duplicatingPresetId === preset.id ? (
+                                          <div className="w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                                        ) : (
+                                          <Copy className="w-3 h-3" />
+                                        )}
                                       </button>
                                       {/* Delete button - show for all custom presets, especially workflow ones */}
                                       {(selectedModeCategory === 'workflow' || preset.agentMode === 'workflow') && (

@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, GitBranch, Play, Settings, Code, Terminal, AlertTriangle, Lock } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, GitBranch, Play, Settings, Code, Terminal, AlertTriangle, Lock, ShieldCheck, SkipForward } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { getToolsByCategory } from '../../../utils/customToolNames'
@@ -68,7 +68,7 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) => {
-  const { id, title, description, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, canRun } = data
+  const { id, title, description, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, validation_schema } = data
 
   // Get preset for config badges
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -97,6 +97,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
     selected_tools?: string[]
     enabled_custom_tools?: string[]
     enable_large_output_virtual_tools?: boolean
+    skip_llm_validation_if_pre_validation_passes?: boolean
   } }
 
   // Determine code execution mode: step config > preset default
@@ -252,26 +253,25 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
   const hasHumanTools = humanToolsInfo.enabled > 0
   const hasLargeOutput = stepConfig?.agent_configs?.enable_large_output_virtual_tools !== false // Default is enabled
 
-  // Button is disabled if executing, can't run (previous steps not done), or no callback
-  const isRunDisabled = isExecuting || !canRun || !onRunFromStep
+  // Button is disabled if executing or no callback
+  const isRunDisabled = isExecuting || !onRunFromStep
 
   // Handle run from this step button click
   const handleRunClick = useCallback((e: MouseEvent) => {
     e.stopPropagation() // Prevent node selection
     e.preventDefault() // Prevent any default behavior
-    console.log('[ConditionalNode] Run button clicked:', { stepIndex, stepId: step.id, onRunFromStep: !!onRunFromStep, isExecuting, canRun, isRunDisabled })
-    if (onRunFromStep && !isExecuting && canRun) {
+    console.log('[ConditionalNode] Run button clicked:', { stepIndex, stepId: step.id, onRunFromStep: !!onRunFromStep, isExecuting, isRunDisabled })
+    if (onRunFromStep && !isExecuting) {
       console.log('[ConditionalNode] Calling onRunFromStep with:', stepIndex, step.id || `step-${stepIndex}`)
       onRunFromStep(stepIndex, step.id || `step-${stepIndex}`)
     } else {
       console.warn('[ConditionalNode] Cannot run step:', { 
         hasCallback: !!onRunFromStep, 
         isExecuting, 
-        canRun, 
         isRunDisabled 
       })
     }
-  }, [onRunFromStep, isExecuting, canRun, stepIndex, step.id, isRunDisabled])
+  }, [onRunFromStep, isExecuting, stepIndex, step.id, isRunDisabled])
 
   // Handle settings icon click - opens the sidebar
   const handleSettingsClick = useCallback((e: MouseEvent) => {
@@ -306,9 +306,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
             title={
               isExecuting 
                 ? 'Execution in progress...' 
-                : !canRun 
-                  ? 'Complete previous steps first' 
-                  : `Run step ${stepIndex + 1} only`
+                : `Run step ${stepIndex + 1} only`
             }
           >
             <Play className="w-3.5 h-3.5" />
@@ -362,6 +360,15 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
           >
             <Lock className="w-3 h-3" />
             <span>Locked</span>
+          </div>
+        )}
+        {/* Validation Skipped Badge */}
+        {stepConfig?.agent_configs?.skip_llm_validation_if_pre_validation_passes && (
+          <div 
+            className="flex items-center justify-center w-8 h-8 rounded-md bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800"
+            title="LLM validation will be skipped if pre-validation passes"
+          >
+            <SkipForward className="w-3.5 h-3.5" />
           </div>
         )}
       </div>
@@ -446,6 +453,31 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
           <p className="text-[11px] text-gray-600 dark:text-gray-400 text-center leading-relaxed p-2.5 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800/50">
             {condition_question}
           </p>
+        </div>
+      )}
+
+      {/* Validation Schema */}
+      {validation_schema && validation_schema.files && validation_schema.files.length > 0 && (
+        <div className={`mx-4 ${condition_question ? 'mt-2' : description ? 'mt-2' : 'mt-3'}`}>
+          <div className="flex gap-2 p-2.5 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50">
+            <ShieldCheck className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <div className="text-xs font-semibold text-blue-700 dark:text-blue-300">
+                Validation Schema
+              </div>
+              <div className="text-[10px] mt-0.5 text-blue-600 dark:text-blue-400">
+                {validation_schema.files.length} file{validation_schema.files.length !== 1 ? 's' : ''} to validate
+                {validation_schema.files.map((file, idx) => {
+                  const checkCount = file.json_checks?.length || 0
+                  return (
+                    <div key={idx} className="mt-1">
+                      • {file.file_name} {checkCount > 0 && `(${checkCount} check${checkCount !== 1 ? 's' : ''})`}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

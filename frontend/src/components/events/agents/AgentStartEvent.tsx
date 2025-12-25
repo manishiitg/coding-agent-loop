@@ -28,6 +28,9 @@ export function AgentStartEventComponent({ event }: AgentStartEventProps) {
                 {(event as unknown as { use_code_execution_mode?: boolean }).use_code_execution_mode && ' | Execution: Code Exec'}
                 {' | Model: '}{event.model_id || 'Unknown'}
                 {' | Provider: '}{event.provider || 'Unknown'}
+                {((event as unknown as { max_turns?: number }).max_turns !== undefined || 
+                  (event.metadata?.max_turns as number | undefined) !== undefined) && 
+                  ` | Max Turns: ${(event as unknown as { max_turns?: number }).max_turns ?? (event.metadata?.max_turns as number)}`}
               </span>
             </div>
           </div>

@@ -50,7 +50,7 @@ type LearningDetectionResponse struct {
 
 ### Learning Metadata (per step)
 
-**File**: `learnings/step-{X}/.learning_metadata.json`
+**File**: `learnings/{step_id}/.learning_metadata.json` (using step IDs from plan.json)
 
 ```json
 {

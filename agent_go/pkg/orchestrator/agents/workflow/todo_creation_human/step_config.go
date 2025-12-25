@@ -95,15 +95,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) ReadStepConfigs(ctx context.
 // WriteStepConfigs writes step_config.json to the workspace in object format
 // Format: { "steps": [{ "id": "...", "agent_configs": {...} }] }
 // Uses the orchestrator's WriteWorkspaceFile method
+// Note: Directory creation is handled automatically by the workspace API
 func (hcpo *HumanControlledTodoPlannerOrchestrator) WriteStepConfigs(ctx context.Context, configs []StepConfig) error {
 	workspacePath := hcpo.GetWorkspacePath()
 	configPath := filepath.Join(workspacePath, "planning", "step_config.json")
-
-	// Ensure planning directory exists
-	planningDir := filepath.Join(workspacePath, "planning")
-	if err := os.MkdirAll(planningDir, 0750); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to create planning directory: %w", err), nil)
-	}
 
 	// Write in object format with "steps" field
 	configFile := StepConfigFile{
@@ -114,6 +109,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) WriteStepConfigs(ctx context
 		return fmt.Errorf(fmt.Sprintf("failed to marshal step_config.json: %w", err), nil)
 	}
 
+	// WriteWorkspaceFile will automatically create the directory structure via the workspace API
 	if err := hcpo.WriteWorkspaceFile(ctx, configPath, string(jsonData)); err != nil {
 		return fmt.Errorf(fmt.Sprintf("failed to write step_config.json: %w", err), nil)
 	}

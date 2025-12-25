@@ -62,6 +62,7 @@ func (agent *HumanControlledTodoPlannerLearningAgent) Execute(ctx context.Contex
 	validationResult := templateVars["ValidationResult"]
 	variableNames := templateVars["VariableNames"]
 	learningDetailLevel := templateVars["LearningDetailLevel"]
+	existingLearningsContent := templateVars["ExistingLearningsContent"] // Existing learnings to build upon
 	// Default to "exact" if not provided
 	if learningDetailLevel == "" {
 		learningDetailLevel = "exact"
@@ -69,16 +70,17 @@ func (agent *HumanControlledTodoPlannerLearningAgent) Execute(ctx context.Contex
 
 	// Prepare template variables
 	learningTemplateVars := map[string]string{
-		"StepTitle":               stepTitle,
-		"StepDescription":         stepDescription,
-		"StepSuccessCriteria":     stepSuccessCriteria,
-		"StepContextDependencies": stepContextDependencies,
-		"StepContextOutput":       stepContextOutput,
-		"WorkspacePath":           workspacePath,
-		"ExecutionHistory":        executionHistory,
-		"ValidationResult":        validationResult,
-		"VariableNames":           variableNames,
-		"LearningDetailLevel":     learningDetailLevel,
+		"StepTitle":                stepTitle,
+		"StepDescription":          stepDescription,
+		"StepSuccessCriteria":      stepSuccessCriteria,
+		"StepContextDependencies":  stepContextDependencies,
+		"StepContextOutput":        stepContextOutput,
+		"WorkspacePath":            workspacePath,
+		"ExecutionHistory":         executionHistory,
+		"ValidationResult":         validationResult,
+		"VariableNames":            variableNames,
+		"LearningDetailLevel":      learningDetailLevel,
+		"ExistingLearningsContent": existingLearningsContent, // Pass existing learnings to build upon
 	}
 
 	// Add step-specific paths (always enabled)
@@ -190,10 +192,17 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 ` + func() string {
 		if learningDetailLevel == "exact" {
 			return `- **Tool arguments**: Replace actual values with {{VARIABLE_NAME}} placeholders when they match known variables
+- **Workspace paths** (CRITICAL): Replace hardcoded workspace paths in tool arguments with {{WORKSPACE_PATH}} variable or relative paths
+  * **Example - Wrong**: "filepath": "Workflow/HDFC Personal Accounts/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json"
+  * **Example - Correct**: "filepath": "{{WORKSPACE_PATH}}/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json" OR "filepath": "step-1/step_1_credentials.json"
+  * **Apply to**: All file paths in tool arguments (filepath, path, input_path, output_path, etc.)
 - **Python scripts**: Refactor to accept variables as parameters (argparse/env vars), NOT placeholders in code
 - **Data references**: Use step references like "output from Step 1" or "{{STEP_1_OUTPUT}}"`
 		}
 		return `- **Descriptions**: Replace actual values with {{VARIABLE_NAME}} when referencing them
+- **Workspace paths** (CRITICAL): Replace hardcoded workspace paths in tool arguments with {{WORKSPACE_PATH}} variable or relative paths
+  * **Example - Wrong**: ` + "`" + `"filepath": "Workflow/HDFC Personal Accounts/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json"` + "`" + `
+  * **Example - Correct**: ` + "`" + `"filepath": "{{WORKSPACE_PATH}}/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json"` + "`" + ` OR ` + "`" + `"filepath": "step-1/step_1_credentials.json"` + "`" + `
 - **Python scripts**: Refactor to accept variables as parameters (argparse/env vars), NOT placeholders in code`
 	}() + `
 
@@ -255,10 +264,10 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 	}() + `
 
 **CRITICAL**: Write ONLY new learning content extracted from current execution. Do NOT merge with existing files.
-- **Output File**: ` + writePath + `/_learning_new.md (temporary file for consolidation agent)
+- **Output File**: ` + writePath + `/_learning_new.md (temporary file for detection agent)
 - **Content**: Only patterns extracted from current execution (ExecutionHistory and ValidationResult)
 - **Format**: Use same format as final learning file, but this is raw extraction output
-- **Note**: Consolidation agent will merge this with existing learnings and handle scoring/optimization
+- **Note**: Detection agent will consolidate this with existing learnings and handle scoring/optimization
 
 ## 📝 OUTPUT FORMAT
 
@@ -276,13 +285,13 @@ Do NOT output narrative descriptions or summaries. Output NUMBERED STEPS with CO
 **🎯 EXECUTION WORKFLOW:**
 
 **Step 1**: server.tool_name [Runs: X | Success: Y%] ✅
-  arguments: {COMPLETE JSON - copy exact arguments from execution history}
+  arguments: {COMPLETE JSON - copy exact arguments from execution history, but replace hardcoded workspace paths with {{WORKSPACE_PATH}} or relative paths}
   prerequisites: What must be true before this step (or "None" for first step)
   outputs: What this step produces (data, state change, file, etc.)
   on_error: Specific recovery action if this step fails
 
 **Step 2**: server.tool_name [Runs: X | Success: Y%] ✅
-  arguments: {COMPLETE JSON - use {{VARIABLE}} for dynamic values}
+  arguments: {COMPLETE JSON - use {{VARIABLE}} for dynamic values, replace workspace paths with {{WORKSPACE_PATH}} or relative paths}
   prerequisites: Step 1 completed, [specific condition]
   outputs: [description]
   on_error: [specific recovery]
@@ -330,6 +339,9 @@ Alternative Path [Runs: X | Success: Y%]
 **KEY REQUIREMENTS FOR EACH STEP:**
 1. **arguments**: MUST be COMPLETE JSON copied from execution history
    - Replace actual sensitive values with {{VARIABLE_NAME}} placeholders
+   - **CRITICAL**: Replace hardcoded workspace paths with {{WORKSPACE_PATH}} or relative paths
+     * **Wrong**: "filepath": "Workflow/HDFC Personal Accounts/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json"
+     * **Correct**: "filepath": "{{WORKSPACE_PATH}}/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json" OR "filepath": "step-1/step_1_credentials.json"
    - Keep non-sensitive values as-is (URLs, selectors, etc.)
    - For dynamic elements (like "ref"), note they are DYNAMIC
 2. **prerequisites**: MUST specify what's needed BEFORE this step runs
@@ -388,6 +400,8 @@ Alternative Path [Runs: X | Success: Y%]
 2. **Extract Per-Step Details**:
    - **Tool Name**: server_name.tool_name
    - **Arguments**: COMPLETE JSON with variable placeholders
+     * **CRITICAL**: Replace hardcoded workspace paths with {{WORKSPACE_PATH}} or relative paths
+     * **Example**: "filepath": "Workflow/.../step-1/file.json" → "filepath": "{{WORKSPACE_PATH}}/runs/.../step-1/file.json" OR "filepath": "step-1/file.json"
    - **Response**: Success or error + relevant output data
    - **Position**: Step number in the workflow sequence
 
@@ -472,7 +486,7 @@ Updated: ` + writePath + "/_learning_new.md" + `
 - **EXTRACTION ONLY**: Extract patterns from current execution, do NOT merge with existing files
 - ALWAYS save working Python scripts to ` + scriptsPath + `/` + `
 - Document learnings ONLY in ` + writePath + `/ folder
-- Write to temporary file: _learning_new.md (consolidation agent will handle merging)
+- Write to temporary file: _learning_new.md (detection agent will handle consolidation)
 ` + func() string {
 		if learningDetailLevel == "exact" {
 			return "- **PRESERVE WORKFLOW ORDER** - Steps must be in execution sequence\n" +
@@ -483,8 +497,8 @@ Updated: ` + writePath + "/_learning_new.md" + `
 		return "- Keep file content SHORT and precise (each entry 1-2 lines max)"
 	}() + `
 - Analyze BOTH success and failure patterns from current execution
-- **NO SCORING**: Do not add [Runs: X | Success: Y%] scores (consolidation agent handles this)
-- **NO OPTIMAL MARKERS**: Do not mark ⭐ OPTIMAL paths (consolidation agent handles this)
+- **NO SCORING**: Do not add [Runs: X | Success: Y%] scores (detection agent handles this during consolidation)
+- **NO OPTIMAL MARKERS**: Do not mark ⭐ OPTIMAL paths (detection agent handles this during consolidation)
 `
 }
 
@@ -524,6 +538,19 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningUserMessageProcess
 - **Workspace**: ` + templateVars["WorkspacePath"] + `
 
 ` + func() string {
+		existingLearnings := templateVars["ExistingLearningsContent"]
+		if existingLearnings != "" && strings.TrimSpace(existingLearnings) != "" {
+			return `## 📚 EXISTING LEARNINGS
+
+These are existing learnings from previous executions. If the current execution is similar, improve upon these patterns rather than duplicating them.
+
+` + existingLearnings + `
+
+---
+`
+		}
+		return ""
+	}() + func() string {
 		if templateVars["VariableNames"] != "" {
 			return `## 🔑 AVAILABLE VARIABLES
 
@@ -534,7 +561,11 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
 1. **Preserve Placeholders**: Keep all {{VARS}} intact in learnings. DO NOT replace with actual values.
 2. **Replace Actual with Variables**: When extracting tool calls from ExecutionHistory, if actual values match known variables, REPLACE them with {{VARIABLE_NAME}} placeholders
    - Example: {\"account_id\": \"123456789012\"} → {\"account_id\": \"{{AWS_ACCOUNT_ID}}\"}
-3. **Python Scripts**: Refactor to accept variables as parameters (argparse/env vars), NOT using {{PLACEHOLDERS}} in code
+3. **Workspace Path Replacement** (CRITICAL): Replace hardcoded workspace paths in tool arguments with {{WORKSPACE_PATH}} or relative paths
+   - **Wrong**: "filepath": "Workflow/HDFC Personal Accounts/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json"
+   - **Correct**: "filepath": "{{WORKSPACE_PATH}}/runs/iteration-11/group-1/execution/step-1/step_1_credentials.json" OR "filepath": "step-1/step_1_credentials.json"
+   - **Apply to**: All file paths in tool arguments (filepath, path, input_path, output_path, etc.)
+4. **Python Scripts**: Refactor to accept variables as parameters (argparse/env vars), NOT using {{PLACEHOLDERS}} in code
    - Example: account_id = \"123456789012\" → account_id = args.account_id (from argparse)
 ` + func() string {
 				if learningDetailLevel == "exact" {
@@ -609,7 +640,7 @@ Task-specific failures teach us what NOT to do - use them to refine the workflow
    - Do NOT update scores or optimal paths
    
 2. **WRITE NEW FILE**: Write extracted patterns to: ` + writePath + `/_learning_new.md
-   - This is a temporary file that the consolidation agent will process
+   - This is a temporary file that the detection agent will process during consolidation
    - Include all patterns extracted from current execution (success + failure)
    - Use same format as final learning file, but without scores or optimal markers
    

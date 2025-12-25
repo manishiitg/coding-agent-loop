@@ -19,18 +19,6 @@ func (bo *BaseOrchestrator) CreateStandardAgentConfig(agentName string, maxTurns
 	return bo.createAgentConfigWithLLM(agentName, maxTurns, outputFormat, bo.GetLLMConfig())
 }
 
-// CreateStandardAgentConfigWithCustomServers creates a standardized agent configuration with custom MCP servers
-// This allows specific agents to override the default MCP server list
-func (bo *BaseOrchestrator) CreateStandardAgentConfigWithCustomServers(agentName string, maxTurns int, outputFormat agents.OutputFormat, customServers []string) *agents.OrchestratorAgentConfig {
-	config := bo.createAgentConfigWithLLM(agentName, maxTurns, outputFormat, bo.GetLLMConfig())
-
-	// Override the server names with custom servers
-	config.ServerNames = customServers
-
-	// Removed verbose logging
-	return config
-}
-
 // CreateStandardAgentConfigWithLLM creates a standardized agent configuration with custom LLM config
 // This allows specific agents to override the default LLM configuration
 func (bo *BaseOrchestrator) CreateStandardAgentConfigWithLLM(agentName string, maxTurns int, outputFormat agents.OutputFormat, llmConfig *LLMConfig) *agents.OrchestratorAgentConfig {
@@ -297,34 +285,6 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 	return agent, nil
 }
 
-// CreateAndSetupStandardAgentWithCustomServers creates and sets up an agent with custom MCP servers
-// This allows specific agents to override the default MCP server list
-func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithCustomServers(
-	ctx context.Context,
-	agentName string,
-	phase string,
-	step, iteration int,
-	maxTurns int,
-	outputFormat agents.OutputFormat,
-	customServers []string,
-	createAgentFunc func(*agents.OrchestratorAgentConfig, loggerv2.Logger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
-	customTools []llmtypes.Tool,
-	customToolExecutors map[string]interface{},
-) (agents.OrchestratorAgent, error) {
-	// Create standardized agent configuration with custom servers
-	config := bo.CreateStandardAgentConfigWithCustomServers(agentName, maxTurns, outputFormat, customServers)
-
-	// Create agent using provided factory function
-	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
-
-	// Setup agent using common helper
-	if err := bo.setupStandardAgent(ctx, agent, agentName, phase, step, iteration, customTools, customToolExecutors); err != nil {
-		return nil, err
-	}
-
-	return agent, nil
-}
-
 // CreateAndSetupStandardAgentWithConfig creates and sets up an agent with a pre-created configuration
 // This allows agents to have full control over config (custom LLM, servers, EnableLargeOutputVirtualTools, etc.)
 // while still using the standard setup logic (initialization, event bridge connection, tool registration)
@@ -347,85 +307,6 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithConfig(
 	// Setup agent using common helper
 	if err := bo.setupStandardAgent(ctx, agent, config.AgentName, phase, step, iteration, customTools, customToolExecutors); err != nil {
 		return nil, err
-	}
-
-	return agent, nil
-}
-
-// CreateAndSetupStandardAgentWithSystemPrompt creates and sets up an agent with system prompt and user message processors
-// This allows agents to have detailed system prompts while keeping user messages simple
-func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithSystemPrompt(
-	ctx context.Context,
-	agentName string,
-	phase string,
-	step, iteration int,
-	maxTurns int,
-	outputFormat agents.OutputFormat,
-	systemPromptProcessor func(map[string]string) string,
-	userMessageProcessor func(map[string]string) string,
-	createAgentFunc func(*agents.OrchestratorAgentConfig, loggerv2.Logger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
-	customTools []llmtypes.Tool,
-	customToolExecutors map[string]interface{},
-) (agents.OrchestratorAgent, error) {
-	// Create standardized agent configuration using agentName as agentType
-	config := bo.CreateStandardAgentConfig(agentName, maxTurns, outputFormat)
-
-	// Create agent using provided factory function
-	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
-
-	// Initialize agent
-	if err := agent.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize %s: %w", agentName, err)
-	}
-
-	// Set user message processor if provided
-	// Since agents embed *BaseOrchestratorAgent, methods are promoted
-	// Note: systemPromptProcessor is now passed as parameter to Execute methods, not set here
-	if userMessageProcessor != nil {
-		if settable, ok := agent.(agents.UserMessageProcessorSetter); ok {
-			settable.SetUserMessageProcessor(userMessageProcessor)
-			// Removed verbose logging
-		} else {
-			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not set user message processor for %s - agent does not implement UserMessageProcessorSetter", agentName))
-		}
-	}
-
-	// Setup agent using common helper (skips initialization since we already did it)
-	// We need to manually do the setup since we already initialized
-	eventBridge := bo.GetContextAwareBridge()
-	if eventBridge == nil {
-		return nil, fmt.Errorf("context-aware event bridge is nil for %s", agentName)
-	}
-
-	// Removed verbose logging
-	baseAgent := agent.GetBaseAgent()
-	if baseAgent == nil {
-		return nil, fmt.Errorf("base agent is nil for %s", agentName)
-	}
-
-	mcpAgent := baseAgent.Agent()
-	if mcpAgent == nil {
-		return nil, fmt.Errorf("MCP agent is nil for %s", agentName)
-	}
-
-	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
-	baseAgentName := baseAgent.GetName()
-	if cab, ok := eventBridge.(*ContextAwareEventBridge); ok {
-		cab.SetOrchestratorContext(phase, step, baseAgentName)
-		// Ensure iteration folder is applied to bridge (for token persistence)
-		// This ensures all agents automatically get the iteration folder if it's been set
-		bo.applyIterationFolderToBridge()
-		mcpAgent.AddEventListener(cab)
-		// Removed verbose logging
-	} else {
-		return nil, fmt.Errorf("context-aware bridge type mismatch for %s", agentName)
-	}
-
-	// Register custom tools
-	if customTools != nil && customToolExecutors != nil {
-		if err := bo.registerCustomToolsForAgent(mcpAgent, baseAgent, agentName, customTools, customToolExecutors); err != nil {
-			return nil, err
-		}
 	}
 
 	return agent, nil

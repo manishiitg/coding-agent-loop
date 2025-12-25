@@ -15,7 +15,7 @@ import (
 
 // GetDefaultMaxTurnsFromEnv returns the default max turns from environment variable
 // Checks MAX_TURNS and ORCHESTRATOR_MAX_TURNS (in that order)
-// Returns 100 if neither is set or invalid
+// Returns 50 if neither is set or invalid
 func GetDefaultMaxTurnsFromEnv() int {
 	// Check MAX_TURNS first (more general)
 	if envVal := os.Getenv("MAX_TURNS"); envVal != "" {
@@ -29,8 +29,8 @@ func GetDefaultMaxTurnsFromEnv() int {
 			return maxTurns
 		}
 	}
-	// Default to 100 if neither is set or invalid
-	return 100
+	// Default to 50 if neither is set or invalid
+	return 50
 }
 
 // Orchestrator defines the common interface for all orchestrators
@@ -130,17 +130,17 @@ func NewBaseOrchestrator(
 			tokenThresholdPercent = threshold
 		}
 	}
-	summaryKeepLastMessages := 8 // Default to 8 messages
+	summaryKeepLastMessages := 4 // Default to 4 messages (roughly 2 turns)
 	if envVal := os.Getenv("SUMMARY_KEEP_LAST_MESSAGES"); envVal != "" {
 		if keepLast, err := strconv.Atoi(envVal); err == nil && keepLast > 0 {
 			summaryKeepLastMessages = keepLast
 		}
 	}
-	summarizeOnFixedTokenThreshold := true // Default to enabled with 200k token threshold
+	summarizeOnFixedTokenThreshold := true // Default to enabled with 100k token threshold
 	if envVal := os.Getenv("SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD"); envVal == "false" {
 		summarizeOnFixedTokenThreshold = false
 	}
-	fixedTokenThreshold := 200000 // Default to 200k tokens
+	fixedTokenThreshold := 100000 // Default to 100k tokens
 	if envVal := os.Getenv("FIXED_TOKEN_THRESHOLD"); envVal != "" {
 		if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
 			fixedTokenThreshold = threshold
@@ -163,10 +163,10 @@ func NewBaseOrchestrator(
 		}
 	}
 
-	// Default maxTurns from environment variable or 100 if not provided or 0
+	// Default maxTurns from environment variable or 50 if not provided or 0
 	if maxTurns <= 0 {
 		maxTurns = GetDefaultMaxTurnsFromEnv()
-		logger.Info(fmt.Sprintf("🔧 MaxTurns not provided or 0, defaulting to %d (from env or 100)", maxTurns))
+		logger.Info(fmt.Sprintf("🔧 MaxTurns not provided or 0, defaulting to %d (from env or 50)", maxTurns))
 	}
 
 	// Create orchestrator instance

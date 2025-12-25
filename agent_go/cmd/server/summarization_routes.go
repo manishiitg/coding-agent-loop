@@ -105,7 +105,7 @@ func (api *StreamingAPI) handleSummarizeConversation(w http.ResponseWriter, r *h
 		Provider:    llmProvider,
 		ModelID:     modelID,
 		Temperature: 0.0, // Use 0.0 for consistent summaries
-		Logger:      api.logger,
+		Logger:      createLLMLogger(),
 	}
 
 	summarizationLLM, err := llm.InitializeLLM(llmConfig)

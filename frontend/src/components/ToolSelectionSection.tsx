@@ -24,42 +24,72 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
   const instanceId = useMemo(() => stepId || `preset-${Date.now()}`, [stepId]);
   
   // Get store state and actions
-  const instance = useToolSelectionStore((state) => state.getInstanceState(instanceId));
+  // Select instance directly - use a stable selector to avoid infinite loop
+  const rawInstance = useToolSelectionStore((state) => {
+    const instance = state.instances[instanceId];
+    // Return the instance directly (Zustand will handle memoization)
+    return instance;
+  });
+  
+  // Get actions directly from store (not as selectors to avoid re-renders)
+  const storeActions = useMemo(() => ({
+    syncServerToolMode: useToolSelectionStore.getState().syncServerToolMode,
+    loadServerTools: useToolSelectionStore.getState().loadServerTools,
+    getServerTools: useToolSelectionStore.getState().getServerTools,
+    isServerLoading: useToolSelectionStore.getState().isServerLoading,
+    toggleExpandedServer: useToolSelectionStore.getState().toggleExpandedServer,
+    updateServerToolMode: useToolSelectionStore.getState().updateServerToolMode,
+    removeInstance: useToolSelectionStore.getState().removeInstance,
+    getInstanceState: useToolSelectionStore.getState().getInstanceState,
+  }), []);
+  
   const toolDetails = useToolSelectionStore((state) => state.toolDetails);
-  const syncServerToolMode = useToolSelectionStore((state) => state.syncServerToolMode);
-  const loadServerTools = useToolSelectionStore((state) => state.loadServerTools);
-  const getServerTools = useToolSelectionStore((state) => state.getServerTools);
-  const isServerLoading = useToolSelectionStore((state) => state.isServerLoading);
-  const toggleExpandedServer = useToolSelectionStore((state) => state.toggleExpandedServer);
-  const updateServerToolMode = useToolSelectionStore((state) => state.updateServerToolMode);
-  const removeInstance = useToolSelectionStore((state) => state.removeInstance);
+  
+  // Use fallback instance to avoid null checks everywhere
+  // Create a stable default instance that won't change
+  const defaultInstance = useMemo(() => ({
+    expandedServers: new Set<string>(),
+    serverToolMode: {} as Record<string, 'all' | 'specific'>,
+    loadingServers: new Set<string>(),
+  }), []);
+  
+  const instance = rawInstance || defaultInstance;
   
   const [showDebug, setShowDebug] = useState(false);
   
+  // Initialize instance if it doesn't exist
+  useEffect(() => {
+    if (!rawInstance) {
+      storeActions.getInstanceState(instanceId);
+    }
+  }, [rawInstance, instanceId, storeActions]);
+  
   // Sync mode when selectedServers or selectedTools change
   useEffect(() => {
-    syncServerToolMode(instanceId, selectedServers, selectedTools);
-  }, [instanceId, selectedServers, selectedTools, syncServerToolMode]);
+    if (rawInstance) {
+      storeActions.syncServerToolMode(instanceId, selectedServers, selectedTools);
+    }
+  }, [rawInstance, instanceId, selectedServers, selectedTools, storeActions]);
   
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      removeInstance(instanceId);
+      storeActions.removeInstance(instanceId);
     };
-  }, [instanceId, removeInstance]);
+  }, [instanceId, storeActions]);
   
   // Auto-expand server when selected
   const expandServer = useCallback((serverName: string) => {
     if (!instance.expandedServers.has(serverName)) {
-      toggleExpandedServer(instanceId, serverName);
+      storeActions.toggleExpandedServer(instanceId, serverName);
     }
     // Load tools if not already loaded
-    const tools = getServerTools(serverName);
+    const tools = storeActions.getServerTools(serverName);
     if (!tools) {
       // Set loading state before loading
       const setLoadingServer = useToolSelectionStore.getState().setLoadingServer;
       setLoadingServer(instanceId, serverName, true);
-      loadServerTools(serverName)
+      storeActions.loadServerTools(serverName)
         .then(() => {
           setLoadingServer(instanceId, serverName, false);
         })
@@ -68,7 +98,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
           setLoadingServer(instanceId, serverName, false);
         });
     }
-  }, [instanceId, instance.expandedServers, toggleExpandedServer, getServerTools, loadServerTools]);
+  }, [instanceId, instance.expandedServers, storeActions]);
 
   // Handle server checkbox
   const handleServerToggle = useCallback((serverName: string) => {
@@ -107,7 +137,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
     console.log('[ToolSelection] Mode change:', serverName, '->', mode);
     
     // Update mode in store immediately
-    updateServerToolMode(instanceId, serverName, mode);
+    storeActions.updateServerToolMode(instanceId, serverName, mode);
     
     if (mode === 'all') {
       // Set special marker "server:*" to indicate "all tools" mode
@@ -126,7 +156,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
       // Load tools for this server when switching to specific mode (force reload)
       const setLoadingServer = useToolSelectionStore.getState().setLoadingServer;
       setLoadingServer(instanceId, serverName, true);
-      loadServerTools(serverName, true)
+      storeActions.loadServerTools(serverName, true)
         .then(() => {
           setLoadingServer(instanceId, serverName, false);
         })
@@ -137,7 +167,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
       // Expand the server when switching to specific mode so user can see tools
       expandServer(serverName);
     }
-  }, [instanceId, selectedTools, onToolChange, loadServerTools, expandServer, updateServerToolMode]);
+  }, [instanceId, selectedTools, onToolChange, expandServer, storeActions]);
 
   // Handle tool checkbox
   const handleToolToggle = useCallback((serverName: string, toolName: string) => {
@@ -153,7 +183,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
 
   // Handle "Select all tools" for a server
   const handleSelectAllServerTools = useCallback((serverName: string) => {
-    const serverTools = getServerTools(serverName) || [];
+    const serverTools = storeActions.getServerTools(serverName) || [];
     if (!Array.isArray(serverTools) || serverTools.length === 0) return;
     
     const serverToolNames = serverTools.map(t => `${serverName}:${t.name}`);
@@ -174,7 +204,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
       });
       onToolChange(newTools);
     }
-  }, [getServerTools, selectedTools, onToolChange]);
+  }, [storeActions, selectedTools, onToolChange]);
 
   // Check if all tools from a server are selected
   const areAllServerToolsSelected = useCallback((serverName: string) => {
@@ -183,7 +213,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
       return true;
     }
     
-    const serverTools = getServerTools(serverName) || [];
+    const serverTools = storeActions.getServerTools(serverName) || [];
     if (!Array.isArray(serverTools) || serverTools.length === 0) return false;
     
     // Filter out "*" marker when counting specific tools
@@ -192,7 +222,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
     );
     
     return specificTools.length > 0 && serverTools.every(t => selectedTools.includes(`${serverName}:${t.name}`));
-  }, [getServerTools, selectedTools]);
+  }, [storeActions, selectedTools]);
 
   return (
     <div className="space-y-3">
@@ -216,9 +246,9 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
           })
           .map((serverName) => {
           const isExpanded = instance.expandedServers.has(serverName);
-          const isLoading = isServerLoading(instanceId, serverName);
+          const isLoading = storeActions.isServerLoading(instanceId, serverName);
           const isServerSelected = selectedServers.includes(serverName);
-          const serverTools = getServerTools(serverName) || [];
+          const serverTools = storeActions.getServerTools(serverName) || [];
           const allToolsSelected = areAllServerToolsSelected(serverName);
           
           // Calculate mode from selectedTools if not in serverToolMode (fallback for initial render)

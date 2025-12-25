@@ -65,12 +65,6 @@ func GetWorkflowConstants() WorkflowConstants {
 				Options:     []WorkflowPhaseOption{}, // No options for execution phase
 			},
 			{
-				ID:          "anonymize-learnings",
-				Title:       "Anonymize Learnings",
-				Description: "Scan the learnings folder (both .md files and Python scripts) to identify actual values that match known variables, request human confirmation, and replace them with variable placeholders for reusability across different environments.",
-				Options:     []WorkflowPhaseOption{}, // No options for anonymization phase
-			},
-			{
 				ID:          "plan-improvement",
 				Title:       "Plan Debugger",
 				Description: "Analyze execution results, plan.json, learnings folder, and validation reports to provide feedback and suggestions for improving the plan based on real execution outcomes.",
@@ -81,12 +75,6 @@ func GetWorkflowConstants() WorkflowConstants {
 				Title:       "Plan-Learnings Alignment",
 				Description: "Check alignment between plan.json and learnings folder. Identifies orphaned learning files (for deleted steps), missing learnings (for new steps), and provides options to manage mismatches.",
 				Options:     []WorkflowPhaseOption{}, // No options for alignment phase
-			},
-			{
-				ID:          "learning-consolidation",
-				Title:       "Learning Consolidation",
-				Description: "Analyze and consolidate learning files across the learnings/ folder. Identifies duplicate patterns, similar patterns, and outdated patterns. Consolidates redundant learnings to optimize learning structure for better future execution efficiency.",
-				Options:     []WorkflowPhaseOption{}, // No options for consolidation phase
 			},
 			{
 				ID:          "plan-tool-optimization",
@@ -145,11 +133,9 @@ type WorkflowOrchestrator struct {
 	presetLearningReadingLLM        *todo_creation_human.AgentLLMConfig // Default for learning reading agent
 	presetPlanningLLM               *todo_creation_human.AgentLLMConfig // Default for planning agent
 	presetVariableExtractionLLM     *todo_creation_human.AgentLLMConfig // Default for variable extraction agent
-	presetAnonymizationLLM          *todo_creation_human.AgentLLMConfig // Default for anonymization agent
 	presetPlanImprovementLLM        *todo_creation_human.AgentLLMConfig // Default for plan improvement agent
 	presetPlanToolOptimizationLLM   *todo_creation_human.AgentLLMConfig // Default for plan tool optimization agent
 	presetPlanLearningsAlignmentLLM *todo_creation_human.AgentLLMConfig // Default for plan learnings alignment agent
-	presetLearningConsolidationLLM  *todo_creation_human.AgentLLMConfig // Default for learning consolidation agent
 
 	// Frontend-provided execution options (when provided, skips interactive prompts)
 	executionOptions *todo_creation_human.ExecutionOptions
@@ -250,7 +236,7 @@ func NewWorkflowOrchestrator(
 	}
 
 	// Extract agent-specific defaults from preset LLM config
-	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetLearningReadingLLM, presetPlanningLLM, presetVariableExtractionLLM, presetAnonymizationLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM, presetPlanLearningsAlignmentLLM, presetLearningConsolidationLLM *todo_creation_human.AgentLLMConfig
+	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetLearningReadingLLM, presetPlanningLLM, presetVariableExtractionLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM, presetPlanLearningsAlignmentLLM *todo_creation_human.AgentLLMConfig
 	if presetLLMConfig != nil {
 		// Use agent-specific defaults if available, otherwise fall back to legacy single default
 		if presetLLMConfig.ExecutionLLM != nil && presetLLMConfig.ExecutionLLM.Provider != "" && presetLLMConfig.ExecutionLLM.ModelID != "" {
@@ -333,11 +319,9 @@ func NewWorkflowOrchestrator(
 		presetLearningReadingLLM:        presetLearningReadingLLM,
 		presetPlanningLLM:               presetPlanningLLM,
 		presetVariableExtractionLLM:     presetVariableExtractionLLM,
-		presetAnonymizationLLM:          presetAnonymizationLLM,
 		presetPlanImprovementLLM:        presetPlanImprovementLLM,
 		presetPlanToolOptimizationLLM:   presetPlanToolOptimizationLLM,
 		presetPlanLearningsAlignmentLLM: presetPlanLearningsAlignmentLLM,
-		presetLearningConsolidationLLM:  presetLearningConsolidationLLM,
 	}
 
 	return wo, nil
@@ -367,11 +351,6 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return wo.runPlanningOnly(ctx, objective, selectedOptions)
 	}
 
-	if workflowStatus == "anonymize-learnings" {
-		wo.GetLogger().Info(fmt.Sprintf("🔒 Routing to anonymize learnings phase (workflowStatus: %s)", workflowStatus))
-		return wo.runAnonymization(ctx, objective, selectedOptions)
-	}
-
 	if workflowStatus == "plan-improvement" {
 		wo.GetLogger().Info(fmt.Sprintf("📊 Routing to plan improvement phase (workflowStatus: %s)", workflowStatus))
 		return wo.runPlanImprovement(ctx, objective, selectedOptions)
@@ -380,11 +359,6 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	if workflowStatus == "plan-learnings-alignment" {
 		wo.GetLogger().Info(fmt.Sprintf("🔍 Routing to plan-learnings alignment phase (workflowStatus: %s)", workflowStatus))
 		return wo.runPlanLearningsAlignment(ctx, objective, selectedOptions)
-	}
-
-	if workflowStatus == "learning-consolidation" {
-		wo.GetLogger().Info(fmt.Sprintf("🔍 Routing to learning consolidation phase (workflowStatus: %s)", workflowStatus))
-		return wo.runLearningConsolidation(ctx, objective, selectedOptions)
 	}
 
 	if workflowStatus == "plan-tool-optimization" {
@@ -430,7 +404,7 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 		wo.presetLearningReadingLLM,
 		wo.presetPlanningLLM,
 		wo.presetVariableExtractionLLM,
-		wo.presetAnonymizationLLM,
+		nil, // presetAnonymizationLLM (deprecated, no longer used)
 		wo.presetPlanImprovementLLM,
 	)
 	if err != nil {
@@ -447,28 +421,6 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 	return result, nil
 }
 
-// runAnonymization runs only the anonymization phase
-func (wo *WorkflowOrchestrator) runAnonymization(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("🔒 Starting Anonymize Learnings Phase"))
-
-	// Create anonymization manager directly (independent from controller)
-	anonymizationManager := todo_creation_human.NewAnonymizationManager(
-		wo.BaseOrchestrator,
-		wo.getSessionID(),
-		wo.getWorkflowID(),
-		wo.presetLearningLLM, // Pass learning LLM (primary LLM for anonymization)
-	)
-
-	// Run only anonymization
-	result, err := anonymizationManager.AnonymizeLearningsOnly(ctx, wo.GetWorkspacePath())
-	if err != nil {
-		return "", fmt.Errorf("anonymization failed: %w", err)
-	}
-
-	wo.GetLogger().Info(fmt.Sprintf("✅ Anonymization completed successfully"))
-	return result, nil
-}
-
 // runPlanImprovement runs only the plan improvement phase
 func (wo *WorkflowOrchestrator) runPlanImprovement(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
 	wo.GetLogger().Info(fmt.Sprintf("📊 Starting Plan Improvement Phase"))
@@ -482,8 +434,17 @@ func (wo *WorkflowOrchestrator) runPlanImprovement(ctx context.Context, objectiv
 		wo.getWorkflowID(),
 	)
 
+	// Extract selected_run_folder from execution options if available
+	var runPath string
+	if wo.executionOptions != nil && wo.executionOptions.SelectedRunFolder != "" {
+		runPath = wo.executionOptions.SelectedRunFolder
+		wo.GetLogger().Info(fmt.Sprintf("📊 Using selected_run_folder from execution options: %s", runPath))
+	} else {
+		wo.GetLogger().Info(fmt.Sprintf("📊 No selected_run_folder in execution options, will ask user for path"))
+	}
+
 	// Run only plan improvement
-	result, err := planImprovementManager.PlanImprovementOnly(ctx, wo.GetWorkspacePath())
+	result, err := planImprovementManager.PlanImprovementOnly(ctx, wo.GetWorkspacePath(), runPath)
 	if err != nil {
 		return "", fmt.Errorf("plan improvement failed: %w", err)
 	}
@@ -511,28 +472,6 @@ func (wo *WorkflowOrchestrator) runPlanLearningsAlignment(ctx context.Context, o
 	}
 
 	wo.GetLogger().Info(fmt.Sprintf("✅ Plan-learnings alignment check completed successfully"))
-	return result, nil
-}
-
-// runLearningConsolidation runs only the learning consolidation phase
-func (wo *WorkflowOrchestrator) runLearningConsolidation(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Learning Consolidation Phase"))
-
-	// Create learning consolidation manager directly (independent from controller)
-	consolidationManager := todo_creation_human.NewLearningConsolidationManager(
-		wo.BaseOrchestrator,
-		wo.getSessionID(),
-		wo.getWorkflowID(),
-		wo.presetLearningLLM, // Pass learning LLM (primary LLM for learning consolidation)
-	)
-
-	// Run only consolidation
-	result, err := consolidationManager.ConsolidateLearningsOnly(ctx, wo.GetWorkspacePath())
-	if err != nil {
-		return "", fmt.Errorf("learning consolidation failed: %w", err)
-	}
-
-	wo.GetLogger().Info(fmt.Sprintf("✅ Learning consolidation completed successfully"))
 	return result, nil
 }
 
@@ -599,7 +538,7 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.presetLearningReadingLLM,
 		wo.presetPlanningLLM,
 		wo.presetVariableExtractionLLM,
-		wo.presetAnonymizationLLM,
+		nil, // presetAnonymizationLLM (deprecated, no longer used)
 		wo.presetPlanImprovementLLM,
 	)
 	if err != nil {
@@ -746,10 +685,8 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 				validStatuses := []string{
 					"planning",                             // Planning phase
 					database.WorkflowStatusPreVerification, // Execution phase
-					"anonymize-learnings",                  // Anonymize learnings phase
 					"plan-improvement",                     // Plan improvement phase
 					"plan-learnings-alignment",             // Plan-learnings alignment phase
-					"learning-consolidation",               // Learning consolidation phase
 					"plan-tool-optimization",               // Plan tool optimization phase
 				}
 				valid := false

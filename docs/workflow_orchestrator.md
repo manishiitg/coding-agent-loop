@@ -302,8 +302,9 @@ graph TB
 - **Output**: Learning analysis, Updates to `plan.json`, Learning files in `learnings/`
 - **Features**: Pattern Extraction, Plan Enhancement, Detail Levels (`exact`/`general`)
 - **Step-Specific Folders**: 
-  - Regular steps: `learnings/step-{X}/` (at workspace root)
-  - Branch steps: `learnings/step-{parentStep}-{true/false}-{branchIdx}/` (at workspace root)
+  - Regular steps: `learnings/{step_id}/` (using step IDs from plan.json, at workspace root)
+  - Branch steps: `learnings/{step_id}/` (using step IDs from plan.json, where step_id is the branch step's own ID, at workspace root)
+  - Orchestration sub-agents: `learnings/{step_id}/` (using step IDs from plan.json, where step_id is the sub-agent's own ID, at workspace root)
 
 **Specialized Variant: Code Execution Learning Agent**
 - **File**: `learning_agent_code_execution.go`
@@ -604,24 +605,31 @@ Each agent can be configured with custom LLM settings.
 **Location**: All step-specific folders are at workspace root, not inside `runs/`.
 
 ### Regular Steps
-- **Learning folder**: `learnings/step-{X}/` (e.g., `learnings/step-1/`, `learnings/step-3/`)
-- **Execution folder**: `execution/step-{X}/` (e.g., `execution/step-1/`, `execution/step-3/`)
-- **Step path format**: `step-{X}` where X is the 1-based step number
+- **Learning folder**: `learnings/{step_id}/` (using step IDs from plan.json, e.g., `learnings/deploy-application/`, `learnings/setup-credentials/`)
+- **Execution folder**: `execution/step-{X}/` (still uses step numbers, e.g., `execution/step-1/`, `execution/step-3/`)
+- **Step path format**: `step-{X}` where X is the 1-based step number (for execution paths)
 
 ### Branch Steps (Conditional Steps)
-- **Learning folder**: `learnings/step-{parentStep}-{true/false}-{branchIdx}/` 
-  - Example: `learnings/step-3-true-0/` (first "if true" branch of step 3)
-  - Example: `learnings/step-3-false-1/` (second "if false" branch of step 3)
-- **Execution folder**: `execution/step-{parentStep}-{true/false}-{branchIdx}/`
+- **Learning folder**: `learnings/{step_id}/` (using step IDs from plan.json, where step_id is the branch step's own ID)
+  - Example: `learnings/verify-deployment-health/` (where `verify-deployment-health` is the branch step's own ID)
+  - Example: `learnings/rollback-deployment/` (where `rollback-deployment` is the branch step's own ID)
+- **Execution folder**: `execution/step-{parentStep}-{true/false}-{branchIdx}/` (still uses step numbers)
   - Example: `execution/step-3-true-0/`
 - **Step path format**: `step-{parentStep}-if-{true/false}-{branchIdx}` (e.g., `step-3-if-true-0`)
 
+### Orchestration Sub-Agents
+- **Learning folder**: `learnings/{step_id}/` (using step IDs from plan.json, where step_id is the sub-agent's own ID)
+  - Example: `learnings/auth-error-handler/` (where `auth-error-handler` is the sub-agent step's own ID)
+- **Execution folder**: `execution/step-{X}-sub-agent-{index}/` (still uses step numbers)
+
 ### Key Rules
-- **Regular steps**: Use numeric step index (1-based) in folder name
-- **Branch steps**: Include parent step number, branch type (true/false), and branch index (0-based)
+- **Learning folders**: Use step IDs (the 'id' field from plan.json) - stable identifiers that don't change when steps are reordered
+- **Execution/logs folders**: Still use step numbers (1-based) for backward compatibility
+- **Branch steps**: Use the branch step's own step ID (from the branch step's 'id' field)
+- **Orchestration sub-agents**: Use the sub-agent's own step ID (from sub_agent_step.id field)
 - **All folders**: Located at workspace root, not inside `runs/` directory
-- **Learning agents**: Automatically use correct folder based on `stepPath` (regular or branch)
-- **Execution agents**: Use `getExecutionFolderPath()` and `getLearningFolderPath()` helpers
+- **Learning agents**: Automatically use correct folder based on step ID
+- **Execution agents**: Use `getExecutionFolderPath()` and `getLearningFolderPathByStepID()` helpers
 
 ### Helper Functions
 - **`parseStepPath(stepPath string) StepPathInfo`**: Parses step paths into structured info

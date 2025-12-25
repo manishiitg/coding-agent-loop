@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # Script to run the MCP agent server with logging enabled
 # This makes it easier to debug event issues by capturing all output to a log file
 # AND displaying it in real-time on the console using tee
@@ -46,6 +45,12 @@ export LANGFUSE_DEBUG="true"
 export OBSERVABILITY_DEBUG="true"
 export OBSERVABILITY_ENABLED="true"
 
+# Set MCP_GENERATED_DIR to point to agent_go/generated/
+# This ensures code generation happens in the correct location
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export MCP_GENERATED_DIR="${SCRIPT_DIR}/generated"
+echo "🔧 Set MCP_GENERATED_DIR to: $MCP_GENERATED_DIR"
+
 # Set agent mode to simple for better reliability
 export DEEP_SEARCH_AGENT_MODE="simple"
 
@@ -62,7 +67,15 @@ export MCP_CACHE_TTL_MINUTES="10080"
 export ENABLE_CONTEXT_SUMMARIZATION="true"
 export SUMMARIZE_ON_TOKEN_THRESHOLD="true"
 export TOKEN_THRESHOLD_PERCENT="0.7"  # 70% threshold (default: 0.7 = 70%)
-export SUMMARY_KEEP_LAST_MESSAGES="8"  # Keep last 8 messages when summarizing
+export SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD="true"  # Enable fixed token threshold
+export FIXED_TOKEN_THRESHOLD="100000"  # Trigger summarization at 100k tokens (default: 100000)
+export SUMMARY_KEEP_LAST_MESSAGES="4"  # Keep last 4 messages when summarizing (roughly 2 turns)
+
+# Context editing configuration (compacts large tool outputs)
+# Note: Higher thresholds preserve cached tokens for cost efficiency
+export ENABLE_CONTEXT_EDITING="true"  # Enable context editing (default: true)
+export CONTEXT_EDITING_THRESHOLD="10000"  # Compact outputs larger than 10k tokens (default: 10000)
+export CONTEXT_EDITING_TURN_THRESHOLD="10"  # Compact outputs older than 10 turns (default: 10)
 
 # Context editing configuration (dynamic context reduction)
 export ENABLE_CONTEXT_EDITING="true"
@@ -72,7 +85,7 @@ export CONTEXT_EDITING_TURN_THRESHOLD="5"  # Turn age threshold (default: 5 turn
 # Set main LLM configuration
 export DEEP_SEARCH_MAIN_LLM_PROVIDER="openrouter"
 export DEEP_SEARCH_MAIN_LLM_MODEL="x-ai/grok-code-fast-1"
-export DEEP_SEARCH_MAIN_LLM_TEMPERATURE="0.2"
+export DEEP_SEARCH_MAIN_LLM_TEMPERATURE="0.0"
 export DEEP_SEARCH_MAIN_LLM_MAX_TOKENS="40000"
 
 # Set agent provider environment variable (used by server.go)
@@ -108,10 +121,12 @@ export DEEP_SEARCH_STRUCTURED_OUTPUT_TEMPERATURE="0.0"
 # Create logs directory if it doesn't exist
 mkdir -p logs
 
-# Truncate the log file to start fresh
-echo "📝 Truncating log file for clean start..."
+# Truncate the log files to start fresh
+echo "📝 Truncating log files for clean start..."
 > "$LOG_FILE"
-echo "✅ Log file truncated: $LOG_FILE"
+echo "✅ Server log file truncated: $LOG_FILE"
+> "logs/llm_debug.log"
+echo "✅ LLM log file truncated: logs/llm_debug.log"
 
 # Add timestamp header to log file
 echo "🚀 MCP Agent Server Session Started: $(date)" | tee "$LOG_FILE"
@@ -135,11 +150,9 @@ echo "- Available OpenAI Models: $OPENAI_AVAILABLE_MODELS" | tee -a "$LOG_FILE"
 echo "- Structured Output LLM: $DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER/$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL" | tee -a "$LOG_FILE"
 echo "- Workspace tools: Enabled" | tee -a "$LOG_FILE"
 echo "- Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION" | tee -a "$LOG_FILE"
-echo "- Token Threshold: $TOKEN_THRESHOLD_PERCENT (70%)" | tee -a "$LOG_FILE"
+echo "- Token Threshold: $TOKEN_THRESHOLD_PERCENT (70%) | Fixed: ${FIXED_TOKEN_THRESHOLD} tokens" | tee -a "$LOG_FILE"
 echo "- Keep Last Messages: $SUMMARY_KEEP_LAST_MESSAGES" | tee -a "$LOG_FILE"
-echo "- Context Editing: $ENABLE_CONTEXT_EDITING" | tee -a "$LOG_FILE"
-echo "- Context Editing Threshold: $CONTEXT_EDITING_THRESHOLD tokens" | tee -a "$LOG_FILE"
-echo "- Context Editing Turn Threshold: $CONTEXT_EDITING_TURN_THRESHOLD turns" | tee -a "$LOG_FILE"
+echo "- Context Editing: $ENABLE_CONTEXT_EDITING (Threshold: ${CONTEXT_EDITING_THRESHOLD} tokens, Age: ${CONTEXT_EDITING_TURN_THRESHOLD} turns)" | tee -a "$LOG_FILE"
 echo "=========================================" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 
@@ -156,8 +169,8 @@ echo "🔄 OpenRouter Cross-Provider Fallback: $OPENROUTER_CROSS_FALLBACK_PROVID
 echo "🔄 Vertex Anthropic Fallback Models: $VERTEX_ANTHROPIC_FALLBACK_MODELS"
 echo "🔧 Structured Output LLM: $DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER/$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL"
 echo "📁 Workspace Tools: Enabled"
-echo "📝 Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION (Threshold: $TOKEN_THRESHOLD_PERCENT = 70%)"
-echo "✂️  Context Editing: $ENABLE_CONTEXT_EDITING (Token Threshold: $CONTEXT_EDITING_THRESHOLD, Turn Threshold: $CONTEXT_EDITING_TURN_THRESHOLD)"
+echo "📝 Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION (Threshold: $TOKEN_THRESHOLD_PERCENT = 70%, Fixed: ${FIXED_TOKEN_THRESHOLD} tokens, Keep: $SUMMARY_KEEP_LAST_MESSAGES msgs)"
+echo "✂️  Context Editing: $ENABLE_CONTEXT_EDITING (Threshold: ${CONTEXT_EDITING_THRESHOLD} tokens, Age: ${CONTEXT_EDITING_TURN_THRESHOLD} turns)"
 echo "📊 Debug level: $LOG_LEVEL"
 
 # Run the server with all the enhanced configuration and log to both file and console
@@ -172,7 +185,7 @@ go run main.go server \
     --provider "$DEEP_SEARCH_MAIN_LLM_PROVIDER" \
     --model "$DEEP_SEARCH_MAIN_LLM_MODEL" \
     --temperature "$DEEP_SEARCH_MAIN_LLM_TEMPERATURE" \
-    --max-turns 30 \
+    --max-turns 50 \
     --mcp-config "configs/mcp_servers_clean.json" \
     --agent-mode "$DEEP_SEARCH_AGENT_MODE" \
     --structured-output-provider "$DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER" \

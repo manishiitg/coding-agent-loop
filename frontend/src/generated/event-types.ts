@@ -84,6 +84,7 @@ import type {
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
   DecisionEvaluatedEvent,
+  PrerequisiteNavigationEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,
@@ -129,6 +130,13 @@ import type {
   BatchGroupEndEvent,
   BatchExecutionEndEvent,
 } from './events-bridge';
+
+// Import event types that exist in events.ts but not in events-bridge.ts
+import type {
+  ContextEditingCompletedEvent,
+  ContextEditingErrorEvent,
+  PreValidationCompletedEvent,
+} from './events';
 
 // =============================================================================
 // EVENT TYPE CONSTANTS
@@ -197,6 +205,8 @@ export type EventTypeString =
   | 'step_token_usage'
   | 'step_progress_updated'
   | 'decision_evaluated'
+  | 'prerequisite_navigation'
+  | 'pre_validation_completed'
   | 'todo_steps_extracted'
   | 'variables_extracted'
   | 'independent_steps_selected'
@@ -313,6 +323,8 @@ export interface EventTypeToDataMap {
   'step_token_usage': StepTokenUsageEvent;
   'step_progress_updated': StepProgressUpdatedEvent;
   'decision_evaluated': DecisionEvaluatedEvent;
+  'prerequisite_navigation': PrerequisiteNavigationEvent;
+  'pre_validation_completed': PreValidationCompletedEvent;
   'todo_steps_extracted': TodoStepsExtractedEvent;
   'variables_extracted': VariablesExtractedEvent;
   'independent_steps_selected': IndependentStepsSelectedEvent;
@@ -604,6 +616,7 @@ export type {
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
   DecisionEvaluatedEvent,
+  PrerequisiteNavigationEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,
@@ -619,3 +632,11 @@ export type {
   BatchGroupEndEvent,
   BatchExecutionEndEvent,
 } from './events-bridge';
+
+// Export nested types from events.ts (used by event types but not in events-bridge.ts)
+export type {
+  FileCheckResultForEvent,
+  JSONCheckResultForEvent,
+  ValidationErrorForEvent,
+  TodoStep,
+} from './events';

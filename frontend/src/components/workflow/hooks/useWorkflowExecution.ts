@@ -201,7 +201,9 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
               console.warn('[useWorkflowExecution] Failed to reload run folders:', err)
             })
             
-            // Load progress for the selected folder
+            // Note: loadProgress will automatically skip during execution (isStreaming=true)
+            // and trust step_progress_updated events instead to avoid race conditions.
+            // This is safe to call - it won't overwrite progress during active execution.
             loadProgress(workspacePath, runFolder).catch(err => {
               console.warn('[useWorkflowExecution] Failed to load progress:', err)
             })

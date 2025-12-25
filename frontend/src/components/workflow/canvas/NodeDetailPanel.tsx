@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import type { WorkflowNode } from '../hooks/usePlanToFlow'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
+import { isConditionalStep, isRegularStep } from '../../../utils/stepConfigMatching'
 
 interface NodeDetailPanelProps {
   node: WorkflowNode | null
@@ -45,8 +46,8 @@ export const NodeDetailPanel: React.FC<NodeDetailPanelProps> = ({
   }
 
   const step = node.data.step as PlanStep
-  const isConditional = step.has_condition
-  const isLoop = step.has_loop
+  const isConditional = isConditionalStep(step)
+  const isLoop = isRegularStep(step) && step.has_loop
 
   const handleStartEdit = () => {
     setEditedTitle(step.title || '')

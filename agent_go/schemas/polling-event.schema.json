@@ -1,87 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
-    "AgentConfigs": {
-      "properties": {
-        "execution_llm": {
-          "$ref": "#/$defs/AgentLLMConfig"
-        },
-        "validation_llm": {
-          "$ref": "#/$defs/AgentLLMConfig"
-        },
-        "learning_llm": {
-          "$ref": "#/$defs/AgentLLMConfig"
-        },
-        "conditional_llm": {
-          "$ref": "#/$defs/AgentLLMConfig"
-        },
-        "execution_max_turns": {
-          "type": "integer"
-        },
-        "validation_max_turns": {
-          "type": "integer"
-        },
-        "learning_max_turns": {
-          "type": "integer"
-        },
-        "disable_validation": {
-          "type": "boolean"
-        },
-        "disable_learning": {
-          "type": "boolean"
-        },
-        "lock_learnings": {
-          "type": "boolean"
-        },
-        "learning_after_loop_iteration": {
-          "type": "boolean"
-        },
-        "learning_detail_level": {
-          "type": "string"
-        },
-        "selected_servers": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "selected_tools": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "enabled_custom_tool_categories": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "enabled_custom_tools": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "enable_large_output_virtual_tools": {
-          "type": "boolean"
-        },
-        "use_code_execution_mode": {
-          "type": "boolean"
-        },
-        "enable_prerequisite_detection": {
-          "type": "boolean"
-        },
-        "prerequisite_rules": {
-          "items": {
-            "$ref": "#/$defs/PrerequisiteRule"
-          },
-          "type": "array"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
     "AgentEndEvent": {
       "properties": {
         "timestamp": {
@@ -250,18 +169,6 @@
         "data": {
           "$ref": "#/$defs/EventDataUnion",
           "description": "The actual typed event data"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "AgentLLMConfig": {
-      "properties": {
-        "provider": {
-          "type": "string"
-        },
-        "model_id": {
-          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1964,18 +1871,6 @@
       "additionalProperties": false,
       "type": "object"
     },
-    "DecisionResponse": {
-      "properties": {
-        "result": {
-          "type": "boolean"
-        },
-        "reasoning": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
     "DecisionResponseEvent": {
       "properties": {
         "result": {
@@ -2244,6 +2139,9 @@
         "decision_evaluated": {
           "$ref": "#/$defs/DecisionEvaluatedEvent"
         },
+        "pre_validation_completed": {
+          "$ref": "#/$defs/PreValidationCompletedEvent"
+        },
         "todo_steps_extracted": {
           "$ref": "#/$defs/TodoStepsExtractedEvent"
         },
@@ -2357,6 +2255,9 @@
         },
         "batch_execution_end": {
           "$ref": "#/$defs/BatchExecutionEndEvent"
+        },
+        "prerequisite_navigation": {
+          "$ref": "#/$defs/PrerequisiteNavigationEvent"
         }
       },
       "additionalProperties": false,
@@ -2365,100 +2266,103 @@
     "EventType": {
       "type": "string",
       "enum": [
-        "agent_end",
-        "agent_error",
-        "agent_processing",
-        "agent_start",
-        "batch_execution_end",
-        "batch_execution_start",
-        "batch_group_end",
-        "batch_group_start",
-        "blocking_human_feedback",
-        "cache_cleanup",
-        "cache_error",
-        "cache_expired",
-        "cache_miss",
-        "cache_operation_start",
-        "cache_write",
-        "comprehensive_cache",
-        "context_cancelled",
-        "context_editing_completed",
-        "context_editing_error",
-        "context_summarization_completed",
-        "context_summarization_error",
-        "context_summarization_started",
-        "conversation_end",
-        "conversation_error",
-        "conversation_start",
-        "conversation_thinking",
-        "conversation_turn",
-        "decision_evaluated",
-        "debug",
-        "error_detail",
-        "fallback_attempt",
-        "fallback_model_used",
-        "human_verification_response",
-        "independent_steps_selected",
-        "json_validation_end",
-        "json_validation_start",
-        "large_tool_output_detected",
-        "large_tool_output_file_write_error",
-        "large_tool_output_file_written",
-        "large_tool_output_server_unavailable",
-        "llm_generation_end",
-        "llm_generation_error",
         "llm_generation_start",
         "llm_generation_with_retry",
-        "llm_messages",
-        "llm_token_usage",
-        "mcp_server_connection",
-        "mcp_server_connection_end",
-        "mcp_server_connection_error",
-        "mcp_server_connection_start",
+        "context_cancelled",
+        "context_summarization_completed",
+        "large_tool_output_file_write_error",
+        "streaming_start",
+        "tool_call_error",
         "mcp_server_discovery",
-        "mcp_server_selection",
         "model_change",
-        "max_turns_reached",
-        "orchestrator_agent_end",
-        "orchestrator_agent_error",
-        "orchestrator_agent_start",
-        "orchestrator_end",
         "orchestrator_error",
-        "orchestrator_start",
-        "performance",
-        "request_human_feedback",
-        "smart_routing_end",
-        "smart_routing_start",
-        "step_execution_end",
+        "blocking_human_feedback",
+        "agent_processing",
+        "conversation_start",
         "step_execution_failed",
-        "step_execution_start",
-        "step_progress_updated",
         "step_token_usage",
         "streaming_chunk",
-        "streaming_connection_lost",
-        "streaming_end",
-        "streaming_error",
         "streaming_progress",
-        "streaming_start",
-        "structured_output_end",
-        "structured_output_error",
-        "structured_output_start",
-        "system_prompt",
-        "throttling_detected",
-        "todo_steps_extracted",
-        "token_limit_exceeded",
-        "token_usage",
-        "tool_call_end",
-        "tool_call_error",
         "tool_call_progress",
-        "tool_call_start",
-        "tool_execution",
+        "context_summarization_error",
+        "fallback_model_used",
+        "smart_routing_end",
+        "pre_validation_completed",
+        "streaming_error",
+        "cache_error",
+        "batch_group_start",
         "tool_output",
-        "tool_response",
-        "unified_completion",
         "user_message",
+        "cache_hit",
+        "json_validation_start",
+        "agent_end",
+        "tool_call_start",
         "variables_extracted",
-        "workspace_file_operation"
+        "system_prompt",
+        "large_tool_output_server_unavailable",
+        "comprehensive_cache",
+        "orchestrator_agent_error",
+        "todo_steps_extracted",
+        "token_usage",
+        "smart_routing_start",
+        "step_execution_start",
+        "structured_output_end",
+        "large_tool_output_detected",
+        "orchestrator_end",
+        "step_execution_end",
+        "step_progress_updated",
+        "prerequisite_navigation",
+        "cache_miss",
+        "json_validation_end",
+        "performance",
+        "agent_start",
+        "workspace_file_operation",
+        "mcp_server_connection",
+        "error_detail",
+        "context_editing_error",
+        "independent_steps_selected",
+        "debug",
+        "throttling_detected",
+        "human_verification_response",
+        "streaming_end",
+        "cache_write",
+        "cache_cleanup",
+        "mcp_server_connection_start",
+        "mcp_server_connection_end",
+        "tool_call_end",
+        "tool_execution",
+        "large_tool_output_file_written",
+        "fallback_attempt",
+        "cache_expired",
+        "conversation_thinking",
+        "llm_token_usage",
+        "max_turns_reached",
+        "token_limit_exceeded",
+        "orchestrator_agent_start",
+        "request_human_feedback",
+        "streaming_connection_lost",
+        "batch_execution_end",
+        "mcp_server_selection",
+        "context_summarization_started",
+        "orchestrator_start",
+        "orchestrator_agent_end",
+        "cache_operation_start",
+        "batch_group_end",
+        "conversation_turn",
+        "llm_generation_end",
+        "llm_generation_error",
+        "context_editing_completed",
+        "unified_completion",
+        "decision_evaluated",
+        "structured_output_start",
+        "mcp_server_connection_error",
+        "conversation_end",
+        "conversation_error",
+        "tool_response",
+        "structured_output_error",
+        "llm_messages",
+        "batch_execution_start",
+        "agent_error"
       ]
     },
     "FallbackAttemptEvent": {
@@ -2586,6 +2490,27 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "FileCheckResultForEvent": {
+      "properties": {
+        "file_name": {
+          "type": "string"
+        },
+        "exists": {
+          "type": "boolean"
+        },
+        "is_json": {
+          "type": "boolean"
+        },
+        "json_checks": {
+          "items": {
+            "$ref": "#/$defs/JSONCheckResultForEvent"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "HumanVerificationResponseEvent": {
       "properties": {
         "timestamp": {
@@ -2691,6 +2616,24 @@
         },
         "execution_batch": {
           "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "JSONCheckResultForEvent": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "check_type": {
+          "type": "string"
+        },
+        "error_msg": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -3866,48 +3809,6 @@
       "additionalProperties": false,
       "type": "object"
     },
-    "OrchestrationResponse": {
-      "properties": {
-        "selected_route_id": {
-          "type": "string"
-        },
-        "reasoning": {
-          "type": "string"
-        },
-        "success_criteria_met": {
-          "type": "boolean"
-        },
-        "success_reasoning": {
-          "type": "string"
-        },
-        "success_criteria_verified_by_validation": {
-          "type": "boolean"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "OrchestrationRoute": {
-      "properties": {
-        "route_id": {
-          "type": "string"
-        },
-        "route_name": {
-          "type": "string"
-        },
-        "condition": {
-          "type": "string"
-        },
-        "sub_agent_step": {
-          "$ref": "#/$defs/TodoStep"
-        },
-        "context_to_pass": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
     "OrchestratorAgentEndEvent": {
       "properties": {
         "timestamp": {
@@ -4401,12 +4302,143 @@
       "additionalProperties": false,
       "type": "object"
     },
-    "PrerequisiteRule": {
+    "PreValidationCompletedEvent": {
       "properties": {
-        "depends_on_step": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
           "type": "string"
         },
-        "description": {
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "step_id": {
+          "type": "string"
+        },
+        "step_index": {
+          "type": "integer"
+        },
+        "step_title": {
+          "type": "string"
+        },
+        "step_path": {
+          "type": "string"
+        },
+        "is_branch_step": {
+          "type": "boolean"
+        },
+        "overall_pass": {
+          "type": "boolean"
+        },
+        "total_checks": {
+          "type": "integer"
+        },
+        "passed_checks": {
+          "type": "integer"
+        },
+        "failed_checks": {
+          "type": "integer"
+        },
+        "files_checked": {
+          "items": {
+            "$ref": "#/$defs/FileCheckResultForEvent"
+          },
+          "type": "array"
+        },
+        "errors": {
+          "items": {
+            "$ref": "#/$defs/ValidationErrorForEvent"
+          },
+          "type": "array"
+        },
+        "run_folder": {
+          "type": "string"
+        },
+        "workspace_path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "PrerequisiteNavigationEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "from_step_index": {
+          "type": "integer"
+        },
+        "to_step_index": {
+          "type": "integer"
+        },
+        "from_step_id": {
+          "type": "string"
+        },
+        "to_step_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "failure_type": {
           "type": "string"
         }
       },
@@ -5596,117 +5628,6 @@
       "additionalProperties": false,
       "type": "object"
     },
-    "TodoStep": {
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "title": {
-          "type": "string"
-        },
-        "description": {
-          "type": "string"
-        },
-        "success_criteria": {
-          "type": "string"
-        },
-        "context_dependencies": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "context_output": {
-          "type": "string"
-        },
-        "has_loop": {
-          "type": "boolean"
-        },
-        "loop_condition": {
-          "type": "string"
-        },
-        "max_iterations": {
-          "type": "integer"
-        },
-        "loop_description": {
-          "type": "string"
-        },
-        "has_condition": {
-          "type": "boolean"
-        },
-        "condition_question": {
-          "type": "string"
-        },
-        "condition_context": {
-          "type": "string"
-        },
-        "if_true_steps": {
-          "items": {
-            "$ref": "#/$defs/TodoStep"
-          },
-          "type": "array"
-        },
-        "if_false_steps": {
-          "items": {
-            "$ref": "#/$defs/TodoStep"
-          },
-          "type": "array"
-        },
-        "if_true_next_step_id": {
-          "type": "string"
-        },
-        "if_false_next_step_id": {
-          "type": "string"
-        },
-        "condition_result": {
-          "type": "boolean"
-        },
-        "condition_reason": {
-          "type": "string"
-        },
-        "has_decision_step": {
-          "type": "boolean"
-        },
-        "decision_step": {
-          "$ref": "#/$defs/TodoStep"
-        },
-        "decision_evaluation_question": {
-          "type": "string"
-        },
-        "decision_result": {
-          "type": "boolean"
-        },
-        "decision_reason": {
-          "type": "string"
-        },
-        "decision_response": {
-          "$ref": "#/$defs/DecisionResponse"
-        },
-        "has_orchestration_step": {
-          "type": "boolean"
-        },
-        "orchestration_step": {
-          "$ref": "#/$defs/TodoStep"
-        },
-        "orchestration_routes": {
-          "items": {
-            "$ref": "#/$defs/OrchestrationRoute"
-          },
-          "type": "array"
-        },
-        "orchestration_response": {
-          "$ref": "#/$defs/OrchestrationResponse"
-        },
-        "next_step_id": {
-          "type": "string"
-        },
-        "agent_configs": {
-          "$ref": "#/$defs/AgentConfigs"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
     "TodoStepsExtractedEvent": {
       "properties": {
         "timestamp": {
@@ -5747,9 +5668,7 @@
           "type": "integer"
         },
         "extracted_steps": {
-          "items": {
-            "$ref": "#/$defs/TodoStep"
-          },
+          "items": true,
           "type": "array"
         },
         "extraction_method": {
@@ -6523,6 +6442,30 @@
           "type": "string"
         },
         "role": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ValidationErrorForEvent": {
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "check_type": {
+          "type": "string"
+        },
+        "expected": {
+          "type": "string"
+        },
+        "actual": {
+          "type": "string"
+        },
+        "message": {
           "type": "string"
         }
       },

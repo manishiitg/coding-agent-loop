@@ -618,7 +618,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           const newLabel = `${baseNameWithoutVersion}-v${nextVersion}`
           
           // Handle folder duplication if exists
-          let newFolder: PlannerFile | undefined = originalPreset.selectedFolder
+          let newFolder: PlannerFile | undefined = undefined
           if (originalPreset.selectedFolder?.filepath) {
             const originalFolderPath = originalPreset.selectedFolder.filepath
             const folderPathParts = originalFolderPath.split('/')
@@ -631,16 +631,87 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             folderPathParts[folderPathParts.length - 1] = newFolderName
             const newFolderPath = folderPathParts.join('/')
             
-            // Copy the folder
+            // Create empty new folder instead of copying
             try {
-              await agentApi.copyFolder(originalFolderPath, newFolderPath)
+              await agentApi.createPlannerFolder(newFolderPath, `Create folder for duplicated preset ${newLabel}`)
+              // Create new folder object with updated path
               newFolder = {
                 ...originalPreset.selectedFolder,
-                filepath: newFolderPath
+                filepath: newFolderPath,
+                type: 'folder' as const
               }
-            } catch (error) {
-              console.error('[PRESET] Error copying folder:', error)
-              // Continue without folder if copy fails
+              
+              // For workflow presets, copy plan.json, step_config.json, and variables.json
+              if (originalPreset.agentMode === 'workflow') {
+                const planJsonPath = `${originalFolderPath}/planning/plan.json`
+                const stepConfigJsonPath = `${originalFolderPath}/planning/step_config.json`
+                const variablesJsonPath = `${originalFolderPath}/variables/variables.json`
+                const newPlanJsonPath = `${newFolderPath}/planning/plan.json`
+                const newStepConfigJsonPath = `${newFolderPath}/planning/step_config.json`
+                const newVariablesJsonPath = `${newFolderPath}/variables/variables.json`
+                
+                // Create planning subdirectory if it doesn't exist
+                const planningFolderPath = `${newFolderPath}/planning`
+                try {
+                  await agentApi.createPlannerFolder(planningFolderPath, `Create planning folder for duplicated workflow preset ${newLabel}`)
+                } catch {
+                  // Planning folder might already exist, continue
+                }
+                
+                // Create variables subdirectory if it doesn't exist
+                const variablesFolderPath = `${newFolderPath}/variables`
+                try {
+                  await agentApi.createPlannerFolder(variablesFolderPath, `Create variables folder for duplicated workflow preset ${newLabel}`)
+                } catch {
+                  // Variables folder might already exist, continue
+                }
+                
+                try {
+                  // Copy plan.json
+                  const planResponse = await agentApi.getPlannerFileContent(planJsonPath)
+                  if (planResponse.success && planResponse.data?.content) {
+                    await agentApi.updatePlannerFile(
+                      newPlanJsonPath,
+                      planResponse.data.content,
+                      `Copy plan.json for duplicated workflow preset ${newLabel}`
+                    )
+                  }
+                } catch {
+                  // Continue even if plan.json copy fails
+                }
+                
+                try {
+                  // Copy step_config.json
+                  const stepConfigResponse = await agentApi.getPlannerFileContent(stepConfigJsonPath)
+                  if (stepConfigResponse.success && stepConfigResponse.data?.content) {
+                    await agentApi.updatePlannerFile(
+                      newStepConfigJsonPath,
+                      stepConfigResponse.data.content,
+                      `Copy step_config.json for duplicated workflow preset ${newLabel}`
+                    )
+                  }
+                } catch {
+                  // Continue even if step_config.json copy fails
+                }
+                
+                try {
+                  // Copy variables.json
+                  const variablesResponse = await agentApi.getPlannerFileContent(variablesJsonPath)
+                  if (variablesResponse.success && variablesResponse.data?.content) {
+                    await agentApi.updatePlannerFile(
+                      newVariablesJsonPath,
+                      variablesResponse.data.content,
+                      `Copy variables.json for duplicated workflow preset ${newLabel}`
+                    )
+                  }
+                } catch {
+                  // Continue even if variables.json copy fails
+                }
+              }
+            } catch {
+              // Continue without folder if creation fails
+              // Reset newFolder to undefined if folder creation failed
+              newFolder = undefined
             }
           }
           
@@ -673,8 +744,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                   )
                 }
               }
-            } catch (error) {
-              console.error('[PRESET] Error duplicating workflow:', error)
+            } catch {
               // Continue even if workflow duplication fails
             }
           }

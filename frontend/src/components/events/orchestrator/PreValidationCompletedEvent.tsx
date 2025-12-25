@@ -1,43 +1,7 @@
 import React, { useState } from 'react'
+import type { PreValidationCompletedEvent, FileCheckResultForEvent, ValidationErrorForEvent } from '../../../generated/event-types'
 
-interface FileCheckResultForEvent {
-  file_name: string
-  exists: boolean
-  is_json: boolean
-  json_checks: JSONCheckResultForEvent[]
-}
-
-interface JSONCheckResultForEvent {
-  path: string
-  passed: boolean
-  check_type: string
-  error_msg?: string
-}
-
-interface ValidationErrorForEvent {
-  file: string
-  path: string
-  check_type: string
-  expected: string
-  actual: string
-  message: string
-}
-
-interface PreValidationCompletedEventData {
-  step_id?: string
-  step_index?: number
-  step_title?: string
-  step_path?: string
-  is_branch_step?: boolean
-  overall_pass: boolean
-  total_checks: number
-  passed_checks: number
-  failed_checks: number
-  files_checked: FileCheckResultForEvent[]
-  errors?: ValidationErrorForEvent[]
-  run_folder?: string
-  workspace_path?: string
-}
+type PreValidationCompletedEventData = PreValidationCompletedEvent
 
 interface PreValidationCompletedEventDisplayProps {
   event: PreValidationCompletedEventData
@@ -50,29 +14,32 @@ export const PreValidationCompletedEventDisplay: React.FC<PreValidationCompleted
 }) => {
   const [isExpanded, setIsExpanded] = useState(false)
 
-  const passRate = event.total_checks > 0 
-    ? Math.round((event.passed_checks / event.total_checks) * 100) 
+  const totalChecks = event.total_checks ?? 0
+  const passedChecks = event.passed_checks ?? 0
+  const overallPass = event.overall_pass ?? false
+  const passRate = totalChecks > 0 
+    ? Math.round((passedChecks / totalChecks) * 100) 
     : 0
 
   return (
     <div className={`${
-      event.overall_pass 
+      overallPass 
         ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800' 
         : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
     } rounded-md ${compact ? 'p-2' : 'p-3'}`}>
       <div className={`${compact ? 'text-xs' : 'text-sm'} ${
-        event.overall_pass 
+        overallPass 
           ? 'text-green-700 dark:text-green-300' 
           : 'text-red-700 dark:text-red-300'
       }`}>
         <div className="font-medium flex items-center gap-2">
-          <span>🔍 Pre-Validation {event.overall_pass ? 'Passed' : 'Failed'}</span>
+          <span>🔍 Pre-Validation {overallPass ? 'Passed' : 'Failed'}</span>
           <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
-            event.overall_pass 
+            overallPass 
               ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' 
               : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
           }`}>
-            {event.passed_checks}/{event.total_checks} checks passed ({passRate}%)
+            {passedChecks}/{totalChecks} checks passed ({passRate}%)
           </span>
         </div>
         
@@ -98,22 +65,22 @@ export const PreValidationCompletedEventDisplay: React.FC<PreValidationCompleted
 
         {/* Summary Stats */}
         <div className={`${compact ? 'text-[10px]' : 'text-xs'} ${
-          event.overall_pass 
+          overallPass 
             ? 'text-green-600 dark:text-green-400' 
             : 'text-red-600 dark:text-red-400'
         } mt-2`}>
           <div className="grid grid-cols-3 gap-2">
             <div>
               <div className="font-medium">Total Checks</div>
-              <div>{event.total_checks}</div>
+              <div>{totalChecks}</div>
             </div>
             <div>
               <div className="font-medium">Passed</div>
-              <div className="text-green-600 dark:text-green-400">{event.passed_checks}</div>
+              <div className="text-green-600 dark:text-green-400">{passedChecks}</div>
             </div>
             <div>
               <div className="font-medium">Failed</div>
-              <div className="text-red-600 dark:text-red-400">{event.failed_checks}</div>
+              <div className="text-red-600 dark:text-red-400">{event.failed_checks ?? 0}</div>
             </div>
           </div>
         </div>
@@ -134,7 +101,7 @@ export const PreValidationCompletedEventDisplay: React.FC<PreValidationCompleted
             
             {isExpanded && (
               <div className="mt-2 space-y-2">
-                {event.files_checked.map((fileCheck, idx) => (
+                {event.files_checked.map((fileCheck: FileCheckResultForEvent, idx: number) => (
                   <div 
                     key={idx}
                     className={`${compact ? 'text-[10px]' : 'text-xs'} bg-white dark:bg-gray-800 rounded p-2 border ${
@@ -194,7 +161,7 @@ export const PreValidationCompletedEventDisplay: React.FC<PreValidationCompleted
               Validation Errors:
             </div>
             <div className="mt-1 space-y-1">
-              {event.errors.map((error, idx) => (
+              {event.errors.map((error: ValidationErrorForEvent, idx: number) => (
                 <div 
                   key={idx}
                   className={`${compact ? 'text-[10px]' : 'text-xs'} bg-red-50 dark:bg-red-900/20 rounded p-2 border border-red-200 dark:border-red-800`}

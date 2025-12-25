@@ -19,10 +19,11 @@ import type {
   ConditionalNodeData, 
   DecisionNodeData,
   LoopNodeData,
+  OrchestratorNodeData,
   ValidationNodeData,
   LearningNodeData
 } from '../hooks/usePlanToFlow'
-import type { PlanStep, PlanningResponse, AgentConfigs } from '../../../utils/stepConfigMatching'
+import type { PlanStep, PlanningResponse, AgentConfigs, ValidationSchema } from '../../../utils/stepConfigMatching'
 import type { TodoStepWithConfigs } from '../../../utils/stepConfigMatching'
 import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep } from '../../../utils/stepConfigMatching'
 
@@ -114,7 +115,18 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       
       // Start the phase through the parent component
       if (onStartPhase) {
-        onStartPhase(phaseId, node.id)
+        // For plan-improvement phase, pass execution options with selected_run_folder
+        // Other step-specific phases (plan-tool-optimization, plan-learnings-alignment) can also benefit from this
+        if (phaseId === 'plan-improvement' || phaseId === 'plan-tool-optimization' || phaseId === 'plan-learnings-alignment') {
+          // Build execution options to include selected_run_folder
+          const buildExecutionOptions = useWorkflowStore.getState().buildExecutionOptions
+          const executionOptions = buildExecutionOptions()
+          console.log('[StepSidebar] Starting', phaseId, 'with execution options:', executionOptions)
+          onStartPhase(phaseId, executionOptions)
+        } else {
+          // For other phases, pass stepId as before
+          onStartPhase(phaseId, node.id)
+        }
       }
     } catch (error) {
       console.error('[StepSidebar] Failed to start phase:', error)
@@ -354,7 +366,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       context_output: Array.isArray(planStep.context_output) 
         ? planStep.context_output.join(', ') 
         : planStep.context_output,
-      agent_configs: planStep.agent_configs
+      agent_configs: planStep.agent_configs,
+      validation_schema: planStep.validation_schema
     }
 
     if (isRegularStep(planStep)) {
@@ -416,9 +429,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     // Validation/learning nodes don't have step data
     if (node.type === 'validation' || node.type === 'learning') return null
     
-    // Check if step exists (for step/conditional/loop nodes)
+    // Check if step exists (for step/conditional/loop/decision/orchestrator nodes)
     // Sub-agents are type 'step', so they should be handled here
-    const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
+    const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
     if (!stepData || !stepData.step) {
       return null
     }
@@ -431,8 +444,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
   // Initialize edit fields when node changes or edit mode is enabled
   React.useEffect(() => {
-    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop')) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
+    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator')) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
       if (stepData.step) {
         const step = stepData.step
         setEditedTitle(step.title || '')
@@ -450,8 +463,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
   // Handle start edit
   const handleStartEdit = () => {
-    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop')) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
+    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator')) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
       if (stepData.step) {
         const step = stepData.step
         setEditedTitle(step.title || '')
@@ -507,8 +520,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   const handleCancelEdit = () => {
     setIsEditing(false)
     // Reset to original values
-    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop')) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
+    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator')) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
       if (stepData.step) {
         const step = stepData.step
         setEditedTitle(step.title || '')
@@ -593,7 +606,25 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         agent_configs: agentConfigs
       } as Partial<PlanStep>
 
+      // Save to parent step
       await onEditStep(stepId, updates)
+
+      // For decision steps, also save agent_configs to the inner step
+      if (stepDataForLogging && isDecisionStep(stepDataForLogging) && stepDataForLogging.decision_step?.id) {
+        const innerStepId = stepDataForLogging.decision_step.id
+        console.log('[StepSidebar] Saving agent config to inner step of decision step:', {
+          parentStepId: stepId,
+          innerStepId: innerStepId,
+          hasAgentConfigs: !!agentConfigs
+        })
+        
+        // Save only agent_configs to the inner step (don't update other fields)
+        const innerStepUpdates: Partial<PlanStep> = {
+          agent_configs: agentConfigs
+        }
+        
+        await onEditStep(innerStepId, innerStepUpdates)
+      }
     } catch (error) {
       console.error('[StepSidebar] Error saving step:', error)
     } finally {
@@ -879,8 +910,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     return null
   }
 
-  // At this point, node must be step/conditional/loop (validation/learning handled above)
-  const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData
+  // At this point, node must be step/conditional/loop/decision/orchestrator (validation/learning handled above)
+  const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
   const step = stepData.step
 
   const sidebarWidth = isCompact ? 'w-[400px]' : 'w-[600px]'
@@ -1346,6 +1377,178 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                   </div>
                 )
               })()}
+
+              {/* Validation Schema */}
+              {(() => {
+                // For different node types, validation_schema is stored in different places:
+                // - Orchestrator: node data or step.validation_schema
+                // - Decision: decision_step.validation_schema (nested step)
+                // - Conditional: wrapper step.validation_schema (branch steps have their own)
+                // - Regular/Loop: step.validation_schema
+                let validationSchema: ValidationSchema | undefined
+                
+                if (node.type === 'orchestrator') {
+                  const orchestratorData = node.data as OrchestratorNodeData
+                  validationSchema = orchestratorData.validation_schema || step.validation_schema as ValidationSchema | undefined
+                } else if (node.type === 'decision' && isDecisionStep(step)) {
+                  // For decision steps, validation_schema is on the nested decision_step
+                  validationSchema = step.decision_step?.validation_schema as ValidationSchema | undefined
+                } else if (node.type === 'conditional' && isConditionalStep(step)) {
+                  // For conditional steps, check wrapper step first, then show note about branch steps
+                  validationSchema = step.validation_schema as ValidationSchema | undefined
+                } else {
+                  // Regular, loop, or other step types
+                  validationSchema = step.validation_schema as ValidationSchema | undefined
+                }
+                
+                if (!validationSchema || !validationSchema.files || validationSchema.files.length === 0) {
+                  // For conditional steps, show a note that branch steps have their own validation schemas
+                  if (node.type === 'conditional' && isConditionalStep(step)) {
+                    const hasBranchSchemas = 
+                      (step.if_true_steps && step.if_true_steps.some(s => s.validation_schema)) ||
+                      (step.if_false_steps && step.if_false_steps.some(s => s.validation_schema))
+                    
+                    if (hasBranchSchemas) {
+                      return (
+                        <div className="space-y-3">
+                          <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                            Validation Schema:
+                          </span>
+                          <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800/50">
+                            <p className="text-xs text-blue-700 dark:text-blue-300">
+                              Validation schemas are defined on the branch steps (if_true_steps and if_false_steps), not on the wrapper step.
+                            </p>
+                          </div>
+                        </div>
+                      )
+                    }
+                  }
+                  return null
+                }
+
+                return (
+                  <div className="space-y-3">
+                    <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                      Validation Schema:
+                    </span>
+                    <div className="space-y-3">
+                      {validationSchema.files.map((file, fileIdx) => (
+                        <div
+                          key={fileIdx}
+                          className="p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800/50"
+                        >
+                          {/* File Header */}
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                                File: {file.file_name}
+                              </span>
+                              {file.must_exist && (
+                                <span className="px-1.5 py-0.5 text-[10px] font-medium bg-indigo-200 dark:bg-indigo-800 text-indigo-800 dark:text-indigo-200 rounded">
+                                  Must Exist
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* JSON Checks */}
+                          {file.json_checks && file.json_checks.length > 0 && (
+                            <div className="mt-2 space-y-2">
+                              <div className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400 uppercase tracking-wide">
+                                JSON Checks ({file.json_checks.length}):
+                              </div>
+                              {file.json_checks.map((check, checkIdx) => (
+                                <div
+                                  key={checkIdx}
+                                  className="p-2 bg-white dark:bg-gray-800 rounded border border-indigo-100 dark:border-indigo-900/50"
+                                >
+                                  {/* JSONPath */}
+                                  <div className="mb-1.5">
+                                    <span className="text-[10px] font-medium text-gray-600 dark:text-gray-400">Path:</span>
+                                    <code className="ml-1 text-[11px] font-mono text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded">
+                                      {check.path}
+                                    </code>
+                                    {check.must_exist && (
+                                      <span className="ml-2 px-1 py-0.5 text-[10px] font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded">
+                                        Required
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Value Type */}
+                                  {check.value_type && (
+                                    <div className="mb-1 text-[10px] text-gray-600 dark:text-gray-400">
+                                      <span className="font-medium">Type:</span>{' '}
+                                      <span className="font-mono text-indigo-600 dark:text-indigo-400">{check.value_type}</span>
+                                    </div>
+                                  )}
+
+                                  {/* Constraints */}
+                                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                    {check.min_length !== undefined && (
+                                      <span className="px-1.5 py-0.5 text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded">
+                                        Min Length: {check.min_length}
+                                      </span>
+                                    )}
+                                    {check.max_length !== undefined && (
+                                      <span className="px-1.5 py-0.5 text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded">
+                                        Max Length: {check.max_length}
+                                      </span>
+                                    )}
+                                    {check.min_value !== undefined && (
+                                      <span className="px-1.5 py-0.5 text-[10px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded">
+                                        Min Value: {check.min_value}
+                                      </span>
+                                    )}
+                                    {check.max_value !== undefined && (
+                                      <span className="px-1.5 py-0.5 text-[10px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded">
+                                        Max Value: {check.max_value}
+                                      </span>
+                                    )}
+                                    {check.pattern && (
+                                      <span className="px-1.5 py-0.5 text-[10px] bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded">
+                                        Pattern: {check.pattern}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Consistency Check */}
+                                  {check.consistency_check && (
+                                    <div className="mt-1.5 pt-1.5 border-t border-indigo-100 dark:border-indigo-900/50">
+                                      <div className="text-[10px] font-medium text-orange-600 dark:text-orange-400 mb-0.5">
+                                        Consistency Check:
+                                      </div>
+                                      <div className="text-[10px] text-gray-600 dark:text-gray-400">
+                                        <span className="font-medium">Type:</span>{' '}
+                                        <span className="font-mono text-orange-600 dark:text-orange-400">
+                                          {check.consistency_check.type}
+                                        </span>
+                                      </div>
+                                      <div className="text-[10px] text-gray-600 dark:text-gray-400 mt-0.5">
+                                        <span className="font-medium">Compare with:</span>{' '}
+                                        <code className="font-mono text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/30 px-1 py-0.5 rounded">
+                                          {check.consistency_check.compare_with_path}
+                                        </code>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* No JSON Checks Message */}
+                          {(!file.json_checks || file.json_checks.length === 0) && (
+                            <div className="mt-2 text-[10px] text-gray-500 dark:text-gray-500 italic">
+                              No JSON checks defined (only file existence check)
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           )}
 
@@ -1456,9 +1659,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         }}
         title="Delete Step"
         message={
-          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop')
+          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator')
             ? (() => {
-                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
+                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
                 return `Are you sure you want to delete "${stepTitle}"? This action cannot be undone. Any context dependencies referencing this step's output will be automatically removed.`
               })()
@@ -1476,9 +1679,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         onConfirm={handleDeleteLearnings}
         title="Delete Learnings"
         message={
-          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop')
+          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator')
             ? (() => {
-                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
+                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
                 const stepId = stepData.step?.id || `step-${stepIndex + 1}`
                 return `Are you sure you want to delete all learnings for "${stepTitle}" (Step ${stepIndex + 1})? This will permanently delete the learnings folder at \`learnings/${stepId}/\` and all its contents. This action cannot be undone.`

@@ -3,6 +3,7 @@ import { devtools } from 'zustand/middleware'
 import type { WorkflowPhase, StepProgress, ExecutionOptions, AgentLLMConfig, VariablesManifest } from '../services/api-types'
 import { ExecutionStrategy } from '../services/api-types'
 import { agentApi } from '../services/api'
+import { useChatStore } from './useChatStore'
 
 // Execution mode options
 export type ExecutionModeType = 'human_approval' | 'fast_execution' | 'with_learning'
@@ -89,7 +90,7 @@ interface WorkflowStore {
   setSelectedRunFolder: (folder: string) => void
 
   // Progress
-  loadProgress: (workspacePath: string, runFolder: string) => Promise<void>
+  loadProgress: (workspacePath: string, runFolder: string, forceLoad?: boolean) => Promise<void>
   loadFolderProgressOnDemand: (workspacePath: string, folderName: string) => Promise<void>
   getCompletedStepIndices: () => number[]
   updateStepProgressFromEvent: (progress: StepProgress) => void
@@ -420,9 +421,20 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       // Load step progress for a run folder
-      loadProgress: async (workspacePath: string, runFolder: string) => {
+      // NOTE: During active execution (isStreaming=true), this will skip API calls
+      // and trust step_progress_updated events instead to avoid race conditions.
+      loadProgress: async (workspacePath: string, runFolder: string, forceLoad = false) => {
         if (!workspacePath || runFolder === 'new') {
           set({ stepProgress: null })
+          return
+        }
+
+        // During execution, skip API calls - trust events instead
+        // This prevents race conditions where API might return stale data
+        // before backend cleanup completes (e.g., when resuming from step 3)
+        const { isStreaming } = useChatStore.getState()
+        if (isStreaming && !forceLoad) {
+          console.log('[PROGRESS_DEBUG] Skipping loadProgress during execution - trusting step_progress_updated events')
           return
         }
 
@@ -430,8 +442,19 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
         try {
           const response = await agentApi.getProgress(workspacePath, runFolder)
+          console.log('[PROGRESS_DEBUG] Loaded progress response:', {
+            exists: response.exists,
+            hasProgress: !!response.progress,
+            completedStepIndices: response.progress?.completed_step_indices,
+            totalSteps: response.progress?.total_steps,
+            runFolder
+          })
           if (response.exists && response.progress) {
             set({ stepProgress: response.progress, isLoadingProgress: false })
+            console.log('[PROGRESS_DEBUG] Set stepProgress in store:', {
+              completedStepIndices: response.progress.completed_step_indices,
+              totalSteps: response.progress.total_steps
+            })
 
             // Update the folder info in state so we can show progress in the dropdown
             set(state => ({

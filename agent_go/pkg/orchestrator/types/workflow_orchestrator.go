@@ -479,8 +479,17 @@ func (wo *WorkflowOrchestrator) runPlanImprovement(ctx context.Context, objectiv
 		wo.getWorkflowID(),
 	)
 
+	// Extract selected_run_folder from execution options if available
+	var runPath string
+	if wo.executionOptions != nil && wo.executionOptions.SelectedRunFolder != "" {
+		runPath = wo.executionOptions.SelectedRunFolder
+		wo.GetLogger().Info(fmt.Sprintf("📊 Using selected_run_folder from execution options: %s", runPath))
+	} else {
+		wo.GetLogger().Info(fmt.Sprintf("📊 No selected_run_folder in execution options, will ask user for path"))
+	}
+
 	// Run only plan improvement
-	result, err := planImprovementManager.PlanImprovementOnly(ctx, wo.GetWorkspacePath())
+	result, err := planImprovementManager.PlanImprovementOnly(ctx, wo.GetWorkspacePath(), runPath)
 	if err != nil {
 		return "", fmt.Errorf("plan improvement failed: %w", err)
 	}

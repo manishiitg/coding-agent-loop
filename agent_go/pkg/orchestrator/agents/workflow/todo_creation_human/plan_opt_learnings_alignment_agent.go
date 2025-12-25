@@ -430,7 +430,7 @@ func (agent *HumanControlledTodoPlannerPlanLearningsAlignmentAgent) alignmentSys
   - **Orchestration step main orchestrator**: Learnings for orchestration step main orchestrator (orchestration_step field) are stored in learnings/{step_id}/ (where step_id is the main orchestrator's ID from orchestration_step.id field)
   - **Orchestration step sub-agents**: Learnings for orchestration step sub-agents (orchestration_routes[].sub_agent_step) are stored in learnings/{step_id}/ (where step_id is the sub-agent's own ID from sub_agent_step.id field). Each sub-agent has its own unique step ID.
   - **Conditional/Decision/Orchestration step parents**: Conditional steps, decision steps, and orchestration steps themselves do NOT have learnings (they only evaluate conditions/routes). Only their branch steps (for conditionals), inner steps (for decisions), main orchestrator (for orchestration), or sub-agents (for orchestration) have learnings.
-  - **Consolidation within step folders**: If multiple files exist within a single step folder, they should be consolidated (handled by the consolidation agent, not this alignment agent)
+  - **Consolidation within step folders**: If multiple files exist within a single step folder, they should be consolidated (handled by the detection agent during consolidation, not this alignment agent)
 
 **Expected Folder Structure** (using step IDs from plan.json):
 - learnings/{step_id}/ - All learnings for regular step OR decision step inner step OR orchestration step main orchestrator (MCP patterns, scripts, and code) (at workspace root)

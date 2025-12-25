@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	agentlogger "mcp-agent-builder-go/agent_go/pkg/logger"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
 	"mcpagent/events"
@@ -69,6 +70,17 @@ func (b *BaseLLM) SetEventEmitter(emitter func(context.Context, events.EventData
 	b.eventEmitter = emitter
 }
 
+// createLLMLogger creates a separate logger instance for LLM operations
+// This logger writes to logs/llm_debug.log to separate LLM logs from server logs
+func createLLMLogger() loggerv2.Logger {
+	llmLogger, err := agentlogger.CreateLogger("logs/llm_debug.log", "debug", "text", false)
+	if err != nil {
+		// Fallback to default logger if creation fails
+		return loggerv2.NewDefault()
+	}
+	return llmLogger
+}
+
 // CreateLLMInstance creates an LLM instance with standard configuration
 func CreateLLMInstance(
 	config *agents.OrchestratorAgentConfig,
@@ -76,6 +88,9 @@ func CreateLLMInstance(
 	llmType string,
 ) (llmtypes.Model, error) {
 	logger.Info(fmt.Sprintf("🔧 Creating %s LLM with standard configuration", llmType))
+
+	// Use separate LLM logger for multi-llm-provider-go logs
+	llmLogger := createLLMLogger()
 
 	// Generate trace ID for this LLM session
 	traceID := observability.TraceID(fmt.Sprintf("%s-llm-%d", llmType, time.Now().UnixNano()))
@@ -121,6 +136,7 @@ func CreateLLMInstance(
 	}
 
 	// Create LLM configuration
+	// Use llmLogger (separate file) for multi-llm-provider-go logs, not the server logger
 	llmConfig := llm.Config{
 		Provider:       llm.Provider(config.Provider),
 		ModelID:        config.Model,
@@ -129,7 +145,7 @@ func CreateLLMInstance(
 		TraceID:        traceID,
 		FallbackModels: fallbackModels,
 		MaxRetries:     config.MaxRetries,
-		Logger:         logger,
+		Logger:         llmLogger, // Use separate LLM logger for multi-llm-provider-go logs
 		APIKeys:        llmAPIKeys,
 	}
 

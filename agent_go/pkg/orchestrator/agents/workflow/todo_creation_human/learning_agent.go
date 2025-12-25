@@ -62,6 +62,7 @@ func (agent *HumanControlledTodoPlannerLearningAgent) Execute(ctx context.Contex
 	validationResult := templateVars["ValidationResult"]
 	variableNames := templateVars["VariableNames"]
 	learningDetailLevel := templateVars["LearningDetailLevel"]
+	existingLearningsContent := templateVars["ExistingLearningsContent"] // Existing learnings to build upon
 	// Default to "exact" if not provided
 	if learningDetailLevel == "" {
 		learningDetailLevel = "exact"
@@ -69,16 +70,17 @@ func (agent *HumanControlledTodoPlannerLearningAgent) Execute(ctx context.Contex
 
 	// Prepare template variables
 	learningTemplateVars := map[string]string{
-		"StepTitle":               stepTitle,
-		"StepDescription":         stepDescription,
-		"StepSuccessCriteria":     stepSuccessCriteria,
-		"StepContextDependencies": stepContextDependencies,
-		"StepContextOutput":       stepContextOutput,
-		"WorkspacePath":           workspacePath,
-		"ExecutionHistory":        executionHistory,
-		"ValidationResult":        validationResult,
-		"VariableNames":           variableNames,
-		"LearningDetailLevel":     learningDetailLevel,
+		"StepTitle":                stepTitle,
+		"StepDescription":          stepDescription,
+		"StepSuccessCriteria":      stepSuccessCriteria,
+		"StepContextDependencies":  stepContextDependencies,
+		"StepContextOutput":        stepContextOutput,
+		"WorkspacePath":            workspacePath,
+		"ExecutionHistory":         executionHistory,
+		"ValidationResult":         validationResult,
+		"VariableNames":            variableNames,
+		"LearningDetailLevel":      learningDetailLevel,
+		"ExistingLearningsContent": existingLearningsContent, // Pass existing learnings to build upon
 	}
 
 	// Add step-specific paths (always enabled)
@@ -262,10 +264,10 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 	}() + `
 
 **CRITICAL**: Write ONLY new learning content extracted from current execution. Do NOT merge with existing files.
-- **Output File**: ` + writePath + `/_learning_new.md (temporary file for consolidation agent)
+- **Output File**: ` + writePath + `/_learning_new.md (temporary file for detection agent)
 - **Content**: Only patterns extracted from current execution (ExecutionHistory and ValidationResult)
 - **Format**: Use same format as final learning file, but this is raw extraction output
-- **Note**: Consolidation agent will merge this with existing learnings and handle scoring/optimization
+- **Note**: Detection agent will consolidate this with existing learnings and handle scoring/optimization
 
 ## 📝 OUTPUT FORMAT
 
@@ -484,7 +486,7 @@ Updated: ` + writePath + "/_learning_new.md" + `
 - **EXTRACTION ONLY**: Extract patterns from current execution, do NOT merge with existing files
 - ALWAYS save working Python scripts to ` + scriptsPath + `/` + `
 - Document learnings ONLY in ` + writePath + `/ folder
-- Write to temporary file: _learning_new.md (consolidation agent will handle merging)
+- Write to temporary file: _learning_new.md (detection agent will handle consolidation)
 ` + func() string {
 		if learningDetailLevel == "exact" {
 			return "- **PRESERVE WORKFLOW ORDER** - Steps must be in execution sequence\n" +
@@ -495,8 +497,8 @@ Updated: ` + writePath + "/_learning_new.md" + `
 		return "- Keep file content SHORT and precise (each entry 1-2 lines max)"
 	}() + `
 - Analyze BOTH success and failure patterns from current execution
-- **NO SCORING**: Do not add [Runs: X | Success: Y%] scores (consolidation agent handles this)
-- **NO OPTIMAL MARKERS**: Do not mark ⭐ OPTIMAL paths (consolidation agent handles this)
+- **NO SCORING**: Do not add [Runs: X | Success: Y%] scores (detection agent handles this during consolidation)
+- **NO OPTIMAL MARKERS**: Do not mark ⭐ OPTIMAL paths (detection agent handles this during consolidation)
 `
 }
 
@@ -536,6 +538,19 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningUserMessageProcess
 - **Workspace**: ` + templateVars["WorkspacePath"] + `
 
 ` + func() string {
+		existingLearnings := templateVars["ExistingLearningsContent"]
+		if existingLearnings != "" && strings.TrimSpace(existingLearnings) != "" {
+			return `## 📚 EXISTING LEARNINGS
+
+These are existing learnings from previous executions. If the current execution is similar, improve upon these patterns rather than duplicating them.
+
+` + existingLearnings + `
+
+---
+`
+		}
+		return ""
+	}() + func() string {
 		if templateVars["VariableNames"] != "" {
 			return `## 🔑 AVAILABLE VARIABLES
 
@@ -625,7 +640,7 @@ Task-specific failures teach us what NOT to do - use them to refine the workflow
    - Do NOT update scores or optimal paths
    
 2. **WRITE NEW FILE**: Write extracted patterns to: ` + writePath + `/_learning_new.md
-   - This is a temporary file that the consolidation agent will process
+   - This is a temporary file that the detection agent will process during consolidation
    - Include all patterns extracted from current execution (success + failure)
    - Use same format as final learning file, but without scores or optimal markers
    

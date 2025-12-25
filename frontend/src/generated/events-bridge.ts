@@ -108,6 +108,8 @@ export interface EventDataUnion {
   context_summarization_started?: ContextSummarizationStartedEvent;
   context_summarization_completed?: ContextSummarizationCompletedEvent;
   context_summarization_error?: ContextSummarizationErrorEvent;
+  context_editing_completed?: ContextEditingCompletedEvent;
+  context_editing_error?: ContextEditingErrorEvent;
   large_tool_output_detected?: LargeToolOutputDetectedEvent;
   large_tool_output_file_written?: LargeToolOutputFileWrittenEvent;
   large_tool_output_file_write_error?: LargeToolOutputFileWriteErrorEvent;
@@ -173,6 +175,7 @@ export interface EventDataUnion {
   batch_group_start?: BatchGroupStartEvent;
   batch_group_end?: BatchGroupEndEvent;
   batch_execution_end?: BatchExecutionEndEvent;
+  prerequisite_navigation?: PrerequisiteNavigationEvent;
 }
 export interface AgentStartEvent {
   timestamp?: string;
@@ -849,6 +852,59 @@ export interface ContextSummarizationErrorEvent {
   original_message_count?: number;
   keep_last_messages?: number;
 }
+export interface ContextEditingCompletedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  total_messages?: number;
+  tool_response_count?: number;
+  compacted_count?: number;
+  total_tokens_saved?: number;
+  token_threshold?: number;
+  turn_threshold?: number;
+  current_turn?: number;
+  evaluations?: ToolResponseEvaluation[];
+  already_compacted_count?: number;
+}
+export interface ToolResponseEvaluation {
+  tool_name?: string;
+  token_count?: number;
+  turn_age?: number;
+  meets_token_threshold?: boolean;
+  meets_turn_threshold?: boolean;
+  was_compacted?: boolean;
+  skip_reason?: string;
+  tokens_saved?: number;
+}
+export interface ContextEditingErrorEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  error?: string;
+  total_messages?: number;
+  token_threshold?: number;
+  turn_threshold?: number;
+}
 export interface LargeToolOutputDetectedEvent {
   timestamp?: string;
   trace_id?: string;
@@ -1473,52 +1529,6 @@ export interface BranchStepProgress {
   branch_executed?: string;
   completed_steps?: string[];
 }
-export interface PreValidationCompletedEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  step_id?: string;
-  step_index?: number;
-  step_title?: string;
-  step_path?: string;
-  is_branch_step?: boolean;
-  overall_pass?: boolean;
-  total_checks?: number;
-  passed_checks?: number;
-  failed_checks?: number;
-  files_checked?: Array<{
-    file_name?: string;
-    exists?: boolean;
-    is_json?: boolean;
-    json_checks?: Array<{
-      path?: string;
-      passed?: boolean;
-      check_type?: string;
-      error_msg?: string;
-    }>;
-  }>;
-  errors?: Array<{
-    file?: string;
-    path?: string;
-    check_type?: string;
-    expected?: string;
-    actual?: string;
-    message?: string;
-  }>;
-  run_folder?: string;
-  workspace_path?: string;
-}
-
 export interface DecisionEvaluatedEvent {
   timestamp?: string;
   trace_id?: string;
@@ -1549,6 +1559,54 @@ export interface DecisionResponseEvent {
   feedback?: unknown[];
   evidence?: string[];
 }
+export interface PreValidationCompletedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  step_id?: string;
+  step_index?: number;
+  step_title?: string;
+  step_path?: string;
+  is_branch_step?: boolean;
+  overall_pass?: boolean;
+  total_checks?: number;
+  passed_checks?: number;
+  failed_checks?: number;
+  files_checked?: FileCheckResultForEvent[];
+  errors?: ValidationErrorForEvent[];
+  run_folder?: string;
+  workspace_path?: string;
+}
+export interface FileCheckResultForEvent {
+  file_name?: string;
+  exists?: boolean;
+  is_json?: boolean;
+  json_checks?: JSONCheckResultForEvent[];
+}
+export interface JSONCheckResultForEvent {
+  path?: string;
+  passed?: boolean;
+  check_type?: string;
+  error_msg?: string;
+}
+export interface ValidationErrorForEvent {
+  file?: string;
+  path?: string;
+  check_type?: string;
+  expected?: string;
+  actual?: string;
+  message?: string;
+}
 export interface TodoStepsExtractedEvent {
   timestamp?: string;
   trace_id?: string;
@@ -1564,92 +1622,11 @@ export interface TodoStepsExtractedEvent {
     [k: string]: unknown;
   };
   total_steps_extracted?: number;
-  extracted_steps?: TodoStep[];
+  extracted_steps?: unknown[];
   extraction_method?: string;
   plan_source?: string;
   workspace_path?: string;
   run_folder?: string;
-}
-export interface TodoStep {
-  id?: string;
-  title?: string;
-  description?: string;
-  success_criteria?: string;
-  context_dependencies?: string[];
-  context_output?: string;
-  has_loop?: boolean;
-  loop_condition?: string;
-  max_iterations?: number;
-  loop_description?: string;
-  has_condition?: boolean;
-  condition_question?: string;
-  condition_context?: string;
-  if_true_steps?: TodoStep[];
-  if_false_steps?: TodoStep[];
-  if_true_next_step_id?: string;
-  if_false_next_step_id?: string;
-  condition_result?: boolean;
-  condition_reason?: string;
-  has_decision_step?: boolean;
-  decision_step?: TodoStep;
-  decision_evaluation_question?: string;
-  decision_result?: boolean;
-  decision_reason?: string;
-  decision_response?: DecisionResponse;
-  has_orchestration_step?: boolean;
-  orchestration_step?: TodoStep;
-  orchestration_routes?: OrchestrationRoute[];
-  orchestration_response?: OrchestrationResponse;
-  next_step_id?: string;
-  agent_configs?: AgentConfigs;
-}
-export interface DecisionResponse {
-  result?: boolean;
-  reasoning?: string;
-}
-export interface OrchestrationRoute {
-  route_id?: string;
-  route_name?: string;
-  condition?: string;
-  sub_agent_step?: TodoStep;
-  context_to_pass?: string;
-}
-export interface OrchestrationResponse {
-  selected_route_id?: string;
-  reasoning?: string;
-  success_criteria_met?: boolean;
-  success_reasoning?: string;
-  success_criteria_verified_by_validation?: boolean;
-}
-export interface AgentConfigs {
-  execution_llm?: AgentLLMConfig;
-  validation_llm?: AgentLLMConfig;
-  learning_llm?: AgentLLMConfig;
-  conditional_llm?: AgentLLMConfig;
-  execution_max_turns?: number;
-  validation_max_turns?: number;
-  learning_max_turns?: number;
-  disable_validation?: boolean;
-  disable_learning?: boolean;
-  lock_learnings?: boolean;
-  learning_after_loop_iteration?: boolean;
-  learning_detail_level?: string;
-  selected_servers?: string[];
-  selected_tools?: string[];
-  enabled_custom_tool_categories?: string[];
-  enabled_custom_tools?: string[];
-  enable_large_output_virtual_tools?: boolean;
-  use_code_execution_mode?: boolean;
-  enable_prerequisite_detection?: boolean;
-  prerequisite_rules?: PrerequisiteRule[];
-}
-export interface AgentLLMConfig {
-  provider?: string;
-  model_id?: string;
-}
-export interface PrerequisiteRule {
-  depends_on_step?: string;
-  description?: string;
 }
 export interface VariablesExtractedEvent {
   timestamp?: string;
@@ -2383,4 +2360,25 @@ export interface BatchExecutionEndEvent {
   iteration_number?: number;
   completed_group_ids?: string[];
   failed_group_ids?: string[];
+}
+export interface PrerequisiteNavigationEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  from_step_index?: number;
+  to_step_index?: number;
+  from_step_id?: string;
+  to_step_id?: string;
+  reason?: string;
+  failure_type?: string;
 }

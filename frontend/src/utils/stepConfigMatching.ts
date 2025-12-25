@@ -1,4 +1,4 @@
-import type { TodoStep } from '../generated/events-bridge';
+import type { TodoStep } from '../generated/event-types';
 
 // AgentLLMConfig represents LLM configuration for an agent
 export interface AgentLLMConfig {
@@ -78,6 +78,7 @@ export interface TodoStepWithConfigs {
   }>;
   next_step_id?: string;
   agent_configs?: AgentConfigs;
+  validation_schema?: ValidationSchema; // Optional structured validation schema for step outputs
 }
 
 // StepConfig represents a single step's configuration in step_config.json

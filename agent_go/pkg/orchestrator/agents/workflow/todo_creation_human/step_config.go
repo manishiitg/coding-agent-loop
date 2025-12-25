@@ -238,10 +238,10 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 // Returns error if config file cannot be read.
 func ApplyStepConfigFromFile(
 	ctx context.Context,
-	step *TodoStep,
+	step PlanStepInterface,
 	orchestrator *HumanControlledTodoPlannerOrchestrator,
 ) error {
-	if step.ID == "" {
+	if step.GetID() == "" {
 		return nil // No ID, skip config matching
 	}
 
@@ -250,18 +250,31 @@ func ApplyStepConfigFromFile(
 		return fmt.Errorf("failed to read step configs: %w", err)
 	}
 
-	matchedConfig := MatchStepConfigByID(step.ID, stepConfigs)
+	matchedConfig := MatchStepConfigByID(step.GetID(), stepConfigs)
 	if matchedConfig == nil {
 		return nil // No matched config, use defaults
 	}
 
 	// Initialize AgentConfigs if not present
-	if step.AgentConfigs == nil {
-		step.AgentConfigs = matchedConfig
-		orchestrator.GetLogger().Info(fmt.Sprintf("✅ Applied full config for step %s (ID: %s)", step.Title, step.ID))
+	agentConfigs := getAgentConfigs(step)
+	if agentConfigs == nil {
+		// Need to set AgentConfigs on the step - this requires type assertion
+		switch s := step.(type) {
+		case *RegularPlanStep:
+			s.AgentConfigs = matchedConfig
+		case *ConditionalPlanStep:
+			s.AgentConfigs = matchedConfig
+		case *DecisionPlanStep:
+			s.AgentConfigs = matchedConfig
+		case *OrchestrationPlanStep:
+			s.AgentConfigs = matchedConfig
+		default:
+			return fmt.Errorf("unknown step type: %T", step)
+		}
+		orchestrator.GetLogger().Info(fmt.Sprintf("✅ Applied full config for step %s (ID: %s)", step.GetTitle(), step.GetID()))
 	} else {
 		// Merge matched config into existing config
-		MergeAgentConfigFields(step.AgentConfigs, matchedConfig, step.ID, orchestrator.GetLogger())
+		MergeAgentConfigFields(agentConfigs, matchedConfig, step.GetID(), orchestrator.GetLogger())
 	}
 
 	return nil

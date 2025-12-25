@@ -60,6 +60,8 @@ type LearningMetadata struct {
 // detectNewLearningWithLLM runs the learning detection agent to compare old vs new learning files
 // previousLearningsContent: Combined content of all learning files BEFORE the learning phase ran (read directly from files)
 // step: Step information for task context (title, description, success criteria, etc.)
+// usedTempLLM: Which tempLLM was used during execution ("tempLLM1", "tempLLM2", or "" for original LLM)
+// validationPassed: Whether validation passed (success criteria met)
 // Returns: (hasNewLearning, reasoning, confidence, error)
 func (hcpo *HumanControlledTodoPlannerOrchestrator) detectNewLearningWithLLM(
 	ctx context.Context,
@@ -68,35 +70,50 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) detectNewLearningWithLLM(
 	learningPathIdentifier string,
 	stepConfig *AgentConfigs,
 	previousLearningsContent string,
-	step *TodoStep,
+	step PlanStepInterface,
+	usedTempLLM string,
+	validationPassed bool,
+	newLearningFilePath string, // Path to new learning file (if provided, consolidation will be performed)
+	isCodeExecutionMode bool, // Code execution mode for consolidation
 ) (bool, string, float64, error) {
 	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Running learning detection for %s", learningPathIdentifier))
 
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	stepLearningsPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier)
 
-	// Get current learnings (what exists now after learning agent has run)
-	currentLearningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
-	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read current learning files: %v (treating as no new learning)", err))
-		return false, "Failed to read current learning files", 0.5, nil
-	}
+	// Check if consolidation is needed (if newLearningFilePath is provided)
+	needsConsolidation := newLearningFilePath != "" && strings.TrimSpace(newLearningFilePath) != ""
 
-	// Combine current learning files into single content
-	currentLearningsContent, _ := hcpo.formatStepLearningFilesAsHistory(currentLearningFiles)
+	var currentLearningsContentTrimmed string
+	if needsConsolidation {
+		// If consolidation is needed, don't read current learnings now
+		// The detection agent will perform consolidation first, then read the consolidated file
+		// Set empty content - agent will read consolidated file after consolidation
+		currentLearningsContentTrimmed = ""
+		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Consolidation will be performed by detection agent for %s", learningPathIdentifier))
+	} else {
+		// Get current learnings (what exists now after learning agent has run)
+		currentLearningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
+		if err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read current learning files: %v (treating as no new learning)", err))
+			return false, "Failed to read current learning files", 0.5, nil
+		}
 
-	// If no current learning files, the learning agent may not have written any files
-	if len(currentLearningFiles) == 0 {
-		hcpo.GetLogger().Info(fmt.Sprintf("📄 No current learning files found for %s - learning may not have written files, treating as no new learning", learningPathIdentifier))
-		return false, "No current learning files found (learning may not have written files)", 0.5, nil
-	}
+		// Combine current learning files into single content
+		currentLearningsContent, _ := hcpo.formatStepLearningFilesAsHistory(currentLearningFiles)
 
-	// Validate that currentLearningsContent is not empty after formatting
-	// (files might exist but be empty or formatting might have failed)
-	currentLearningsContentTrimmed := strings.TrimSpace(currentLearningsContent)
-	if currentLearningsContentTrimmed == "" {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Current learning files exist but formatted content is empty for %s - treating as no new learning", learningPathIdentifier))
-		return false, "Current learning files exist but formatted content is empty", 0.5, nil
+		// If no current learning files, the learning agent may not have written any files
+		if len(currentLearningFiles) == 0 {
+			hcpo.GetLogger().Info(fmt.Sprintf("📄 No current learning files found for %s - learning may not have written files, treating as no new learning", learningPathIdentifier))
+			return false, "No current learning files found (learning may not have written files)", 0.5, nil
+		}
+
+		// Validate that currentLearningsContent is not empty after formatting
+		currentLearningsContentTrimmed = strings.TrimSpace(currentLearningsContent)
+		if currentLearningsContentTrimmed == "" {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Current learning files exist but formatted content is empty for %s - treating as no new learning", learningPathIdentifier))
+			return false, "Current learning files exist but formatted content is empty", 0.5, nil
+		}
 	}
 
 	// Validate previous learnings content
@@ -112,10 +129,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) detectNewLearningWithLLM(
 	hcpo.GetLogger().Info(fmt.Sprintf("📊 Learning detection content sizes for %s - Previous: %d chars, Current: %d chars",
 		learningPathIdentifier, len(previousLearningsContentTrimmed), len(currentLearningsContentTrimmed)))
 
-	// Validate that both contents are non-empty before calling LLM
-	if previousLearningsContentTrimmed == "" && currentLearningsContentTrimmed == "" {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Both previous and current learning contents are empty for %s - cannot compare, treating as no new learning", learningPathIdentifier))
-		return false, "Both previous and current learning contents are empty - cannot compare", 0.5, nil
+	// Validate that both contents are non-empty before calling LLM (skip if consolidation is needed - agent will read consolidated file)
+	if !needsConsolidation {
+		if previousLearningsContentTrimmed == "" && currentLearningsContentTrimmed == "" {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Both previous and current learning contents are empty for %s - cannot compare, treating as no new learning", learningPathIdentifier))
+			return false, "Both previous and current learning contents are empty - cannot compare", 0.5, nil
+		}
 	}
 
 	// Both previous and current learnings exist - use LLM to compare them
@@ -131,18 +150,70 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) detectNewLearningWithLLM(
 	templateVars := map[string]string{
 		"PreviousLearningsContent": previousLearningsContentTrimmed,
 		"CurrentLearningsContent":  currentLearningsContentTrimmed,
-		"StepTitle":                step.Title,
-		"StepDescription":          step.Description,
-		"StepSuccessCriteria":      step.SuccessCriteria,
-		"StepContextOutput":        step.ContextOutput,
+		"StepTitle":                step.GetTitle(),
+		"StepDescription":          step.GetDescription(),
+		"StepSuccessCriteria":      step.GetSuccessCriteria(),
+		"StepContextOutput":        step.GetContextOutput().String(),
+		"UsedTempLLM":              usedTempLLM,
+		"ValidationPassed":         fmt.Sprintf("%v", validationPassed),
+	}
+
+	// Add consolidation parameters if consolidation is needed
+	if needsConsolidation {
+		// Use step-specific learning detail level, default to "exact" if not set
+		learningDetailLevel := "exact"
+		if stepConfig != nil && stepConfig.LearningDetailLevel != "" {
+			learningDetailLevel = stepConfig.LearningDetailLevel
+		}
+
+		templateVars["NewLearningFilePath"] = newLearningFilePath
+		templateVars["WorkspacePath"] = baseWorkspacePath
+		templateVars["StepNumber"] = learningPathIdentifier
+		templateVars["LearningDetailLevel"] = learningDetailLevel
+		templateVars["IsCodeExecutionMode"] = fmt.Sprintf("%v", isCodeExecutionMode)
+
+		// Add step-specific paths
+		runWorkspacePath := fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
+		templateVars["StepExecutionPath"] = runWorkspacePath
+
+		// Add variable names if available
+		if variableNames := FormatVariableNames(hcpo.variablesManifest); variableNames != "" {
+			templateVars["VariableNames"] = variableNames
+		}
+
+		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Passing consolidation parameters to detection agent: NewLearningFilePath=%s, LearningDetailLevel=%s", newLearningFilePath, learningDetailLevel))
 	}
 
 	// Add context dependencies as comma-separated string
-	if len(step.ContextDependencies) > 0 {
-		templateVars["StepContextDependencies"] = strings.Join(step.ContextDependencies, ", ")
+	if len(step.GetContextDependencies()) > 0 {
+		templateVars["StepContextDependencies"] = strings.Join(step.GetContextDependencies(), ", ")
 	} else {
 		templateVars["StepContextDependencies"] = ""
 	}
+
+	// Validate step context fields are not empty (critical for detection agent)
+	stepTitle := strings.TrimSpace(step.GetTitle())
+	stepDescription := strings.TrimSpace(step.GetDescription())
+	stepSuccessCriteria := strings.TrimSpace(step.GetSuccessCriteria())
+
+	if stepTitle == "" {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step title is empty for %s - detection may be inaccurate", learningPathIdentifier))
+	}
+	if stepDescription == "" {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step description is empty for %s - detection may be inaccurate", learningPathIdentifier))
+	}
+	if stepSuccessCriteria == "" {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step success criteria is empty for %s - detection may be inaccurate", learningPathIdentifier))
+	}
+
+	// Log template variable sizes for debugging (helps identify empty content issues)
+	hcpo.GetLogger().Info(fmt.Sprintf("📊 Learning detection template variable sizes for %s - PreviousLearnings: %d chars, CurrentLearnings: %d chars, Title: %d chars, Description: %d chars, SuccessCriteria: %d chars",
+		learningPathIdentifier,
+		len(templateVars["PreviousLearningsContent"]),
+		len(templateVars["CurrentLearningsContent"]),
+		len(templateVars["StepTitle"]),
+		len(templateVars["StepDescription"]),
+		len(templateVars["StepSuccessCriteria"])))
 
 	// Execute detection agent
 	detectionResponse, _, err := detectionAgent.ExecuteStructured(ctx, templateVars, []llmtypes.MessageContent{})
@@ -628,95 +699,34 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepConfigUpdatedEvent(
 ) error {
 	hcpo.GetLogger().Info(fmt.Sprintf("📤 [emitStepConfigUpdatedEvent] Starting event emission for step %s", stepID))
 
-	// Read plan.json to get the step
-	planPath := filepath.Join(hcpo.GetWorkspacePath(), "plan.json")
+	// Read plan.json from the correct location (planning/plan.json)
+	planPath := filepath.Join(hcpo.GetWorkspacePath(), "planning", "plan.json")
 	hcpo.GetLogger().Info(fmt.Sprintf("📤 [emitStepConfigUpdatedEvent] Reading plan.json from: %s", planPath))
-	planContent, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, planPath)
+	planContent, err := hcpo.ReadWorkspaceFile(ctx, planPath)
 	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [emitStepConfigUpdatedEvent] Failed to read plan.json: %v", err))
-		return fmt.Errorf("failed to read plan.json: %w", err)
-	}
-	hcpo.GetLogger().Info(fmt.Sprintf("📤 [emitStepConfigUpdatedEvent] Successfully read plan.json (size: %d bytes)", len(planContent)))
-
-	var plan struct {
-		Steps []struct {
-			ID                  string   `json:"id"`
-			Title               string   `json:"title"`
-			Description         string   `json:"description"`
-			SuccessCriteria     string   `json:"success_criteria"`
-			ContextDependencies []string `json:"context_dependencies"`
-			ContextOutput       string   `json:"context_output"`
-			HasLoop             bool     `json:"has_loop"`
-			LoopCondition       string   `json:"loop_condition"`
-			MaxIterations       int      `json:"max_iterations"`
-			LoopDescription     string   `json:"loop_description"`
-			HasCondition        bool     `json:"has_condition"`
-			ConditionQuestion   string   `json:"condition_question"`
-			ConditionContext    string   `json:"condition_context"`
-		} `json:"steps"`
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [emitStepConfigUpdatedEvent] Failed to read plan.json: %v, skipping event", err))
+		return nil // Don't fail, just skip the event
 	}
 
-	if err := json.Unmarshal([]byte(planContent), &plan); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [emitStepConfigUpdatedEvent] Failed to parse plan.json: %v", err))
-		return fmt.Errorf("failed to parse plan.json: %w", err)
-	}
-	hcpo.GetLogger().Info(fmt.Sprintf("📤 [emitStepConfigUpdatedEvent] Successfully parsed plan.json (found %d steps)", len(plan.Steps)))
-
-	// Find the step by ID
-	var foundStep *struct {
-		ID                  string   `json:"id"`
-		Title               string   `json:"title"`
-		Description         string   `json:"description"`
-		SuccessCriteria     string   `json:"success_criteria"`
-		ContextDependencies []string `json:"context_dependencies"`
-		ContextOutput       string   `json:"context_output"`
-		HasLoop             bool     `json:"has_loop"`
-		LoopCondition       string   `json:"loop_condition"`
-		MaxIterations       int      `json:"max_iterations"`
-		LoopDescription     string   `json:"loop_description"`
-		HasCondition        bool     `json:"has_condition"`
-		ConditionQuestion   string   `json:"condition_question"`
-		ConditionContext    string   `json:"condition_context"`
+	var planResponse PlanningResponse
+	if err := json.Unmarshal([]byte(planContent), &planResponse); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [emitStepConfigUpdatedEvent] Failed to parse plan.json: %v, skipping event", err))
+		return nil // Don't fail, just skip the event
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("📤 [emitStepConfigUpdatedEvent] Searching for step ID: %s (available step IDs: %v)", stepID, func() []string {
-		ids := make([]string, 0, len(plan.Steps))
-		for _, s := range plan.Steps {
-			ids = append(ids, s.ID)
-		}
-		return ids
-	}()))
-
-	for i := range plan.Steps {
-		if plan.Steps[i].ID == stepID {
-			foundStep = &plan.Steps[i]
-			hcpo.GetLogger().Info(fmt.Sprintf("📤 [emitStepConfigUpdatedEvent] Found step: %s (title: %s)", stepID, foundStep.Title))
+	// Find the step in the plan
+	var foundStepPlan PlanStepInterface
+	for _, step := range planResponse.Steps {
+		if step.GetID() == stepID {
+			foundStepPlan = step
 			break
 		}
 	}
 
-	if foundStep == nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [emitStepConfigUpdatedEvent] Step %s not found in plan.json", stepID))
-		return fmt.Errorf("step %s not found in plan.json", stepID)
+	if foundStepPlan == nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [emitStepConfigUpdatedEvent] Step %s not found in plan, skipping event emission", stepID))
+		return nil // Don't fail, just skip the event
 	}
-
-	// Convert to TodoStep format
-	todoStep := TodoStep{
-		ID:                  foundStep.ID,
-		Title:               foundStep.Title,
-		Description:         foundStep.Description,
-		SuccessCriteria:     foundStep.SuccessCriteria,
-		ContextDependencies: foundStep.ContextDependencies,
-		ContextOutput:       foundStep.ContextOutput,
-		HasLoop:             foundStep.HasLoop,
-		LoopCondition:       foundStep.LoopCondition,
-		MaxIterations:       foundStep.MaxIterations,
-		LoopDescription:     foundStep.LoopDescription,
-		HasCondition:        foundStep.HasCondition,
-		ConditionQuestion:   foundStep.ConditionQuestion,
-		ConditionContext:    foundStep.ConditionContext,
-	}
-	hcpo.GetLogger().Info(fmt.Sprintf("📤 [emitStepConfigUpdatedEvent] Created TodoStep for step: %s", stepID))
 
 	// Prepare metadata indicating this is a step config update (not a full plan update)
 	metadata := map[string]interface{}{
@@ -730,7 +740,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepConfigUpdatedEvent(
 	EmitTodoStepsExtractedEventWithMetadata(
 		ctx,
 		hcpo.BaseOrchestrator,
-		[]TodoStep{todoStep},
+		[]PlanStepInterface{foundStepPlan},
 		"step_config_updated",
 		"auto_lock_learnings",
 		"",
@@ -748,40 +758,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningDetectionAgent
 	agentName string,
 	stepConfig *AgentConfigs,
 ) (*HumanControlledTodoPlannerLearningDetectionAgent, error) {
-	// Determine max turns (default: 10 for detection - faster than learning)
-	maxTurns := 10
-	if stepConfig != nil && stepConfig.LearningMaxTurns != nil {
-		maxTurns = *stepConfig.LearningMaxTurns
-		// Cap at 20 for detection (should be fast)
-		if maxTurns > 20 {
-			maxTurns = 20
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific learning max turns for detection: %d", maxTurns))
-	}
+	// Fixed to 25 (not configurable)
+	maxTurns := 25
 
-	// Determine LLM config: Priority: step config > preset default > orchestrator default
-	var llmConfig *orchestrator.LLMConfig
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
-	if stepConfig != nil && stepConfig.LearningLLM != nil && stepConfig.LearningLLM.Provider != "" && stepConfig.LearningLLM.ModelID != "" {
-		llmConfig = &orchestrator.LLMConfig{
-			Provider:       stepConfig.LearningLLM.Provider,
-			ModelID:        stepConfig.LearningLLM.ModelID,
-			FallbackModels: []string{},
-			APIKeys:        orchestratorLLMConfig.APIKeys,
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific learning LLM for detection: %s/%s", stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID))
-	} else if hcpo.presetLearningLLM != nil && hcpo.presetLearningLLM.Provider != "" && hcpo.presetLearningLLM.ModelID != "" {
-		llmConfig = &orchestrator.LLMConfig{
-			Provider:       hcpo.presetLearningLLM.Provider,
-			ModelID:        hcpo.presetLearningLLM.ModelID,
-			FallbackModels: []string{},
-			APIKeys:        orchestratorLLMConfig.APIKeys,
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default learning LLM for detection: %s/%s", hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID))
-	} else {
-		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default learning LLM for detection: %s/%s", llmConfig.Provider, llmConfig.ModelID))
-	}
+	// Use learning LLM config (same as learning agents) - Priority: step config > preset default > orchestrator default
+	// Since detection agent now also performs consolidation (which was previously done by learning consolidation agent),
+	// it should use the same LLM as other learning agents
+	llmConfig := hcpo.selectLearningLLM(stepConfig)
 
 	// Create agent config with custom LLM
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)

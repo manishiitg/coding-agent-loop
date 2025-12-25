@@ -58,15 +58,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) LoadStepLearningHistory(
 // Returns false if learnings are locked BUT folder is empty (need to create initial learnings).
 func (hcpo *HumanControlledTodoPlannerOrchestrator) ShouldSkipLearningDueToLock(
 	ctx context.Context,
-	step *TodoStep,
+	step PlanStepInterface,
 	stepID string,
 	stepIndex int,
 	stepPath string,
 ) (bool, error) {
 	// Check if learnings are locked in agent configs
-	isLearningsLocked := step.AgentConfigs != nil &&
-		step.AgentConfigs.LockLearnings != nil &&
-		*step.AgentConfigs.LockLearnings
+	agentConfigs := getAgentConfigs(step)
+	isLearningsLocked := agentConfigs != nil &&
+		agentConfigs.LockLearnings != nil &&
+		*agentConfigs.LockLearnings
 
 	if !isLearningsLocked {
 		return false, nil // Not locked, proceed with learning

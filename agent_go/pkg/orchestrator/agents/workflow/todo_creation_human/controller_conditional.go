@@ -11,26 +11,32 @@ import (
 // executeConditionalStep executes a conditional step by evaluating the condition and executing the chosen branch
 // depth: current nesting depth (0 = main plan, 1 = first level conditional, 2 = second level conditional)
 //
-// NOTE: This function works with TodoStep which uses boolean flags (has_condition).
+// NOTE: This function works with PlanStepInterface (specifically ConditionalPlanStep).
 // The step type is already validated by the main execution loop before calling this function.
 func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 	ctx context.Context,
-	step TodoStep,
+	step PlanStepInterface,
 	stepIndex int,
 	depth int,
 	progress *StepProgress,
 	previousExecutionResults []string, // Execution results from previous steps (in-memory, not file paths)
 	iteration int, // Current iteration number
 	execCtx *ExecutionContext, // Execution context with flags
-	allSteps []TodoStep, // All steps in the plan (for previous steps summary in branch steps)
+	allSteps []PlanStepInterface, // All steps in the plan (for previous steps summary in branch steps)
 ) error {
+	// Steps are already PlanStepInterface - no conversion needed
+	conditionalStep, ok := step.(*ConditionalPlanStep)
+	if !ok {
+		return fmt.Errorf("step is not a ConditionalPlanStep")
+	}
+
 	const maxDepth = 2
 	if depth > maxDepth {
 		return fmt.Errorf(fmt.Sprintf("nesting depth %d exceeds maximum allowed depth of %d", depth, maxDepth), nil)
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("🔀 Executing conditional step %d (depth %d): %s", stepIndex+1, depth, step.Title))
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Conditional step %d has %d if_true_steps and %d if_false_steps", stepIndex+1, len(step.IfTrueSteps), len(step.IfFalseSteps)))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔀 Executing conditional step %d (depth %d): %s", stepIndex+1, depth, step.GetTitle()))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Conditional step %d has %d if_true_steps and %d if_false_steps", stepIndex+1, len(conditionalStep.IfTrueSteps), len(conditionalStep.IfFalseSteps)))
 
 	// Emit step_started event for conditional step
 	// Use regular step path for conditional step (not -conditional suffix)
@@ -51,12 +57,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 	var conditionResult bool
 	var conditionReason string
 
-	if progress.BranchSteps == nil {
-		progress.BranchSteps = make(map[int]BranchStepProgress)
-	}
-
 	// Always evaluate the condition
-	hcpo.GetLogger().Info(fmt.Sprintf("🤔 Evaluating condition for step %d (depth %d): %s", stepIndex+1, depth, step.ConditionQuestion))
+	hcpo.GetLogger().Info(fmt.Sprintf("🤔 Evaluating condition for step %d (depth %d): %s", stepIndex+1, depth, conditionalStep.ConditionQuestion))
 
 	// Build conditionContext - ONLY the last previous execution agent output (from in-memory results)
 	// Learnings are passed separately as learningHistory variable
@@ -89,12 +91,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 	hcpo.GetLogger().Info(fmt.Sprintf("📋 Condition context length: %d characters (only last execution output)", len(conditionContext)))
 
 	// Read learnings separately (passed as separate learningHistory variable, not in conditionContext)
-	learningHistory, _ := hcpo.LoadStepLearningHistory(ctx, step.ID, stepIndex, conditionalStepPath, "conditional")
+	learningHistory, _ := hcpo.LoadStepLearningHistory(ctx, step.GetID(), stepIndex, conditionalStepPath, "conditional")
 
 	// Determine code execution mode: Priority: step config > orchestrator default
 	var isCodeExecutionMode bool
-	if step.AgentConfigs != nil && step.AgentConfigs.UseCodeExecutionMode != nil {
-		isCodeExecutionMode = *step.AgentConfigs.UseCodeExecutionMode
+	agentConfigs := getAgentConfigs(step)
+	if agentConfigs != nil && agentConfigs.UseCodeExecutionMode != nil {
+		isCodeExecutionMode = *agentConfigs.UseCodeExecutionMode
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode for conditional evaluation: %v", isCodeExecutionMode))
 	} else {
 		isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
@@ -108,12 +111,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 
 	// Evaluate condition using ConditionalAgent
 	// Note: Branch step execution agents will set their own context when created via createExecutionOnlyAgent
-	conditionalResponse, err := conditionalAgent.Decide(ctx, conditionContext, step.ConditionQuestion, step.Description, stepIndex, 0, isCodeExecutionMode, learningHistory)
+	stepDescription := step.GetDescription()
+	conditionalResponse, err := conditionalAgent.Decide(ctx, conditionContext, conditionalStep.ConditionQuestion, stepDescription, stepIndex, 0, isCodeExecutionMode, learningHistory)
 
 	if err != nil {
 		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate condition for step %d: %v", stepIndex+1, err), nil)
 		// Emit error event using centralized method
-		hcpo.EmitOrchestratorAgentError(ctx, "conditional", "conditional-step-evaluation", fmt.Sprintf("Evaluate condition: %s", step.ConditionQuestion), err.Error(), stepIndex, 0)
+		hcpo.EmitOrchestratorAgentError(ctx, "conditional", "conditional-step-evaluation", fmt.Sprintf("Evaluate condition: %s", conditionalStep.ConditionQuestion), err.Error(), stepIndex, 0)
 		return fmt.Errorf(fmt.Sprintf("failed to evaluate condition: %w", err), nil)
 	}
 
@@ -148,13 +152,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 		conditionalEvaluationResponse := map[string]interface{}{
 			"step_index":            stepIndex + 1,
 			"step_path":             conditionalStepPath,
-			"conditional_step_id":   step.ID,
-			"condition_question":    step.ConditionQuestion,
+			"conditional_step_id":   step.GetID(),
+			"condition_question":    conditionalStep.ConditionQuestion,
 			"condition_result":      conditionResult,
 			"condition_reason":      conditionReason,
 			"branch_executed":       branchExecuted,
-			"if_true_next_step_id":  step.IfTrueNextStepID,
-			"if_false_next_step_id": step.IfFalseNextStepID,
+			"if_true_next_step_id":  conditionalStep.IfTrueNextStepID,
+			"if_false_next_step_id": conditionalStep.IfFalseNextStepID,
 			"depth":                 depth,
 			"timestamp":             time.Now().Format(time.RFC3339),
 		}
@@ -181,20 +185,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 
 	// Log decision details
 	hcpo.GetLogger().Info(fmt.Sprintf("📊 Conditional decision details - Step: %s, Question: %s, Result: %t, Depth: %d",
-		step.Title, step.ConditionQuestion, conditionResult, depth))
+		step.GetTitle(), conditionalStep.ConditionQuestion, conditionResult, depth))
 
 	// Determine which branch to execute
-	var branchSteps []TodoStep
+	// Get branch steps from original PlanStepInterface to maintain type safety
+	var branchStepsPlan []PlanStepInterface
 	if conditionResult {
-		branchSteps = step.IfTrueSteps
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Executing TRUE branch with %d steps", len(branchSteps)))
-		if len(branchSteps) == 0 {
+		branchStepsPlan = conditionalStep.IfTrueSteps
+		hcpo.GetLogger().Info(fmt.Sprintf("📋 Executing TRUE branch with %d steps", len(branchStepsPlan)))
+		if len(branchStepsPlan) == 0 {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Conditional step %d evaluated to TRUE but has no if_true_steps defined in plan. Step will complete immediately without executing any branch steps.", stepIndex+1))
 		}
 	} else {
-		branchSteps = step.IfFalseSteps
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Executing FALSE branch with %d steps", len(branchSteps)))
-		if len(branchSteps) == 0 {
+		branchStepsPlan = conditionalStep.IfFalseSteps
+		hcpo.GetLogger().Info(fmt.Sprintf("📋 Executing FALSE branch with %d steps", len(branchStepsPlan)))
+		if len(branchStepsPlan) == 0 {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Conditional step %d evaluated to FALSE but has no if_false_steps defined in plan. Step will complete immediately without executing any branch steps.", stepIndex+1))
 		}
 	}
@@ -210,9 +215,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 		// Add context outputs from all previous regular steps (before this conditional step)
 		for prevIdx := 0; prevIdx < stepIndex && prevIdx < len(allSteps); prevIdx++ {
 			prevStep := allSteps[prevIdx]
-			if prevStep.ContextOutput != "" {
+			contextOutput := prevStep.GetContextOutput()
+			if contextOutput.String() != "" {
 				// Resolve variables in context output
-				resolvedOutput := ResolveVariables(prevStep.ContextOutput, hcpo.variableValues)
+				resolvedOutput := ResolveVariables(contextOutput.String(), hcpo.variableValues)
 				branchContextFiles = append(branchContextFiles, resolvedOutput)
 			}
 		}
@@ -220,8 +226,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 	}
 
 	// Add conditional step's context output to branch context files if it exists
-	if step.ContextOutput != "" {
-		resolvedOutput := ResolveVariables(step.ContextOutput, hcpo.variableValues)
+	contextOutput := step.GetContextOutput()
+	if contextOutput.String() != "" {
+		resolvedOutput := ResolveVariables(contextOutput.String(), hcpo.variableValues)
 		branchContextFiles = append(branchContextFiles, resolvedOutput)
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 Added conditional step context output to branch context: %s", resolvedOutput))
 	}
@@ -242,10 +249,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 	}
 
 	// Execute each step in the chosen branch
-	for branchIdx, branchStep := range branchSteps {
+	for branchIdx, branchStepPlan := range branchStepsPlan {
 		// Skip if resuming and this branch step is already completed
 		if branchIdx < resumeFromBranchStep {
-			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping branch step %d/%d (already completed): %s", branchIdx+1, len(branchSteps), branchStep.Title))
+			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping branch step %d/%d (already completed): %s", branchIdx+1, len(branchStepsPlan), branchStepPlan.GetTitle()))
 			continue
 		}
 
@@ -253,17 +260,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 		branchStepPath := fmt.Sprintf("step-%d-%s-%d", stepIndex+1, branchExecutedStr, branchIdx)
 		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [BRANCH STEP] Generated branchStepPath: %s (stepIndex=%d, branchExecutedStr=%s, branchIdx=%d)", branchStepPath, stepIndex+1, branchExecutedStr, branchIdx))
 
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Executing branch step %d/%d (depth %d): %s", branchIdx+1, len(branchSteps), depth+1, branchStep.Title))
+		hcpo.GetLogger().Info(fmt.Sprintf("📋 Executing branch step %d/%d (depth %d): %s", branchIdx+1, len(branchStepsPlan), depth+1, branchStepPlan.GetTitle()))
 
 		// Check if branch step is conditional (nested conditional)
-		if branchStep.HasCondition {
+		if isConditionalStep(branchStepPlan) {
 			// Recursively execute nested conditional step - pass execution results (not file paths)
-			hcpo.GetLogger().Info(fmt.Sprintf("🔀 Executing nested conditional step in branch: %s (depth %d)", branchStep.Title, depth+1))
-			if err := hcpo.executeConditionalStep(ctx, branchStep, stepIndex, depth+1, progress, branchExecutionResults, iteration, execCtx, allSteps); err != nil {
-				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute nested conditional step '%s' at depth %d: %v", branchStep.Title, depth+1, err), nil)
-				return fmt.Errorf(fmt.Sprintf("failed to execute nested conditional step '%s': %w", branchStep.Title, err), nil)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔀 Executing nested conditional step in branch: %s (depth %d)", branchStepPlan.GetTitle(), depth+1))
+			if err := hcpo.executeConditionalStep(ctx, branchStepPlan, stepIndex, depth+1, progress, branchExecutionResults, iteration, execCtx, allSteps); err != nil {
+				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute nested conditional step '%s' at depth %d: %v", branchStepPlan.GetTitle(), depth+1, err), nil)
+				return fmt.Errorf(fmt.Sprintf("failed to execute nested conditional step '%s': %w", branchStepPlan.GetTitle(), err), nil)
 			}
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Completed nested conditional step: %s", branchStep.Title))
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Completed nested conditional step: %s", branchStepPlan.GetTitle()))
 		} else {
 			// Execute regular branch step using extracted execution logic
 			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [BRANCH STEP] Calling executeSingleStep with branchStepPath: %s (isBranchStep=true)", branchStepPath))
@@ -272,9 +279,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 			previousBranchContextFiles := make([]string, 0)
 			// Include all previous branch steps' context outputs
 			for prevBranchIdx := 0; prevBranchIdx < branchIdx; prevBranchIdx++ {
-				if prevBranchIdx < len(branchSteps) && branchSteps[prevBranchIdx].ContextOutput != "" {
-					resolvedOutput := ResolveVariables(branchSteps[prevBranchIdx].ContextOutput, hcpo.variableValues)
-					previousBranchContextFiles = append(previousBranchContextFiles, resolvedOutput)
+				if prevBranchIdx < len(branchStepsPlan) {
+					prevBranchStep := branchStepsPlan[prevBranchIdx]
+					contextOutput := prevBranchStep.GetContextOutput()
+					if contextOutput.String() != "" {
+						resolvedOutput := ResolveVariables(contextOutput.String(), hcpo.variableValues)
+						previousBranchContextFiles = append(previousBranchContextFiles, resolvedOutput)
+					}
 				}
 			}
 			// Combine: previous regular steps + previous branch steps
@@ -282,30 +293,88 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 			copy(combinedBranchContextFiles, branchContextFiles)
 			combinedBranchContextFiles = append(combinedBranchContextFiles, previousBranchContextFiles...)
 
-			// Match branch step's own step config from step_config.json (mandatory - no inheritance from parent)
-			_ = ApplyStepConfigFromFile(ctx, &branchStep, hcpo)
-			// Ignore error - use defaults if config loading fails
+			// Match branch step's own step config from step_config.json
+			// Priority: branch step's own config > parent conditional step's config > preset default
+			if err := ApplyStepConfigFromFile(ctx, branchStepPlan, hcpo); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to load step config for branch step '%s' (ID: %s): %v", branchStepPlan.GetTitle(), branchStepPlan.GetID(), err))
+			}
+
+			// Check if branch step config was applied, if not inherit from parent conditional step
+			branchStepConfig := getAgentConfigs(branchStepPlan)
+			if branchStepConfig == nil || branchStepConfig.UseCodeExecutionMode == nil {
+				// Branch step config not found or UseCodeExecutionMode not set - try to inherit from parent conditional step
+				parentStepConfig := getAgentConfigs(step)
+				if parentStepConfig != nil && parentStepConfig.UseCodeExecutionMode != nil {
+					// Initialize branch step config if needed
+					if branchStepConfig == nil {
+						switch s := branchStepPlan.(type) {
+						case *RegularPlanStep:
+							s.AgentConfigs = &AgentConfigs{}
+						case *ConditionalPlanStep:
+							s.AgentConfigs = &AgentConfigs{}
+						case *DecisionPlanStep:
+							s.AgentConfigs = &AgentConfigs{}
+						case *OrchestrationPlanStep:
+							s.AgentConfigs = &AgentConfigs{}
+						}
+						branchStepConfig = getAgentConfigs(branchStepPlan)
+					}
+					// Inherit UseCodeExecutionMode from parent conditional step
+					if branchStepConfig != nil {
+						branchStepConfig.UseCodeExecutionMode = parentStepConfig.UseCodeExecutionMode
+						hcpo.GetLogger().Info(fmt.Sprintf("🔧 Inherited code execution mode from parent conditional step (ID: %s) to branch step (ID: %s): %v", step.GetID(), branchStepPlan.GetID(), *parentStepConfig.UseCodeExecutionMode))
+					}
+				} else {
+					// Try to load parent step config from file if not already loaded
+					if err := ApplyStepConfigFromFile(ctx, step, hcpo); err == nil {
+						parentStepConfig = getAgentConfigs(step)
+						if parentStepConfig != nil && parentStepConfig.UseCodeExecutionMode != nil {
+							// Initialize branch step config if needed
+							if branchStepConfig == nil {
+								switch s := branchStepPlan.(type) {
+								case *RegularPlanStep:
+									s.AgentConfigs = &AgentConfigs{}
+								case *ConditionalPlanStep:
+									s.AgentConfigs = &AgentConfigs{}
+								case *DecisionPlanStep:
+									s.AgentConfigs = &AgentConfigs{}
+								case *OrchestrationPlanStep:
+									s.AgentConfigs = &AgentConfigs{}
+								}
+								branchStepConfig = getAgentConfigs(branchStepPlan)
+							}
+							// Inherit UseCodeExecutionMode from parent conditional step
+							if branchStepConfig != nil {
+								branchStepConfig.UseCodeExecutionMode = parentStepConfig.UseCodeExecutionMode
+								hcpo.GetLogger().Info(fmt.Sprintf("🔧 Loaded and inherited code execution mode from parent conditional step (ID: %s) to branch step (ID: %s): %v", step.GetID(), branchStepPlan.GetID(), *parentStepConfig.UseCodeExecutionMode))
+							}
+						}
+					}
+				}
+			}
 
 			branchExecutionResult, updatedBranchContextFiles, err := hcpo.executeSingleStep(
 				ctx,
-				branchStep,
+				branchStepPlan,
 				stepIndex, // Use parent step index for now
 				branchStepPath,
-				len(branchSteps), // Total steps in branch
+				len(branchStepsPlan), // Total steps in branch
 				iteration,
 				combinedBranchContextFiles, // Include previous regular steps + previous branch steps
 				progress,
 				true, // isBranchStep = true
 				execCtx,
-				allSteps, // Pass allSteps so branch steps can see previous regular steps
-				false,    // isDecisionInnerStep = false (branch step)
-				nil,      // decisionContext = nil (branch steps are not routed from decision steps)
-				"",       // decisionEvaluationQuestion - empty for branch steps
-				false,    // isSubAgent = false (branch step, not a sub-agent)
+				allSteps,                 // Pass allSteps so branch steps can see previous regular steps
+				false,                    // isDecisionInnerStep = false (branch step)
+				nil,                      // decisionContext = nil (branch steps are not routed from decision steps)
+				"",                       // decisionEvaluationQuestion - empty for branch steps
+				false,                    // isSubAgent = false (branch step, not a sub-agent)
+				previousExecutionResults, // Execution outputs from previous steps (for context)
+				nil,                      // orchestrationRoutes - nil for branch steps (not sub-agents)
 			)
 			if err != nil {
-				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute branch step '%s': %v", branchStep.Title, err), nil)
-				return fmt.Errorf(fmt.Sprintf("failed to execute branch step '%s': %w", branchStep.Title, err), nil)
+				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute branch step '%s': %v", branchStepPlan.GetTitle(), err), nil)
+				return fmt.Errorf(fmt.Sprintf("failed to execute branch step '%s': %w", branchStepPlan.GetTitle(), err), nil)
 			}
 
 			// Track branch step completion
@@ -326,21 +395,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 			// Branch steps can signal termination by including "WORKFLOW_END" or "END_WORKFLOW" in their output
 			branchOutputUpper := strings.ToUpper(branchExecutionResult)
 			if strings.Contains(branchOutputUpper, "WORKFLOW_END") || strings.Contains(branchOutputUpper, "END_WORKFLOW") {
-				hcpo.GetLogger().Info(fmt.Sprintf("🏁 Branch step '%s' signaled workflow termination - ending workflow early", branchStep.Title))
+				hcpo.GetLogger().Info(fmt.Sprintf("🏁 Branch step '%s' signaled workflow termination - ending workflow early", branchStepPlan.GetTitle()))
 				// Return a special error that the caller can detect to signal termination
-				return fmt.Errorf("WORKFLOW_END: branch step '%s' signaled workflow termination", branchStep.Title)
+				return fmt.Errorf("WORKFLOW_END: branch step '%s' signaled workflow termination", branchStepPlan.GetTitle())
 			}
 
 			// Track execution result for use by subsequent conditional steps
 			branchExecutionResults = append(branchExecutionResults, branchExecutionResult)
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Completed branch step: %s (execution result length: %d chars)", branchStep.Title, len(branchExecutionResult)))
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Completed branch step: %s (execution result length: %d chars)", branchStepPlan.GetTitle(), len(branchExecutionResult)))
 			hcpo.GetLogger().Info(fmt.Sprintf("💾 Stored branch step execution result (will be used by subsequent conditional steps)"))
 		}
 	}
 
 	// Verify all branch steps are completed
 	branchProgress := progress.BranchSteps[stepIndex]
-	expectedBranchSteps := len(branchSteps)
+	expectedBranchSteps := len(branchStepsPlan)
 	completedBranchSteps := len(branchProgress.CompletedSteps)
 	if completedBranchSteps < expectedBranchSteps {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Conditional step %d: only %d/%d branch steps completed", stepIndex+1, completedBranchSteps, expectedBranchSteps))

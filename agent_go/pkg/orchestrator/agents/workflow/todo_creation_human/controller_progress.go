@@ -79,17 +79,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) saveStepProgress(ctx context
 }
 
 // emitStepStartedEvent emits a step started event
-func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepStartedEvent(ctx context.Context, step TodoStep, stepIndex int, stepPath string, isBranchStep bool) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepStartedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string, isBranchStep bool) {
 	bridge := hcpo.GetContextAwareBridge()
 	if bridge == nil {
 		return
 	}
 
-	stepTitle := step.Title
+	stepTitle := step.GetTitle()
 	if stepTitle == "" {
 		stepTitle = fmt.Sprintf("Step %d", stepIndex+1)
 	}
-	stepId := step.ID
+	stepId := step.GetID()
 	if stepId == "" {
 		stepId = fmt.Sprintf("step-%d", stepIndex+1)
 	}
@@ -122,17 +122,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepStartedEvent(ctx con
 }
 
 // emitStepFinishedEvent emits a step finished event
-func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepFinishedEvent(ctx context.Context, step TodoStep, stepIndex int, stepPath string, isBranchStep bool) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepFinishedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string, isBranchStep bool) {
 	bridge := hcpo.GetContextAwareBridge()
 	if bridge == nil {
 		return
 	}
 
-	stepTitle := step.Title
+	stepTitle := step.GetTitle()
 	if stepTitle == "" {
 		stepTitle = fmt.Sprintf("Step %d", stepIndex+1)
 	}
-	stepId := step.ID
+	stepId := step.GetID()
 	if stepId == "" {
 		stepId = fmt.Sprintf("step-%d", stepIndex+1)
 	}
@@ -164,17 +164,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepFinishedEvent(ctx co
 
 // emitDecisionEvaluatedEvent emits a decision evaluated event with structured response
 // decisionResponse is from the workflow package (conditional_agent.go) - same package, so we can use it directly
-func (hcpo *HumanControlledTodoPlannerOrchestrator) emitDecisionEvaluatedEvent(ctx context.Context, step TodoStep, stepIndex int, stepPath string, decisionResponse *DecisionResponse) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) emitDecisionEvaluatedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string, decisionResponse *DecisionResponse) {
 	bridge := hcpo.GetContextAwareBridge()
 	if bridge == nil {
 		return
 	}
 
-	stepTitle := step.Title
+	stepTitle := step.GetTitle()
 	if stepTitle == "" {
 		stepTitle = fmt.Sprintf("Step %d", stepIndex+1)
 	}
-	stepId := step.ID
+	stepId := step.GetID()
 	if stepId == "" {
 		stepId = fmt.Sprintf("step-%d", stepIndex+1)
 	}
@@ -191,11 +191,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitDecisionEvaluatedEvent(c
 			Timestamp: time.Now(),
 			Component: "orchestrator",
 		},
-		StepID:           stepId,
-		StepIndex:        stepIndex,
-		StepTitle:        stepTitle,
-		StepPath:         stepPath,
-		DecisionQuestion: step.DecisionEvaluationQuestion,
+		StepID:    stepId,
+		StepIndex: stepIndex,
+		StepTitle: stepTitle,
+		StepPath:  stepPath,
+		DecisionQuestion: func() string {
+			if decisionStep, ok := step.(*DecisionPlanStep); ok {
+				return decisionStep.DecisionEvaluationQuestion
+			}
+			return ""
+		}(),
 		DecisionResponse: eventDecisionResponse,
 		RunFolder:        hcpo.selectedRunFolder,
 		WorkspacePath:    hcpo.GetWorkspacePath(),
@@ -261,17 +266,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepProgressUpdatedEvent
 }
 
 // emitPreValidationCompletedEvent emits a pre-validation completed event
-func (hcpo *HumanControlledTodoPlannerOrchestrator) emitPreValidationCompletedEvent(ctx context.Context, step TodoStep, stepIndex int, stepPath string, isBranchStep bool, workspaceResults *WorkspaceVerificationResult) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) emitPreValidationCompletedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string, isBranchStep bool, workspaceResults *WorkspaceVerificationResult) {
 	bridge := hcpo.GetContextAwareBridge()
 	if bridge == nil {
 		return
 	}
 
-	stepTitle := step.Title
+	stepTitle := step.GetTitle()
 	if stepTitle == "" {
 		stepTitle = fmt.Sprintf("Step %d", stepIndex+1)
 	}
-	stepId := step.ID
+	stepId := step.GetID()
 	if stepId == "" {
 		stepId = fmt.Sprintf("step-%d", stepIndex+1)
 	}
@@ -428,6 +433,45 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) initializeFreshProgress(ctx 
 	return nil
 }
 
+// archiveLogsFolder archives (renames) a logs folder instead of deleting it
+// This preserves logs for debugging while allowing clean re-execution
+func (hcpo *HumanControlledTodoPlannerOrchestrator) archiveLogsFolder(ctx context.Context, logsFolderPath string, folderName string) error {
+	// Check if the logs folder exists
+	exists, err := hcpo.CheckWorkspaceFileExists(ctx, logsFolderPath)
+	if err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to check if logs folder exists: %w", err), nil)
+	}
+
+	if !exists {
+		// Folder doesn't exist, nothing to archive
+		hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Logs folder does not exist, skipping archive: %s", folderName))
+		return nil
+	}
+
+	// Generate archive name with timestamp
+	timestamp := time.Now().Format("20060102-150405")
+	archivedFolderName := fmt.Sprintf("%s-archived-%s", folderName, timestamp)
+
+	// Build archived path (same parent directory)
+	// Extract parent directory from logsFolderPath
+	lastSlash := strings.LastIndex(logsFolderPath, "/")
+	if lastSlash == -1 {
+		return fmt.Errorf(fmt.Sprintf("invalid logs folder path: %s", logsFolderPath), nil)
+	}
+	parentDir := logsFolderPath[:lastSlash]
+	archivedFolderPath := fmt.Sprintf("%s/%s", parentDir, archivedFolderName)
+
+	hcpo.GetLogger().Info(fmt.Sprintf("📦 Archiving logs folder: %s -> %s", folderName, archivedFolderName))
+
+	// Use MoveWorkspaceFile to rename the folder
+	if err := hcpo.MoveWorkspaceFile(ctx, logsFolderPath, archivedFolderPath); err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to archive logs folder %s: %w", folderName, err), nil)
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully archived logs folder: %s -> %s", folderName, archivedFolderName))
+	return nil
+}
+
 // deleteStepExecutionFolder deletes the execution folder for a specific step
 // stepNumber is 1-based (e.g., step 1, step 2, etc.)
 // This is used when resuming from a step or running a single step to ensure clean re-execution
@@ -458,15 +502,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 		// Continue to try deleting branch step folders even if main folder deletion failed
 	}
 
-	// Also delete logs folder for this step: logs/step-{stepNumber}
+	// Also archive logs folder for this step: logs/step-{stepNumber}
 	logsWorkspacePath := fmt.Sprintf("%s/logs", runWorkspacePath)
 	stepLogsFolderPath := fmt.Sprintf("%s/step-%d", logsWorkspacePath, stepNumber)
-	hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleting logs folder for step %d: %s", stepNumber, stepLogsFolderPath))
-	if err := hcpo.CleanupDirectory(ctx, stepLogsFolderPath, fmt.Sprintf("logs/step-%d", stepNumber)); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete logs folder for step %d: %w", stepNumber, err))
-		// Continue even if logs deletion failed
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Deleted logs folder for step %d", stepNumber))
+	if err := hcpo.archiveLogsFolder(ctx, stepLogsFolderPath, fmt.Sprintf("step-%d", stepNumber)); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive logs folder for step %d: %w", stepNumber, err))
+		// Continue even if logs archiving failed
 	}
 
 	// Also delete all branch step folders for this step (e.g., step-3-if-true-0, step-3-if-false-1, etc.)
@@ -508,13 +549,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 					branchFoldersDeleted++
 					hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted branch step folder: %s", file))
 				}
-				// Also delete corresponding branch step logs folder
+				// Also archive corresponding branch step logs folder
 				branchLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)
-				hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleting branch step logs folder: %s", file))
-				if err := hcpo.CleanupDirectory(ctx, branchLogsFolderPath, fmt.Sprintf("logs/%s", file)); err != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete branch step logs folder %s: %w", file, err))
-				} else {
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted branch step logs folder: %s", file))
+				if err := hcpo.archiveLogsFolder(ctx, branchLogsFolderPath, file); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive branch step logs folder %s: %w", file, err))
 				}
 			} else if file == decisionStepFolder {
 				// Delete decision step folder
@@ -526,13 +564,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 					decisionFoldersDeleted++
 					hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted decision step folder: %s", file))
 				}
-				// Also delete corresponding decision step logs folder
+				// Also archive corresponding decision step logs folder
 				decisionLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)
-				hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleting decision step logs folder: %s", file))
-				if err := hcpo.CleanupDirectory(ctx, decisionLogsFolderPath, fmt.Sprintf("logs/%s", file)); err != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete decision step logs folder %s: %w", file, err))
-				} else {
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted decision step logs folder: %s", file))
+				if err := hcpo.archiveLogsFolder(ctx, decisionLogsFolderPath, file); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive decision step logs folder %s: %w", file, err))
 				}
 			} else if strings.HasPrefix(file, subAgentStepPrefix) {
 				// Check if this is a sub-agent step folder for the current step
@@ -546,13 +581,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 					subAgentFoldersDeleted++
 					hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted sub-agent step folder: %s", file))
 				}
-				// Also delete corresponding sub-agent step logs folder
+				// Also archive corresponding sub-agent step logs folder
 				subAgentLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)
-				hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleting sub-agent step logs folder: %s", file))
-				if err := hcpo.CleanupDirectory(ctx, subAgentLogsFolderPath, fmt.Sprintf("logs/%s", file)); err != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete sub-agent step logs folder %s: %w", file, err))
-				} else {
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted sub-agent step logs folder: %s", file))
+				if err := hcpo.archiveLogsFolder(ctx, subAgentLogsFolderPath, file); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive sub-agent step logs folder %s: %w", file, err))
 				}
 			}
 		}

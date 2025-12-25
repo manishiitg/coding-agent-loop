@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Play, Settings, Code, Terminal, AlertTriangle, Zap, Lock, ArrowDownToLine, ArrowUpFromLine, ShieldCheck } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Play, Settings, Code, Terminal, AlertTriangle, Zap, Lock, ArrowDownToLine, ArrowUpFromLine, ShieldCheck, SkipForward } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -120,6 +120,7 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
     selected_tools?: string[]
     enabled_custom_tools?: string[]
     enable_large_output_virtual_tools?: boolean
+    skip_llm_validation_if_pre_validation_passes?: boolean
   } }
 
   // Determine code execution mode: step config > preset default
@@ -473,6 +474,15 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
           >
             <Lock className="w-3 h-3" />
             <span>Locked</span>
+          </div>
+        )}
+        {/* Validation Skipped Badge */}
+        {stepConfig?.agent_configs?.skip_llm_validation_if_pre_validation_passes && (
+          <div 
+            className="flex items-center justify-center w-8 h-8 rounded-md bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800"
+            title="LLM validation will be skipped if pre-validation passes"
+          >
+            <SkipForward className="w-3.5 h-3.5" />
           </div>
         )}
       </div>

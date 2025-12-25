@@ -34,8 +34,6 @@ i) prompt tempaltes, need to check variables on compile time
 planning/changelog
 📏 Max Depth:.. if there a single path only.. can we prefix auto?
 
-12. multiple chats?
-
 16. diff patch tool, corrupts json
 
 17. saving set config is taking too long
@@ -44,23 +42,18 @@ planning/changelog
 
 19. in code exectuion, allow to discover multiple files together
 
-20. multi agent manager to choose a step
-
 21. see how we can integrate learning locking and make it more automatic
 22. we should have a human notification tool also.
 
 23.. in basic event we should show the user message also
 
-25. if we store learninvs via step id, we don't need to worry about moving steps, etc.
-
-26. learnings vs skills? 
 
 27. learning in background?
 
 28. need to simply tool filter.
 
-29. have non llm validation??
+32. remove locking learnings in orchestrator, it should always learn.. or maybe we need thinkg of learnins for orchestrator differently?
+26. learnings vs skills? 
+27. workspace, sheel exec is reading env variable which is an issue
 
-30. in code exec mode, when we get error, don't put the entire code again. just put error
-
-31. chcke user message we send for execution agent
+28.. the context eidting/ summiazation, token call, we do after a turn.. and not after a tool call

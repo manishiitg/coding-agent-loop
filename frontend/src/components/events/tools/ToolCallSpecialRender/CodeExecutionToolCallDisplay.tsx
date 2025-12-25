@@ -58,7 +58,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
   // Handle discover_code_files tool
   if (toolName === 'discover_code_files') {
     const serverName = (parsedArgs.server_name as string) || null
-    const toolNameParam = (parsedArgs.tool_name as string) || null
+    const toolNames = (parsedArgs.tool_names as string[]) || null
 
     return (
       <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded p-2">
@@ -69,7 +69,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
                 🔍 Discover Code Files{' '}
                 <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
                   {event.turn && `• Turn: ${event.turn}`}
-                  {event.server_name && ` • Server: ${event.server_name}`}
+                  {serverName && ` • Server: ${serverName}`}
                 </span>
               </div>
             </div>
@@ -91,15 +91,24 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
               </div>
             </div>
           )}
-          {toolNameParam && (
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-              <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">🔧 Tool:</div>
-              <div className="text-sm font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 px-2 py-1 rounded">
-                {toolNameParam}
+          {toolNames && toolNames.length > 0 && (
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-1.5">
+              <div className="text-[10px] font-medium text-blue-700 dark:text-blue-300 mb-0.5">
+                🔧 Tools ({toolNames.length}):
+              </div>
+              <div className="flex flex-wrap gap-0.5">
+                {toolNames.map((tool, index) => (
+                  <span
+                    key={index}
+                    className="text-[10px] font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700"
+                  >
+                    {tool}
+                  </span>
+                ))}
               </div>
             </div>
           )}
-          {(serverName || toolNameParam) && (
+          {(serverName || (toolNames && toolNames.length > 0)) && (
             <div className="text-xs text-gray-500 dark:text-gray-400 px-2">
               Fetching Go source code...
             </div>

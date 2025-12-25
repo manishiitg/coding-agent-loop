@@ -17,6 +17,7 @@ import (
 	"mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"github.com/r3labs/diff/v3"
 )
 
 // HumanControlledTodoPlannerPlanningTemplate holds template variables for human-controlled planning prompts
@@ -229,10 +230,11 @@ type PlanStepInterface interface {
 type RegularPlanStep struct {
 	Type StepType `json:"type"` // Always "regular" - required for JSON marshaling/unmarshaling
 	CommonStepFields
-	HasLoop         bool   `json:"has_loop"`                   // true if step needs to loop
-	LoopCondition   string `json:"loop_condition"`             // condition description (same as success criteria) - REQUIRED when has_loop=true
-	MaxIterations   int    `json:"max_iterations,omitempty"`   // max iterations (default: 10)
-	LoopDescription string `json:"loop_description,omitempty"` // human-readable explanation
+	HasLoop         bool          `json:"has_loop"`                   // true if step needs to loop
+	LoopCondition   string        `json:"loop_condition"`             // condition description (same as success criteria) - REQUIRED when has_loop=true
+	MaxIterations   int           `json:"max_iterations,omitempty"`   // max iterations (default: 10)
+	LoopDescription string        `json:"loop_description,omitempty"` // human-readable explanation
+	AgentConfigs    *AgentConfigs `json:"-"`                          // runtime: per-agent configuration (LLM, max turns, toggles) - not stored in plan.json
 }
 
 // Implement PlanStepInterface for RegularPlanStep
@@ -272,8 +274,9 @@ type ConditionalPlanStep struct {
 	IfFalseSteps      []PlanStepInterface `json:"if_false_steps,omitempty"`        // nested steps for false branch
 	IfTrueNextStepID  string              `json:"if_true_next_step_id,omitempty"`  // ID of step to connect to after true branch completes (or "end" to end workflow). When if_true_steps is empty [], this is REQUIRED. When if_true_steps has steps, this is optional (defaults to next step in main plan if not specified).
 	IfFalseNextStepID string              `json:"if_false_next_step_id,omitempty"` // ID of step to connect to after false branch completes (or "end" to end workflow). When if_false_steps is empty [], this is REQUIRED. When if_false_steps has steps, this is optional (defaults to next step in main plan if not specified).
-	ConditionResult   *bool               `json:"condition_result,omitempty"`      // runtime: stores decision result
-	ConditionReason   string              `json:"condition_reason,omitempty"`      // runtime: stores LLM reasoning
+	ConditionResult   *bool               `json:"-"`                               // runtime: stores decision result - not stored in plan.json
+	ConditionReason   string              `json:"-"`                               // runtime: stores LLM reasoning - not stored in plan.json
+	AgentConfigs      *AgentConfigs       `json:"-"`                               // runtime: per-agent configuration (LLM, max turns, toggles) - not stored in plan.json
 }
 
 // Implement PlanStepInterface for ConditionalPlanStep
@@ -326,8 +329,7 @@ func (c *ConditionalPlanStep) UnmarshalJSON(data []byte) error {
 		IfFalseSteps      []json.RawMessage `json:"if_false_steps,omitempty"`
 		IfTrueNextStepID  string            `json:"if_true_next_step_id,omitempty"`
 		IfFalseNextStepID string            `json:"if_false_next_step_id,omitempty"`
-		ConditionResult   *bool             `json:"condition_result,omitempty"`
-		ConditionReason   string            `json:"condition_reason,omitempty"`
+		// Runtime fields (ConditionResult, ConditionReason, AgentConfigs) are excluded - they use json:"-" and won't be in plan.json
 	}
 
 	if err := json.Unmarshal(data, &temp); err != nil {
@@ -341,8 +343,7 @@ func (c *ConditionalPlanStep) UnmarshalJSON(data []byte) error {
 	c.ConditionContext = temp.ConditionContext
 	c.IfTrueNextStepID = temp.IfTrueNextStepID
 	c.IfFalseNextStepID = temp.IfFalseNextStepID
-	c.ConditionResult = temp.ConditionResult
-	c.ConditionReason = temp.ConditionReason
+	// Runtime fields (ConditionResult, ConditionReason, AgentConfigs) are not unmarshaled - they use json:"-"
 
 	// Unmarshal nested steps
 	if len(temp.IfTrueSteps) > 0 {
@@ -381,8 +382,10 @@ type DecisionPlanStep struct {
 	DecisionEvaluationQuestion string            `json:"decision_evaluation_question,omitempty"` // Question to evaluate step output
 	IfTrueNextStepID           string            `json:"if_true_next_step_id,omitempty"`         // ID of step to connect to if decision is true (or "end")
 	IfFalseNextStepID          string            `json:"if_false_next_step_id,omitempty"`        // ID of step to connect to if decision is false (or "end")
-	DecisionResult             *bool             `json:"decision_result,omitempty"`              // runtime: stores evaluation result
-	DecisionReason             string            `json:"decision_reason,omitempty"`              // runtime: stores evaluation reasoning
+	DecisionResult             *bool             `json:"-"`                                      // runtime: stores evaluation result (backward compatibility) - not stored in plan.json
+	DecisionReason             string            `json:"-"`                                      // runtime: stores evaluation reasoning (backward compatibility) - not stored in plan.json
+	DecisionResponse           *DecisionResponse `json:"-"`                                      // runtime: stores structured decision evaluation response - not stored in plan.json
+	AgentConfigs               *AgentConfigs     `json:"-"`                                      // runtime: per-agent configuration (LLM, max turns, toggles) - not stored in plan.json
 	// Prerequisite rules are NOT supported on decision wrappers - if needed, they should be on the inner DecisionStep.
 }
 
@@ -440,8 +443,7 @@ func (d *DecisionPlanStep) UnmarshalJSON(data []byte) error {
 		DecisionEvaluationQuestion string          `json:"decision_evaluation_question,omitempty"`
 		IfTrueNextStepID           string          `json:"if_true_next_step_id,omitempty"`
 		IfFalseNextStepID          string          `json:"if_false_next_step_id,omitempty"`
-		DecisionResult             *bool           `json:"decision_result,omitempty"`
-		DecisionReason             string          `json:"decision_reason,omitempty"`
+		// Runtime fields (DecisionResult, DecisionReason, DecisionResponse, AgentConfigs) are excluded - they use json:"-" and won't be in plan.json
 	}
 
 	if err := json.Unmarshal(data, &temp); err != nil {
@@ -455,8 +457,7 @@ func (d *DecisionPlanStep) UnmarshalJSON(data []byte) error {
 	d.DecisionEvaluationQuestion = temp.DecisionEvaluationQuestion
 	d.IfTrueNextStepID = temp.IfTrueNextStepID
 	d.IfFalseNextStepID = temp.IfFalseNextStepID
-	d.DecisionResult = temp.DecisionResult
-	d.DecisionReason = temp.DecisionReason
+	// Runtime fields (DecisionResult, DecisionReason, DecisionResponse, AgentConfigs) are not unmarshaled - they use json:"-"
 
 	// Unmarshal nested decision_step
 	if len(temp.DecisionStep) > 0 {
@@ -478,12 +479,14 @@ func (d *DecisionPlanStep) UnmarshalJSON(data []byte) error {
 // Description, SuccessCriteria, ContextDependencies, and ContextOutput come from the inner OrchestrationStep.
 // Loops are NOT supported on orchestration wrappers - if looping is needed, it should be on the inner OrchestrationStep.
 type OrchestrationPlanStep struct {
-	Type                StepType                 `json:"type"`                           // Always "orchestration" - required for JSON marshaling/unmarshaling
-	ID                  string                   `json:"id"`                             // Stable step ID - required for identification
-	Title               string                   `json:"title"`                          // Display title for the orchestration step wrapper
-	OrchestrationStep   PlanStepInterface        `json:"orchestration_step,omitempty"`   // The main orchestrator step to execute (has its own Description, SuccessCriteria, etc.)
-	OrchestrationRoutes []PlanOrchestrationRoute `json:"orchestration_routes,omitempty"` // Array of possible routes with conditions
-	NextStepID          string                   `json:"next_step_id,omitempty"`         // ID of step after orchestration completes (or "end")
+	Type                  StepType                 `json:"type"`                           // Always "orchestration" - required for JSON marshaling/unmarshaling
+	ID                    string                   `json:"id"`                             // Stable step ID - required for identification
+	Title                 string                   `json:"title"`                          // Display title for the orchestration step wrapper
+	OrchestrationStep     PlanStepInterface        `json:"orchestration_step,omitempty"`   // The main orchestrator step to execute (has its own Description, SuccessCriteria, etc.)
+	OrchestrationRoutes   []PlanOrchestrationRoute `json:"orchestration_routes,omitempty"` // Array of possible routes with conditions
+	NextStepID            string                   `json:"next_step_id,omitempty"`         // ID of step after orchestration completes (or "end")
+	OrchestrationResponse *OrchestrationResponse   `json:"-"`                              // runtime: stores selected route and success evaluation - not stored in plan.json
+	AgentConfigs          *AgentConfigs            `json:"-"`                              // runtime: per-agent configuration (LLM, max turns, toggles) - not stored in plan.json
 	// Prerequisite rules are NOT supported on orchestration wrappers - if needed, they should be on the inner OrchestrationStep.
 }
 
@@ -546,6 +549,7 @@ func (o *OrchestrationPlanStep) UnmarshalJSON(data []byte) error {
 			ContextToPass string          `json:"context_to_pass,omitempty"`
 		} `json:"orchestration_routes,omitempty"`
 		NextStepID string `json:"next_step_id,omitempty"`
+		// Runtime fields (OrchestrationResponse, AgentConfigs) are excluded - they use json:"-" and won't be in plan.json
 	}
 
 	if err := json.Unmarshal(data, &temp); err != nil {
@@ -557,6 +561,7 @@ func (o *OrchestrationPlanStep) UnmarshalJSON(data []byte) error {
 	o.ID = temp.ID
 	o.Title = temp.Title
 	o.NextStepID = temp.NextStepID
+	// Runtime fields (OrchestrationResponse, AgentConfigs) are not unmarshaled - they use json:"-"
 
 	// Unmarshal nested orchestration_step
 	if len(temp.OrchestrationStep) > 0 {
@@ -739,12 +744,14 @@ var changelogSessionStartTime time.Time
 
 // PlanChangeLogEntry represents a single change entry in the changelog
 type PlanChangeLogEntry struct {
-	Timestamp   string            `json:"timestamp"`   // ISO 8601 timestamp
-	ChangeType  string            `json:"change_type"` // "update", "delete", "add", "convert_to_conditional", "convert_to_regular", "add_branch_steps", "update_branch_steps", "delete_branch_steps", "update_conditional_step"
-	StepIDs     []string          `json:"step_ids"`    // Affected step IDs
-	Description string            `json:"description"` // Human-readable description of the change
-	Details     string            `json:"details"`     // Additional details (JSON string of what changed)
-	Changes     []PlanFieldChange `json:"changes"`     // Old and new values for each changed field
+	Timestamp   string          `json:"timestamp"`    // ISO 8601 timestamp
+	ChangeType  string          `json:"change_type"`  // "update", "delete", "add", "convert_to_conditional", "convert_to_regular", "add_branch_steps", "update_branch_steps", "delete_branch_steps", "update_conditional_step"
+	StepIDs     []string        `json:"step_ids"`     // Affected step IDs
+	Description string          `json:"description"`  // Human-readable description of the change
+	Details     string          `json:"details"`      // Additional details (JSON string of what changed)
+	DiffChanges json.RawMessage `json:"diff_changes"` // Raw diff output from r3labs/diff library (stores diff.Changelog as JSON)
+	// For backward compatibility and detailed field tracking (optional - can be derived from diff_changes)
+	Changes []PlanFieldChange `json:"changes,omitempty"` // Old and new values for each changed field (deprecated, use diff_changes)
 	// For revert support: store complete step snapshots
 	AddedSteps        []json.RawMessage `json:"added_steps,omitempty"`          // Complete step data for "add" operations (to restore on revert) - stored as JSON
 	DeletedSteps      []json.RawMessage `json:"deleted_steps,omitempty"`        // Complete step data for "delete" operations (to restore on revert) - stored as JSON
@@ -824,6 +831,170 @@ func resetChangelogSession() {
 	defer changelogSessionMutex.Unlock()
 	changelogSessionFile = ""
 	changelogSessionStartTime = time.Time{}
+}
+
+// generateChangelogFromPlanDiff compares two plans and generates changelog entries for all differences
+// This is called after the planning agent completes to capture all changes in one go
+// Uses r3labs/diff library - stores raw diff output directly (no conversion needed)
+func generateChangelogFromPlanDiff(ctx context.Context, workspacePath string, oldPlan *PlanningResponse, newPlan *PlanningResponse, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger loggerv2.Logger) error {
+	if oldPlan == nil && newPlan == nil {
+		return nil // No changes
+	}
+
+	// Use r3labs/diff to compare the entire plan structure
+	// This gives us all changes in one go, including nested structures
+	diffChangelog, err := diff.Diff(oldPlan, newPlan, diff.AllowTypeMismatch(true))
+	if err != nil {
+		// If diff fails, log warning but don't fail - we still have complete old/new plans for revert
+		logger.Warn(fmt.Sprintf("⚠️ Failed to generate diff: %v. Storing complete plan snapshots for revert.", err))
+		diffChangelog = diff.Changelog{}
+	}
+
+	// Extract step IDs that were affected from the diff
+	affectedStepIDs := make(map[string]bool)
+	var addedSteps []json.RawMessage
+	var deletedSteps []json.RawMessage
+
+	// Create maps for step lookup
+	oldStepsByID := make(map[string]PlanStepInterface)
+	if oldPlan != nil {
+		for _, step := range oldPlan.Steps {
+			oldStepsByID[step.GetID()] = step
+		}
+	}
+
+	newStepsByID := make(map[string]PlanStepInterface)
+	if newPlan != nil {
+		for _, step := range newPlan.Steps {
+			newStepsByID[step.GetID()] = step
+		}
+	}
+
+	// Find added/deleted steps
+	for stepID, oldStep := range oldStepsByID {
+		if _, exists := newStepsByID[stepID]; !exists {
+			affectedStepIDs[stepID] = true
+			stepJSON, _ := json.Marshal(oldStep)
+			deletedSteps = append(deletedSteps, stepJSON)
+		}
+	}
+
+	for stepID, newStep := range newStepsByID {
+		if _, exists := oldStepsByID[stepID]; !exists {
+			affectedStepIDs[stepID] = true
+			stepJSON, _ := json.Marshal(newStep)
+			addedSteps = append(addedSteps, stepJSON)
+		}
+	}
+
+	// Extract step IDs from diff paths (paths like ["Steps", "0", "Title"] or ["Steps", "0", "orchestration_step", "description"])
+	// Map array indices to step IDs
+	stepIndexToID := make(map[int]string)
+	if newPlan != nil {
+		for i, step := range newPlan.Steps {
+			stepIndexToID[i] = step.GetID()
+		}
+	}
+
+	// Check diff paths to find which steps were modified
+	for _, change := range diffChangelog {
+		if len(change.Path) >= 2 && change.Path[0] == "Steps" {
+			// Path format: ["Steps", index, ...field path...]
+			// change.Path[1] is already a string, parse it as index
+			idxStr := change.Path[1]
+			var idx int
+			if _, err := fmt.Sscanf(idxStr, "%d", &idx); err == nil {
+				if stepID, exists := stepIndexToID[idx]; exists {
+					affectedStepIDs[stepID] = true
+				}
+			}
+		}
+	}
+
+	// Check if step order changed
+	stepOrderChanges := false
+	if oldPlan != nil && newPlan != nil {
+		if len(oldPlan.Steps) == len(newPlan.Steps) {
+			for i := range oldPlan.Steps {
+				if oldPlan.Steps[i].GetID() != newPlan.Steps[i].GetID() {
+					stepOrderChanges = true
+					break
+				}
+			}
+		} else {
+			stepOrderChanges = true
+		}
+	}
+
+	// If no changes detected, return early
+	if len(diffChangelog) == 0 && len(affectedStepIDs) == 0 && !stepOrderChanges {
+		logger.Info("📝 No plan changes detected - skipping changelog generation")
+		return nil
+	}
+
+	// Marshal diff.Changelog to JSON for storage
+	diffJSON, err := json.Marshal(diffChangelog)
+	if err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to marshal diff changelog: %v", err))
+		diffJSON = []byte("[]")
+	}
+
+	// Determine change type and description
+	changeType := "update"
+	description := "Plan updated"
+	stepIDsList := make([]string, 0, len(affectedStepIDs))
+	for stepID := range affectedStepIDs {
+		stepIDsList = append(stepIDsList, stepID)
+	}
+	sort.Strings(stepIDsList)
+
+	if len(deletedSteps) > 0 && len(addedSteps) > 0 {
+		changeType = "update"
+		description = fmt.Sprintf("Updated plan: %d change(s), %d step(s) added, %d deleted", len(diffChangelog), len(addedSteps), len(deletedSteps))
+	} else if len(deletedSteps) > 0 {
+		changeType = "delete"
+		description = fmt.Sprintf("Deleted %d step(s) from plan", len(deletedSteps))
+	} else if len(addedSteps) > 0 {
+		changeType = "add"
+		description = fmt.Sprintf("Added %d step(s) to plan", len(addedSteps))
+	} else if len(diffChangelog) > 0 {
+		changeType = "update"
+		description = fmt.Sprintf("Updated plan: %d change(s) detected", len(diffChangelog))
+	}
+
+	if stepOrderChanges && len(stepIDsList) == 0 {
+		changeType = "update"
+		description = "Plan step order changed"
+	}
+
+	// Create changelog entry
+	detailsJSON, _ := json.Marshal(map[string]interface{}{
+		"affected_step_ids":  stepIDsList,
+		"added_count":        len(addedSteps),
+		"deleted_count":      len(deletedSteps),
+		"updated_count":      len(stepIDsList) - len(addedSteps) - len(deletedSteps),
+		"order_changed":      stepOrderChanges,
+		"total_diff_changes": len(diffChangelog),
+	})
+
+	changelogEntry := PlanChangeLogEntry{
+		Timestamp:    time.Now().Format(time.RFC3339),
+		ChangeType:   changeType,
+		StepIDs:      stepIDsList,
+		Description:  description,
+		Details:      string(detailsJSON),
+		DiffChanges:  diffJSON, // Store raw diff output directly
+		AddedSteps:   addedSteps,
+		DeletedSteps: deletedSteps,
+	}
+
+	// Write changelog entry
+	if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to write changelog entry: %w", err), nil)
+	}
+
+	logger.Info(fmt.Sprintf("📝 Generated changelog entry: %s - %d diff changes across %d step(s)", changeType, len(diffChangelog), len(stepIDsList)))
+	return nil
 }
 
 // readChangelog reads all changelog files from planning/changelog/ directory and combines them
@@ -2515,6 +2686,412 @@ func updateValidationSchemaOnStep(step PlanStepInterface, schema *ValidationSche
 	}
 }
 
+// compareNestedStepFields compares two PlanStepInterface objects and tracks all field changes
+// prefix is used to create hierarchical field names (e.g., "orchestration_step.description")
+func compareNestedStepFields(oldStep PlanStepInterface, newStep PlanStepInterface, stepID string, prefix string, fieldChanges *[]PlanFieldChange) {
+	if oldStep == nil && newStep == nil {
+		return
+	}
+
+	// If one is nil, track the entire step as changed
+	if oldStep == nil {
+		newStepJSON, _ := json.Marshal(newStep)
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   stepID,
+			Field:    prefix,
+			OldValue: nil,
+			NewValue: string(newStepJSON),
+		})
+		return
+	}
+	if newStep == nil {
+		oldStepJSON, _ := json.Marshal(oldStep)
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   stepID,
+			Field:    prefix,
+			OldValue: string(oldStepJSON),
+			NewValue: nil,
+		})
+		return
+	}
+
+	// Compare common fields
+	if oldStep.GetTitle() != newStep.GetTitle() {
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   stepID,
+			Field:    prefix + ".title",
+			OldValue: oldStep.GetTitle(),
+			NewValue: newStep.GetTitle(),
+		})
+	}
+	if oldStep.GetDescription() != newStep.GetDescription() {
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   stepID,
+			Field:    prefix + ".description",
+			OldValue: oldStep.GetDescription(),
+			NewValue: newStep.GetDescription(),
+		})
+	}
+	if oldStep.GetSuccessCriteria() != newStep.GetSuccessCriteria() {
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   stepID,
+			Field:    prefix + ".success_criteria",
+			OldValue: oldStep.GetSuccessCriteria(),
+			NewValue: newStep.GetSuccessCriteria(),
+		})
+	}
+
+	// Compare context dependencies
+	oldDeps := oldStep.GetContextDependencies()
+	newDeps := newStep.GetContextDependencies()
+	if !equalStringSlices(oldDeps, newDeps) {
+		// Store as JSON for proper revert
+		oldDepsJSON, _ := json.Marshal(oldDeps)
+		newDepsJSON, _ := json.Marshal(newDeps)
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   stepID,
+			Field:    prefix + ".context_dependencies",
+			OldValue: string(oldDepsJSON),
+			NewValue: string(newDepsJSON),
+		})
+	}
+
+	// Compare context output
+	oldOutput := oldStep.GetContextOutput().String()
+	newOutput := newStep.GetContextOutput().String()
+	if oldOutput != newOutput {
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   stepID,
+			Field:    prefix + ".context_output",
+			OldValue: oldOutput,
+			NewValue: newOutput,
+		})
+	}
+
+	// Compare prerequisite detection
+	oldPrereq := oldStep.GetEnablePrerequisiteDetection()
+	newPrereq := newStep.GetEnablePrerequisiteDetection()
+	if !equalBoolPtrs(oldPrereq, newPrereq) {
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   stepID,
+			Field:    prefix + ".enable_prerequisite_detection",
+			OldValue: oldPrereq,
+			NewValue: newPrereq,
+		})
+	}
+
+	// Compare prerequisite rules
+	oldRules := oldStep.GetPrerequisiteRules()
+	newRules := newStep.GetPrerequisiteRules()
+	if !equalPrerequisiteRules(oldRules, newRules) {
+		// Store as JSON for proper revert
+		oldRulesJSON, _ := json.Marshal(oldRules)
+		newRulesJSON, _ := json.Marshal(newRules)
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   stepID,
+			Field:    prefix + ".prerequisite_rules",
+			OldValue: string(oldRulesJSON),
+			NewValue: string(newRulesJSON),
+		})
+	}
+
+	// Compare validation schema
+	oldSchema := oldStep.GetValidationSchema()
+	newSchema := newStep.GetValidationSchema()
+	if !equalValidationSchemas(oldSchema, newSchema) {
+		oldSchemaJSON := "nil"
+		if oldSchema != nil {
+			oldBytes, _ := json.Marshal(oldSchema)
+			oldSchemaJSON = string(oldBytes)
+		}
+		newSchemaJSON := "nil"
+		if newSchema != nil {
+			newBytes, _ := json.Marshal(newSchema)
+			newSchemaJSON = string(newBytes)
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   stepID,
+			Field:    prefix + ".validation_schema",
+			OldValue: oldSchemaJSON,
+			NewValue: newSchemaJSON,
+		})
+	}
+
+	// Compare type-specific fields
+	switch oldS := oldStep.(type) {
+	case *RegularPlanStep:
+		if newS, ok := newStep.(*RegularPlanStep); ok {
+			if oldS.HasLoop != newS.HasLoop {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".has_loop",
+					OldValue: oldS.HasLoop,
+					NewValue: newS.HasLoop,
+				})
+			}
+			// Note: LoopCondition, MaxIterations, LoopDescription are already compared above in common fields
+			// But we track them here for type-specific clarity
+			if oldS.LoopCondition != newS.LoopCondition {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".loop_condition",
+					OldValue: oldS.LoopCondition,
+					NewValue: newS.LoopCondition,
+				})
+			}
+			if oldS.MaxIterations != newS.MaxIterations {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".max_iterations",
+					OldValue: oldS.MaxIterations,
+					NewValue: newS.MaxIterations,
+				})
+			}
+			if oldS.LoopDescription != newS.LoopDescription {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".loop_description",
+					OldValue: oldS.LoopDescription,
+					NewValue: newS.LoopDescription,
+				})
+			}
+		}
+
+	case *ConditionalPlanStep:
+		if newS, ok := newStep.(*ConditionalPlanStep); ok {
+			if oldS.ConditionQuestion != newS.ConditionQuestion {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".condition_question",
+					OldValue: oldS.ConditionQuestion,
+					NewValue: newS.ConditionQuestion,
+				})
+			}
+			if oldS.ConditionContext != newS.ConditionContext {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".condition_context",
+					OldValue: oldS.ConditionContext,
+					NewValue: newS.ConditionContext,
+				})
+			}
+			if oldS.IfTrueNextStepID != newS.IfTrueNextStepID {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".if_true_next_step_id",
+					OldValue: oldS.IfTrueNextStepID,
+					NewValue: newS.IfTrueNextStepID,
+				})
+			}
+			if oldS.IfFalseNextStepID != newS.IfFalseNextStepID {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".if_false_next_step_id",
+					OldValue: oldS.IfFalseNextStepID,
+					NewValue: newS.IfFalseNextStepID,
+				})
+			}
+			// Compare nested steps in branches (simplified - track count and IDs)
+			if len(oldS.IfTrueSteps) != len(newS.IfTrueSteps) {
+				oldIDs := make([]string, len(oldS.IfTrueSteps))
+				for i, s := range oldS.IfTrueSteps {
+					oldIDs[i] = s.GetID()
+				}
+				newIDs := make([]string, len(newS.IfTrueSteps))
+				for i, s := range newS.IfTrueSteps {
+					newIDs[i] = s.GetID()
+				}
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".if_true_steps",
+					OldValue: fmt.Sprintf("%d steps: %v", len(oldIDs), oldIDs),
+					NewValue: fmt.Sprintf("%d steps: %v", len(newIDs), newIDs),
+				})
+			}
+			if len(oldS.IfFalseSteps) != len(newS.IfFalseSteps) {
+				oldIDs := make([]string, len(oldS.IfFalseSteps))
+				for i, s := range oldS.IfFalseSteps {
+					oldIDs[i] = s.GetID()
+				}
+				newIDs := make([]string, len(newS.IfFalseSteps))
+				for i, s := range newS.IfFalseSteps {
+					newIDs[i] = s.GetID()
+				}
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".if_false_steps",
+					OldValue: fmt.Sprintf("%d steps: %v", len(oldIDs), oldIDs),
+					NewValue: fmt.Sprintf("%d steps: %v", len(newIDs), newIDs),
+				})
+			}
+		}
+
+	case *DecisionPlanStep:
+		if newS, ok := newStep.(*DecisionPlanStep); ok {
+			// Compare wrapper's title (already compared in common fields, but ensure it's here for clarity)
+			if oldS.Title != newS.Title {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".title",
+					OldValue: oldS.Title,
+					NewValue: newS.Title,
+				})
+			}
+			if oldS.DecisionEvaluationQuestion != newS.DecisionEvaluationQuestion {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".decision_evaluation_question",
+					OldValue: oldS.DecisionEvaluationQuestion,
+					NewValue: newS.DecisionEvaluationQuestion,
+				})
+			}
+			if oldS.IfTrueNextStepID != newS.IfTrueNextStepID {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".if_true_next_step_id",
+					OldValue: oldS.IfTrueNextStepID,
+					NewValue: newS.IfTrueNextStepID,
+				})
+			}
+			if oldS.IfFalseNextStepID != newS.IfFalseNextStepID {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".if_false_next_step_id",
+					OldValue: oldS.IfFalseNextStepID,
+					NewValue: newS.IfFalseNextStepID,
+				})
+			}
+			// Compare nested decision step
+			if oldS.DecisionStep != nil && newS.DecisionStep != nil {
+				compareNestedStepFields(oldS.DecisionStep, newS.DecisionStep, stepID, prefix+".decision_step", fieldChanges)
+			} else if oldS.DecisionStep != nil || newS.DecisionStep != nil {
+				oldID := "nil"
+				if oldS.DecisionStep != nil {
+					oldID = oldS.DecisionStep.GetID()
+				}
+				newID := "nil"
+				if newS.DecisionStep != nil {
+					newID = newS.DecisionStep.GetID()
+				}
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".decision_step",
+					OldValue: oldID,
+					NewValue: newID,
+				})
+			}
+		}
+
+	case *OrchestrationPlanStep:
+		if newS, ok := newStep.(*OrchestrationPlanStep); ok {
+			// Compare wrapper's title (already compared in common fields, but ensure it's here for clarity)
+			// Title is already compared in common fields section above, but we include it here for wrapper-specific tracking
+			if oldS.Title != newS.Title {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".title",
+					OldValue: oldS.Title,
+					NewValue: newS.Title,
+				})
+			}
+			if oldS.NextStepID != newS.NextStepID {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".next_step_id",
+					OldValue: oldS.NextStepID,
+					NewValue: newS.NextStepID,
+				})
+			}
+			// Compare nested orchestration step
+			if oldS.OrchestrationStep != nil && newS.OrchestrationStep != nil {
+				compareNestedStepFields(oldS.OrchestrationStep, newS.OrchestrationStep, stepID, prefix+".orchestration_step", fieldChanges)
+			} else if oldS.OrchestrationStep != nil || newS.OrchestrationStep != nil {
+				oldID := "nil"
+				if oldS.OrchestrationStep != nil {
+					oldID = oldS.OrchestrationStep.GetID()
+				}
+				newID := "nil"
+				if newS.OrchestrationStep != nil {
+					newID = newS.OrchestrationStep.GetID()
+				}
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".orchestration_step",
+					OldValue: oldID,
+					NewValue: newID,
+				})
+			}
+			// Compare orchestration routes
+			if !equalOrchestrationRoutes(oldS.OrchestrationRoutes, newS.OrchestrationRoutes) {
+				oldRoutesJSON, _ := json.Marshal(oldS.OrchestrationRoutes)
+				newRoutesJSON, _ := json.Marshal(newS.OrchestrationRoutes)
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".orchestration_routes",
+					OldValue: string(oldRoutesJSON),
+					NewValue: string(newRoutesJSON),
+				})
+			}
+		}
+	}
+}
+
+// Helper functions for comparison
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func equalBoolPtrs(a, b *bool) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+func equalPrerequisiteRules(a, b []PrerequisiteRule) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].DependsOnStep != b[i].DependsOnStep || a[i].Description != b[i].Description {
+			return false
+		}
+	}
+	return true
+}
+
+func equalValidationSchemas(a, b *ValidationSchema) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	aJSON, _ := json.Marshal(a)
+	bJSON, _ := json.Marshal(b)
+	return string(aJSON) == string(bJSON)
+}
+
+func equalOrchestrationRoutes(a, b []PlanOrchestrationRoute) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	aJSON, _ := json.Marshal(a)
+	bJSON, _ := json.Marshal(b)
+	return string(aJSON) == string(bJSON)
+}
+
 // mergePartialStepUpdate merges a PartialPlanStep update into an existing PlanStepInterface
 // Uses type switches to handle each step type appropriately
 func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate PartialPlanStep) PlanStepInterface {
@@ -2612,11 +3189,57 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 			updated.Title = partialUpdate.Title
 		}
 		if partialUpdate.DecisionStep != nil {
-			converted, err := convertMapToStep(partialUpdate.DecisionStep)
-			if err != nil {
-				return existingStep
+			// If we have an existing nested step, merge the partial update into it to preserve fields
+			// that weren't in the update (like context_dependencies, validation_schema, etc.)
+			if updated.DecisionStep != nil {
+				// Create a PartialPlanStep from the map by extracting fields directly
+				nestedPartial := PartialPlanStep{}
+				// Extract common fields from the map
+				if desc, ok := partialUpdate.DecisionStep["description"].(string); ok {
+					nestedPartial.Description = desc
+				}
+				if title, ok := partialUpdate.DecisionStep["title"].(string); ok {
+					nestedPartial.Title = title
+				}
+				if successCriteria, ok := partialUpdate.DecisionStep["success_criteria"].(string); ok {
+					nestedPartial.SuccessCriteria = successCriteria
+				}
+				if contextDeps, ok := partialUpdate.DecisionStep["context_dependencies"].([]interface{}); ok {
+					nestedPartial.ContextDependencies = make([]string, 0, len(contextDeps))
+					for _, dep := range contextDeps {
+						if depStr, ok := dep.(string); ok {
+							nestedPartial.ContextDependencies = append(nestedPartial.ContextDependencies, depStr)
+						}
+					}
+				}
+				if contextOutput, ok := partialUpdate.DecisionStep["context_output"]; ok {
+					if contextOutputMap, ok := contextOutput.(map[string]interface{}); ok {
+						contextOutputJSON, _ := json.Marshal(contextOutputMap)
+						json.Unmarshal(contextOutputJSON, &nestedPartial.ContextOutput)
+					}
+				}
+				if validationSchema, ok := partialUpdate.DecisionStep["validation_schema"]; ok {
+					if validationSchemaMap, ok := validationSchema.(map[string]interface{}); ok {
+						validationSchemaJSON, _ := json.Marshal(validationSchemaMap)
+						var vs ValidationSchema
+						if json.Unmarshal(validationSchemaJSON, &vs) == nil {
+							nestedPartial.ValidationSchema = &vs
+						}
+					}
+				}
+				if nextStepID, ok := partialUpdate.DecisionStep["next_step_id"].(string); ok {
+					nestedPartial.NextStepID = nextStepID
+				}
+				// Merge the nested partial update into the existing nested step
+				updated.DecisionStep = mergePartialStepUpdate(updated.DecisionStep, nestedPartial)
+			} else {
+				// No existing nested step - convert and assign directly
+				converted, err := convertMapToStep(partialUpdate.DecisionStep)
+				if err != nil {
+					return existingStep
+				}
+				updated.DecisionStep = converted
 			}
-			updated.DecisionStep = converted
 		}
 		if partialUpdate.DecisionEvaluationQuestion != "" {
 			updated.DecisionEvaluationQuestion = partialUpdate.DecisionEvaluationQuestion
@@ -2639,11 +3262,57 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 			updated.Title = partialUpdate.Title
 		}
 		if partialUpdate.OrchestrationStep != nil {
-			converted, err := convertMapToStep(partialUpdate.OrchestrationStep)
-			if err != nil {
-				return existingStep
+			// If we have an existing nested step, merge the partial update into it to preserve fields
+			// that weren't in the update (like context_dependencies, validation_schema, etc.)
+			if updated.OrchestrationStep != nil {
+				// Create a PartialPlanStep from the map by extracting fields directly
+				nestedPartial := PartialPlanStep{}
+				// Extract common fields from the map
+				if desc, ok := partialUpdate.OrchestrationStep["description"].(string); ok {
+					nestedPartial.Description = desc
+				}
+				if title, ok := partialUpdate.OrchestrationStep["title"].(string); ok {
+					nestedPartial.Title = title
+				}
+				if successCriteria, ok := partialUpdate.OrchestrationStep["success_criteria"].(string); ok {
+					nestedPartial.SuccessCriteria = successCriteria
+				}
+				if contextDeps, ok := partialUpdate.OrchestrationStep["context_dependencies"].([]interface{}); ok {
+					nestedPartial.ContextDependencies = make([]string, 0, len(contextDeps))
+					for _, dep := range contextDeps {
+						if depStr, ok := dep.(string); ok {
+							nestedPartial.ContextDependencies = append(nestedPartial.ContextDependencies, depStr)
+						}
+					}
+				}
+				if contextOutput, ok := partialUpdate.OrchestrationStep["context_output"]; ok {
+					if contextOutputMap, ok := contextOutput.(map[string]interface{}); ok {
+						contextOutputJSON, _ := json.Marshal(contextOutputMap)
+						json.Unmarshal(contextOutputJSON, &nestedPartial.ContextOutput)
+					}
+				}
+				if validationSchema, ok := partialUpdate.OrchestrationStep["validation_schema"]; ok {
+					if validationSchemaMap, ok := validationSchema.(map[string]interface{}); ok {
+						validationSchemaJSON, _ := json.Marshal(validationSchemaMap)
+						var vs ValidationSchema
+						if json.Unmarshal(validationSchemaJSON, &vs) == nil {
+							nestedPartial.ValidationSchema = &vs
+						}
+					}
+				}
+				if nextStepID, ok := partialUpdate.OrchestrationStep["next_step_id"].(string); ok {
+					nestedPartial.NextStepID = nextStepID
+				}
+				// Merge the nested partial update into the existing nested step
+				updated.OrchestrationStep = mergePartialStepUpdate(updated.OrchestrationStep, nestedPartial)
+			} else {
+				// No existing nested step - convert and assign directly
+				converted, err := convertMapToStep(partialUpdate.OrchestrationStep)
+				if err != nil {
+					return existingStep
+				}
+				updated.OrchestrationStep = converted
 			}
-			updated.OrchestrationStep = converted
 		}
 		if partialUpdate.OrchestrationRoutes != nil {
 			// Convert routes - SubAgentStep needs conversion
@@ -2737,11 +3406,14 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 	if partialUpdate.ContextDependencies != nil {
 		changedFields = append(changedFields, "context_dependencies")
 		oldDeps := existingStep.GetContextDependencies()
+		// Store as JSON for proper revert
+		oldDepsJSON, _ := json.Marshal(oldDeps)
+		newDepsJSON, _ := json.Marshal(partialUpdate.ContextDependencies)
 		*fieldChanges = append(*fieldChanges, PlanFieldChange{
 			StepID:   partialUpdate.ExistingStepID,
 			Field:    "context_dependencies",
-			OldValue: fmt.Sprintf("%v", oldDeps),
-			NewValue: fmt.Sprintf("%v", partialUpdate.ContextDependencies),
+			OldValue: string(oldDepsJSON),
+			NewValue: string(newDepsJSON),
 		})
 	}
 	if partialUpdate.ContextOutput != "" {
@@ -2764,8 +3436,8 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 		*fieldChanges = append(*fieldChanges, PlanFieldChange{
 			StepID:   partialUpdate.ExistingStepID,
 			Field:    "has_loop",
-			OldValue: fmt.Sprintf("%v", oldHasLoop),
-			NewValue: fmt.Sprintf("%v", *partialUpdate.HasLoop),
+			OldValue: oldHasLoop,
+			NewValue: *partialUpdate.HasLoop,
 		})
 	}
 	if partialUpdate.LoopCondition != "" {
@@ -2790,8 +3462,8 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 		*fieldChanges = append(*fieldChanges, PlanFieldChange{
 			StepID:   partialUpdate.ExistingStepID,
 			Field:    "max_iterations",
-			OldValue: fmt.Sprintf("%d", oldMaxIterations),
-			NewValue: fmt.Sprintf("%d", *partialUpdate.MaxIterations),
+			OldValue: oldMaxIterations,
+			NewValue: *partialUpdate.MaxIterations,
 		})
 	}
 	if partialUpdate.LoopDescription != "" {
@@ -2823,11 +3495,14 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 	if partialUpdate.PrerequisiteRules != nil {
 		changedFields = append(changedFields, "prerequisite_rules")
 		oldRules := existingStep.GetPrerequisiteRules()
+		// Store as JSON for proper revert
+		oldRulesJSON, _ := json.Marshal(oldRules)
+		newRulesJSON, _ := json.Marshal(partialUpdate.PrerequisiteRules)
 		*fieldChanges = append(*fieldChanges, PlanFieldChange{
 			StepID:   partialUpdate.ExistingStepID,
 			Field:    "prerequisite_rules",
-			OldValue: fmt.Sprintf("%v", oldRules),
-			NewValue: fmt.Sprintf("%v", partialUpdate.PrerequisiteRules),
+			OldValue: string(oldRulesJSON),
+			NewValue: string(newRulesJSON),
 		})
 	}
 	// Conditional step fields
@@ -2859,29 +3534,99 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 	}
 	if partialUpdate.IfTrueSteps != nil {
 		changedFields = append(changedFields, "if_true_steps")
-		oldIfTrueSteps := "[]"
-		if conditionalStep, ok := existingStep.(*ConditionalPlanStep); ok && len(conditionalStep.IfTrueSteps) > 0 {
-			oldIfTrueSteps = fmt.Sprintf("%d steps", len(conditionalStep.IfTrueSteps))
+		// Get old steps
+		var oldSteps []PlanStepInterface
+		if conditionalStep, ok := existingStep.(*ConditionalPlanStep); ok {
+			oldSteps = conditionalStep.IfTrueSteps
 		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "if_true_steps",
-			OldValue: oldIfTrueSteps,
-			NewValue: fmt.Sprintf("%d steps", len(partialUpdate.IfTrueSteps)),
-		})
+		// Convert new steps from maps to PlanStepInterface
+		newSteps := make([]PlanStepInterface, 0, len(partialUpdate.IfTrueSteps))
+		for _, stepMap := range partialUpdate.IfTrueSteps {
+			converted, err := convertMapToStep(stepMap)
+			if err == nil {
+				newSteps = append(newSteps, converted)
+			}
+		}
+		// Compare steps in detail
+		maxLen := len(oldSteps)
+		if len(newSteps) > maxLen {
+			maxLen = len(newSteps)
+		}
+		for i := 0; i < maxLen; i++ {
+			stepPrefix := fmt.Sprintf("if_true_steps[%d]", i)
+			if i >= len(oldSteps) {
+				// New step added
+				if i < len(newSteps) {
+					newStepJSON, _ := json.Marshal(newSteps[i])
+					*fieldChanges = append(*fieldChanges, PlanFieldChange{
+						StepID:   partialUpdate.ExistingStepID,
+						Field:    stepPrefix,
+						OldValue: nil,
+						NewValue: string(newStepJSON),
+					})
+				}
+			} else if i >= len(newSteps) {
+				// Step removed
+				oldStepJSON, _ := json.Marshal(oldSteps[i])
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   partialUpdate.ExistingStepID,
+					Field:    stepPrefix,
+					OldValue: string(oldStepJSON),
+					NewValue: nil,
+				})
+			} else {
+				// Step modified - compare fields
+				compareNestedStepFields(oldSteps[i], newSteps[i], partialUpdate.ExistingStepID, stepPrefix, fieldChanges)
+			}
+		}
 	}
 	if partialUpdate.IfFalseSteps != nil {
 		changedFields = append(changedFields, "if_false_steps")
-		oldIfFalseSteps := "[]"
-		if conditionalStep, ok := existingStep.(*ConditionalPlanStep); ok && len(conditionalStep.IfFalseSteps) > 0 {
-			oldIfFalseSteps = fmt.Sprintf("%d steps", len(conditionalStep.IfFalseSteps))
+		// Get old steps
+		var oldSteps []PlanStepInterface
+		if conditionalStep, ok := existingStep.(*ConditionalPlanStep); ok {
+			oldSteps = conditionalStep.IfFalseSteps
 		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "if_false_steps",
-			OldValue: oldIfFalseSteps,
-			NewValue: fmt.Sprintf("%d steps", len(partialUpdate.IfFalseSteps)),
-		})
+		// Convert new steps from maps to PlanStepInterface
+		newSteps := make([]PlanStepInterface, 0, len(partialUpdate.IfFalseSteps))
+		for _, stepMap := range partialUpdate.IfFalseSteps {
+			converted, err := convertMapToStep(stepMap)
+			if err == nil {
+				newSteps = append(newSteps, converted)
+			}
+		}
+		// Compare steps in detail
+		maxLen := len(oldSteps)
+		if len(newSteps) > maxLen {
+			maxLen = len(newSteps)
+		}
+		for i := 0; i < maxLen; i++ {
+			stepPrefix := fmt.Sprintf("if_false_steps[%d]", i)
+			if i >= len(oldSteps) {
+				// New step added
+				if i < len(newSteps) {
+					newStepJSON, _ := json.Marshal(newSteps[i])
+					*fieldChanges = append(*fieldChanges, PlanFieldChange{
+						StepID:   partialUpdate.ExistingStepID,
+						Field:    stepPrefix,
+						OldValue: nil,
+						NewValue: string(newStepJSON),
+					})
+				}
+			} else if i >= len(newSteps) {
+				// Step removed
+				oldStepJSON, _ := json.Marshal(oldSteps[i])
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   partialUpdate.ExistingStepID,
+					Field:    stepPrefix,
+					OldValue: string(oldStepJSON),
+					NewValue: nil,
+				})
+			} else {
+				// Step modified - compare fields
+				compareNestedStepFields(oldSteps[i], newSteps[i], partialUpdate.ExistingStepID, stepPrefix, fieldChanges)
+			}
+		}
 	}
 	if partialUpdate.IfTrueNextStepID != "" {
 		changedFields = append(changedFields, "if_true_next_step_id")
@@ -2916,20 +3661,33 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 	// Decision step fields
 	if partialUpdate.DecisionStep != nil {
 		changedFields = append(changedFields, "decision_step")
-		oldDecisionStep := "nil"
-		if decisionStep, ok := existingStep.(*DecisionPlanStep); ok && decisionStep.DecisionStep != nil {
-			oldDecisionStep = decisionStep.DecisionStep.GetID()
+		// Convert new decision step from map to PlanStepInterface
+		newDecisionStep, err := convertMapToStep(partialUpdate.DecisionStep)
+		if err == nil {
+			// Get old decision step
+			var oldDecisionStep PlanStepInterface
+			if decisionStep, ok := existingStep.(*DecisionPlanStep); ok {
+				oldDecisionStep = decisionStep.DecisionStep
+			}
+			// Compare nested step fields in detail
+			compareNestedStepFields(oldDecisionStep, newDecisionStep, partialUpdate.ExistingStepID, "decision_step", fieldChanges)
+		} else {
+			// Fallback to ID-only tracking if conversion fails
+			oldDecisionStep := "nil"
+			if decisionStep, ok := existingStep.(*DecisionPlanStep); ok && decisionStep.DecisionStep != nil {
+				oldDecisionStep = decisionStep.DecisionStep.GetID()
+			}
+			newDecisionStepID := ""
+			if id, ok := partialUpdate.DecisionStep["id"].(string); ok {
+				newDecisionStepID = id
+			}
+			*fieldChanges = append(*fieldChanges, PlanFieldChange{
+				StepID:   partialUpdate.ExistingStepID,
+				Field:    "decision_step",
+				OldValue: oldDecisionStep,
+				NewValue: newDecisionStepID,
+			})
 		}
-		newDecisionStepID := ""
-		if id, ok := partialUpdate.DecisionStep["id"].(string); ok {
-			newDecisionStepID = id
-		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "decision_step",
-			OldValue: oldDecisionStep,
-			NewValue: newDecisionStepID,
-		})
 	}
 	if partialUpdate.DecisionEvaluationQuestion != "" {
 		changedFields = append(changedFields, "decision_evaluation_question")
@@ -2947,33 +3705,126 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 	// Orchestration step fields
 	if partialUpdate.OrchestrationStep != nil {
 		changedFields = append(changedFields, "orchestration_step")
-		oldOrchestrationStep := "nil"
-		if orchestrationStep, ok := existingStep.(*OrchestrationPlanStep); ok && orchestrationStep.OrchestrationStep != nil {
-			oldOrchestrationStep = orchestrationStep.OrchestrationStep.GetID()
+		// Convert new orchestration step from map to PlanStepInterface
+		newOrchestrationStep, err := convertMapToStep(partialUpdate.OrchestrationStep)
+		if err == nil {
+			// Get old orchestration step
+			var oldOrchestrationStep PlanStepInterface
+			if orchestrationStep, ok := existingStep.(*OrchestrationPlanStep); ok {
+				oldOrchestrationStep = orchestrationStep.OrchestrationStep
+			}
+			// Compare nested step fields in detail
+			compareNestedStepFields(oldOrchestrationStep, newOrchestrationStep, partialUpdate.ExistingStepID, "orchestration_step", fieldChanges)
+		} else {
+			// Fallback to ID-only tracking if conversion fails
+			oldOrchestrationStep := "nil"
+			if orchestrationStep, ok := existingStep.(*OrchestrationPlanStep); ok && orchestrationStep.OrchestrationStep != nil {
+				oldOrchestrationStep = orchestrationStep.OrchestrationStep.GetID()
+			}
+			newOrchestrationStepID := ""
+			if id, ok := partialUpdate.OrchestrationStep["id"].(string); ok {
+				newOrchestrationStepID = id
+			}
+			*fieldChanges = append(*fieldChanges, PlanFieldChange{
+				StepID:   partialUpdate.ExistingStepID,
+				Field:    "orchestration_step",
+				OldValue: oldOrchestrationStep,
+				NewValue: newOrchestrationStepID,
+			})
 		}
-		newOrchestrationStepID := ""
-		if id, ok := partialUpdate.OrchestrationStep["id"].(string); ok {
-			newOrchestrationStepID = id
-		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "orchestration_step",
-			OldValue: oldOrchestrationStep,
-			NewValue: newOrchestrationStepID,
-		})
 	}
 	if partialUpdate.OrchestrationRoutes != nil {
 		changedFields = append(changedFields, "orchestration_routes")
-		oldRoutesCount := 0
+		// Get old routes
+		var oldRoutes []PlanOrchestrationRoute
 		if orchestrationStep, ok := existingStep.(*OrchestrationPlanStep); ok {
-			oldRoutesCount = len(orchestrationStep.OrchestrationRoutes)
+			oldRoutes = orchestrationStep.OrchestrationRoutes
 		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "orchestration_routes",
-			OldValue: fmt.Sprintf("%d routes", oldRoutesCount),
-			NewValue: fmt.Sprintf("%d routes", len(partialUpdate.OrchestrationRoutes)),
-		})
+		// Compare routes in detail
+		if !equalOrchestrationRoutes(oldRoutes, partialUpdate.OrchestrationRoutes) {
+			// Track detailed changes for each route
+			maxLen := len(oldRoutes)
+			if len(partialUpdate.OrchestrationRoutes) > maxLen {
+				maxLen = len(partialUpdate.OrchestrationRoutes)
+			}
+			for i := 0; i < maxLen; i++ {
+				routePrefix := fmt.Sprintf("orchestration_routes[%d]", i)
+				if i >= len(oldRoutes) {
+					// New route added
+					newRouteJSON, _ := json.Marshal(partialUpdate.OrchestrationRoutes[i])
+					*fieldChanges = append(*fieldChanges, PlanFieldChange{
+						StepID:   partialUpdate.ExistingStepID,
+						Field:    routePrefix,
+						OldValue: nil,
+						NewValue: string(newRouteJSON),
+					})
+				} else if i >= len(partialUpdate.OrchestrationRoutes) {
+					// Route removed
+					oldRouteJSON, _ := json.Marshal(oldRoutes[i])
+					*fieldChanges = append(*fieldChanges, PlanFieldChange{
+						StepID:   partialUpdate.ExistingStepID,
+						Field:    routePrefix,
+						OldValue: string(oldRouteJSON),
+						NewValue: nil,
+					})
+				} else {
+					// Route modified - compare fields
+					oldRoute := oldRoutes[i]
+					newRoute := partialUpdate.OrchestrationRoutes[i]
+					if oldRoute.RouteID != newRoute.RouteID {
+						*fieldChanges = append(*fieldChanges, PlanFieldChange{
+							StepID:   partialUpdate.ExistingStepID,
+							Field:    routePrefix + ".route_id",
+							OldValue: oldRoute.RouteID,
+							NewValue: newRoute.RouteID,
+						})
+					}
+					if oldRoute.RouteName != newRoute.RouteName {
+						*fieldChanges = append(*fieldChanges, PlanFieldChange{
+							StepID:   partialUpdate.ExistingStepID,
+							Field:    routePrefix + ".route_name",
+							OldValue: oldRoute.RouteName,
+							NewValue: newRoute.RouteName,
+						})
+					}
+					if oldRoute.Condition != newRoute.Condition {
+						*fieldChanges = append(*fieldChanges, PlanFieldChange{
+							StepID:   partialUpdate.ExistingStepID,
+							Field:    routePrefix + ".condition",
+							OldValue: oldRoute.Condition,
+							NewValue: newRoute.Condition,
+						})
+					}
+					if oldRoute.ContextToPass != newRoute.ContextToPass {
+						*fieldChanges = append(*fieldChanges, PlanFieldChange{
+							StepID:   partialUpdate.ExistingStepID,
+							Field:    routePrefix + ".context_to_pass",
+							OldValue: oldRoute.ContextToPass,
+							NewValue: newRoute.ContextToPass,
+						})
+					}
+					// Compare nested sub-agent step
+					if oldRoute.SubAgentStep != nil && newRoute.SubAgentStep != nil {
+						compareNestedStepFields(oldRoute.SubAgentStep, newRoute.SubAgentStep, partialUpdate.ExistingStepID, routePrefix+".sub_agent_step", fieldChanges)
+					} else if oldRoute.SubAgentStep != nil || newRoute.SubAgentStep != nil {
+						oldID := "nil"
+						if oldRoute.SubAgentStep != nil {
+							oldID = oldRoute.SubAgentStep.GetID()
+						}
+						newID := "nil"
+						if newRoute.SubAgentStep != nil {
+							newID = newRoute.SubAgentStep.GetID()
+						}
+						*fieldChanges = append(*fieldChanges, PlanFieldChange{
+							StepID:   partialUpdate.ExistingStepID,
+							Field:    routePrefix + ".sub_agent_step",
+							OldValue: oldID,
+							NewValue: newID,
+						})
+					}
+				}
+			}
+		}
 	}
 	if partialUpdate.NextStepID != "" {
 		changedFields = append(changedFields, "next_step_id")
@@ -3039,7 +3890,8 @@ func createUpdateRegularStepExecutor(workspacePath string, logger loggerv2.Logge
 		fieldChanges := make([]PlanFieldChange, 0)
 
 		// Update the step
-		stepIndex, changedFields, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
+		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
+		stepIndex, _, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
 		if err != nil {
 			return "", err
 		}
@@ -3052,23 +3904,6 @@ func createUpdateRegularStepExecutor(workspacePath string, logger loggerv2.Logge
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
 			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
-		}
-
-		// Write changelog entry
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"step_id":        partialUpdate.ExistingStepID,
-			"changed_fields": changedFields,
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:   time.Now().Format(time.RFC3339),
-			ChangeType:  "update",
-			StepIDs:     []string{partialUpdate.ExistingStepID},
-			Description: fmt.Sprintf("Updated regular step: %s", partialUpdate.ExistingStepID),
-			Details:     string(detailsJSON),
-			Changes:     fieldChanges,
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
 		}
 
 		// Unlock learnings for updated step
@@ -3183,22 +4018,7 @@ func createUpdateConditionalStepExecutor(workspacePath string, logger loggerv2.L
 			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		// Write changelog entry
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"step_id":        partialUpdate.ExistingStepID,
-			"changed_fields": changedFields,
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:   time.Now().Format(time.RFC3339),
-			ChangeType:  "update_conditional_step",
-			StepIDs:     []string{partialUpdate.ExistingStepID},
-			Description: fmt.Sprintf("Updated conditional step: %s", partialUpdate.ExistingStepID),
-			Details:     string(detailsJSON),
-			Changes:     fieldChanges,
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
-		}
+		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		// Unlock learnings for updated step
 		if unlockLearningsFunc != nil && stepIndex >= 0 {
@@ -3252,7 +4072,8 @@ func createUpdateDecisionStepExecutor(workspacePath string, logger loggerv2.Logg
 			return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs), nil)
 		}
 
-		decisionStep, ok := existingStep.(*DecisionPlanStep)
+		// Validate it's a decision step before updating
+		_, ok := existingStep.(*DecisionPlanStep)
 		if !ok {
 			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not a decision step", partialUpdate.ExistingStepID), nil)
 		}
@@ -3261,17 +4082,22 @@ func createUpdateDecisionStepExecutor(workspacePath string, logger loggerv2.Logg
 		fieldChanges := make([]PlanFieldChange, 0)
 
 		// Update the step
-		_, changedFields, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
+		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
+		stepIndex, _, err = updateSingleStep(plan, partialUpdate, &fieldChanges)
 		if err != nil {
 			return "", err
 		}
 
-		// Update the step in the plan (updateSingleStep already did this, but ensure it's set)
-		plan.Steps[stepIndex] = decisionStep
+		// Get the updated step from the plan (updateSingleStep already updated it)
+		updatedStep := plan.Steps[stepIndex]
+		updatedDecisionStep, ok := updatedStep.(*DecisionPlanStep)
+		if !ok {
+			return "", fmt.Errorf(fmt.Sprintf("updated step is not a decision step"), nil)
+		}
 
 		// Validate the updated step has all required fields for decision steps
 		// This ensures the agent gets immediate feedback if validation fails
-		if err := validateDecisionStepFieldsTyped(decisionStep); err != nil {
+		if err := validateDecisionStepFieldsTyped(updatedDecisionStep); err != nil {
 			return "", fmt.Errorf(fmt.Sprintf("validation failed after update: %w", err), nil)
 		}
 
@@ -3285,22 +4111,7 @@ func createUpdateDecisionStepExecutor(workspacePath string, logger loggerv2.Logg
 			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		// Write changelog entry
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"step_id":        partialUpdate.ExistingStepID,
-			"changed_fields": changedFields,
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:   time.Now().Format(time.RFC3339),
-			ChangeType:  "update",
-			StepIDs:     []string{partialUpdate.ExistingStepID},
-			Description: fmt.Sprintf("Updated decision step: %s", partialUpdate.ExistingStepID),
-			Details:     string(detailsJSON),
-			Changes:     fieldChanges,
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
-		}
+		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		// Unlock learnings for updated step
 		if unlockLearningsFunc != nil && stepIndex >= 0 {
@@ -3354,7 +4165,8 @@ func createUpdateOrchestrationStepExecutor(workspacePath string, logger loggerv2
 			return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs), nil)
 		}
 
-		orchestrationStep, ok := existingStep.(*OrchestrationPlanStep)
+		// Validate it's an orchestration step before updating
+		_, ok := existingStep.(*OrchestrationPlanStep)
 		if !ok {
 			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not an orchestration step", partialUpdate.ExistingStepID), nil)
 		}
@@ -3362,18 +4174,42 @@ func createUpdateOrchestrationStepExecutor(workspacePath string, logger loggerv2
 		// Track changes for changelog
 		fieldChanges := make([]PlanFieldChange, 0)
 
+		// Log what we're updating for debugging
+		if partialUpdate.OrchestrationStep != nil {
+			orchestrationStepMap := partialUpdate.OrchestrationStep
+			if desc, ok := orchestrationStepMap["description"].(string); ok {
+				logger.Info(fmt.Sprintf("🔍 [DEBUG] Updating orchestration_step.description to: %s", desc))
+			}
+			// Get old description for comparison
+			if orchestrationStep, ok := existingStep.(*OrchestrationPlanStep); ok && orchestrationStep.OrchestrationStep != nil {
+				oldDesc := orchestrationStep.OrchestrationStep.GetDescription()
+				logger.Info(fmt.Sprintf("🔍 [DEBUG] Old orchestration_step.description: %s", oldDesc))
+			}
+		}
+
 		// Update the step
-		_, changedFields, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
+		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
+		stepIndex, _, err = updateSingleStep(plan, partialUpdate, &fieldChanges)
 		if err != nil {
 			return "", err
 		}
 
-		// Update the step in the plan (updateSingleStep already did this, but ensure it's set)
-		plan.Steps[stepIndex] = orchestrationStep
+		// Get the updated step from the plan (updateSingleStep already updated it)
+		updatedStep := plan.Steps[stepIndex]
+		updatedOrchestrationStep, ok := updatedStep.(*OrchestrationPlanStep)
+		if !ok {
+			return "", fmt.Errorf(fmt.Sprintf("updated step is not an orchestration step"), nil)
+		}
+
+		// Log the updated description for debugging
+		if updatedOrchestrationStep.OrchestrationStep != nil {
+			newDesc := updatedOrchestrationStep.OrchestrationStep.GetDescription()
+			logger.Info(fmt.Sprintf("🔍 [DEBUG] New orchestration_step.description after merge: %s", newDesc))
+		}
 
 		// Validate the updated step has all required fields for orchestration steps
 		// This ensures the agent gets immediate feedback if validation fails
-		if err := validateOrchestrationStepFieldsTyped(orchestrationStep); err != nil {
+		if err := validateOrchestrationStepFieldsTyped(updatedOrchestrationStep); err != nil {
 			return "", fmt.Errorf(fmt.Sprintf("validation failed after update: %w", err), nil)
 		}
 
@@ -3387,22 +4223,7 @@ func createUpdateOrchestrationStepExecutor(workspacePath string, logger loggerv2
 			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		// Write changelog entry
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"step_id":        partialUpdate.ExistingStepID,
-			"changed_fields": changedFields,
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:   time.Now().Format(time.RFC3339),
-			ChangeType:  "update",
-			StepIDs:     []string{partialUpdate.ExistingStepID},
-			Description: fmt.Sprintf("Updated orchestration step: %s", partialUpdate.ExistingStepID),
-			Details:     string(detailsJSON),
-			Changes:     fieldChanges,
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
-		}
+		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		// Unlock learnings for updated step
 		if unlockLearningsFunc != nil && stepIndex >= 0 {
@@ -3501,21 +4322,7 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		// Write changelog entry with complete deleted step data for revert support
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"deleted_step_ids": deletedIDs,
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:    time.Now().Format(time.RFC3339),
-			ChangeType:   "delete",
-			StepIDs:      deletedIDs,
-			Description:  fmt.Sprintf("Deleted %d step(s): %v", len(deletedIDs), deletedIDs),
-			Details:      string(detailsJSON),
-			DeletedSteps: deletedSteps, // Store complete deleted step data for revert
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
-		}
+		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		// Unlock learnings for all deleted steps (if unlock function provided)
 		// Use old step indices from before deletion
@@ -3718,30 +4525,7 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		// Write changelog entry with complete step data for revert support
-		// Marshal typed step to JSON for changelog
-		stepJSON, err := json.Marshal(typedStep)
-		if err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to marshal step for changelog: %v", err))
-		}
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"step_id":              typedStep.GetID(),
-			"title":                typedStep.GetTitle(),
-			"step_type":            stepType,
-			"insert_after_step_id": insertAfterStepID,
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:         time.Now().Format(time.RFC3339),
-			ChangeType:        "add",
-			StepIDs:           []string{typedStep.GetID()},
-			Description:       fmt.Sprintf("Added %s step: %s (ID: %s)", stepType, typedStep.GetTitle(), typedStep.GetID()),
-			Details:           string(detailsJSON),
-			AddedSteps:        []json.RawMessage{stepJSON}, // Store complete step data for revert (as JSON)
-			InsertAfterStepID: insertAfterStepID,           // Store insertion point for revert
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
-		}
+		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		// Unlock learnings for the newly added step (if unlock function provided)
 		if unlockLearningsFunc != nil {
@@ -4417,24 +5201,7 @@ func createConvertStepToConditionalExecutor(workspacePath string, logger loggerv
 			OldValue: oldIfFalseSteps,
 			NewValue: ifFalseSteps,
 		})
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"step_id":            stepID,
-			"condition_question": conditionQuestion,
-			"if_true_steps":      len(ifTrueSteps),
-			"if_false_steps":     len(ifFalseSteps),
-			"branch_step_ids":    branchStepIDs,
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:   time.Now().Format(time.RFC3339),
-			ChangeType:  "convert_to_conditional",
-			StepIDs:     []string{stepID},
-			Description: fmt.Sprintf("Converted step '%s' to conditional with %d true branch steps and %d false branch steps", stepToConvert.GetTitle(), len(ifTrueSteps), len(ifFalseSteps)),
-			Details:     string(detailsJSON),
-			Changes:     fieldChanges,
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
-		}
+		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		logger.Info(fmt.Sprintf("✅ Converted step '%s' to conditional with %d true branch steps and %d false branch steps", stepToConvert.GetTitle(), len(ifTrueSteps), len(ifFalseSteps)))
 		return fmt.Sprintf("Successfully converted step '%s' to conditional", stepToConvert.GetTitle()), nil
@@ -4538,41 +5305,7 @@ func createAddBranchStepsExecutor(workspacePath string, logger loggerv2.Logger, 
 			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		// Write changelog entry with old/new values
-		newBranchStepIDs := make([]string, 0, len(newSteps))
-		for _, step := range newSteps {
-			newBranchStepIDs = append(newBranchStepIDs, step.GetID())
-		}
-		fieldChanges := make([]PlanFieldChange, 0)
-		fieldName := fmt.Sprintf("%s_steps", branchType) // "if_true_steps" or "if_false_steps"
-		var newBranchSteps []PlanStepInterface
-		if branchType == "if_true" {
-			newBranchSteps = conditionalStep.IfTrueSteps
-		} else {
-			newBranchSteps = conditionalStep.IfFalseSteps
-		}
-		fieldChanges = append(fieldChanges, PlanFieldChange{
-			StepID:   parentStepID,
-			Field:    fieldName,
-			OldValue: fmt.Sprintf("%d steps", len(oldBranchSteps)),
-			NewValue: fmt.Sprintf("%d steps", len(newBranchSteps)),
-		})
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"parent_step_id": parentStepID,
-			"branch_type":    branchType,
-			"new_step_ids":   newBranchStepIDs,
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:   time.Now().Format(time.RFC3339),
-			ChangeType:  "add_branch_steps",
-			StepIDs:     newBranchStepIDs,
-			Description: fmt.Sprintf("Added %d step(s) to %s branch of conditional step '%s'", len(newSteps), branchType, conditionalStep.Title),
-			Details:     string(detailsJSON),
-			Changes:     fieldChanges,
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
-		}
+		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		logger.Info(fmt.Sprintf("✅ Added %d steps to %s branch of conditional step '%s'", len(newSteps), branchType, conditionalStep.Title))
 		return fmt.Sprintf("Successfully added %d step(s) to %s branch of conditional step '%s'", len(newSteps), branchType, conditionalStep.Title), nil
@@ -4785,22 +5518,7 @@ func createUpdateBranchStepsExecutor(workspacePath string, logger loggerv2.Logge
 		}
 
 		// Write changelog entry
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"parent_step_id":   parentStepID,
-			"branch_type":      branchType,
-			"updated_step_ids": updatedBranchStepIDs,
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:   time.Now().Format(time.RFC3339),
-			ChangeType:  "update_branch_steps",
-			StepIDs:     updatedBranchStepIDs,
-			Description: fmt.Sprintf("Updated %d step(s) in %s branch of conditional step '%s'", len(partialUpdates), branchType, conditionalStep.Title),
-			Details:     string(detailsJSON),
-			Changes:     fieldChanges,
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
-		}
+		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		logger.Info(fmt.Sprintf("✅ Updated %d steps in %s branch of conditional step '%s'", len(partialUpdates), branchType, conditionalStep.Title))
 		return fmt.Sprintf("Successfully updated %d step(s) in %s branch of conditional step '%s'", len(partialUpdates), branchType, conditionalStep.Title), nil
@@ -4932,23 +5650,7 @@ func createDeleteBranchStepsExecutor(workspacePath string, logger loggerv2.Logge
 			OldValue: fmt.Sprintf("%d steps", len(oldBranchStepsJSON)),
 			NewValue: fmt.Sprintf("%d steps", len(filteredSteps)),
 		})
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"parent_step_id":   parentStepID,
-			"branch_type":      branchType,
-			"deleted_step_ids": deletedIDs,
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:    time.Now().Format(time.RFC3339),
-			ChangeType:   "delete_branch_steps",
-			StepIDs:      deletedIDs,
-			Description:  fmt.Sprintf("Deleted %d step(s) from %s branch of conditional step '%s'", len(deletedIDs), branchType, conditionalStep.Title),
-			Details:      string(detailsJSON),
-			DeletedSteps: oldBranchStepsJSON,
-			Changes:      fieldChanges,
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
-		}
+		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		logger.Info(fmt.Sprintf("✅ Deleted %d steps from %s branch of conditional step '%s'", len(deletedIDs), branchType, conditionalStep.Title))
 		return fmt.Sprintf("Successfully deleted %d step(s) from %s branch of conditional step '%s'", len(deletedIDs), branchType, conditionalStep.Title), nil
@@ -5037,30 +5739,7 @@ func createAddOrchestrationRouteExecutor(workspacePath string, logger loggerv2.L
 			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		// Write changelog entry with old/new values
-		fieldChanges := make([]PlanFieldChange, 0)
-		fieldChanges = append(fieldChanges, PlanFieldChange{
-			StepID:   parentStepID,
-			Field:    "orchestration_routes",
-			OldValue: fmt.Sprintf("%d routes", len(oldRoutes)),
-			NewValue: fmt.Sprintf("%d routes", len(orchestrationStep.OrchestrationRoutes)),
-		})
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"parent_step_id": parentStepID,
-			"new_route_id":   newRoute.RouteID,
-			"route_name":     newRoute.RouteName,
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:   time.Now().Format(time.RFC3339),
-			ChangeType:  "add_orchestration_route",
-			StepIDs:     []string{parentStepID},
-			Description: fmt.Sprintf("Added route '%s' (ID: %s) to orchestration step '%s'", newRoute.RouteName, newRoute.RouteID, orchestrationStep.Title),
-			Details:     string(detailsJSON),
-			Changes:     fieldChanges,
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
-		}
+		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		logger.Info(fmt.Sprintf("✅ Added route '%s' (ID: %s) to orchestration step '%s'", newRoute.RouteName, newRoute.RouteID, orchestrationStep.Title))
 		return fmt.Sprintf("Successfully added route '%s' (ID: %s) to orchestration step '%s'", newRoute.RouteName, newRoute.RouteID, orchestrationStep.Title), nil
@@ -5193,23 +5872,7 @@ func createUpdateOrchestrationRouteExecutor(workspacePath string, logger loggerv
 			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
 		}
 
-		// Write changelog entry
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"parent_step_id":    parentStepID,
-			"existing_route_id": existingRouteID,
-			"changed_fields":    len(fieldChanges),
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:   time.Now().Format(time.RFC3339),
-			ChangeType:  "update_orchestration_route",
-			StepIDs:     []string{parentStepID},
-			Description: fmt.Sprintf("Updated route '%s' (ID: %s) in orchestration step '%s'", routeToUpdate.RouteName, existingRouteID, orchestrationStep.Title),
-			Details:     string(detailsJSON),
-			Changes:     fieldChanges,
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
-		}
+		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		logger.Info(fmt.Sprintf("✅ Updated route '%s' (ID: %s) in orchestration step '%s'", routeToUpdate.RouteName, existingRouteID, orchestrationStep.Title))
 		return fmt.Sprintf("Successfully updated route '%s' (ID: %s) in orchestration step '%s'", routeToUpdate.RouteName, existingRouteID, orchestrationStep.Title), nil
@@ -5298,29 +5961,7 @@ func createDeleteOrchestrationRouteExecutor(workspacePath string, logger loggerv
 		}
 
 		// Write changelog entry with old/new values
-		fieldChanges := make([]PlanFieldChange, 0)
-		fieldChanges = append(fieldChanges, PlanFieldChange{
-			StepID:   parentStepID,
-			Field:    "orchestration_routes",
-			OldValue: fmt.Sprintf("%d routes", len(oldRoutes)),
-			NewValue: fmt.Sprintf("%d routes", len(orchestrationStep.OrchestrationRoutes)),
-		})
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"parent_step_id":   parentStepID,
-			"deleted_route_id": deletedRouteID,
-			"route_name":       deletedRoute.RouteName,
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:   time.Now().Format(time.RFC3339),
-			ChangeType:  "delete_orchestration_route",
-			StepIDs:     []string{parentStepID},
-			Description: fmt.Sprintf("Deleted route '%s' (ID: %s) from orchestration step '%s'", deletedRoute.RouteName, deletedRouteID, orchestrationStep.Title),
-			Details:     string(detailsJSON),
-			Changes:     fieldChanges,
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
-		}
+		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		logger.Info(fmt.Sprintf("✅ Deleted route '%s' (ID: %s) from orchestration step '%s'", deletedRoute.RouteName, deletedRouteID, orchestrationStep.Title))
 		return fmt.Sprintf("Successfully deleted route '%s' (ID: %s) from orchestration step '%s'", deletedRoute.RouteName, deletedRouteID, orchestrationStep.Title), nil
@@ -5419,20 +6060,7 @@ func createConvertConditionalToRegularExecutor(workspacePath string, logger logg
 			OldValue: fmt.Sprintf("%d steps", oldIfFalseStepsCount),
 			NewValue: "0 steps",
 		})
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"step_id": stepID,
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:   time.Now().Format(time.RFC3339),
-			ChangeType:  "convert_to_regular",
-			StepIDs:     []string{stepID},
-			Description: fmt.Sprintf("Converted conditional step '%s' back to regular step", conditionalStep.Title),
-			Details:     string(detailsJSON),
-			Changes:     fieldChanges,
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
-		}
+		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		logger.Info(fmt.Sprintf("✅ Converted conditional step '%s' back to regular step", regularStep.Title))
 		return fmt.Sprintf("Successfully converted conditional step '%s' back to regular step", regularStep.Title), nil
@@ -5479,7 +6107,8 @@ func createUpdateValidationSchemaExecutor(workspacePath string, logger loggerv2.
 		fieldChanges := make([]PlanFieldChange, 0)
 
 		// Update the step
-		stepIndex, changedFields, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
+		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
+		stepIndex, _, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
 		if err != nil {
 			return "", err
 		}
@@ -5492,23 +6121,6 @@ func createUpdateValidationSchemaExecutor(workspacePath string, logger loggerv2.
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
 			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
-		}
-
-		// Write changelog entry
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"step_id":        updateData.ExistingStepID,
-			"changed_fields": changedFields,
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:   time.Now().Format(time.RFC3339),
-			ChangeType:  "update",
-			StepIDs:     []string{updateData.ExistingStepID},
-			Description: fmt.Sprintf("Updated validation schema for step: %s", updateData.ExistingStepID),
-			Details:     string(detailsJSON),
-			Changes:     fieldChanges,
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
 		}
 
 		// Unlock learnings for updated step
@@ -5565,7 +6177,8 @@ func createUpdateSuccessCriteriaExecutor(workspacePath string, logger loggerv2.L
 		fieldChanges := make([]PlanFieldChange, 0)
 
 		// Update the step
-		stepIndex, changedFields, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
+		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
+		stepIndex, _, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
 		if err != nil {
 			return "", err
 		}
@@ -5578,23 +6191,6 @@ func createUpdateSuccessCriteriaExecutor(workspacePath string, logger loggerv2.L
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
 			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
-		}
-
-		// Write changelog entry
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"step_id":        updateData.ExistingStepID,
-			"changed_fields": changedFields,
-		})
-		changelogEntry := PlanChangeLogEntry{
-			Timestamp:   time.Now().Format(time.RFC3339),
-			ChangeType:  "update",
-			StepIDs:     []string{updateData.ExistingStepID},
-			Description: fmt.Sprintf("Updated success criteria for step: %s", updateData.ExistingStepID),
-			Details:     string(detailsJSON),
-			Changes:     fieldChanges,
-		}
-		if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write changelog entry: %v", err))
 		}
 
 		// Unlock learnings for updated step

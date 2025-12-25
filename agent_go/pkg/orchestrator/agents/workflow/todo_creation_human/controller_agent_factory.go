@@ -73,7 +73,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getExecutionMaxTurns(stepCon
 
 // resolveStepID resolves the step ID from stepPath, stepIDOverride, or allSteps
 // Priority: stepIDOverride > allSteps lookup > stepPath fallback
-func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveStepID(stepPath, stepIDOverride string, allSteps []TodoStep, currentStepIndex int) string {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveStepID(stepPath, stepIDOverride string, allSteps []PlanStepInterface, currentStepIndex int) string {
 	stepID := stepIDOverride
 	pathInfo := parseStepPath(stepPath)
 	stepIndexForCheck := pathInfo.ParentStepNumber - 1 // Convert to 0-based
@@ -82,15 +82,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveStepID(stepPath, step
 		// Try to get step ID from allSteps
 		if allSteps != nil && stepIndexForCheck >= 0 && stepIndexForCheck < len(allSteps) {
 			// Default: use the step's own ID
-			stepID = allSteps[stepIndexForCheck].ID
+			stepID = allSteps[stepIndexForCheck].GetID()
 
 			// Special case: decision step inner execution (step-{N}-decision)
 			// In this case, learnings for execution are stored under the INNER decision step ID,
 			// not the outer decision container step ID. Use DecisionStep.ID when available.
 			if strings.HasSuffix(stepPath, "-decision") {
 				decisionContainerStep := allSteps[currentStepIndex]
-				if decisionContainerStep.HasDecisionStep && decisionContainerStep.DecisionStep != nil && decisionContainerStep.DecisionStep.ID != "" {
-					stepID = decisionContainerStep.DecisionStep.ID
+				// Check if it's a DecisionPlanStep and get the inner DecisionStep
+				if decisionStep, ok := decisionContainerStep.(*DecisionPlanStep); ok && decisionStep.DecisionStep != nil {
+					stepID = decisionStep.DecisionStep.GetID()
 					hcpo.GetLogger().Info(fmt.Sprintf("🔍 Using inner decision step ID for learnings folder: %s (stepPath: %s)", stepID, stepPath))
 				} else {
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ stepPath %s indicates decision inner step but DecisionStep ID not available; falling back to outer step ID: %s", stepPath, stepID))
@@ -302,7 +303,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) prepareCustomTools(stepConfi
 // This must be called AFTER the agent is created, as it directly registers the tool on the mcpAgent
 func (hcpo *HumanControlledTodoPlannerOrchestrator) addPrerequisiteDetectionTool(
 	prerequisiteInfo *PrerequisiteInfo,
-	allSteps []TodoStep,
+	allSteps []PlanStepInterface,
 	currentStepIndex int,
 	cancelFunc context.CancelFunc,
 	prereqErrChan chan<- *PrerequisiteFailureError,
@@ -374,13 +375,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) selectValidationLLM(stepConf
 }
 
 // getValidationMaxTurns determines max turns for validation agents
+// Fixed to 25 (not configurable)
 func (hcpo *HumanControlledTodoPlannerOrchestrator) getValidationMaxTurns(stepConfig *AgentConfigs) int {
-	maxTurns := hcpo.GetMaxTurns()
-	if stepConfig != nil && stepConfig.ValidationMaxTurns != nil {
-		maxTurns = *stepConfig.ValidationMaxTurns
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific validation max turns: %d", maxTurns))
-	}
-	return maxTurns
+	return 25
 }
 
 // setupValidationFolderGuard sets up folder guard paths for validation agents (read-only)
@@ -429,13 +426,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) setupLearningFolderGuard(lea
 }
 
 // getLearningMaxTurns determines max turns for learning agents
+// Fixed to 25 (not configurable)
 func (hcpo *HumanControlledTodoPlannerOrchestrator) getLearningMaxTurns(stepConfig *AgentConfigs) int {
-	maxTurns := hcpo.GetMaxTurns()
-	if stepConfig != nil && stepConfig.LearningMaxTurns != nil {
-		maxTurns = *stepConfig.LearningMaxTurns
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific learning max turns: %d", maxTurns))
-	}
-	return maxTurns
+	return 25
 }
 
 // selectLearningLLM selects the LLM config for learning agents
@@ -518,7 +511,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) applyPostSetupToAgent(agent 
 // stepIDOverride: Optional explicit step ID to use for learnings / tempLLM selection (e.g., sub-agent step ID).
 //
 //	When empty, the step ID will be derived from allSteps based on stepPath as before.
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, isRetryAfterValidationFailure bool, retryAttempt int, prerequisiteInfo *PrerequisiteInfo, allSteps []TodoStep, currentStepIndex int, cancelFunc context.CancelFunc, prereqErrChan chan<- *PrerequisiteFailureError, stepIDOverride string) (agents.OrchestratorAgent, error) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, isRetryAfterValidationFailure bool, retryAttempt int, prerequisiteInfo *PrerequisiteInfo, allSteps []PlanStepInterface, currentStepIndex int, cancelFunc context.CancelFunc, prereqErrChan chan<- *PrerequisiteFailureError, stepIDOverride string) (agents.OrchestratorAgent, error) {
 	// 1. Setup folder guard (extracted method)
 	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath)
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
@@ -661,17 +654,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 }
 
 // createLearningAgentInternal is the unified internal function for creating learning agents (extraction or consolidation)
-// isConsolidation: if true, creates consolidation agent; if false, creates extraction agent
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgentInternal(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool, isConsolidation bool) (agents.OrchestratorAgent, error) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgentInternal(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool) (agents.OrchestratorAgent, error) {
 	// 1. Setup folder guard (extracted method)
 	readPaths, writePaths := hcpo.setupLearningFolderGuard(learningPathIdentifier)
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	agentType := "learning agent"
-	if isConsolidation {
-		agentType = "learning consolidation agent"
-	}
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for %s - Read paths: %v, Write paths: %v", agentType, readPaths, writePaths))
 
 	// Use the provided step-specific code execution mode (already computed with step-level priority) to ensure consistency
@@ -680,6 +669,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgentInternal(
 
 	// 2. Determine settings (extracted methods)
 	maxTurns := hcpo.getLearningMaxTurns(stepConfig)
+	// Use learning LLM config - Priority: step config > preset default > orchestrator default
 	llmConfig := hcpo.selectLearningLLM(stepConfig)
 
 	// 3. Create config
@@ -693,11 +683,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgentInternal(
 	// CRITICAL: Override orchestrator-level code execution mode setting - learning agents are pure LLM analysis agents
 	config.UseCodeExecutionMode = false
 	if wasCodeExecutionMode {
-		if isConsolidation {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Execution was in code execution mode - using consolidation agent (but agent itself does NOT use code execution mode)"))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Execution was in code execution mode - using code execution learning agent (but agent itself does NOT use code execution mode)"))
-		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Execution was in code execution mode - using code execution learning agent (but agent itself does NOT use code execution mode)"))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for %s (only execution agents use MCP tools)", agentType))
 	}
@@ -717,21 +703,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgentInternal(
 	pathInfo := parseStepPath(learningPathIdentifier)
 	stepNumberForContext := pathInfo.ParentStepNumber - 1 // Convert to 0-based for SetOrchestratorContext
 
-	// Create agent factory function based on agent type and code execution mode
+	// Create agent factory function based on code execution mode
 	var createAgentFunc func(*agents.OrchestratorAgentConfig, loggerv2.Logger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent
-	if isConsolidation {
+	if wasCodeExecutionMode {
 		createAgentFunc = func(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewHumanControlledTodoPlannerLearningPhaseConsolidationAgent(config, logger, tracer, eventBridge)
+			return NewHumanControlledTodoPlannerCodeExecutionLearningAgent(config, logger, tracer, eventBridge)
 		}
 	} else {
-		if wasCodeExecutionMode {
-			createAgentFunc = func(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-				return NewHumanControlledTodoPlannerCodeExecutionLearningAgent(config, logger, tracer, eventBridge)
-			}
-		} else {
-			createAgentFunc = func(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-				return NewHumanControlledTodoPlannerLearningAgent(config, logger, tracer, eventBridge)
-			}
+		createAgentFunc = func(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+			return NewHumanControlledTodoPlannerLearningAgent(config, logger, tracer, eventBridge)
 		}
 	}
 
@@ -753,8 +733,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgentInternal(
 	// 6. Post-setup: folder guard paths and code execution registry (after base factory setup)
 	// Note: Base factory already updates code execution registry, but we need to set folder guard paths
 	// on mcpAgent first, then update registry again with correct paths (for extraction agents only)
-	// Only update registry for extraction agents (not consolidation) in code execution mode
-	shouldUpdateRegistry := !isConsolidation && wasCodeExecutionMode
+	// Only update registry for extraction agents in code execution mode
+	shouldUpdateRegistry := wasCodeExecutionMode
 	if err := hcpo.applyPostSetupToAgent(agent, agentName, shouldUpdateRegistry); err != nil {
 		// Log warning but don't fail agent creation
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Post-setup configuration failed for %s: %v", agentName, err))
@@ -768,14 +748,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgentInternal(
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool) (agents.OrchestratorAgent, error) {
-	return hcpo.createLearningAgentInternal(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode, false)
-}
-
-// createLearningConsolidationAgent creates a learning consolidation agent for merging and optimizing learning files
-// learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
-// isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningConsolidationAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool) (agents.OrchestratorAgent, error) {
-	return hcpo.createLearningAgentInternal(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode, true)
+	return hcpo.createLearningAgentInternal(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode)
 }
 
 // Note: Learning integration functions removed - execution agent now auto-discovers learning files and scripts

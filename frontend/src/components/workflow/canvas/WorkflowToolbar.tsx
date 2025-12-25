@@ -23,6 +23,7 @@ import {
   MessageSquare,
   Circle,
   Layers,
+  CheckSquare,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useAppStore } from '../../../stores'
@@ -218,6 +219,27 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
   const toggleGroupSelection = useWorkflowStore(state => state.toggleGroupSelection)
   const setSelectedGroupIds = useWorkflowStore(state => state.setSelectedGroupIds)
+  const clearSelectedGroupIds = useWorkflowStore(state => state.clearSelectedGroupIds)
+  
+  // Helper function to get first 5 characters of first variable value for a group
+  const getFirstVariablePreview = useCallback((groupId: string | null): string | null => {
+    if (!groupId || !variablesManifest) return null
+    
+    // Find the group in manifest
+    const group = variablesManifest.groups?.find(g => g.group_id === groupId)
+    if (!group || !group.values) return null
+    
+    // Get first variable name from manifest
+    const firstVariable = variablesManifest.variables?.[0]
+    if (!firstVariable) return null
+    
+    // Get value from group
+    const value = group.values[firstVariable.name]
+    if (!value) return null
+    
+    // Return first 5 characters (or less if shorter)
+    return value.substring(0, 5)
+  }, [variablesManifest])
   
   // Save settings when they change (including selectedGroupIds)
   useEffect(() => {
@@ -296,8 +318,15 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Calculate progress info - memoize to prevent unnecessary recalculations
   const completedStepIndices = useMemo(() => {
     const indices = getCompletedStepIndices()
-    return indices.slice().sort((a, b) => a - b) // Sort and create new array for stability
-  }, [getCompletedStepIndices])
+    const sorted = indices.slice().sort((a, b) => a - b) // Sort and create new array for stability
+    console.log('[PROGRESS_DEBUG] WorkflowToolbar - completedStepIndices:', {
+      raw: indices,
+      sorted,
+      stepProgress: stepProgress,
+      totalSteps
+    })
+    return sorted
+  }, [getCompletedStepIndices, stepProgress, totalSteps])
   
   const hasExistingProgress = stepProgress !== null && completedStepIndices.length > 0
   const completedStepCount = completedStepIndices.length
@@ -449,6 +478,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       { id: 'from_beginning', label: 'Start from Beginning', icon: Play, description: 'Execute all steps from start' }
     ]
     
+    console.log('[PROGRESS_DEBUG] Generating startPointOptions:', {
+      completedStepIndices,
+      completedStepIndicesLength: completedStepIndices.length,
+      totalSteps,
+      condition: completedStepIndices.length > 0 && totalSteps > 0
+    })
+    
     // Add resume options for all completed steps plus the next step after all completed
     if (completedStepIndices.length > 0 && totalSteps > 0) {
       // Convert 0-based indices to 1-based step numbers
@@ -458,24 +494,30 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       
       // Add all completed steps as resume options
       completedStepNumbers.forEach(stepNum => {
+        const stepIndex = stepNum - 1 // Convert to 0-based
+        const step = plan?.steps?.[stepIndex]
+        const stepTitle = step?.title || `Step ${stepNum}`
         options.push({
           id: 'resume',
           stepNumber: stepNum,
-          label: `Start Again from Step ${stepNum}`,
+          label: `Start Again from step${stepNum}: ${stepTitle}`,
           icon: RefreshCw,
-          description: `Start again from step ${stepNum} (${completedStepCount} completed)`
+          description: `Start again from step ${stepNum}`
         })
       })
       
       // Add next step if it exists (resume from after all completed steps)
       // This is a new step that will run, so it says "Resume" not "Start Again"
       if (nextStep <= totalSteps) {
+        const stepIndex = nextStep - 1 // Convert to 0-based
+        const step = plan?.steps?.[stepIndex]
+        const stepTitle = step?.title || `Step ${nextStep}`
         options.push({
           id: 'resume',
           stepNumber: nextStep,
-          label: `Resume from Step ${nextStep}`,
+          label: `Resume from step${nextStep}: ${stepTitle}`,
           icon: RefreshCw,
-          description: `Resume from step ${nextStep} (after ${completedStepCount} completed steps)`
+          description: `Resume from step ${nextStep}`
         })
       }
     }
@@ -629,7 +671,16 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const handleSelectPhase = (phaseId: string) => {
     setIsDropdownOpen(false)
     if (!isRunning) {
-      onStartPhase(phaseId)
+      // For plan-improvement and other phases that need run folder, pass execution options
+      if (phaseId === 'plan-improvement' || phaseId === 'plan-tool-optimization' || phaseId === 'plan-learnings-alignment') {
+        // Build execution options to include selected_run_folder
+        const executionOptions = buildExecutionOptions()
+        console.log('[WorkflowToolbar] Starting', phaseId, 'with execution options:', executionOptions)
+        onStartPhase(phaseId, executionOptions)
+      } else {
+        // For other phases, don't pass execution options
+        onStartPhase(phaseId)
+      }
     }
   }
 
@@ -882,8 +933,36 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                   <div key={iteration}>
                                     {/* Iteration header (only if it has groups or is a top-level folder) */}
                                     {hasGroups ? (
-                                      <div className="px-3 py-1.5 text-xs font-semibold text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50">
-                                        {iteration}
+                                      <div className="px-3 py-1.5 text-xs font-semibold text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50 flex items-center justify-between gap-2">
+                                        <span>{iteration}</span>
+                                        {/* Select All / Unselect All buttons - only show if multiple groups */}
+                                        {hasMultipleGroups && (
+                                          <div className="flex items-center gap-1">
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation()
+                                                const allGroupIds = enabledGroups.map(g => g.groupId!).filter(Boolean) as string[]
+                                                setSelectedGroupIds(allGroupIds)
+                                              }}
+                                              disabled={isRunning}
+                                              className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                              title="Select all groups"
+                                            >
+                                              <CheckSquare className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                                            </button>
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation()
+                                                clearSelectedGroupIds()
+                                              }}
+                                              disabled={isRunning}
+                                              className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                              title="Unselect all groups"
+                                            >
+                                              <Square className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
+                                            </button>
+                                          </div>
+                                        )}
                                       </div>
                                     ) : null}
                                     
@@ -931,7 +1010,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                     })()}
                                     
                                     {/* Groups under this iteration - show ALL groups from manifest, not just ones with folders */}
-                                    {groups.map((group) => {
+                                    {/* Filter out iteration folders (groupId === null) since we already show the iteration header */}
+                                    {groups.filter(group => group.groupId !== null).map((group) => {
                                       const progress = group.progress
                                       const completedCount = progress?.completed_step_indices?.length || 0
                                       const totalSteps = progress?.total_steps || 0
@@ -939,6 +1019,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                       const isSelected = selectedRunFolder === group.id
                                       const isDisabled = group.enabled === false
                                       const isGroupChecked = group.groupId ? selectedGroupIds.includes(group.groupId) : false
+                                      const firstVariablePreview = getFirstVariablePreview(group.groupId)
                                       
                                       return (
                                         <div
@@ -1004,8 +1085,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                               // Only show circle if no checkboxes (single group mode)
                                               <Circle className="w-4 h-4" />
                                             )}
-                                            <span className="flex-1 font-mono text-xs">
-                                              {group.groupId || group.name}
+                                            <span className="flex-1 font-mono text-xs flex items-center gap-1.5">
+                                              <span>{group.groupId || group.name}</span>
+                                              {firstVariablePreview && (
+                                                <span className="text-[10px] text-gray-500 dark:text-gray-400 font-normal">
+                                                  ({firstVariablePreview})
+                                                </span>
+                                              )}
                                             </span>
                                             {hasProgress && (
                                               <span className="text-xs text-gray-500 dark:text-gray-400">

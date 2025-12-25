@@ -11,6 +11,7 @@ import {
   type WorkflowStartEventData,
   type WorkflowProgressEventData,
   type WorkflowEndEventData,
+  type PrerequisiteNavigationEvent,
 } from '../../generated/event-types'
 
 // Import from the new organized component structure
@@ -50,6 +51,7 @@ import {
   SystemPromptEventDisplay,
   UserMessageEventDisplay
 } from './system'
+import type { UserMessageEvent } from '../../generated/events'
 
 import {
   OrchestratorStartEventDisplay,
@@ -63,7 +65,8 @@ import {
   StepExecutionEventDisplay,
   StepProgressUpdatedEventDisplay,
   DecisionEvaluatedEventDisplay,
-  PreValidationCompletedEventDisplay
+  PreValidationCompletedEventDisplay,
+  PrerequisiteNavigationEventDisplay
 } from './orchestrator'
 import { StepTokenUsageEventDisplay } from './orchestrator/StepTokenUsageEvent'
 import { VariablesExtractedEventDisplay } from './orchestrator/VariablesExtractedEvent'
@@ -97,6 +100,8 @@ import {
   ContextSummarizationStartedEventDisplay,
   ContextSummarizationCompletedEventDisplay,
   ContextSummarizationErrorEventDisplay,
+  ContextEditingCompletedEventDisplay,
+  ContextEditingErrorEventDisplay,
   TempLLMSkippedEventDisplay
 } from './debug'
 import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
@@ -260,11 +265,28 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
   if (isEventType(event, 'user_message')) {
     const data = getEventData(event)
+    // Always render - UserMessageEventDisplay handles missing content gracefully
+    // Log warning if content is missing for debugging
     if (!data.content) {
-      console.error('USERMSG_DEBUG - EventDispatcher - no user_message content found')
-      return null
+      console.warn('USERMSG_DEBUG - EventDispatcher - user_message event has no content, but rendering anyway', data)
     }
     return <CompactWrapper><WithContext Component={UserMessageEventDisplay} data={data} compact={compact} /></CompactWrapper>
+  }
+  
+  // Fallback: Try to handle user_message events even if type check fails
+  // This handles cases where event structure might be slightly different
+  if (event.type === 'user_message' && event.data) {
+    try {
+      // Try to extract data from nested structure
+      const agentEvent = event.data as { data?: unknown; type?: string }
+      const eventData = (agentEvent?.data || event.data) as UserMessageEvent
+      if (eventData) {
+        console.log('USERMSG_DEBUG - EventDispatcher - Using fallback for user_message event', eventData)
+        return <CompactWrapper><WithContext Component={UserMessageEventDisplay} data={eventData} compact={compact} /></CompactWrapper>
+      }
+    } catch (error) {
+      console.error('USERMSG_DEBUG - EventDispatcher - Error in fallback handler', error, event)
+    }
   }
 
   // Orchestrator Events
@@ -352,6 +374,9 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'workflow_end')) {
     return <CompactWrapper><WorkflowEndEvent event={getEventData(event) as WorkflowEndEventData} /></CompactWrapper>
   }
+  if (isEventType(event, 'prerequisite_navigation')) {
+    return <CompactWrapper><PrerequisiteNavigationEventDisplay event={getEventData(event) as PrerequisiteNavigationEvent} compact={compact} /></CompactWrapper>
+  }
   // Batch execution events
   if (isEventType(event, 'batch_group_start')) {
     return <CompactWrapper><BatchGroupStartEvent event={getEventData(event)} compact={compact} /></CompactWrapper>
@@ -430,6 +455,14 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
   if (isEventType(event, 'context_summarization_error')) {
     return <CompactWrapper><ContextSummarizationErrorEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+  }
+
+  // Context Editing Events
+  if (isEventType(event, 'context_editing_completed')) {
+    return <CompactWrapper><ContextEditingCompletedEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+  }
+  if (isEventType(event, 'context_editing_error')) {
+    return <CompactWrapper><ContextEditingErrorEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
 
   // Temp LLM Skipped Event

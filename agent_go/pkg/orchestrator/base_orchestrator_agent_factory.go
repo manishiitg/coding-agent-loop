@@ -87,6 +87,11 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	config.FixedTokenThreshold = bo.GetFixedTokenThreshold()
 	config.SummaryKeepLastMessages = bo.GetSummaryKeepLastMessages()
 
+	// Context editing configuration from orchestrator
+	config.EnableContextEditing = bo.GetEnableContextEditing()
+	config.ContextEditingThreshold = bo.GetContextEditingThreshold()
+	config.ContextEditingTurnThreshold = bo.GetContextEditingTurnThreshold()
+
 	return config
 }
 

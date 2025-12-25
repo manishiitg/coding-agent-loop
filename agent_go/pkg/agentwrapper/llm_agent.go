@@ -14,6 +14,8 @@ import (
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
 
+	agentlogger "mcp-agent-builder-go/agent_go/pkg/logger"
+
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -68,7 +70,7 @@ type LLMAgentConfig struct {
 	TokenThresholdPercent          float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
 	SummarizeOnFixedTokenThreshold bool    // Enable fixed token-based summarization trigger
 	FixedTokenThreshold            int     // Fixed token threshold to trigger summarization (e.g., 100000 = 100k tokens, default: 100k)
-	SummaryKeepLastMessages        int     // Number of recent messages to keep when summarizing (0 = use default: 8)
+	SummaryKeepLastMessages        int     // Number of recent messages to keep when summarizing (0 = use default: 4)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -632,12 +634,19 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, trac
 		logger.Info(fmt.Sprintf("Added default cross-provider fallback models: %v", crossProviderFallbacks))
 	}
 
-	// Use logger directly (already loggerv2.Logger)
+	// Create a separate LLM logger that writes to llm_debug.log
+	// This separates LLM logs (including [GEMINI] logs from multi-llm-provider-go) from server logs
 	var v2LoggerForLLM loggerv2.Logger
-	if logger != nil {
-		v2LoggerForLLM = logger
+	llmLogger, err := agentlogger.CreateLogger("logs/llm_debug.log", "debug", "text", false)
+	if err != nil {
+		// Fallback to the provided logger if LLM logger creation fails
+		if logger != nil {
+			v2LoggerForLLM = logger
+		} else {
+			v2LoggerForLLM = loggerv2.NewDefault()
+		}
 	} else {
-		v2LoggerForLLM = loggerv2.NewDefault()
+		v2LoggerForLLM = llmLogger
 	}
 
 	// Use the existing LLM provider system with detailed fallback models

@@ -132,6 +132,9 @@ func NewBaseAgent(
 	summarizeOnFixedTokenThreshold bool, // Enable fixed token-based summarization trigger
 	fixedTokenThreshold int, // Fixed token threshold to trigger summarization
 	summaryKeepLastMessages int, // Number of recent messages to keep when summarizing
+	enableContextEditing bool, // Context editing configuration
+	contextEditingThreshold int, // Token threshold for context editing
+	contextEditingTurnThreshold int, // Turn age threshold for context editing
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
 	// All agents use Simple mode
@@ -188,6 +191,17 @@ func NewBaseAgent(
 		}
 		if summaryKeepLastMessages > 0 {
 			agentOptions = append(agentOptions, mcpagent.WithSummaryKeepLastMessages(summaryKeepLastMessages))
+		}
+	}
+
+	// Add context editing configuration
+	if enableContextEditing {
+		agentOptions = append(agentOptions, mcpagent.WithContextEditing(true))
+		if contextEditingThreshold > 0 {
+			agentOptions = append(agentOptions, mcpagent.WithContextEditingThreshold(contextEditingThreshold))
+		}
+		if contextEditingTurnThreshold > 0 {
+			agentOptions = append(agentOptions, mcpagent.WithContextEditingTurnThreshold(contextEditingTurnThreshold))
 		}
 	}
 

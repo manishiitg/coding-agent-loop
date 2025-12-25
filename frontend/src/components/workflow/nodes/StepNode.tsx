@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle, Lock, ShieldCheck } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle, Lock, ShieldCheck, SkipForward } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -135,6 +135,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     enable_large_output_virtual_tools?: boolean
     enable_prerequisite_detection?: boolean
     prerequisite_rules?: Array<{ depends_on_step: string; description: string }>
+    skip_llm_validation_if_pre_validation_passes?: boolean
   } }
   
   // Backward-compatible prerequisite flags/rules (agent_configs takes priority over top-level fields)
@@ -527,11 +528,19 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
           {/* Lock Learnings Badge */}
           {stepConfig?.agent_configs?.lock_learnings && !stepConfig?.agent_configs?.disable_learning && (
             <div 
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 text-[10px] font-semibold border border-purple-200 dark:border-purple-800"
+              className="flex items-center justify-center w-8 h-8 rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800"
               title="Learnings are locked - learning agent will not run but existing learnings will be used"
             >
               <Lock className="w-3.5 h-3.5" />
-              <span>Locked</span>
+            </div>
+          )}
+          {/* Validation Skipped Badge */}
+          {stepConfig?.agent_configs?.skip_llm_validation_if_pre_validation_passes && (
+            <div 
+              className="flex items-center justify-center w-8 h-8 rounded-md bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800"
+              title="LLM validation will be skipped if pre-validation passes"
+            >
+              <SkipForward className="w-3.5 h-3.5" />
             </div>
           )}
           {statusIcons[status]}

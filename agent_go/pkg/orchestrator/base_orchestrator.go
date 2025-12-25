@@ -15,7 +15,7 @@ import (
 
 // GetDefaultMaxTurnsFromEnv returns the default max turns from environment variable
 // Checks MAX_TURNS and ORCHESTRATOR_MAX_TURNS (in that order)
-// Returns 100 if neither is set or invalid
+// Returns 50 if neither is set or invalid
 func GetDefaultMaxTurnsFromEnv() int {
 	// Check MAX_TURNS first (more general)
 	if envVal := os.Getenv("MAX_TURNS"); envVal != "" {
@@ -29,8 +29,8 @@ func GetDefaultMaxTurnsFromEnv() int {
 			return maxTurns
 		}
 	}
-	// Default to 100 if neither is set or invalid
-	return 100
+	// Default to 50 if neither is set or invalid
+	return 50
 }
 
 // Orchestrator defines the common interface for all orchestrators
@@ -89,6 +89,11 @@ type BaseOrchestrator struct {
 	summarizeOnFixedTokenThreshold bool
 	fixedTokenThreshold            int
 	summaryKeepLastMessages        int
+
+	// Context editing configuration
+	enableContextEditing        bool // Enable context editing (dynamic context reduction)
+	contextEditingThreshold     int  // Token threshold for context editing
+	contextEditingTurnThreshold int  // Turn age threshold for context editing
 }
 
 // NewBaseOrchestrator creates a new unified base orchestrator
@@ -125,7 +130,7 @@ func NewBaseOrchestrator(
 			tokenThresholdPercent = threshold
 		}
 	}
-	summaryKeepLastMessages := 8 // Default to 8 messages
+	summaryKeepLastMessages := 4 // Default to 4 messages (roughly 2 turns)
 	if envVal := os.Getenv("SUMMARY_KEEP_LAST_MESSAGES"); envVal != "" {
 		if keepLast, err := strconv.Atoi(envVal); err == nil && keepLast > 0 {
 			summaryKeepLastMessages = keepLast
@@ -142,10 +147,28 @@ func NewBaseOrchestrator(
 		}
 	}
 
-	// Default maxTurns from environment variable or 100 if not provided or 0
+	// Context editing configuration (enabled by default to compact large tool outputs)
+	enableContextEditing := true // Default to enabled
+	if envVal := os.Getenv("ENABLE_CONTEXT_EDITING"); envVal == "false" {
+		enableContextEditing = false
+	}
+	contextEditingThreshold := 10000 // Default to 10k tokens - compact outputs larger than this
+	if envVal := os.Getenv("CONTEXT_EDITING_THRESHOLD"); envVal != "" {
+		if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
+			contextEditingThreshold = threshold
+		}
+	}
+	contextEditingTurnThreshold := 10 // Default to 10 turns - compact outputs older than this
+	if envVal := os.Getenv("CONTEXT_EDITING_TURN_THRESHOLD"); envVal != "" {
+		if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
+			contextEditingTurnThreshold = threshold
+		}
+	}
+
+	// Default maxTurns from environment variable or 50 if not provided or 0
 	if maxTurns <= 0 {
 		maxTurns = GetDefaultMaxTurnsFromEnv()
-		logger.Info(fmt.Sprintf("🔧 MaxTurns not provided or 0, defaulting to %d (from env or 100)", maxTurns))
+		logger.Info(fmt.Sprintf("🔧 MaxTurns not provided or 0, defaulting to %d (from env or 50)", maxTurns))
 	}
 
 	// Create orchestrator instance
@@ -175,6 +198,10 @@ func NewBaseOrchestrator(
 		summarizeOnFixedTokenThreshold: summarizeOnFixedTokenThreshold,
 		fixedTokenThreshold:            fixedTokenThreshold,
 		summaryKeepLastMessages:        summaryKeepLastMessages,
+		// Context editing configuration
+		enableContextEditing:        enableContextEditing,
+		contextEditingThreshold:     contextEditingThreshold,
+		contextEditingTurnThreshold: contextEditingTurnThreshold,
 	}
 
 	// Set token persister on bridge (no longer using accumulators)

@@ -67,19 +67,39 @@ type WorkspaceToolExecutors map[string]interface{}
 
 // RunPreValidation runs pre-validation on a step's output
 // validationSchema can be passed directly (preferred) or extracted from PlanStepInterface
-// If validationSchema is nil, it will be extracted from step if step is PlanStepInterface
+// If validationSchema is nil, pre-validation is skipped and a result indicating skip is returned
 func RunPreValidation(
 	ctx context.Context,
 	validationSchema *ValidationSchema, // Validation schema (preferred - passed from TodoStep)
 	workspacePath string,
 	baseOrchestrator *orchestrator.BaseOrchestrator,
 ) (*WorkspaceVerificationResult, error) {
-	// Check if schema is nil or empty
+	// If schema is nil, skip pre-validation and return a result indicating skip
 	if validationSchema == nil {
-		return nil, fmt.Errorf("validation schema is nil (validation_schema is mandatory)")
+		return &WorkspaceVerificationResult{
+			OverallPass:  true, // Pass so it doesn't block LLM validation
+			FilesChecked: []FileCheckResult{},
+			Summary: ValidationSummary{
+				TotalChecks:  0,
+				PassedChecks: 0,
+				FailedChecks: 0,
+				Errors:       []ValidationError{},
+			},
+		}, nil
 	}
+
+	// If schema is empty (no files), skip pre-validation
 	if len(validationSchema.Files) == 0 {
-		return nil, fmt.Errorf("validation schema is empty (no files to validate) (validation_schema must have at least one file)")
+		return &WorkspaceVerificationResult{
+			OverallPass:  true, // Pass so it doesn't block LLM validation
+			FilesChecked: []FileCheckResult{},
+			Summary: ValidationSummary{
+				TotalChecks:  0,
+				PassedChecks: 0,
+				FailedChecks: 0,
+				Errors:       []ValidationError{},
+			},
+		}, nil
 	}
 
 	// Validate schema limits
@@ -313,17 +333,30 @@ func validateJSONCheck(
 	}
 
 	// If path exists but MustExist is false, we still need to validate other checks
-	// Convert values to a slice for easier handling
+	// Handle JSONPath return value correctly:
+	// - If path points to an array field directly (like $.missing_months), jsonpath.Get returns the array itself
+	// - If path uses wildcards/filters, jsonpath.Get returns a slice of matching results
+	// - If path points to a scalar, jsonpath.Get returns the scalar value
 	var value interface{}
-	if valuesSlice, ok := values.([]interface{}); ok && len(valuesSlice) > 0 {
-		value = valuesSlice[0]
+	if valuesSlice, ok := values.([]interface{}); ok {
+		// If we're expecting an array and got a slice, the slice IS the array value
+		// (not a collection of results to take the first element from)
+		if check.ValueType == "array" {
+			value = valuesSlice
+		} else if len(valuesSlice) > 0 {
+			// For non-array types, if we got multiple results, take the first one
+			value = valuesSlice[0]
+		} else {
+			// Empty slice - use as is (will fail validation if expected type is not array)
+			value = valuesSlice
+		}
 	} else {
 		value = values
 	}
 
 	// Validate value type
 	if check.ValueType != "" {
-		typeResult := validateValueType(value, check.ValueType)
+		typeResult := validateValueType(check.Path, value, check.ValueType)
 		if !typeResult.Passed {
 			return typeResult
 		}
@@ -333,7 +366,7 @@ func validateJSONCheck(
 
 	// Validate min/max length for strings and arrays
 	if check.MinLength != nil || check.MaxLength != nil {
-		lengthResult := validateLength(value, check.MinLength, check.MaxLength)
+		lengthResult := validateLength(check.Path, value, check.MinLength, check.MaxLength)
 		if !lengthResult.Passed {
 			return lengthResult
 		}
@@ -345,7 +378,7 @@ func validateJSONCheck(
 
 	// Validate min/max value for numbers
 	if check.MinValue != nil || check.MaxValue != nil {
-		valueResult := validateValueRange(value, check.MinValue, check.MaxValue)
+		valueResult := validateValueRange(check.Path, value, check.MinValue, check.MaxValue)
 		if !valueResult.Passed {
 			return valueResult
 		}
@@ -357,7 +390,7 @@ func validateJSONCheck(
 
 	// Validate pattern (regex) for strings
 	if check.Pattern != "" {
-		patternResult := validatePattern(value, check.Pattern)
+		patternResult := validatePattern(check.Path, value, check.Pattern)
 		if !patternResult.Passed {
 			return patternResult
 		}
@@ -389,8 +422,9 @@ func validateJSONCheck(
 }
 
 // validateValueType validates that a value matches the expected type
-func validateValueType(value interface{}, expectedType string) JSONCheckResult {
+func validateValueType(path string, value interface{}, expectedType string) JSONCheckResult {
 	result := JSONCheckResult{
+		Path:      path,
 		CheckType: "value_type",
 		Passed:    false,
 		Expected:  expectedType,
@@ -437,8 +471,9 @@ func validateValueType(value interface{}, expectedType string) JSONCheckResult {
 }
 
 // validateLength validates min/max length for strings and arrays
-func validateLength(value interface{}, minLength *int, maxLength *int) JSONCheckResult {
+func validateLength(path string, value interface{}, minLength *int, maxLength *int) JSONCheckResult {
 	result := JSONCheckResult{
+		Path:      path,
 		CheckType: "length",
 		Passed:    false,
 	}
@@ -479,8 +514,9 @@ func validateLength(value interface{}, minLength *int, maxLength *int) JSONCheck
 }
 
 // validateValueRange validates min/max value for numbers
-func validateValueRange(value interface{}, minValue *float64, maxValue *float64) JSONCheckResult {
+func validateValueRange(path string, value interface{}, minValue *float64, maxValue *float64) JSONCheckResult {
 	result := JSONCheckResult{
+		Path:      path,
 		CheckType: "value_range",
 		Passed:    false,
 	}
@@ -521,8 +557,9 @@ func validateValueRange(value interface{}, minValue *float64, maxValue *float64)
 }
 
 // validatePattern validates a string against a regex pattern
-func validatePattern(value interface{}, pattern string) JSONCheckResult {
+func validatePattern(path string, value interface{}, pattern string) JSONCheckResult {
 	result := JSONCheckResult{
+		Path:      path,
 		CheckType: "pattern",
 		Passed:    false,
 		Expected:  pattern,
@@ -559,6 +596,7 @@ func validateConsistency(
 	jsonData interface{},
 ) JSONCheckResult {
 	result := JSONCheckResult{
+		Path:      check.Path,
 		CheckType: "consistency",
 		Passed:    false,
 	}
@@ -571,8 +609,21 @@ func validateConsistency(
 	}
 
 	var currentValue interface{}
-	if valuesSlice, ok := currentValues.([]interface{}); ok && len(valuesSlice) > 0 {
-		currentValue = valuesSlice[0]
+	if valuesSlice, ok := currentValues.([]interface{}); ok {
+		// For consistency checks, if we need the full array (like array_length), keep it
+		// Otherwise, take the first element
+		if check.ConsistencyCheck.Type == "array_length" {
+			// For array_length, currentValue should be a number, so take first element
+			if len(valuesSlice) > 0 {
+				currentValue = valuesSlice[0]
+			} else {
+				currentValue = valuesSlice
+			}
+		} else if len(valuesSlice) > 0 {
+			currentValue = valuesSlice[0]
+		} else {
+			currentValue = valuesSlice
+		}
 	} else {
 		currentValue = currentValues
 	}
@@ -585,8 +636,16 @@ func validateConsistency(
 	}
 
 	var compareValue interface{}
-	if valuesSlice, ok := compareValues.([]interface{}); ok && len(valuesSlice) > 0 {
-		compareValue = valuesSlice[0]
+	if valuesSlice, ok := compareValues.([]interface{}); ok {
+		// For array_length check, compareValue should be the full array
+		// For other checks, take the first element
+		if check.ConsistencyCheck.Type == "array_length" {
+			compareValue = valuesSlice
+		} else if len(valuesSlice) > 0 {
+			compareValue = valuesSlice[0]
+		} else {
+			compareValue = valuesSlice
+		}
 	} else {
 		compareValue = compareValues
 	}
@@ -742,6 +801,22 @@ func validateFilePath(workspacePath string, fileName string) (string, error) {
 
 // formatWorkspaceResults formats the pre-validation results for the validation agent
 func formatWorkspaceResults(results *WorkspaceVerificationResult) string {
+	// Check if pre-validation was skipped (no checks performed)
+	if results.Summary.TotalChecks == 0 && len(results.FilesChecked) == 0 {
+		return `
+⏭️ PRE-VALIDATION SKIPPED
+
+No validation schema was provided for this step. Pre-validation was skipped.
+
+Your task: Verify the execution history proves this output is authentic.
+Focus on:
+1. Did the agent actually read/process the claimed data sources?
+2. Do tool calls in execution history match the output values?
+3. Is the timeline consistent?
+4. Are there any suspicious patterns (e.g., round numbers, fake data)?
+`
+	}
+
 	if results.OverallPass {
 		return fmt.Sprintf(`
 ✅ PRE-VALIDATION PASSED

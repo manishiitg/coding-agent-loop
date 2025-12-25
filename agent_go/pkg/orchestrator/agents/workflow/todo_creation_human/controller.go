@@ -232,20 +232,21 @@ func NewHumanControlledTodoPlannerOrchestrator(
 // Uses the standard factory pattern for proper event bridge connection and context setup
 // agentName: custom agent name for this specific use case (e.g., "conditional-step-evaluation", "decision-step-evaluation")
 // phase: orchestrator phase for context (e.g., "conditional_evaluation", "decision_evaluation")
-func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(ctx context.Context, step TodoStep, stepIndex int, agentName, phase string) *HumanControlledTodoPlannerConditionalAgent {
-	stepID := step.ID
+func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(ctx context.Context, step PlanStepInterface, stepIndex int, agentName, phase string) *HumanControlledTodoPlannerConditionalAgent {
+	stepID := step.GetID()
 	if stepID == "" {
-		stepID = fmt.Sprintf("step-%s", step.Title)
+		stepID = fmt.Sprintf("step-%s", step.GetTitle())
 	}
 
 	// Check if step has step-specific config (conditional LLM or code execution mode)
-	hasStepSpecificConfig := step.AgentConfigs != nil && (step.AgentConfigs.ConditionalLLM != nil || step.AgentConfigs.UseCodeExecutionMode != nil)
+	agentConfigs := getAgentConfigs(step)
+	hasStepSpecificConfig := agentConfigs != nil && (agentConfigs.ConditionalLLM != nil || agentConfigs.UseCodeExecutionMode != nil)
 
 	if hasStepSpecificConfig {
 		// Determine code execution mode for cache key
 		var isCodeExecutionMode bool
-		if step.AgentConfigs != nil && step.AgentConfigs.UseCodeExecutionMode != nil {
-			isCodeExecutionMode = *step.AgentConfigs.UseCodeExecutionMode
+		if agentConfigs != nil && agentConfigs.UseCodeExecutionMode != nil {
+			isCodeExecutionMode = *agentConfigs.UseCodeExecutionMode
 		} else {
 			isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
 		}
@@ -259,7 +260,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(c
 		hcpo.stepConditionalAgentMutex.RUnlock()
 
 		if exists && cachedAgent != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using cached step-specific conditional agent for step '%s' (ID: %s, code exec: %v)", step.Title, stepID, isCodeExecutionMode))
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using cached step-specific conditional agent for step '%s' (ID: %s, code exec: %v)", step.GetTitle(), stepID, isCodeExecutionMode))
 			return cachedAgent
 		}
 
@@ -267,16 +268,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(c
 		var llmConfig *orchestrator.LLMConfig
 		orchestratorLLMConfig := hcpo.GetLLMConfig()
 
-		if step.AgentConfigs.ConditionalLLM != nil {
-			conditionalLLMConfig := step.AgentConfigs.ConditionalLLM
+		if agentConfigs.ConditionalLLM != nil {
+			conditionalLLMConfig := agentConfigs.ConditionalLLM
 			llmConfig = &orchestrator.LLMConfig{
 				Provider:       conditionalLLMConfig.Provider,
 				ModelID:        conditionalLLMConfig.ModelID,
 				FallbackModels: []string{},
 				APIKeys:        orchestratorLLMConfig.APIKeys,
 			}
-		} else if step.AgentConfigs.ExecutionLLM != nil && step.AgentConfigs.ExecutionLLM.Provider != "" && step.AgentConfigs.ExecutionLLM.ModelID != "" {
-			executionLLMConfig := step.AgentConfigs.ExecutionLLM
+		} else if agentConfigs.ExecutionLLM != nil && agentConfigs.ExecutionLLM.Provider != "" && agentConfigs.ExecutionLLM.ModelID != "" {
+			executionLLMConfig := agentConfigs.ExecutionLLM
 			llmConfig = &orchestrator.LLMConfig{
 				Provider:       executionLLMConfig.Provider,
 				ModelID:        executionLLMConfig.ModelID,
@@ -309,22 +310,22 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(c
 		// Use factory method - this handles initialization, event bridge connection, and tool registration
 		agent, err := hcpo.createConditionalAgent(
 			ctx,
-			actualPhase,       // phase (from parameter)
-			stepIndex,         // step index
-			0,                 // iteration
-			actualAgentName,   // agent name (from parameter)
-			step.AgentConfigs, // step config (includes UseCodeExecutionMode)
-			llmConfig,         // conditional LLM config
+			actualPhase,     // phase (from parameter)
+			stepIndex,       // step index
+			0,               // iteration
+			actualAgentName, // agent name (from parameter)
+			agentConfigs,    // step config (includes UseCodeExecutionMode)
+			llmConfig,       // conditional LLM config
 		)
 		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step-specific conditional agent for step '%s': %v, falling back to default", step.Title, err))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step-specific conditional agent for step '%s': %v, falling back to default", step.GetTitle(), err))
 			return hcpo.conditionalAgent // Fallback to default
 		}
 
 		// Type assert to conditional agent
 		stepConditionalAgent, ok := agent.(*HumanControlledTodoPlannerConditionalAgent)
 		if !ok {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Factory returned wrong agent type for step '%s', falling back to default", step.Title))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Factory returned wrong agent type for step '%s', falling back to default", step.GetTitle()))
 			return hcpo.conditionalAgent // Fallback to default
 		}
 
@@ -333,10 +334,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(c
 		hcpo.stepConditionalAgentCache[cacheKey] = stepConditionalAgent
 		hcpo.stepConditionalAgentMutex.Unlock()
 
-		if step.AgentConfigs.ConditionalLLM != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created step-specific conditional agent for step '%s' (ID: %s, code exec: %v): %s/%s", step.Title, stepID, isCodeExecutionMode, step.AgentConfigs.ConditionalLLM.Provider, step.AgentConfigs.ConditionalLLM.ModelID))
+		if agentConfigs.ConditionalLLM != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created step-specific conditional agent for step '%s' (ID: %s, code exec: %v): %s/%s", step.GetTitle(), stepID, isCodeExecutionMode, agentConfigs.ConditionalLLM.Provider, agentConfigs.ConditionalLLM.ModelID))
 		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created step-specific conditional agent for step '%s' (ID: %s, code exec: %v): using execution LLM", step.Title, stepID, isCodeExecutionMode))
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created step-specific conditional agent for step '%s' (ID: %s, code exec: %v): using execution LLM", step.GetTitle(), stepID, isCodeExecutionMode))
 		}
 		return stepConditionalAgent
 	}
@@ -348,7 +349,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(c
 // getConditionalLLMForStep returns the ConditionalLLM to use for a specific step
 // Priority: step config conditional_llm > default LLM config
 // Uses simpler ConditionalLLM instead of full agent (no MCP tools needed for decision evaluation)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalLLMForStep(step TodoStep, stepIndex int) (*orchestratorllm.ConditionalLLM, error) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalLLMForStep(step PlanStepInterface, stepIndex int) (*orchestratorllm.ConditionalLLM, error) {
 	eventBridge := hcpo.GetContextAwareBridge()
 	if eventBridge == nil {
 		return nil, fmt.Errorf("event bridge is required for conditional LLM")
@@ -360,10 +361,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalLLMForStep(ste
 	// Determine LLM config: Priority: step execution_llm > preset execution_llm > orchestrator default
 	var llmConfig *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
+	agentConfigs := getAgentConfigs(step)
 
-	if step.AgentConfigs != nil && step.AgentConfigs.ExecutionLLM != nil && step.AgentConfigs.ExecutionLLM.Provider != "" && step.AgentConfigs.ExecutionLLM.ModelID != "" {
+	if agentConfigs != nil && agentConfigs.ExecutionLLM != nil && agentConfigs.ExecutionLLM.Provider != "" && agentConfigs.ExecutionLLM.ModelID != "" {
 		// Use step-specific execution LLM config
-		executionLLMConfig := step.AgentConfigs.ExecutionLLM
+		executionLLMConfig := agentConfigs.ExecutionLLM
+		llmConfig = &orchestrator.LLMConfig{
+			Provider:       executionLLMConfig.Provider,
+			ModelID:        executionLLMConfig.ModelID,
+			FallbackModels: []string{},
+			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution LLM for conditional LLM: %s/%s", executionLLMConfig.Provider, executionLLMConfig.ModelID))
+	} else if agentConfigs != nil && agentConfigs.ExecutionLLM != nil && agentConfigs.ExecutionLLM.Provider != "" && agentConfigs.ExecutionLLM.ModelID != "" {
+		// Use step-specific execution LLM config
+		executionLLMConfig := agentConfigs.ExecutionLLM
 		llmConfig = &orchestrator.LLMConfig{
 			Provider:       executionLLMConfig.Provider,
 			ModelID:        executionLLMConfig.ModelID,
@@ -556,12 +568,19 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	hcpo.SetObjective(templatedObjective)
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Using templated objective with {{VARIABLES}}: %s", templatedObjective))
 
-	// Convert existing plan to TodoStep format for execution
-	breakdownSteps, err := hcpo.convertPlanStepsToTodoSteps(ctx, existingPlan.Steps)
+	// Populate runtime fields on plan steps for execution
+	stepConfigs, err := hcpo.ReadStepConfigs(ctx)
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to convert existing plan steps: %w", err), nil)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_config.json: %v (using defaults)", err))
+		stepConfigs = []StepConfig{}
 	}
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Converted existing plan: %d steps extracted", len(breakdownSteps)))
+	for _, step := range existingPlan.Steps {
+		if err := populateRuntimeFields(step, stepConfigs); err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("failed to populate runtime fields: %w", err), nil)
+		}
+	}
+	breakdownSteps := existingPlan.Steps // Use PlanStepInterface directly
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Prepared existing plan: %d steps with runtime fields populated", len(breakdownSteps)))
 
 	// Store approved plan for access during execution
 	hcpo.approvedPlan = existingPlan

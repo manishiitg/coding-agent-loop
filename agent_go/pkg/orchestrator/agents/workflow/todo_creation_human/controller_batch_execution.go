@@ -104,7 +104,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) shouldUseBatchExecution() bo
 // Uses ExecutionManager for centralized cleanup and progress management
 func (hcpo *HumanControlledTodoPlannerOrchestrator) runBatchExecution(
 	ctx context.Context,
-	breakdownSteps []TodoStep,
+	breakdownSteps []PlanStepInterface,
 	iteration int,
 	execCtx *ExecutionContext,
 ) (*BatchExecutionResult, error) {

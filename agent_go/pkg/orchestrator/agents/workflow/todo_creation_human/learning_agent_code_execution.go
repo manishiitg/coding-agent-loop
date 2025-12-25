@@ -2,6 +2,7 @@ package todo_creation_human
 
 import (
 	"context"
+	"strings"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
@@ -44,17 +45,19 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) Execute(ctx c
 	executionHistory := templateVars["ExecutionHistory"]
 	validationResult := templateVars["ValidationResult"]
 	variableNames := templateVars["VariableNames"]
+	existingLearningsContent := templateVars["ExistingLearningsContent"] // Existing learnings to build upon
 	// Prepare template variables
 	learningTemplateVars := map[string]string{
-		"StepTitle":               stepTitle,
-		"StepDescription":         stepDescription,
-		"StepSuccessCriteria":     stepSuccessCriteria,
-		"StepContextDependencies": stepContextDependencies,
-		"StepContextOutput":       stepContextOutput,
-		"WorkspacePath":           workspacePath,
-		"ExecutionHistory":        executionHistory,
-		"ValidationResult":        validationResult,
-		"VariableNames":           variableNames,
+		"StepTitle":                stepTitle,
+		"StepDescription":          stepDescription,
+		"StepSuccessCriteria":      stepSuccessCriteria,
+		"StepContextDependencies":  stepContextDependencies,
+		"StepContextOutput":        stepContextOutput,
+		"WorkspacePath":            workspacePath,
+		"ExecutionHistory":         executionHistory,
+		"ValidationResult":         validationResult,
+		"VariableNames":            variableNames,
+		"ExistingLearningsContent": existingLearningsContent, // Pass existing learnings to build upon
 	}
 
 	// Add step-specific paths if provided (when flag is enabled)
@@ -118,7 +121,7 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningSyste
 **CRITICAL RULES**:
 - Each step gets its own learning file (format: {StepTitle}_learning.md)
 - Write ONLY new learning content extracted from current execution to _learning_new.md (temporary file)
-- Do NOT merge with existing files - consolidation agent handles that
+- Do NOT merge with existing files - detection agent handles that during consolidation
 - Prioritize code that is clean, efficient, handles errors well, and accomplishes the step goal in the best possible way
 
 ## 🧠 **CODE EXTRACTION PROCESS (Focus on Efficiency)**
@@ -145,7 +148,7 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningSyste
    - **Ranking**: Always rank code by effectiveness - best code first
    - **Secondary**: Failure patterns (what to avoid to save time)
    - **CRITICAL**: Write ONLY new learning content extracted from current execution to _learning_new.md (temporary file)
-   - **NO MERGING**: Do NOT merge with existing files - consolidation agent handles that
+   - **NO MERGING**: Do NOT merge with existing files - detection agent handles that during consolidation
 
 ### **How to Extract Go Code from ExecutionHistory:**
 The ExecutionHistory section contains the complete execution conversation. Parse it to extract BOTH successful and failed Go code from write_code tool calls that relate to achieving the step description:
@@ -360,8 +363,8 @@ When documenting errors discovered from ExecutionHistory, use this format:
 - **ONLY save best code**: Only save code that is truly effective - don't save mediocre or inefficient code just because it worked
 - **Keep descriptions concise and focused on efficiency**
 - **CRITICAL - File Content Must Be Short**: Write learning files that are brief, precise, and to the point. Avoid verbose explanations, long paragraphs, or unnecessary details. Each code pattern entry should be 1-2 lines maximum. Focus on actionable information only.
-- **NO SCORING**: Do not add [Runs: X | Success: Y%] scores - consolidation agent handles this
-- **NO OPTIMAL MARKERS**: Do not mark ⭐ OPTIMAL paths - consolidation agent handles this
+- **NO SCORING**: Do not add [Runs: X | Success: Y%] scores - detection agent handles this during consolidation
+- **NO OPTIMAL MARKERS**: Do not mark ⭐ OPTIMAL paths - detection agent handles this during consolidation
 
 ### **Available Tools:**
 You have access to all MCP tools to examine workspace files and gather additional context.
@@ -392,8 +395,8 @@ You have access to all MCP tools to examine workspace files and gather additiona
 - Extract and save the BEST code snippets (or multiple best variations) with full function calls
 - Rank code by effectiveness: best code first, then alternatives, then failures to avoid
 - Document only meaningful best code patterns - don't save mediocre code just because it worked
-- **WRITE TO TEMP FILE**: Write extracted patterns to _learning_new.md (temporary file for consolidation agent)
-- **NO MERGING**: Do NOT read existing files or merge patterns - consolidation agent handles that
+- **WRITE TO TEMP FILE**: Write extracted patterns to _learning_new.md (temporary file for detection agent)
+- **NO MERGING**: Do NOT read existing files or merge patterns - detection agent handles that during consolidation
 - **EXCLUDE WORKSPACE TOOLS**: Never include workspace management tools in success/failure patterns unless part of the code being learned
 
 `
@@ -423,6 +426,19 @@ func (agent *HumanControlledTodoPlannerCodeExecutionLearningAgent) learningUserM
 - **Workspace**: ` + templateVars["WorkspacePath"] + `
 
 ` + func() string {
+		existingLearnings := templateVars["ExistingLearningsContent"]
+		if existingLearnings != "" && strings.TrimSpace(existingLearnings) != "" {
+			return `## 📚 EXISTING LEARNINGS
+
+These are existing learnings from previous executions. If the current execution is similar, improve upon these patterns rather than duplicating them.
+
+` + existingLearnings + `
+
+---
+`
+		}
+		return ""
+	}() + func() string {
 		if templateVars["VariableNames"] != "" {
 			return `## 🔑 AVAILABLE VARIABLES
 
@@ -466,8 +482,8 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
 4. Failures to avoid come second (save time)
 5. Keep it actionable for future executions
 6. **Write short, precise content**: Each entry should be 1-2 lines maximum. No verbose explanations.
-7. **NO SCORING**: Do not add [Runs: X | Success: Y%] scores - consolidation agent handles this
-8. **NO OPTIMAL MARKERS**: Do not mark ⭐ OPTIMAL paths - consolidation agent handles this
+7. **NO SCORING**: Do not add [Runs: X | Success: Y%] scores - detection agent handles this during consolidation
+8. **NO OPTIMAL MARKERS**: Do not mark ⭐ OPTIMAL paths - detection agent handles this during consolidation
 
 **🔴 LEARNING FROM FAILURES (TASK-SPECIFIC ONLY):**
 
@@ -487,7 +503,7 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
 - **These are NOT learnings** - they're general programming knowledge the LLM already knows
 
 **File to create:**
-` + `- ` + writePath + `/_learning_new.md (temporary file for consolidation agent)
+` + `- ` + writePath + `/_learning_new.md (temporary file for detection agent)
 
 **CRITICAL FILE HANDLING INSTRUCTIONS:**
 1. **EXTRACTION ONLY**: Extract learnings from current execution (ExecutionHistory and ValidationResult above)
@@ -496,7 +512,7 @@ These variables may appear in the plan as {{VARIABLE_NAME}} placeholders:
    - Do NOT update scores or optimal paths
    
 2. **WRITE NEW FILE**: Write extracted patterns to: ` + writePath + `/_learning_new.md
-   - This is a temporary file that the consolidation agent will process
+   - This is a temporary file that the detection agent will process during consolidation
    - Include all patterns extracted from current execution (success + failure)
    - Use same format as final learning file, but without scores or optimal markers
    

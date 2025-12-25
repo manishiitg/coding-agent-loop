@@ -216,15 +216,36 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 
 // PlanImprovementOnly runs only the plan improvement phase (standalone, independent from other phases)
 // This is a separate workflow phase that can be run independently
-func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, originalWorkspacePath string) (string, error) {
+// runPath is optional - if provided (e.g., "runs/iteration-11" or "iteration-11"), it will be used directly
+// If not provided or invalid, the function will ask the user via human feedback
+func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, originalWorkspacePath string, runPath string) (string, error) {
 	pim.GetLogger().Info(fmt.Sprintf("📊 Starting standalone plan improvement for workspace: %s", originalWorkspacePath))
 
 	// Store original workspace path
-	// Request and validate full path from user via blocking human feedback
-	pim.GetLogger().Info(fmt.Sprintf("📊 Requesting full path from user for plan improvement analysis"))
-	validatedRunPath, err := pim.requestAndValidateFullPath(ctx, originalWorkspacePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to get validated path: %w", err)
+	var validatedRunPath string
+	var err error
+
+	// If runPath is provided, try to validate it first
+	if runPath != "" {
+		pim.GetLogger().Info(fmt.Sprintf("📊 Using provided run path: %s", runPath))
+		validatedRunPath, err = pim.validateRunPath(ctx, originalWorkspacePath, runPath)
+		if err != nil {
+			pim.GetLogger().Warn(fmt.Sprintf("⚠️ Provided run path validation failed: %v, falling back to user input", err))
+			// Fall back to asking user
+			validatedRunPath, err = pim.requestAndValidateFullPath(ctx, originalWorkspacePath)
+			if err != nil {
+				return "", fmt.Errorf("failed to get validated path: %w", err)
+			}
+		} else {
+			pim.GetLogger().Info(fmt.Sprintf("✅ Successfully validated provided run path: %s", validatedRunPath))
+		}
+	} else {
+		// No run path provided - request and validate full path from user via blocking human feedback
+		pim.GetLogger().Info(fmt.Sprintf("📊 Requesting full path from user for plan improvement analysis"))
+		validatedRunPath, err = pim.requestAndValidateFullPath(ctx, originalWorkspacePath)
+		if err != nil {
+			return "", fmt.Errorf("failed to get validated path: %w", err)
+		}
 	}
 
 	// Keep orchestrator workspace rooted at the workspace root.
@@ -414,6 +435,46 @@ func (pim *PlanImprovementManager) requestAndValidateFullPath(ctx context.Contex
 	}
 
 	return "", fmt.Errorf(fmt.Sprintf("failed to get valid path after %d attempts", maxAttempts), nil)
+}
+
+// validateRunPath validates a run path without asking the user
+// runPath can be in format "runs/iteration-11", "iteration-11", or "iteration-11/group-7"
+// Returns the full path relative to original workspace (e.g., "runs/iteration-11") if valid
+func (pim *PlanImprovementManager) validateRunPath(ctx context.Context, originalWorkspacePath string, runPath string) (string, error) {
+	// Clean up the path (remove leading/trailing spaces and slashes, remove runs/ prefix if included)
+	cleanedPath := strings.TrimSpace(runPath)
+	cleanedPath = strings.TrimPrefix(cleanedPath, "runs/")
+	cleanedPath = strings.TrimPrefix(cleanedPath, "/")
+	cleanedPath = strings.TrimSuffix(cleanedPath, "/")
+
+	if cleanedPath == "" {
+		return "", fmt.Errorf("empty run path provided")
+	}
+
+	// Construct full path: runs/{cleanedPath}
+	// Examples: runs/iteration-11 or runs/iteration-11/group-7
+	fullPath := fmt.Sprintf("%s/runs/%s", originalWorkspacePath, cleanedPath)
+	executionPath := fmt.Sprintf("%s/execution", fullPath)
+
+	pim.GetLogger().Info(fmt.Sprintf("🔍 Validating run path: %s (full path: %s, checking execution: %s)", cleanedPath, fullPath, executionPath))
+
+	// First check if the base path exists
+	_, err := pim.ListWorkspaceFiles(ctx, fullPath)
+	if err != nil {
+		return "", fmt.Errorf("path does not exist: %s: %w", fullPath, err)
+	}
+
+	// Check if execution/ folder exists in this path
+	files, err := pim.ListWorkspaceFiles(ctx, executionPath)
+	if err != nil {
+		return "", fmt.Errorf("path does not contain an execution/ folder: %s: %w", fullPath, err)
+	}
+
+	// Path exists and has execution/ folder
+	pim.GetLogger().Info(fmt.Sprintf("✅ Validated run path: runs/%s (found %d items in execution/ folder)", cleanedPath, len(files)))
+
+	// Return the full path relative to original workspace (e.g., "runs/iteration-11")
+	return fmt.Sprintf("runs/%s", cleanedPath), nil
 }
 
 // Execute implements the OrchestratorAgent interface

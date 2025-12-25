@@ -253,7 +253,7 @@ type QueryRequest struct {
 	TokenThresholdPercent          float64 `json:"token_threshold_percent,omitempty"`            // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
 	SummarizeOnFixedTokenThreshold bool    `json:"summarize_on_fixed_token_threshold,omitempty"` // Enable fixed token-based summarization trigger
 	FixedTokenThreshold            int     `json:"fixed_token_threshold,omitempty"`              // Fixed token threshold to trigger summarization (e.g., 100000 = 100k tokens, default: 100k)
-	SummaryKeepLastMessages        int     `json:"summary_keep_last_messages,omitempty"`         // Number of recent messages to keep when summarizing (default: 8)
+	SummaryKeepLastMessages        int     `json:"summary_keep_last_messages,omitempty"`         // Number of recent messages to keep when summarizing (default: 4)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -307,7 +307,7 @@ func init() {
 	ServerCmd.Flags().StringSlice("cors-origins", []string{"*"}, "CORS allowed origins")
 	ServerCmd.Flags().String("provider", "bedrock", "LLM provider (bedrock, openai, anthropic)")
 	ServerCmd.Flags().String("model", "", "Model ID (uses provider default if empty)")
-	ServerCmd.Flags().Float64("temperature", 0.2, "Temperature for LLM")
+	ServerCmd.Flags().Float64("temperature", 0.0, "Temperature for LLM")
 	ServerCmd.Flags().Int("max-turns", 100, "Maximum conversation turns")
 	ServerCmd.Flags().String("mcp-config", "configs/mcp_servers_clean.json", "MCP servers configuration path")
 	ServerCmd.Flags().String("agent-mode", "simple", "Agent mode (simple)")
@@ -523,7 +523,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		Provider:    internalLLMProvider,
 		ModelID:     config.ModelID,
 		Temperature: config.Temperature,
-		Logger:      createServerLogger(),
+		Logger:      createLLMLogger(),
 	}
 	internalLLM, err := llm.InitializeLLM(internalLLMConfig)
 	if err != nil {
@@ -2104,6 +2104,16 @@ func createServerLogger() loggerv2.Logger {
 		log.Fatalf("Failed to create server logger: %w", err)
 	}
 	return serverLogger
+}
+
+// createLLMLogger creates a separate logger instance for LLM operations
+// This logger writes to logs/llm_debug.log to separate LLM logs from server logs
+func createLLMLogger() loggerv2.Logger {
+	llmLogger, err := logger.CreateLogger("logs/llm_debug.log", "debug", "text", false)
+	if err != nil {
+		log.Fatalf("Failed to create LLM logger: %w", err)
+	}
+	return llmLogger
 }
 
 // Chat History API Handlers

@@ -20,7 +20,6 @@ import (
 type HumanControlledTodoPlannerExecutionOnlyTemplate struct {
 	StepTitle                  string
 	StepDescription            string
-	StepSuccessCriteria        string
 	StepContextDependencies    string
 	StepContextOutput          string
 	WorkspacePath              string
@@ -41,6 +40,7 @@ type HumanControlledTodoPlannerExecutionOnlyTemplate struct {
 	DecisionReasoning          string // Context from decision step that routed to this step (empty if not routed from decision)
 	DecisionEvaluationQuestion string // Evaluation question for decision inner steps (used to format output for LLM evaluation)
 	PreviousStepsSummary       string // Summary of previous completed steps (titles, descriptions, outputs)
+	OtherAgentsCapabilities    string // Summary of other sub-agents' capabilities (only for sub-agents in orchestration steps)
 }
 
 // HumanControlledTodoPlannerExecutionOnlyAgent executes steps using pre-discovered learning context
@@ -89,6 +89,7 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 	stepNumber := templateVars["StepNumber"]               // e.g., "step-8" or "step-3-if-true-0"
 	stepExecutionPath := templateVars["StepExecutionPath"] // e.g., "execution/step-8"
 	previousStepsSummary := templateVars["PreviousStepsSummary"]
+	otherAgentsCapabilities := templateVars["OtherAgentsCapabilities"]
 
 	// Get current date and time
 	now := time.Now()
@@ -135,7 +136,7 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 {{end}}
 
 **Variable Handling**:
-- **Step descriptions already have variables resolved** - you'll see actual values in StepDescription, StepSuccessCriteria, etc.
+- **Step descriptions already have variables resolved** - you'll see actual values in StepDescription, etc.
 - **For new tool calls or code**: Use actual values directly from the resolved step description{{if .IsCodeExecutionMode}}
 - **For Go code**: 
   - **🚨 CRITICAL**: WorkspacePath ({{.WorkspacePath}}) MUST be passed as FIRST CLI argument (ONLY base path)
@@ -156,6 +157,9 @@ The step description, success criteria, and context dependencies define WHAT you
 {{if .PreviousStepsSummary}}
 ## 📋 Previous Steps Context
 {{.PreviousStepsSummary}}
+{{end}}
+{{if .OtherAgentsCapabilities}}
+{{.OtherAgentsCapabilities}}
 {{end}}
 {{if .PrerequisiteRulesInfo}}
 {{.PrerequisiteRulesInfo}}
@@ -364,6 +368,7 @@ Validation agent will verify your work - focus on execution and evidence.`
 		"StepNumber":                 stepNumber,
 		"StepExecutionPath":          stepExecutionPath,
 		"PreviousStepsSummary":       previousStepsSummary,
+		"OtherAgentsCapabilities":    otherAgentsCapabilities,
 		"PrerequisiteRulesInfo":      prerequisiteRulesInfo,
 		"DecisionEvaluationQuestion": decisionEvaluationQuestion,
 		"ValidationSchema":           validationSchema, // Validation schema JSON string
@@ -381,7 +386,6 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlyUserMe
 	templateData := HumanControlledTodoPlannerExecutionOnlyTemplate{
 		StepTitle:               templateVars["StepTitle"],
 		StepDescription:         templateVars["StepDescription"],
-		StepSuccessCriteria:     templateVars["StepSuccessCriteria"],
 		StepContextDependencies: templateVars["StepContextDependencies"],
 		StepContextOutput:       templateVars["StepContextOutput"],
 		WorkspacePath:           templateVars["WorkspacePath"],
@@ -404,32 +408,17 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlyUserMe
 	}
 
 	// Define the user message template
+	// NOTE: Variables, previous steps summary, and execution approach are in system prompt to avoid duplication
 	templateStr := `## 🎯 Execute Step: {{.StepTitle}}
 
 **STEP DESCRIPTION**: {{.StepDescription}}  
 **WORKSPACE**: {{.WorkspacePath}}  
 **STEP NUMBER**: {{.StepNumber}} (write all output files to {{.StepExecutionPath}}/)
 
-{{if .PreviousStepsSummary}}
-{{.PreviousStepsSummary}}
-{{end}}
-{{if .VariableNames}}## 📋 Variables
-{{.VariableNames}}
-{{if .VariableValues}}
-**Values**: {{.VariableValues}}
-{{end}}
 {{if eq .IsCodeExecutionMode "true"}}
 ## 📝 Code Execution Example
 
-**Task**: Read a context dependency file and write output to current step folder.
-
-**Tool Call Format**:
-write_code(
-  code="...",
-  args=["{{.WorkspacePath}}", "userId123"]
-)
-
-**Go Code Content Pattern**:
+**Go Code Pattern** (see system prompt for detailed rules):
 package main
 import (
     "os"
@@ -438,40 +427,27 @@ import (
 )
 
 func main() {
-    // 1. Read base workspace path (ALWAYS first argument)
-    basePath := os.Args[1]      // e.g., "Workflow/runs/iteration-11/execution"
-    userId := os.Args[2]        // Additional variables
-    
-    // 2. Use relative paths with filepath.Join()
-    // Read context dependency (previous step output)
+    basePath := os.Args[1]  // WorkspacePath (always first argument)
+    // Read context dependency
     inputPath := filepath.Join(basePath, "step-1/credentials.json")
     inputData := workspace_tools.ReadWorkspaceFile(workspace_tools.ReadWorkspaceFileParams{
         Filepath: inputPath,
     })
-    
-    // Write to current step folder (ALWAYS use {{.StepNumber}} - never hardcode step numbers)
+    // Write to current step folder (ALWAYS use {{.StepNumber}})
     outputPath := filepath.Join(basePath, "{{.StepNumber}}/analysis.json")
-    result := workspace_tools.UpdateWorkspaceFile(workspace_tools.UpdateWorkspaceFileParams{
+    workspace_tools.UpdateWorkspaceFile(workspace_tools.UpdateWorkspaceFileParams{
         Filepath: outputPath,
         Content:  "...",
     })
 }
-
-**Key Points**:
-- Tool call: Pass ONLY base workspace path (NOT full file paths)
-- Go code: Use relative paths like "{{.StepNumber}}/file.json" (ALWAYS use {{.StepNumber}}, never hardcode step numbers)
-- Path construction: Always use filepath.Join(basePath, "{{.StepNumber}}", filename)
-- Context dependencies: Relative paths from base execution folder (e.g., "step-1/file.json" for previous steps)
-- **🚨 CRITICAL**: When writing output files, ALWAYS use "{{.StepNumber}}" - never guess or hardcode step numbers!
-{{end}}{{end}}
+{{end}}
 {{if eq .HasLoop "true"}}
 ## 🔄 Loop Mode Active
 **Loop Condition**: {{.LoopCondition}}  
 {{if .LoopDescription}}**Loop Description**: {{.LoopDescription}}  
 {{end}}**Iteration**: {{.CurrentIteration}} / {{.MaxIterations}}
 
-**Task**: Execute step repeatedly until loop condition met. **Save progress after EACH iteration** to {{.StepExecutionPath}}/{{.StepContextOutput}} (update/append, don't overwrite).  
-**🚨 CRITICAL**: Always write to {{.StepNumber}} folder - never use a different step number!
+**Task**: Execute step repeatedly until loop condition met. **Save progress after EACH iteration** to {{.StepExecutionPath}}/{{.StepContextOutput}} (update/append, don't overwrite).
 {{end}}
 {{if .PreviousIterationOutput}}
 ## 🔄 Previous Iteration Output
@@ -509,39 +485,8 @@ Address the issues above and improve your approach.
 {{end}}
 
 ## 📋 Step Details
-**Success Criteria**: {{.StepSuccessCriteria}}  
 **Context Dependencies**: {{.StepContextDependencies}}  
-**Context Output**: {{.StepContextOutput}}
-
-## ✅ Execution Checklist
-
-**STEP 0: 🧠 ANALYSIS & PLAN**
-- Briefly analyze the step requirements.
-- Identify which variables need to be passed to write_code.
-- Confirm you will use os.Args[1] for the workspace path.
-
-**ALWAYS (Step Requirements are PRIMARY):**
-1. ✓ **Understand step description** ← THIS IS YOUR GOAL
-2. ✓ **Know success criteria** ← THIS DEFINES DONE
-3. ✓ Read context dependencies from {{.WorkspacePath}}
-
-**THEN Apply Learnings (Best Practice Guidance):**
-4. ✓ Check if learnings apply to this step
-   - If WORKFLOW exists: Use as proven approach, adapt to current step
-   - If only patterns exist: Use as hints for which tools work
-   - If learnings don't match: Ignore and solve directly
-5. ✓ Execute using MCP tools{{if eq .IsCodeExecutionMode "true"}} or Go code{{end}}:
-{{if eq .IsCodeExecutionMode "true"}}   - discover_code_files (see available packages)
-   - write_code (🚨 ALWAYS pass WorkspacePath as FIRST arg: args=["{{.WorkspacePath}}", ...other vars...], access via os.Args[1], os.Args[2], etc.)
-{{else}}   - Use appropriate MCP tools to accomplish step
-{{end}}6. ✓ **Verify success criteria met** (collect evidence)
-7. ✓ Create context output file at {{.StepExecutionPath}}/{{.StepContextOutput}}{{if eq .HasLoop "true"}} (update/append after each iteration){{end}}
-   - **🚨 CRITICAL**: Always write to {{.StepNumber}} folder - use filepath.Join(basePath, "{{.StepNumber}}", filename)
-
-**REMEMBER:**
-- Step description = WHAT to do (mandatory)
-- Learnings = HOW to do it efficiently (optional guidance)
-- If learnings conflict with step → **step wins**`
+**Context Output**: {{.StepContextOutput}}`
 
 	// Parse and execute the template
 	tmpl, err := template.New("executionOnlyUserMessage").Parse(templateStr)

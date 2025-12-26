@@ -57,3 +57,5 @@ planning/changelog
 27. workspace, sheel exec is reading env variable which is an issue
 
 28.. the context eidting/ summiazation, token call, we do after a turn.. and not after a tool call
+
+29.. get credit card, mutual funds, itr complete finacal info

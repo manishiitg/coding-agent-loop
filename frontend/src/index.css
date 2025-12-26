@@ -2502,6 +2502,59 @@
   background-color: hsl(240 25% 55%) !important;
 }
 
+/* ===== CUSTOM SCROLLBAR STYLING ===== */
+/* Thin, light scrollbars for better aesthetics */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+}
+
+/* Webkit scrollbar styling (Chrome, Safari, Edge) */
+*::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.5);
+  border-radius: 2px;
+  border: none;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(156, 163, 175, 0.7);
+}
+
+/* Dark mode scrollbar */
+.dark * {
+  scrollbar-color: rgba(107, 114, 128, 0.5) transparent;
+}
+
+.dark *::-webkit-scrollbar-thumb {
+  background-color: rgba(107, 114, 128, 0.5);
+}
+
+.dark *::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(107, 114, 128, 0.7);
+}
+
+/* Dark+ mode scrollbar */
+.dark-plus * {
+  scrollbar-color: rgba(107, 114, 128, 0.5) transparent;
+}
+
+.dark-plus *::-webkit-scrollbar-thumb {
+  background-color: rgba(107, 114, 128, 0.5);
+}
+
+.dark-plus *::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(107, 114, 128, 0.7);
+}
+
 /* ===== WORKFLOW NODE ANIMATIONS ===== */
 /* Highlight pulse animation for plan changes */
 @keyframes highlight-pulse {

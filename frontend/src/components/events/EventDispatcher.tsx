@@ -1,6 +1,5 @@
 import React from 'react'
 import type { PollingEvent } from '../../services/api-types'
-import { useEventMode } from './useEventMode'
 import { EventHierarchy } from './EventHierarchy'
 import { EventWithOrchestratorContext } from './common/EventWithOrchestratorContext'
 
@@ -604,6 +603,8 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
 })
 
 // Event list component for displaying multiple events
+// NOTE: Event filtering is now done on the backend based on event_mode
+// Frontend no longer filters events - backend returns pre-filtered events
 export const EventList: React.FC<{ 
   events: PollingEvent[]
   onApproveWorkflow?: (requestId: string) => void
@@ -612,35 +613,13 @@ export const EventList: React.FC<{
   isApproving?: boolean
   compact?: boolean
 }> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact = false }) => {
-  const { shouldShowEvent, mode } = useEventMode()
-  
-  const filteredEvents = React.useMemo(() => {
-    return events.filter(event => {
-      if (!event.type) return false
-      return shouldShowEvent(event.type)
-    })
-  }, [events, shouldShowEvent])
-  
   if (events.length === 0) {
     return <div className={`${compact ? 'text-xs' : 'text-sm'} text-gray-500 text-center ${compact ? 'py-2' : 'py-4'}`}>No events to display</div>
   }
   
-  if (filteredEvents.length === 0) {
-    return (
-      <div className={`${compact ? 'text-xs' : 'text-sm'} text-gray-500 text-center ${compact ? 'py-2' : 'py-4'}`}>
-        No events to display in {mode} mode
-        {mode === 'basic' && (
-          <div className={`${compact ? 'text-[10px]' : 'text-xs'} mt-2`}>
-            Switch to Advanced mode to see all events
-          </div>
-        )}
-      </div>
-    )
-  }
-  
   return (
     <EventHierarchy 
-      events={filteredEvents} 
+      events={events} 
       onApproveWorkflow={onApproveWorkflow}
       onSubmitFeedback={onSubmitFeedback}
       onFeedbackSubmitted={onFeedbackSubmitted}

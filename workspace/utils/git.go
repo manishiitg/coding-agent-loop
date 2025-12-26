@@ -26,8 +26,10 @@ func isAuthenticationError(output string) bool {
 		strings.Contains(outputLower, "permission denied") ||
 		strings.Contains(outputLower, "invalid username or token") ||
 		strings.Contains(outputLower, "could not read password") ||
+		strings.Contains(outputLower, "could not read username") ||
 		strings.Contains(outputLower, "bad credentials") ||
-		strings.Contains(outputLower, "unauthorized")
+		strings.Contains(outputLower, "unauthorized") ||
+		strings.Contains(outputLower, "terminal prompts disabled")
 }
 
 // PullFromGitHub pulls the latest changes from GitHub
@@ -43,10 +45,12 @@ func PullFromGitHub(docsDir, githubBranch string) error {
 
 		// Check if it's an authentication error
 		if isAuthenticationError(string(fetchOutput)) {
-			return fmt.Errorf("authentication failed: invalid or expired GitHub token")
+			rawError := strings.TrimSpace(string(fetchOutput))
+			return fmt.Errorf("authentication failed: invalid or expired GitHub token\nRaw error: %s", rawError)
 		}
 
-		return fmt.Errorf("failed to fetch from origin: %v", fetchErr)
+		rawError := strings.TrimSpace(string(fetchOutput))
+		return fmt.Errorf("failed to fetch from origin: %v\nRaw error: %s", fetchErr, rawError)
 	}
 
 	log.Printf("[GIT] PullFromGitHub: Checking out branch %s...", githubBranch)
@@ -70,7 +74,8 @@ func PullFromGitHub(docsDir, githubBranch string) error {
 
 		// Check if it's an authentication error
 		if isAuthenticationError(string(pullOutput)) {
-			return fmt.Errorf("authentication failed: invalid or expired GitHub token")
+			rawError := strings.TrimSpace(string(pullOutput))
+			return fmt.Errorf("authentication failed: invalid or expired GitHub token\nRaw error: %s", rawError)
 		}
 
 		// Check if it's a merge conflict
@@ -135,9 +140,11 @@ func PullFromGitHub(docsDir, githubBranch string) error {
 
 						// Check for conflicts
 						if strings.Contains(string(mergeOutput), "CONFLICT") || strings.Contains(string(mergeOutput), "conflict") {
-							return fmt.Errorf("merge conflict: local and remote branches have conflicting changes")
+							rawError := strings.TrimSpace(string(mergeOutput))
+							return fmt.Errorf("merge conflict: local and remote branches have conflicting changes\nRaw error: %s", rawError)
 						}
-						return fmt.Errorf("failed to merge remote changes: %v", mergeErr)
+						rawError := strings.TrimSpace(string(mergeOutput))
+						return fmt.Errorf("failed to merge remote changes: %v\nRaw error: %s", mergeErr, rawError)
 					}
 					log.Printf("[GIT] PullFromGitHub: Successfully merged remote changes")
 					return nil

@@ -77,6 +77,11 @@ export ENABLE_CONTEXT_EDITING="true"  # Enable context editing (default: true)
 export CONTEXT_EDITING_THRESHOLD="10000"  # Compact outputs larger than 10k tokens (default: 10000)
 export CONTEXT_EDITING_TURN_THRESHOLD="10"  # Compact outputs older than 10 turns (default: 10)
 
+# Context editing configuration (dynamic context reduction)
+export ENABLE_CONTEXT_EDITING="true"
+export CONTEXT_EDITING_THRESHOLD="100"  # Token threshold for compaction (default: 100)
+export CONTEXT_EDITING_TURN_THRESHOLD="5"  # Turn age threshold (default: 5 turns)
+
 # Set main LLM configuration
 export DEEP_SEARCH_MAIN_LLM_PROVIDER="openrouter"
 export DEEP_SEARCH_MAIN_LLM_MODEL="x-ai/grok-code-fast-1"

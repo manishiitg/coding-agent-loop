@@ -27,6 +27,18 @@ export interface RunFolder {
   progress?: StepProgress
 }
 
+export interface WorkflowChatTab {
+  tabId: string  // Unique ID: `phase_${phaseId}_${timestamp}`
+  phaseId: string  // Workflow phase ID (e.g., "planning", "execution")
+  phaseName: string  // Display name from WorkflowPhase
+  observerId: string  // Unique observer ID for this tab
+  sessionId: string | null  // Chat session ID if exists
+  isActive: boolean  // Whether this phase is currently running
+  isStreaming: boolean  // Whether this tab's execution is currently running
+  isCompleted: boolean  // Whether this tab's execution has completed (detected from completion events)
+  createdAt: number  // Timestamp for ordering
+}
+
 interface WorkflowStore {
   // === CONSTANTS (loaded once from API) ===
   phases: WorkflowPhase[]
@@ -78,6 +90,10 @@ interface WorkflowStore {
   activePhase: string | null // Currently running phase
   showChatArea: boolean
 
+  // Multi-tab chat state
+  workflowChatTabs: Record<string, WorkflowChatTab>  // tabId -> tab
+  activeWorkflowTabId: string | null  // Currently selected tab
+
   // === ACTIONS ===
   // Constants
   loadPhases: () => Promise<void>
@@ -126,6 +142,21 @@ interface WorkflowStore {
   // UI
   setActivePhase: (phase: string | null) => void
   setShowChatArea: (show: boolean) => void
+
+  // Workflow chat tabs
+  createWorkflowTab: (phaseId: string, phaseName: string) => Promise<string>  // Returns tabId
+  switchWorkflowTab: (tabId: string) => void
+  closeWorkflowTab: (tabId: string) => Promise<void>
+  getWorkflowTab: (tabId: string) => WorkflowChatTab | undefined
+  getActiveWorkflowTab: () => WorkflowChatTab | undefined
+  getTabsByPhase: (phaseId: string) => WorkflowChatTab[]
+  setTabStreaming: (tabId: string, isStreaming: boolean) => void
+  setTabCompleted: (tabId: string, isCompleted: boolean) => void
+  updateTabSessionId: (tabId: string, sessionId: string) => void
+  // Computed: Get tab's streaming status (derived from polling status)
+  getTabStreamingStatus: (tabId: string) => boolean
+  // Check if tab has completion events
+  checkTabCompletion: (tabId: string, events: Array<{ type: string }>) => boolean
 
   // Persistence (localStorage)
   loadSavedSettings: (presetId: string) => void
@@ -281,6 +312,10 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // UI state
       activePhase: null,
       showChatArea: false,
+
+      // Multi-tab chat state
+      workflowChatTabs: {},
+      activeWorkflowTabId: null,
 
       // === Actions ===
 
@@ -903,6 +938,225 @@ export const useWorkflowStore = create<WorkflowStore>()(
         set({ showChatArea: show })
       },
 
+      // Workflow chat tabs
+      createWorkflowTab: async (phaseId: string, phaseName: string): Promise<string> => {
+        // Generate unique tab ID
+        const tabId = `phase_${phaseId}_${Date.now()}`
+        
+        // Generate new session ID for tab
+        const sessionIdForTab = crypto.randomUUID()
+        
+        // Create tab entry
+        const tab: WorkflowChatTab = {
+          tabId,
+          phaseId,
+          phaseName,
+          observerId: sessionIdForTab, // Keep for backward compatibility, set to sessionId
+          sessionId: sessionIdForTab,
+          isActive: false,
+          isStreaming: false,
+          isCompleted: false,
+          createdAt: Date.now()
+        }
+        
+        // Add to store
+        set((state) => ({
+          workflowChatTabs: {
+            ...state.workflowChatTabs,
+            [tabId]: tab
+          },
+          activeWorkflowTabId: tabId
+        }))
+        
+        return tabId
+      },
+
+      switchWorkflowTab: (tabId: string) => {
+        const state = get()
+        if (!state.workflowChatTabs[tabId]) {
+          console.warn(`[WorkflowStore] Tab ${tabId} not found`)
+          return
+        }
+        
+        set({ activeWorkflowTabId: tabId })
+      },
+
+      closeWorkflowTab: async (tabId: string) => {
+        const state = get()
+        const tab = state.workflowChatTabs[tabId]
+        
+        if (!tab) {
+          console.warn(`[WorkflowStore] Tab ${tabId} not found`)
+          return
+        }
+        
+        // If tab is streaming, stop it first
+        if (tab.isStreaming && tab.sessionId) {
+          try {
+            await agentApi.stopSession(tab.sessionId)
+            console.log(`[WorkflowStore] Stopped session ${tab.sessionId} for tab ${tabId}`)
+          } catch (error) {
+            console.error(`[WorkflowStore] Failed to stop session for tab ${tabId}:`, error)
+          }
+        }
+        
+        // No observer removal needed - observers are no longer used
+        
+        // Remove tab from store
+        const newTabs = { ...state.workflowChatTabs }
+        delete newTabs[tabId]
+        
+        // If closing active tab, switch to another tab or clear active
+        let newActiveTabId = state.activeWorkflowTabId
+        if (state.activeWorkflowTabId === tabId) {
+          const remainingTabs = Object.values(newTabs)
+          if (remainingTabs.length > 0) {
+            // Switch to most recently created tab
+            const sortedTabs = remainingTabs.sort((a, b) => b.createdAt - a.createdAt)
+            newActiveTabId = sortedTabs[0].tabId
+          } else {
+            newActiveTabId = null
+            set({ showChatArea: false })
+          }
+        }
+        
+        set({
+          workflowChatTabs: newTabs,
+          activeWorkflowTabId: newActiveTabId
+        })
+      },
+
+      getWorkflowTab: (tabId: string) => {
+        return get().workflowChatTabs[tabId]
+      },
+
+      getActiveWorkflowTab: () => {
+        const state = get()
+        if (!state.activeWorkflowTabId) {
+          return undefined
+        }
+        return state.workflowChatTabs[state.activeWorkflowTabId]
+      },
+
+      getTabsByPhase: (phaseId: string) => {
+        const state = get()
+        return Object.values(state.workflowChatTabs).filter(tab => tab.phaseId === phaseId)
+      },
+
+      setTabStreaming: (tabId: string, isStreaming: boolean) => {
+        const state = get()
+        const tab = state.workflowChatTabs[tabId]
+        if (!tab) {
+          console.warn(`[WorkflowStore] Tab ${tabId} not found for setTabStreaming`)
+          return
+        }
+        
+        set((state) => ({
+          workflowChatTabs: {
+            ...state.workflowChatTabs,
+            [tabId]: {
+              ...state.workflowChatTabs[tabId],
+              isStreaming
+            }
+          }
+        }))
+      },
+
+      updateTabSessionId: (tabId: string, sessionId: string) => {
+        const state = get()
+        const tab = state.workflowChatTabs[tabId]
+        if (!tab) {
+          console.warn(`[WorkflowStore] Tab ${tabId} not found for updateTabSessionId`)
+          return
+        }
+        
+        set((state) => ({
+          workflowChatTabs: {
+            ...state.workflowChatTabs,
+            [tabId]: {
+              ...state.workflowChatTabs[tabId],
+              sessionId
+            }
+          }
+        }))
+      },
+
+      setTabCompleted: (tabId: string, isCompleted: boolean) => {
+        const state = get()
+        const tab = state.workflowChatTabs[tabId]
+        if (!tab) {
+          console.warn(`[WorkflowStore] Tab ${tabId} not found for setTabCompleted`)
+          return
+        }
+        
+        set((state) => ({
+          workflowChatTabs: {
+            ...state.workflowChatTabs,
+            [tabId]: {
+              ...state.workflowChatTabs[tabId],
+              isCompleted
+            }
+          }
+        }))
+      },
+
+      // Computed: Get tab's streaming status (derived from polling and completion)
+      getTabStreamingStatus: (tabId: string) => {
+        const state = get()
+        const tab = state.workflowChatTabs[tabId]
+        if (!tab) {
+          return false
+        }
+        
+        // If tab is marked as completed, it's not streaming
+        if (tab.isCompleted) {
+          return false
+        }
+        
+        // Get chat store state to check polling status
+        const chatStore = useChatStore.getState()
+        
+        // Tab is streaming if:
+        // 1. Polling is active
+        // 2. This tab's observer ID matches the currently polled observer
+        // 3. Not manually paused (stored isStreaming !== false)
+        const isPolling = chatStore.pollingInterval !== null
+        
+        // If polling and not completed, it's streaming
+        // The stored tab.isStreaming can be used to pause (e.g., human feedback)
+        if (isPolling) {
+          return tab.isStreaming !== false // Respect manual pause
+        }
+        
+        return false
+      },
+
+      // Check if events contain completion events for this tab's observer
+      checkTabCompletion: (tabId: string, events: Array<{ type: string }>) => {
+        const state = get()
+        const tab = state.workflowChatTabs[tabId]
+        if (!tab) {
+          return false
+        }
+        
+        // Check if any events are completion events
+        // For workflow mode: workflow_end, request_human_feedback
+        // For chat mode: unified_completion, agent_end, conversation_end, etc.
+        const completionEventTypes = [
+          'workflow_end',
+          'request_human_feedback',
+          'unified_completion',
+          'agent_end',
+          'conversation_end',
+          'conversation_error',
+          'agent_error'
+        ]
+        
+        return events.some(event => 
+          completionEventTypes.includes(event.type)
+        )
+      },
+
       // Load saved settings from localStorage for a preset
       loadSavedSettings: (presetId: string) => {
         if (!presetId) return
@@ -965,6 +1219,10 @@ export const useWorkflowStore = create<WorkflowStore>()(
       resetExecutionState: () => {
         // Note: We don't clear tempOverrideLLM here because it's a global setting
         // that should persist across workflow switches
+        
+        // Close all workflow tabs (no observer cleanup needed)
+        // Observers are no longer used - just clear tabs
+        
         set({
           runFolders: [],
           selectedRunFolder: 'new',
@@ -976,7 +1234,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
           selectedGroupIds: [],
           currentRunningGroupId: null,
           activePhase: null,
-          showChatArea: false
+          showChatArea: false,
+          workflowChatTabs: {},
+          activeWorkflowTabId: null
         })
       },
 

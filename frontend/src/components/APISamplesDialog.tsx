@@ -140,11 +140,11 @@ curl -X POST http://localhost:8000/api/external/execute \\
 
   const examples = generateExamples()
 
-  const pollEventsExample = `# Poll for events using observer_id
-curl "http://localhost:8000/api/observer/observer-uuid-456/events?since=0"
+  const pollEventsExample = `# Poll for events using session_id
+curl "http://localhost:8000/api/sessions/session-uuid-123/events?since=0"
 
 # Poll for new events since last check
-curl "http://localhost:8000/api/observer/observer-uuid-456/events?since=15"`
+curl "http://localhost:8000/api/sessions/session-uuid-123/events?since=15"`
 
   const pollEventsResponse = `{
   "events": [
@@ -166,9 +166,8 @@ curl "http://localhost:8000/api/observer/observer-uuid-456/events?since=15"`
       }
     }
   ],
-  "last_event_index": 2,
   "has_more": true,
-  "observer_id": "observer-uuid-456"
+  "session_id": "session-uuid-123"
 }`
 
   const cancelExecutionExample = `# Cancel execution using session_id
@@ -192,22 +191,22 @@ RESPONSE=$(curl -s -X POST http://localhost:8000/api/external/execute \\
   -H "Content-Type: application/json" \\
   -d '{"preset_id": "${activePreset?.id || 'your-preset-id'}"${selectedModeCategory === 'workflow' ? ',\n    "execution_phase": "post-verification",\n    "options": {\n      "run_management": "create_new_runs_always",\n      "execution_strategy": "sequential_execution"\n    }' : ''}}')
 
-# Extract IDs
+# Extract session ID
 SESSION_ID=$(echo $RESPONSE | jq -r '.session_id')
-OBSERVER_ID=$(echo $RESPONSE | jq -r '.observer_id')
 
 echo "📋 Session ID: $SESSION_ID"
-echo "👁️  Observer ID: $OBSERVER_ID"
 
 # 2. Poll for events
 echo "📡 Polling for events..."
 LAST_INDEX=0
 
 while true; do
-  EVENTS_RESPONSE=$(curl -s "http://localhost:8000/api/observer/$OBSERVER_ID/events?since=$LAST_INDEX")
+  EVENTS_RESPONSE=$(curl -s "http://localhost:8000/api/sessions/$SESSION_ID/events?since=$LAST_INDEX")
   
   EVENTS=$(echo $EVENTS_RESPONSE | jq -r '.events[]')
-  LAST_INDEX=$(echo $EVENTS_RESPONSE | jq -r '.last_event_index')
+  # Calculate new last index from events received
+  EVENT_COUNT=$(echo $EVENTS_RESPONSE | jq -r '.events | length')
+  LAST_INDEX=$((LAST_INDEX + EVENT_COUNT))
   HAS_MORE=$(echo $EVENTS_RESPONSE | jq -r '.has_more')
   
   if [ "$HAS_MORE" = "true" ]; then

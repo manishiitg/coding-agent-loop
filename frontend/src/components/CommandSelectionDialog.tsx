@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Terminal, FileText } from 'lucide-react'
+import { Terminal, FileText, Scissors } from 'lucide-react'
 
 interface Command {
   command: string
@@ -12,6 +12,11 @@ const AVAILABLE_COMMANDS: Command[] = [
     command: 'summarize',
     description: 'Summarize conversation history',
     icon: <FileText className="w-4 h-4" />
+  },
+  {
+    command: 'compact',
+    description: 'Compact stale tool responses (context editing)',
+    icon: <Scissors className="w-4 h-4" />
   }
 ]
 

@@ -243,7 +243,7 @@ Expert agent for detecting substantial new knowledge that helps task execution.
 
 Focus on semantic differences AND task relevance, not just text changes.
 
-`, stepTitle, stepDescription, stepSuccessCriteria, stepContextDependencies, stepContextOutput, tempLLMContext)
+`, tempLLMContext, stepTitle, stepDescription, stepSuccessCriteria, stepContextDependencies, stepContextOutput)
 }
 
 // buildUserMessage builds the user message with old and new learning content and task context

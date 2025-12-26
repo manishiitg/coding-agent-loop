@@ -284,7 +284,6 @@ func NewWorkflowOrchestrator(
 			presetVariableExtractionLLM = presetLearningLLM
 			presetPlanImprovementLLM = presetLearningLLM
 			presetPlanToolOptimizationLLM = presetLearningLLM
-			presetPlanLearningsAlignmentLLM = presetLearningLLM
 			// Note: presetAnonymizationLLM and presetLearningConsolidationLLM are deprecated and removed
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
 			// Fall back to legacy single default for planning

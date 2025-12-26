@@ -1924,6 +1924,58 @@ func writeStepConfigToWorkspace(ctx context.Context, workspacePath string, confi
 	return nil
 }
 
+// findInStepsWithOffset recursively searches nested steps within a step, handling ConditionalPlanStep offsets correctly
+func findInStepsWithOffset(step todo_creation_human.PlanStepInterface, targetID string, basePath []int, findInSteps func([]todo_creation_human.PlanStepInterface, string, []int) (todo_creation_human.PlanStepInterface, []int)) (todo_creation_human.PlanStepInterface, []int) {
+	switch s := step.(type) {
+	case *todo_creation_human.ConditionalPlanStep:
+		// Check nested if_true_steps
+		if found, foundPath := findInSteps(s.IfTrueSteps, targetID, basePath); found != nil {
+			return found, foundPath
+		}
+		// Check nested if_false_steps with offset
+		for k, nestedFalseStep := range s.IfFalseSteps {
+			nestedFalseIndex := len(s.IfTrueSteps) + k
+			nestedFalsePath := append(basePath, nestedFalseIndex)
+			if nestedFalseStep.GetID() == targetID {
+				return nestedFalseStep, nestedFalsePath
+			}
+			// Continue recursion for deeper nesting
+			if found, foundPath := findInStepsWithOffset(nestedFalseStep, targetID, nestedFalsePath, findInSteps); found != nil {
+				return found, foundPath
+			}
+		}
+	case *todo_creation_human.DecisionPlanStep:
+		if s.DecisionStep != nil {
+			if s.DecisionStep.GetID() == targetID {
+				return s.DecisionStep, append(basePath, -1)
+			}
+			if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{s.DecisionStep}, targetID, basePath); found != nil {
+				return found, foundPath
+			}
+		}
+	case *todo_creation_human.OrchestrationPlanStep:
+		if s.OrchestrationStep != nil {
+			if s.OrchestrationStep.GetID() == targetID {
+				return s.OrchestrationStep, append(basePath, -2)
+			}
+			if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{s.OrchestrationStep}, targetID, basePath); found != nil {
+				return found, foundPath
+			}
+		}
+		for routeIdx, route := range s.OrchestrationRoutes {
+			if route.SubAgentStep != nil {
+				if route.SubAgentStep.GetID() == targetID {
+					return route.SubAgentStep, append(basePath, -3, routeIdx)
+				}
+				if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{route.SubAgentStep}, targetID, basePath); found != nil {
+					return found, foundPath
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
 // findStepInPlan recursively finds a step by ID in the plan
 // Returns the step and a path to it (indices for nested steps)
 func findStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string) (todo_creation_human.PlanStepInterface, []int) {
@@ -1944,9 +1996,19 @@ func findStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string) (
 				if found, foundPath := findInSteps(s.IfTrueSteps, targetID, currentPath); found != nil {
 					return found, foundPath
 				}
-				// Check if_false_steps
-				if found, foundPath := findInSteps(s.IfFalseSteps, targetID, currentPath); found != nil {
-					return found, foundPath
+				// Check if_false_steps with offset to avoid index overlap
+				// False branch indices are offset by len(IfTrueSteps) to match updateNestedStepInPlanRecursive expectations
+				for j, falseStep := range s.IfFalseSteps {
+					falseIndex := len(s.IfTrueSteps) + j
+					falsePath := append(currentPath, falseIndex)
+					if falseStep.GetID() == targetID {
+						return falseStep, falsePath
+					}
+					// Recursively check nested steps in false branch using findInSteps with offset handling
+					// We need to search nested steps but ensure paths are built correctly
+					if found, foundPath := findInStepsWithOffset(falseStep, targetID, falsePath, findInSteps); found != nil {
+						return found, foundPath
+					}
 				}
 			case *todo_creation_human.DecisionPlanStep:
 				// Check decision_step

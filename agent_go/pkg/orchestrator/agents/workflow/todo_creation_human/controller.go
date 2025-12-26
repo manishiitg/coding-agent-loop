@@ -1079,6 +1079,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 				}
 				hcpo.selectedRunFolder = fmt.Sprintf("%s/%s", hcpo.selectedRunFolder, folderName)
 				hcpo.GetLogger().Info(fmt.Sprintf("📁 Updated selectedRunFolder to include group path: %s", hcpo.selectedRunFolder))
+				// Sync base orchestrator's iteration folder to match the updated selectedRunFolder
+				// This ensures consistency for token/log persistence and event-bridge context
+				hcpo.SetIterationFolder(hcpo.selectedRunFolder)
 			}
 		}
 		err = hcpo.runExecutionPhase(ctx, breakdownSteps, 1, existingProgress, startFromStep, execCtx)

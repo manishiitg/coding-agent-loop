@@ -2266,7 +2266,7 @@
     "EventType": {
       "type": "string",
       "enum": [
-        "comprehensive_cache",
+        "comprehensive_cache_event",
         "structured_output_start",
         "streaming_end",
         "streaming_error",
@@ -2282,6 +2282,7 @@
         "streaming_progress",
         "cache_hit",
         "cache_error",
+        "cache_event",
         "llm_messages",
         "debug",
         "agent_processing",

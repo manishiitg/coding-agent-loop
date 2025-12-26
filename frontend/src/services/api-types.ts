@@ -61,7 +61,6 @@ export interface AgentQueryResponse {
   status: string
   message?: string
   sse_endpoint?: string
-  observer_id?: string
   session_id?: string
 }
 
@@ -135,6 +134,20 @@ export interface SummarizeConversationResponse {
   summary?: string
 }
 
+export interface CompactContextRequest {
+  token_threshold?: number // Optional: token threshold (default: 1000)
+  turn_threshold?: number  // Optional: turn age threshold (default: 10)
+}
+
+export interface CompactContextResponse {
+  session_id: string
+  status: string
+  message?: string
+  total_messages?: number
+  compacted_count?: number
+  total_tokens_saved?: number
+}
+
 // Slack Feedback Configuration types
 export interface SlackConfig {
   enabled: boolean
@@ -183,11 +196,7 @@ export interface RegisterObserverRequest {
   session_id?: string
 }
 
-export interface RegisterObserverResponse {
-  observer_id: string
-  status: string
-  message: string
-}
+// Observer APIs removed - no longer needed
 
 // Use the PollingEventSchema type from generated events
 // Extends with additional runtime fields that may not be in schema
@@ -208,18 +217,13 @@ export type { EventTypeString }
 
 export interface GetEventsResponse {
   events: PollingEvent[]
-  last_event_index: number
   has_more: boolean
-  observer_id: string
+  session_id: string
+  session_status: string // Session status: "running", "completed", "error", "stopped", "inactive" (required - source of truth)
+  last_processed_index?: number // Last index processed in unfiltered array (for correct sinceIndex tracking when filtering)
 }
 
-export interface ObserverStatusResponse {
-  observer_id: string
-  status: string
-  created_at: string
-  last_activity: string
-  total_events: number
-}
+// Observer APIs removed - no longer needed
 
 // Active Session Management Types
 export interface ActiveSessionInfo {
@@ -249,7 +253,6 @@ export interface SessionStatusResponse {
   session_id: string
   status: string // "active", "completed", "not_found"
   agent_mode?: string
-  observer_id?: string
   created_at?: string
   last_activity?: string
   completed_at?: string
@@ -520,6 +523,8 @@ export interface CreateChatSessionRequest {
 
 export interface UpdateChatSessionRequest {
   title?: string;
+  agent_mode?: string;
+  preset_query_id?: string;
   status?: string;
   completed_at?: string;
 }

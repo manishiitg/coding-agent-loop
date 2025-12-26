@@ -147,21 +147,19 @@ func NewBaseOrchestrator(
 		}
 	}
 
-	// Context editing configuration (enabled by default to compact large tool outputs)
-	enableContextEditing := true // Default to enabled
-	if envVal := os.Getenv("ENABLE_CONTEXT_EDITING"); envVal == "false" {
-		enableContextEditing = false
-	}
-	contextEditingThreshold := 10000 // Default to 10k tokens - compact outputs larger than this
+	// Load context editing configuration from environment variables
+	// Default to enabled (true), can be disabled via ENABLE_CONTEXT_EDITING=false
+	enableContextEditing := os.Getenv("ENABLE_CONTEXT_EDITING") != "false"
+	contextEditingThreshold := 10000 // Default to 10k tokens - compact outputs larger than this (matches library default)
 	if envVal := os.Getenv("CONTEXT_EDITING_THRESHOLD"); envVal != "" {
 		if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
 			contextEditingThreshold = threshold
 		}
 	}
-	contextEditingTurnThreshold := 10 // Default to 10 turns - compact outputs older than this
+	contextEditingTurnThreshold := 10 // Default to 10 turns - compact outputs older than this (matches library default)
 	if envVal := os.Getenv("CONTEXT_EDITING_TURN_THRESHOLD"); envVal != "" {
-		if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
-			contextEditingTurnThreshold = threshold
+		if turnThreshold, err := strconv.Atoi(envVal); err == nil && turnThreshold > 0 {
+			contextEditingTurnThreshold = turnThreshold
 		}
 	}
 

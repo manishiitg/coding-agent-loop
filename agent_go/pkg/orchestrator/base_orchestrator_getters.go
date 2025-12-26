@@ -179,12 +179,12 @@ func (bo *BaseOrchestrator) GetEnableContextEditing() bool {
 	return bo.enableContextEditing
 }
 
-// GetContextEditingThreshold returns the token threshold for context editing
+// GetContextEditingThreshold returns the token threshold for context editing (0 = use default)
 func (bo *BaseOrchestrator) GetContextEditingThreshold() int {
 	return bo.contextEditingThreshold
 }
 
-// GetContextEditingTurnThreshold returns the turn age threshold for context editing
+// GetContextEditingTurnThreshold returns the turn age threshold for context editing (0 = use default)
 func (bo *BaseOrchestrator) GetContextEditingTurnThreshold() int {
 	return bo.contextEditingTurnThreshold
 }

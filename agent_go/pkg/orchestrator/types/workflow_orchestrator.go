@@ -268,17 +268,9 @@ func NewWorkflowOrchestrator(
 				ModelID:  presetLLMConfig.ModelID,
 			}
 		}
-		if presetLLMConfig.LearningReadingLLM != nil && presetLLMConfig.LearningReadingLLM.Provider != "" && presetLLMConfig.LearningReadingLLM.ModelID != "" {
-			presetLearningReadingLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.LearningReadingLLM.Provider,
-				ModelID:  presetLLMConfig.LearningReadingLLM.ModelID,
-			}
-		} else if presetLLMConfig.ExecutionLLM != nil && presetLLMConfig.ExecutionLLM.Provider != "" && presetLLMConfig.ExecutionLLM.ModelID != "" {
-			// Fall back to execution LLM if learning reading LLM not set
-			presetLearningReadingLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.ExecutionLLM.Provider,
-				ModelID:  presetLLMConfig.ExecutionLLM.ModelID,
-			}
+		// Initialize learning reading LLM from execution LLM (not configurable in UI)
+		if presetExecutionLLM != nil {
+			presetLearningReadingLLM = presetExecutionLLM
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
 			// Fall back to legacy single default for learning reading
 			presetLearningReadingLLM = &todo_creation_human.AgentLLMConfig{
@@ -286,11 +278,14 @@ func NewWorkflowOrchestrator(
 				ModelID:  presetLLMConfig.ModelID,
 			}
 		}
-		if presetLLMConfig.PlanningLLM != nil && presetLLMConfig.PlanningLLM.Provider != "" && presetLLMConfig.PlanningLLM.ModelID != "" {
-			presetPlanningLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.PlanningLLM.Provider,
-				ModelID:  presetLLMConfig.PlanningLLM.ModelID,
-			}
+		// Initialize all learning-related agents from learning LLM (not individually configurable in UI)
+		if presetLearningLLM != nil {
+			presetPlanningLLM = presetLearningLLM
+			presetVariableExtractionLLM = presetLearningLLM
+			presetPlanImprovementLLM = presetLearningLLM
+			presetPlanToolOptimizationLLM = presetLearningLLM
+			presetPlanLearningsAlignmentLLM = presetLearningLLM
+			// Note: presetAnonymizationLLM and presetLearningConsolidationLLM are deprecated and removed
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
 			// Fall back to legacy single default for planning
 			presetPlanningLLM = &todo_creation_human.AgentLLMConfig{

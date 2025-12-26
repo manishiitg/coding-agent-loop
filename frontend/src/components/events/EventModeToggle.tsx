@@ -1,14 +1,20 @@
 import React from 'react';
 import { Button } from '../ui/Button';
-import { useEventMode } from './useEventMode';
+import { useChatStore } from '../../stores/useChatStore';
 import { Eye, EyeOff } from 'lucide-react';
 
 export const EventModeToggle: React.FC = () => {
-  const { mode, setMode } = useEventMode();
+  // Get active tab's event mode directly from store
+  const activeTab = useChatStore(state => state.getActiveTab());
+  const mode = activeTab?.eventMode || 'basic';
+  const setTabEventMode = useChatStore(state => state.setTabEventMode);
 
   const cycleMode = () => {
     // Simple toggle between basic and advanced
-    setMode(mode === 'basic' ? 'advanced' : 'basic');
+    if (activeTab) {
+      const newMode = mode === 'basic' ? 'advanced' : 'basic';
+      setTabEventMode(activeTab.tabId, newMode);
+    }
   };
 
   const getModeDisplay = () => {
@@ -25,19 +31,16 @@ export const EventModeToggle: React.FC = () => {
   const { icon: Icon, label } = getModeDisplay();
 
   return (
-    <div className="flex items-center gap-1">
-      <span className="text-xs text-gray-600 dark:text-gray-400">
-        Event Mode:
-      </span>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={cycleMode}
-        className="flex items-center gap-1 text-xs h-7 px-2"
-      >
-        <Icon className="w-3 h-3" />
-        {label}
-      </Button>
-    </div>
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={cycleMode}
+      className="flex items-center gap-1 text-xs h-6 px-1.5 border-gray-300 dark:border-gray-600"
+      title={`Event Mode: ${label} (click to toggle)`}
+      data-testid="event-mode-toggle"
+    >
+      <Icon className="w-3 h-3" />
+      <span className="text-[10px]">{label}</span>
+    </Button>
   );
 }; 

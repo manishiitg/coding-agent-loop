@@ -59,3 +59,4 @@ planning/changelog
 28.. the context eidting/ summiazation, token call, we do after a turn.. and not after a tool call
 
 29.. get credit card, mutual funds, itr complete finacal info
+29. we cannot always, delete all execution when starting a research agent might want to reuse execution

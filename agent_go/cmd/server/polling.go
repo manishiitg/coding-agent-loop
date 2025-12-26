@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"time"
 
 	"mcp-agent-builder-go/agent_go/internal/events"
 
@@ -13,183 +12,163 @@ import (
 )
 
 // --- POLLING API TYPES ---
-
-// RegisterObserverRequest represents a request to register a new observer
-type RegisterObserverRequest struct {
-	SessionID string `json:"session_id,omitempty"`
-}
-
-// RegisterObserverResponse represents the response for observer registration
-type RegisterObserverResponse struct {
-	ObserverID string `json:"observer_id"`
-	Status     string `json:"status"`
-	Message    string `json:"message"`
-}
+// Observer APIs removed - events are now stored by sessionID
 
 // GetEventsResponse represents the response for event polling
 type GetEventsResponse struct {
-	Events         []events.Event `json:"events"`
-	LastEventIndex int            `json:"last_event_index"`
-	HasMore        bool           `json:"has_more"`
-	ObserverID     string         `json:"observer_id"`
-}
-
-// ObserverStatusResponse represents the response for observer status
-type ObserverStatusResponse struct {
-	ObserverID   string    `json:"observer_id"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
-	LastActivity time.Time `json:"last_activity"`
-	TotalEvents  int       `json:"total_events"`
+	Events             []events.Event `json:"events"`
+	HasMore            bool           `json:"has_more"`
+	SessionID          string         `json:"session_id"`
+	SessionStatus      string         `json:"session_status,omitempty"`       // Session status: "running", "completed", "error", "stopped", "inactive"
+	LastProcessedIndex int            `json:"last_processed_index,omitempty"` // Last index processed in unfiltered array (for correct sinceIndex tracking)
 }
 
 // --- POLLING API HANDLERS ---
+// Observer registration/status/removal handlers removed - no longer needed
 
-// handleRegisterObserver handles observer registration
-func (api *StreamingAPI) handleRegisterObserver(w http.ResponseWriter, r *http.Request) {
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
+// handleGetEvents handles event polling for a session (new session-based API)
+// Supports both forward polling (since parameter) and backward pagination (limit/offset)
+// Also supports event mode filtering (event_mode parameter: "basic" or "advanced")
+func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	var req RegisterObserverRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	// Register new observer
-	observer := api.observerManager.RegisterObserver(req.SessionID)
-
-	response := RegisterObserverResponse{
-		ObserverID: observer.ID,
-		Status:     "created",
-		Message:    "Observer registered successfully",
-	}
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
-		return
-	}
-}
-
-// handleGetEvents handles event polling for an observer
-func (api *StreamingAPI) handleGetEvents(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	// Extract observer ID from URL
+	// Extract session ID from URL
 	vars := mux.Vars(r)
-	observerID := vars["observer_id"]
+	sessionID := vars["session_id"]
 
-	if observerID == "" {
-		http.Error(w, "Observer ID is required", http.StatusBadRequest)
+	if sessionID == "" {
+		http.Error(w, "Session ID is required", http.StatusBadRequest)
 		return
 	}
 
-	// Get since parameter (optional)
+	// Parse query parameters
 	sinceStr := r.URL.Query().Get("since")
-	sinceIndex := 0
-	if sinceStr != "" {
-		if since, err := strconv.Atoi(sinceStr); err == nil {
-			sinceIndex = since
-		}
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+	eventMode := r.URL.Query().Get("event_mode")
+	if eventMode == "" {
+		eventMode = "basic" // Default to basic mode
+	}
+	if eventMode != "basic" && eventMode != "advanced" {
+		http.Error(w, "event_mode must be 'basic' or 'advanced'", http.StatusBadRequest)
+		return
 	}
 
-	// Update observer activity
-	api.observerManager.UpdateObserverActivity(observerID)
+	// Build options for GetEvents
+	opts := events.GetEventsOptions{
+		EventMode:  eventMode,
+		SinceIndex: -1, // Default: not using sinceIndex
+		Limit:      0,  // Default: no limit
+		Offset:     0,  // Default: no offset
+	}
 
-	// Get events for observer
-	events, totalEvents, exists := api.eventStore.GetEvents(observerID, sinceIndex)
+	// Determine mode: forward polling (since) or backward pagination (limit/offset)
+	if sinceStr != "" {
+		// Forward polling mode
+		sinceIndex, err := strconv.Atoi(sinceStr)
+		if err != nil {
+			http.Error(w, "since parameter must be a valid integer", http.StatusBadRequest)
+			return
+		}
+		opts.SinceIndex = sinceIndex
+	} else if limitStr != "" || offsetStr != "" {
+		// Backward pagination mode
+		if limitStr != "" {
+			limit, err := strconv.Atoi(limitStr)
+			if err != nil || limit <= 0 {
+				http.Error(w, "limit parameter must be a positive integer", http.StatusBadRequest)
+				return
+			}
+			opts.Limit = limit
+		} else {
+			opts.Limit = 50 // Default limit for pagination
+		}
+
+		if offsetStr != "" {
+			offset, err := strconv.Atoi(offsetStr)
+			if err != nil || offset < 0 {
+				http.Error(w, "offset parameter must be a non-negative integer", http.StatusBadRequest)
+				return
+			}
+			opts.Offset = offset
+		}
+	} else {
+		// Neither since nor limit/offset specified - require at least one
+		http.Error(w, "either 'since' parameter (for polling) or 'limit' parameter (for pagination) is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get events for session with options
+	getEventsResult := api.eventStore.GetEvents(sessionID, opts)
+	sessionEvents := getEventsResult.Events
+	exists := getEventsResult.Exists
+	lastProcessedIndex := getEventsResult.LastProcessedIndex
+	hasMoreFromStore := getEventsResult.HasMore
+
+	// Get session status (from active sessions or database)
+	var sessionStatus string
+	activeSession, existsInActive := api.getActiveSession(sessionID)
+	if existsInActive {
+		sessionStatus = activeSession.Status
+	} else {
+		// Check database for completed/error sessions
+		chatSession, err := api.chatDB.GetChatSession(r.Context(), sessionID)
+		if err == nil && chatSession != nil {
+			sessionStatus = chatSession.Status
+		}
+		// If not found, leave empty (session might not exist yet)
+	}
 
 	if !exists {
-		http.Error(w, "Observer not found", http.StatusNotFound)
+		// Session doesn't exist yet (no events have been added)
+		// Return empty events array instead of 404 - this is expected when polling starts before events are generated
+		response := GetEventsResponse{
+			Events:        []events.Event{},
+			HasMore:       false,
+			SessionID:     sessionID,
+			SessionStatus: sessionStatus,
+		}
+
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+			return
+		}
 		return
 	}
 
-	for i, event := range events {
+	for i, event := range sessionEvents {
 		api.logger.Debug(fmt.Sprintf("  [%d] %s", i, event.Type))
 	}
 
+	// Determine has_more based on mode
+	// Use hasMoreFromStore if available (for sinceIndex=0 case), otherwise calculate
+	hasMore := hasMoreFromStore
+	if !hasMoreFromStore {
+		if opts.SinceIndex >= 0 {
+			// Forward polling: has more if we got events (for normal polling, not initial fetch)
+			// For sinceIndex=0, hasMoreFromStore is already set correctly
+			if opts.SinceIndex > 0 {
+				hasMore = len(sessionEvents) > 0
+			}
+		} else if opts.Limit > 0 {
+			// Backward pagination: has more if there are more filtered events after current offset
+			// totalCount is the total UNFILTERED events, but we need to check filtered count
+			// Since we filter first then paginate, we can check if we got a full page
+			// If we got fewer events than requested limit, we've reached the end
+			hasMore = len(sessionEvents) >= opts.Limit
+		}
+	}
+
 	response := GetEventsResponse{
-		Events:         events,
-		LastEventIndex: totalEvents,
-		HasMore:        len(events) > 0,
-		ObserverID:     observerID,
+		Events:             sessionEvents,
+		HasMore:            hasMore,
+		SessionID:          sessionID,
+		SessionStatus:      sessionStatus,
+		LastProcessedIndex: lastProcessedIndex,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
-		return
-	}
-}
-
-// handleGetObserverStatus handles observer status requests
-func (api *StreamingAPI) handleGetObserverStatus(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	// Extract observer ID from URL
-	vars := mux.Vars(r)
-	observerID := vars["observer_id"]
-
-	if observerID == "" {
-		http.Error(w, "Observer ID is required", http.StatusBadRequest)
-		return
-	}
-
-	// Get observer
-	observer, exists := api.observerManager.GetObserver(observerID)
-	if !exists {
-		http.Error(w, "Observer not found", http.StatusNotFound)
-		return
-	}
-
-	// Get total events for this observer
-	totalEvents, _ := api.eventStore.GetObserverStatus(observerID)
-
-	response := ObserverStatusResponse{
-		ObserverID:   observer.ID,
-		Status:       observer.Status,
-		CreatedAt:    observer.CreatedAt,
-		LastActivity: observer.LastActivity,
-		TotalEvents:  totalEvents,
-	}
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
-		return
-	}
-}
-
-// handleRemoveObserver handles observer removal
-func (api *StreamingAPI) handleRemoveObserver(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	// Extract observer ID from URL
-	vars := mux.Vars(r)
-	observerID := vars["observer_id"]
-
-	if observerID == "" {
-		http.Error(w, "Observer ID is required", http.StatusBadRequest)
-		return
-	}
-
-	// Remove observer
-	removed := api.observerManager.RemoveObserver(observerID)
-
-	if !removed {
-		http.Error(w, "Observer not found", http.StatusNotFound)
-		return
-	}
-
-	response := map[string]interface{}{
-		"status":  "deleted",
-		"message": "Observer removed successfully",
-	}
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 		return
 	}
 }
@@ -219,11 +198,10 @@ type GetActiveSessionsResponse struct {
 
 // ReconnectSessionResponse represents the response for reconnecting to a session
 type ReconnectSessionResponse struct {
-	ObserverID string `json:"observer_id"`
-	SessionID  string `json:"session_id"`
-	Status     string `json:"status"`
-	AgentMode  string `json:"agent_mode"`
-	Message    string `json:"message"`
+	SessionID string `json:"session_id"`
+	Status    string `json:"status"`
+	AgentMode string `json:"agent_mode"`
+	Message   string `json:"message"`
 }
 
 // handleGetActiveSessions handles requests to get all active sessions
@@ -246,7 +224,7 @@ func (api *StreamingAPI) handleGetActiveSessions(w http.ResponseWriter, r *http.
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 		return
 	}
 }
@@ -271,19 +249,16 @@ func (api *StreamingAPI) handleReconnectSession(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Create new observer for reconnection
-	observer := api.observerManager.RegisterObserver(sessionID)
-
+	// No observer needed - just return session info
 	response := ReconnectSessionResponse{
-		ObserverID: observer.ID,
-		SessionID:  sessionID,
-		Status:     "reconnected",
-		AgentMode:  activeSession.AgentMode,
-		Message:    "Successfully reconnected to active session",
+		SessionID: sessionID,
+		Status:    "reconnected",
+		AgentMode: activeSession.AgentMode,
+		Message:   "Successfully reconnected to active session",
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 		return
 	}
 }
@@ -321,7 +296,7 @@ func (api *StreamingAPI) handleGetSessionStatus(w http.ResponseWriter, r *http.R
 		}
 
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 			return
 		}
 		return
@@ -330,7 +305,6 @@ func (api *StreamingAPI) handleGetSessionStatus(w http.ResponseWriter, r *http.R
 	// Return active session info
 	response := map[string]interface{}{
 		"session_id":    activeSession.SessionID,
-		"observer_id":   activeSession.ObserverID,
 		"status":        activeSession.Status,
 		"agent_mode":    activeSession.AgentMode,
 		"created_at":    activeSession.CreatedAt,
@@ -339,7 +313,7 @@ func (api *StreamingAPI) handleGetSessionStatus(w http.ResponseWriter, r *http.R
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 		return
 	}
 }

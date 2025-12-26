@@ -345,10 +345,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 				OverallPass:  true, // Always pass for orchestration steps
 				FilesChecked: []FileCheckResult{},
 				Summary: ValidationSummary{
-					TotalChecks:  0,
-					PassedChecks: 0,
-					FailedChecks: 0,
-					Errors:       []ValidationError{},
+					TotalChecks:    0,
+					PassedChecks:   0,
+					FailedChecks:   0,
+					SchemaErrors:   0,
+					Errors:         []ValidationError{},
+					SchemaWarnings: []ValidationError{},
 				},
 			}
 

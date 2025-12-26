@@ -33,11 +33,6 @@
         "TAVILY_API_KEY": "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"
       },
       "description": "Advanced web search for validation and research"
-    },
-    "google-docs-mcp": {
-      "command": "node",
-      "args": ["/Users/mipl/ai-work/mcp-googledocs-server/dist/server.js"],
-      "env": {}
     }
   }
 }

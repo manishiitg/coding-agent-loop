@@ -28,10 +28,12 @@ type WorkspaceVerificationResult struct {
 
 // ValidationSummary provides a summary of validation checks
 type ValidationSummary struct {
-	TotalChecks  int
-	PassedChecks int
-	FailedChecks int
-	Errors       []ValidationError
+	TotalChecks    int
+	PassedChecks   int
+	FailedChecks   int
+	SchemaErrors   int // Count of schema errors (e.g., invalid regex patterns)
+	Errors         []ValidationError
+	SchemaWarnings []ValidationError // Schema errors that don't fail validation
 }
 
 // ValidationError represents a single validation error
@@ -54,12 +56,13 @@ type FileCheckResult struct {
 
 // JSONCheckResult represents the result of a single JSON validation check
 type JSONCheckResult struct {
-	Path      string
-	Passed    bool
-	CheckType string
-	Expected  interface{}
-	Actual    interface{}
-	ErrorMsg  string
+	Path        string
+	Passed      bool
+	CheckType   string
+	Expected    interface{}
+	Actual      interface{}
+	ErrorMsg    string
+	SchemaError bool // True if this is a schema error (e.g., invalid regex) rather than a validation failure
 }
 
 // WorkspaceToolExecutors is a type alias for the workspace tool executors map
@@ -80,10 +83,12 @@ func RunPreValidation(
 			OverallPass:  true, // Pass so it doesn't block LLM validation
 			FilesChecked: []FileCheckResult{},
 			Summary: ValidationSummary{
-				TotalChecks:  0,
-				PassedChecks: 0,
-				FailedChecks: 0,
-				Errors:       []ValidationError{},
+				TotalChecks:    0,
+				PassedChecks:   0,
+				FailedChecks:   0,
+				SchemaErrors:   0,
+				Errors:         []ValidationError{},
+				SchemaWarnings: []ValidationError{},
 			},
 		}, nil
 	}
@@ -94,10 +99,12 @@ func RunPreValidation(
 			OverallPass:  true, // Pass so it doesn't block LLM validation
 			FilesChecked: []FileCheckResult{},
 			Summary: ValidationSummary{
-				TotalChecks:  0,
-				PassedChecks: 0,
-				FailedChecks: 0,
-				Errors:       []ValidationError{},
+				TotalChecks:    0,
+				PassedChecks:   0,
+				FailedChecks:   0,
+				SchemaErrors:   0,
+				Errors:         []ValidationError{},
+				SchemaWarnings: []ValidationError{},
 			},
 		}, nil
 	}
@@ -137,10 +144,12 @@ func validateWithSchema(
 		OverallPass:  true,
 		FilesChecked: []FileCheckResult{},
 		Summary: ValidationSummary{
-			TotalChecks:  0,
-			PassedChecks: 0,
-			FailedChecks: 0,
-			Errors:       []ValidationError{},
+			TotalChecks:    0,
+			PassedChecks:   0,
+			FailedChecks:   0,
+			SchemaErrors:   0,
+			Errors:         []ValidationError{},
+			SchemaWarnings: []ValidationError{},
 		},
 	}
 
@@ -152,7 +161,18 @@ func validateWithSchema(
 		// Update summary
 		for _, jsonCheck := range fileResult.JSONChecks {
 			result.Summary.TotalChecks++
-			if jsonCheck.Passed {
+			if jsonCheck.SchemaError {
+				// Schema error (e.g., invalid regex) - don't fail validation, but track it
+				result.Summary.SchemaErrors++
+				result.Summary.SchemaWarnings = append(result.Summary.SchemaWarnings, ValidationError{
+					File:      fileResult.FileName,
+					Path:      jsonCheck.Path,
+					CheckType: jsonCheck.CheckType,
+					Expected:  fmt.Sprintf("%v", jsonCheck.Expected),
+					Actual:    fmt.Sprintf("%v", jsonCheck.Actual),
+					Message:   jsonCheck.ErrorMsg,
+				})
+			} else if jsonCheck.Passed {
 				result.Summary.PassedChecks++
 			} else {
 				result.Summary.FailedChecks++
@@ -567,10 +587,11 @@ func validateValueRange(path string, value interface{}, minValue *float64, maxVa
 // validatePattern validates a string against a regex pattern
 func validatePattern(path string, value interface{}, pattern string) JSONCheckResult {
 	result := JSONCheckResult{
-		Path:      path,
-		CheckType: "pattern",
-		Passed:    false,
-		Expected:  pattern,
+		Path:        path,
+		CheckType:   "pattern",
+		Passed:      false,
+		Expected:    pattern,
+		SchemaError: false,
 	}
 
 	strValue, ok := value.(string)
@@ -582,7 +603,11 @@ func validatePattern(path string, value interface{}, pattern string) JSONCheckRe
 
 	regex, err := regexp.Compile(pattern)
 	if err != nil {
-		result.ErrorMsg = fmt.Sprintf("Invalid regex pattern: %v", err)
+		// Invalid regex pattern from schema - treat as schema error, not validation failure
+		// This allows validation to continue even if LLM generated a malformed regex
+		result.Passed = true      // Pass so it doesn't fail validation
+		result.SchemaError = true // Mark as schema error
+		result.ErrorMsg = fmt.Sprintf("Invalid regex pattern in schema (skipped): %v", err)
 		result.Actual = pattern
 		return result
 	}
@@ -846,11 +871,23 @@ Focus on:
 	}
 
 	if results.OverallPass {
-		return fmt.Sprintf(`
+		var output strings.Builder
+		output.WriteString(fmt.Sprintf(`
 ✅ PRE-VALIDATION PASSED
 
 Files Checked: %d
 Checks Passed: %d/%d
+`, len(results.FilesChecked), results.Summary.PassedChecks, results.Summary.TotalChecks))
+
+		// Report schema warnings if any
+		if results.Summary.SchemaErrors > 0 {
+			output.WriteString(fmt.Sprintf("⚠️ Schema Warnings: %d (invalid patterns skipped, validation continued)\n", results.Summary.SchemaErrors))
+			for _, warning := range results.Summary.SchemaWarnings {
+				output.WriteString(fmt.Sprintf("   ⚠️ %s [%s]: %s\n", warning.File, warning.Path, warning.Message))
+			}
+		}
+
+		output.WriteString(`
 All structural checks passed.
 
 Your task: Verify the execution history proves this output is authentic.
@@ -859,12 +896,19 @@ Focus on:
 2. Do tool calls in execution history match the output values?
 3. Is the timeline consistent?
 4. Are there any suspicious patterns (e.g., round numbers, fake data)?
-`, len(results.FilesChecked), results.Summary.PassedChecks, results.Summary.TotalChecks)
+`)
+		return output.String()
 	} else {
 		var errDetails strings.Builder
 		errDetails.WriteString("❌ PRE-VALIDATION FAILED\n\n")
-		errDetails.WriteString(fmt.Sprintf("Checks: %d passed, %d failed\n\n",
+		errDetails.WriteString(fmt.Sprintf("Checks: %d passed, %d failed\n",
 			results.Summary.PassedChecks, results.Summary.FailedChecks))
+
+		// Report schema warnings if any
+		if results.Summary.SchemaErrors > 0 {
+			errDetails.WriteString(fmt.Sprintf("⚠️ Schema Warnings: %d (invalid patterns skipped)\n", results.Summary.SchemaErrors))
+		}
+		errDetails.WriteString("\n")
 
 		for _, err := range results.Summary.Errors {
 			errDetails.WriteString(fmt.Sprintf("❌ %s [%s]: %s\n",
@@ -872,6 +916,15 @@ Focus on:
 			if err.Expected != "" {
 				errDetails.WriteString(fmt.Sprintf("   Expected: %s, Actual: %s\n",
 					err.Expected, err.Actual))
+			}
+		}
+
+		// Show schema warnings separately
+		if len(results.Summary.SchemaWarnings) > 0 {
+			errDetails.WriteString("\n⚠️ Schema Warnings (non-blocking):\n")
+			for _, warning := range results.Summary.SchemaWarnings {
+				errDetails.WriteString(fmt.Sprintf("   ⚠️ %s [%s]: %s\n",
+					warning.File, warning.Path, warning.Message))
 			}
 		}
 

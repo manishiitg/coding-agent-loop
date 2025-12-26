@@ -30,6 +30,30 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 No step-specific learning detail level set, using default: 'exact'"))
 	}
 
+	// AUTO-UNLOCK LEARNINGS: If validation failed, automatically unlock learnings so the step can learn from the failure
+	// This ensures that when validation fails, learnings are unlocked even if they were previously locked
+	validationFailed := validationResponse != nil && !validationResponse.IsSuccessCriteriaMet
+	if validationFailed {
+		isLearningsLocked := agentConfigs != nil && agentConfigs.LockLearnings != nil && *agentConfigs.LockLearnings
+		if isLearningsLocked {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔓 Validation failed - auto-unlocking learnings for step %s so it can learn from the failure", step.GetID()))
+			if unlockErr := hcpo.unlockStepLearningsInConfig(ctx, step.GetID()); unlockErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-unlock learnings for step %s: %v", step.GetID(), unlockErr))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Auto-unlocked learnings for step %s (validation failed)", step.GetID()))
+				// Update unlock metadata
+				if metadataErr := hcpo.updateUnlockMetadata(ctx, step.GetID(), stepIndex, stepPath, learningPathIdentifier, "validation_failed"); metadataErr != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update unlock metadata for step %s: %v", step.GetID(), metadataErr))
+				}
+				// Update agentConfigs to reflect the unlock (for this function's execution)
+				if agentConfigs != nil {
+					lockValue := false
+					agentConfigs.LockLearnings = &lockValue
+				}
+			}
+		}
+	}
+
 	// LOCK LEARNINGS: Check if learnings are locked (prevents learning agent from running but still uses existing learnings)
 	// Note: Lock learnings takes precedence - even in code execution mode, if learnings are locked, skip learning agent
 	// EXCEPTION: If learnings are locked but learnings don't exist, still run learning to create initial learnings
@@ -233,6 +257,30 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 Using step-specific learning detail level: '%s'", learningDetailLevel))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 No step-specific learning detail level set, using default: 'exact'"))
+	}
+
+	// AUTO-UNLOCK LEARNINGS: If validation failed, automatically unlock learnings so the step can learn from the failure
+	// This ensures that when validation fails, learnings are unlocked even if they were previously locked
+	validationFailed := validationResponse != nil && !validationResponse.IsSuccessCriteriaMet
+	if validationFailed {
+		isLearningsLocked := agentConfigs != nil && agentConfigs.LockLearnings != nil && *agentConfigs.LockLearnings
+		if isLearningsLocked {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔓 Validation failed - auto-unlocking learnings for step %s so it can learn from the failure", step.GetID()))
+			if unlockErr := hcpo.unlockStepLearningsInConfig(ctx, step.GetID()); unlockErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-unlock learnings for step %s: %v", step.GetID(), unlockErr))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Auto-unlocked learnings for step %s (validation failed)", step.GetID()))
+				// Update unlock metadata
+				if metadataErr := hcpo.updateUnlockMetadata(ctx, step.GetID(), stepIndex, stepPath, learningPathIdentifier, "validation_failed"); metadataErr != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update unlock metadata for step %s: %v", step.GetID(), metadataErr))
+				}
+				// Update agentConfigs to reflect the unlock (for this function's execution)
+				if agentConfigs != nil {
+					lockValue := false
+					agentConfigs.LockLearnings = &lockValue
+				}
+			}
+		}
 	}
 
 	// LOCK LEARNINGS: Check if learnings are locked (prevents learning agent from running but still uses existing learnings)

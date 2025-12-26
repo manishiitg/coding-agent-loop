@@ -71,6 +71,11 @@ type LLMAgentConfig struct {
 	SummarizeOnFixedTokenThreshold bool    // Enable fixed token-based summarization trigger
 	FixedTokenThreshold            int     // Fixed token threshold to trigger summarization (e.g., 100000 = 100k tokens, default: 100k)
 	SummaryKeepLastMessages        int     // Number of recent messages to keep when summarizing (0 = use default: 4)
+
+	// Context editing configuration
+	EnableContextEditing        bool // Enable context editing (dynamic context reduction)
+	ContextEditingThreshold     int  // Token threshold for context editing (0 = use default: 100)
+	ContextEditingTurnThreshold int  // Turn age threshold for context editing (0 = use default: 5)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -245,6 +250,19 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		}
 		logger.Info(fmt.Sprintf("📝 Context summarization enabled - Token threshold: %v (%.0f%%), Fixed threshold: %v (%d tokens), Keep last messages: %d",
 			config.SummarizeOnTokenThreshold, config.TokenThresholdPercent*100, config.SummarizeOnFixedTokenThreshold, config.FixedTokenThreshold, config.SummaryKeepLastMessages))
+	}
+
+	// Add context editing options if enabled
+	if config.EnableContextEditing {
+		agentOptions = append(agentOptions, mcpagent.WithContextEditing(true))
+		if config.ContextEditingThreshold > 0 {
+			agentOptions = append(agentOptions, mcpagent.WithContextEditingThreshold(config.ContextEditingThreshold))
+		}
+		if config.ContextEditingTurnThreshold > 0 {
+			agentOptions = append(agentOptions, mcpagent.WithContextEditingTurnThreshold(config.ContextEditingTurnThreshold))
+		}
+		logger.Info(fmt.Sprintf("✂️ Context editing enabled - Token threshold: %d, Turn threshold: %d",
+			config.ContextEditingThreshold, config.ContextEditingTurnThreshold))
 	}
 
 	// Add smart routing options if enabled

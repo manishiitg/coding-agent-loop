@@ -789,12 +789,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             preset = presetOrId as CustomPreset | PredefinedPreset
           }
           
-          // Clear chatSessionId to allow fresh observer initialization
+          // Clear chatSessionId to allow fresh session initialization
           useAppStore.getState().setChatSessionId('')
           
-          // Clear only the observer ID, not the entire chat state
-          const { setObserverId } = useChatStore.getState()
-          setObserverId('')
+          // Note: Session IDs are now managed per-tab, not globally
+          // When a preset is applied, tabs will be created with new session IDs as needed
           
           // Set the current query in both stores
           set({ currentQuery: preset.query })

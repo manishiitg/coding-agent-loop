@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { X, Settings, AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import { X, Settings, AlertCircle, CheckCircle2, Loader2, Code2, Sparkles } from "lucide-react";
 import { Button } from "../ui/Button";
 import { useLLMStore } from "../../stores";
 import { useGlobalPresetStore } from "../../stores/useGlobalPresetStore";
@@ -204,7 +204,7 @@ export default function BulkStepConfigModal({
     return allSteps;
   }, [plan]);
 
-  // Handle immediate action (disable/enable validation, learning, lock learnings, LLM updates, disable human tools, set max turns)
+  // Handle immediate action (disable/enable validation, learning, lock learnings, LLM updates, disable human tools, set max turns, learning detail level, agent mode)
   const handleImmediateAction = async (
     action:
       | "disable_validation"
@@ -217,7 +217,11 @@ export default function BulkStepConfigModal({
       | "set_validation_llm"
       | "set_learning_llm"
       | "disable_human_tools"
-      | "set_execution_max_turns",
+      | "set_execution_max_turns"
+      | "set_learning_detail_level_exact"
+      | "set_learning_detail_level_general"
+      | "set_code_execution_mode"
+      | "set_simple_mode",
     llm?: LLMOption | null,
     maxTurns?: number
   ) => {
@@ -309,6 +313,23 @@ export default function BulkStepConfigModal({
                newAgentConfigs.execution_max_turns = maxTurns;
              }
              break;
+          case "set_learning_detail_level_exact":
+            newAgentConfigs.learning_detail_level = "exact";
+            break;
+          case "set_learning_detail_level_general":
+            newAgentConfigs.learning_detail_level = "general";
+            break;
+          case "set_code_execution_mode":
+            // Set code execution mode and auto-enable learning/validation
+            newAgentConfigs.use_code_execution_mode = true;
+            newAgentConfigs.disable_learning = false;
+            newAgentConfigs.disable_validation = false;
+            newAgentConfigs.learning_detail_level = "exact";
+            break;
+          case "set_simple_mode":
+            // Set simple mode (disable code execution)
+            newAgentConfigs.use_code_execution_mode = false;
+            break;
         }
 
         stepConfigUpdates.push({
@@ -590,6 +611,80 @@ export default function BulkStepConfigModal({
                   </>
                 ) : (
                   "Disable Human Feedback Tools for All Steps"
+                )}
+              </Button>
+
+              {/* Set Learning Detail Level to Exact */}
+              <Button
+                variant="outline"
+                onClick={() => handleImmediateAction("set_learning_detail_level_exact")}
+                disabled={applyingAction !== null}
+                className="w-full"
+              >
+                {applyingAction === "set_learning_detail_level_exact" ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Applying...
+                  </>
+                ) : (
+                  "Set Learning Detail: Exact (All Steps)"
+                )}
+              </Button>
+
+              {/* Set Learning Detail Level to General */}
+              <Button
+                variant="outline"
+                onClick={() => handleImmediateAction("set_learning_detail_level_general")}
+                disabled={applyingAction !== null}
+                className="w-full"
+              >
+                {applyingAction === "set_learning_detail_level_general" ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Applying...
+                  </>
+                ) : (
+                  "Set Learning Detail: General (All Steps)"
+                )}
+              </Button>
+
+              {/* Set Agent Mode to Code Exec */}
+              <Button
+                variant="outline"
+                onClick={() => handleImmediateAction("set_code_execution_mode")}
+                disabled={applyingAction !== null}
+                className="w-full"
+              >
+                {applyingAction === "set_code_execution_mode" ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Applying...
+                  </>
+                ) : (
+                  <>
+                    <Code2 className="w-4 h-4 mr-2 inline" />
+                    Set Agent Mode: Code Exec (All Steps)
+                  </>
+                )}
+              </Button>
+
+              {/* Set Agent Mode to Simple */}
+              <Button
+                variant="outline"
+                onClick={() => handleImmediateAction("set_simple_mode")}
+                disabled={applyingAction !== null}
+                className="w-full"
+              >
+                {applyingAction === "set_simple_mode" ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Applying...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 mr-2 inline" />
+                    Set Agent Mode: Simple (All Steps)
+                  </>
                 )}
               </Button>
             </div>

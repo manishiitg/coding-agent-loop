@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useCallback, useRef, useState } from "react";
+import { useEffect, useCallback, useRef, useState, forwardRef } from "react";
 import { ThemeProvider } from "./contexts/ThemeContext.tsx";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import Workspace from "./components/Workspace.tsx";
@@ -14,7 +14,9 @@ import { Edit, Save, X, Loader2 } from "lucide-react";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { WorkflowLayout } from "./components/workflow";
 import { EventModeProvider } from "./components/events";
-import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore } from "./stores";
+import { ModePresetBar } from "./components/ModePresetBar";
+import { ChatTabs } from "./components/ChatTabs";
+import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
 import { useModeStore } from "./stores/useModeStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
@@ -29,6 +31,25 @@ declare global {
 }
 
 const queryClient = new QueryClient();
+
+
+// Helper component to get observerId and render ChatArea
+// Always renders ChatArea (even without observerId) so header with mode/preset selectors is visible
+// Uses Zustand hooks to reactively update when tabs change
+const ChatAreaWithObserverId = forwardRef<ChatAreaRef, { onNewChat: () => void }>(({ onNewChat }, ref) => {
+  // Use Zustand hooks to reactively subscribe to tab changes
+  const activeTabId = useChatStore(state => state.activeTabId)
+  
+  // Always render ChatArea - it will show header even without sessionId
+  // This allows users to select mode/preset even when no tab exists
+  return (
+    <ChatArea
+      ref={ref}
+      onNewChat={onNewChat}
+      tabId={activeTabId || undefined}
+    />
+  )
+})
 
 // Utility function to format file path for display
 // Shows directory with ellipsis if needed, always shows filename
@@ -167,6 +188,9 @@ function App() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [isRestoring, setIsRestoring] = useState(false)
   const [restoreError, setRestoreError] = useState<string | null>(null)
+  
+  // Ref to prevent duplicate default tab creation (React StrictMode runs effects twice)
+  const hasCreatedDefaultTabRef = useRef(false)
   
   const { clearActivePreset, applyPreset, getActivePreset } = useGlobalPresetStore()
 
@@ -376,6 +400,58 @@ function App() {
     // Initialize workflow store (load phases)
     useWorkflowStore.getState().loadPhases()
   }, [])
+  
+  // Create default tab on page load (only for chat mode, not workflow mode)
+  // In workflow mode, tabs are created when user starts a phase/execution
+  useEffect(() => {
+    if (!hasCompletedInitialSetup) return
+    
+    // Only create default tab for chat mode
+    if (selectedModeCategory !== 'chat') {
+      return
+    }
+    
+    // Prevent duplicate execution (React StrictMode runs effects twice)
+    if (hasCreatedDefaultTabRef.current) {
+      return
+    }
+    
+    const chatStore = useChatStore.getState()
+    const existingTabs = Object.values(chatStore.chatTabs)
+    
+    // Filter to only chat mode tabs
+    const chatModeTabs = existingTabs.filter(tab => 
+      tab.metadata?.mode === 'chat'
+    )
+    
+    // If chat mode tabs already exist, skip
+    if (chatModeTabs.length > 0) {
+      return
+    }
+    
+    // Mark as in progress
+    hasCreatedDefaultTabRef.current = true
+    
+    // Create default tab with new session ID
+    const createDefaultTab = async () => {
+      // Double-check tabs don't exist right before creating (race condition protection)
+      const currentTabs = Object.values(useChatStore.getState().chatTabs)
+      const currentChatTabs = currentTabs.filter(tab => 
+        tab.metadata?.mode === 'chat'
+      )
+      if (currentChatTabs.length === 0) {
+        try {
+          await chatStore.createChatTab('Chat 1', { mode: 'chat' })
+        } catch (error) {
+          console.error('Failed to create default tab:', error)
+          // Reset flag on error so it can retry
+          hasCreatedDefaultTabRef.current = false
+        }
+      }
+    }
+    
+    createDefaultTab()
+  }, [hasCompletedInitialSetup, selectedModeCategory])
 
   // Restore active presets after stores are initialized
   useEffect(() => {
@@ -568,25 +644,37 @@ function App() {
           </div>
 
           {/* Middle Content Area - WorkflowLayout (workflow mode) or ChatArea (other modes) */}
-          <div className="flex-1 flex flex-col min-w-0 relative z-10">
-            {selectedModeCategory === 'workflow' ? (
-              // Workflow mode - WorkflowLayout as main view (wrapped in EventModeProvider for ChatHeader)
-              // ChatArea is now embedded inside WorkflowLayout
-              <EventModeProvider>
-              <WorkflowLayout
-                className="flex-1"
-                onNewChat={startNewChat}
-              />
-              </EventModeProvider>
-            ) : (
-              // Other modes - show ChatArea (wrapped in EventModeProvider for filter toggle)
-              <EventModeProvider>
-                <ChatArea
-                  ref={chatAreaRef}
-                  onNewChat={startNewChat}
-                />
-              </EventModeProvider>
-            )}
+          <div className="flex-1 flex flex-col min-w-0 min-h-0 relative z-10 overflow-hidden">
+            {/* Global Mode & Preset Bar - only above middle content area, not sidebars */}
+            <ModePresetBar />
+            
+            {/* Chat Tabs - global navigation for both chat and workflow modes */}
+            <ChatTabs 
+              autoScroll={useChatStore(state => state.autoScroll)}
+              onToggleAutoScroll={() => {
+                const chatStore = useChatStore.getState()
+                chatStore.setAutoScroll(!chatStore.autoScroll)
+              }}
+            />
+            
+            {/* EventModeProvider wraps each tab's content (ChatArea/WorkflowLayout) - per-tab scope */}
+            <EventModeProvider>
+              <div className="flex-1 min-h-0 overflow-hidden">
+                {selectedModeCategory === 'workflow' ? (
+                  // Workflow mode - WorkflowLayout renders header, then ChatArea
+                  <WorkflowLayout
+                    className="h-full"
+                    onNewChat={startNewChat}
+                  />
+                ) : (
+                  // Chat mode - ChatArea renders header, then content
+                  <ChatAreaWithObserverId
+                    ref={chatAreaRef}
+                    onNewChat={startNewChat}
+                  />
+                )}
+              </div>
+            </EventModeProvider>
             
             {/* File Content View - overlay when showing file content */}
             {showFileContent && (

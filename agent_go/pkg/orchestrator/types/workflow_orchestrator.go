@@ -275,17 +275,9 @@ func NewWorkflowOrchestrator(
 				ModelID:  presetLLMConfig.ModelID,
 			}
 		}
-		if presetLLMConfig.LearningReadingLLM != nil && presetLLMConfig.LearningReadingLLM.Provider != "" && presetLLMConfig.LearningReadingLLM.ModelID != "" {
-			presetLearningReadingLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.LearningReadingLLM.Provider,
-				ModelID:  presetLLMConfig.LearningReadingLLM.ModelID,
-			}
-		} else if presetLLMConfig.ExecutionLLM != nil && presetLLMConfig.ExecutionLLM.Provider != "" && presetLLMConfig.ExecutionLLM.ModelID != "" {
-			// Fall back to execution LLM if learning reading LLM not set
-			presetLearningReadingLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.ExecutionLLM.Provider,
-				ModelID:  presetLLMConfig.ExecutionLLM.ModelID,
-			}
+		// Initialize learning reading LLM from execution LLM (not configurable in UI)
+		if presetExecutionLLM != nil {
+			presetLearningReadingLLM = presetExecutionLLM
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
 			// Fall back to legacy single default for learning reading
 			presetLearningReadingLLM = &todo_creation_human.AgentLLMConfig{
@@ -293,65 +285,26 @@ func NewWorkflowOrchestrator(
 				ModelID:  presetLLMConfig.ModelID,
 			}
 		}
-		if presetLLMConfig.PlanningLLM != nil && presetLLMConfig.PlanningLLM.Provider != "" && presetLLMConfig.PlanningLLM.ModelID != "" {
-			presetPlanningLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.PlanningLLM.Provider,
-				ModelID:  presetLLMConfig.PlanningLLM.ModelID,
-			}
+		// Initialize all learning-related agents from learning LLM (not individually configurable in UI)
+		if presetLearningLLM != nil {
+			presetPlanningLLM = presetLearningLLM
+			presetVariableExtractionLLM = presetLearningLLM
+			presetPlanImprovementLLM = presetLearningLLM
+			presetPlanToolOptimizationLLM = presetLearningLLM
+			presetPlanLearningsAlignmentLLM = presetLearningLLM
+			// Note: presetAnonymizationLLM and presetLearningConsolidationLLM are deprecated and removed
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-			// Fall back to legacy single default for planning
-			presetPlanningLLM = &todo_creation_human.AgentLLMConfig{
+			// Fall back to legacy single default for all learning-related agents
+			legacyDefault := &todo_creation_human.AgentLLMConfig{
 				Provider: presetLLMConfig.Provider,
 				ModelID:  presetLLMConfig.ModelID,
 			}
-		}
-		if presetLLMConfig.VariableExtractionLLM != nil && presetLLMConfig.VariableExtractionLLM.Provider != "" && presetLLMConfig.VariableExtractionLLM.ModelID != "" {
-			presetVariableExtractionLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.VariableExtractionLLM.Provider,
-				ModelID:  presetLLMConfig.VariableExtractionLLM.ModelID,
-			}
-		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-			// Fall back to legacy single default for variable extraction
-			presetVariableExtractionLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.Provider,
-				ModelID:  presetLLMConfig.ModelID,
-			}
-		}
-		if presetLLMConfig.PlanImprovementLLM != nil && presetLLMConfig.PlanImprovementLLM.Provider != "" && presetLLMConfig.PlanImprovementLLM.ModelID != "" {
-			presetPlanImprovementLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.PlanImprovementLLM.Provider,
-				ModelID:  presetLLMConfig.PlanImprovementLLM.ModelID,
-			}
-		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-			// Fall back to legacy single default for plan improvement
-			presetPlanImprovementLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.Provider,
-				ModelID:  presetLLMConfig.ModelID,
-			}
-		}
-		if presetLLMConfig.PlanToolOptimizationLLM != nil && presetLLMConfig.PlanToolOptimizationLLM.Provider != "" && presetLLMConfig.PlanToolOptimizationLLM.ModelID != "" {
-			presetPlanToolOptimizationLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.PlanToolOptimizationLLM.Provider,
-				ModelID:  presetLLMConfig.PlanToolOptimizationLLM.ModelID,
-			}
-		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-			// Fall back to legacy single default for plan tool optimization
-			presetPlanToolOptimizationLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.Provider,
-				ModelID:  presetLLMConfig.ModelID,
-			}
-		}
-		if presetLLMConfig.PlanLearningsAlignmentLLM != nil && presetLLMConfig.PlanLearningsAlignmentLLM.Provider != "" && presetLLMConfig.PlanLearningsAlignmentLLM.ModelID != "" {
-			presetPlanLearningsAlignmentLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.PlanLearningsAlignmentLLM.Provider,
-				ModelID:  presetLLMConfig.PlanLearningsAlignmentLLM.ModelID,
-			}
-		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-			// Fall back to legacy single default for plan learnings alignment
-			presetPlanLearningsAlignmentLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.Provider,
-				ModelID:  presetLLMConfig.ModelID,
-			}
+			presetPlanningLLM = legacyDefault
+			presetVariableExtractionLLM = legacyDefault
+			presetPlanImprovementLLM = legacyDefault
+			presetPlanToolOptimizationLLM = legacyDefault
+			presetPlanLearningsAlignmentLLM = legacyDefault
+			// Note: presetAnonymizationLLM and presetLearningConsolidationLLM are deprecated and removed
 		}
 	}
 

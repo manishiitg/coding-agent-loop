@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import type { PollingEvent } from '../../services/api-types';
 import { EventDispatcher } from './EventDispatcher';
+import { agentApi } from '../../services/api';
+import { useChatStore } from '../../stores/useChatStore';
 import './EventHierarchy.css';
 
 interface EventHierarchyProps {
@@ -21,61 +23,58 @@ interface EventNode {
 
 // Performance optimization: Limit events processed to prevent browser freeze
 const MAX_EVENTS_TO_PROCESS = 1000; // Process max 1000 events at a time (matches memory limit in useChatStore)
-const INITIAL_VISIBLE_EVENTS = 100; // Show first 100 events initially (users can load more)
 
 export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact = false }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
-  // Track start index for loading older events (starts from end, moves backward)
-  // startIndex represents the index in displayEvents where we start showing events
-  // Initially set to show last INITIAL_VISIBLE_EVENTS events (most recent)
-  const [startIndex, setStartIndex] = useState<number | null>(null);
+  // Track loaded older events from backend (prepended to props events)
+  const [loadedOlderEvents, setLoadedOlderEvents] = useState<PollingEvent[]>([]);
+  // Track pagination offset for loading older events
+  const [paginationOffset, setPaginationOffset] = useState<number>(0);
+  // Track loading state
+  const [isLoadingOlder, setIsLoadingOlder] = useState<boolean>(false);
+  // Track if there are more events to load
+  const [hasMoreOlderEvents, setHasMoreOlderEvents] = useState<boolean>(false);
   // Track last event count to detect new events
   const lastEventCountRef = React.useRef<number>(0);
   
-  // Limit events to prevent browser freeze - only process recent events
-  // ALWAYS takes the LATEST events (last N from the array)
+  // Get active tab for sessionId and eventMode
+  const activeTab = useChatStore(state => state.getActiveTab())
+  const sessionId = activeTab?.sessionId
+  const eventMode: 'basic' | 'advanced' = (activeTab?.eventMode || 'basic') as 'basic' | 'advanced'
+  
+  // Merge loaded older events with current events (older events first, then current events)
   const displayEvents = React.useMemo(() => {
-    if (events.length <= MAX_EVENTS_TO_PROCESS) {
-      return events;
+    // Combine: older events (loaded from backend) + current events (from props/store)
+    const allEvents = [...loadedOlderEvents, ...events];
+    
+    // Limit to prevent browser freeze
+    if (allEvents.length <= MAX_EVENTS_TO_PROCESS) {
+      return allEvents;
     }
     // Only process the most recent MAX_EVENTS_TO_PROCESS events
-    // This prevents processing thousands of events
-    // slice(-N) ensures we always get the LATEST events
-    console.warn(`[PERF] Limiting events from ${events.length} to ${MAX_EVENTS_TO_PROCESS} to prevent freeze`);
-    return events.slice(-MAX_EVENTS_TO_PROCESS);
-  }, [events]);
+    console.warn(`[PERF] Limiting events from ${allEvents.length} to ${MAX_EVENTS_TO_PROCESS} to prevent freeze`);
+    return allEvents.slice(-MAX_EVENTS_TO_PROCESS);
+  }, [events, loadedOlderEvents]);
   
-  // Initialize startIndex when displayEvents changes (new events or first load)
+  // Reset loaded older events when session or event mode changes
+  // (since filtering happens on backend, we need to reload when mode changes)
   React.useEffect(() => {
-    const currentEventCount = displayEvents.length;
-    const previousEventCount = lastEventCountRef.current;
-    
-    // If new events arrived (count increased), reset to show latest events
-    if (currentEventCount > previousEventCount) {
-      // New events arrived - reset to show latest INITIAL_VISIBLE_EVENTS
-      setStartIndex(Math.max(0, displayEvents.length - INITIAL_VISIBLE_EVENTS));
-    } else if (startIndex === null) {
-      // First load - initialize to show latest INITIAL_VISIBLE_EVENTS
-      setStartIndex(Math.max(0, displayEvents.length - INITIAL_VISIBLE_EVENTS));
-    } else if (currentEventCount < previousEventCount) {
-      // Events were cleared/reset - reset startIndex
-      setStartIndex(Math.max(0, displayEvents.length - INITIAL_VISIBLE_EVENTS));
-    }
-    
-    lastEventCountRef.current = currentEventCount;
-  }, [displayEvents.length, startIndex]);
+    setLoadedOlderEvents([])
+    setPaginationOffset(0)
+    // Get hasMoreOlderEvents from store (set by ChatArea when initial fetch completes)
+    const chatStore = useChatStore.getState()
+    const hasMore = sessionId ? chatStore.getTabHasMoreOlderEvents(sessionId) : false
+    setHasMoreOlderEvents(hasMore)
+  }, [sessionId, eventMode])
   
-  // Limit visible events for rendering - show events starting from startIndex
-  // When startIndex is 0, shows all events from beginning
-  // When startIndex > 0, shows events from that position to end (older events are hidden)
-  const visibleEvents = React.useMemo(() => {
-    if (startIndex === null || displayEvents.length === 0) {
-      return [];
-    }
-    // Show events from startIndex to end (includes older events when startIndex decreases)
-    return displayEvents.slice(startIndex);
-  }, [displayEvents, startIndex]);
+  // Track event count changes
+  React.useEffect(() => {
+    lastEventCountRef.current = displayEvents.length;
+  }, [displayEvents.length]);
+  
+  // All events are visible (no startIndex needed - we use pagination instead)
+  const visibleEvents = displayEvents;
 
   // Extract parent_id from event data
   const getParentId = React.useCallback((event: PollingEvent): string | undefined => {
@@ -424,22 +423,43 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     return filteredEvents.map(event => buildTreeRecursive(event));
   }, [visibleEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId, getHierarchyLevel]);
 
-  // Load more events handler (must be before return)
-  // Loads OLDER events (going back in time) by decreasing startIndex
-  const handleLoadMore = React.useCallback(() => {
-    setStartIndex(prev => {
-      if (prev === null) return 0;
-      // Load 50 more older events (move startIndex backward)
-      const newStartIndex = Math.max(0, prev - 50);
-      return newStartIndex;
-    });
-  }, []);
+  // Load more events handler - fetches older events from backend
+  const handleLoadMore = React.useCallback(async () => {
+    if (!sessionId || isLoadingOlder) {
+      return;
+    }
+    
+    setIsLoadingOlder(true);
+    try {
+      // Fetch older events using pagination (limit=50, offset=current offset)
+      const response = await agentApi.getSessionEvents(sessionId, undefined, {
+        limit: 50,
+        offset: paginationOffset,
+        eventMode
+      });
+      
+      if (response.events.length > 0) {
+        // Events come from backend in chronological order (oldest first) already
+        // Prepend older events to the beginning of our loaded events
+        setLoadedOlderEvents(prev => [...response.events, ...prev]);
+        // Update offset: add the number of events we just loaded
+        setPaginationOffset(prev => prev + response.events.length);
+        setHasMoreOlderEvents(response.has_more);
+      } else {
+        setHasMoreOlderEvents(false);
+      }
+    } catch (error) {
+      console.error('[EventHierarchy] Failed to load older events:', error);
+      setHasMoreOlderEvents(false);
+    } finally {
+      setIsLoadingOlder(false);
+    }
+  }, [sessionId, paginationOffset, eventMode, isLoadingOlder]);
 
-  // Check if there are older events to load (startIndex > 0 means there are events before current view)
-  const hasMoreEvents = startIndex !== null && startIndex > 0;
-  const totalEventsCount = events.length;
+  // Check if there are more events to load
+  const hasMoreEvents = hasMoreOlderEvents;
+  const totalEventsCount = displayEvents.length;
   const showingCount = visibleEvents.length;
-  const remainingCount = startIndex !== null ? startIndex : 0;
 
   if (eventTree.length === 0) {
     return (
@@ -467,9 +487,10 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
           <div className="flex justify-center py-4">
             <button
               onClick={handleLoadMore}
-              className="px-4 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-md transition-colors"
+              disabled={isLoadingOlder}
+              className="px-4 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Load Older Events ({remainingCount} remaining)
+              {isLoadingOlder ? 'Loading...' : 'Load Older Events'}
             </button>
           </div>
         )}

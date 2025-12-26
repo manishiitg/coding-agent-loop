@@ -1,9 +1,13 @@
 import { create } from 'zustand'
-import { devtools } from 'zustand/middleware'
-import type { PollingEvent } from '../services/api-types'
+import { devtools, persist } from 'zustand/middleware'
+import type { PollingEvent, ExtendedLLMConfiguration, SessionStatusResponse } from '../services/api-types'
 import type { StoreActions } from './types'
+import type { FileContextItem } from './types'
 import type { WorkflowPhase } from '../constants/workflow'
 import { useAppStore } from './useAppStore'
+import { agentApi } from '../services/api'
+import { useMCPStore } from './useMCPStore'
+import { useLLMStore } from './useLLMStore'
 
 // Event memory management constants
 const MAX_EVENTS = 1000
@@ -27,6 +31,64 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     'workflow_start'
   ]
   return importantTypes.includes(event.type)
+}
+
+// Tab session status type
+export interface TabSessionStatus {
+  status: string | null
+  agentMode: string | null
+  lastActivity: string | null
+}
+
+// Tab-specific configuration (all settings that should be per-tab)
+export interface ChatTabConfig {
+  inputText: string  // Chat input text
+  useCodeExecutionMode: boolean  // Code execution mode toggle
+  selectedServers: string[]  // Selected MCP servers
+  llmConfig: ExtendedLLMConfiguration  // LLM configuration (provider, model, etc.)
+  fileContext: FileContextItem[]  // Files/folders in context
+  enableContextSummarization?: boolean  // Context summarization setting
+}
+
+// Generalized ChatTab interface (works for both chat and workflow modes)
+export interface ChatTab {
+  tabId: string  // Unique ID: `chat_${timestamp}` or `phase_${phaseId}_${timestamp}`
+  name: string  // Display name (e.g., "Chat 1", "Planning", "Execution")
+  sessionId: string | null  // Chat session ID if exists
+  isStreaming: boolean  // Whether this tab's execution is currently running
+  isCompleted: boolean  // Whether this tab's execution has completed
+  eventMode: 'basic' | 'advanced'  // Event display mode for this tab
+  config: ChatTabConfig  // Tab-specific configuration
+  createdAt: number  // Timestamp for ordering
+  lastViewedEventCount: number  // Last event count when this tab was viewed (for badge)
+  // Mode-specific metadata
+  metadata?: {
+    phaseId?: string  // For workflow mode: phase ID
+    phaseName?: string  // For workflow mode: phase name
+    mode?: 'chat' | 'workflow'  // Which mode this tab belongs to
+    presetQueryId?: string  // For workflow mode: preset query ID (workflow identifier)
+  }
+}
+
+// Helper function to get default tab config from current global state
+const getDefaultTabConfig = (): ChatTabConfig => {
+  const appStore = useAppStore.getState()
+  const mcpStore = useMCPStore?.getState?.()
+  const llmStore = useLLMStore?.getState?.()
+  
+  return {
+    inputText: '',
+    useCodeExecutionMode: appStore.useCodeExecutionMode || false,
+    selectedServers: mcpStore?.selectedServers || [],
+    llmConfig: llmStore?.primaryConfig || {
+      provider: 'openrouter',
+      model_id: '',
+      fallback_models: [],
+      cross_provider_fallback: undefined
+    },
+    fileContext: appStore.chatFileContext || [],
+    enableContextSummarization: false
+  }
 }
 
 // Helper function to cleanup old events while retaining important ones
@@ -67,14 +129,14 @@ const cleanupOldEvents = (events: PollingEvent[]): PollingEvent[] => {
 interface ChatState extends StoreActions {
   // Chat streaming state
   isStreaming: boolean
-  observerId: string
   lastEventIndex: number
   pollingInterval: NodeJS.Timeout | null
   
-  // Event tracking
-  totalEvents: number
-  lastEventCount: number
-  events: PollingEvent[]
+  // Event tracking removed - using tabEvents only (keyed by sessionId)
+  // Per-tab event storage (keyed by session ID)
+  tabEvents: Record<string, PollingEvent[]>  // sessionId -> events
+  tabEventIndices: Record<string, number>  // sessionId -> lastEventIndex
+  tabHasMoreOlderEvents: Record<string, boolean>  // sessionId -> hasMoreOlderEvents (from initial fetch)
   
   // User message state
   currentUserMessage: string
@@ -107,18 +169,37 @@ interface ChatState extends StoreActions {
   // Toast notifications
   toasts: Array<{ id: string; message: string; type: 'success' | 'info' | 'error' | 'warning' }>
   
+  // Multi-tab chat state (generalized for both chat and workflow modes)
+  chatTabs: Record<string, ChatTab>  // tabId -> tab
+  activeTabId: string | null  // Currently selected tab
+  
+  // Tab session status (fetched from backend)
+  tabSessionStatus: Record<string, TabSessionStatus>  // tabId -> status
+  
   // Actions
   setIsStreaming: (streaming: boolean) => void
-  setObserverId: (id: string) => void
+  // Computed: Derive isStreaming from polling status
+  // Use this selector: useChatStore(state => state.getIsStreaming())
+  getIsStreaming: () => boolean
   setLastEventIndex: (index: number) => void
   setPollingInterval: (interval: NodeJS.Timeout | null) => void
   
-  // Event actions
-  setTotalEvents: (count: number) => void
-  setLastEventCount: (count: number) => void
-  setEvents: (events: PollingEvent[] | ((prevEvents: PollingEvent[]) => PollingEvent[])) => void
-  addEvent: (event: PollingEvent) => void
-  clearEvents: () => void
+  // Polling management actions
+  startPolling: (onPoll: () => Promise<void>) => void
+  stopPolling: () => void
+  updatePollingState: () => void  // Auto-start/stop based on active sessions
+  
+  // Event actions removed - using tabEvents only
+      // Per-tab event actions (now keyed by sessionId instead of observerId)
+      getTabEvents: (sessionId: string) => PollingEvent[]
+      addTabEvent: (sessionId: string, event: PollingEvent) => void
+      addTabEvents: (sessionId: string, events: PollingEvent[]) => void
+      setTabEvents: (sessionId: string, events: PollingEvent[]) => void
+      clearTabEvents: (sessionId: string) => void
+      getTabLastEventIndex: (sessionId: string) => number
+      setTabLastEventIndex: (sessionId: string, index: number) => void
+      getTabHasMoreOlderEvents: (sessionId: string) => boolean
+      setTabHasMoreOlderEvents: (sessionId: string, hasMore: boolean) => void
   
   // User message actions
   setCurrentUserMessage: (message: string) => void
@@ -153,6 +234,28 @@ interface ChatState extends StoreActions {
   removeToast: (id: string) => void
   clearToasts: () => void
   
+  // Tab management actions
+  createChatTab: (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string) => Promise<string>  // Returns tabId
+  switchTab: (tabId: string) => void
+  closeTab: (tabId: string) => Promise<void>
+  getTab: (tabId: string) => ChatTab | undefined
+  getActiveTab: () => ChatTab | undefined
+  getTabsByMode: (mode: 'chat' | 'workflow') => ChatTab[]
+  getTabsByPhaseId: (phaseId: string) => ChatTab[]  // Find workflow tabs by phaseId
+  setTabStreaming: (tabId: string, isStreaming: boolean) => void
+  setTabCompleted: (tabId: string, isCompleted: boolean) => void
+  updateTabSessionId: (tabId: string, sessionId: string) => void
+  setTabEventMode: (tabId: string, eventMode: 'basic' | 'advanced') => void
+  getTabConfig: (tabId: string) => ChatTabConfig | undefined
+  setTabConfig: (tabId: string, configUpdate: Partial<ChatTabConfig>) => void
+  getTabStreamingStatus: (tabId: string) => boolean
+  checkTabCompletion: (tabId: string, events: Array<{ type: string }>) => boolean
+  
+  // Tab session status actions
+  fetchTabSessionStatus: (tabId: string) => Promise<void>
+  fetchAllTabSessionStatuses: (tabIds: string[]) => Promise<void>
+  getTabSessionStatus: (tabId: string) => TabSessionStatus | undefined
+  
   // Helper methods
   resetChatState: () => void
   isAtBottom: (element: HTMLDivElement) => boolean
@@ -160,15 +263,15 @@ interface ChatState extends StoreActions {
 
 export const useChatStore = create<ChatState>()(
   devtools(
-    (set, get) => ({
+    persist(
+      (set, get) => ({
       // Initial state
       isStreaming: false,
-      observerId: '',
       lastEventIndex: -1,
       pollingInterval: null,
-      totalEvents: 0,
-      lastEventCount: 0,
-      events: [],
+      tabEvents: {},
+      tabEventIndices: {},
+      tabHasMoreOlderEvents: {},
       currentUserMessage: '',
       showUserMessage: true,
       sessionId: null,
@@ -184,14 +287,22 @@ export const useChatStore = create<ChatState>()(
       currentWorkflowPhase: 'planning' as WorkflowPhase,
       currentWorkflowQueryId: null,
       toasts: [],
+      chatTabs: {},
+      activeTabId: null,
+      tabSessionStatus: {},
 
       // Actions
       setIsStreaming: (streaming) => {
         set({ isStreaming: streaming })
       },
-
-      setObserverId: (id) => {
-        set({ observerId: id })
+      
+      // Computed getter for isStreaming (derived from polling status)
+      // This ensures isStreaming reflects actual polling state
+      getIsStreaming: () => {
+        const state = get()
+        // Derive from polling status: if polling is active and not completed, we're streaming
+        // Exception: if manually set to false (e.g., human feedback pause), respect that
+        return state.pollingInterval !== null && !state.isCompleted && state.isStreaming !== false
       },
 
       setLastEventIndex: (index) => {
@@ -200,50 +311,180 @@ export const useChatStore = create<ChatState>()(
 
       setPollingInterval: (interval) => {
         set({ pollingInterval: interval })
+        // Auto-update isStreaming based on polling status
+        const state = get()
+        const derivedStreaming = interval !== null && !state.isCompleted
+        if (state.isStreaming !== derivedStreaming && state.isStreaming !== false) {
+          // Only auto-update if not manually paused (isStreaming === false means paused)
+          set({ isStreaming: derivedStreaming })
+        }
       },
+      
+      // Start polling with a callback function
+      startPolling: (onPoll) => {
+        const state = get()
+        // Don't start if already polling
+        if (state.pollingInterval) {
+          console.log('[ChatStore] Polling already active, skipping start')
+          return
+        }
+        
+        console.log('[ChatStore] Starting polling interval')
+        const interval = setInterval(() => {
+          onPoll().catch(error => {
+            console.error('[ChatStore] Error in polling callback:', error)
+          })
+        }, 1000)
+        
+        set({ pollingInterval: interval })
+      },
+      
+      // Stop polling
+      stopPolling: () => {
+        const state = get()
+        if (state.pollingInterval) {
+          console.log('[ChatStore] Stopping polling interval')
+          clearInterval(state.pollingInterval)
+          set({ pollingInterval: null })
+        }
+      },
+      
+      // Update polling state based on active (streaming) sessions
+      // This should be called when tab streaming status changes
+      updatePollingState: () => {
+        const state = get()
+        const activeTabs = Object.values(state.chatTabs).filter(tab => tab.isStreaming)
+        
+        // If there are active sessions and no polling, start it
+        if (activeTabs.length > 0 && !state.pollingInterval) {
+          console.log(`[ChatStore] Found ${activeTabs.length} active session(s), but polling not started yet. Call startPolling() with your poll callback.`)
+          // Note: We can't start polling here because we need the poll callback
+          // The component should call startPolling with the callback
+        }
+        // If there are no active sessions but polling is running, stop it
+        else if (activeTabs.length === 0 && state.pollingInterval) {
+          console.log(`[ChatStore] No active sessions, stopping polling`)
+          state.stopPolling()
+        }
+      },
+      
 
       // Event actions
-      setTotalEvents: (count) => {
-        set({ totalEvents: count })
-      },
+      // Deprecated: setTotalEvents and setLastEventCount removed - use tabEvents instead
 
-      setLastEventCount: (count) => {
-        set({ lastEventCount: count })
+      // Deprecated: setEvents, addEvent, clearEvents removed - use tabEvents instead
+      
+      // Per-tab event actions (now keyed by sessionId)
+      getTabEvents: (sessionId: string) => {
+        const state = get()
+        return state.tabEvents[sessionId] || []
       },
-
-      setEvents: (events) => {
-        if (typeof events === 'function') {
-          set((state) => {
-            let newEvents = events(state.events)
-            
-            // Trigger cleanup if threshold exceeded
-            if (newEvents.length >= CLEANUP_THRESHOLD) {
-              console.log(`[MEMORY] Cleaning up events: ${newEvents.length} -> ${MAX_EVENTS}`)
-              newEvents = cleanupOldEvents(newEvents)
-            }
-            
-            return { events: newEvents }
-          })
-        } else {
+      
+      addTabEvent: (sessionId: string, event: PollingEvent) => {
+        set((state) => {
+          const currentEvents = state.tabEvents[sessionId] || []
+          const newEvents = [...currentEvents, event]
+          
+          // Trigger cleanup if threshold exceeded
+          let finalEvents = newEvents
+          if (newEvents.length >= CLEANUP_THRESHOLD) {
+            console.log(`[MEMORY] Cleaning up events for session ${sessionId}: ${newEvents.length} -> ${MAX_EVENTS}`)
+            finalEvents = cleanupOldEvents(newEvents)
+          }
+          
+          return {
+            tabEvents: {
+              ...state.tabEvents,
+              [sessionId]: finalEvents
+            },
+            // Deprecated: totalEvents removed
+          }
+        })
+      },
+      
+      addTabEvents: (sessionId: string, events: PollingEvent[]) => {
+        set((state) => {
+          const currentEvents = state.tabEvents[sessionId] || []
+          const newEvents = [...currentEvents, ...events]
+          
+          // Trigger cleanup if threshold exceeded
+          let finalEvents = newEvents
+          if (newEvents.length >= CLEANUP_THRESHOLD) {
+            console.log(`[MEMORY] Cleaning up events for session ${sessionId}: ${newEvents.length} -> ${MAX_EVENTS}`)
+            finalEvents = cleanupOldEvents(newEvents)
+          }
+          
+          return {
+            tabEvents: {
+              ...state.tabEvents,
+              [sessionId]: finalEvents
+            },
+            // Deprecated: totalEvents removed
+          }
+        })
+      },
+      
+      setTabEvents: (sessionId: string, events: PollingEvent[]) => {
+        set((state) => {
           // Trigger cleanup if threshold exceeded
           let finalEvents = events
           if (events.length >= CLEANUP_THRESHOLD) {
-            console.log(`[MEMORY] Cleaning up events: ${events.length} -> ${MAX_EVENTS}`)
+            console.log(`[MEMORY] Cleaning up events for session ${sessionId}: ${events.length} -> ${MAX_EVENTS}`)
             finalEvents = cleanupOldEvents(events)
           }
-          set({ events: finalEvents })
-        }
+          
+          return {
+            tabEvents: {
+              ...state.tabEvents,
+              [sessionId]: finalEvents
+            }
+          }
+        })
       },
-
-      addEvent: (event) => {
+      
+      clearTabEvents: (sessionId: string) => {
+        set((state) => {
+          const newTabEvents = { ...state.tabEvents }
+          delete newTabEvents[sessionId]
+          const newTabEventIndices = { ...state.tabEventIndices }
+          delete newTabEventIndices[sessionId]
+          const newTabHasMoreOlderEvents = { ...state.tabHasMoreOlderEvents }
+          delete newTabHasMoreOlderEvents[sessionId]
+          
+          return {
+            tabEvents: newTabEvents,
+            tabEventIndices: newTabEventIndices,
+            tabHasMoreOlderEvents: newTabHasMoreOlderEvents
+          }
+        })
+      },
+      
+      getTabLastEventIndex: (sessionId: string) => {
+        const state = get()
+        return state.tabEventIndices[sessionId] ?? -1
+      },
+      
+      setTabLastEventIndex: (sessionId: string, index: number) => {
         set((state) => ({
-          events: [...state.events, event],
-          totalEvents: state.totalEvents + 1
+          tabEventIndices: {
+            ...state.tabEventIndices,
+            [sessionId]: index
+          }
         }))
       },
-
-      clearEvents: () => {
-        set({ events: [], totalEvents: 0, lastEventCount: 0 })
+      
+      getTabHasMoreOlderEvents: (sessionId: string) => {
+        const state = get()
+        return state.tabHasMoreOlderEvents[sessionId] ?? false
+      },
+      
+      setTabHasMoreOlderEvents: (sessionId: string, hasMore: boolean) => {
+        set((state) => ({
+          tabHasMoreOlderEvents: {
+            ...state.tabHasMoreOlderEvents,
+            [sessionId]: hasMore
+          }
+        }))
       },
 
       // User message actions
@@ -280,6 +521,13 @@ export const useChatStore = create<ChatState>()(
 
       setIsCompleted: (completed) => {
         set({ isCompleted: completed })
+        // Auto-update isStreaming: if completed, stop streaming
+        if (completed) {
+          const state = get()
+          if (state.isStreaming) {
+            set({ isStreaming: false })
+          }
+        }
       },
 
       // Loading actions
@@ -329,14 +577,24 @@ export const useChatStore = create<ChatState>()(
 
       // Helper methods
       resetChatState: () => {
+        const state = get()
+        
+        // Close all tabs and stop sessions
+        Object.values(state.chatTabs).forEach(async (tab) => {
+          try {
+            if (tab.isStreaming && tab.sessionId) {
+              await agentApi.stopSession(tab.sessionId)
+            }
+          } catch (error) {
+            console.error(`[ChatStore] Error cleaning up tab ${tab.tabId}:`, error)
+          }
+        })
+        
         set({
           isStreaming: false,
-          observerId: '',
           lastEventIndex: -1,
           pollingInterval: null,
-          totalEvents: 0,
-          lastEventCount: 0,
-          events: [],
+          // Deprecated fields removed
           currentUserMessage: '',
           showUserMessage: true,
           sessionId: null,
@@ -351,7 +609,9 @@ export const useChatStore = create<ChatState>()(
           isCheckingActiveSessions: false,
           currentWorkflowPhase: 'planning' as WorkflowPhase,
           currentWorkflowQueryId: null,
-          toasts: []
+          toasts: [],
+          chatTabs: {},
+          activeTabId: null
         })
         
         // Clear the requiresNewChat flag after successful chat reset
@@ -378,8 +638,541 @@ export const useChatStore = create<ChatState>()(
         if (error) {
           get().addToast(error, 'error')
         }
+      },
+      
+      // Tab management actions
+      createChatTab: async (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string) => {
+        // Generate unique tab ID
+        const timestamp = Date.now()
+        const mode = metadata?.mode || 'chat'
+        const tabId = mode === 'workflow' && metadata?.phaseId
+          ? `phase_${metadata.phaseId}_${timestamp}`
+          : `chat_${timestamp}`
+        
+        // Generate session ID for the new tab if not provided
+        let sessionIdForTab: string | null = null
+        
+        if (existingObserverId) {
+          // If existingObserverId is provided, treat it as sessionId
+          sessionIdForTab = existingObserverId
+          console.log(`[ChatStore] Using existing session ID for tab ${tabId}: ${sessionIdForTab}`)
+        } else {
+          // Generate new session ID
+          sessionIdForTab = globalThis.crypto.randomUUID()
+          console.log(`[ChatStore] Generated new session ID for tab ${tabId}: ${sessionIdForTab}`)
+        }
+        
+        // Get default config from current global state
+        const defaultConfig = getDefaultTabConfig()
+        
+        // Validate session ID before creating tab
+        if (!sessionIdForTab || sessionIdForTab.trim() === '') {
+          console.error(`[ChatStore] ❌ Cannot create tab ${tabId} - sessionId is empty!`)
+          throw new Error('Session ID is required but was not provided or is empty')
+        }
+        
+        // Create tab with session ID
+        const tab: ChatTab = {
+          tabId,
+          name,
+          sessionId: sessionIdForTab,
+          isStreaming: false,
+          isCompleted: false,
+          eventMode: 'basic', // Default to basic mode
+          config: defaultConfig, // Initialize with default config from global state
+          createdAt: timestamp,
+          lastViewedEventCount: 0, // Initialize to 0 (no events viewed yet)
+          metadata
+        }
+        
+        console.log(`[ChatStore] Creating tab with session ID:`, {
+          tabId,
+          name,
+          sessionId: sessionIdForTab,
+          hasSessionId: !!sessionIdForTab
+        })
+        
+        set((state) => ({
+          chatTabs: {
+            ...state.chatTabs,
+            [tabId]: tab
+          },
+          activeTabId: tabId
+        }))
+        
+        // Verify the tab was stored correctly
+        const storedTab = get().chatTabs[tabId]
+        if (!storedTab) {
+          console.error(`[ChatStore] ❌ Tab ${tabId} was not stored in state!`)
+          throw new Error('Failed to store tab in state')
+        }
+        if (!storedTab.sessionId) {
+          console.error(`[ChatStore] ❌ Tab ${tabId} stored but has no sessionId!`, storedTab)
+          throw new Error('Tab stored without session ID')
+        }
+        
+        console.log(`[ChatStore] ✅ Tab ${tabId} created and stored successfully with session ID: ${storedTab.sessionId}`)
+        return tabId
+      },
+      
+      switchTab: (tabId: string) => {
+        const state = get()
+        if (!state.chatTabs[tabId]) {
+          console.warn(`[ChatStore] Tab ${tabId} not found`)
+          return
+        }
+        
+        // Update previous active tab's lastViewedEventCount before switching
+        if (state.activeTabId && state.activeTabId !== tabId) {
+          const previousTabId = state.activeTabId
+          const previousTab = state.chatTabs[previousTabId]
+          if (previousTab?.sessionId) {
+            const currentEventCount = state.tabEvents[previousTab.sessionId]?.length || 0
+            set((s) => ({
+              chatTabs: {
+                ...s.chatTabs,
+                [previousTabId]: {
+                  ...previousTab,
+                  lastViewedEventCount: currentEventCount
+                }
+              }
+            }))
+          }
+        }
+        
+        // Switch to new tab and update its lastViewedEventCount
+        const newTab = state.chatTabs[tabId]
+        if (newTab?.sessionId) {
+          const currentEventCount = state.tabEvents[newTab.sessionId]?.length || 0
+          set((s) => ({
+            activeTabId: tabId,
+            chatTabs: {
+              ...s.chatTabs,
+              [tabId]: {
+                ...newTab,
+                lastViewedEventCount: currentEventCount
+              }
+            }
+          }))
+        } else {
+          set({ activeTabId: tabId })
+        }
+      },
+      
+      closeTab: async (tabId: string) => {
+        const state = get()
+        const tab = state.chatTabs[tabId]
+        
+        if (!tab) {
+          console.warn(`[ChatStore] Tab ${tabId} not found`)
+          return
+        }
+        
+        // Stop session if streaming
+        if (tab.isStreaming && tab.sessionId) {
+          try {
+            await agentApi.stopSession(tab.sessionId)
+          } catch (error) {
+            console.error(`[ChatStore] Failed to stop session ${tab.sessionId}:`, error)
+          }
+        }
+        
+        // Clear tab's events (by sessionId)
+        const newTabEvents = { ...state.tabEvents }
+        if (tab.sessionId) {
+          delete newTabEvents[tab.sessionId]
+        }
+        const newTabEventIndices = { ...state.tabEventIndices }
+        if (tab.sessionId) {
+          delete newTabEventIndices[tab.sessionId]
+        }
+        
+        // Remove tab
+        const newTabs = { ...state.chatTabs }
+        delete newTabs[tabId]
+        
+        // Switch to another tab if this was active
+        let newActiveTabId = state.activeTabId
+        if (state.activeTabId === tabId) {
+          const remainingTabs = Object.values(newTabs).sort((a, b) => b.createdAt - a.createdAt)
+          newActiveTabId = remainingTabs.length > 0 ? remainingTabs[0].tabId : null
+        }
+        
+        set({
+          chatTabs: newTabs,
+          activeTabId: newActiveTabId,
+          tabEvents: newTabEvents,
+          tabEventIndices: newTabEventIndices
+        })
+      },
+      
+      getTab: (tabId: string) => {
+        return get().chatTabs[tabId]
+      },
+      
+      getActiveTab: () => {
+        const state = get()
+        if (!state.activeTabId) return undefined
+        return state.chatTabs[state.activeTabId]
+      },
+      
+      getTabsByMode: (mode: 'chat' | 'workflow') => {
+        const state = get()
+        return Object.values(state.chatTabs).filter(tab => tab.metadata?.mode === mode)
+      },
+      
+      getTabsByPhaseId: (phaseId: string) => {
+        const state = get()
+        return Object.values(state.chatTabs).filter(
+          tab => tab.metadata?.mode === 'workflow' && tab.metadata?.phaseId === phaseId
+        )
+      },
+      
+      setTabStreaming: (tabId: string, isStreaming: boolean) => {
+        const state = get()
+        const tab = state.chatTabs[tabId]
+        if (!tab) return
+        
+        set(() => ({
+          chatTabs: {
+            ...state.chatTabs,
+            [tabId]: {
+              ...tab,
+              isStreaming
+            }
+          }
+        }))
+      },
+      
+      setTabCompleted: (tabId: string, isCompleted: boolean) => {
+        const state = get()
+        const tab = state.chatTabs[tabId]
+        if (!tab) return
+        
+        set((state) => ({
+          chatTabs: {
+            ...state.chatTabs,
+            [tabId]: {
+              ...tab,
+              isCompleted,
+              isStreaming: isCompleted ? false : tab.isStreaming
+            }
+          }
+        }))
+      },
+      
+      updateTabSessionId: (tabId: string, sessionId: string) => {
+        const state = get()
+        const tab = state.chatTabs[tabId]
+        if (!tab) return
+        
+        set((state) => ({
+          chatTabs: {
+            ...state.chatTabs,
+            [tabId]: {
+              ...tab,
+              sessionId
+            }
+          }
+        }))
+      },
+      
+      // updateTabObserverId removed - observers no longer used
+      
+      setTabEventMode: (tabId: string, eventMode: 'basic' | 'advanced') => {
+        const state = get()
+        const tab = state.chatTabs[tabId]
+        if (!tab) return
+        
+        // Check if mode actually changed
+        const modeChanged = tab.eventMode !== eventMode
+        
+        set((state) => {
+          const updates: Partial<ChatState> = {
+            chatTabs: {
+              ...state.chatTabs,
+              [tabId]: {
+                ...tab,
+                eventMode
+              }
+            }
+          }
+          
+          // CRITICAL: When event mode changes, reset lastEventIndex and clear events
+          // This forces the frontend to fetch all events from the beginning
+          // because the filtered view is completely different (basic vs advanced)
+          // The old events in the store are from the previous filter mode and are invalid
+          if (modeChanged && tab.sessionId) {
+            updates.tabEventIndices = {
+              ...state.tabEventIndices,
+              [tab.sessionId]: -1
+            }
+            // Clear events for this session - they'll be reloaded with the new filter
+            if (state.tabEvents[tab.sessionId]) {
+              updates.tabEvents = {
+                ...state.tabEvents,
+                [tab.sessionId]: []
+              }
+            }
+            // Reset hasMoreOlderEvents flag
+            updates.tabHasMoreOlderEvents = {
+              ...state.tabHasMoreOlderEvents,
+              [tab.sessionId]: false
+            }
+          }
+          
+          return updates
+        })
+      },
+      
+      getTabConfig: (tabId: string) => {
+        const state = get()
+        const tab = state.chatTabs[tabId]
+        return tab?.config
+      },
+      
+      setTabConfig: (tabId: string, configUpdate: Partial<ChatTabConfig>) => {
+        const state = get()
+        const tab = state.chatTabs[tabId]
+        if (!tab) return
+        
+        set((state) => ({
+          chatTabs: {
+            ...state.chatTabs,
+            [tabId]: {
+              ...tab,
+              config: {
+                ...tab.config,
+                ...configUpdate
+              }
+            }
+          }
+        }))
+      },
+      
+      getTabStreamingStatus: (tabId: string) => {
+        const state = get()
+        const tab = state.chatTabs[tabId]
+        if (!tab) return false
+        
+        // If tab is marked as completed, it's not streaming
+        if (tab.isCompleted) return false
+        
+        // Tab is streaming if:
+        // 1. Polling is active
+        // 2. Not manually paused (stored isStreaming !== false)
+        const isPolling = state.pollingInterval !== null
+        
+        if (isPolling) {
+          return tab.isStreaming !== false // Respect manual pause
+        }
+        
+        return false
+      },
+      
+      checkTabCompletion: (tabId: string, events: Array<{ type: string }>) => {
+        const state = get()
+        const tab = state.chatTabs[tabId]
+        if (!tab) return false
+        
+        const mode = tab.metadata?.mode || 'chat'
+        
+        // Check if any events are completion events
+        const completionEventTypes = mode === 'workflow'
+          ? ['workflow_end', 'request_human_feedback']
+          : ['unified_completion', 'agent_end', 'conversation_end', 'conversation_error', 'agent_error']
+        
+        return events.some(event => completionEventTypes.includes(event.type))
+      },
+      
+      // Tab session status actions
+      fetchTabSessionStatus: async (tabId: string) => {
+        const state = get()
+        const tab = state.chatTabs[tabId]
+        
+        if (!tab || !tab.sessionId) {
+          console.warn(`[ChatStore] Cannot fetch session status - tab ${tabId} has no session ID`)
+          return
+        }
+        
+        try {
+          let status: TabSessionStatus = {
+            status: null,
+            agentMode: null,
+            lastActivity: null
+          }
+          
+          if (tab.sessionId) {
+            // Check if this session is in the active sessions list before calling getSessionStatus
+            // This avoids unnecessary API calls when there are no active sessions
+            try {
+              const activeSessionsResponse = await agentApi.getActiveSessions()
+              const activeSessionIds = new Set(activeSessionsResponse.active_sessions.map(s => s.session_id))
+              
+              // Only call getSessionStatus if the session is active
+              if (activeSessionIds.has(tab.sessionId)) {
+                try {
+                  // Get session status
+                  const sessionStatus: SessionStatusResponse = await agentApi.getSessionStatus(tab.sessionId)
+                  status = {
+                    status: sessionStatus.status || null,
+                    agentMode: sessionStatus.agent_mode || null,
+                    lastActivity: sessionStatus.last_activity || null
+                  }
+                } catch (sessionError: unknown) {
+                  // Handle 404 or other session status errors gracefully
+                  const axiosError = sessionError as { response?: { status?: number }; message?: string }
+                  if (axiosError?.response?.status === 404) {
+                    // Session not found
+                    status = {
+                      status: null,
+                      agentMode: null,
+                      lastActivity: null
+                    }
+                  }
+                }
+              }
+            } catch {
+              // If active sessions check fails, fall back to calling getSessionStatus
+              try {
+                const sessionStatus: SessionStatusResponse = await agentApi.getSessionStatus(tab.sessionId)
+                status = {
+                  status: sessionStatus.status || null,
+                  agentMode: sessionStatus.agent_mode || null,
+                  lastActivity: sessionStatus.last_activity || null
+                }
+              } catch (sessionError: unknown) {
+                // Handle 404 or other session status errors gracefully
+                const axiosError = sessionError as { response?: { status?: number }; message?: string }
+                if (axiosError?.response?.status === 404) {
+                  // Session not found
+                  status = {
+                    status: null,
+                    agentMode: null,
+                    lastActivity: null
+                  }
+                }
+              }
+            }
+          }
+          
+          // Update status in store
+          set((state) => ({
+            tabSessionStatus: {
+              ...state.tabSessionStatus,
+              [tabId]: status
+            }
+          }))
+        } catch (error: unknown) {
+          // Handle session status errors gracefully
+          const axiosError = error as { response?: { status?: number }; message?: string }
+          if (axiosError?.response?.status === 404) {
+            // Session not found - it may have been cleaned up
+            console.log(`[ChatStore] Session ${tab.sessionId} not found (404) for tab ${tabId}`)
+          } else {
+            console.warn(`[ChatStore] Failed to fetch session status for tab ${tabId}:`, axiosError.message || 'Unknown error')
+          }
+          
+          // Set status to null on error
+          set((state) => ({
+            tabSessionStatus: {
+              ...state.tabSessionStatus,
+              [tabId]: {
+                status: null,
+                agentMode: null,
+                lastActivity: null
+              }
+            }
+          }))
+        }
+      },
+      
+      fetchAllTabSessionStatuses: async (tabIds: string[]) => {
+        // First check if there are any active sessions
+        try {
+          const activeSessionsResponse = await agentApi.getActiveSessions()
+          const activeSessionIds = new Set(activeSessionsResponse.active_sessions.map(s => s.session_id))
+          
+          // If no active sessions, skip all status calls (no need to poll)
+          if (activeSessionIds.size === 0) {
+            console.log('[ChatStore] No active sessions found, skipping status fetch')
+            return
+          }
+          
+          // Filter tabs: only fetch status for tabs that either:
+          // 1. Have a sessionId that matches an active session, OR
+          // 2. Don't have a sessionId yet (need to check observer to get it)
+          const state = get()
+          const tabsToFetch = tabIds.filter(tabId => {
+            const tab = state.chatTabs[tabId]
+            if (!tab) return false
+            
+            // If tab has sessionId, only fetch if it's in active sessions
+            if (tab.sessionId) {
+              return activeSessionIds.has(tab.sessionId)
+            }
+            
+            // If tab doesn't have sessionId yet, we still need to check observer
+            // to see if it has a session (it might be newly created)
+            return true
+          })
+          
+          if (tabsToFetch.length === 0) {
+            console.log('[ChatStore] No tabs with active sessions to fetch status for')
+            return
+          }
+          
+          console.log(`[ChatStore] Fetching status for ${tabsToFetch.length} tabs (${activeSessionIds.size} active sessions)`)
+          
+          // Fetch status for tabs in parallel
+          const { fetchTabSessionStatus } = get()
+          const promises = tabsToFetch.map(tabId => fetchTabSessionStatus(tabId))
+          await Promise.all(promises)
+        } catch (error) {
+          console.warn('[ChatStore] Failed to check active sessions, falling back to fetching all tab statuses:', error)
+          // Fallback: fetch status for all tabs if active sessions check fails
+          const { fetchTabSessionStatus } = get()
+          const promises = tabIds.map(tabId => fetchTabSessionStatus(tabId))
+          await Promise.all(promises)
+        }
+      },
+      
+      getTabSessionStatus: (tabId: string) => {
+        return get().tabSessionStatus[tabId]
       }
-    }),
+      }),
+      {
+        name: 'chat-store',
+        partialize: (state) => ({
+          // Only persist tab structure and configs, not temporary runtime state
+          chatTabs: Object.fromEntries(
+            Object.entries(state.chatTabs).map(([tabId, tab]) => [
+              tabId,
+              {
+                tabId: tab.tabId,
+                name: tab.name,
+                sessionId: null, // Don't persist session IDs (sessions are ephemeral)
+                isStreaming: false, // Reset streaming state on reload
+                isCompleted: false, // Reset completion state on reload
+                eventMode: tab.eventMode, // Persist user preference
+                config: tab.config, // CRITICAL: Persist full config including:
+                // - selectedServers (MCP server selections)
+                // - llmConfig (LLM provider, model_id, fallback_models, etc.)
+                // - useCodeExecutionMode (Simple vs Code Exec mode)
+                // - fileContext (selected files/folders)
+                // - inputText (chat input text)
+                // - enableContextSummarization
+                createdAt: tab.createdAt, // Persist for ordering
+                lastViewedEventCount: 0, // Reset on reload
+                metadata: tab.metadata // Persist mode and phase info
+              }
+            ])
+          ),
+          activeTabId: state.activeTabId
+          // Exclude all other state (isStreaming, pollingInterval, tabEvents, etc.)
+        })
+      }
+    ),
     {
       name: 'chat-store'
     }

@@ -19,32 +19,31 @@ type EventBridge interface {
 
 // BaseEventBridge contains the common functionality for all event bridges
 type BaseEventBridge struct {
-	EventStore      *events.EventStore
-	ObserverManager *events.ObserverManager
-	ObserverID      string // Observer ID for polling API
-	SessionID       string // Session ID for database storage
-	Logger          loggerv2.Logger
-	ChatDB          database.Database // Add database reference for chat history storage
-	BridgeName      string            // Name of the bridge (used for logging and ID prefix)
+	EventStore *events.EventStore
+	SessionID  string // Session ID for event storage
+	Logger     loggerv2.Logger
+	ChatDB     database.Database // Add database reference for chat history storage
+	BridgeName string            // Name of the bridge (used for logging and ID prefix)
 }
 
 // HandleEvent processes events and converts them to server events
 func (b *BaseEventBridge) HandleEvent(ctx context.Context, event *pkgevents.AgentEvent) error {
+
 	// Create server event with typed AgentEvent data directly - no conversion needed!
 	serverEvent := events.Event{
 		ID:        fmt.Sprintf("%s_%s_%d", b.BridgeName, event.Type, time.Now().UnixNano()),
 		Type:      string(event.Type),
 		Timestamp: time.Now(),
-		Data:      event,        // Pass through the typed AgentEvent directly
-		SessionID: b.ObserverID, // Use observerID for in-memory storage (polling)
+		Data:      event,       // Pass through the typed AgentEvent directly
+		SessionID: b.SessionID, // Use sessionID for event storage
 	}
 
 	// Store the event in the server's event store for polling API
-	// Use the observer ID for in-memory storage (this is what the frontend polls)
-	if b.ObserverID == "" {
-		b.Logger.Warn("⚠️ [BaseEventBridge] ObserverID is empty! Event will not be stored correctly.")
+	// Use the session ID for in-memory storage (multiple observers can view the same session)
+	if b.SessionID == "" {
+		b.Logger.Warn("⚠️ [BaseEventBridge] SessionID is empty! Event will not be stored correctly.")
 	}
-	b.EventStore.AddEvent(b.ObserverID, serverEvent)
+	b.EventStore.AddEvent(b.SessionID, serverEvent)
 
 	// ✅ CHAT HISTORY FIX: Store event in database for chat history
 	if b.ChatDB != nil {

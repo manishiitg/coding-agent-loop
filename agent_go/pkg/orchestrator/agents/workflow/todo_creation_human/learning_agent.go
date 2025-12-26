@@ -128,6 +128,7 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 	// StepNumber is already the full learning path identifier (e.g., "step-3" or "step-3-true-0")
 	workspacePath := templateVars["WorkspacePath"]
 	stepNumber := templateVars["StepNumber"]
+	stepTitle := templateVars["StepTitle"]
 	writePath := workspacePath + "/learnings/" + stepNumber // Write to step-specific folder at workspace root (supports both regular and branch steps)
 	scriptsPath := workspacePath + "/learnings/" + stepNumber + "/scripts"
 
@@ -256,18 +257,30 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningSystemPromptProces
 			return `7`
 		}
 		return `6`
-	}() + `. Write New Learning Content** - Priority: ` + func() string {
+	}() + `. Consolidate & Update Learning File** - Priority: ` + func() string {
 		if learningDetailLevel == "exact" {
 			return `Execution Workflow → Data Flow → Decision Logic → Error Recovery → Failures`
 		}
 		return `Success tools/scripts → Guidelines → Failures`
 	}() + `
 
-**CRITICAL**: Write ONLY new learning content extracted from current execution. Do NOT merge with existing files.
-- **Output File**: ` + writePath + `/_learning_new.md (temporary file for detection agent)
-- **Content**: Only patterns extracted from current execution (ExecutionHistory and ValidationResult)
-- **Format**: Use same format as final learning file, but this is raw extraction output
-- **Note**: Detection agent will consolidate this with existing learnings and handle scoring/optimization
+**CONSOLIDATION PROCESS** (if existing learnings provided):
+1. **Plan Alignment**: Remove learnings that don't match CURRENT step description (step description is SOURCE OF TRUTH)
+2. **Pattern Matching**: Match new patterns with existing (same MCP tool/function = same pattern, normalize to {{VARS}})
+3. **Merge & Update**: 
+   - If pattern exists: Update scores [Runs: X | Success: Y%%] (increment Runs if succeeded, recalculate Success %%)
+   - If new pattern: Add with initial score [Runs: 1 | Success: 100%%] (or [Runs: 0 | Success: 0%%] if failed)
+4. **Anonymization**: Replace sensitive values with {{VARIABLE_NAME}}, normalize workspace paths to {{WORKSPACE_PATH}} or relative paths
+5. **Compression**: Remove redundancy, keep concise, focus on MCP tools (not workspace tools)
+6. **Optimal Path**: Mark highest scoring pattern as ⭐ OPTIMAL, deprecate <50%% as ⚠️ UNRELIABLE
+7. **Write Consolidated File**: Write to ` + writePath + `/` + stepTitle + `_learning.md (final file, not temporary)
+
+**CRITICAL**: 
+- **Output File**: ` + writePath + `/` + stepTitle + `_learning.md (final consolidated file)
+- **Consolidate**: Merge new patterns from current execution with existing learnings
+- **Focus on MCP Tools**: Preserve MCP tool patterns, minimize workspace tool noise
+- **Update Scores**: Maintain [Runs: X | Success: Y%%] format
+- **Compress & Optimize**: Keep learnings precise and concise
 
 ## 📝 OUTPUT FORMAT
 
@@ -477,16 +490,18 @@ Alternative Path [Runs: X | Success: Y%]
 
 ## 📤 REQUIRED OUTPUT
 
-**CRITICAL**: After writing new learning file, output ONLY the file path:
-Updated: ` + writePath + "/_learning_new.md" + `
+**CRITICAL**: After consolidating and writing learning file, output ONLY the file path:
+Updated: ` + writePath + "/" + stepTitle + "_learning.md" + `
 
 **DO NOT provide**: summaries, analysis reports, long explanations, lists of patterns
 
 **Key Requirements**:
-- **EXTRACTION ONLY**: Extract patterns from current execution, do NOT merge with existing files
+- **CONSOLIDATE**: Extract patterns from current execution AND merge with existing learnings (if provided)
+- **Update Scores**: Maintain [Runs: X | Success: Y%%] format, increment runs if pattern succeeded
+- **Mark Optimal**: Mark highest scoring pattern as ⭐ OPTIMAL
 - ALWAYS save working Python scripts to ` + scriptsPath + `/` + `
 - Document learnings ONLY in ` + writePath + `/ folder
-- Write to temporary file: _learning_new.md (detection agent will handle consolidation)
+- Write directly to final file: {StepTitle}_learning.md (consolidation handled by extraction agent)
 ` + func() string {
 		if learningDetailLevel == "exact" {
 			return "- **PRESERVE WORKFLOW ORDER** - Steps must be in execution sequence\n" +
@@ -497,8 +512,8 @@ Updated: ` + writePath + "/_learning_new.md" + `
 		return "- Keep file content SHORT and precise (each entry 1-2 lines max)"
 	}() + `
 - Analyze BOTH success and failure patterns from current execution
-- **NO SCORING**: Do not add [Runs: X | Success: Y%] scores (detection agent handles this during consolidation)
-- **NO OPTIMAL MARKERS**: Do not mark ⭐ OPTIMAL paths (detection agent handles this during consolidation)
+- **UPDATE SCORES**: Maintain [Runs: X | Success: Y%%] format - increment Runs if pattern succeeded, recalculate Success %%
+- **MARK OPTIMAL**: Mark highest scoring pattern as ⭐ OPTIMAL, deprecate <50%% success as ⚠️ UNRELIABLE
 `
 }
 
@@ -513,6 +528,7 @@ func (agent *HumanControlledTodoPlannerLearningAgent) learningUserMessageProcess
 	// StepNumber is already the full learning path identifier (e.g., "step-3" or "step-3-true-0")
 	stepNumber := templateVars["StepNumber"]
 	workspacePath := templateVars["WorkspacePath"]
+	stepTitle := templateVars["StepTitle"]
 	writePath := workspacePath + "/learnings/" + stepNumber // Write to step-specific folder at workspace root (supports both regular and branch steps)
 
 	return `# ` + func() string {
@@ -634,17 +650,24 @@ Task-specific failures teach us what NOT to do - use them to refine the workflow
 	}() + `
 
 **File Handling**:
-1. **EXTRACTION ONLY**: Extract learnings from current execution (ExecutionHistory and ValidationResult above)
-   - Do NOT read existing learning files
-   - Do NOT merge with existing patterns
-   - Do NOT update scores or optimal paths
+1. **READ EXISTING LEARNINGS** (if provided in ExistingLearningsContent):
+   - Review existing patterns and scores
+   - Identify which patterns match new patterns from current execution
    
-2. **WRITE NEW FILE**: Write extracted patterns to: ` + writePath + `/_learning_new.md
-   - This is a temporary file that the detection agent will process during consolidation
-   - Include all patterns extracted from current execution (success + failure)
-   - Use same format as final learning file, but without scores or optimal markers
+2. **CONSOLIDATE & UPDATE**: 
+   - **Plan Alignment**: Remove learnings that don't match current step description
+   - **Pattern Matching**: Match new patterns with existing (same MCP tool = same pattern)
+   - **Merge**: Update existing pattern scores OR add new patterns with initial scores
+   - **Anonymize**: Replace sensitive values with {{VARIABLE_NAME}}, normalize paths
+   - **Compress**: Remove redundancy, keep concise, focus on MCP tools
+   - **Mark Optimal**: Mark highest scoring pattern as ⭐ OPTIMAL, deprecate <50%% as ⚠️ UNRELIABLE
    
-3. **OUTPUT**: After writing, output ONLY the file path (e.g., "Updated: ` + writePath + `/_learning_new.md")
+3. **WRITE CONSOLIDATED FILE**: Write to ` + writePath + `/` + stepTitle + `_learning.md
+   - This is the FINAL consolidated file (not temporary)
+   - Include all consolidated patterns with updated scores
+   - Focus on MCP tool patterns, minimize workspace tool noise
+   
+4. **OUTPUT**: After writing, output ONLY the file path (e.g., "Updated: ` + writePath + `/` + stepTitle + `_learning.md")
    
 **Keep response minimal** - just the file path. No summaries or analysis.
 `

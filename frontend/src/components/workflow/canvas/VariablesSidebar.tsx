@@ -298,10 +298,10 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
               >
                 {/* Group header */}
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
                     <button
                       onClick={() => handleToggleGroup(group.group_id)}
-                      className="flex items-center gap-1.5 hover:scale-110 transition-transform"
+                      className="flex items-center gap-1.5 hover:scale-110 transition-transform flex-shrink-0"
                       title={group.enabled ? 'Disable group' : 'Enable group'}
                     >
                       {group.enabled ? (
@@ -310,17 +310,45 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
                         <Circle className="w-4 h-4 text-gray-400 dark:text-gray-500" />
                       )}
                     </button>
-                    <span className="text-sm font-semibold text-foreground font-mono">
-                      {group.group_id.toUpperCase()}
-                    </span>
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <input
+                        type="text"
+                        value={group.display_name || ''}
+                        onChange={(e) => {
+                          // Update display name for this specific group
+                          if (manifest.groups && manifest.groups.length > 0) {
+                            const updatedGroups = manifest.groups.map(g => {
+                              if (g.group_id === group.group_id) {
+                                return { ...g, display_name: e.target.value }
+                              }
+                              return g
+                            })
+                            const updatedManifest = { ...manifest, groups: updatedGroups }
+                            setManifest(updatedManifest)
+                            setHasChanges(true)
+                            if (onUpdate) {
+                              onUpdate(updatedManifest)
+                            }
+                          }
+                        }}
+                        placeholder={group.group_id.toUpperCase()}
+                        className="flex-1 px-2 py-1 rounded border border-border bg-background text-sm font-semibold text-foreground
+                                 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary
+                                 placeholder:text-muted-foreground/50 min-w-0"
+                        title="Edit group display name"
+                      />
+                      <span className="text-xs text-muted-foreground font-mono flex-shrink-0">
+                        ({group.group_id})
+                      </span>
+                    </div>
                     {!group.enabled && (
-                      <span className="text-xs text-muted-foreground">(Disabled)</span>
+                      <span className="text-xs text-muted-foreground flex-shrink-0">(Disabled)</span>
                     )}
                   </div>
                   {groups.length > 1 && (
                     <button
                       onClick={() => handleDeleteGroup(group.group_id)}
-                      className="p-1 hover:text-red-500 transition-colors"
+                      className="p-1 hover:text-red-500 transition-colors flex-shrink-0 ml-2"
                       title="Delete group"
                     >
                       <Trash2 className="w-4 h-4" />

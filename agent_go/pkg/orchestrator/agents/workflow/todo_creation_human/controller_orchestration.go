@@ -34,6 +34,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 	stepIndex int,
 	progress *StepProgress,
 	previousContextFiles []string,
+	previousExecutionResults []string,
 	iteration int,
 	execCtx *ExecutionContext,
 	allSteps []PlanStepInterface,
@@ -205,6 +206,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			mainStepPath,
 			iteration,
 			orchestrationContext,
+			previousExecutionResults,
 			orchestrationRoutes,
 			conversationHistory,
 			allSteps,
@@ -695,6 +697,31 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Sub-agent completed. Output length: %d chars", len(subAgentExecutionResult)))
 
+		// Run pre-validation on sub-agent output if validation schema exists
+		validationSchema := getValidationSchema(subAgentStepPlan)
+		if validationSchema != nil && len(validationSchema.Files) > 0 {
+			// Construct execution workspace path for sub-agent
+			runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+			executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
+			subAgentExecutionPath := getExecutionFolderPath(executionWorkspacePath, subAgentPath)
+
+			hcpo.GetLogger().Info(fmt.Sprintf("🔍 Running pre-validation on sub-agent output (path: %s)", subAgentExecutionPath))
+			workspaceResults, err := RunPreValidation(ctx, validationSchema, subAgentExecutionPath, hcpo.BaseOrchestrator)
+			if err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation error for sub-agent '%s': %v", subAgentStepPlan.GetTitle(), err))
+			} else if workspaceResults.OverallPass {
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Pre-validation passed for sub-agent '%s'", subAgentStepPlan.GetTitle()))
+			} else {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation failed for sub-agent '%s' - %d checks failed", subAgentStepPlan.GetTitle(), workspaceResults.Summary.FailedChecks))
+				// Log validation errors for debugging
+				for _, validationError := range workspaceResults.Summary.Errors {
+					hcpo.GetLogger().Warn(fmt.Sprintf("  - %s: %s (expected: %s, actual: %s)", validationError.File, validationError.Message, validationError.Expected, validationError.Actual))
+				}
+			}
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping pre-validation for sub-agent '%s' (no validation schema provided)", subAgentStepPlan.GetTitle()))
+		}
+
 		// Add sub-agent output to conversation history as an assistant message (in-memory only)
 		// This makes it feel like a continuous conversation for the main agent
 		subAgentMessage := llmtypes.MessageContent{
@@ -794,6 +821,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 	stepPath string,
 	iteration int,
 	previousContextFiles []string,
+	previousExecutionResults []string,
 	orchestrationRoutes []OrchestrationRoute,
 	conversationHistory []llmtypes.MessageContent,
 	allSteps []PlanStepInterface,
@@ -830,18 +858,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 		routesDescription += fmt.Sprintf("- Sub-agent: %s\n", route.SubAgentStep.GetTitle())
 	}
 
-	// Build previous steps summary
-	// Note: executeOrchestrationOrchestratorStep receives []PlanStepInterface
-	// For orchestration steps, we can build a simple summary from PlanStepInterface fields
-	previousStepsSummary := ""
-	if len(allSteps) > 0 && stepIndex > 0 {
-		var summary strings.Builder
-		for i := 0; i < stepIndex && i < len(allSteps); i++ {
-			if allSteps[i].GetTitle() != "" {
-				summary.WriteString(fmt.Sprintf("- Step %d: %s\n", i+1, allSteps[i].GetTitle()))
-			}
-		}
-		previousStepsSummary = summary.String()
+	// Build previous steps summary using shared function (includes descriptions, output files, and execution results)
+	previousStepsSummary := hcpo.buildPreviousStepsSummary(allSteps, stepIndex, previousContextFiles, previousExecutionResults)
+	if previousStepsSummary != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 Added previous steps summary to template variables for orchestration step %d (%d previous steps)", stepIndex+1, len(previousContextFiles)))
 	}
 
 	// Prepare template variables

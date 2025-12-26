@@ -35,6 +35,7 @@ type HumanControlledTodoPlannerExecutionOnlyTemplate struct {
 	CurrentIteration           string // Current iteration number
 	MaxIterations              string // Max iterations allowed
 	LearningHistory            string // Formatted learning conversation history (REQUIRED for execution-only mode)
+	LearningFilePaths          string // Learning file paths (when KeepLearningFull is false)
 	StepNumber                 string // Step identifier (e.g., "step-8" or "step-3-if-true-0")
 	StepExecutionPath          string // Full execution folder path (e.g., "execution/step-8")
 	DecisionReasoning          string // Context from decision step that routed to this step (empty if not routed from decision)
@@ -86,6 +87,9 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 	stepContextOutput := templateVars["StepContextOutput"]
 	isCodeExecutionMode := templateVars["IsCodeExecutionMode"] == "true"
 	learningHistory := templateVars["LearningHistory"]
+	// Feature flag: KeepLearningFull (set by controller with priority: step config > env var > default false)
+	keepLearningFullStr := templateVars["KeepLearningFull"]
+	keepLearningFull := keepLearningFullStr == "true"
 	stepNumber := templateVars["StepNumber"]               // e.g., "step-8" or "step-3-if-true-0"
 	stepExecutionPath := templateVars["StepExecutionPath"] // e.g., "execution/step-8"
 	previousStepsSummary := templateVars["PreviousStepsSummary"]
@@ -165,7 +169,7 @@ The step description, success criteria, and context dependencies define WHAT you
 {{.PrerequisiteRulesInfo}}
 {{end}}
 ## 📚 SECONDARY: Learning Context (BEST PRACTICE GUIDANCE)
-{{.LearningHistory}}
+{{if eq .KeepLearningFull "true"}}{{.LearningHistory}}{{end}}
 
 **HOW TO USE LEARNINGS:**
 - Learnings are **guidance for HOW to accomplish the step**, not WHAT to accomplish
@@ -182,7 +186,7 @@ The step description, success criteria, and context dependencies define WHAT you
 - **Learnings don't match step**: Ignore learnings, solve step directly using available tools
 
 **ACCESSING LEARNINGS FILES DIRECTLY:**
-- **Pre-loaded context above** provides a summary of relevant learnings
+- **Learning context is provided in the user message** when available
 - **If you get stuck or need more detail**: You can read learnings files directly from the learnings folder
   - Use "read_workspace_file" or "list_workspace_files" to explore learnings
   - Step-specific learnings: "learnings/step-{N}/*.md"{{if .IsCodeExecutionMode}} and "learnings/step-{N}/code/*.go"{{end}}
@@ -201,6 +205,59 @@ The step description, success criteria, and context dependencies define WHAT you
 - **Your step identifier**: {{.StepNumber}} - ALWAYS use this exact step number when writing files
 - Cannot write to other steps' folders, learnings folder, or validation reports
 - Path validation is enforced at the code level - invalid paths will be rejected
+
+## 📋 Understanding Step Details
+
+**STEP DESCRIPTION**: 
+- **What it means**: The step description defines **WHAT you must accomplish** - this is your PRIMARY goal
+- **How to use it**: Read it carefully to understand the task, success criteria, and expected outcome
+- **Priority**: This is the SOURCE OF TRUTH - always prioritize step requirements over learnings
+
+**CONTEXT DEPENDENCIES**: 
+- **What it means**: These are **input files from previous steps** that you need to read before executing this step
+- **Content**: These files contain data or results from previous steps that this step depends on
+- **Format**: Each dependency is a file name (e.g., "step_1_credentials.json", "step_6_conversion_status.json")
+- **Location**: These files are located in previous step folders within the execution workspace
+- **How to read them**: 
+  - Construct the path: {{.WorkspacePath}}/step-{N}/{filename} where {N} is the step number and {filename} is the dependency name
+  - Example: If dependency is "step_1_credentials.json" and it came from step-1, read from {{.WorkspacePath}}/step-1/step_1_credentials.json
+  - Use workspace tools (read_workspace_file) or Go code (filepath.Join) to read these files
+- **Requirement**: **You MUST read all context dependencies** before executing the step - they provide required input data
+
+**CONTEXT OUTPUT**: 
+- **What it means**: This is the **output file name** that you MUST create in your current step folder after completing the step execution
+- **Purpose**: This file will contain the results, status, or data produced by this step
+- **Format**: The context output is just the filename (e.g., "step_7_sheet_update_status.json")
+- **Location**: You MUST create this file in your current step folder: {{.StepExecutionPath}}/{{.StepContextOutput}}
+- **Usage**: This file will be used by subsequent steps as their context dependencies
+- **Content**: The file should contain structured data (typically JSON) that represents the step's execution results
+- **Requirement**: **This file is REQUIRED** - the workflow depends on it for next steps
+{{if .HasLoop}}
+- **For loops**: Update/append to this file after EACH iteration - don't overwrite it completely
+{{else}}
+- **For single execution**: Create this file once after completing the step execution
+{{end}}
+
+{{if .HasLoop}}## 🔄 Loop Execution Details
+
+**LOOP CONDITION**: 
+- **What it means**: This condition determines when the loop should stop
+- **Behavior**: The loop continues executing until this condition is met (e.g., "all items processed", "no more errors", "conversion complete")
+- **Requirement**: You must evaluate this condition after each iteration to determine if the loop should continue
+
+{{if .LoopDescription}}**LOOP DESCRIPTION**: 
+- **What it means**: This provides additional context about why the loop exists and what it's trying to accomplish
+- **How to use it**: Use this information to understand the loop's purpose and adjust your execution strategy accordingly
+{{end}}**ITERATION COUNT**: 
+- **What it means**: You are currently on iteration {{.CurrentIteration}} out of a maximum of {{.MaxIterations}}
+- **Limitation**: If you reach the maximum iterations without meeting the loop condition, the step will be marked as incomplete
+- **Requirement**: Track your progress and ensure you're making progress toward meeting the loop condition with each iteration
+
+**LOOP OUTPUT HANDLING**: 
+- **Save progress after EACH iteration** to {{.StepExecutionPath}}/{{.StepContextOutput}}
+- **Update/append** to the file - don't overwrite it completely
+- Each iteration should add its results to the output file so progress is preserved
+{{end}}
 
 ## 🎯 Execution Approach
 
@@ -363,6 +420,7 @@ Validation agent will verify your work - focus on execution and evidence.`
 		"CurrentDate":                currentDate,
 		"CurrentTime":                currentTime,
 		"LearningHistory":            learningHistory,
+		"KeepLearningFull":           fmt.Sprintf("%t", keepLearningFull),
 		"VariableNames":              variableNames,
 		"VariableValues":             variableValues,
 		"StepNumber":                 stepNumber,
@@ -401,6 +459,7 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlyUserMe
 		CurrentIteration:        templateVars["CurrentIteration"],
 		MaxIterations:           templateVars["MaxIterations"],
 		LearningHistory:         templateVars["LearningHistory"],
+		LearningFilePaths:       templateVars["LearningFilePaths"],
 		StepNumber:              templateVars["StepNumber"],
 		StepExecutionPath:       templateVars["StepExecutionPath"],
 		DecisionReasoning:       templateVars["DecisionReasoning"],
@@ -415,32 +474,6 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlyUserMe
 **WORKSPACE**: {{.WorkspacePath}}  
 **STEP NUMBER**: {{.StepNumber}} (write all output files to {{.StepExecutionPath}}/)
 
-{{if eq .IsCodeExecutionMode "true"}}
-## 📝 Code Execution Example
-
-**Go Code Pattern** (see system prompt for detailed rules):
-package main
-import (
-    "os"
-    "path/filepath"
-    "workspace_tools"
-)
-
-func main() {
-    basePath := os.Args[1]  // WorkspacePath (always first argument)
-    // Read context dependency
-    inputPath := filepath.Join(basePath, "step-1/credentials.json")
-    inputData := workspace_tools.ReadWorkspaceFile(workspace_tools.ReadWorkspaceFileParams{
-        Filepath: inputPath,
-    })
-    // Write to current step folder (ALWAYS use {{.StepNumber}})
-    outputPath := filepath.Join(basePath, "{{.StepNumber}}/analysis.json")
-    workspace_tools.UpdateWorkspaceFile(workspace_tools.UpdateWorkspaceFileParams{
-        Filepath: outputPath,
-        Content:  "...",
-    })
-}
-{{end}}
 {{if eq .HasLoop "true"}}
 ## 🔄 Loop Mode Active
 **Loop Condition**: {{.LoopCondition}}  
@@ -482,6 +515,19 @@ Address the issues above and improve your approach.
 - The reasoning explains what was evaluated in the previous decision step and why routing led here
 - **The execution output from the decision step** provides context about what was done before the decision was made
 - **This context directly impacts** how you should approach and execute this step
+{{end}}
+{{if .LearningFilePaths}}
+## 📚 Learning Files Available
+
+The following learning files are available for this step. **Read them using workspace tools** to get guidance on HOW to accomplish the step:
+
+{{.LearningFilePaths}}
+
+**How to read learning files:**
+- Use read_workspace_file tool with the file paths listed above
+- Learnings provide guidance for HOW to accomplish the step, not WHAT to accomplish
+- Always prioritize step requirements over learnings
+- If learnings conflict with step requirements → follow step requirements
 {{end}}
 
 ## 📋 Step Details

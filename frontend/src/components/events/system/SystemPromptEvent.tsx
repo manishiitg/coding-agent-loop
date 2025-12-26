@@ -11,9 +11,10 @@ export const SystemPromptEventDisplay: React.FC<SystemPromptEventDisplayProps> =
   mode = 'detailed'
 }) => {
   const [isExpanded, setIsExpanded] = useState(false)
+  const CHAR_LIMIT = 300
 
   // Check if content is long enough to need expansion
-  const shouldShowExpand = event.content && event.content.length > (mode === 'compact' ? 80 : 300)
+  const shouldShowExpand = event.content && event.content.length > CHAR_LIMIT
 
   if (mode === 'compact') {
     return (
@@ -23,9 +24,9 @@ export const SystemPromptEventDisplay: React.FC<SystemPromptEventDisplayProps> =
           <div className="flex-1 min-w-0">
             {event.content ? (
               <div className="text-xs text-blue-900 dark:text-blue-100 leading-tight">
-                {isExpanded || event.content.length <= 80
+                {isExpanded || event.content.length <= CHAR_LIMIT
                   ? event.content
-                  : `${event.content.substring(0, 80)}...`
+                  : `${event.content.substring(0, CHAR_LIMIT)}...`
                 }
               </div>
             ) : (
@@ -59,7 +60,7 @@ export const SystemPromptEventDisplay: React.FC<SystemPromptEventDisplayProps> =
         <div className="flex-1 min-w-0">
           {event.content ? (
             <div className="text-xs text-blue-900 dark:text-blue-100 leading-tight whitespace-pre-wrap font-mono bg-blue-50 dark:bg-blue-900/30 rounded p-2 border border-blue-100 dark:border-blue-700/50">
-              {isExpanded || !shouldShowExpand ? event.content : `${event.content.substring(0, 300)}...`}
+              {isExpanded || !shouldShowExpand ? event.content : `${event.content.substring(0, CHAR_LIMIT)}...`}
             </div>
           ) : (
             <div className="text-xs text-red-600 dark:text-red-400 italic bg-red-50 dark:bg-red-900/30 rounded p-2 border border-red-200 dark:border-red-800">

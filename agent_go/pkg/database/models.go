@@ -112,17 +112,16 @@ type PresetLLMConfig struct {
 	ModelID  string `json:"model_id,omitempty"`
 
 	// New: Agent-specific default models (takes priority over legacy fields)
-	ExecutionLLM              *AgentLLMConfig `json:"execution_llm,omitempty"`                // Default for execution agents
-	ValidationLLM             *AgentLLMConfig `json:"validation_llm,omitempty"`               // Default for validation agents
-	LearningLLM               *AgentLLMConfig `json:"learning_llm,omitempty"`                 // Default for learning agents
-	LearningReadingLLM        *AgentLLMConfig `json:"learning_reading_llm,omitempty"`         // Default for learning reading agent
-	PlanningLLM               *AgentLLMConfig `json:"planning_llm,omitempty"`                 // Default for planning agent
-	VariableExtractionLLM     *AgentLLMConfig `json:"variable_extraction_llm,omitempty"`      // Default for variable extraction agent
-	AnonymizationLLM          *AgentLLMConfig `json:"anonymization_llm,omitempty"`            // Default for anonymization agent
-	PlanImprovementLLM        *AgentLLMConfig `json:"plan_improvement_llm,omitempty"`         // Default for plan improvement agent
-	PlanToolOptimizationLLM   *AgentLLMConfig `json:"plan_tool_optimization_llm,omitempty"`   // Default for plan tool optimization agent
-	PlanLearningsAlignmentLLM *AgentLLMConfig `json:"plan_learnings_alignment_llm,omitempty"` // Default for plan learnings alignment agent
-	LearningConsolidationLLM  *AgentLLMConfig `json:"learning_consolidation_llm,omitempty"`   // Default for learning consolidation agent
+	ExecutionLLM             *AgentLLMConfig `json:"execution_llm,omitempty"`              // Default for execution agents
+	ValidationLLM            *AgentLLMConfig `json:"validation_llm,omitempty"`             // Default for validation agents
+	LearningLLM              *AgentLLMConfig `json:"learning_llm,omitempty"`               // Default for learning agents
+	LearningReadingLLM       *AgentLLMConfig `json:"learning_reading_llm,omitempty"`       // Default for learning reading agent
+	PlanningLLM              *AgentLLMConfig `json:"planning_llm,omitempty"`               // Default for planning agent
+	VariableExtractionLLM    *AgentLLMConfig `json:"variable_extraction_llm,omitempty"`    // Default for variable extraction agent
+	AnonymizationLLM         *AgentLLMConfig `json:"anonymization_llm,omitempty"`          // Default for anonymization agent
+	PlanImprovementLLM       *AgentLLMConfig `json:"plan_improvement_llm,omitempty"`       // Default for plan improvement agent
+	PlanToolOptimizationLLM  *AgentLLMConfig `json:"plan_tool_optimization_llm,omitempty"` // Default for plan tool optimization agent
+	LearningConsolidationLLM *AgentLLMConfig `json:"learning_consolidation_llm,omitempty"` // Default for learning consolidation agent
 }
 
 // AgentLLMConfig represents LLM configuration for a specific agent type
@@ -235,7 +234,6 @@ func validatePresetLLMConfig(config *PresetLLMConfig) error {
 		{config.AnonymizationLLM, "anonymization_llm"},
 		{config.PlanImprovementLLM, "plan_improvement_llm"},
 		{config.PlanToolOptimizationLLM, "plan_tool_optimization_llm"},
-		{config.PlanLearningsAlignmentLLM, "plan_learnings_alignment_llm"},
 		{config.LearningConsolidationLLM, "learning_consolidation_llm"},
 	}
 

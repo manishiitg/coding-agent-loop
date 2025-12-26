@@ -116,8 +116,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       // Start the phase through the parent component
       if (onStartPhase) {
         // For plan-improvement phase, pass execution options with selected_run_folder
-        // Other step-specific phases (plan-tool-optimization, plan-learnings-alignment) can also benefit from this
-        if (phaseId === 'plan-improvement' || phaseId === 'plan-tool-optimization' || phaseId === 'plan-learnings-alignment') {
+        // Other step-specific phases (plan-tool-optimization) can also benefit from this
+        if (phaseId === 'plan-improvement' || phaseId === 'plan-tool-optimization') {
           // Build execution options to include selected_run_folder
           const buildExecutionOptions = useWorkflowStore.getState().buildExecutionOptions
           const executionOptions = buildExecutionOptions()

@@ -79,7 +79,7 @@ func (hctpooa *HumanControlledTodoPlannerOrchestrationOrchestratorAgent) Execute
 func (hctpooa *HumanControlledTodoPlannerOrchestrationOrchestratorAgent) ExecuteStructured(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (*OrchestrationResponse, []llmtypes.MessageContent, error) {
 	// Generate system prompt and user message separately
 	systemPrompt := hctpooa.orchestrationOrchestratorSystemPromptProcessorStructured(templateVars)
-	userMessage := hctpooa.orchestrationOrchestratorUserMessageProcessor(templateVars)
+	userMessage := hctpooa.orchestrationOrchestratorUserMessageProcessor(templateVars, conversationHistory)
 
 	// Create a simple input processor that returns the user message
 	inputProcessor := func(map[string]string) string {
@@ -161,9 +161,6 @@ func (hctpooa *HumanControlledTodoPlannerOrchestrationOrchestratorAgent) orchest
 	stepExecutionPath := templateVars["StepExecutionPath"]
 	previousStepsSummary := templateVars["PreviousStepsSummary"]
 	orchestrationRoutes := templateVars["OrchestrationRoutes"]
-	stepTitle := templateVars["StepTitle"]
-	stepDescription := templateVars["StepDescription"]
-	stepSuccessCriteria := templateVars["StepSuccessCriteria"]
 
 	// Get current date and time
 	now := time.Now()
@@ -211,29 +208,19 @@ func (hctpooa *HumanControlledTodoPlannerOrchestrationOrchestratorAgent) orchest
 
 **CRITICAL**: Don't guess or assume - use your tools to gather concrete information before making routing decisions or evaluating success criteria.
 
-## 🎯 YOUR MISSION
-
-**Step Goal**: %s
-**Step Description**: %s
-**Success Criteria**: %s
-
 **Available Sub-Agents (Routes):**
 %s
 
 **Your Task**: 
-1. **EXECUTE the step description** - Use your tools to perform the work described in the step description
-   - **DO THE WORK YOURSELF** if the task is simple, straightforward, or quick (e.g., read a file, create a simple config, validate data, make a simple API call)
+1. **EXECUTE the work** - Use your tools to perform the work described in the step description (provided in user message)
    - **Use your tools actively**: Read files, write files, call APIs, execute code, validate conditions - whatever is needed to complete the task
+   - **Decision**: See "Decision Framework - Do It Yourself vs Delegate" section below for when to do work yourself vs delegate
 2. **EVALUATE against success criteria** - Use your tools to test and verify if the success criteria is met
 3. **If success criteria is met**: Report success (set success_criteria_met: true, selected_route_id: "")
 4. **If success criteria is NOT met**: 
    - **Continue working yourself** if the task is still simple/straightforward and you can complete it with your tools
-   - **Delegate to a sub-agent** ONLY if the task is complex, long-running, or requires specialized capabilities that you don't have
+   - **Delegate to a sub-agent** ONLY if the task is complex, long-running, or requires specialized capabilities (see Decision Framework below)
 
-{{if .IsCodeExecutionMode}}
-## ⚡ Code Execution Mode Active
-%s
-{{end}}
 {{if .VariableNames}}
 ## 🔑 Available Variables
 {{.VariableNames}}
@@ -282,12 +269,11 @@ func (hctpooa *HumanControlledTodoPlannerOrchestrationOrchestratorAgent) orchest
 - **Identify current state**: What is the current situation that needs orchestration?
 
 #### Step 3: Execute the Task and Evaluate Success Criteria
-**Success Criteria**: %s
 
 **Execution and Evaluation Strategy:**
 1. **FIRST: Try to complete the work yourself using your tools**
    - **Simple tasks you should do yourself**: Reading files, writing simple configs, validating data, making simple API calls, creating basic files, checking conditions, transforming simple data
-   - **Use your tools actively**: Read files, write files, call APIs, execute code, validate conditions - perform the actual work described in the step description
+   - **Use your tools actively**: Read files, write files, call APIs, execute code, validate conditions - perform the actual work (step description provided in user message)
    - **Work incrementally**: Do the work, then check if success criteria is met
 
 2. **THEN: Evaluate success criteria using your tools**
@@ -355,25 +341,6 @@ func (hctpooa *HumanControlledTodoPlannerOrchestrationOrchestratorAgent) orchest
   - **context_dependencies_for_sub_agent** (OPTIONAL): These dependencies REPLACE the sub-agent's original context dependencies. Specify which files the sub-agent should read as input. Format: comma-separated list of relative file paths (e.g., "step-1/output.json, step-2/credentials.json"). If not provided, the sub-agent will use its original context dependencies.
   - **context_output_for_sub_agent** (OPTIONAL): This REPLACES the sub-agent's original context output file name. Specify the output file name the sub-agent should create (e.g., "step_3_output.json"). The file will be created in the sub-agent's step folder. If not provided, the sub-agent will use its original context output.
 - The sub-agent will use your instructions, success criteria, and context settings instead of its original step configuration
-
-### Phase 2: Handling Validation Feedback (if validation feedback is in conversation history)
-
-**IMPORTANT**: Validation runs separately after you complete. If you see validation feedback in the conversation history, it means validation failed and you are being restarted from the beginning.
-
-**When you see validation feedback in conversation history:**
-1. **Review validation feedback** - Look for messages containing "Validation agent completed"
-   - Review the validation result and any feedback provided (errors, issues, missing elements)
-   - Understand what went wrong and what needs to be fixed
-
-2. **Use validation feedback to improve your work**:
-   - Review validation feedback carefully (errors, missing elements, quality issues)
-   - Use your tools to address the issues identified by validation
-   - Re-execute the step description incorporating the validation feedback
-   - Make sure to fix the specific issues mentioned in the validation feedback
-
-3. **Re-evaluate success criteria** - After addressing validation feedback, check if success criteria is now met
-   - **If success criteria is met**: Set success_criteria_met: true (validation will run again)
-   - **If success criteria is NOT met**: Set success_criteria_met: false and select a route (sub-agent) to help complete the work
 
 ## 📋 OUTPUT REQUIREMENTS
 
@@ -458,17 +425,12 @@ The tool accepts a structured object with:
 - **Focus on Recovery**: Store only information needed to resume orchestration if agent restarts
 
 **REMEMBER:**
-- **DO THE WORK YOURSELF** for simple, straightforward tasks - use your tools actively to complete the step description
-- **DELEGATE TO SUB-AGENTS** only for complex, long-running, or specialized tasks
-- You are both an executor AND an orchestrator - execute when you can, delegate when you must
+- You are both an executor AND an orchestrator - execute when you can, delegate when you must (see Decision Framework above)
 - Your structured output determines whether you continue working yourself or delegate to a sub-agent
 - Provide clear reasoning for your decisions and what work you've done`,
 		currentDate, currentTime,
-		stepTitle, stepDescription, stepSuccessCriteria,
 		orchestrationRoutes,
-		codeExecutionInstructions,
 		workspacePath, workspacePath, workspacePath,
-		stepSuccessCriteria,
 		orchestrationRoutes,
 		stepExecutionPath, workspacePath, stepNumber, stepNumber,
 		// Workspace usage section - progress.md file path (1 placeholder)
@@ -483,11 +445,12 @@ The tool accepts a structured object with:
 		result = strings.Replace(result, "{{if .PreviousStepsSummary}}\n## 📋 Previous Steps Context\n{{.PreviousStepsSummary}}\n{{end}}", "", 1)
 	}
 
-	if isCodeExecutionMode {
-		result = strings.Replace(result, "{{if .IsCodeExecutionMode}}\n## ⚡ Code Execution Mode Active\n%s\n{{end}}",
-			fmt.Sprintf("## ⚡ Code Execution Mode Active\n%s", codeExecutionInstructions), 1)
-	} else {
-		result = strings.Replace(result, "{{if .IsCodeExecutionMode}}\n## ⚡ Code Execution Mode Active\n%s\n{{end}}", "", 1)
+	// Insert code execution instructions if code execution mode is enabled
+	if isCodeExecutionMode && codeExecutionInstructions != "" {
+		// Insert after "Your Task" section, before Variables section
+		insertPoint := "   - **Delegate to a sub-agent** ONLY if the task is complex, long-running, or requires specialized capabilities (see Decision Framework below)\n\n"
+		codeExecutionSection := fmt.Sprintf("## ⚡ Code Execution Mode Active\n%s\n\n", codeExecutionInstructions)
+		result = strings.Replace(result, insertPoint, insertPoint+codeExecutionSection, 1)
 	}
 
 	if variableNames != "" {
@@ -509,7 +472,7 @@ The tool accepts a structured object with:
 }
 
 // orchestrationOrchestratorUserMessageProcessor generates the user message for orchestration orchestrator agent
-func (hctpooa *HumanControlledTodoPlannerOrchestrationOrchestratorAgent) orchestrationOrchestratorUserMessageProcessor(templateVars map[string]string) string {
+func (hctpooa *HumanControlledTodoPlannerOrchestrationOrchestratorAgent) orchestrationOrchestratorUserMessageProcessor(templateVars map[string]string, conversationHistory []llmtypes.MessageContent) string {
 	// Create template data
 	templateData := OrchestrationOrchestratorTemplate{
 		StepTitle:               templateVars["StepTitle"],
@@ -528,112 +491,24 @@ func (hctpooa *HumanControlledTodoPlannerOrchestrationOrchestratorAgent) orchest
 	}
 
 	// Define the user message template
-	templateStr := `## 🎯 Orchestrate Step: {{.StepTitle}}
+	// NOTE: Previous steps summary is in system prompt to avoid duplication
+	templateStr := `## 🎯 Step Goal: {{.StepTitle}}
 
 **STEP DESCRIPTION**: {{.StepDescription}}  
+**SUCCESS CRITERIA**: {{.StepSuccessCriteria}}
+
 **WORKSPACE**: {{.WorkspacePath}}  
 **STEP NUMBER**: {{.StepNumber}} (write all output files to {{.StepExecutionPath}}/)
 
 **🚨 CRITICAL: Your role is EXECUTION AND ORCHESTRATION.**
-- **FIRST**: Try to complete the work yourself using your tools - do simple tasks directly
-- **THEN**: Delegate to sub-agents ONLY if the task is complex, long-running, or requires specialized capabilities
 - Use your tools actively to read files, write files, call APIs, execute code - perform the actual work
 - Provide structured output indicating whether you completed the work yourself or need to delegate
 
-{{if .PreviousStepsSummary}}
-{{.PreviousStepsSummary}}
-{{end}}
-
-{{if .VariableNames}}## 📋 Variables
-{{.VariableNames}}
-{{if .VariableValues}}
-**Values**: {{.VariableValues}}
-{{end}}
-{{end}}
-
-## 🎯 Available Sub-Agents
-
-{{.OrchestrationRoutes}}
-
-**EXECUTE the step description using your tools. If the task is simple, do it yourself. If complex/long-running, delegate to the most appropriate sub-agent.**
-
-{{if eq .IsCodeExecutionMode "true"}}
-## 📝 Code Execution Example
-
-**Task**: Execute the step description using your tools. Do the work yourself if simple, or delegate to a sub-agent if complex.
-
-**Tool Call Format**:
-write_code(
-  code="...",
-  args=["{{.WorkspacePath}}", "userId123"]
-)
-
-**Go Code Content Pattern**:
-package main
-import (
-    "os"
-    "path/filepath"
-    "workspace_tools"
-)
-
-func main() {
-    // 1. Read base workspace path (ALWAYS first argument)
-    basePath := os.Args[1]      // e.g., "Workflow/runs/iteration-11/execution"
-    userId := os.Args[2]        // Additional variables
-    
-    // 2. Use relative paths with filepath.Join()
-    // Read context dependency (previous step output)
-    inputPath := filepath.Join(basePath, "step-1/credentials.json")
-    inputData := workspace_tools.ReadWorkspaceFile(workspace_tools.ReadWorkspaceFileParams{
-        Filepath: inputPath,
-    })
-    
-    // 3. Execute the task and create output
-    // Write output files to current step folder (as specified in step description)
-    outputPath := filepath.Join(basePath, "{{.StepNumber}}/output.json")
-    result := workspace_tools.UpdateWorkspaceFile(workspace_tools.UpdateWorkspaceFileParams{
-        Filepath: outputPath,
-        Content:  "...", // Actual work output (not just analysis)
-    })
-}
-
-**Key Points**:
-- Tool call: Pass ONLY base workspace path (NOT full file paths)
-- Go code: Use relative paths like "{{.StepNumber}}/file.json" (ALWAYS use {{.StepNumber}}, never hardcode step numbers)
-- Path construction: Always use filepath.Join(basePath, "{{.StepNumber}}", filename)
-- Context dependencies: Relative paths from base execution folder (e.g., "step-1/file.json" for previous steps)
-- **🚨 CRITICAL**: When writing output files, ALWAYS use "{{.StepNumber}}" - never guess or hardcode step numbers!
-{{end}}
+**EXECUTE the step description using your tools.**
 
 ## 📋 Step Details
-**Success Criteria**: {{.StepSuccessCriteria}}  
 **Context Dependencies**: {{.StepContextDependencies}}  
-**Context Output**: {{.StepContextOutput}}
-
-## ✅ Orchestration Checklist
-
-**STEP 0: 🧠 UNDERSTAND & EXECUTE**
-- Understand the step description and what needs to be done
-- Identify if the task is simple (do it yourself) or complex (delegate)
-- Execute the work using your tools
-
-**ALWAYS (Execution Requirements are PRIMARY):**
-1. ✓ **Understand step description** ← What work needs to be done?
-2. ✓ **Know success criteria** ← When is the work complete?
-3. ✓ Read context dependencies from {{.WorkspacePath}}
-4. ✓ **EXECUTE the step description** - Use your tools to do the actual work:
-   - Read files, write files, call APIs, execute code, validate data
-   - Do simple tasks yourself directly
-   - Only delegate if task is complex/long-running
-5. ✓ **Evaluate success criteria** - Use your tools to verify if success criteria is met
-6. ✓ **Create context output file** at {{.StepExecutionPath}}/{{.StepContextOutput}}
-   - **🚨 CRITICAL**: Always write to {{.StepNumber}} folder - use filepath.Join(basePath, "{{.StepNumber}}", filename)
-7. ✓ **Provide structured output** - Indicate whether you completed the work yourself or need to delegate
-
-**REMEMBER:**
-- **DO THE WORK YOURSELF** for simple tasks - use your tools actively
-- **DELEGATE TO SUB-AGENTS** only for complex, long-running, or specialized tasks
-- You are both an executor AND an orchestrator - execute when you can, delegate when you must`
+**Context Output**: {{.StepContextOutput}}`
 
 	// Parse and execute the template
 	tmpl, err := template.New("orchestrationOrchestratorUserMessage").Parse(templateStr)
@@ -646,5 +521,53 @@ func main() {
 		return fmt.Sprintf("Error executing orchestration orchestrator user message template: %v", err)
 	}
 
-	return result.String()
+	userMsg := result.String()
+
+	// Check for validation feedback in conversation history
+	hasValidationFeedback := false
+	var validationMessages []string
+	for _, msg := range conversationHistory {
+		// Check messages from assistant or human roles
+		if msg.Role == llmtypes.ChatMessageTypeAI || msg.Role == llmtypes.ChatMessageTypeHuman {
+			content := ""
+			// Extract text from message parts
+			for _, part := range msg.Parts {
+				if textPart, ok := part.(llmtypes.TextContent); ok {
+					content += textPart.Text + " "
+				}
+			}
+
+			// Check for validation feedback indicators
+			contentLower := strings.ToLower(content)
+			if strings.Contains(contentLower, "validation agent completed") ||
+				strings.Contains(contentLower, "validation failed") ||
+				strings.Contains(contentLower, "validation result") ||
+				strings.Contains(contentLower, "validation error") {
+				hasValidationFeedback = true
+				validationMessages = append(validationMessages, strings.TrimSpace(content))
+			}
+		}
+	}
+
+	// Add validation feedback section if found
+	if hasValidationFeedback {
+		validationSection := "\n\n## ⚠️ VALIDATION FEEDBACK\n\n"
+		validationSection += "**IMPORTANT**: Validation has failed. Review the validation feedback below and address the issues.\n\n"
+		validationSection += "**Validation Feedback from Previous Attempt:**\n"
+		for i, msg := range validationMessages {
+			if i < 3 { // Limit to last 3 validation messages
+				validationSection += fmt.Sprintf("- %s\n", strings.TrimSpace(msg))
+			}
+		}
+		validationSection += "\n**Action Required:**\n"
+		validationSection += "1. **Review validation feedback** - Understand what went wrong and what needs to be fixed\n"
+		validationSection += "2. **Use your tools to address the issues** - Fix the specific problems identified by validation\n"
+		validationSection += "3. **Re-execute the step description** - Incorporate the validation feedback into your work\n"
+		validationSection += "4. **Re-evaluate success criteria** - After fixing issues, verify if success criteria is now met\n\n"
+
+		// Insert validation section before "EXECUTE" instruction
+		userMsg = strings.Replace(userMsg, "**EXECUTE the step description using your tools.**", validationSection+"**EXECUTE the step description using your tools.**", 1)
+	}
+
+	return userMsg
 }

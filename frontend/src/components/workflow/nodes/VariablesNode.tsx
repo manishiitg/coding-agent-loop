@@ -186,15 +186,20 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
                   // When disabled, show empty circle
                   <Circle className="w-3 h-3 text-gray-400 dark:text-gray-500" />
                 )}
-                <span className={`font-mono font-semibold ${
+                <span className={`font-semibold ${
                   isRunning 
                     ? 'text-blue-700 dark:text-blue-300' 
                     : showSelected
                     ? 'text-purple-700 dark:text-purple-300'
                     : 'text-purple-600 dark:text-purple-400'
-                }`}>
-                  {group.group_id.toUpperCase()}
+                } ${!group.display_name ? 'font-mono' : ''}`}>
+                  {group.display_name || group.group_id.toUpperCase()}
                 </span>
+                {group.display_name && (
+                  <span className="text-[10px] text-gray-500 dark:text-gray-400 font-mono">
+                    ({group.group_id})
+                  </span>
+                )}
                 {isRunning && (
                   <span className="ml-auto text-[10px] text-blue-600 dark:text-blue-400 font-medium">
                     Running...
@@ -279,7 +284,14 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
                   // When disabled, show empty circle
                   <Circle className="w-3 h-3" />
                 )}
-                <span className="font-mono">{group.group_id}</span>
+                <span className={group.display_name ? '' : 'font-mono'}>
+                  {group.display_name || group.group_id}
+                </span>
+                {group.display_name && (
+                  <span className="text-[10px] font-mono opacity-70">
+                    ({group.group_id})
+                  </span>
+                )}
               </div>
             )
             })}

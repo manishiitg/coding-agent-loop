@@ -550,7 +550,6 @@ export interface PresetLLMConfig {
   anonymization_llm?: AgentLLMConfig    // Default for anonymization agent
   plan_improvement_llm?: AgentLLMConfig // Default for plan debugger agent
   plan_tool_optimization_llm?: AgentLLMConfig // Default for plan tool optimization agent
-  plan_learnings_alignment_llm?: AgentLLMConfig // Default for plan learnings alignment agent
   learning_consolidation_llm?: AgentLLMConfig // Default for learning consolidation agent
 }
 
@@ -803,7 +802,8 @@ export interface Variable {
 }
 
 export interface VariableGroup {
-  group_id: string;  // e.g., "group-1", "group-2"
+  group_id: string;  // e.g., "group-1", "group-2" (used as fallback for folder names)
+  display_name?: string;  // Optional user-friendly name (e.g., "Production", "Staging")
   values: Record<string, string>;  // Variable name -> value mapping
   enabled: boolean;
 }

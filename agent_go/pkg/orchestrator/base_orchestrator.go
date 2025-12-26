@@ -91,9 +91,9 @@ type BaseOrchestrator struct {
 	summaryKeepLastMessages        int
 
 	// Context editing configuration
-	enableContextEditing        bool
-	contextEditingThreshold     int
-	contextEditingTurnThreshold int
+	enableContextEditing        bool // Enable context editing (dynamic context reduction)
+	contextEditingThreshold     int  // Token threshold for context editing
+	contextEditingTurnThreshold int  // Turn age threshold for context editing
 }
 
 // NewBaseOrchestrator creates a new unified base orchestrator
@@ -150,13 +150,13 @@ func NewBaseOrchestrator(
 	// Load context editing configuration from environment variables
 	// Default to enabled (true), can be disabled via ENABLE_CONTEXT_EDITING=false
 	enableContextEditing := os.Getenv("ENABLE_CONTEXT_EDITING") != "false"
-	contextEditingThreshold := 0 // 0 means use default (100)
+	contextEditingThreshold := 10000 // Default to 10k tokens - compact outputs larger than this (matches library default)
 	if envVal := os.Getenv("CONTEXT_EDITING_THRESHOLD"); envVal != "" {
 		if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
 			contextEditingThreshold = threshold
 		}
 	}
-	contextEditingTurnThreshold := 0 // 0 means use default (5)
+	contextEditingTurnThreshold := 10 // Default to 10 turns - compact outputs older than this (matches library default)
 	if envVal := os.Getenv("CONTEXT_EDITING_TURN_THRESHOLD"); envVal != "" {
 		if turnThreshold, err := strconv.Atoi(envVal); err == nil && turnThreshold > 0 {
 			contextEditingTurnThreshold = turnThreshold

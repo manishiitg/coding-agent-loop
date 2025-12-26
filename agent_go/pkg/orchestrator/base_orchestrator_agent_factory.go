@@ -100,6 +100,7 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 func (bo *BaseOrchestrator) setupStandardAgent(
 	ctx context.Context,
 	agent agents.OrchestratorAgent,
+	config *agents.OrchestratorAgentConfig,
 	agentName string,
 	phase string,
 	step, iteration int,
@@ -153,9 +154,9 @@ func (bo *BaseOrchestrator) setupStandardAgent(
 		}
 	}
 
-	// Register custom tools
+	// Register custom tools (pass config to check agent-specific code execution mode)
 	if customTools != nil && customToolExecutors != nil {
-		if err := bo.registerCustomToolsForAgent(mcpAgent, baseAgent, agentName, customTools, customToolExecutors); err != nil {
+		if err := bo.registerCustomToolsForAgent(mcpAgent, baseAgent, config, agentName, customTools, customToolExecutors); err != nil {
 			return err
 		}
 	}
@@ -167,6 +168,7 @@ func (bo *BaseOrchestrator) setupStandardAgent(
 func (bo *BaseOrchestrator) registerCustomToolsForAgent(
 	mcpAgent *mcpagent.Agent,
 	baseAgent *agents.BaseAgent,
+	config *agents.OrchestratorAgentConfig,
 	agentName string,
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
@@ -249,7 +251,15 @@ func (bo *BaseOrchestrator) registerCustomToolsForAgent(
 
 	// 🔧 CRITICAL FIX: Explicitly update code execution registry after all tools are registered
 	// This ensures workspace and human tools are available in code execution mode
-	if bo.GetUseCodeExecutionMode() {
+	// Check agent config first (if provided), otherwise fall back to orchestrator level
+	useCodeExecutionMode := false
+	if config != nil {
+		useCodeExecutionMode = config.UseCodeExecutionMode
+	} else {
+		// Fallback to orchestrator level if config not provided (backward compatibility)
+		useCodeExecutionMode = bo.GetUseCodeExecutionMode()
+	}
+	if useCodeExecutionMode {
 		if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
 			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update code execution registry for %s: %v", agentName, err))
 			// Don't fail agent creation if registry update fails, but log the warning
@@ -277,8 +287,8 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 	// Create agent using provided factory function
 	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
 
-	// Setup agent using common helper
-	if err := bo.setupStandardAgent(ctx, agent, agentName, phase, step, iteration, customTools, customToolExecutors); err != nil {
+	// Setup agent using common helper (pass config to check agent-specific code execution mode)
+	if err := bo.setupStandardAgent(ctx, agent, config, agentName, phase, step, iteration, customTools, customToolExecutors); err != nil {
 		return nil, err
 	}
 
@@ -304,8 +314,8 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithConfig(
 	// Create agent using provided factory function with pre-created config
 	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
 
-	// Setup agent using common helper
-	if err := bo.setupStandardAgent(ctx, agent, config.AgentName, phase, step, iteration, customTools, customToolExecutors); err != nil {
+	// Setup agent using common helper (pass config to check agent-specific code execution mode)
+	if err := bo.setupStandardAgent(ctx, agent, config, config.AgentName, phase, step, iteration, customTools, customToolExecutors); err != nil {
 		return nil, err
 	}
 

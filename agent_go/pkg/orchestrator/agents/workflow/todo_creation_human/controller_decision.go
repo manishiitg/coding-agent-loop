@@ -261,6 +261,33 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeDecisionStep(
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Decision step evaluated: result=%t", decisionResponse.Result))
 
+	// AUTO-UNLOCK LEARNINGS: If decision result is false, automatically unlock learnings for the inner step
+	// This ensures that when a decision step returns false, the inner step can learn from the failure
+	if !decisionResponse.Result {
+		innerStepID := innerStepPlan.GetID()
+		if innerStepID == "" {
+			// Fallback to parent wrapper ID if inner step has no ID
+			innerStepID = step.GetID()
+		}
+		// Get agent configs for the inner step to check if learnings are locked
+		innerStepConfigs := getAgentConfigs(innerStepPlan)
+		isLearningsLocked := innerStepConfigs != nil && innerStepConfigs.LockLearnings != nil && *innerStepConfigs.LockLearnings
+		if isLearningsLocked {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔓 Decision step returned FALSE - auto-unlocking learnings for inner step %s so it can learn from the failure", innerStepID))
+			if unlockErr := hcpo.unlockStepLearningsInConfig(ctx, innerStepID); unlockErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-unlock learnings for inner step %s: %v", innerStepID, unlockErr))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Auto-unlocked learnings for inner step %s (decision step returned false)", innerStepID))
+				// Update unlock metadata - use inner step path for learning path identifier
+				innerStepPath := fmt.Sprintf("step-%d-decision", stepIndex+1)
+				learningPathIdentifier := innerStepID // Use step ID as learning path identifier (new format)
+				if metadataErr := hcpo.updateUnlockMetadata(ctx, innerStepID, stepIndex, innerStepPath, learningPathIdentifier, "decision_step_false"); metadataErr != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update unlock metadata for inner step %s: %v", innerStepID, metadataErr))
+				}
+			}
+		}
+	}
+
 	// Emit decision_evaluated event with structured response
 	hcpo.emitDecisionEvaluatedEvent(ctx, step, stepIndex, decisionStepPath, decisionResponse)
 

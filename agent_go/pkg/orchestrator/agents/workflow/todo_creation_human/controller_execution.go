@@ -1509,6 +1509,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 								TotalChecks:  0,
 								PassedChecks: 0,
 								FailedChecks: 1,
+								SchemaErrors: 0,
 								Errors: []ValidationError{
 									{
 										File:      "",
@@ -1519,6 +1520,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 										Message:   fmt.Sprintf("Pre-validation failed to run: %v", err),
 									},
 								},
+								SchemaWarnings: []ValidationError{},
 							},
 						}
 					} else if validationSchema == nil {

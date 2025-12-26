@@ -1516,8 +1516,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                           <button
                                             onClick={() => {
                                               handleSelectRunFolder(group.id)
-                                              // When clicking a specific group, also toggle its checkbox if "All Groups" mode
-                                              if (isAllGroupsSelected && group.groupId) {
+                                              // When clicking a specific group, also toggle its checkbox
+                                              if (group.groupId) {
                                                 toggleGroupSelection(group.groupId)
                                               }
                                             }}

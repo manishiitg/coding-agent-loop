@@ -57,6 +57,10 @@ type LearningMetadata struct {
 	AutoLockedAt      string `json:"auto_locked_at,omitempty"`      // Timestamp when auto-lock was triggered
 	AutoLockReason    string `json:"auto_lock_reason,omitempty"`    // Reason: "consecutive_no_new_learning" or "maximum_learnings"
 	AutoLockIteration int    `json:"auto_lock_iteration,omitempty"` // Iteration number when auto-lock was triggered
+	// Auto-unlock information
+	AutoUnlockedAt      string `json:"auto_unlocked_at,omitempty"`      // Timestamp when auto-unlock was triggered
+	AutoUnlockReason    string `json:"auto_unlock_reason,omitempty"`    // Reason: "validation_failed" or "decision_step_false"
+	AutoUnlockIteration int    `json:"auto_unlock_iteration,omitempty"` // Iteration number when auto-unlock was triggered
 	// Note: LastConsolidationOutput removed - learning content is stored in files, not metadata
 }
 
@@ -484,6 +488,75 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) autoLockStepLearningsInConfi
 		// Don't fail the whole operation if event emission fails
 	}
 
+	return nil
+}
+
+// updateUnlockMetadata updates the learning metadata file with unlock information
+func (hcpo *HumanControlledTodoPlannerOrchestrator) updateUnlockMetadata(
+	ctx context.Context,
+	stepID string,
+	stepIndex int,
+	stepPath string,
+	learningPathIdentifier string,
+	unlockReason string,
+) error {
+	baseWorkspacePath := hcpo.GetWorkspacePath()
+	metadataPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier, ".learning_metadata.json")
+
+	// Read existing metadata or create new
+	var metadata LearningMetadata
+	content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, metadataPath)
+	if err != nil {
+		// Metadata doesn't exist - create new
+		metadata = LearningMetadata{
+			StepID:                   fmt.Sprintf("step-%d", stepIndex+1),
+			StepPath:                 stepPath,
+			TotalIterations:          0,
+			ConsecutiveNoNewLearning: 0,
+			DetectionHistory:         []DetectionHistoryEntry{},
+			ConsolidationHistory:     []ConsolidationHistoryEntry{},
+		}
+	} else {
+		// Parse existing metadata
+		if err := json.Unmarshal([]byte(content), &metadata); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse learning metadata: %v (creating new)", err))
+			metadata = LearningMetadata{
+				StepID:                   fmt.Sprintf("step-%d", stepIndex+1),
+				StepPath:                 stepPath,
+				TotalIterations:          0,
+				ConsecutiveNoNewLearning: 0,
+				DetectionHistory:         []DetectionHistoryEntry{},
+				ConsolidationHistory:     []ConsolidationHistoryEntry{},
+			}
+		}
+	}
+
+	// Initialize DetectionHistory if nil (for backward compatibility)
+	if metadata.DetectionHistory == nil {
+		metadata.DetectionHistory = []DetectionHistoryEntry{}
+	}
+
+	// Initialize ConsolidationHistory if nil (for backward compatibility)
+	if metadata.ConsolidationHistory == nil {
+		metadata.ConsolidationHistory = []ConsolidationHistoryEntry{}
+	}
+
+	// Update unlock information
+	metadata.AutoUnlockedAt = time.Now().Format(time.RFC3339)
+	metadata.AutoUnlockReason = unlockReason
+	metadata.AutoUnlockIteration = metadata.TotalIterations
+
+	// Write updated metadata
+	metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal learning metadata: %w", err)
+	}
+
+	if err := hcpo.BaseOrchestrator.WriteWorkspaceFile(ctx, metadataPath, string(metadataJSON)); err != nil {
+		return fmt.Errorf("failed to write learning metadata: %w", err)
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Updated unlock metadata for %s (reason: %s)", learningPathIdentifier, unlockReason))
 	return nil
 }
 

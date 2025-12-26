@@ -38,11 +38,8 @@ planning/changelog
 
 17. saving set config is taking too long
 
-18. having multiple chats in parallel
-
-19. in code exectuion, allow to discover multiple files together
-
 21. see how we can integrate learning locking and make it more automatic
+
 22. we should have a human notification tool also.
 
 23.. in basic event we should show the user message also

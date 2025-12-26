@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -1225,7 +1226,7 @@ func getAddRegularStepSchema() string {
 			},
 			"validation_schema": {
 				"type": "object",
-				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. You MUST generate this by parsing the success_criteria and extracting file names, field requirements, and validation rules. This enables pre-validation before LLM validation (improves speed by 50-70%). Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath like $.field_name), must_exist: boolean, value_type?: string (string/number/boolean/array/object), min_length?: number, max_length?: number, pattern?: string (regex), min_value?: number, max_value?: number, consistency_check?: {type: string (array_length/equals/greater_than/less_than), compare_with_path: string}}]}]}. Example: If success_criteria mentions 'File results.json contains status field and count field equals items array length', generate schema with file_name: 'results.json', json_checks for $.status and $.count with consistency_check.",
+				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. You MUST generate this by parsing the success_criteria and extracting file names, field requirements, and validation rules. This enables pre-validation before LLM validation (improves speed by 50-70%). Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath like $.field_name), must_exist: boolean, value_type?: string (string/number/boolean/array/object), min_length?: number, max_length?: number, pattern?: string (VALID Go regex - must compile with regexp.Compile, ensure balanced parentheses, escape special chars), min_value?: number, max_value?: number, consistency_check?: {type: string (array_length/equals/greater_than/less_than), compare_with_path: string}}]}]}. Example: If success_criteria mentions 'File results.json contains status field and count field equals items array length', generate schema with file_name: 'results.json', json_checks for $.status and $.count with consistency_check. IMPORTANT: For pattern field, only use if you can generate a VALID Go regex pattern. Invalid patterns will be skipped. Examples of valid patterns: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Do NOT use incomplete patterns.",
 				"properties": {
 					"files": {
 						"type": "array",
@@ -1244,7 +1245,7 @@ func getAddRegularStepSchema() string {
 											"value_type": {"type": "string"},
 											"min_length": {"type": "number"},
 											"max_length": {"type": "number"},
-											"pattern": {"type": "string"},
+											"pattern": {"type": "string", "description": "OPTIONAL: Valid Go regex pattern for string format validation. MUST be valid Go regex syntax (use regexp.Compile). Common patterns: '^[A-Z]+$' (uppercase only), '^\\d{4}-\\d{2}-\\d{2}$' (date format), '^[a-z0-9-]+$' (lowercase alphanumeric with hyphens). CRITICAL: Ensure all parentheses are balanced, escape special characters (use \\\\ for backslash, \\\\( for literal parenthesis), and test your pattern. Invalid patterns will be skipped with a warning. Examples: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Avoid: incomplete patterns like 'VALUE\\\\(SUBSTITUTE\\\\(.*' (missing closing parentheses)."},
 											"min_value": {"type": "number"},
 											"max_value": {"type": "number"},
 											"consistency_check": {
@@ -1321,7 +1322,7 @@ func getAddConditionalStepSchema() string {
 						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
 						"validation_schema": {
 							"type": "object",
-							"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string, min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}",
+							"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string (VALID Go regex only - must compile, balanced parentheses, properly escaped), min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}. IMPORTANT: Only use pattern field if you can generate a valid Go regex. Invalid patterns will be skipped.",
 							"properties": {
 								"files": {
 									"type": "array",
@@ -1340,7 +1341,7 @@ func getAddConditionalStepSchema() string {
 														"value_type": {"type": "string"},
 														"min_length": {"type": "number"},
 														"max_length": {"type": "number"},
-														"pattern": {"type": "string"},
+														"pattern": {"type": "string", "description": "OPTIONAL: Valid Go regex pattern for string format validation. MUST be valid Go regex syntax (use regexp.Compile). Common patterns: '^[A-Z]+$' (uppercase only), '^\\d{4}-\\d{2}-\\d{2}$' (date format), '^[a-z0-9-]+$' (lowercase alphanumeric with hyphens). CRITICAL: Ensure all parentheses are balanced, escape special characters (use \\\\ for backslash, \\\\( for literal parenthesis), and test your pattern. Invalid patterns will be skipped with a warning. Examples: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Avoid: incomplete patterns like 'VALUE\\\\(SUBSTITUTE\\\\(.*' (missing closing parentheses)."},
 														"min_value": {"type": "number"},
 														"max_value": {"type": "number"},
 														"consistency_check": {
@@ -1378,7 +1379,7 @@ func getAddConditionalStepSchema() string {
 						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
 						"validation_schema": {
 							"type": "object",
-							"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string, min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}",
+							"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string (VALID Go regex only - must compile, balanced parentheses, properly escaped), min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}. IMPORTANT: Only use pattern field if you can generate a valid Go regex. Invalid patterns will be skipped.",
 							"properties": {
 								"files": {
 									"type": "array",
@@ -1397,7 +1398,7 @@ func getAddConditionalStepSchema() string {
 														"value_type": {"type": "string"},
 														"min_length": {"type": "number"},
 														"max_length": {"type": "number"},
-														"pattern": {"type": "string"},
+														"pattern": {"type": "string", "description": "OPTIONAL: Valid Go regex pattern for string format validation. MUST be valid Go regex syntax (use regexp.Compile). Common patterns: '^[A-Z]+$' (uppercase only), '^\\d{4}-\\d{2}-\\d{2}$' (date format), '^[a-z0-9-]+$' (lowercase alphanumeric with hyphens). CRITICAL: Ensure all parentheses are balanced, escape special characters (use \\\\ for backslash, \\\\( for literal parenthesis), and test your pattern. Invalid patterns will be skipped with a warning. Examples: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Avoid: incomplete patterns like 'VALUE\\\\(SUBSTITUTE\\\\(.*' (missing closing parentheses)."},
 														"min_value": {"type": "number"},
 														"max_value": {"type": "number"},
 														"consistency_check": {
@@ -1486,7 +1487,7 @@ func getAddDecisionStepSchema() string {
 													"value_type": {"type": "string"},
 													"min_length": {"type": "number"},
 													"max_length": {"type": "number"},
-													"pattern": {"type": "string"},
+													"pattern": {"type": "string", "description": "OPTIONAL: Valid Go regex pattern for string format validation. MUST be valid Go regex syntax (use regexp.Compile). Common patterns: '^[A-Z]+$' (uppercase only), '^\\d{4}-\\d{2}-\\d{2}$' (date format), '^[a-z0-9-]+$' (lowercase alphanumeric with hyphens). CRITICAL: Ensure all parentheses are balanced, escape special characters (use \\\\ for backslash, \\\\( for literal parenthesis), and test your pattern. Invalid patterns will be skipped with a warning. Examples: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Avoid: incomplete patterns like 'VALUE\\\\(SUBSTITUTE\\\\(.*' (missing closing parentheses)."},
 													"min_value": {"type": "number"},
 													"max_value": {"type": "number"},
 													"consistency_check": {
@@ -1593,7 +1594,7 @@ func getAddOrchestrationStepSchema() string {
 								"loop_description": {"type": "string"},
 								"validation_schema": {
 									"type": "object",
-									"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string, min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}",
+									"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string (VALID Go regex only - must compile, balanced parentheses, properly escaped), min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}. IMPORTANT: Only use pattern field if you can generate a valid Go regex. Invalid patterns will be skipped.",
 									"properties": {
 										"files": {
 											"type": "array",
@@ -1612,7 +1613,7 @@ func getAddOrchestrationStepSchema() string {
 																"value_type": {"type": "string"},
 																"min_length": {"type": "number"},
 																"max_length": {"type": "number"},
-																"pattern": {"type": "string"},
+																"pattern": {"type": "string", "description": "OPTIONAL: Valid Go regex pattern for string format validation. MUST be valid Go regex syntax (use regexp.Compile). Common patterns: '^[A-Z]+$' (uppercase only), '^\\d{4}-\\d{2}-\\d{2}$' (date format), '^[a-z0-9-]+$' (lowercase alphanumeric with hyphens). CRITICAL: Ensure all parentheses are balanced, escape special characters (use \\\\ for backslash, \\\\( for literal parenthesis), and test your pattern. Invalid patterns will be skipped with a warning. Examples: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Avoid: incomplete patterns like 'VALUE\\\\(SUBSTITUTE\\\\(.*' (missing closing parentheses)."},
 																"min_value": {"type": "number"},
 																"max_value": {"type": "number"},
 																"consistency_check": {
@@ -2421,7 +2422,7 @@ func getUpdateValidationSchemaSchema() string {
 			},
 			"validation_schema": {
 				"type": "object",
-				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. You MUST generate this by parsing the success_criteria and extracting file names, field requirements, and validation rules. This enables pre-validation before LLM validation (improves speed by 50-70%). Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath like $.field_name), must_exist: boolean, value_type?: string (string/number/boolean/array/object), min_length?: number, max_length?: number, pattern?: string (regex), min_value?: number, max_value?: number, consistency_check?: {type: string (array_length/equals/greater_than/less_than), compare_with_path: string}}]}]}. Example: If success_criteria mentions 'File results.json contains status field and count field equals items array length', generate schema with file_name: 'results.json', json_checks for $.status and $.count with consistency_check.",
+				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. You MUST generate this by parsing the success_criteria and extracting file names, field requirements, and validation rules. This enables pre-validation before LLM validation (improves speed by 50-70%). Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath like $.field_name), must_exist: boolean, value_type?: string (string/number/boolean/array/object), min_length?: number, max_length?: number, pattern?: string (VALID Go regex - must compile with regexp.Compile, ensure balanced parentheses, escape special chars), min_value?: number, max_value?: number, consistency_check?: {type: string (array_length/equals/greater_than/less_than), compare_with_path: string}}]}]}. Example: If success_criteria mentions 'File results.json contains status field and count field equals items array length', generate schema with file_name: 'results.json', json_checks for $.status and $.count with consistency_check. IMPORTANT: For pattern field, only use if you can generate a VALID Go regex pattern. Invalid patterns will be skipped. Examples of valid patterns: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Do NOT use incomplete patterns.",
 				"properties": {
 					"files": {
 						"type": "array",
@@ -2440,7 +2441,7 @@ func getUpdateValidationSchemaSchema() string {
 											"value_type": {"type": "string"},
 											"min_length": {"type": "number"},
 											"max_length": {"type": "number"},
-											"pattern": {"type": "string"},
+											"pattern": {"type": "string", "description": "OPTIONAL: Valid Go regex pattern for string format validation. MUST be valid Go regex syntax (use regexp.Compile). Common patterns: '^[A-Z]+$' (uppercase only), '^\\d{4}-\\d{2}-\\d{2}$' (date format), '^[a-z0-9-]+$' (lowercase alphanumeric with hyphens). CRITICAL: Ensure all parentheses are balanced, escape special characters (use \\\\ for backslash, \\\\( for literal parenthesis), and test your pattern. Invalid patterns will be skipped with a warning. Examples: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Avoid: incomplete patterns like 'VALUE\\\\(SUBSTITUTE\\\\(.*' (missing closing parentheses)."},
 											"min_value": {"type": "number"},
 											"max_value": {"type": "number"},
 											"consistency_check": {
@@ -2667,6 +2668,32 @@ func unmarshalStepsFromJSON(stepsData []json.RawMessage) ([]PlanStepInterface, e
 		steps[i] = step
 	}
 	return steps, nil
+}
+
+// validateRegexPatternsInSchema validates all regex patterns in a ValidationSchema
+// Returns an error with details if any pattern is invalid
+func validateRegexPatternsInSchema(schema *ValidationSchema) error {
+	if schema == nil {
+		return nil
+	}
+
+	var errors []string
+	for _, fileRule := range schema.Files {
+		for _, check := range fileRule.JSONChecks {
+			if check.Pattern != "" {
+				_, err := regexp.Compile(check.Pattern)
+				if err != nil {
+					errors = append(errors, fmt.Sprintf("Invalid regex pattern in file '%s' at path '%s': %v (pattern: '%s')", fileRule.FileName, check.Path, err, check.Pattern))
+				}
+			}
+		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("validation schema contains invalid regex patterns:\n%s", strings.Join(errors, "\n"))
+	}
+
+	return nil
 }
 
 // updateValidationSchemaOnStep updates validation schema on any step type
@@ -3863,6 +3890,13 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 		})
 	}
 
+	// Validate regex patterns in validation schema before merging
+	if partialUpdate.ValidationSchema != nil {
+		if err := validateRegexPatternsInSchema(partialUpdate.ValidationSchema); err != nil {
+			return -1, nil, fmt.Errorf("invalid regex patterns in validation schema: %w", err)
+		}
+	}
+
 	// Merge partial update
 	plan.Steps[stepIndex] = mergePartialStepUpdate(existingStep, partialUpdate)
 
@@ -4442,6 +4476,13 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		}
 
 		// Validation schema is LLM-generated only - no code-based auto-generation
+
+		// Validate regex patterns in validation schema before proceeding
+		if validationSchema := typedStep.GetValidationSchema(); validationSchema != nil {
+			if err := validateRegexPatternsInSchema(validationSchema); err != nil {
+				return "", fmt.Errorf(fmt.Sprintf("invalid regex patterns in validation schema: %w", err), nil)
+			}
+		}
 
 		// Validate step type-specific required fields BEFORE writing to plan
 		// This allows the agent to correct errors immediately via tool response
@@ -6094,6 +6135,11 @@ func createUpdateValidationSchemaExecutor(workspacePath string, logger loggerv2.
 			return "", fmt.Errorf(fmt.Sprintf("validation_schema is required"), nil)
 		}
 
+		// Validate regex patterns before updating the plan
+		if err := validateRegexPatternsInSchema(updateData.ValidationSchema); err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("invalid regex patterns in validation schema: %w", err), nil)
+		}
+
 		// Create PartialPlanStep with only validation schema
 		partialUpdate := PartialPlanStep{
 			ExistingStepID:   updateData.ExistingStepID,
@@ -6648,7 +6694,7 @@ You MUST include a validation_schema field in ALL step definitions. This enables
     - value_type: Expected type ("string", "number", "boolean", "array", "object")
     - min_length/max_length: For arrays/strings (e.g., min_length: 3)
     - min_value/max_value: For numbers (e.g., min_value: 1)
-    - pattern: Regex pattern for strings (e.g., "^\\d{4}-\\d{2}-\\d{2}T" for ISO dates)
+    - pattern: Valid Go regex pattern for strings (MUST be valid Go regex syntax that compiles with regexp.Compile). Examples: "^\\d{4}-\\d{2}-\\d{2}T" (ISO dates), "^[A-Z]+$" (uppercase only), "^success$" (exact match). CRITICAL: Ensure all parentheses are balanced, escape special characters properly (use \\\\ for backslash, \\\\( for literal parenthesis). Invalid patterns will be skipped with a warning. Do NOT use incomplete patterns like 'VALUE\\\\(SUBSTITUTE\\\\(.*' (missing closing parentheses).
     - consistency_check: Compare with another field
       - type: "array_length" (count equals array length), "equals", "greater_than", "less_than"
       - compare_with_path: JSONPath to compare with (e.g., "$.databases")

@@ -3,6 +3,7 @@ import type { PollingEvent } from '../../services/api-types';
 import { EventDispatcher } from './EventDispatcher';
 import { agentApi } from '../../services/api';
 import { useChatStore } from '../../stores/useChatStore';
+import { MAX_EVENTS_TO_PROCESS } from '../../constants/events';
 import './EventHierarchy.css';
 
 interface EventHierarchyProps {
@@ -20,9 +21,6 @@ interface EventNode {
   level: number;
   isExpanded: boolean;
 }
-
-// Performance optimization: Limit events processed to prevent browser freeze
-const MAX_EVENTS_TO_PROCESS = 1000; // Process max 1000 events at a time (matches memory limit in useChatStore)
 
 export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact = false }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
@@ -456,10 +454,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     }
   }, [sessionId, paginationOffset, eventMode, isLoadingOlder]);
 
-  // Check if there are more events to load
+  // Check if there are more events to load from backend
   const hasMoreEvents = hasMoreOlderEvents;
-  const totalEventsCount = displayEvents.length;
-  const showingCount = visibleEvents.length;
 
   if (eventTree.length === 0) {
     return (
@@ -471,13 +467,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
 
   return (
     <div className="event-hierarchy">
-      {/* Performance warning if events are limited */}
-      {totalEventsCount > MAX_EVENTS_TO_PROCESS && (
-        <div className="mb-2 p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded text-xs text-yellow-700 dark:text-yellow-300">
-          Showing {showingCount} of {totalEventsCount} events (performance limit: {MAX_EVENTS_TO_PROCESS})
-        </div>
-      )}
-      
       {/* Event tree */}
       <div
         className="event-tree-container"

@@ -8,10 +8,10 @@ import { useAppStore } from './useAppStore'
 import { agentApi } from '../services/api'
 import { useMCPStore } from './useMCPStore'
 import { useLLMStore } from './useLLMStore'
+import { MAX_EVENTS_TO_PROCESS, CLEANUP_THRESHOLD } from '../constants/events'
 
-// Event memory management constants
-const MAX_EVENTS = 1000
-const CLEANUP_THRESHOLD = 1200
+// Event memory management constants - use shared constants
+const MAX_EVENTS = MAX_EVENTS_TO_PROCESS
 
 // Helper function to identify important events that should always be retained
 const shouldRetainEvent = (event: PollingEvent): boolean => {

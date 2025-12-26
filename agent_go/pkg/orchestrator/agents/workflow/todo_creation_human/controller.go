@@ -1061,6 +1061,29 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		}
 	} else {
 		// Single group or no groups - use standard execution
+		// If a single group is selected and selectedRunFolder doesn't include the group path,
+		// we need to update it to include the group folder name
+		enabledGroups := hcpo.getEnabledGroupsForExecution()
+		if len(enabledGroups) == 1 && hcpo.selectedRunFolder != "" {
+			group := enabledGroups[0]
+			// Check if selectedRunFolder already contains a group path
+			if !strings.Contains(hcpo.selectedRunFolder, "/") {
+				// selectedRunFolder is just the iteration (e.g., "iteration-14")
+				// Need to add the group folder name
+				folderName := group.GroupID
+				if group.DisplayName != "" {
+					sanitized := hcpo.sanitizeDisplayNameForFolder(group.DisplayName)
+					if sanitized != "" {
+						folderName = sanitized
+					}
+				}
+				hcpo.selectedRunFolder = fmt.Sprintf("%s/%s", hcpo.selectedRunFolder, folderName)
+				hcpo.GetLogger().Info(fmt.Sprintf("📁 Updated selectedRunFolder to include group path: %s", hcpo.selectedRunFolder))
+				// Sync base orchestrator's iteration folder to match the updated selectedRunFolder
+				// This ensures consistency for token/log persistence and event-bridge context
+				hcpo.SetIterationFolder(hcpo.selectedRunFolder)
+			}
+		}
 		err = hcpo.runExecutionPhase(ctx, breakdownSteps, 1, existingProgress, startFromStep, execCtx)
 		if err != nil {
 			return "", fmt.Errorf(fmt.Sprintf("execution phase failed: %w", err), nil)

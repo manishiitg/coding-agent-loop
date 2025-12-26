@@ -180,6 +180,7 @@ type AgentConfigs struct {
 	UseCodeExecutionMode                   *bool              `json:"use_code_execution_mode,omitempty"`                      // Step-level code execution mode override (nil = use preset default, true/false = override)
 	EnablePrerequisiteDetection            *bool              `json:"enable_prerequisite_detection,omitempty"`                // Enable prerequisite failure detection for this step (default: false)
 	PrerequisiteRules                      []PrerequisiteRule `json:"prerequisite_rules,omitempty"`                           // Array of prerequisite rules, each with one step dependency and one description
+	KeepLearningFull                       *bool              `json:"keep_learning_full,omitempty"`                           // Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (default: false, can be overridden by KEEP_LEARNING_FULL env var)
 }
 
 // ============================================================================
@@ -1249,9 +1250,10 @@ func getAddRegularStepSchema() string {
 											"consistency_check": {
 												"type": "object",
 												"properties": {
-													"type": {"type": "string"},
-													"compare_with_path": {"type": "string"}
-												}
+													"type": {"type": "string", "description": "Type of consistency check: 'array_length', 'equals', 'greater_than', 'less_than', or 'in_array'"},
+													"compare_with_path": {"type": "string", "description": "REQUIRED: JSONPath to compare with (e.g., '$.items', '$.count'). Must be a valid, non-empty JSONPath string."}
+												},
+												"required": ["type", "compare_with_path"]
 											}
 										}
 									}
@@ -2444,9 +2446,10 @@ func getUpdateValidationSchemaSchema() string {
 											"consistency_check": {
 												"type": "object",
 												"properties": {
-													"type": {"type": "string"},
-													"compare_with_path": {"type": "string"}
-												}
+													"type": {"type": "string", "description": "Type of consistency check: 'array_length', 'equals', 'greater_than', 'less_than', or 'in_array'"},
+													"compare_with_path": {"type": "string", "description": "REQUIRED: JSONPath to compare with (e.g., '$.items', '$.count'). Must be a valid, non-empty JSONPath string."}
+												},
+												"required": ["type", "compare_with_path"]
 											}
 										}
 									}
@@ -6269,8 +6272,12 @@ func planningSystemPromptProcessorForUpdate(templateVars map[string]string) stri
 **Date**: {{.CurrentDate}} | **Time**: {{.CurrentTime}} | **Workspace**: {{.WorkspacePath}}
 
 ## 🤖 AGENT IDENTITY
-**Role**: Planning Agent (Update Mode)
-**Task**: Update existing plan based on human feedback
+**Role**: Planning Agent (Design-Time Planning)
+**Task**: Create or update plans from objectives or user feedback (design-time, before execution)
+**When to Use**: 
+- Creating a new plan from an objective
+- Updating plan structure based on user feedback
+- Modifying step types, context flow, or plan design
 **Tools**: human_feedback → type-specific update/add/delete tools → plan.json updates immediately
 
 ---
@@ -6743,17 +6750,44 @@ When moving/deleting/adding steps:
 
 ---
 
-## 📊 EXECUTION LOGS ACCESS
+## 📊 EXECUTION FOLDER STRUCTURE
 
-**Location**: runs/{iteration}/logs/step-{X}/
+**IMPORTANT**: There are TWO different execution/ folders with different purposes:
 
-| File | Content |
-|------|---------|
-| validation.json | Validation responses |
-| execution/execution-attempt-{N}-iteration-{M}.json | Execution results |
-| decision-evaluation.json | Decision step results |
+### 1. Root Execution Folder (Context Output Files)
+**Location**: runs/{iteration}/execution/
 
-Use read_workspace_file to explore logs and inform plan updates.
+**Purpose**: Where execution agents write **context_output files** (step results that subsequent steps depend on)
+
+**Structure**:
+- execution/step-{X}/ - Step-specific folders containing context output files
+- Files like step_1_results.json, login_session.json, etc. (as defined in step context_output fields)
+
+**Use Case**: When designing plans, understand that:
+- Each step writes its context_output file to execution/step-{X}/
+- Subsequent steps read these files via context_dependencies
+- These are the **actual work products** that flow between steps
+
+### 2. Logs Execution Subfolder (Execution Logs)
+**Location**: runs/{iteration}/logs/step-{X}/execution/
+
+**Purpose**: Where execution **logs and results** are stored for debugging and analysis
+
+**Structure**:
+- logs/step-{X}/execution/execution-attempt-{N}-iteration-{M}.json - Execution results with retry info
+- logs/step-{X}/execution/execution-attempt-{N}-iteration-{M}-conversation.json - Full LLM conversation history
+- logs/step-{X}/validation-N.json - Validation responses
+- logs/step-{X}/decision-evaluation.json - Decision step routing results
+
+**Use Case**: When iterating on plans based on feedback:
+- Read these logs to understand why steps failed
+- Check validation responses to see what criteria weren't met
+- Review decision routing to understand branching logic
+- Use read_workspace_file to explore logs and inform plan updates
+
+**Summary**:
+- **Root execution/**: Contains context_output files (the data flow between steps)
+- **logs/step-X/execution/**: Contains execution logs (for debugging and analysis)
 
 ---
 

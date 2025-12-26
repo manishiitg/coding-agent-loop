@@ -22,9 +22,10 @@ type Variable struct {
 
 // VariableGroup represents a single set of variable values for batch execution
 type VariableGroup struct {
-	GroupID string            `json:"group_id"` // e.g., "group-1", "group-2"
-	Values  map[string]string `json:"values"`   // Variable name -> value mapping
-	Enabled bool              `json:"enabled"`  // Whether to include in execution
+	GroupID     string            `json:"group_id"`     // e.g., "group-1", "group-2" (used as fallback for folder names)
+	DisplayName string            `json:"display_name"` // Optional user-friendly name (e.g., "Production", "Staging")
+	Values      map[string]string `json:"values"`       // Variable name -> value mapping
+	Enabled     bool              `json:"enabled"`      // Whether to include in execution
 }
 
 // VariablesManifest contains all extracted variables

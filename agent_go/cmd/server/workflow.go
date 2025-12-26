@@ -158,8 +158,10 @@ func extractIterationFoldersFromTypedChildren(children []virtualtools.WorkspaceF
 										}
 									}
 								}
-								// Check if this is a group subfolder (starts with iteration-X/group-)
-								if groupName != "" && strings.HasPrefix(groupName, name+"/") && strings.HasPrefix(strings.TrimPrefix(groupName, name+"/"), "group-") {
+								// Check if this is a group subfolder (nested under iteration-X)
+								// Accepts both "group-X" format (backward compatibility) and display names (e.g., "production", "staging")
+								if groupName != "" && strings.HasPrefix(groupName, name+"/") {
+									// Any nested folder under iteration-X is considered a group folder
 									hasGroups = true
 									groupFolders = append(groupFolders, groupName)
 								}
@@ -201,7 +203,7 @@ func extractIterationFoldersFromInterfaceArray(dataArray []interface{}, existing
 }
 
 // extractIterationFoldersFromChildren extracts iteration folder names from children array (interface{} version for backward compatibility)
-// Supports both top-level (iteration-X) and nested (iteration-X/group-Y) folders
+// Supports both top-level (iteration-X) and nested (iteration-X/group-Y or iteration-X/display-name) folders
 func extractIterationFoldersFromChildren(children []interface{}, existingFolders []string) []string {
 	for _, child := range children {
 		if childMap, ok := child.(map[string]interface{}); ok {
@@ -270,8 +272,10 @@ func extractIterationFoldersFromChildren(children []interface{}, existingFolders
 										} else if n, ok := groupMap["name"].(string); ok {
 											groupName = n
 										}
-										// Check if this is a group subfolder (starts with iteration-X/group-)
-										if groupName != "" && strings.HasPrefix(groupName, name+"/") && strings.HasPrefix(strings.TrimPrefix(groupName, name+"/"), "group-") {
+										// Check if this is a group subfolder (nested under iteration-X)
+										// Accepts both "group-X" format (backward compatibility) and display names (e.g., "production", "staging")
+										if groupName != "" && strings.HasPrefix(groupName, name+"/") {
+											// Any nested folder under iteration-X is considered a group folder
 											hasGroups = true
 											groupFolders = append(groupFolders, groupName)
 										}
@@ -931,9 +935,10 @@ func (api *StreamingAPI) handleGetProgress(w http.ResponseWriter, r *http.Reques
 
 // VariableGroup represents a single set of variable values (matches controller type)
 type VariableGroup struct {
-	GroupID string            `json:"group_id"`
-	Values  map[string]string `json:"values"`
-	Enabled bool              `json:"enabled"`
+	GroupID     string            `json:"group_id"`     // e.g., "group-1", "group-2" (used as fallback for folder names)
+	DisplayName string            `json:"display_name"` // Optional user-friendly name (e.g., "Production", "Staging")
+	Values      map[string]string `json:"values"`
+	Enabled     bool              `json:"enabled"`
 }
 
 // Variable represents a single variable definition
@@ -1919,6 +1924,58 @@ func writeStepConfigToWorkspace(ctx context.Context, workspacePath string, confi
 	return nil
 }
 
+// findInStepsWithOffset recursively searches nested steps within a step, handling ConditionalPlanStep offsets correctly
+func findInStepsWithOffset(step todo_creation_human.PlanStepInterface, targetID string, basePath []int, findInSteps func([]todo_creation_human.PlanStepInterface, string, []int) (todo_creation_human.PlanStepInterface, []int)) (todo_creation_human.PlanStepInterface, []int) {
+	switch s := step.(type) {
+	case *todo_creation_human.ConditionalPlanStep:
+		// Check nested if_true_steps
+		if found, foundPath := findInSteps(s.IfTrueSteps, targetID, basePath); found != nil {
+			return found, foundPath
+		}
+		// Check nested if_false_steps with offset
+		for k, nestedFalseStep := range s.IfFalseSteps {
+			nestedFalseIndex := len(s.IfTrueSteps) + k
+			nestedFalsePath := append(basePath, nestedFalseIndex)
+			if nestedFalseStep.GetID() == targetID {
+				return nestedFalseStep, nestedFalsePath
+			}
+			// Continue recursion for deeper nesting
+			if found, foundPath := findInStepsWithOffset(nestedFalseStep, targetID, nestedFalsePath, findInSteps); found != nil {
+				return found, foundPath
+			}
+		}
+	case *todo_creation_human.DecisionPlanStep:
+		if s.DecisionStep != nil {
+			if s.DecisionStep.GetID() == targetID {
+				return s.DecisionStep, append(basePath, -1)
+			}
+			if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{s.DecisionStep}, targetID, basePath); found != nil {
+				return found, foundPath
+			}
+		}
+	case *todo_creation_human.OrchestrationPlanStep:
+		if s.OrchestrationStep != nil {
+			if s.OrchestrationStep.GetID() == targetID {
+				return s.OrchestrationStep, append(basePath, -2)
+			}
+			if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{s.OrchestrationStep}, targetID, basePath); found != nil {
+				return found, foundPath
+			}
+		}
+		for routeIdx, route := range s.OrchestrationRoutes {
+			if route.SubAgentStep != nil {
+				if route.SubAgentStep.GetID() == targetID {
+					return route.SubAgentStep, append(basePath, -3, routeIdx)
+				}
+				if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{route.SubAgentStep}, targetID, basePath); found != nil {
+					return found, foundPath
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
 // findStepInPlan recursively finds a step by ID in the plan
 // Returns the step and a path to it (indices for nested steps)
 func findStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string) (todo_creation_human.PlanStepInterface, []int) {
@@ -1939,9 +1996,19 @@ func findStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string) (
 				if found, foundPath := findInSteps(s.IfTrueSteps, targetID, currentPath); found != nil {
 					return found, foundPath
 				}
-				// Check if_false_steps
-				if found, foundPath := findInSteps(s.IfFalseSteps, targetID, currentPath); found != nil {
-					return found, foundPath
+				// Check if_false_steps with offset to avoid index overlap
+				// False branch indices are offset by len(IfTrueSteps) to match updateNestedStepInPlanRecursive expectations
+				for j, falseStep := range s.IfFalseSteps {
+					falseIndex := len(s.IfTrueSteps) + j
+					falsePath := append(currentPath, falseIndex)
+					if falseStep.GetID() == targetID {
+						return falseStep, falsePath
+					}
+					// Recursively check nested steps in false branch using findInSteps with offset handling
+					// We need to search nested steps but ensure paths are built correctly
+					if found, foundPath := findInStepsWithOffset(falseStep, targetID, falsePath, findInSteps); found != nil {
+						return found, foundPath
+					}
 				}
 			case *todo_creation_human.DecisionPlanStep:
 				// Check decision_step

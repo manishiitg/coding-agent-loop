@@ -5,7 +5,6 @@ import type { PlannerFile, PresetQuery, PresetLLMConfig, CreatePresetQueryReques
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import { useAppStore } from './useAppStore'
 import { useWorkspaceStore } from './useWorkspaceStore'
-import { useChatStore } from './useChatStore'
 import { useMCPStore } from './useMCPStore'
 import { useLLMStore } from './useLLMStore'
 

@@ -32,7 +32,7 @@ type DecisionEvaluatedEvent struct {
 
 // GetEventType implements events.EventData interface
 func (e *DecisionEvaluatedEvent) GetEventType() events.EventType {
-	return events.EventType("decision_evaluated")
+	return events.DecisionEvaluated
 }
 
 // StepStartedEvent represents the event when a step execution starts
@@ -198,5 +198,5 @@ type ValidationErrorForEvent struct {
 }
 
 func (e *PreValidationCompletedEvent) GetEventType() events.EventType {
-	return events.EventType("pre_validation_completed")
+	return events.PreValidationCompleted
 }

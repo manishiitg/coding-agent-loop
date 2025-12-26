@@ -133,8 +133,6 @@ import type {
 
 // Import event types that exist in events.ts but not in events-bridge.ts
 import type {
-  ContextEditingCompletedEvent,
-  ContextEditingErrorEvent,
   PreValidationCompletedEvent,
 } from './events';
 

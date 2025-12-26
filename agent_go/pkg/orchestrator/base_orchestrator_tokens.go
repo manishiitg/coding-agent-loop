@@ -678,7 +678,6 @@ func IsPhaseOnlyAgent(phase string) bool {
 	phaseOnlyPhases := []string{
 		"planning",
 		"plan-tool-optimization",
-		"plan-learnings-alignment",
 		"learning-consolidation",
 		"anonymization",
 		"plan-improvement",

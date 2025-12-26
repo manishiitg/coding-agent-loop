@@ -289,11 +289,10 @@ func NewWorkflowOrchestrator(
 		if presetLearningLLM != nil {
 			presetPlanningLLM = presetLearningLLM
 			presetVariableExtractionLLM = presetLearningLLM
-			presetAnonymizationLLM = presetLearningLLM
 			presetPlanImprovementLLM = presetLearningLLM
 			presetPlanToolOptimizationLLM = presetLearningLLM
 			presetPlanLearningsAlignmentLLM = presetLearningLLM
-			presetLearningConsolidationLLM = presetLearningLLM
+			// Note: presetAnonymizationLLM and presetLearningConsolidationLLM are deprecated and removed
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
 			// Fall back to legacy single default for all learning-related agents
 			legacyDefault := &todo_creation_human.AgentLLMConfig{
@@ -302,11 +301,10 @@ func NewWorkflowOrchestrator(
 			}
 			presetPlanningLLM = legacyDefault
 			presetVariableExtractionLLM = legacyDefault
-			presetAnonymizationLLM = legacyDefault
 			presetPlanImprovementLLM = legacyDefault
 			presetPlanToolOptimizationLLM = legacyDefault
 			presetPlanLearningsAlignmentLLM = legacyDefault
-			presetLearningConsolidationLLM = legacyDefault
+			// Note: presetAnonymizationLLM and presetLearningConsolidationLLM are deprecated and removed
 		}
 	}
 

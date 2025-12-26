@@ -78,7 +78,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   
   // Workflow store actions
   const setVariablesManifestInStore = useWorkflowStore.getState().setVariablesManifest
-  const getCompletedStepIndices = useWorkflowStore(state => state.getCompletedStepIndices)
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
   const stepProgress = useWorkflowStore(state => state.stepProgress)
   
@@ -88,17 +87,34 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Calculate if StepSidebar should be in compact mode (when both ChatArea and Workspace are open)
   const isStepSidebarCompact = showChatArea && !workspaceMinimized
   
-  // Callback for when progress changes in toolbar
-  const handleProgressChange = useCallback((indices: number[]) => {
-    setCompletedStepIndices(indices)
-  }, [])
+  // Note: We no longer need handleProgressChange callback
+  // The completedStepIndices are synced directly from stepProgress in the useEffect below
 
   // Load initial completedStepIndices from store when component mounts or selectedRunFolder/stepProgress changes
   // This ensures we have the correct state even after page refresh
+  // Use ref to track previous indices to prevent loops
+  const prevIndicesRef = useRef<string>('')
   useEffect(() => {
-    const indices = getCompletedStepIndices()
-    setCompletedStepIndices(indices)
-  }, [selectedRunFolder, stepProgress, getCompletedStepIndices])
+    const indices = stepProgress?.completed_step_indices || []
+    const indicesStr = JSON.stringify(indices.slice().sort((a, b) => a - b))
+    const prevIndicesStr = prevIndicesRef.current
+    const indicesChanged = prevIndicesStr !== indicesStr
+    
+    console.log('[EFFECT_DEBUG] WorkflowCanvas - completedStepIndices sync effect:', {
+      selectedRunFolder,
+      stepProgressIsNull: stepProgress === null,
+      stepProgressRef: stepProgress,
+      prevIndicesStr,
+      newIndicesStr: indicesStr,
+      indicesChanged,
+      willUpdate: indicesChanged
+    })
+    
+    if (indicesChanged) {
+      prevIndicesRef.current = indicesStr
+      setCompletedStepIndices(indices)
+    }
+  }, [selectedRunFolder, stepProgress]) // Don't include completedStepIndices to prevent loop
 
   // Load plan data with change detection
   const { plan, loading, error, changes, updateStep, deleteStep, refresh: loadPlanRefresh, clearChanges, setChanges } = usePlanData(workspacePath)
@@ -1078,7 +1094,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           onZoomIn={zoomIn}
           onZoomOut={zoomOut}
           onFitView={handleFitView}
-          onProgressChange={handleProgressChange}
           showChatArea={showChatArea}
           onToggleChatArea={onToggleChatArea}
         />
@@ -1127,7 +1142,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         onFitView={handleFitView}
-        onProgressChange={handleProgressChange}
         showChatArea={showChatArea}
         onToggleChatArea={onToggleChatArea}
       />

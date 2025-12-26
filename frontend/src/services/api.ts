@@ -1,15 +1,13 @@
 import axios from 'axios'
 import { useChatStore } from '../stores/useChatStore'
+import { useModeStore } from '../stores/useModeStore'
 import type {
   AgentQueryRequest,
   AgentQueryResponse,
-  RegisterObserverResponse,
   GetEventsResponse,
-  ObserverStatusResponse,
   MCPServerConfig,
   ChatSession,
   ListChatSessionsResponse,
-  GetSessionEventsResponse,
   CreateChatSessionRequest,
   UpdateChatSessionRequest,
   PresetQuery,
@@ -26,6 +24,8 @@ import type {
   HumanFeedbackResponse,
   SummarizeConversationRequest,
   SummarizeConversationResponse,
+  CompactContextRequest,
+  CompactContextResponse,
   RunFoldersResponse,
   CreateRunFolderResponse,
   ProgressResponse,
@@ -42,9 +42,7 @@ import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 export type {
   AgentQueryRequest,
   AgentQueryResponse,
-  RegisterObserverResponse,
   GetEventsResponse,
-  ObserverStatusResponse,
   MCPServerConfig,
   ChatSession,
   ListChatSessionsResponse,
@@ -104,8 +102,13 @@ export function getSessionId(): string {
     return newSessionId
   }
   
-  // Fallback: generate a temporary session ID (shouldn't happen in normal flow)
-  console.warn('[API] No active tab - generating temporary session ID')
+  // Fallback: generate a temporary session ID
+  // In workflow mode, it's normal to not have an active tab until a phase is started
+  // Only warn in chat mode where tabs should always exist
+  const selectedModeCategory = useModeStore.getState().selectedModeCategory
+  if (selectedModeCategory === 'chat') {
+    console.warn('[API] No active tab - generating temporary session ID')
+  }
   return crypto.randomUUID()
 }
 
@@ -133,19 +136,7 @@ export function setSessionId(sessionId: string): void {
   }
 }
 
-// --- Observer ID Management ---
-// Module-level observer ID (synced from useChatStore via setCurrentObserverId)
-let currentObserverIdRef = ''
-
-// Called by ChatArea to sync observer ID from useChatStore
-export function setCurrentObserverId(observerId: string): void {
-  currentObserverIdRef = observerId
-  console.log(`[API] Observer ID set: ${observerId}`)
-}
-
-function getObserverId(): string {
-  return currentObserverIdRef
-}
+// Observer ID management removed - no longer needed
 
 // --- Axios request interceptor to inject session ID ---
 // Only adds session ID if not already provided in headers
@@ -157,79 +148,57 @@ api.interceptors.request.use((config) => {
     config.headers['X-Session-ID'] = getSessionId()
   }
 
-  // Add observer ID if available and not already provided
-  if (!config.headers['X-Observer-ID']) {
-    const observerId = getObserverId()
-    if (observerId) {
-      config.headers['X-Observer-ID'] = observerId
-    }
-  }
+  // Observer ID header removed - no longer needed
 
   return config
 })
 
 export const agentApi = {
-  // Register a new observer
-  registerObserver: async (sessionId?: string): Promise<RegisterObserverResponse> => {
-    try {
-      const effectiveSessionId = sessionId || getSessionId()
-      console.log('[API] Registering observer with sessionId:', effectiveSessionId)
-      const response = await api.post('/api/observer/register', {
-        session_id: effectiveSessionId
-      }, {
-        headers: {
-          'X-Session-ID': effectiveSessionId
-        }
-      })
-      const data = response.data
+  // Observer APIs removed - no longer needed
 
-      console.log('[API] RegisterObserver response:', {
-        status: response.status,
-        data: data,
-        hasObserverId: !!data?.observer_id,
-        observerId: data?.observer_id
-      })
-
-      // Note: Observer ID is now managed by useChatStore, not localStorage
-      // The caller (ChatArea) should call setCurrentObserverId after this
-      if (!data?.observer_id) {
-        console.error('[API] ❌ No observer_id received from server. Response data:', data)
-        throw new Error('No observer_id in response from registerObserver API')
-      }
-
-      console.log('[API] ✅ Observer registered successfully:', data.observer_id)
-      return data
-    } catch (error) {
-      console.error('[API] ❌ registerObserver failed:', error)
-      if (error instanceof Error) {
-        throw error
-      }
-      throw new Error(`Failed to register observer: ${String(error)}`)
+  // Get events for a session
+  // Supports both forward polling (sinceIndex) and backward pagination (limit/offset)
+  // eventMode: 'basic' | 'advanced' - filters events by mode (defaults to 'basic')
+  getSessionEvents: async (
+    sessionId: string, 
+    sinceIndex?: number,
+    options?: {
+      limit?: number
+      offset?: number
+      eventMode?: 'basic' | 'advanced'
     }
-  },
-
-  // Get events for an observer
-  getEvents: async (observerId: string, sinceIndex?: number, sessionId?: string): Promise<GetEventsResponse> => {
-    const params = sinceIndex !== undefined ? { since: sinceIndex } : {}
-    const headers: Record<string, string> = {}
-    if (sessionId) {
-      headers['X-Session-ID'] = sessionId
+  ): Promise<GetEventsResponse> => {
+    const params: Record<string, string | number> = {}
+    
+    // Forward polling mode: use sinceIndex
+    if (sinceIndex !== undefined && sinceIndex >= 0) {
+      params.since = sinceIndex
+      // Add event mode if specified (for polling mode)
+      if (options?.eventMode) {
+        params.event_mode = options.eventMode
+      }
     }
-    const response = await api.get(`/api/observer/${observerId}/events`, { params, headers })
+    // Backward pagination mode: use limit/offset
+    else if (options?.limit !== undefined || options?.offset !== undefined) {
+      if (options.limit !== undefined) {
+        params.limit = options.limit
+      }
+      if (options.offset !== undefined) {
+        params.offset = options.offset
+      }
+      // Add event mode if specified (for pagination mode)
+      if (options?.eventMode) {
+        params.event_mode = options.eventMode
+      }
+    } else {
+      throw new Error('Either sinceIndex (for polling) or limit (for pagination) must be provided')
+    }
+    
+    const response = await api.get(`/api/sessions/${sessionId}/events`, { params })
     return response.data
   },
 
-  // Get observer status
-  getObserverStatus: async (observerId: string): Promise<ObserverStatusResponse> => {
-    const response = await api.get(`/api/observer/${observerId}/status`)
-    return response.data
-  },
-
-  // Remove observer
-  removeObserver: async (observerId: string): Promise<void> => {
-    await api.delete(`/api/observer/${observerId}`)
-    // Note: Observer ID is managed by useChatStore, caller should clear it there
-  },
+  // Observer APIs removed - no longer needed
 
   // Stop session/agent execution (preserves conversation history)
   stopSession: async (sessionId: string): Promise<void> => {
@@ -265,18 +234,9 @@ export const agentApi = {
   },
 
   // Start a new agent query
-  startQuery: async (request: AgentQueryRequest, sessionId?: string, observerId?: string): Promise<AgentQueryResponse> => {
-    // Use provided observer ID or get from current state
-    const effectiveObserverId = observerId || getObserverId()
-
-    // Create headers with observer ID and session ID if provided
+  startQuery: async (request: AgentQueryRequest, sessionId?: string): Promise<AgentQueryResponse> => {
+    // Create headers with session ID if provided
     const headers: Record<string, string> = {}
-    if (effectiveObserverId) {
-      headers['X-Observer-ID'] = effectiveObserverId
-      console.log(`[API] Starting query with observer ID: ${effectiveObserverId}`)
-    } else {
-      console.warn('[API] No observer ID available for query')
-    }
     if (sessionId) {
       headers['X-Session-ID'] = sessionId
       console.log(`[API] Starting query with session ID: ${sessionId}`)
@@ -638,12 +598,7 @@ export const agentApi = {
     return response.data
   },
 
-  getSessionEvents: async (sessionId: string, limit: number = 100, offset: number = 0): Promise<GetSessionEventsResponse> => {
-    const response = await api.get(`/api/chat-history/sessions/${sessionId}/events`, {
-      params: { limit, offset }
-    })
-    return response.data
-  },
+  // getSessionEvents for chat history (duplicate removed - using the one at line 153)
 
   createChatSession: async (request: CreateChatSessionRequest): Promise<ChatSession> => {
     const response = await api.post('/api/chat-history/sessions', request)

@@ -33,7 +33,7 @@ import type { PlannerFile, WorkflowPhase, StepProgress } from '../../../services
 import type { PlanningResponse } from '../../../utils/stepConfigMatching'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
-import { agentApi, setCurrentObserverId } from '../../../services/api'
+import { agentApi } from '../../../services/api'
 import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import LLMOverrideModal from '../LLMOverrideModal'
 import BulkStepConfigModal from '../BulkStepConfigModal'
@@ -80,7 +80,6 @@ interface WorkflowToolbarProps {
   onZoomIn: () => void
   onZoomOut: () => void
   onFitView: () => void
-  onProgressChange?: (completedStepIndices: number[]) => void  // Callback when step progress changes
   showChatArea?: boolean
   onToggleChatArea?: () => void
   onBulkUpdateSteps?: (updates: Array<{ stepId: string; updates: Partial<PlanStep> }>) => Promise<void>  // Bulk update function
@@ -101,7 +100,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   onZoomIn,
   onZoomOut,
   onFitView,
-  onProgressChange,
   showChatArea = false,
   onToggleChatArea,
   onBulkUpdateSteps,
@@ -112,36 +110,42 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // App store for toggling workspace visibility
   const { setWorkspaceMinimized } = useAppStore()
   
-  // Workflow store - use selectors to ensure proper reactivity
+  // Workflow store - use individual selectors (Zustand optimizes these automatically)
+  // Only select what we need to minimize re-renders
   const phases = useWorkflowStore(state => state.phases)
   const isLoadingPhases = useWorkflowStore(state => state.isLoadingPhases)
   const phasesInitialized = useWorkflowStore(state => state.phasesInitialized)
-  const loadPhases = useWorkflowStore(state => state.loadPhases)
   const runFolders = useWorkflowStore(state => state.runFolders)
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
   const isLoadingRunFolders = useWorkflowStore(state => state.isLoadingRunFolders)
-  const loadRunFolders = useWorkflowStore(state => state.loadRunFolders)
-  const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
   const stepProgress = useWorkflowStore(state => state.stepProgress)
-  const loadProgress = useWorkflowStore(state => state.loadProgress)
-  const loadFolderProgressOnDemand = useWorkflowStore(state => state.loadFolderProgressOnDemand)
-  const getCompletedStepIndices = useWorkflowStore(state => state.getCompletedStepIndices)
   const selectedExecutionMode = useWorkflowStore(state => state.selectedExecutionMode)
   const selectedStartPoint = useWorkflowStore(state => state.selectedStartPoint)
   const selectedBranchStep = useWorkflowStore(state => state.selectedBranchStep)
+  const tempOverrideLLM = useWorkflowStore(state => state.tempOverrideLLM)
+  const tempOverrideLLM2 = useWorkflowStore(state => state.tempOverrideLLM2)
+  const tempOverrideLLMEnabled = useWorkflowStore(state => state.tempOverrideLLMEnabled)
+  const variablesManifest = useWorkflowStore(state => state.variablesManifest)
+  const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
+  
+  // Store actions - these are stable in Zustand, but get them via selectors to be safe
+  const loadPhases = useWorkflowStore(state => state.loadPhases)
+  const loadRunFolders = useWorkflowStore(state => state.loadRunFolders)
+  const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
+  const loadProgress = useWorkflowStore(state => state.loadProgress)
+  const loadFolderProgressOnDemand = useWorkflowStore(state => state.loadFolderProgressOnDemand)
   const setExecutionMode = useWorkflowStore(state => state.setExecutionMode)
   const setStartPoint = useWorkflowStore(state => state.setStartPoint)
   const setBranchStep = useWorkflowStore(state => state.setBranchStep)
   const buildExecutionOptions = useWorkflowStore(state => state.buildExecutionOptions)
   const loadSavedSettings = useWorkflowStore(state => state.loadSavedSettings)
   const saveSettings = useWorkflowStore(state => state.saveSettings)
-  const tempOverrideLLM = useWorkflowStore(state => state.tempOverrideLLM)
-  const tempOverrideLLM2 = useWorkflowStore(state => state.tempOverrideLLM2)
-  const tempOverrideLLMEnabled = useWorkflowStore(state => state.tempOverrideLLMEnabled)
   const setTempOverrideLLMEnabled = useWorkflowStore(state => state.setTempOverrideLLMEnabled)
   const clearTempOverrideLLM = useWorkflowStore(state => state.clearTempOverrideLLM)
   const clearTempOverrideLLM2 = useWorkflowStore(state => state.clearTempOverrideLLM2)
-  const variablesManifest = useWorkflowStore(state => state.variablesManifest)
+  const toggleGroupSelection = useWorkflowStore(state => state.toggleGroupSelection)
+  const setSelectedGroupIds = useWorkflowStore(state => state.setSelectedGroupIds)
+  const clearSelectedGroupIds = useWorkflowStore(state => state.clearSelectedGroupIds)
   
   // LLM Override modal state
   const [showLLMOverrideModal, setShowLLMOverrideModal] = useState(false)
@@ -199,7 +203,40 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const executionModeDropdownRef = useRef<HTMLDivElement>(null)
   const startPointDropdownRef = useRef<HTMLDivElement>(null)
   
+  // Keep isRunning for other uses (like dropdown disabled state)
   const isRunning = status === 'running'
+  
+  // Check if execution phase specifically is running (not just any phase)
+  // Use a selector that only recalculates when chatTabs or pollingInterval actually change
+  const isExecutionRunning = useChatStore(state => {
+    const chatTabs = state.chatTabs
+    const pollingInterval = state.pollingInterval
+    const allTabs = Object.values(chatTabs)
+    
+    try {
+      // Filter for execution phase tabs
+      const executionTabs = allTabs.filter(tab => 
+        tab.metadata?.mode === 'workflow' && tab.metadata?.phaseId === EXECUTION_PHASE_ID
+      )
+      
+      // Check if any execution tab is streaming
+      return executionTabs.some(tab => {
+        // If tab is completed, it's not streaming
+        if (tab.isCompleted) return false
+        
+        // Tab is streaming if polling is active and tab is not manually paused
+        const isPolling = pollingInterval !== null
+        if (isPolling) {
+          return tab.isStreaming !== false // Respect manual pause
+        }
+        
+        return false
+      })
+    } catch (error) {
+      console.error('[WorkflowToolbar] Error checking execution phase status:', error)
+      return false
+    }
+  }) // Zustand will handle memoization - only re-render if result changes
 
   // Load phases on mount (store handles deduplication)
   // Only load if not already initialized
@@ -216,11 +253,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
   }, [presetQueryId, loadSavedSettings])
 
-  // Get selected group IDs from store
-  const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
-  const toggleGroupSelection = useWorkflowStore(state => state.toggleGroupSelection)
-  const setSelectedGroupIds = useWorkflowStore(state => state.setSelectedGroupIds)
-  const clearSelectedGroupIds = useWorkflowStore(state => state.clearSelectedGroupIds)
+  // selectedGroupIds is already included in the batched selector above
   
   // Helper function to get first 5 characters of first variable value for a group
   const getFirstVariablePreview = useCallback((groupId: string | null): string | null => {
@@ -243,8 +276,25 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [variablesManifest])
   
   // Save settings when they change (including selectedGroupIds)
+  // Use refs to track previous values and only save when they actually change
+  const prevSettingsRef = useRef<string>('')
   useEffect(() => {
-    if (presetQueryId) {
+    const settingsKey = `${presetQueryId}|${selectedRunFolder}|${selectedExecutionMode}|${selectedStartPoint}|${JSON.stringify(selectedGroupIds)}`
+    
+    console.log('[EFFECT_DEBUG] saveSettings effect triggered:', {
+      presetQueryId,
+      selectedRunFolder,
+      selectedExecutionMode,
+      selectedStartPoint,
+      selectedGroupIds,
+      prevSettingsKey: prevSettingsRef.current,
+      currentSettingsKey: settingsKey,
+      willSave: prevSettingsRef.current !== settingsKey && !!presetQueryId
+    })
+    
+    // Only save if settings actually changed
+    if (prevSettingsRef.current !== settingsKey && presetQueryId) {
+      prevSettingsRef.current = settingsKey
       saveSettings(presetQueryId)
     }
   }, [presetQueryId, selectedRunFolder, selectedExecutionMode, selectedStartPoint, selectedGroupIds, saveSettings])
@@ -257,19 +307,32 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [workspacePath, loadRunFolders])
 
   // Load progress when selected run folder changes
+  // Use ref to track previous values and only load when they actually change
+  const prevLoadProgressRef = useRef<string>('')
   useEffect(() => {
-    if (workspacePath && selectedRunFolder !== 'new') {
+    const loadKey = `${workspacePath}|${selectedRunFolder}`
+    const shouldLoad = workspacePath && selectedRunFolder !== 'new'
+    
+    console.log('[EFFECT_DEBUG] loadProgress effect triggered:', {
+      workspacePath,
+      selectedRunFolder,
+      condition: shouldLoad,
+      prevLoadKey: prevLoadProgressRef.current,
+      currentLoadKey: loadKey,
+      willLoad: prevLoadProgressRef.current !== loadKey && shouldLoad
+    })
+    
+    // Only load if workspacePath or selectedRunFolder actually changed
+    if (prevLoadProgressRef.current !== loadKey && shouldLoad) {
+      prevLoadProgressRef.current = loadKey
       loadProgress(workspacePath, selectedRunFolder)
     }
   }, [workspacePath, selectedRunFolder, loadProgress])
 
-  // Notify parent when step progress changes
-  useEffect(() => {
-    if (onProgressChange) {
-      const completedIndices = getCompletedStepIndices()
-      onProgressChange(completedIndices)
-    }
-  }, [stepProgress, onProgressChange, getCompletedStepIndices])
+  // Note: We don't need to notify parent via onProgressChange callback
+  // because the parent (WorkflowCanvas) already syncs completedStepIndices 
+  // directly from stepProgress in its own useEffect.
+  // Calling onProgressChange here would create a circular update loop.
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -316,18 +379,54 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
   }, [isDropdownOpen, isLoadingPhases, otherPhases.length])
 
-  // Calculate progress info - memoize to prevent unnecessary recalculations
+  // Calculate progress info - use ref to track previous value and prevent infinite loops
+  const completedStepIndicesRef = useRef<number[]>([])
+  const stepProgressDataRef = useRef<string>('')
+  const completedStepIndicesDepsRef = useRef<{ indices: number[] | undefined, totalSteps: number }>({ indices: undefined, totalSteps: 0 })
+  
   const completedStepIndices = useMemo(() => {
-    const indices = getCompletedStepIndices()
-    const sorted = indices.slice().sort((a, b) => a - b) // Sort and create new array for stability
-    console.log('[PROGRESS_DEBUG] WorkflowToolbar - completedStepIndices:', {
-      raw: indices,
-      sorted,
-      stepProgress: stepProgress,
-      totalSteps
-    })
-    return sorted
-  }, [getCompletedStepIndices, stepProgress, totalSteps])
+    // Extract the array inside useMemo to avoid dependency issues
+    const indices = stepProgress?.completed_step_indices || []
+    const sorted = indices.slice().sort((a, b) => a - b)
+    
+    // Debug: Track dependency changes
+    const prevDeps = completedStepIndicesDepsRef.current
+    const depsChanged = prevDeps.indices !== indices || prevDeps.totalSteps !== totalSteps
+    if (depsChanged) {
+      console.log('[MEMO_DEBUG] completedStepIndices useMemo dependencies changed:', {
+        prevIndices: prevDeps.indices,
+        currentIndices: indices,
+        indicesReferenceChanged: prevDeps.indices !== indices,
+        prevTotalSteps: prevDeps.totalSteps,
+        currentTotalSteps: totalSteps,
+        totalStepsChanged: prevDeps.totalSteps !== totalSteps
+      })
+      completedStepIndicesDepsRef.current = { indices, totalSteps }
+    }
+    
+    // Create a stable string representation of the data
+    const dataStr = JSON.stringify(sorted) + String(totalSteps)
+    
+    // Only update if data actually changed
+    if (stepProgressDataRef.current !== dataStr) {
+      console.log('[MEMO_DEBUG] completedStepIndices useMemo recalculating:', {
+        prevDataStr: stepProgressDataRef.current,
+        newDataStr: dataStr,
+        dataChanged: stepProgressDataRef.current !== dataStr
+      })
+      stepProgressDataRef.current = dataStr
+      completedStepIndicesRef.current = sorted
+      console.log('[PROGRESS_DEBUG] WorkflowToolbar - completedStepIndices changed:', {
+        raw: indices,
+        sorted,
+        totalSteps
+      })
+    } else {
+      console.log('[MEMO_DEBUG] completedStepIndices useMemo returning cached value (data unchanged)')
+    }
+    
+    return completedStepIndicesRef.current
+  }, [stepProgress?.completed_step_indices, totalSteps]) // Only depend on the array, not the whole object
   
   const hasExistingProgress = stepProgress !== null && completedStepIndices.length > 0
   const completedStepCount = completedStepIndices.length
@@ -474,10 +573,76 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [runFolders, variablesManifest])
   
   // Generate start point options based on completed steps and branch steps
+  // Use ref to track previous options and prevent recalculation loops
+  const startPointOptionsRef = useRef<StartPointOption[]>([])
+  const startPointOptionsDataRef = useRef<string>('')
+  const startPointOptionsDepsRef = useRef<{ completedStepIndices: number[], totalSteps: number, planStepsLength: number, branchSteps: Record<string, unknown> | undefined }>({
+    completedStepIndices: [],
+    totalSteps: 0,
+    planStepsLength: 0,
+    branchSteps: undefined
+  })
+  
   const startPointOptions = useMemo((): StartPointOption[] => {
     const options: StartPointOption[] = [
       { id: 'from_beginning', label: 'Start from Beginning', icon: Play, description: 'Execute all steps from start' }
     ]
+    
+    // Extract specific data inside useMemo to avoid dependency issues
+    const stepProgressBranchSteps = stepProgress?.branch_steps
+    const planSteps = plan?.steps
+    const planStepsCount = planSteps?.length || 0
+    
+    // Debug: Track dependency changes
+    const prevDeps = startPointOptionsDepsRef.current
+    const depsChanged = 
+      prevDeps.completedStepIndices !== completedStepIndices ||
+      prevDeps.totalSteps !== totalSteps ||
+      prevDeps.planStepsLength !== planStepsCount ||
+      prevDeps.branchSteps !== stepProgressBranchSteps
+    
+    if (depsChanged) {
+      console.log('[MEMO_DEBUG] startPointOptions useMemo dependencies changed:', {
+        completedStepIndicesRefChanged: prevDeps.completedStepIndices !== completedStepIndices,
+        totalStepsChanged: prevDeps.totalSteps !== totalSteps,
+        planStepsLengthChanged: prevDeps.planStepsLength !== planStepsCount,
+        branchStepsRefChanged: prevDeps.branchSteps !== stepProgressBranchSteps,
+        prevCompletedStepIndices: prevDeps.completedStepIndices,
+        currentCompletedStepIndices: completedStepIndices,
+        prevTotalSteps: prevDeps.totalSteps,
+        currentTotalSteps: totalSteps,
+        prevPlanStepsLength: prevDeps.planStepsLength,
+        currentPlanStepsLength: planStepsCount
+      })
+      startPointOptionsDepsRef.current = {
+        completedStepIndices,
+        totalSteps,
+        planStepsLength: planStepsCount,
+        branchSteps: stepProgressBranchSteps
+      }
+    }
+    
+    // Create stable data representation for comparison
+    const indicesStr = JSON.stringify(completedStepIndices)
+    const branchStepsStr = stepProgressBranchSteps ? JSON.stringify(stepProgressBranchSteps) : ''
+    const dataStr = `${indicesStr}|${branchStepsStr}|${totalSteps}|${planStepsCount}`
+    
+    // Only recalculate if data actually changed
+    if (startPointOptionsDataRef.current === dataStr && startPointOptionsRef.current.length > 0) {
+      console.log('[MEMO_DEBUG] startPointOptions useMemo returning cached value (data unchanged):', {
+        dataStr,
+        cachedOptionsLength: startPointOptionsRef.current.length
+      })
+      return startPointOptionsRef.current
+    }
+    
+    console.log('[MEMO_DEBUG] startPointOptions useMemo recalculating:', {
+      prevDataStr: startPointOptionsDataRef.current,
+      newDataStr: dataStr,
+      dataChanged: startPointOptionsDataRef.current !== dataStr,
+      hasCachedValue: startPointOptionsRef.current.length > 0
+    })
+    startPointOptionsDataRef.current = dataStr
     
     console.log('[PROGRESS_DEBUG] Generating startPointOptions:', {
       completedStepIndices,
@@ -524,11 +689,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
     
     // Add branch step resume options for conditional steps with incomplete branches
-    if (plan && stepProgress?.branch_steps && Object.keys(stepProgress.branch_steps).length > 0) {
-      console.log('[WorkflowToolbar] Processing branch steps:', stepProgress.branch_steps)
-      Object.entries(stepProgress.branch_steps).forEach(([stepIndexStr, branchProgress]) => {
+    if (planSteps && stepProgressBranchSteps && Object.keys(stepProgressBranchSteps).length > 0) {
+      console.log('[WorkflowToolbar] Processing branch steps:', stepProgressBranchSteps)
+      Object.entries(stepProgressBranchSteps).forEach(([stepIndexStr, branchProgress]) => {
         const parentStepIndex = parseInt(stepIndexStr, 10)
-        const parentStep = plan.steps?.[parentStepIndex]
+        const parentStep = planSteps[parentStepIndex]
         
         // Only process conditional steps
         if (!parentStep || !isConditionalStep(parentStep)) {
@@ -612,8 +777,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     // Only log when options actually change (not on every render)  
     // Removed console.log to prevent excessive logging - uncomment for debugging
     // console.log(`[WorkflowToolbar] Generated ${options.length} start point options:`, options.map(o => ({ id: o.id, label: o.label, hasBranchStep: !!o.branchStep })))
+    
+    // Store in ref for next comparison
+    startPointOptionsRef.current = options
     return options
-  }, [completedStepIndices, totalSteps, completedStepCount, plan, stepProgress])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [completedStepIndices, totalSteps, plan?.steps?.length, stepProgress?.branch_steps]) // Only depend on specific data, not whole objects - using ref comparison to prevent loops
 
   // Get current start point info
   const currentStartPointInfo = useMemo(() => {
@@ -665,13 +834,30 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // If currentPhase is undefined/null, allow dropdown to be enabled
   const isExecutionPhase = currentPhase === EXECUTION_PHASE_ID
 
-  // Allow dropdown even when in execution phase - user should be able to switch to other phases
-  const dropdownDisabled = isRunning || isLoadingPhases || otherPhases.length === 0
+  // Allow dropdown to be enabled even when phases are running - this enables parallel execution
+  // Only disable if phases are loading or there are no other phases available
+  // Individual phase checks (if a specific phase is running) are handled in handleSelectPhase
+  const dropdownDisabled = isLoadingPhases || otherPhases.length === 0
 
   // Handle phase selection
   const handleSelectPhase = (phaseId: string) => {
+    console.log('[WorkflowToolbar] handleSelectPhase called:', { phaseId, isRunning, status })
     setIsDropdownOpen(false)
-    if (!isRunning) {
+    
+    // Check if THIS SPECIFIC phase's tab is running (not just any tab)
+    const getTabsByPhaseId = useChatStore.getState().getTabsByPhaseId
+    const phaseTabs = getTabsByPhaseId(phaseId)
+    const getTabStreamingStatus = useChatStore.getState().getTabStreamingStatus
+    const isPhaseRunning = phaseTabs.some(tab => getTabStreamingStatus(tab.tabId))
+    
+    console.log('[WorkflowToolbar] Phase status check:', {
+      phaseId,
+      phaseTabsCount: phaseTabs.length,
+      isPhaseRunning,
+      phaseTabs: phaseTabs.map(t => ({ tabId: t.tabId, isStreaming: getTabStreamingStatus(t.tabId) }))
+    })
+    
+    if (!isPhaseRunning) {
       // For plan-improvement and other phases that need run folder, pass execution options
       if (phaseId === 'plan-improvement' || phaseId === 'plan-tool-optimization' || phaseId === 'plan-learnings-alignment') {
         // Build execution options to include selected_run_folder
@@ -680,8 +866,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         onStartPhase(phaseId, executionOptions)
       } else {
         // For other phases, don't pass execution options
+        console.log('[WorkflowToolbar] Starting', phaseId, 'without execution options')
         onStartPhase(phaseId)
       }
+    } else {
+      console.warn('[WorkflowToolbar] Phase selection blocked: phase', phaseId, 'is already running')
     }
   }
 
@@ -803,9 +992,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // Handle execution button click - finds/reuses execution tab
   const handleExecute = useCallback(() => {
-    if (!isRunning && executionPhase) {
-      const workflowStore = useWorkflowStore.getState()
-      
+    // Use isExecutionRunning instead of isRunning to allow execution even when other phases are running
+    if (!isExecutionRunning && executionPhase) {
       // Find existing execution phase tab
       // Get execution tabs from generalized chat store
       const chatStore = useChatStore.getState()
@@ -824,9 +1012,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           chatStore.switchTab(existingExecutionTab.tabId)
         }
         
-        // Sync observer ID to API module
-        setCurrentObserverId(existingExecutionTab.observerId)
-        console.log(`[WorkflowToolbar] Synced observer ID: ${existingExecutionTab.observerId}`)
+        // No observer ID syncing needed - sessions are used directly
       } else {
         console.log('[WorkflowToolbar] No existing execution tab, creating new one')
       }
@@ -842,7 +1028,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       // Start phase (will create new tab if none exists, or use existing if we switched to it)
       onStartPhase(executionPhase.id, options)
     }
-  }, [isRunning, executionPhase, buildExecutionOptions, onStartPhase])
+  }, [isExecutionRunning, executionPhase, buildExecutionOptions, onStartPhase])
 
   return (
     <>
@@ -865,23 +1051,176 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </button>
         ) : (
           <>
-            {/* Execution Controls - Execute button first, then configuration dropdowns */}
+            {/* Regular Phases Dropdown Selector - moved before execution button */}
+            <div className="relative" ref={dropdownRef}>
+              <button
+                onClick={() => {
+                  console.log('[WorkflowToolbar] Phase dropdown button clicked:', { isLoadingPhases, otherPhasesLength: otherPhases.length, isDropdownOpen })
+                  // Allow dropdown to open even when phases are running - enables parallel execution
+                  // Only block if phases are loading or there are no phases available
+                  if (!isLoadingPhases && otherPhases.length > 0) {
+                    setIsDropdownOpen(!isDropdownOpen)
+                  } else {
+                    console.warn('[WorkflowToolbar] Dropdown blocked:', { isLoadingPhases, otherPhasesLength: otherPhases.length })
+                  }
+                }}
+                disabled={dropdownDisabled}
+                className={`
+                  flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-medium min-w-[160px]
+                  ${dropdownDisabled
+                    ? 'bg-muted text-muted-foreground cursor-not-allowed' 
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-600'
+                  }
+                `}
+              >
+                {isLoadingPhases ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Loading phases...</span>
+                  </>
+                ) : (() => {
+                  // Check if current phase is running
+                  const getTabsByPhaseId = useChatStore.getState().getTabsByPhaseId
+                  const getTabStreamingStatus = useChatStore.getState().getTabStreamingStatus
+                  const currentPhaseTabs = currentPhase ? getTabsByPhaseId(currentPhase) : []
+                  const isCurrentPhaseRunning = currentPhaseTabs.some(tab => getTabStreamingStatus(tab.tabId))
+                  
+                  if (isCurrentPhaseRunning && !isExecutionPhase) {
+                    return (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                        <span className="flex-1 text-left truncate">
+                          {currentPhaseDetails?.title || 'Running...'}
+                        </span>
+                        <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+                      </>
+                    )
+                  }
+                  
+                  return (
+                    <>
+                      <Play className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="flex-1 text-left truncate">
+                        {currentPhaseDetails && !isExecutionPhase ? currentPhaseDetails.title : 'Select Phase'}
+                      </span>
+                      <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+                    </>
+                  )
+                })()}
+              </button>
+
+              {/* Dropdown Menu - Only show non-execution phases */}
+              {isDropdownOpen && !isLoadingPhases && otherPhases.length > 0 && (
+                <div className="absolute top-full left-0 mt-1 w-80 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 max-h-[400px] overflow-y-auto">
+                  <div className="p-2">
+                    <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">
+                      Workflow Phases
+                    </div>
+                    {otherPhases.length === 0 ? (
+                      <div className="px-3 py-4 text-sm text-gray-500 dark:text-gray-400 text-center">
+                        {isLoadingPhases ? 'Loading phases...' : 'No phases available'}
+                      </div>
+                    ) : (
+                      otherPhases.map((phase: WorkflowPhase) => {
+                      const isActive = currentPhase === phase.id
+                      // Check if THIS specific phase is running or completed
+                      const getTabsByPhaseId = useChatStore.getState().getTabsByPhaseId
+                      const getTabStreamingStatus = useChatStore.getState().getTabStreamingStatus
+                      const phaseTabs = getTabsByPhaseId(phase.id)
+                      // Find the most recent or active tab for this phase
+                      const activePhaseTab = phaseTabs.length > 0 
+                        ? phaseTabs.sort((a, b) => b.createdAt - a.createdAt)[0] // Most recent
+                        : null
+                      const isPhaseRunning = activePhaseTab ? getTabStreamingStatus(activePhaseTab.tabId) : false
+                      const isPhaseCompleted = activePhaseTab?.isCompleted || false
+                      const isDisabled = isPhaseRunning // Only disable if running, allow clicking completed phases
+                      
+                      return (
+                        <button
+                          key={phase.id}
+                          onClick={() => handleSelectPhase(phase.id)}
+                          disabled={isDisabled}
+                          className={`
+                            w-full text-left px-3 py-2.5 rounded-lg transition-colors
+                            ${isDisabled
+                              ? 'opacity-50 cursor-not-allowed bg-gray-100 dark:bg-gray-800'
+                              : isActive 
+                                ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 font-semibold' 
+                                : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100'
+                            }
+                          `}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className={`
+                              w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5
+                              ${isPhaseRunning
+                                ? 'bg-purple-500 dark:bg-purple-600'
+                                : isPhaseCompleted
+                                  ? 'bg-green-500 dark:bg-green-600'
+                                  : isActive 
+                                    ? 'bg-gray-900 dark:bg-gray-100 text-gray-100 dark:text-gray-900' 
+                                    : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
+                              }
+                            `}>
+                              {isPhaseRunning ? (
+                                <Loader2 className="w-3 h-3 text-white animate-spin" />
+                              ) : isPhaseCompleted ? (
+                                <Check className="w-3 h-3 text-white" />
+                              ) : isActive ? (
+                                <Check className="w-3 h-3" />
+                              ) : (
+                                <span className="text-xs font-medium">
+                                  {otherPhases.indexOf(phase) + 1}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-sm flex items-center gap-2">
+                                {phase.title}
+                                {isPhaseRunning && (
+                                  <span className="text-xs px-1.5 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded flex items-center gap-1">
+                                    <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                    Running
+                                  </span>
+                                )}
+                                {isPhaseCompleted && !isPhaseRunning && (
+                                  <span className="text-xs px-1.5 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded">
+                                    Completed
+                                  </span>
+                                )}
+                              </div>
+                              {phase.description && (
+                                <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 line-clamp-2">
+                                  {phase.description}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      )
+                    }))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Execution Controls - Execute button and configuration dropdowns */}
             {executionPhase && (
               <>
-                {/* Execute/Stop Button - Changes to Stop when running */}
+                {/* Execute/Stop Button - Changes to Stop when execution phase is running */}
                 <button
-                  onClick={isRunning ? onStop : handleExecute}
+                  onClick={isExecutionRunning ? onStop : handleExecute}
                   disabled={false}
                   className={`
                     flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-semibold
-                    ${isRunning
+                    ${isExecutionRunning
                       ? 'bg-red-500 dark:bg-red-600 text-white shadow-md hover:bg-red-600 dark:hover:bg-red-700 hover:shadow-lg'
                       : 'bg-purple-500 dark:bg-purple-600 text-white shadow-md hover:bg-purple-600 dark:hover:bg-purple-700 hover:shadow-lg'
                     }
                   `}
-                  title={isRunning ? 'Stop execution' : `Execute: ${currentModeInfo.label}`}
+                  title={isExecutionRunning ? 'Stop execution' : `Execute: ${currentModeInfo.label}`}
                 >
-                  {isRunning ? (
+                  {isExecutionRunning ? (
                     <>
                       <Square className="w-3.5 h-3.5" />
                       <span>Stop</span>
@@ -1389,107 +1728,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 </div>
               </>
             )}
-
-            {/* Regular Phases Dropdown Selector */}
-            <div className="relative" ref={dropdownRef}>
-              <button
-                onClick={() => {
-                  if (!isRunning && !isLoadingPhases && otherPhases.length > 0) {
-                    setIsDropdownOpen(!isDropdownOpen)
-                  }
-                }}
-                disabled={dropdownDisabled}
-                className={`
-                  flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-medium min-w-[160px]
-                  ${dropdownDisabled
-                    ? 'bg-muted text-muted-foreground cursor-not-allowed' 
-                    : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-600'
-                  }
-                `}
-              >
-                {isLoadingPhases ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Loading phases...</span>
-                  </>
-                ) : isRunning && !isExecutionPhase ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span className="flex-1 text-left truncate">
-                      {currentPhaseDetails?.title || 'Running...'}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-3.5 h-3.5 flex-shrink-0" />
-                    <span className="flex-1 text-left truncate">
-                      {currentPhaseDetails && !isExecutionPhase ? currentPhaseDetails.title : 'Select Phase'}
-                    </span>
-                    <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
-                  </>
-                )}
-              </button>
-
-              {/* Dropdown Menu - Only show non-execution phases */}
-              {isDropdownOpen && !isRunning && !isLoadingPhases && otherPhases.length > 0 && (
-                <div className="absolute top-full left-0 mt-1 w-80 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 max-h-[400px] overflow-y-auto">
-                  <div className="p-2">
-                    <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">
-                      Workflow Phases
-                    </div>
-                    {otherPhases.length === 0 ? (
-                      <div className="px-3 py-4 text-sm text-gray-500 dark:text-gray-400 text-center">
-                        {isLoadingPhases ? 'Loading phases...' : 'No phases available'}
-                      </div>
-                    ) : (
-                      otherPhases.map((phase: WorkflowPhase) => {
-                      const isActive = currentPhase === phase.id
-                      return (
-                        <button
-                          key={phase.id}
-                          onClick={() => handleSelectPhase(phase.id)}
-                          className={`
-                            w-full text-left px-3 py-2.5 rounded-lg transition-colors
-                            ${isActive 
-                              ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 font-semibold' 
-                              : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100'
-                            }
-                          `}
-                        >
-                          <div className="flex items-start gap-3">
-                            <div className={`
-                              w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5
-                              ${isActive 
-                                ? 'bg-gray-900 dark:bg-gray-100 text-gray-100 dark:text-gray-900' 
-                                : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
-                              }
-                            `}>
-                              {isActive ? (
-                                <Check className="w-3 h-3" />
-                              ) : (
-                                <span className="text-xs font-medium">
-                                  {otherPhases.indexOf(phase) + 1}
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium text-sm">
-                                {phase.title}
-                              </div>
-                              {phase.description && (
-                                <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 line-clamp-2">
-                                  {phase.description}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </button>
-                      )
-                    }))}
-                  </div>
-                </div>
-              )}
-            </div>
 
           </>
         )}

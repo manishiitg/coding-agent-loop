@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/gorilla/mux"
 
@@ -115,21 +114,7 @@ func (api *StreamingAPI) handleCompactContext(w http.ResponseWriter, r *http.Req
 		turnThreshold = 10 // Default: 10 turns
 	}
 
-	// Get observer ID from active session or request header
-	observerID := r.Header.Get("X-Observer-ID")
-	if observerID == "" {
-		// Try to get observer ID from active session
-		if activeSession, exists := api.getActiveSession(sessionID); exists {
-			observerID = activeSession.ObserverID
-			log.Printf("[CONTEXT_EDITING] Using observer ID from active session: %s", observerID)
-		}
-	}
-
-	// If still no observer ID, create a temporary one for event storage
-	if observerID == "" {
-		observerID = fmt.Sprintf("context_editing_%s_%d", sessionID, time.Now().UnixNano())
-		log.Printf("[CONTEXT_EDITING] Created temporary observer ID: %s", observerID)
-	}
+	// No observer ID needed - events are stored by sessionID
 
 	// Create minimal agent with NO_SERVERS to avoid connecting to MCP servers
 	tempAgent, err := mcpagent.NewAgent(
@@ -149,9 +134,9 @@ func (api *StreamingAPI) handleCompactContext(w http.ResponseWriter, r *http.Req
 
 	// Attach event observer to capture context editing events
 	if api.eventStore != nil {
-		eventObserver := events.NewEventObserverWithLogger(api.eventStore, observerID, sessionID, api.logger)
+		eventObserver := events.NewEventObserverWithLogger(api.eventStore, sessionID, api.logger)
 		tempAgent.AddEventListener(eventObserver)
-		log.Printf("[CONTEXT_EDITING] Attached event observer %s to capture context editing events", observerID)
+		log.Printf("[CONTEXT_EDITING] Attached event observer to capture context editing events for session %s", sessionID)
 	} else {
 		log.Printf("[CONTEXT_EDITING] Warning: eventStore is nil, events will not be captured")
 	}

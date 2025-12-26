@@ -57,3 +57,5 @@ planning/changelog
 27. workspace, sheel exec is reading env variable which is an issue
 
 28.. the context eidting/ summiazation, token call, we do after a turn.. and not after a tool call
+
+29. we cannot always, delete all execution when starting a research agent might want to reuse execution

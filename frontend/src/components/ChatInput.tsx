@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect } from 'react'
-import { Send, Loader2, Square, Code2, Sparkles } from 'lucide-react'
+import { Send, Square, Code2, Sparkles } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -45,7 +45,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // CRITICAL: Always use tab's status - never fall back to global to prevent mixing
   // If no active tab, this is an error condition (tabs should always exist)
   const isStreaming = activeTab?.isStreaming ?? false
-  const observerId = activeTab?.observerId ?? null
+  const tabSessionId = activeTab?.sessionId ?? null
   
   // Warn if no active tab (tabs should always exist)
   if (!activeTab) {
@@ -214,28 +214,28 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return localQuery
   }, [localQuery])
 
-  // Guard to prevent submission before observer is ready
+  // Guard to prevent submission before session is ready
   // Use active tab's status: allow submission if not streaming (completion is fine, user can continue conversation)
   const canSubmit = useMemo(() => {
-    return queryToSubmit?.trim() && !isStreaming && observerId
-  }, [queryToSubmit, isStreaming, observerId])
+    return queryToSubmit?.trim() && !isStreaming && tabSessionId
+  }, [queryToSubmit, isStreaming, tabSessionId])
   
   // Debug logging for submission issues
   React.useEffect(() => {
     const hasValidQuery = Boolean(localQuery?.trim())
-    const canSubmitValue = queryToSubmit?.trim() && !isStreaming && observerId
-    const submitButtonDisabledValue = !hasValidQuery || !observerId
+    const canSubmitValue = queryToSubmit?.trim() && !isStreaming && tabSessionId
+    const submitButtonDisabledValue = !hasValidQuery || !tabSessionId
     
-    console.log('[ChatInput] Observer ID check:', {
+    console.log('[ChatInput] Session ID check:', {
       activeTab: activeTab?.tabId,
-      tabObserverId: activeTab?.observerId,
-      effectiveObserverId: observerId,
+      tabSessionId: activeTab?.sessionId,
+      effectiveSessionId: tabSessionId,
       canSubmit: canSubmitValue,
       hasValidQuery,
       submitButtonDisabled: submitButtonDisabledValue,
       localQuery: localQuery?.substring(0, 50) // First 50 chars for debugging
     })
-  }, [activeTab?.tabId, activeTab?.observerId, observerId, queryToSubmit, isStreaming, localQuery, canSubmit])
+  }, [activeTab?.tabId, activeTab?.sessionId, tabSessionId, queryToSubmit, isStreaming, localQuery, canSubmit])
 
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -360,7 +360,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       alert(`Conversation summarized successfully!\nOriginal: ${response.original_count} messages\nNew: ${response.new_count} messages\nReduced by: ${response.reduced_by} messages`)
       
       // If there's a message to send after summarization, send it now
-      if (messageToSendAfter && messageToSendAfter.trim() && observerId) {
+      if (messageToSendAfter && messageToSendAfter.trim() && tabSessionId) {
         // Small delay to ensure summarization is fully processed
         setTimeout(() => {
           onSubmit(messageToSendAfter.trim())
@@ -373,7 +373,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     } finally {
       setIsSummarizing(false)
     }
-  }, [sessionId, isSummarizing, isStreaming, observerId, onSubmit])
+  }, [sessionId, isSummarizing, isStreaming, tabSessionId, onSubmit])
 
   // Handle manual context compaction (context editing)
   // If messageToSendAfter is provided, it will be sent as a user message after compaction completes
@@ -390,7 +390,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       alert(`Context compacted successfully!\nCompacted: ${response.compacted_count} tool responses\nTokens saved: ${response.total_tokens_saved?.toLocaleString() || 0}`)
       
       // If there's a message to send after compaction, send it now
-      if (messageToSendAfter && messageToSendAfter.trim() && observerId) {
+      if (messageToSendAfter && messageToSendAfter.trim() && tabSessionId) {
         // Small delay to ensure compaction is fully processed
         setTimeout(() => {
           onSubmit(messageToSendAfter.trim())
@@ -403,7 +403,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     } finally {
       setIsSummarizing(false)
     }
-  }, [sessionId, isSummarizing, isStreaming, observerId, onSubmit])
+  }, [sessionId, isSummarizing, isStreaming, tabSessionId, onSubmit])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If command dialog is open, let it handle keyboard events
@@ -428,10 +428,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         queryToSubmit: queryToSubmit?.substring(0, 50),
         queryToSubmitLength: queryToSubmit?.length,
         canSubmit,
-        observerId,
+        sessionId: tabSessionId,
         isStreaming,
         activeTab: activeTab?.tabId,
-        tabObserverId: activeTab?.observerId,
+        tabSessionId: activeTab?.sessionId,
         localQuery: localQuery?.substring(0, 50),
         localQueryLength: localQuery?.length
       }, null, 2))
@@ -471,8 +471,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       
       if (canSubmit) {
         console.log('[ChatInput] canSubmit is true, calling onSubmit:', queryToSubmit)
-        // Clear local state immediately for UI responsiveness (only for non-preset modes and when observer is ready)
-        if (observerId) {
+        // Clear local state immediately for UI responsiveness (only for non-preset modes and when session is ready)
+        if (tabSessionId) {
           setLocalQuery('')
         }
         // Call onSubmit with the query directly - no global state coordination needed!
@@ -482,9 +482,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           hasQuery: Boolean(queryToSubmit?.trim()),
           queryLength: queryToSubmit?.length,
           isStreaming,
-          hasObserverId: Boolean(observerId),
-          observerIdValue: observerId,
-          tabObserverId: activeTab?.observerId,
+          hasSessionId: Boolean(tabSessionId),
+          sessionIdValue: tabSessionId,
+          tabSessionId: activeTab?.sessionId,
           canSubmit,
           activeTab: activeTab?.tabId,
           localQuery: localQuery?.substring(0, 50),
@@ -508,7 +508,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [localQuery, onSubmit, showFileDialog, showCommandDialog, observerId, canSubmit, queryToSubmit, sessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTab?.tabId])
+  }, [localQuery, onSubmit, showFileDialog, showCommandDialog, tabSessionId, canSubmit, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTab?.tabId, activeTab?.sessionId, sessionId])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -516,7 +516,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     console.log('[ChatInput] handleSubmit called:', {
       queryToSubmit,
       canSubmit,
-      observerId,
+      sessionId: tabSessionId,
       isStreaming,
       activeTab: activeTab?.tabId
     })
@@ -557,7 +557,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (canSubmit) {
       console.log('[ChatInput] Calling onSubmit with query:', queryToSubmit)
       // Clear local state immediately for UI responsiveness when observer is ready
-      if (observerId) {
+      if (tabSessionId) {
         setLocalQuery('')
       }
       // Call onSubmit with the query directly - no global state coordination needed!
@@ -566,11 +566,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       console.warn('[ChatInput] Cannot submit:', {
         hasQuery: Boolean(queryToSubmit?.trim()),
         isStreaming,
-        hasObserverId: Boolean(observerId),
+          hasSessionId: Boolean(tabSessionId),
         canSubmit
       })
     }
-  }, [canSubmit, observerId, queryToSubmit, onSubmit, sessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, setLocalQuery, activeTab])
+  }, [canSubmit, tabSessionId, queryToSubmit, onSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, setLocalQuery, activeTab, sessionId])
 
   // File selection handlers
   const handleCommandSelect = useCallback((command: string) => {
@@ -655,7 +655,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Check if query is valid
   const hasValidQuery = Boolean(localQuery?.trim())
-  const submitButtonDisabled = !hasValidQuery || !observerId
+  const submitButtonDisabled = !hasValidQuery || !tabSessionId
   
   // Memoized placeholder
   const placeholder = useMemo(() => {
@@ -702,7 +702,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
               className="min-h-[60px] max-h-[100px] resize-none text-sm"
-              disabled={isStreaming || !observerId}
+              disabled={isStreaming || !tabSessionId}
               data-testid="chat-input-textarea"
             />
             <div className="flex justify-between items-center">
@@ -781,17 +781,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   </div>
                 )}
                 
-                {/* Status text */}
-                <div className="text-xs text-gray-500">
-                  {!observerId ? (
-                    <span>
-                      <Loader2 className="w-3 h-3 inline animate-spin mr-1" />
-                      Initializing observer... (retrying if needed)
-                    </span>
-                  ) : (
-                    ''
-                  )}
-                </div>
+                {/* Status text - removed observer initialization message */}
               </div>
               {/* Show old buttons */}
               {(
@@ -831,8 +821,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         <p>
                           {!localQuery?.trim()
                             ? 'Type a message to send'
-                            : !observerId 
-                              ? 'Observer not ready yet' 
+                            : !tabSessionId 
+                              ? 'Session not ready yet' 
                               : 'Send message'
                           }
                         </p>

@@ -12,7 +12,7 @@ App
     └── Content Area
         ├── WorkflowLayout (workflow mode)
         │   └── ChatArea (with hideHeader, hideInput, compact)
-        └── ChatAreaWithObserverId (chat mode)
+        └── ChatAreaWithSessionId (chat mode)
             └── ChatArea
                 ├── ChatHeader (session title/status)
                 ├── EventDisplay (events list - uses EventMode context)
@@ -35,8 +35,8 @@ App
 
 **ChatArea.tsx**
 - Main chat interface
-- Manages observer registration and event polling
-- Filters events by active tab's observerId
+- Manages session-based event polling
+- Filters events by active tab's sessionId
 - Handles query submission
 
 **EventDisplay.tsx**
@@ -47,7 +47,7 @@ App
 
 **ChatInput.tsx**
 - Query input and submission
-- Uses active tab's observerId and sessionId
+- Uses active tab's sessionId
 - No "New Chat" button (new chats = new tabs)
 
 ### State Management
@@ -55,15 +55,14 @@ App
 **useChatStore (Zustand)**
 - `chatTabs: Record<string, ChatTab>` - All tabs
 - `activeTabId: string` - Currently active tab
-- `tabEvents: Record<string, PollingEvent[]>` - Events keyed by observerId
-- `tabEventIndices: Record<string, number>` - Last event index per observerId
+- `tabEvents: Record<string, PollingEvent[]>` - Events keyed by sessionId
+- `tabEventIndices: Record<string, number>` - Last event index per sessionId
 
 **Tab Structure (ChatTab)**
 ```typescript
 {
   tabId: string
   name: string
-  observerId: string
   sessionId: string | null
   isStreaming: boolean
   isCompleted: boolean
@@ -75,20 +74,21 @@ App
 
 ### Event Flow
 
-1. **Tab Creation**: `createChatTab()` → generates sessionId → registers observer → gets observerId
-2. **Query Submission**: `ChatInput` → `ChatArea.submitQuery()` → `POST /api/query` with sessionId/observerId
-3. **Event Polling**: `ChatArea.pollEvents()` → polls all tabs with observerId → `GET /api/observer/{observer_id}/events`
-4. **Event Storage**: Events stored in `tabEvents[observerId]` via `addTabEvents()`
-5. **Event Display**: `ChatArea` filters `tabEvents` by active tab's `observerId` → passes to `EventDisplay`
+1. **Tab Creation**: `createChatTab()` → generates sessionId → creates tab with sessionId
+2. **Query Submission**: `ChatInput` → `ChatArea.submitQuery()` → `POST /api/query` with sessionId
+3. **Event Polling**: `ChatArea.pollEvents()` → polls all tabs by sessionId → `GET /api/sessions/{session_id}/events`
+4. **Event Storage**: Events stored in `tabEvents[sessionId]` via `addTabEvents()`
+5. **Event Display**: `ChatArea` filters `tabEvents` by active tab's `sessionId` → passes to `EventDisplay`
 
 ### Isolation Strategy
 
-- **Per-Tab Observer IDs**: Each tab has unique `observerId`
-- **Per-Tab Event Storage**: Events stored keyed by `observerId` in `tabEvents`
+- **Per-Tab Session IDs**: Each tab has unique `sessionId`
+- **Per-Tab Event Storage**: Events stored keyed by `sessionId` in `tabEvents`
 - **Per-Tab Event Mode**: Each tab has its own `eventMode` ('basic' | 'advanced') stored in `ChatTab`
-- **Prop-Based Filtering**: `ChatArea` filters events by `observerId` prop
+- **Prop-Based Filtering**: `ChatArea` filters events by `sessionId` prop
 - **EventModeProvider Scope**: Only wraps content area (ChatArea/WorkflowLayout), not ChatTabs
 - **No Global Fallbacks**: Components never fall back to global events
+- **Frontend-Managed Polling**: Each tab maintains its own `lastEventIndex` for polling state
 
 ### Component → API Mapping
 
@@ -96,14 +96,14 @@ App
 - No direct API calls (delegates to child components)
 
 **useChatStore (Zustand Store)**
-- `createChatTab()` → `POST /api/observer/register` (registers observer with sessionId)
+- `createChatTab()` → Generates sessionId and creates tab (no observer registration needed)
 - `fetchTabSessionStatus()` → `GET /api/sessions/active` + `GET /api/sessions/{session_id}/status`
 - `fetchAllTabSessionStatuses()` → `GET /api/sessions/active` + `GET /api/sessions/{session_id}/status` (for multiple tabs)
 - `closeTab()` → `POST /api/session/stop` (if tab has sessionId and is streaming)
 
 **ChatArea.tsx**
-- `pollEvents()` → `GET /api/observer/{observer_id}/events` (polls all tabs with observerId)
-- `submitQueryWithQuery()` → `POST /api/query` (with X-Session-ID and X-Observer-ID headers)
+- `pollEvents()` → `GET /api/sessions/{session_id}/events?since={index}` (polls all tabs by sessionId)
+- `submitQueryWithQuery()` → `POST /api/query` (with X-Session-ID header)
 - `checkActiveSessions()` → `GET /api/sessions/active` (checks for active sessions on mount)
 - `reconnectSession()` → `POST /api/sessions/{session_id}/reconnect` (reconnects to active session)
 - `getSessionStatus()` → `GET /api/sessions/{session_id}/status` (checks session status)
@@ -123,44 +123,42 @@ App
 
 ## Data Model
 
-**Hierarchy: Session → Observers → Events**
+**Hierarchy: Session → Events**
 
 - **One Session** = One Tab (1:1 relationship)
-- **One Session** can have **Multiple Observers** (1:N relationship)
-- **One Observer** has **Multiple Events** (1:N relationship)
+- **One Session** has **Multiple Events** (1:N relationship)
+- **Multiple Tabs** can view the same session (each maintains its own polling state)
 
 ### Relationships
 
 ```
-Session (session_id)
-  └── Observer 1 (observer_id_1) → Events [event1, event2, ...]
-  └── Observer 2 (observer_id_2) → Events [event3, event4, ...]
+Session (session_id: "abc123")
+  └── Events: [event1, event2, event3, ...] ← Stored by sessionId
+
+Tab 1 (sessionId: "abc123")
+  └── Frontend tracks: lastEventIndex = 2
+  └── Polls: GET /api/sessions/abc123/events?since=2
+
+Tab 2 (sessionId: "abc123")  ← Can view same session
+  └── Frontend tracks: lastEventIndex = 0
+  └── Polls: GET /api/sessions/abc123/events?since=0
 ```
 
 **Key Points:**
-- Each tab has its own unique `sessionId`
-- Each tab has its own unique `observerId` 
-- Events are stored in-memory per `observerId` (for real-time polling)
+- Each tab has its own unique `sessionId` (typically, but can share sessions)
+- Events are stored in-memory per `sessionId` (for real-time polling)
 - Events are also persisted to database with `session_id` (for history)
+- Frontend manages polling state (`lastEventIndex`) per tab, enabling multiple independent viewers
 
 ## API Structure
 
-### Observer API (Real-time Event Polling)
+### Session Events API (Real-time Event Polling)
 ```
-POST   /api/observer/register
-       Body: { session_id: string }
-       Returns: { observer_id: string }
-
-GET    /api/observer/{observer_id}/events?since={index}
-       Returns: { events: Event[], last_event_index: number }
-
-GET    /api/observer/{observer_id}/status
-       Returns: { observer_id, status, total_events, session_id, agent_mode }
-
-DELETE /api/observer/{observer_id}
+GET    /api/sessions/{session_id}/events?since={index}
+       Returns: { events: Event[], has_more: boolean, session_id: string }
 ```
 
-**Purpose:** Real-time event delivery via polling. Events stored in-memory keyed by `observer_id`.
+**Purpose:** Real-time event delivery via polling. Events stored in-memory keyed by `session_id`. Frontend manages polling state (`since` parameter) per tab.
 
 ### Session API (Session Management)
 ```
@@ -174,7 +172,7 @@ GET    /api/sessions/active
        Returns: { active_sessions: ActiveSessionInfo[] }
 
 POST   /api/sessions/{session_id}/reconnect
-       Returns: { observer_id: string }
+       Returns: { session_id: string, status: string, agent_mode: string, message: string }
 
 GET    /api/sessions/{session_id}/status
        Returns: { status: "running" | "completed" | "not_found" }
@@ -185,12 +183,12 @@ GET    /api/sessions/{session_id}/status
 ### Query API (Agent Execution)
 ```
 POST   /api/query
-       Headers: X-Session-ID, X-Observer-ID
+       Headers: X-Session-ID
        Body: AgentQueryRequest
-       Returns: AgentQueryResponse
+       Returns: AgentQueryResponse { status, session_id, query_id, message? }
 ```
 
-**Purpose:** Execute agent queries. Events emitted to observer's event store.
+**Purpose:** Execute agent queries. Events emitted to session's event store.
 
 ### Chat History API (Database Persistence)
 ```
@@ -207,40 +205,30 @@ GET    /api/chat-history/events
 
 ## Data Flow
 
-1. **Tab Creation**: Frontend generates `sessionId` (UUID)
-2. **Observer Registration**: `POST /api/observer/register` with `sessionId` → returns `observerId`
-3. **Query Submission**: `POST /api/query` with `X-Session-ID` and `X-Observer-ID` headers
-4. **Event Emission**: Backend emits events to observer's in-memory event store
-5. **Event Polling**: Frontend polls `GET /api/observer/{observer_id}/events` every 1 second
-6. **Event Persistence**: Backend saves events to database with `session_id` for history
+1. **Tab Creation**: Frontend generates `sessionId` (UUID) and creates tab
+2. **Query Submission**: `POST /api/query` with `X-Session-ID` header
+3. **Event Emission**: Backend emits events to session's in-memory event store
+4. **Event Polling**: Frontend polls `GET /api/sessions/{session_id}/events?since={index}` every 1 second
+5. **Event Persistence**: Backend saves events to database with `session_id` for history
+6. **Polling State**: Frontend tracks `lastEventIndex` per tab for independent polling positions
 
 ## Storage
 
-- **In-Memory**: Events stored in `EventStore` keyed by `observer_id` for real-time polling
+- **In-Memory**: Events stored in `EventStore` keyed by `session_id` for real-time polling
 - **Database**: Events persisted with `session_id` and `chat_session_id` for historical queries
+- **Frontend Polling State**: `lastEventIndex` tracked per tab in `tabEventIndices[sessionId]`
 
 ## Key Identifiers
 
-- `session_id`: Unique per tab, used for session management and database persistence
-- `observer_id`: Unique per tab, used for real-time event polling
-- Events have both `session_id` (for grouping) and are stored per `observer_id` (for isolation)
+- `session_id`: Unique per tab (typically), used for session management, event storage, and database persistence
+- Events are stored and retrieved by `session_id` (both in-memory and database)
+- Frontend manages polling state per tab, enabling multiple independent viewers of the same session
 
 ## API Response Examples
 
-### Observer Registration
+### Get Session Events
 ```json
-POST /api/observer/register
-Request: { "session_id": "550e8400-e29b-41d4-a716-446655440000" }
-Response: {
-  "observer_id": "observer_73ef03dc0e6110cb",
-  "status": "created",
-  "message": "Observer registered successfully"
-}
-```
-
-### Get Events
-```json
-GET /api/observer/{observer_id}/events?since=0
+GET /api/sessions/{session_id}/events?since=0
 Response: {
   "events": [
     {
@@ -258,23 +246,8 @@ Response: {
       "session_id": "550e8400-e29b-41d4-a716-446655440000"
     }
   ],
-  "last_event_index": 1,
   "has_more": false,
-  "observer_id": "observer_73ef03dc0e6110cb"
-}
-```
-
-### Observer Status
-```json
-GET /api/observer/{observer_id}/status
-Response: {
-  "observer_id": "observer_73ef03dc0e6110cb",
-  "status": "active",
-  "created_at": "2024-01-15T10:29:00Z",
-  "last_activity": "2024-01-15T10:30:05Z",
-  "total_events": 2,
-  "session_id": "550e8400-e29b-41d4-a716-446655440000",
-  "agent_mode": "chat"
+  "session_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -285,7 +258,6 @@ Response: {
   "active_sessions": [
     {
       "session_id": "550e8400-e29b-41d4-a716-446655440000",
-      "observer_id": "observer_73ef03dc0e6110cb",
       "agent_mode": "chat",
       "status": "running",
       "query": "Hello",
@@ -301,8 +273,7 @@ Response: {
 ```json
 POST /api/query
 Headers: {
-  "X-Session-ID": "550e8400-e29b-41d4-a716-446655440000",
-  "X-Observer-ID": "observer_73ef03dc0e6110cb"
+  "X-Session-ID": "550e8400-e29b-41d4-a716-446655440000"
 }
 Request: {
   "query": "What is the weather?",
@@ -311,7 +282,8 @@ Request: {
 }
 Response: {
   "status": "started",
-  "observer_id": "observer_73ef03dc0e6110cb",
+  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "query_id": "query_123",
   "message": "Query started"
 }
 ```
@@ -327,10 +299,7 @@ App.tsx (mounts)
   └── useEffect: createDefaultTabIfNeeded()
       └── useChatStore.createChatTab("Chat 1", { mode: 'chat' })
           ├── Generate sessionId: "550e8400-e29b-41d4-a716-446655440000"
-          ├── API: POST /api/observer/register
-          │   Request: { "session_id": "550e8400-e29b-41d4-a716-446655440000" }
-          │   Response: { "observer_id": "observer_73ef03dc0e6110cb", ... }
-          └── Store: Create tab with { tabId, observerId, sessionId, metadata: { mode: 'chat' } }
+          └── Store: Create tab with { tabId, sessionId, metadata: { mode: 'chat' } }
 ```
 
 **Workflow Mode:**
@@ -347,10 +316,10 @@ App.tsx (mounts)
 App
 ├── ModePresetBar (renders)
 ├── ChatTabs
-│   └── Tab: "Chat 1" (mode: 'chat', observerId: observer_73ef03dc0e6110cb)
+│   └── Tab: "Chat 1" (mode: 'chat', sessionId: 550e8400-e29b-41d4-a716-446655440000)
 └── EventModeProvider (per-tab scope)
-    └── ChatAreaWithObserverId
-        └── ChatArea (observerId: observer_73ef03dc0e6110cb)
+    └── ChatAreaWithSessionId
+        └── ChatArea (sessionId: 550e8400-e29b-41d4-a716-446655440000)
             ├── ChatHeader (renders)
             ├── EventDisplay (events: []) ← Empty, no events yet (uses EventMode context)
             └── ChatInput (renders, ready for input)
@@ -375,7 +344,7 @@ App
 App
 ├── ModePresetBar (renders)
 ├── ChatTabs
-│   └── Tab: "Planning" (mode: 'workflow', observerId: observer_84fg04ed1f7221dc)
+│   └── Tab: "Planning" (mode: 'workflow', sessionId: 660f9511-f39c-52e5-b827-557766551111)
 └── EventModeProvider (per-tab scope)
     └── WorkflowLayout
         ├── ChatHeader (renders workflow preset name)
@@ -393,17 +362,16 @@ ChatInput.onSubmit()
       ├── Ensure tab has sessionId (already has: "550e8400-...")
       ├── API: POST /api/query
       │   Headers: {
-      │     "X-Session-ID": "550e8400-e29b-41d4-a716-446655440000",
-      │     "X-Observer-ID": "observer_73ef03dc0e6110cb"
+      │     "X-Session-ID": "550e8400-e29b-41d4-a716-446655440000"
       │   }
       │   Request: {
       │     "query": "What is the weather?",
       │     "agent_mode": "chat",
       │     ...
       │   }
-      │   Response: { "status": "started", "observer_id": "observer_73ef03dc0e6110cb" }
+      │   Response: { "status": "started", "session_id": "550e8400-e29b-41d4-a716-446655440000" }
       ├── Store: setTabStreaming(tabId, true)
-      └── Store: addTabEvents(observerId, [userMessageEvent])
+      └── Store: addTabEvents(sessionId, [userMessageEvent])
 ```
 
 **Workflow Mode:**
@@ -422,8 +390,7 @@ WorkflowCanvas.onStartPhase() or ChatArea (if chat panel open)
       │       }
       ├── API: POST /api/query
       │   Headers: {
-      │     "X-Session-ID": "660f9511-f39c-52e5-b827-557766551111",
-      │     "X-Observer-ID": "observer_84fg04ed1f7221dc"
+      │     "X-Session-ID": "660f9511-f39c-52e5-b827-557766551111"
       │   }
       │   Request: {
       │     "query": "Create a todo list for building a website",
@@ -431,9 +398,9 @@ WorkflowCanvas.onStartPhase() or ChatArea (if chat panel open)
       │     "preset_query_id": "preset_123",
       │     ...
       │   }
-      │   Response: { "status": "workflow_started", "observer_id": "observer_84fg04ed1f7221dc" }
+      │   Response: { "status": "workflow_started", "session_id": "660f9511-f39c-52e5-b827-557766551111" }
       ├── Store: setTabStreaming(tabId, true)
-      └── Store: addTabEvents(observerId, [userMessageEvent])
+      └── Store: addTabEvents(sessionId, [userMessageEvent])
 ```
 
 **Component Tree - Chat Mode:**
@@ -459,18 +426,19 @@ App
 **Both Modes (Same Flow):**
 ```
 ChatArea.pollEvents() (setInterval, every 1000ms)
-  ├── Get all tabs with observerId (both chat and workflow tabs)
+  ├── Get all tabs with sessionId (both chat and workflow tabs)
   ├── For each tab:
-  │   └── API: GET /api/observer/{observer_id}/events?since={lastIndex}
+  │   └── API: GET /api/sessions/{session_id}/events?since={lastIndex}
   │       Response: {
   │         "events": [
   │           { "type": "agent_message", "data": { "content": "It's sunny!" } },
   │           { "type": "agent_end" }
   │         ],
-  │         "last_event_index": 2
+  │         "has_more": false,
+  │         "session_id": "550e8400-e29b-41d4-a716-446655440000"
   │       }
-  │   └── Store: addTabEvents(observerId, newEvents)
-  └── Store: setTabLastEventIndex(observerId, 2)
+  │   └── Store: addTabEvents(sessionId, newEvents)
+  └── Store: setTabLastEventIndex(sessionId, newLastIndex)
 ```
 
 **Component Tree - Chat Mode:**
@@ -514,17 +482,17 @@ App.tsx (re-renders based on selectedModeCategory)
   │   └── Render WorkflowLayout
   │       └── ChatArea (hideHeader, hideInput, compact)
   └── If tab.metadata.mode === 'chat':
-      └── Render ChatAreaWithObserverId
+      └── Render ChatAreaWithSessionId
           └── ChatArea (full mode with header and input)
 
-ChatAreaWithObserverId / WorkflowLayout (re-renders)
+ChatAreaWithSessionId / WorkflowLayout (re-renders)
   ├── activeTabId changes → "workflow_1766227475472"
-  ├── Get tab: { observerId: "observer_6df3888423c03744", metadata: { mode: 'workflow' }, ... }
-  └── ChatArea (observerId: "observer_6df3888423c03744")
+  ├── Get tab: { sessionId: "660f9511-f39c-52e5-b827-557766551111", metadata: { mode: 'workflow' }, ... }
+  └── ChatArea (sessionId: "660f9511-f39c-52e5-b827-557766551111")
       └── tabEvents = useMemo(() => 
-            tabEventsStore["observer_6df3888423c03744"] || []
+            tabEventsStore["660f9511-f39c-52e5-b827-557766551111"] || []
           )
-      └── EventDisplay (events: [12 events for observer_6df3888423c03744])
+      └── EventDisplay (events: [12 events for session 660f9511-f39c-52e5-b827-557766551111])
 ```
 
 **Component Tree:**
@@ -535,7 +503,7 @@ App
     └── Tab 2: "Workflow 1" (mode: 'workflow', active) ← Switched to this
 └── WorkflowLayout (renders because tab.mode === 'workflow')
     ├── WorkflowCanvas
-    └── ChatArea (observerId: observer_6df3888423c03744)
+    └── ChatArea (sessionId: 660f9511-f39c-52e5-b827-557766551111)
         └── EventDisplay (events: [12 events]) ← Shows Workflow tab's events
 ```
 
@@ -549,14 +517,12 @@ ChatTabs.useEffect (setInterval, every 5000ms)
       │   Response: {
       │     "active_sessions": [
       │       { 
-      │         "session_id": "...", 
-      │         "observer_id": "observer_73ef03dc0e6110cb", 
+      │         "session_id": "550e8400-e29b-41d4-a716-446655440000", 
       │         "agent_mode": "chat",
       │         "status": "running" 
       │       },
       │       { 
-      │         "session_id": "...", 
-      │         "observer_id": "observer_84fg04ed1f7221dc", 
+      │         "session_id": "660f9511-f39c-52e5-b827-557766551111", 
       │         "agent_mode": "workflow",
       │         "status": "running" 
       │       }
@@ -592,11 +558,8 @@ App
 │   └── createDefaultTabIfNeeded()                               │
 │       └── useChatStore.createChatTab("Chat 1", { mode: 'chat' })│
 │           ├── Generate: sessionId = UUID()                    │
-│           ├── API: POST /api/observer/register                │
-│           │   Request: { "session_id": "..." }                │
-│           │   → Response: { observer_id: "observer_xxx" }     │
 │           └── Store: chatTabs[tabId] = {                      │
-│                 observerId, sessionId, metadata: { mode: 'chat' }│
+│                 sessionId, metadata: { mode: 'chat' }         │
 │               }                                                │
 └─────────────────────────────────────────────────────────────────┘
                             ↓
@@ -604,9 +567,9 @@ App
 │ 2. COMPONENT RENDER (Chat Mode)                                  │
 ├─────────────────────────────────────────────────────────────────┤
 │ selectedModeCategory === 'chat'                                 │
-│   └── ChatAreaWithObserverId                                    │
+│   └── ChatAreaWithSessionId                                    │
 │       ├── Get activeTab from store                              │
-│       └── ChatArea (observerId: "observer_xxx")                 │
+│       └── ChatArea (sessionId: "550e8400-...")                 │
 │           ├── ChatHeader                                        │
 │           ├── EventDisplay (events: []) ← Empty              │
 │           └── ChatInput                                         │
@@ -618,10 +581,10 @@ App
 │ ChatInput.onSubmit()                                            │
 │   └── ChatArea.submitQueryWithQuery()                          │
 │       ├── API: POST /api/query                                 │
-│       │   Headers: X-Session-ID, X-Observer-ID                │
+│       │   Headers: X-Session-ID                               │
 │       │   Request: { "query": "...", "agent_mode": "chat" }    │
-│       │   → Response: { status: "started" }                   │
-│       ├── Store: addTabEvents(observerId, [userEvent])        │
+│       │   → Response: { status: "started", session_id: "..." }│
+│       ├── Store: addTabEvents(sessionId, [userEvent])        │
 │       └── Store: setTabStreaming(tabId, true)                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -656,22 +619,19 @@ App
 │   └── Tab creation (if needed) + ChatArea.submitQueryWithQuery()│
 │       ├── useChatStore.createChatTab("Planning", { mode: 'workflow', phaseId: 'planning' })│
 │       │   ├── Generate: sessionId = UUID()                    │
-│       │   ├── API: POST /api/observer/register                │
-│       │   │   Request: { "session_id": "..." }                │
-│       │   │   → Response: { observer_id: "observer_yyy" }     │
 │       │   └── Store: chatTabs[tabId] = {                      │
-│       │         observerId, sessionId, metadata: { mode: 'workflow', phaseId: 'planning' }│
+│       │         sessionId, metadata: { mode: 'workflow', phaseId: 'planning' }│
 │       │       }                                                │
 │       ├── WorkflowModeHandler.handleChatSubmit() (if planning) │
 │       │   └── API: POST /api/workflow/create                  │
 │       │       Request: { "preset_query_id": "...", "objective": "..." }│
 │       │       → Response: { "workflow": { "id": "workflow_123" } }│
 │       ├── API: POST /api/query                                 │
-│       │   Headers: X-Session-ID, X-Observer-ID                │
+│       │   Headers: X-Session-ID                               │
 │       │   Request: { "query": "...", "agent_mode": "workflow", │
 │       │             "preset_query_id": "...", "step_id": "..." }│
-│       │   → Response: { status: "workflow_started" }          │
-│       ├── Store: addTabEvents(observerId, [userEvent])        │
+│       │   → Response: { status: "workflow_started", session_id: "..." }│
+│       ├── Store: addTabEvents(sessionId, [userEvent])        │
 │       └── Store: setTabStreaming(tabId, true)                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -683,14 +643,15 @@ App
 │ 4. EVENT POLLING (Every 1s) - Both Modes                       │
 ├─────────────────────────────────────────────────────────────────┤
 │ ChatArea.pollEvents()                                           │
-│   ├── Get all tabs with observerId (chat + workflow)          │
+│   ├── Get all tabs with sessionId (chat + workflow)          │
 │   ├── For each tab:                                            │
-│   │   └── API: GET /api/observer/{observer_id}/events?since=0 │
+│   │   └── API: GET /api/sessions/{session_id}/events?since={index}│
 │   │       → Response: {                                        │
 │   │             events: [agentEvent1, agentEvent2],           │
-│   │             last_event_index: 2                            │
+│   │             has_more: false,                               │
+│   │             session_id: "..."                              │
 │   │           }                                                │
-│   └── Store: addTabEvents(observerId, newEvents)              │
+│   └── Store: addTabEvents(sessionId, newEvents)              │
 │       └── Component re-renders (ChatArea or WorkflowLayout)   │
 │           └── EventDisplay (events: [userEvent, agentEvent1,   │
 │                                    agentEvent2])               │
@@ -707,10 +668,10 @@ App
 │                   ├── If mode === 'workflow':                   │
 │                   │   └── Render WorkflowLayout               │
 │                   └── If mode === 'chat':                      │
-│                       └── Render ChatAreaWithObserverId       │
-│                           └── ChatArea (observerId: newObserverId)│
+│                       └── Render ChatAreaWithSessionId       │
+│                           └── ChatArea (sessionId: newSessionId)│
 │                               └── EventDisplay (events: tabEvents[│
-│                                                   newObserverId])│
+│                                                   newSessionId])│
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -720,16 +681,62 @@ App
 API Response → Store Update → Component Re-render
 
 Example: New Event Received
-1. API: GET /api/observer/{id}/events
-   → Response: { events: [newEvent] }
+1. API: GET /api/sessions/{session_id}/events?since={index}
+   → Response: { events: [newEvent], session_id: "..." }
 
-2. Store: addTabEvents(observerId, [newEvent])
-   → tabEvents[observerId] = [...existingEvents, newEvent]
+2. Store: addTabEvents(sessionId, [newEvent])
+   → tabEvents[sessionId] = [...existingEvents, newEvent]
 
 3. ChatArea: tabEvents useMemo recalculates
-   → displayEvents = tabEvents[observerId]
+   → displayEvents = tabEvents[sessionId]
 
 4. EventDisplay: Receives new events prop
    → Re-renders with new events
 ```
+
+## Architecture: Session-Based Event Storage
+
+### Implementation Status
+✅ **Completed**: Refactored from observer-based to session-based event storage.
+
+### Architecture
+
+**Backend:**
+- **EventStore**: Stores events by `sessionID` (not `observerID`)
+- **BaseEventBridge**: Stores events using `sessionID`
+- **Polling API**: `/api/sessions/{session_id}/events?since={index}`
+- **Query API**: Only requires `X-Session-ID` header (no observer ID needed)
+- **No event counters**: Removed - timestamp + randomSuffix provides uniqueness
+
+**Frontend:**
+- **API Client**: `getSessionEvents(sessionId, sinceIndex)` 
+- **useChatStore**: Tracks `tabEventIndices` by `sessionId`
+- **ChatArea**: Polls by `sessionId` instead of `observerId`
+- **No observer registration**: Removed - sessions are used directly
+
+### Benefits
+- ✅ **Multiple viewers per session**: Each tab maintains its own polling position on frontend
+- ✅ **Simpler backend**: No per-observer state tracking, stateless polling
+- ✅ **Conceptual clarity**: Events belong to sessions, not observers
+- ✅ **True independence**: Multiple tabs can watch the same session independently
+
+### Current Architecture
+
+```
+Session (session_id: "abc123")
+  ├── Events: [event1, event2, event3, ...] ← Stored by sessionID
+  │
+  ├── Tab 1 (sessionId: "abc123")
+  │   └── Frontend tracks: lastEventIndex = 2
+  │   └── Polls: GET /api/sessions/abc123/events?since=2
+  │
+  └── Tab 2 (sessionId: "abc123")  ← Can view same session
+      └── Frontend tracks: lastEventIndex = 0
+      └── Polls: GET /api/sessions/abc123/events?since=0
+```
+
+**Storage:**
+- **In-Memory**: Events stored by `sessionID` (not `observerID`)
+- **Database**: Stores by `session_id` (no change needed)
+- **Polling State**: Managed by frontend per tab in `tabEventIndices[sessionId]`
 

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useCallback, useRef, useState, forwardRef, useMemo } from "react";
+import { useEffect, useCallback, useRef, useState, forwardRef } from "react";
 import { ThemeProvider } from "./contexts/ThemeContext.tsx";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import Workspace from "./components/Workspace.tsx";
@@ -39,24 +39,14 @@ const queryClient = new QueryClient();
 const ChatAreaWithObserverId = forwardRef<ChatAreaRef, { onNewChat: () => void }>(({ onNewChat }, ref) => {
   // Use Zustand hooks to reactively subscribe to tab changes
   const activeTabId = useChatStore(state => state.activeTabId)
-  const chatTabs = useChatStore(state => state.chatTabs)
   
-  // Get active tab reactively - this will update when activeTabId or chatTabs change
-  const activeTab = useMemo(() => {
-    if (!activeTabId) return null
-    return chatTabs[activeTabId] || null
-  }, [activeTabId, chatTabs])
-  
-  const observerId = activeTab?.observerId
-  
-  // Always render ChatArea - it will show header even without observerId
+  // Always render ChatArea - it will show header even without sessionId
   // This allows users to select mode/preset even when no tab exists
   return (
     <ChatArea
       ref={ref}
       onNewChat={onNewChat}
       tabId={activeTabId || undefined}
-      observerId={observerId}
     />
   )
 })
@@ -198,9 +188,6 @@ function App() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [isRestoring, setIsRestoring] = useState(false)
   const [restoreError, setRestoreError] = useState<string | null>(null)
-  
-  // State for workflow phase start handler (set by WorkflowLayout)
-  const [workflowStartPhaseHandler, setWorkflowStartPhaseHandler] = useState<((phaseId: string, executionOptions?: import('./services/api-types').ExecutionOptions) => Promise<void>) | null>(null)
   
   // Ref to prevent duplicate default tab creation (React StrictMode runs effects twice)
   const hasCreatedDefaultTabRef = useRef(false)
@@ -434,7 +421,7 @@ function App() {
     
     // Filter to only chat mode tabs
     const chatModeTabs = existingTabs.filter(tab => 
-      tab.metadata?.mode === 'chat' || !tab.metadata?.mode // Legacy chat tabs without metadata
+      tab.metadata?.mode === 'chat'
     )
     
     // If chat mode tabs already exist, skip
@@ -450,7 +437,7 @@ function App() {
       // Double-check tabs don't exist right before creating (race condition protection)
       const currentTabs = Object.values(useChatStore.getState().chatTabs)
       const currentChatTabs = currentTabs.filter(tab => 
-        tab.metadata?.mode === 'chat' || !tab.metadata?.mode
+        tab.metadata?.mode === 'chat'
       )
       if (currentChatTabs.length === 0) {
         try {
@@ -662,9 +649,13 @@ function App() {
             <ModePresetBar />
             
             {/* Chat Tabs - global navigation for both chat and workflow modes */}
-            <div className="flex-shrink-0">
-              <ChatTabs onStartPhase={workflowStartPhaseHandler || undefined} />
-            </div>
+            <ChatTabs 
+              autoScroll={useChatStore(state => state.autoScroll)}
+              onToggleAutoScroll={() => {
+                const chatStore = useChatStore.getState()
+                chatStore.setAutoScroll(!chatStore.autoScroll)
+              }}
+            />
             
             {/* EventModeProvider wraps each tab's content (ChatArea/WorkflowLayout) - per-tab scope */}
             <EventModeProvider>
@@ -674,7 +665,6 @@ function App() {
                   <WorkflowLayout
                     className="h-full"
                     onNewChat={startNewChat}
-                    onRegisterStartPhase={(handler) => setWorkflowStartPhaseHandler(handler)}
                   />
                 ) : (
                   // Chat mode - ChatArea renders header, then content

@@ -1,20 +1,19 @@
 import React, { useEffect, useMemo } from 'react'
-import { X, Plus } from 'lucide-react'
+import { X, Plus, ArrowDown } from 'lucide-react'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
-import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { EventModeToggle } from './events'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
-import type { ExecutionOptions } from '../services/api-types'
 
 interface ChatTabsProps {
-  // For workflow mode: callback when starting a new phase
-  onStartPhase?: (phaseId: string, executionOptions?: ExecutionOptions) => void
   // For chat mode: callback when starting a new chat
   onNewChat?: () => void
+  // Auto-scroll state and toggle
+  autoScroll?: boolean
+  onToggleAutoScroll?: () => void
 }
 
-export const ChatTabs: React.FC<ChatTabsProps> = ({ onStartPhase }) => {
+export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScroll }) => {
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const {
     chatTabs,
@@ -22,39 +21,52 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onStartPhase }) => {
     switchTab,
     closeTab,
     tabSessionStatus,
-    fetchAllTabSessionStatuses
+    fetchAllTabSessionStatuses,
+    tabEvents,
+    autoScroll: storeAutoScroll,
+    setAutoScroll
   } = useChatStore()
   
-  // For workflow mode: get phases for "New Phase" button
-  const { phases } = useWorkflowStore()
+  // Use prop if provided, otherwise use store value
+  const effectiveAutoScroll = autoScroll !== undefined ? autoScroll : storeAutoScroll
+  const handleToggleAutoScroll = onToggleAutoScroll || (() => {
+    setAutoScroll(!storeAutoScroll)
+  })
   
   // Filter tabs by current mode
+  // In workflow mode, only show chat tabs in global ChatTabs (workflow tabs show in chat area)
   const modeTabs = useMemo(() => {
+    if (selectedModeCategory === 'workflow') {
+      // In workflow mode, only show chat tabs (workflow tabs are shown in the chat area panel)
+      return Object.values(chatTabs).filter(tab => 
+        tab.metadata?.mode === 'chat'
+      ).sort((a, b) => a.createdAt - b.createdAt)
+    }
+    // In chat mode, show all chat tabs
     return Object.values(chatTabs).filter(tab => 
-      tab.metadata?.mode === selectedModeCategory || 
-      (selectedModeCategory === 'chat' && !tab.metadata?.mode) // Legacy chat tabs without metadata
+      tab.metadata?.mode === selectedModeCategory
     ).sort((a, b) => a.createdAt - b.createdAt)
   }, [chatTabs, selectedModeCategory])
   
-  // Get stable list of tab IDs with observers for dependency
-  const tabIdsWithObservers = useMemo(() => {
+  // Get stable list of tab IDs with sessions for dependency
+  const tabIdsWithSessions = useMemo(() => {
     return modeTabs
-      .filter(tab => tab.observerId)
-      .map(tab => `${tab.tabId}:${tab.observerId}`)
+      .filter(tab => tab.sessionId)
+      .map(tab => `${tab.tabId}:${tab.sessionId}`)
       .join(',')
   }, [modeTabs])
   
-  // Fetch session status for tabs with observer IDs
+  // Fetch session status for tabs with session IDs
   useEffect(() => {
     // Use modeTabs directly (it's memoized, so safe to use)
-    const tabsWithObservers = modeTabs.filter(tab => tab.observerId)
+    const tabsWithSessions = modeTabs.filter(tab => tab.sessionId)
     
-    if (tabsWithObservers.length === 0) {
-      console.log('[ChatTabs] No tabs with observer IDs to fetch status for')
+    if (tabsWithSessions.length === 0) {
+      console.log('[ChatTabs] No tabs with session IDs to fetch status for')
       return
     }
     
-    const tabIds = tabsWithObservers.map(tab => tab.tabId)
+    const tabIds = tabsWithSessions.map(tab => tab.tabId)
     
     // Fetch status for all tabs
     const fetchStatuses = async () => {
@@ -68,9 +80,9 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onStartPhase }) => {
     // Refresh status every 5 seconds
     const interval = setInterval(fetchStatuses, 5000)
     return () => clearInterval(interval)
-    // Only depend on tabIdsWithObservers (the string) - it changes only when tabs/observers actually change
+    // Only depend on tabIdsWithSessions (the string) - it changes only when tabs/sessions actually change
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabIdsWithObservers])
+  }, [tabIdsWithSessions])
 
   const handleTabClick = (tabId: string) => {
     switchTab(tabId)
@@ -83,18 +95,18 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onStartPhase }) => {
 
   const handleNewTab = async () => {
     console.log('[ChatTabs] handleNewTab called, mode:', selectedModeCategory)
-    if (selectedModeCategory === 'workflow' && onStartPhase) {
-      // Find first available phase (or use default)
-      const defaultPhase = phases.length > 0 ? phases[0] : null
-      if (defaultPhase) {
-        onStartPhase(defaultPhase.id)
-      }
-    } else if (selectedModeCategory === 'chat') {
+    // In workflow mode, phases are started from WorkflowToolbar, not from ChatTabs
+    if (selectedModeCategory === 'workflow') {
+      console.log('[ChatTabs] Workflow mode: phases should be started from WorkflowToolbar, not ChatTabs')
+      return
+    }
+    
+    if (selectedModeCategory === 'chat') {
       // Create a new chat tab
       console.log('[ChatTabs] Creating new chat tab...')
       const chatStore = useChatStore.getState()
       const allChatTabs = Object.values(chatTabs).filter(tab => 
-        tab.metadata?.mode === 'chat' || !tab.metadata?.mode
+        tab.metadata?.mode === 'chat'
       )
       const chatNumber = allChatTabs.length + 1
       const tabName = `Chat ${chatNumber}`
@@ -165,46 +177,60 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onStartPhase }) => {
     const sessionStatus = tabSessionStatus[tab.tabId]
     const parts: string[] = [tab.name]
     
-    // Always show observer ID if available
-    if (tab.observerId) {
-      parts.push(`Observer: ${tab.observerId.substring(0, 12)}...`)
-    }
-    
-    if (!sessionStatus) {
-      // Status not loaded yet
-      if (tab.observerId) {
-        parts.push('Status: Loading...')
-      } else {
-        parts.push('Status: No observer')
-      }
-      return parts.join(' • ')
-    }
-    
-    // Show status if available
-    if (sessionStatus.status) {
-      const statusLabel = sessionStatus.status === 'active' ? 'Active' :
-                         sessionStatus.status === 'running' ? 'Running' :
-                         sessionStatus.status === 'completed' ? 'Completed' :
-                         sessionStatus.status === 'paused' ? 'Paused' :
-                         sessionStatus.status === 'stopped' ? 'Stopped' :
-                         sessionStatus.status === 'error' ? 'Error' :
-                         sessionStatus.status
-      parts.push(`Status: ${statusLabel}`)
+    // Always show session ID if available (full ID)
+    if (tab.sessionId) {
+      parts.push(`Session ID: ${tab.sessionId}`)
     } else {
-      parts.push('Status: No session')
+      parts.push('Session ID: None')
     }
     
-    // Show agent mode if available
-    if (sessionStatus.agentMode) {
-      const modeLabel = sessionStatus.agentMode === 'workflow' ? 'Workflow' : 
-                       sessionStatus.agentMode === 'simple' ? 'Chat (Simple)' :
-                       sessionStatus.agentMode === 'orchestrator' ? 'Chat (Orchestrator)' :
-                       'Chat'
+    // Determine status from multiple sources (priority: sessionStatus > tab state)
+    let statusLabel: string | null = null
+    
+    if (sessionStatus?.status) {
+      // Use status from backend if available
+      statusLabel = sessionStatus.status === 'active' ? 'Active' :
+                    sessionStatus.status === 'running' ? 'Running' :
+                    sessionStatus.status === 'completed' ? 'Completed' :
+                    sessionStatus.status === 'paused' ? 'Paused' :
+                    sessionStatus.status === 'stopped' ? 'Stopped' :
+                    sessionStatus.status === 'error' ? 'Error' :
+                    sessionStatus.status
+    } else if (tab.isCompleted) {
+      // Fallback to tab state
+      statusLabel = 'Completed'
+    } else if (tab.isStreaming) {
+      statusLabel = 'Running'
+    } else if (tab.sessionId) {
+      // Has session but not streaming and not completed - might be paused or waiting
+      statusLabel = 'Inactive'
+    } else {
+      statusLabel = 'No session'
+    }
+    
+    // Always show status
+    parts.push(`Status: ${statusLabel}`)
+    
+    // Show agent mode - check tab config for code execution mode first, then sessionStatus
+    let modeLabel: string | null = null
+    
+    // Check if code execution mode is enabled in tab config (frontend-only setting)
+    if (tab.config?.useCodeExecutionMode) {
+      modeLabel = 'Chat (Code Execution)'
+    } else if (sessionStatus?.agentMode) {
+      // Use backend agent mode if available
+      modeLabel = sessionStatus.agentMode === 'workflow' ? 'Workflow' : 
+                   sessionStatus.agentMode === 'simple' ? 'Chat (Simple)' :
+                   sessionStatus.agentMode === 'orchestrator' ? 'Chat (Orchestrator)' :
+                   'Chat'
+    }
+    
+    if (modeLabel) {
       parts.push(`Mode: ${modeLabel}`)
     }
     
     // Show last activity if available
-    if (sessionStatus.lastActivity) {
+    if (sessionStatus?.lastActivity) {
       try {
         const lastActivity = new Date(sessionStatus.lastActivity)
         const now = new Date()
@@ -227,15 +253,43 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onStartPhase }) => {
     return parts.join(' • ')
   }
 
-  // Always show tabs bar (even when empty) so users can create new tabs
+  // Show tabs bar only in chat mode (workflow tabs are shown in WorkflowChatTabs inside ChatArea panel)
+  // In workflow mode, ChatTabs should not be visible at all
+  const shouldShowTabsBar = selectedModeCategory === 'chat'
+  const hasTabs = modeTabs.length > 0
+  
+  // In workflow mode, don't show ChatTabs at all
+  if (!shouldShowTabsBar) {
+    return null
+  }
+  
+  // Only show border when there are actual tabs (not just the "New Chat" button)
+  const borderClass = hasTabs ? 'border-b border-gray-200 dark:border-gray-700' : ''
+  
   return (
     <TooltipProvider>
-      <div className="flex items-center gap-1 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-2 py-1 overflow-x-auto">
+      <div className={`flex-shrink-0 flex items-center gap-1 bg-gray-50 dark:bg-gray-800 px-2 py-1 overflow-x-auto${borderClass ? ` ${borderClass}` : ''}`}>
         {/* Existing Tabs */}
         {modeTabs.map((tab) => {
           const isActive = tab.tabId === activeTabId
           const indicatorColor = getTabIndicator(tab)
           const tooltipText = getTabTooltip(tab)
+          
+          // Calculate new event count for inactive tabs
+          // NOTE: Events are already filtered by backend based on event_mode, so no need to filter again
+          const newEventCount = (() => {
+            if (isActive || !tab.sessionId) return 0
+            
+            // Get all events for this tab's session (already filtered by backend)
+            const allEvents = tabEvents[tab.sessionId] || []
+            
+            // Get the last viewed count (events are already filtered, so this is the filtered count)
+            const lastViewedCount = tab.lastViewedEventCount || 0
+            
+            // New events = current count - last viewed count
+            const newCount = Math.max(0, allEvents.length - lastViewedCount)
+            return newCount
+          })()
           
           return (
             <Tooltip key={tab.tabId}>
@@ -256,6 +310,13 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onStartPhase }) => {
                   
                   {/* Tab Name */}
                   <span className="whitespace-nowrap">{tab.name}</span>
+                  
+                  {/* New Events Badge - show for inactive tabs with new events */}
+                  {!isActive && newEventCount > 0 && (
+                    <span className="flex items-center justify-center min-w-[18px] h-4 px-1.5 text-xs font-semibold text-white bg-red-500 dark:bg-red-600 rounded-full">
+                      {newEventCount > 99 ? '99+' : newEventCount}
+                    </span>
+                  )}
                   
                   {/* Event Mode Toggle - show inside active tab header */}
                   {isActive && (
@@ -286,18 +347,40 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ onStartPhase }) => {
           )
         })}
       
-      {/* New Tab Button */}
-      <button
-        onClick={handleNewTab}
-        data-testid={selectedModeCategory === 'workflow' ? 'new-phase-button' : 'new-chat-button'}
-        className="flex items-center gap-1 px-2 py-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
-        title={selectedModeCategory === 'workflow' ? 'Start new phase' : 'New chat'}
-      >
-        <Plus className="w-4 h-4" />
-        <span className="text-xs">
-          {selectedModeCategory === 'workflow' ? 'New Phase' : 'New Chat'}
-        </span>
-      </button>
+      {/* New Tab Button - Only show in chat mode (workflow phases are started from WorkflowToolbar) */}
+      {selectedModeCategory === 'chat' && (
+        <button
+          onClick={handleNewTab}
+          data-testid="new-chat-button"
+          className="flex items-center gap-1 px-2 py-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+          title="New chat"
+        >
+          <Plus className="w-4 h-4" />
+          <span className="text-xs">New Chat</span>
+        </button>
+      )}
+      
+      {/* Auto-scroll Toggle - only show when there are tabs */}
+      {handleToggleAutoScroll && modeTabs.length > 0 && (
+        <div className="ml-auto flex items-center border-l border-gray-200 dark:border-gray-700 pl-2">
+          <button
+            onClick={handleToggleAutoScroll}
+            className={`
+              flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors
+              ${effectiveAutoScroll
+                ? 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                : 'text-gray-500 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }
+            `}
+            title={effectiveAutoScroll ? 'Auto-scroll enabled (click to disable)' : 'Auto-scroll disabled (click to enable)'}
+          >
+            <ArrowDown className={`w-3.5 h-3.5 ${effectiveAutoScroll ? 'opacity-70' : 'opacity-40'}`} />
+            <span className="hidden sm:inline">
+              {effectiveAutoScroll ? 'Auto-scroll' : 'Manual'}
+            </span>
+          </button>
+        </div>
+      )}
     </div>
     </TooltipProvider>
   )

@@ -8,6 +8,42 @@ import (
 	"mcpagent/events"
 )
 
+// ADVANCED_MODE_EVENTS contains event types that are hidden in basic mode
+// These events are only shown in advanced mode
+var ADVANCED_MODE_EVENTS = map[string]bool{
+	"llm_generation_start":      true,
+	"llm_generation_with_retry": true,
+	"conversation_start":        true,
+	"conversation_turn":         true,
+	"cache_event":               true,
+	"comprehensive_cache_event": true,
+	"step_execution_start":      true,
+	"step_execution_end":        true,
+	"step_execution_failed":     true,
+	"step_progress_updated":     true,
+	"workspace_file_operation":  true,
+}
+
+// MaxPollingLimit is the maximum number of events returned in a single polling request
+// This prevents fetching too many events at once, especially when switching event modes
+const MaxPollingLimit = 1000 // Match frontend MAX_EVENTS limit
+
+// InitialEventsLimit is the number of events returned when starting from the beginning (sinceIndex=0)
+// This is used when switching event modes - show latest events first, then allow loading older events
+const InitialEventsLimit = 50
+
+// shouldShowEventByMode checks if an event should be shown based on event mode
+func shouldShowEventByMode(eventType string, eventMode string) bool {
+	if eventType == "" {
+		return false
+	}
+	if eventMode == "advanced" {
+		return true // Show all events in advanced mode
+	}
+	// In basic mode, show all events EXCEPT the ones in ADVANCED_MODE_EVENTS
+	return !ADVANCED_MODE_EVENTS[eventType]
+}
+
 // Event represents a generic event that can be stored and retrieved
 // Both MCP agent and orchestrator events now use the same AgentEvent structure
 type Event struct {
@@ -42,26 +78,33 @@ func (e Event) MarshalJSON() ([]byte, error) {
 	return json.Marshal(result)
 }
 
-// EventStore manages in-memory event storage for multiple observers
+// ActivityCallback is called when an event is added to update session activity
+type ActivityCallback func(sessionID string)
+
+// EventStore manages in-memory event storage for sessions
+// Events are stored by sessionID, allowing multiple observers to view the same session
 type EventStore struct {
-	events        map[string][]Event // observerID -> events
-	lastIndex     map[string]int     // observerID -> last event index
-	eventCounters map[string]int     // observerID -> event counter (persistent across messages)
-	mu            sync.RWMutex
-	maxEvents     int // Maximum events per observer
-	cleanupTicker *time.Ticker
-	stopCh        chan struct{}
+	events           map[string][]Event // sessionID -> events
+	mu               sync.RWMutex
+	maxEvents        int // Maximum events per session
+	cleanupTicker    *time.Ticker
+	stopCh           chan struct{}
+	activityCallback ActivityCallback // Optional callback to update session activity
 }
 
 // NewEventStore creates a new event store with configurable limits
 func NewEventStore(maxEvents int) *EventStore {
+	return NewEventStoreWithActivityCallback(maxEvents, nil)
+}
+
+// NewEventStoreWithActivityCallback creates a new event store with an activity callback
+func NewEventStoreWithActivityCallback(maxEvents int, activityCallback ActivityCallback) *EventStore {
 	store := &EventStore{
-		events:        make(map[string][]Event),
-		lastIndex:     make(map[string]int),
-		eventCounters: make(map[string]int),
-		maxEvents:     maxEvents,
-		cleanupTicker: time.NewTicker(5 * time.Minute), // Cleanup every 5 minutes
-		stopCh:        make(chan struct{}),
+		events:           make(map[string][]Event),
+		maxEvents:        maxEvents,
+		cleanupTicker:    time.NewTicker(5 * time.Minute), // Cleanup every 5 minutes
+		stopCh:           make(chan struct{}),
+		activityCallback: activityCallback,
 	}
 
 	// Start background cleanup
@@ -70,102 +113,247 @@ func NewEventStore(maxEvents int) *EventStore {
 	return store
 }
 
-// AddEvent adds an event for a specific observer
-func (es *EventStore) AddEvent(observerID string, event Event) {
+// SetActivityCallback sets the activity callback (can be called after creation)
+func (es *EventStore) SetActivityCallback(callback ActivityCallback) {
 	es.mu.Lock()
 	defer es.mu.Unlock()
+	es.activityCallback = callback
+}
 
-	// Initialize observer if not exists
-	if _, exists := es.events[observerID]; !exists {
-		es.events[observerID] = make([]Event, 0)
-		es.lastIndex[observerID] = 0
+// AddEvent adds an event for a specific session
+func (es *EventStore) AddEvent(sessionID string, event Event) {
+	es.mu.Lock()
+
+	// Initialize session if not exists
+	if _, exists := es.events[sessionID]; !exists {
+		es.events[sessionID] = make([]Event, 0)
 	}
 
 	// Add event
-	es.events[observerID] = append(es.events[observerID], event)
+	es.events[sessionID] = append(es.events[sessionID], event)
 
 	// Remove old events if over limit
-	if len(es.events[observerID]) > es.maxEvents {
-		es.events[observerID] = es.events[observerID][len(es.events[observerID])-es.maxEvents:]
+	if len(es.events[sessionID]) > es.maxEvents {
+		es.events[sessionID] = es.events[sessionID][len(es.events[sessionID])-es.maxEvents:]
 	}
 
+	// Call activity callback if set (call outside of lock to avoid deadlock)
+	activityCallback := es.activityCallback
+	es.mu.Unlock()
+
+	// Update session activity (call outside lock to avoid potential deadlock)
+	if activityCallback != nil && sessionID != "" {
+		activityCallback(sessionID)
+	}
 }
 
-// InitializeObserver creates an empty event list for an observer
-func (es *EventStore) InitializeObserver(observerID string) {
+// InitializeSession creates an empty event list for a session
+func (es *EventStore) InitializeSession(sessionID string) {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 
-	// Initialize observer if not exists
-	if _, exists := es.events[observerID]; !exists {
-		es.events[observerID] = make([]Event, 0)
-		es.lastIndex[observerID] = 0
-		es.eventCounters[observerID] = 0
+	// Initialize session if not exists
+	if _, exists := es.events[sessionID]; !exists {
+		es.events[sessionID] = make([]Event, 0)
 	}
 }
 
-// GetNextEventCounter gets and increments the event counter for an observer
-func (es *EventStore) GetNextEventCounter(observerID string) int {
-	es.mu.Lock()
-	defer es.mu.Unlock()
-
-	// Initialize counter if not exists
-	if _, exists := es.eventCounters[observerID]; !exists {
-		es.eventCounters[observerID] = 0
-	}
-
-	// Increment and return the counter
-	es.eventCounters[observerID]++
-	return es.eventCounters[observerID]
+// GetEventsOptions contains options for retrieving events
+type GetEventsOptions struct {
+	SinceIndex int    // For forward polling: get events after this index
+	Limit      int    // For pagination: maximum number of events to return (0 = no limit)
+	Offset     int    // For pagination: skip this many events (used for backward pagination)
+	EventMode  string // "basic" or "advanced" - filters events by mode
 }
 
-// GetEvents retrieves events for an observer since a specific index
-func (es *EventStore) GetEvents(observerID string, sinceIndex int) ([]Event, int, bool) {
+// GetEventsResult contains the result of GetEvents call
+type GetEventsResult struct {
+	Events             []Event
+	Exists             bool
+	TotalCount         int
+	LastProcessedIndex int  // Last index processed in unfiltered array (for forward polling with filtering)
+	HasMore            bool // Whether there are more events available (for initial fetch with sinceIndex=0)
+}
+
+// GetEvents retrieves events for a session with various options
+// Supports both forward polling (sinceIndex) and backward pagination (limit/offset)
+func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEventsResult {
 	es.mu.RLock()
 	defer es.mu.RUnlock()
 
-	events, exists := es.events[observerID]
+	events, exists := es.events[sessionID]
 	if !exists {
-		return []Event{}, 0, false
-	}
-
-	// If sinceIndex is beyond our events, return empty but with correct last index
-	if sinceIndex >= len(events) {
-		// Return the actual last event index (len(events) - 1) instead of len(events)
-		// This prevents the frontend from getting stuck in an infinite polling loop
-		lastIndex := len(events) - 1
-		if lastIndex < 0 {
-			lastIndex = 0
+		return GetEventsResult{
+			Events:             []Event{},
+			Exists:             false,
+			TotalCount:         0,
+			LastProcessedIndex: -1,
+			HasMore:            false,
 		}
-		return []Event{}, lastIndex, true
 	}
 
-	// Return events AFTER the specified index (excluding it)
-	// This ensures only new events are returned, preventing infinite loops
-	nextIndex := sinceIndex + 1
-	var newEvents []Event
-	if nextIndex >= len(events) {
-		// No new events after the sinceIndex
-		newEvents = []Event{}
+	var result []Event
+	lastProcessedIndex := -1
+	hasMore := false
+
+	// Determine which events to retrieve based on options
+	if opts.SinceIndex >= 0 {
+		// Forward polling mode: get events after sinceIndex
+		// CRITICAL: Filter FIRST, then apply index logic
+		// This ensures consistency with backward pagination and correct filtering behavior
+
+		// Step 1: Filter the entire array first
+		var filteredEvents []Event
+		if opts.EventMode != "" {
+			filteredEvents = make([]Event, 0, len(events))
+			for _, event := range events {
+				if shouldShowEventByMode(event.Type, opts.EventMode) {
+					filteredEvents = append(filteredEvents, event)
+				}
+			}
+		} else {
+			filteredEvents = events
+		}
+
+		// Step 2: Find the position in filtered array that corresponds to "after sinceIndex" in unfiltered array
+		// Count how many filtered events exist up to and including sinceIndex
+		// The next position after that in the filtered array is where we start slicing
+		filteredCountUpToSinceIndex := 0
+		for i := 0; i <= opts.SinceIndex && i < len(events); i++ {
+			if opts.EventMode == "" || shouldShowEventByMode(events[i].Type, opts.EventMode) {
+				filteredCountUpToSinceIndex++
+			}
+		}
+
+		// Step 3: Slice from the next position in filtered array (after the last event at or before sinceIndex)
+		if opts.SinceIndex >= len(events) {
+			// We've already processed all events
+			result = []Event{}
+			lastProcessedIndex = len(events) - 1
+		} else if opts.SinceIndex == 0 && len(filteredEvents) > 0 {
+			// Special case: Starting from beginning (sinceIndex=0) - return latest N events
+			// This happens when switching event modes - show most recent events first
+			// Events are stored chronologically (oldest to newest), so "latest" = last N in array
+			startPos := len(filteredEvents) - InitialEventsLimit
+			if startPos < 0 {
+				startPos = 0
+			}
+			result = filteredEvents[startPos:]
+			// We processed all events, but only returned the latest InitialEventsLimit
+			lastProcessedIndex = len(events) - 1
+			// hasMore = true if there are events before startPos (older events available)
+			hasMore = startPos > 0
+		} else {
+			// Normal polling: Get events after position filteredCountUpToSinceIndex in the filtered array
+			// This corresponds to events after sinceIndex in the unfiltered array
+			nextFilteredPos := filteredCountUpToSinceIndex
+			if nextFilteredPos >= len(filteredEvents) {
+				result = []Event{}
+			} else {
+				// Apply maximum limit to prevent fetching too many events at once
+				remainingEvents := filteredEvents[nextFilteredPos:]
+				if len(remainingEvents) > MaxPollingLimit {
+					result = remainingEvents[:MaxPollingLimit]
+					// Calculate the actual last processed index in unfiltered array
+					// We need to find which unfiltered index corresponds to the last returned event
+					// Count filtered events up to the last returned event
+					filteredCount := 0
+					actualLastIndex := -1
+					for i := 0; i < len(events); i++ {
+						if opts.EventMode == "" || shouldShowEventByMode(events[i].Type, opts.EventMode) {
+							filteredCount++
+							if filteredCount == nextFilteredPos+MaxPollingLimit {
+								actualLastIndex = i
+								break
+							}
+						}
+					}
+					if actualLastIndex >= 0 {
+						lastProcessedIndex = actualLastIndex
+					} else {
+						// Fallback: we processed up to the end
+						lastProcessedIndex = len(events) - 1
+					}
+				} else {
+					result = remainingEvents
+					// We processed from sinceIndex+1 to the end of unfiltered array
+					lastProcessedIndex = len(events) - 1
+				}
+			}
+		}
+	} else if opts.Limit > 0 {
+		// Backward pagination mode: get older events using limit/offset
+		// Events are stored chronologically (oldest to newest: index 0 = oldest)
+		// For "load more", we want older events from the START of the array
+		// Offset counts from the START (0 = oldest events)
+
+		// CRITICAL: Filter FIRST, then paginate, to ensure correct offset calculation
+		// Otherwise, offset would be wrong if some events are filtered out
+		var eventsToPaginate []Event
+		if opts.EventMode != "" {
+			// Filter first
+			eventsToPaginate = make([]Event, 0, len(events))
+			for _, event := range events {
+				if shouldShowEventByMode(event.Type, opts.EventMode) {
+					eventsToPaginate = append(eventsToPaginate, event)
+				}
+			}
+		} else {
+			// No filtering needed
+			eventsToPaginate = events
+		}
+
+		// Now paginate the filtered events
+		start := opts.Offset
+		end := opts.Offset + opts.Limit
+
+		if start < 0 {
+			start = 0
+		}
+		if end > len(eventsToPaginate) {
+			end = len(eventsToPaginate)
+		}
+
+		if start < end {
+			// Get events from start (oldest first)
+			result = eventsToPaginate[start:end]
+		} else {
+			result = []Event{}
+		}
+		// For pagination, lastProcessedIndex is not relevant (offset-based, not index-based)
+		lastProcessedIndex = -1
 	} else {
-		newEvents = events[nextIndex:]
+		// No specific mode: return all events (with filtering if needed)
+		if opts.EventMode != "" {
+			filtered := make([]Event, 0, len(events))
+			for _, event := range events {
+				if shouldShowEventByMode(event.Type, opts.EventMode) {
+					filtered = append(filtered, event)
+				}
+			}
+			result = filtered
+		} else {
+			result = events
+		}
+		// For "all events" mode, we processed all events
+		lastProcessedIndex = len(events) - 1
 	}
 
-	// Return the actual last event index (len(events) - 1) instead of len(events)
-	// This prevents the frontend from getting stuck in an infinite polling loop
-	lastIndex := len(events) - 1
-	if lastIndex < 0 {
-		lastIndex = 0
+	return GetEventsResult{
+		Events:             result,
+		Exists:             true,
+		TotalCount:         len(events),
+		LastProcessedIndex: lastProcessedIndex,
+		HasMore:            hasMore,
 	}
-	return newEvents, lastIndex, true
 }
 
-// GetObserverStatus returns the status of an observer
-func (es *EventStore) GetObserverStatus(observerID string) (int, bool) {
+// GetSessionStatus returns the status of a session
+func (es *EventStore) GetSessionStatus(sessionID string) (int, bool) {
 	es.mu.RLock()
 	defer es.mu.RUnlock()
 
-	events, exists := es.events[observerID]
+	events, exists := es.events[sessionID]
 	if !exists {
 		return 0, false
 	}
@@ -173,27 +361,25 @@ func (es *EventStore) GetObserverStatus(observerID string) (int, bool) {
 	return len(events), true
 }
 
-// RemoveObserver removes an observer and its events
-func (es *EventStore) RemoveObserver(observerID string) {
+// RemoveSession removes a session and its events
+func (es *EventStore) RemoveSession(sessionID string) {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 
-	delete(es.events, observerID)
-	delete(es.lastIndex, observerID)
-	delete(es.eventCounters, observerID) // Clean up event counter to prevent memory leak
+	delete(es.events, sessionID)
 }
 
-// GetActiveObservers returns all active observer IDs
-func (es *EventStore) GetActiveObservers() []string {
+// GetActiveSessions returns all active session IDs
+func (es *EventStore) GetActiveSessions() []string {
 	es.mu.RLock()
 	defer es.mu.RUnlock()
 
-	observers := make([]string, 0, len(es.events))
-	for observerID := range es.events {
-		observers = append(observers, observerID)
+	sessions := make([]string, 0, len(es.events))
+	for sessionID := range es.events {
+		sessions = append(sessions, sessionID)
 	}
 
-	return observers
+	return sessions
 }
 
 // cleanupRoutine periodically cleans up inactive observers
@@ -201,7 +387,7 @@ func (es *EventStore) cleanupRoutine() {
 	for {
 		select {
 		case <-es.cleanupTicker.C:
-			es.cleanupInactiveObservers()
+			es.cleanupInactiveSessions()
 		case <-es.stopCh:
 			es.cleanupTicker.Stop()
 			return
@@ -209,19 +395,17 @@ func (es *EventStore) cleanupRoutine() {
 	}
 }
 
-// cleanupInactiveObservers removes observers that haven't been active recently
-func (es *EventStore) cleanupInactiveObservers() {
+// cleanupInactiveSessions removes sessions that haven't been active recently
+func (es *EventStore) cleanupInactiveSessions() {
 	// For now, we'll implement a simple cleanup based on event count
 	// In a real implementation, you might track last activity time
 	es.mu.Lock()
 	defer es.mu.Unlock()
 
-	for observerID, events := range es.events {
-		// Remove observers with no events (inactive)
+	for sessionID, events := range es.events {
+		// Remove sessions with no events (inactive)
 		if len(events) == 0 {
-			delete(es.events, observerID)
-			delete(es.lastIndex, observerID)
-			delete(es.eventCounters, observerID) // Clean up event counter to prevent memory leak
+			delete(es.events, sessionID)
 		}
 	}
 }
@@ -242,8 +426,8 @@ func (es *EventStore) GetStats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"total_observers": len(es.events),
-		"total_events":    totalEvents,
-		"max_events":      es.maxEvents,
+		"total_sessions": len(es.events),
+		"total_events":   totalEvents,
+		"max_events":     es.maxEvents,
 	}
 }

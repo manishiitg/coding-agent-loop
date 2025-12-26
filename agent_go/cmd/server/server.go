@@ -153,7 +153,6 @@ type ServerConfig struct {
 // ActiveSessionInfo represents an active session for page refresh recovery
 type ActiveSessionInfo struct {
 	SessionID    string    `json:"session_id"`
-	ObserverID   string    `json:"observer_id"`
 	AgentMode    string    `json:"agent_mode"`
 	Status       string    `json:"status"` // "running", "paused", "completed"
 	LastActivity time.Time `json:"last_activity"`
@@ -194,8 +193,7 @@ type StreamingAPI struct {
 	chatDB database.Database
 
 	// Polling system components
-	eventStore      *events.EventStore
-	observerManager *events.ObserverManager
+	eventStore *events.EventStore
 
 	// Workflow orchestrator configuration
 	provider      string
@@ -268,11 +266,10 @@ type CrossProviderFallback struct {
 
 // QueryResponse represents an agent query response
 type QueryResponse struct {
-	QueryID    string `json:"query_id"`
-	SessionID  string `json:"session_id"` // The actual session ID used for conversation history
-	ObserverID string `json:"observer_id"`
-	Status     string `json:"status"`
-	Message    string `json:"message,omitempty"`
+	QueryID   string `json:"query_id"`
+	SessionID string `json:"session_id"` // The actual session ID used for conversation history
+	Status    string `json:"status"`
+	Message   string `json:"message,omitempty"`
 }
 
 // LLMGuidanceRequest represents a request to set LLM guidance for a session
@@ -464,9 +461,8 @@ func runServer(cmd *cobra.Command, args []string) {
 		log.Fatalf("Failed to load MCP config: %w", err)
 	}
 
-	// Initialize polling system
-	eventStore := events.NewEventStore(10000) // Max 10000 events per observer
-	observerManager := events.NewObserverManager(eventStore)
+	// Initialize polling system (activity callback will be set after api is created)
+	eventStore := events.NewEventStore(10000) // Max 10000 events per session
 
 	// Initialize chat history database
 	dbPath := viper.GetString("db-path")
@@ -542,7 +538,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		conversationHistory:          make(map[string][]llmtypes.MessageContent),
 		chatDB:                       chatDB,
 		eventStore:                   eventStore,
-		observerManager:              observerManager,
 		provider:                     config.Provider,
 		model:                        config.ModelID,
 		mcpConfigPath:                configPath,
@@ -608,14 +603,11 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/mcp-config/discover", api.handleDiscoverServers).Methods("POST")
 	apiRouter.HandleFunc("/mcp-config/status", api.handleGetMCPConfigStatus).Methods("GET")
 
-	// Polling API routes (from polling.go)
-	apiRouter.HandleFunc("/observer/register", api.handleRegisterObserver).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/observer/{observer_id}/events", api.handleGetEvents).Methods("GET")
-	apiRouter.HandleFunc("/observer/{observer_id}/status", api.handleGetObserverStatus).Methods("GET")
-	apiRouter.HandleFunc("/observer/{observer_id}", api.handleRemoveObserver).Methods("DELETE")
+	// Observer APIs removed - events are now stored by sessionID, no observers needed
 
 	// Active Session API routes (from polling.go)
 	apiRouter.HandleFunc("/sessions/active", api.handleGetActiveSessions).Methods("GET")
+	apiRouter.HandleFunc("/sessions/{session_id}/events", api.handleGetSessionEvents).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/reconnect", api.handleReconnectSession).Methods("POST")
 	apiRouter.HandleFunc("/sessions/{session_id}/status", api.handleGetSessionStatus).Methods("GET")
 
@@ -644,6 +636,14 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Slack Feedback API routes
 	SlackFeedbackRoutes(router, api, chatDB)
+
+	// Set activity callback for event store to update session LastActivity when events are added
+	eventStore.SetActivityCallback(func(sessionID string) {
+		api.updateSessionActivity(sessionID)
+	})
+
+	// Start background cleanup goroutine to mark inactive sessions (10 minute timeout)
+	go api.cleanupInactiveSessions()
 
 	// Workflow API routes
 	apiRouter.HandleFunc("/workflow/create", api.handleCreateWorkflow).Methods("POST", "OPTIONS")
@@ -686,7 +686,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("✅ Server started on %s:%d\n", config.Host, config.Port)
 	fmt.Printf("🔗 API endpoint: http://%s:%d/api/query\n", config.Host, config.Port)
-	fmt.Printf("📡 Polling API: http://%s:%d/api/observer/{observer_id}/events\n", config.Host, config.Port)
+	fmt.Printf("📡 Polling API: http://%s:%d/api/sessions/{session_id}/events\n", config.Host, config.Port)
 
 	// Initialize tool cache on server startup
 	fmt.Printf("🔄 Initializing tool cache on server startup...\n")
@@ -728,7 +728,7 @@ func (api *StreamingAPI) corsMiddleware(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Session-ID, X-Observer-ID")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Session-ID")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		if r.Method == "OPTIONS" {
@@ -858,13 +858,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		traceName = fmt.Sprintf("agent-conversation: %s", queryID)
 	}
 	traceID := tracer.StartTrace(traceName, map[string]interface{}{
-		"method":      r.Method,
-		"url":         r.URL.String(),
-		"user_agent":  r.Header.Get("User-Agent"),
-		"session_id":  r.Header.Get("X-Session-ID"),
-		"observer_id": r.Header.Get("X-Observer-ID"),
-		"query":       req.Query,
-		"query_id":    queryID,
+		"method":     r.Method,
+		"url":        r.URL.String(),
+		"user_agent": r.Header.Get("User-Agent"),
+		"session_id": r.Header.Get("X-Session-ID"),
+		"query":      req.Query,
+		"query_id":   queryID,
 	})
 
 	// Set agent execution LLM defaults: API request takes precedence, then environment variables, then server config, then fallback to Bedrock
@@ -961,9 +960,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("[TITLE DEBUG] Final title: '%s'", title)
 		chatSession, err = api.chatDB.CreateChatSession(r.Context(), &database.CreateChatSessionRequest{
-			SessionID: sessionID,
-			Title:     title,
-			AgentMode: req.AgentMode,
+			SessionID:     sessionID,
+			Title:         title,
+			AgentMode:     req.AgentMode,
+			PresetQueryID: req.PresetQueryID,
 		})
 		if err != nil {
 			log.Printf("[DATABASE DEBUG] Failed to create chat session: %w", err)
@@ -975,16 +975,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[DATABASE DEBUG] Found existing chat session: %s", chatSession.ID)
 	}
 
-	// Extract observer ID from request - this is required
-	observerID := r.Header.Get("X-Observer-ID")
-	if observerID == "" {
-		errorMsg := "X-Observer-ID header is required. Please register an observer first using /api/observer/register"
-		http.Error(w, errorMsg, http.StatusBadRequest)
-		return
-	}
-
-	// Track active session for page refresh recovery
-	api.trackActiveSession(sessionID, observerID, req.AgentMode, req.Query)
+	// Track active session for page refresh recovery (no observer needed)
+	api.trackActiveSession(sessionID, req.AgentMode, req.Query)
 
 	// Create a fresh agent for each request
 	log.Printf("[LLM CONFIG DEBUG] Creating fresh agent for each request")
@@ -1046,26 +1038,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		log.Printf("[WORKFLOW DEBUG] Workflow mode requested for query %s - using workflow orchestrator", queryID)
-		log.Printf("[WORKFLOW DEBUG] Current observerID: '%s', sessionID: '%s'", observerID, sessionID)
+		log.Printf("[WORKFLOW DEBUG] SessionID: '%s'", sessionID)
 		log.Printf("[WORKFLOW DEBUG] Selected servers for workflow: %v", selectedServers)
-
-		// Observer ID is now required - should have been set above
-		if observerID == "" {
-			http.Error(w, "X-Observer-ID header is required for workflow mode. Please register an observer first using /api/observer/register", http.StatusBadRequest)
-			return
-		}
-		log.Printf("[WORKFLOW DEBUG] Using observer %s for workflow session %s", observerID, sessionID)
 
 		// Create workflow event bridge for event emission
 		workflowEventBridge := &eventbridge.WorkflowEventBridge{
 			BaseEventBridge: &eventbridge.BaseEventBridge{
-				EventStore:      api.eventStore,
-				ObserverManager: api.observerManager,
-				ObserverID:      observerID,
-				SessionID:       sessionID,
-				Logger:          api.logger,
-				ChatDB:          api.chatDB,
-				BridgeName:      "workflow",
+				EventStore: api.eventStore,
+				SessionID:  sessionID,
+				Logger:     api.logger,
+				ChatDB:     api.chatDB,
+				BridgeName: "workflow",
 			},
 		}
 
@@ -1175,13 +1158,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.workflowOrchestratorContexts[sessionID] = workflowCancel
 		api.workflowOrchestratorContextMux.Unlock()
 
-		// Return immediate response with query ID and observer ID
+		// Return immediate response with query ID
 		response := QueryResponse{
-			QueryID:    queryID,
-			SessionID:  sessionID,  // Include the actual session ID used for conversation history
-			ObserverID: observerID, // Include observer ID in response
-			Status:     "started",
-			Message:    "Query processing started. Use polling API to get real-time updates.",
+			QueryID:   queryID,
+			SessionID: sessionID, // Include the actual session ID used for conversation history
+			Status:    "started",
+			Message:   "Query processing started. Use polling API to get real-time updates.",
 		}
 
 		if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -1197,9 +1179,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				delete(api.workflowOrchestratorContexts, sessionID)
 				api.workflowOrchestratorContextMux.Unlock()
 
-				// Note: Observer cleanup is handled by session management
-				// Don't remove observer immediately to allow frontend polling
-				log.Printf("[WORKFLOW DEBUG] Workflow completed, observer %s will be cleaned up by session management", observerID)
+				log.Printf("[WORKFLOW DEBUG] Workflow completed for session %s", sessionID)
 			}()
 
 			log.Printf("[WORKFLOW DEBUG] Starting asynchronous workflow execution for query %s", queryID)
@@ -1378,7 +1358,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					"error":    err.Error(),
 					"query_id": queryID,
 				}
-				api.eventStore.AddEvent(observerID, events.Event{
+				api.eventStore.AddEvent(sessionID, events.Event{
 					ID:        fmt.Sprintf("workflow_error_%s_%d", queryID, time.Now().UnixNano()),
 					Type:      "workflow_error",
 					Timestamp: time.Now(),
@@ -1389,23 +1369,74 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							Data: errorData,
 						},
 					},
-					SessionID: observerID,
+					SessionID: sessionID,
 				})
+
+				// --- BEGIN: Update chat session status to error ---
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				chatSession, err := api.chatDB.GetChatSession(ctx, sessionID)
+				cancel()
+				if err == nil && chatSession != nil {
+					updateReq := &database.UpdateChatSessionRequest{
+						Title:     chatSession.Title,     // Preserve existing title
+						AgentMode: chatSession.AgentMode, // Preserve existing agent_mode
+						Status:    "error",
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					_, err := api.chatDB.UpdateChatSession(ctx, sessionID, updateReq)
+					cancel()
+					if err != nil {
+						log.Printf("[DATABASE DEBUG] Failed to update chat session status to error (workflow): %w", err)
+					} else {
+						log.Printf("[DATABASE DEBUG] Successfully updated chat session %s to error status (workflow)", sessionID)
+					}
+				}
+				// --- END: Update chat session status to error ---
+
+				// Update active session status to error
+				log.Printf("[WORKFLOW COMPLETION] Updating session %s status to error", sessionID)
+				api.updateSessionStatus(sessionID, "error")
 			} else {
 				log.Printf("[WORKFLOW DEBUG] Workflow execution completed for query %s", queryID)
 				// Workflow completion events are now handled by the workflow orchestrator itself
+
+				// --- BEGIN: Update chat session status to completed ---
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				chatSession, err := api.chatDB.GetChatSession(ctx, sessionID)
+				cancel()
+				if err == nil && chatSession != nil {
+					// Update session status to completed with completion timestamp
+					completedAt := time.Now()
+					updateReq := &database.UpdateChatSessionRequest{
+						Status:        "completed",
+						CompletedAt:   &completedAt,
+						PresetQueryID: "", // Explicitly set to empty string to trigger NULL in database
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					_, err := api.chatDB.UpdateChatSession(ctx, sessionID, updateReq)
+					cancel()
+					if err != nil {
+						log.Printf("[DATABASE DEBUG] Failed to update chat session status to completed (workflow): %w", err)
+					} else {
+						log.Printf("[DATABASE DEBUG] Successfully updated chat session %s to completed status (workflow)", sessionID)
+					}
+				}
+				// --- END: Update chat session status to completed ---
+
+				// Update active session status to completed
+				log.Printf("[WORKFLOW COMPLETION] Updating session %s status to completed", sessionID)
+				api.updateSessionStatus(sessionID, "completed")
 			}
 		}()
 		return
 	}
 
-	// Return immediate response with query ID and observer ID
+	// Return immediate response with query ID
 	response := QueryResponse{
-		QueryID:    queryID,
-		SessionID:  sessionID,  // Include the actual session ID used for conversation history
-		ObserverID: observerID, // Include observer ID in response
-		Status:     "started",
-		Message:    "Query processing started. Use polling API to get real-time updates.",
+		QueryID:   queryID,
+		SessionID: sessionID, // Include the actual session ID used for conversation history
+		Status:    "started",
+		Message:   "Query processing started. Use polling API to get real-time updates.",
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -1452,16 +1483,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				)
 
 				agentEvent := unifiedevents.NewAgentEvent(errorEventData)
-				agentEvent.SessionID = observerID
+				agentEvent.SessionID = sessionID
 
 				serverErrorEvent := events.Event{
 					ID:        fmt.Sprintf("server_error_%s_%d", queryID, time.Now().UnixNano()),
 					Type:      string(unifiedevents.EventTypeUnifiedCompletion),
 					Timestamp: time.Now(),
 					Data:      agentEvent,
-					SessionID: observerID,
+					SessionID: sessionID,
 				}
-				api.eventStore.AddEvent(observerID, serverErrorEvent)
+				api.eventStore.AddEvent(sessionID, serverErrorEvent)
 				log.Printf("[SERVER DEBUG] Emitted server error completion event for query %s", queryID)
 			}
 		}
@@ -1882,12 +1913,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// ✅ FIX: Always attach EventObserver to agent, even in orchestrator mode
 		// The eventbridge.OrchestratorAgentEventBridge handles orchestrator-specific events, but we still need EventObserver for regular agent events
 		log.Printf("[DATABASE DEBUG] Starting event observer setup for session %s", sessionID)
-		log.Printf("[DATABASE DEBUG] ObserverID: %s", observerID)
 		log.Printf("[DATABASE DEBUG] ChatDB available: %v", api.chatDB != nil)
 
 		log.Printf("[DATABASE DEBUG] Creating in-memory event observer for session %s", sessionID)
 		// Create in-memory event observer for real-time updates
-		eventObserver := events.NewEventObserverWithLogger(api.eventStore, observerID, sessionID, api.logger)
+		eventObserver := events.NewEventObserverWithLogger(api.eventStore, sessionID, api.logger)
 
 		log.Printf("[DATABASE DEBUG] Creating database event observer for session %s", sessionID)
 		// Create database event observer to store events in database
@@ -1999,16 +2029,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				)
 
 				agentEvent := unifiedevents.NewAgentEvent(timeoutEventData)
-				agentEvent.SessionID = observerID
+				agentEvent.SessionID = sessionID
 
 				serverTimeoutEvent := events.Event{
 					ID:        fmt.Sprintf("server_timeout_%s_%d", queryID, time.Now().UnixNano()),
 					Type:      string(unifiedevents.EventTypeUnifiedCompletion),
 					Timestamp: time.Now(),
 					Data:      agentEvent,
-					SessionID: observerID,
+					SessionID: sessionID,
 				}
-				api.eventStore.AddEvent(observerID, serverTimeoutEvent)
+				api.eventStore.AddEvent(sessionID, serverTimeoutEvent)
 				log.Printf("[SERVER DEBUG] Emitted server timeout completion event for query %s", queryID)
 				return
 			default:
@@ -2421,13 +2451,12 @@ func chatHistoryHealthCheckHandler(db database.Database) http.HandlerFunc {
 // --- ACTIVE SESSION MANAGEMENT ---
 
 // trackActiveSession tracks a new active session
-func (api *StreamingAPI) trackActiveSession(sessionID, observerID, agentMode, query string) {
+func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query string) {
 	api.activeSessionsMux.Lock()
 	defer api.activeSessionsMux.Unlock()
 
 	api.activeSessions[sessionID] = &ActiveSessionInfo{
 		SessionID:    sessionID,
-		ObserverID:   observerID,
 		AgentMode:    agentMode,
 		Status:       "running",
 		LastActivity: time.Now(),
@@ -2435,7 +2464,18 @@ func (api *StreamingAPI) trackActiveSession(sessionID, observerID, agentMode, qu
 		Query:        query,
 	}
 
-	log.Printf("[ACTIVE_SESSION] Tracked active session: %s (observer: %s, mode: %s)", sessionID, observerID, agentMode)
+	log.Printf("[ACTIVE_SESSION] Tracked active session: %s (mode: %s)", sessionID, agentMode)
+}
+
+// updateSessionActivity updates the LastActivity timestamp for a session when events are added
+func (api *StreamingAPI) updateSessionActivity(sessionID string) {
+	api.activeSessionsMux.Lock()
+	defer api.activeSessionsMux.Unlock()
+
+	if session, exists := api.activeSessions[sessionID]; exists {
+		session.LastActivity = time.Now()
+		// Don't log every activity update to avoid log spam
+	}
 }
 
 // updateSessionStatus updates the status of an active session
@@ -2491,16 +2531,51 @@ func (api *StreamingAPI) getActiveSession(sessionID string) (*ActiveSessionInfo,
 	return session, exists
 }
 
-// getAllActiveSessions returns all active sessions
+// getAllActiveSessions returns all active sessions (filtered by activity - 10 minute timeout)
 func (api *StreamingAPI) getAllActiveSessions() []*ActiveSessionInfo {
 	api.activeSessionsMux.RLock()
 	defer api.activeSessionsMux.RUnlock()
 
+	now := time.Now()
+	inactivityTimeout := 10 * time.Minute
 	sessions := make([]*ActiveSessionInfo, 0, len(api.activeSessions))
+
 	for _, session := range api.activeSessions {
-		sessions = append(sessions, session)
+		// Only return sessions that are running and have been active within the last 10 minutes
+		if session.Status == "running" && now.Sub(session.LastActivity) < inactivityTimeout {
+			sessions = append(sessions, session)
+		}
 	}
+
 	return sessions
+}
+
+// cleanupInactiveSessions runs periodically to mark sessions as inactive if no events for 10 minutes
+func (api *StreamingAPI) cleanupInactiveSessions() {
+	ticker := time.NewTicker(2 * time.Minute) // Check every 2 minutes
+	defer ticker.Stop()
+
+	for range ticker.C {
+		api.activeSessionsMux.Lock()
+		now := time.Now()
+		inactivityTimeout := 10 * time.Minute
+		sessionsToMarkInactive := make([]string, 0)
+
+		for sessionID, session := range api.activeSessions {
+			// Mark as inactive if no activity for 10 minutes and status is still "running"
+			if session.Status == "running" && now.Sub(session.LastActivity) >= inactivityTimeout {
+				sessionsToMarkInactive = append(sessionsToMarkInactive, sessionID)
+			}
+		}
+
+		api.activeSessionsMux.Unlock()
+
+		// Mark sessions as inactive (outside lock to avoid deadlock)
+		for _, sessionID := range sessionsToMarkInactive {
+			log.Printf("[ACTIVE_SESSION] Marking session %s as inactive (no activity for 10+ minutes)", sessionID)
+			api.updateSessionStatus(sessionID, "inactive")
+		}
+	}
 }
 
 // storeWorkflowOrchestrator stores a workflow orchestrator for a session

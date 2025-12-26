@@ -943,20 +943,16 @@ export const useWorkflowStore = create<WorkflowStore>()(
         // Generate unique tab ID
         const tabId = `phase_${phaseId}_${Date.now()}`
         
-        // Register new observer with a new session ID
+        // Generate new session ID for tab
         const sessionIdForTab = crypto.randomUUID()
-        const response = await agentApi.registerObserver(sessionIdForTab)
-        if (!response.observer_id) {
-          throw new Error('Failed to register observer for workflow tab')
-        }
         
         // Create tab entry
         const tab: WorkflowChatTab = {
           tabId,
           phaseId,
           phaseName,
-          observerId: response.observer_id,
-          sessionId: null,
+          observerId: sessionIdForTab, // Keep for backward compatibility, set to sessionId
+          sessionId: sessionIdForTab,
           isActive: false,
           isStreaming: false,
           isCompleted: false,
@@ -1004,12 +1000,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           }
         }
         
-        // Remove observer from backend
-        try {
-          await agentApi.removeObserver(tab.observerId)
-        } catch (error) {
-          console.error(`[WorkflowStore] Failed to remove observer ${tab.observerId}:`, error)
-        }
+        // No observer removal needed - observers are no longer used
         
         // Remove tab from store
         const newTabs = { ...state.workflowChatTabs }
@@ -1130,11 +1121,10 @@ export const useWorkflowStore = create<WorkflowStore>()(
         // 2. This tab's observer ID matches the currently polled observer
         // 3. Not manually paused (stored isStreaming !== false)
         const isPolling = chatStore.pollingInterval !== null
-        const isThisTabPolled = chatStore.currentlyPolledObserverId === tab.observerId
         
-        // If polling this tab's observer and not completed, it's streaming
+        // If polling and not completed, it's streaming
         // The stored tab.isStreaming can be used to pause (e.g., human feedback)
-        if (isPolling && isThisTabPolled) {
+        if (isPolling) {
           return tab.isStreaming !== false // Respect manual pause
         }
         
@@ -1230,13 +1220,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
         // Note: We don't clear tempOverrideLLM here because it's a global setting
         // that should persist across workflow switches
         
-        // Close all workflow tabs (cleanup observers)
-        const state = get()
-        Object.values(state.workflowChatTabs).forEach(tab => {
-          agentApi.removeObserver(tab.observerId).catch(err => {
-            console.error(`[WorkflowStore] Failed to remove observer ${tab.observerId} during reset:`, err)
-          })
-        })
+        // Close all workflow tabs (no observer cleanup needed)
+        // Observers are no longer used - just clear tabs
         
         set({
           runFolders: [],

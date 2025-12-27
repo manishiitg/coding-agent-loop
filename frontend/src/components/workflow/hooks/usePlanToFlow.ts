@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import dagre from 'dagre'
 import type { PlanStep, PlanningResponse, AgentConfigs, AgentLLMConfig, PrerequisiteRule, ValidationSchema } from '../../../utils/stepConfigMatching'
-import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep } from '../../../utils/stepConfigMatching'
+import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep, isHumanInputStep } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
 import type { VariablesManifest } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
@@ -107,6 +107,24 @@ export interface OrchestratorNodeData extends Record<string, unknown> {
   validation_schema?: ValidationSchema  // Validation schema from plan.json (from orchestration_step)
 }
 
+export interface HumanInputNodeData extends Record<string, unknown> {
+  id: string
+  title: string
+  question?: string
+  response_type?: string
+  options?: string[]
+  status: 'pending' | 'waiting' | 'completed'
+  stepIndex: number
+  step: PlanStep
+  changeType?: ChangeType  // Highlight type for visual feedback
+  onRunFromStep?: OnRunFromStepCallback  // Callback to run from this step
+  onOpenSidebar?: OnOpenSidebarCallback  // Callback to open sidebar for editing
+  isExecuting?: boolean  // Whether execution is in progress
+  canRun?: boolean  // Deprecated: always true (all steps can run regardless of previous completion)
+  workspacePath?: string | null  // Workspace path for file opening
+  selectedRunFolder?: string  // Selected iteration folder for file opening
+}
+
 export interface ValidationNodeData extends Record<string, unknown> {
   id: string
   parentStepId: string
@@ -135,7 +153,7 @@ export interface EvaluationNodeData extends Record<string, unknown> {
   llmModel?: string  // LLM model name
 }
 
-export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData
+export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | HumanInputNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -178,6 +196,7 @@ const NODE_DIMENSIONS = {
   conditional: { width: 300, height: 160 },
   decision: { width: 300, height: 180 },  // Decision step node (similar to conditional but shows inner step)
   orchestrator: { width: 360, height: 250 },   // Orchestrator step node (shows orchestrator and sub-agents)
+  human_input: { width: 320, height: 180 },  // Human input step node
   loop: { width: 360, height: 280 },
   validation: { width: 120, height: 50 },
   learning: { width: 120, height: 50 },
@@ -419,6 +438,10 @@ function stepToNode(
       // For orchestration nodes, use step title or fallback
       return step.title || `Orchestrator ${stepIndex + 1}`
     }
+    if (isHumanInputStep(step)) {
+      // For human input nodes, prefer question over generic title
+      return step.title || step.question || `Human Input ${stepIndex + 1}`
+    }
     // For regular steps, use step.title or fallback
     // For nested branch steps, use a more descriptive fallback
     if (parentId) {
@@ -485,6 +508,21 @@ function stepToNode(
         validation_schema: step.orchestration_step?.validation_schema || step.validation_schema
         // Note: status is inherited from baseData (computed based on completedStepIndices)
       } as OrchestratorNodeData
+    }
+  }
+
+  if (isHumanInputStep(step)) {
+    return {
+      id: nodeId,
+      type: 'human_input',
+      position: { x: 0, y: 0 },
+      data: {
+        ...baseData,
+        question: step.question,
+        response_type: step.response_type || 'text',
+        options: step.options
+        // Note: status is inherited from baseData (computed based on completedStepIndices)
+      } as HumanInputNodeData
     }
   }
 
@@ -775,9 +813,10 @@ function processSteps(
       }
     }
     
-    // Add validation/learning nodes for non-conditional steps
+    // Add validation/learning nodes for non-conditional and non-human-input steps
     // Decision steps also have validation/learning for their inner step execution
-    if (!isConditionalStep(step)) {
+    // Human input steps don't have validation/learning (they just ask questions)
+    if (!isConditionalStep(step) && !isHumanInputStep(step)) {
       const vlResult = createValidationLearningNodes(
         step, 
         node.id, 
@@ -1140,6 +1179,149 @@ function processSteps(
       lastExitNodeId = null
     }
 
+    // Handle human input step edge routing
+    // Human input steps ask a question and route based on response (yes/no or multiple choice)
+    if (isHumanInputStep(step)) {
+      const humanInputEdges: WorkflowEdge[] = []
+      // Use the human input node itself as source (no validation/learning nodes for human input)
+      const sourceNodeId = node.id
+      
+      // Determine routing based on response_type
+      if (step.response_type === 'yesno') {
+        // Yes/No routing
+        if (step.if_yes_next_step_id) {
+          const targetNodeId = stepIdToNodeIdMap?.get(step.if_yes_next_step_id)
+          if (targetNodeId) {
+            humanInputEdges.push({
+              id: `${sourceNodeId}-human-input-yes-to-${targetNodeId}`,
+              source: sourceNodeId,
+              target: targetNodeId,
+              type: 'smoothstep',
+              label: 'Yes',
+              labelStyle: { fill: '#22c55e', fontWeight: 600, fontSize: 11 },
+              labelBgStyle: { fill: '#f0fdf4', fillOpacity: 0.9 },
+              labelBgPadding: [4, 4] as [number, number],
+              labelBgBorderRadius: 4,
+              style: { stroke: '#22c55e', strokeWidth: 2 },
+              animated: false
+            })
+          } else if (step.if_yes_next_step_id === 'end') {
+            humanInputEdges.push({
+              id: `${sourceNodeId}-human-input-yes-to-end`,
+              source: sourceNodeId,
+              target: 'end',
+              type: 'smoothstep',
+              label: 'Yes',
+              labelStyle: { fill: '#22c55e', fontWeight: 600, fontSize: 11 },
+              labelBgStyle: { fill: '#f0fdf4', fillOpacity: 0.9 },
+              labelBgPadding: [4, 4] as [number, number],
+              labelBgBorderRadius: 4,
+              style: { stroke: '#22c55e', strokeWidth: 2 },
+              animated: false
+            })
+          }
+        }
+        
+        if (step.if_no_next_step_id) {
+          const targetNodeId = stepIdToNodeIdMap?.get(step.if_no_next_step_id)
+          if (targetNodeId) {
+            humanInputEdges.push({
+              id: `${sourceNodeId}-human-input-no-to-${targetNodeId}`,
+              source: sourceNodeId,
+              target: targetNodeId,
+              type: 'smoothstep',
+              label: 'No',
+              labelStyle: { fill: '#ef4444', fontWeight: 600, fontSize: 11 },
+              labelBgStyle: { fill: '#fef2f2', fillOpacity: 0.9 },
+              labelBgPadding: [4, 4] as [number, number],
+              labelBgBorderRadius: 4,
+              style: { stroke: '#ef4444', strokeWidth: 2 },
+              animated: false
+            })
+          } else if (step.if_no_next_step_id === 'end') {
+            humanInputEdges.push({
+              id: `${sourceNodeId}-human-input-no-to-end`,
+              source: sourceNodeId,
+              target: 'end',
+              type: 'smoothstep',
+              label: 'No',
+              labelStyle: { fill: '#ef4444', fontWeight: 600, fontSize: 11 },
+              labelBgStyle: { fill: '#fef2f2', fillOpacity: 0.9 },
+              labelBgPadding: [4, 4] as [number, number],
+              labelBgBorderRadius: 4,
+              style: { stroke: '#ef4444', strokeWidth: 2 },
+              animated: false
+            })
+          }
+        }
+      } else if (step.response_type === 'multiple_choice' && step.option_routes) {
+        // Multiple choice routing - create edges for each option route
+        Object.entries(step.option_routes).forEach(([optionKey, nextStepId]) => {
+          const targetNodeId = stepIdToNodeIdMap?.get(nextStepId)
+          const optionLabel = step.options?.[parseInt(optionKey)] || optionKey
+          
+          if (targetNodeId) {
+            humanInputEdges.push({
+              id: `${sourceNodeId}-human-input-option-${optionKey}-to-${targetNodeId}`,
+              source: sourceNodeId,
+              target: targetNodeId,
+              type: 'smoothstep',
+              label: optionLabel,
+              labelStyle: { fill: '#3b82f6', fontWeight: 600, fontSize: 11 },
+              labelBgStyle: { fill: '#eff6ff', fillOpacity: 0.9 },
+              labelBgPadding: [4, 4] as [number, number],
+              labelBgBorderRadius: 4,
+              style: { stroke: '#3b82f6', strokeWidth: 2 },
+              animated: false
+            })
+          } else if (nextStepId === 'end') {
+            humanInputEdges.push({
+              id: `${sourceNodeId}-human-input-option-${optionKey}-to-end`,
+              source: sourceNodeId,
+              target: 'end',
+              type: 'smoothstep',
+              label: optionLabel,
+              labelStyle: { fill: '#ef4444', fontWeight: 600, fontSize: 11 },
+              labelBgStyle: { fill: '#fef2f2', fillOpacity: 0.9 },
+              labelBgPadding: [4, 4] as [number, number],
+              labelBgBorderRadius: 4,
+              style: { stroke: '#ef4444', strokeWidth: 2 },
+              animated: false
+            })
+          }
+        })
+      } else {
+        // Text response or default routing - use next_step_id
+        if (step.next_step_id) {
+          const targetNodeId = stepIdToNodeIdMap?.get(step.next_step_id)
+          if (targetNodeId) {
+            humanInputEdges.push({
+              id: `${sourceNodeId}-human-input-to-${targetNodeId}`,
+              source: sourceNodeId,
+              target: targetNodeId,
+              type: 'smoothstep',
+              style: { stroke: '#6b7280', strokeWidth: 2 },
+              animated: false
+            })
+          } else if (step.next_step_id === 'end') {
+            humanInputEdges.push({
+              id: `${sourceNodeId}-human-input-to-end`,
+              source: sourceNodeId,
+              target: 'end',
+              type: 'smoothstep',
+              style: { stroke: '#6b7280', strokeWidth: 2 },
+              animated: false
+            })
+          }
+        }
+      }
+      
+      edges.push(...humanInputEdges)
+      
+      // Human input steps handle their own routing - don't connect to next sequential step
+      lastExitNodeId = null
+    }
+
     // Handle routing step edge routing
     // Orchestrator steps execute a main orchestrator step, then route to sub-agents based on evaluation
     // After sub-agents complete, they return to the main orchestrator for re-evaluation
@@ -1378,8 +1560,8 @@ function processSteps(
 /**
  * Check if a node is a step-type node (has step data)
  */
-function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData } {
-  return node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator'
+function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | HumanInputNodeData } {
+  return node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator' || node.type === 'human_input'
 }
 
 /**
@@ -2226,7 +2408,7 @@ export function usePlanToFlow(
     
     // Inject onRunFromStep callback, onOpenSidebar callback, isExecuting state, canRun, workspacePath, and selectedRunFolder into step-type nodes
     layoutedResult.nodes = layoutedResult.nodes.map(node => {
-      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator') {
+      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator' || node.type === 'human_input') {
         const canRun = canStepRun()
         // Sub-agents cannot be run independently (they are part of routing steps)
         const isSubAgent = node.id.includes('-sub-agent-')

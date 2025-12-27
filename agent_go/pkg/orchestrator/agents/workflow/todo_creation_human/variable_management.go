@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	"mcpagent/events"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	baseevents "mcpagent/events"
 )
 
 // VariablesExtractedEvent represents the event when variables are extracted from objective
 type VariablesExtractedEvent struct {
-	events.BaseEventData
+	baseevents.BaseEventData
 	Variables          []Variable `json:"variables"`
 	TemplatedObjective string     `json:"templated_objective"`
 	WorkspacePath      string     `json:"workspace_path"`       // Workspace path for file operations (required)
@@ -21,7 +22,7 @@ type VariablesExtractedEvent struct {
 }
 
 // GetEventType returns the event type for VariablesExtractedEvent
-func (e *VariablesExtractedEvent) GetEventType() events.EventType {
+func (e *VariablesExtractedEvent) GetEventType() baseevents.EventType {
 	return events.VariablesExtracted
 }
 
@@ -190,7 +191,7 @@ func EmitVariablesExtractedEvent(ctx context.Context, bo *orchestrator.BaseOrche
 
 	// Create event data
 	eventData := &VariablesExtractedEvent{
-		BaseEventData: events.BaseEventData{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 		},
 		Variables:          variables,
@@ -200,7 +201,7 @@ func EmitVariablesExtractedEvent(ctx context.Context, bo *orchestrator.BaseOrche
 	}
 
 	// Create unified event wrapper
-	unifiedEvent := &events.AgentEvent{
+	unifiedEvent := &baseevents.AgentEvent{
 		Type:      events.VariablesExtracted,
 		Timestamp: time.Now(),
 		Data:      eventData,

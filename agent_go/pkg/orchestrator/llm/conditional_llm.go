@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "mcpagent/agent"
-	"mcpagent/events"
+	baseevents "mcpagent/events"
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
 	"time"
@@ -42,7 +43,7 @@ func NewConditionalLLMWithEventBridge(
 }
 
 // SetEventEmitter sets the event emitter function
-func (cl *ConditionalLLM) SetEventEmitter(emitter func(context.Context, events.EventData)) {
+func (cl *ConditionalLLM) SetEventEmitter(emitter func(context.Context, baseevents.EventData)) {
 	cl.BaseLLM.SetEventEmitter(emitter)
 }
 
@@ -59,7 +60,7 @@ func (cl *ConditionalLLM) Decide(ctx context.Context, context, question string, 
 		}
 
 		startEvent := &events.OrchestratorAgentStartEvent{
-			BaseEventData: events.BaseEventData{
+			BaseEventData: baseevents.BaseEventData{
 				Timestamp: time.Now(),
 			},
 			AgentType: "conditional",

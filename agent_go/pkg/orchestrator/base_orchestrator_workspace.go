@@ -259,6 +259,13 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 			continue
 		}
 
+		// Skip knowledgebase folder - it should never be deleted during cleanup
+		// Check if the filepath contains "/knowledgebase" (case-insensitive)
+		if strings.Contains(strings.ToLower(normalizedFilePath), "/knowledgebase") {
+			bo.GetLogger().Info(fmt.Sprintf("🔒 Skipping protected knowledgebase folder: %s", filepath))
+			continue
+		}
+
 		// Check if it's a directory
 		if fileInfo.IsDirectory {
 			dirsToDelete = append(dirsToDelete, filepath)

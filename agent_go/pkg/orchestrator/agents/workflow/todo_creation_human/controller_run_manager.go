@@ -287,6 +287,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createRunFolderStructure(ctx
 		return fmt.Errorf(fmt.Sprintf("failed to create run folder: %w", err), nil)
 	}
 
+	// Create execution/knowledgebase folder structure
+	executionPath := fmt.Sprintf("%s/execution", runPath)
+	knowledgebasePath := getKnowledgebasePath(executionPath)
+	knowledgebaseKeepFile := fmt.Sprintf("%s/.keep", knowledgebasePath)
+	if err := hcpo.WriteWorkspaceFile(ctx, knowledgebaseKeepFile, "# This file ensures the knowledgebase folder exists\n# Files in this folder persist across runs and are never deleted during cleanup"); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create knowledgebase folder: %v (continuing)", err))
+		// Don't fail - knowledgebase folder will be created when first file is written
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Created knowledgebase folder: %s", knowledgebasePath))
+	}
+
 	// The actual folder creation will happen when files are written
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created run folder structure: %s", runPath))
 	return nil

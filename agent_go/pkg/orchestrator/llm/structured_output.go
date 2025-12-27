@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	loggerv2 "mcpagent/logger/v2"
 	mcpagent "mcpagent/agent"
-	"mcpagent/events"
+	baseevents "mcpagent/events"
+	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
 	"time"
-
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -54,8 +53,8 @@ func (s *StructuredOutputLLM) GenerateStructuredOutput(ctx context.Context, prom
 
 	// Emit start event
 	if s.GetEventEmitter() != nil {
-		startEventData := &events.StructuredOutputEvent{
-			BaseEventData: events.BaseEventData{
+		startEventData := &baseevents.StructuredOutputEvent{
+			BaseEventData: baseevents.BaseEventData{
 				Timestamp:     startTime,
 				CorrelationID: correlationID,
 				Component:     "llm",

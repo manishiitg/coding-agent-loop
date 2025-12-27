@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { agentApi } from '../../services/api'
 import type { ChatSession, ActiveSessionInfo } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
 import { useModeStore } from '../../stores/useModeStore'
-import { usePresetApplication } from '../../stores/useGlobalPresetStore'
 
 interface ChatHistorySectionProps {
   onSessionSelect?: (sessionId: string, sessionTitle?: string, sessionType?: 'active' | 'completed', activeSessionInfo?: ActiveSessionInfo) => void
@@ -25,18 +24,6 @@ export default function ChatHistorySection({
   
   // Mode store subscription
   const { selectedModeCategory } = useModeStore()
-  
-  // Active preset query store
-  const { getActivePreset } = usePresetApplication()
-  
-  // Track active preset for current category to trigger reloads
-  const activePresetForCategory = useMemo(() => {
-    if (selectedModeCategory === 'workflow') {
-      const preset = getActivePreset(selectedModeCategory)
-      return preset?.id || null
-    }
-    return null
-  }, [selectedModeCategory, getActivePreset])
 
   // Fetch preset query details
   const fetchPresetQuery = useCallback(async (presetQueryId: string) => {
@@ -76,12 +63,6 @@ export default function ChatHistorySection({
     return activeSessions.find(session => session.session_id === sessionId)
   }, [activeSessions])
 
-  // Helper function to get the active preset query ID for a category
-  const getBackendPresetQueryId = useCallback((category: 'workflow') => {
-    const preset = getActivePreset(category)
-    return preset?.id || null
-  }, [getActivePreset])
-
   // Filter sessions based on mode and active preset
   const filterSessionsByMode = useCallback((sessions: ChatSession[]) => {
     if (!selectedModeCategory) return sessions
@@ -93,39 +74,30 @@ export default function ChatHistorySection({
           session.agent_mode === 'simple'
         )
       
-      case 'workflow': {
-        // Show sessions filtered by active preset (workflow category)
-        const backendPresetQueryId = getBackendPresetQueryId('workflow')
-        if (backendPresetQueryId) {
-          return sessions.filter(session => 
-            session.agent_mode === 'workflow' && 
-            session.preset_query_id === backendPresetQueryId
-          )
-        }
-        return sessions.filter(session => session.agent_mode === 'workflow')
-      }
+      case 'workflow':
+        // Hide all previous chats in workflow mode
+        return []
       
       default:
         return sessions
     }
-  }, [selectedModeCategory, getBackendPresetQueryId])
+  }, [selectedModeCategory])
 
   // Load chat sessions
   const loadSessions = useCallback(async () => {
+    // Skip loading in workflow mode since we hide the entire section
+    if (selectedModeCategory === 'workflow') {
+      setSessions([])
+      return
+    }
+
     setLoading(true)
     setError(null)
     try {
-      // Use server-side filtering when an active preset is selected
-      let response
-      if (selectedModeCategory === 'workflow') {
-        const activePresetQueryId = activePresetForCategory
-        response = await agentApi.getChatSessions(100, 0, activePresetQueryId || undefined) // server filters by preset
-      } else {
-        response = await agentApi.getChatSessions(100, 0)
-      }
+      const response = await agentApi.getChatSessions(100, 0)
       const allSessions = response.sessions || []
       
-      // Filter sessions based on current mode (for cases where server filtering isn't sufficient)
+      // Filter sessions based on current mode
       const filteredSessions = filterSessionsByMode(allSessions)
       setSessions(filteredSessions)
       
@@ -143,13 +115,13 @@ export default function ChatHistorySection({
     } finally {
       setLoading(false)
     }
-  }, [presetCache, fetchPresetQuery, filterSessionsByMode, selectedModeCategory, activePresetForCategory])
+  }, [presetCache, fetchPresetQuery, filterSessionsByMode, selectedModeCategory])
 
   // Load sessions and active sessions on mount
   useEffect(() => {
     loadSessions()
     loadActiveSessions()
-  }, [loadSessions, loadActiveSessions, activePresetForCategory])
+  }, [loadSessions, loadActiveSessions, selectedModeCategory])
 
   // Refresh active sessions periodically
   useEffect(() => {
@@ -227,6 +199,11 @@ export default function ChatHistorySection({
         setError('Failed to delete session')
       }
     }
+  }
+
+  // Hide entire section in workflow mode
+  if (selectedModeCategory === 'workflow') {
+    return null
   }
 
   if (minimized) {

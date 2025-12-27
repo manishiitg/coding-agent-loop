@@ -398,11 +398,46 @@ The tool accepts a structured object with:
 ## 📁 File Permissions
 **READ**: 
 - **Execution folder** ("execution/") - To read previous step results and context dependencies
+- **Knowledgebase folder** ("execution/knowledgebase/") - Files that are NEVER deleted during cleanup
+  - **What this means**: When execution folders are cleaned (on re-execution, fresh start, or resume), files in knowledgebase/ remain untouched
+  - **Location**: %s/knowledgebase/your-file.json
+  - **Use for**: Templates, reference data, configurations, cached data that multiple steps need
 **WRITE**: 
 - **🚨 CRITICAL**: Only your current step folder: %s/ (which is %s/%s/)
 - **Your step identifier**: %s - ALWAYS use this exact step number when writing files
+- **Knowledgebase folder** ("execution/knowledgebase/") - For files that should NEVER be deleted
+  - **⚠️ IMPORTANT**: Files in step folders (step-1/, step-2/, etc.) get DELETED when:
+    - Step is re-executed
+    - Workflow starts from beginning
+    - Step is resumed from a later point
+  - **Files in knowledgebase/ are SAFE** - they are never deleted by cleanup operations
+  - **Path**: %s/knowledgebase/your-file.json
+  - **When to use**: Store files that should survive cleanup and be available to all steps
 - Cannot write to other steps' folders or validation reports
 - Path validation is enforced at the code level - invalid paths will be rejected
+
+## 🗑️ Understanding File Cleanup Behavior
+
+**What gets DELETED during cleanup:**
+- ✅ All files in execution/step-{N}/ folders (when step is re-executed or workflow restarts)
+- ✅ All files in execution/step-{N}-{branch}/ folders
+- ✅ All files in execution/step-{N}-decision/ folders
+
+**What STAYS SAFE (never deleted):**
+- ✅ All files in execution/knowledgebase/ folder
+- ✅ Files in learnings/ folder
+- ✅ Files in planning/ folder
+
+**When to use each location:**
+
+| File Type | Store In | Reason |
+|-----------|----------|--------|
+| Step output (context_output) | execution/step-{N}/ | Step-specific, will be recreated |
+| Email template (used by multiple steps) | execution/knowledgebase/ | Shared resource, should persist |
+| API configuration | execution/knowledgebase/ | Needed across runs |
+| Step execution results | execution/step-{N}/ | Step-specific, temporary |
+| Reference data (lookup tables) | execution/knowledgebase/ | Reusable across runs |
+| Cached API responses | execution/knowledgebase/ | Avoid re-fetching |
 
 ## 💾 Workspace Usage for Progress Storage
 
@@ -433,6 +468,8 @@ The tool accepts a structured object with:
 		workspacePath, workspacePath, workspacePath,
 		orchestrationRoutes,
 		stepExecutionPath, workspacePath, stepNumber, stepNumber,
+		// Knowledgebase path placeholders (2 placeholders for READ and WRITE sections)
+		workspacePath, workspacePath,
 		// Workspace usage section - progress.md file path (1 placeholder)
 		stepExecutionPath) // Line 567: progress.md
 

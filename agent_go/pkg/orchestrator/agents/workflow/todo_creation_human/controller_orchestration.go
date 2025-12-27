@@ -882,11 +882,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 	}
 	// Step-specific learnings folder: learnings/{stepID}/ (only this step's learnings, not full learnings folder)
 	stepLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
-	// READ: step-specific learnings folder + execution folder + run folder (to read previous step results and run folder files)
+	// Knowledgebase folder: execution/knowledgebase/ (persistent files across runs)
+	knowledgebasePath := getKnowledgebasePath(executionWorkspacePath)
+	// READ: step-specific learnings folder + execution folder + run folder + knowledgebase folder (to read previous step results and run folder files)
 	// Note: runWorkspacePath is already defined earlier in this function (line 810)
-	// WRITE: only the specific step folder (execution/step-{X}-orchestration/ or execution/step-{X}-orchestration-{N}/)
-	readPaths := []string{stepLearningsPath, executionWorkspacePath, runWorkspacePath}
-	writePaths := []string{stepExecutionPath}
+	// WRITE: only the specific step folder (execution/step-{X}-orchestration/ or execution/step-{X}-orchestration-{N}/) + knowledgebase folder
+	readPaths := []string{stepLearningsPath, executionWorkspacePath, runWorkspacePath, knowledgebasePath}
+	writePaths := []string{stepExecutionPath, knowledgebasePath}
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for orchestration orchestrator agent - Read paths: %v, Write paths: %v (can read learnings/%s/, execution/, and run folder, can only write to %s)", readPaths, writePaths, stepID, stepPath))
 

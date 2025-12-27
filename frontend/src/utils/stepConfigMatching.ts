@@ -77,6 +77,15 @@ export interface TodoStepWithConfigs {
     context_to_pass?: string;
   }>;
   next_step_id?: string;
+  // Human input step fields (asks question to human and blocks for input)
+  has_human_input?: boolean;
+  question?: string;
+  variable_name?: string;
+  response_type?: string; // "text" (default), "yesno", "multiple_choice"
+  options?: string[];
+  if_yes_next_step_id?: string; // For yesno type when response is "yes"
+  if_no_next_step_id?: string; // For yesno type when response is "no"
+  option_routes?: Record<string, string>; // For multiple_choice type - maps option index or value to next_step_id
   agent_configs?: AgentConfigs;
   validation_schema?: ValidationSchema; // Optional structured validation schema for step outputs
 }
@@ -211,8 +220,21 @@ export interface OrchestrationPlanStep extends CommonStepFields {
   next_step_id?: string;              // ID of step after orchestration completes (or "end")
 }
 
+// Human input step (asks question to human and blocks for input)
+export interface HumanInputPlanStep extends CommonStepFields {
+  type: 'human_input';
+  question: string;                      // Required: question to ask human
+  variable_name?: string;                // Optional: store response in variable
+  response_type?: string;                // "text" (default), "yesno", "multiple_choice"
+  options?: string[];                    // For multiple_choice type
+  next_step_id?: string;                 // Default: where to go after response (or "end") - used if conditional routing not specified
+  if_yes_next_step_id?: string;         // Optional: for yesno type when response is "yes"
+  if_no_next_step_id?: string;          // Optional: for yesno type when response is "no"
+  option_routes?: Record<string, string>; // Optional: for multiple_choice type - maps option index (as string "0", "1", etc.) or option value to next_step_id
+}
+
 // Discriminated union type for all step types
-export type PlanStep = RegularPlanStep | ConditionalPlanStep | DecisionPlanStep | OrchestrationPlanStep;
+export type PlanStep = RegularPlanStep | ConditionalPlanStep | DecisionPlanStep | OrchestrationPlanStep | HumanInputPlanStep;
 
 // PlanRoutingRoute represents a possible route/sub-agent for planning
 export interface PlanRoutingRoute {
@@ -245,6 +267,10 @@ export function isDecisionStep(step: PlanStep): step is DecisionPlanStep {
 
 export function isOrchestrationStep(step: PlanStep): step is OrchestrationPlanStep {
   return step.type === 'orchestration';
+}
+
+export function isHumanInputStep(step: PlanStep): step is HumanInputPlanStep {
+  return step.type === 'human_input';
 }
 
 

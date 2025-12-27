@@ -11,8 +11,9 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/database"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
+	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "mcpagent/agent"
-	"mcpagent/events"
+	baseevents "mcpagent/events"
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
 
@@ -608,8 +609,8 @@ func (wo *WorkflowOrchestrator) emitBlockingHumanFeedback(ctx context.Context, o
 	}
 
 	// Create blocking human feedback event data
-	eventData := &events.BlockingHumanFeedbackEvent{
-		BaseEventData: events.BaseEventData{
+	eventData := &orchestrator_events.BlockingHumanFeedbackEvent{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 		},
 		Question:      questionText,
@@ -624,8 +625,8 @@ func (wo *WorkflowOrchestrator) emitBlockingHumanFeedback(ctx context.Context, o
 	}
 
 	// Create agent event
-	agentEvent := &events.AgentEvent{
-		Type:      events.BlockingHumanFeedback,
+	agentEvent := &baseevents.AgentEvent{
+		Type:      orchestrator_events.BlockingHumanFeedback,
 		Timestamp: time.Now(),
 		Data:      eventData,
 	}
@@ -633,7 +634,7 @@ func (wo *WorkflowOrchestrator) emitBlockingHumanFeedback(ctx context.Context, o
 	// Emit through event bridge if available
 	if wo.GetContextAwareBridge() != nil {
 		if bridge, ok := wo.GetContextAwareBridge().(interface {
-			HandleEvent(context.Context, *events.AgentEvent) error
+			HandleEvent(context.Context, *baseevents.AgentEvent) error
 		}); ok {
 			if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
 				return err

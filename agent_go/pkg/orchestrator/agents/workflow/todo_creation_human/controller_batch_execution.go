@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"mcpagent/events"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	baseevents "mcpagent/events"
 )
 
 // BatchExecutionResult contains the result of batch execution
@@ -528,7 +529,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitBatchExecutionStartEvent
 	}
 
 	event := events.NewBatchExecutionStartEvent(totalGroups, enabledGroupIDs, iteration, hcpo.GetWorkspacePath())
-	bridge.HandleEvent(ctx, &events.AgentEvent{
+	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
 		Type:      events.BatchExecutionStart,
 		Timestamp: time.Now(),
 		Data:      event,
@@ -542,7 +543,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitBatchGroupStartEvent(ctx
 	}
 
 	event := events.NewBatchGroupStartEvent(groupID, groupIndex, totalGroups, variableValues, runFolder, iteration, hcpo.GetWorkspacePath())
-	bridge.HandleEvent(ctx, &events.AgentEvent{
+	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
 		Type:      events.BatchGroupStart,
 		Timestamp: time.Now(),
 		Data:      event,
@@ -556,7 +557,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitBatchGroupEndEvent(ctx c
 	}
 
 	event := events.NewBatchGroupEndEvent(groupID, groupIndex, totalGroups, success, errorMsg, duration, completedSteps, totalSteps, runFolder, remainingGroups)
-	bridge.HandleEvent(ctx, &events.AgentEvent{
+	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
 		Type:      events.BatchGroupEnd,
 		Timestamp: time.Now(),
 		Data:      event,
@@ -581,7 +582,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitBatchExecutionEndEvent(c
 		result.CompletedGroupIDs,
 		result.FailedGroupIDs,
 	)
-	bridge.HandleEvent(ctx, &events.AgentEvent{
+	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
 		Type:      events.BatchExecutionEnd,
 		Timestamp: time.Now(),
 		Data:      event,
@@ -595,7 +596,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitBatchExecutionCanceledEv
 	}
 
 	event := events.NewBatchExecutionCanceledEvent(totalGroups, completedGroups, canceledGroupID, remainingGroupIDs, reason)
-	bridge.HandleEvent(ctx, &events.AgentEvent{
+	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
 		Type:      events.BatchExecutionCanceled,
 		Timestamp: time.Now(),
 		Data:      event,

@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"mcpagent/events"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	baseevents "mcpagent/events"
 )
 
 // BranchStepProgress tracks branch execution progress for conditional steps
@@ -149,7 +150,7 @@ const (
 
 // TodoStepsExtractedEvent represents the event when todo steps are extracted from a plan
 type TodoStepsExtractedEvent struct {
-	events.BaseEventData
+	baseevents.BaseEventData
 	TotalStepsExtracted int                 `json:"total_steps_extracted"`
 	ExtractedSteps      []PlanStepInterface `json:"extracted_steps"`
 	ExtractionMethod    string              `json:"extraction_method"`
@@ -183,6 +184,6 @@ func (e *TodoStepsExtractedEvent) MarshalJSON() ([]byte, error) {
 }
 
 // GetEventType returns the event type for TodoStepsExtractedEvent
-func (e *TodoStepsExtractedEvent) GetEventType() events.EventType {
+func (e *TodoStepsExtractedEvent) GetEventType() baseevents.EventType {
 	return events.TodoStepsExtracted
 }

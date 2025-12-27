@@ -10,8 +10,9 @@ import (
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "mcpagent/agent"
-	"mcpagent/events"
+	baseevents "mcpagent/events"
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
@@ -99,8 +100,12 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 
 	// Build read paths list - explicit read-only access
 	// Use current workspace for execution/logs, original workspace for learnings/planning
+	// Knowledgebase folder: execution/knowledgebase/ (persistent files across runs)
+	executionPath := fmt.Sprintf("%s/execution", currentWorkspacePath)
+	knowledgebasePath := getKnowledgebasePath(executionPath)
 	readPaths := []string{
 		currentWorkspacePath, // Read execution results and logs from current workspace
+		knowledgebasePath,    // Read knowledgebase folder (persistent files across runs)
 		learningsPath,        // Read learnings from original workspace (shared and step-specific)
 		planningPath,         // Read plan.json from original workspace
 	}
@@ -280,8 +285,10 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, orig
 	// Create execution results summary based on the selected run folder.
 	// Execution/logs live under runs/<run>/..., while plan/learnings are at workspace root.
 	executionResultsSummary := fmt.Sprintf(
-		"Workspace root: %s\nSelected run folder: %s\n\nRun folder contains:\n- %s/execution/ - step execution outputs\n- %s/logs/ - validation and execution logs\n\nUse list_workspace_files to explore:\n- Execution result files in %s/execution/\n- Detailed logs in %s/logs/step-X/ including:\n  * validation-{N}.json - validation responses for each validation attempt\n  * execution/execution-attempt-{N}-iteration-{M}.json - execution results with retry/loop information\n  * execution/execution-attempt-{N}-iteration-{M}-conversation.json - full conversation history for each execution attempt\n\nLearnings are stored at workspace root:\n- learnings/\n- learnings/{step_id}/ (regular steps, using step IDs from plan.json)\n- learnings/{step_id}/ (branch steps, using step IDs from plan.json where step_id is the branch step's own ID)\n- learnings/{step_id}/ (orchestration sub-agents, using step IDs from plan.json where step_id is the sub-agent's own ID)\n\nPlan is stored at:\n- planning/plan.json",
+		"Workspace root: %s\nSelected run folder: %s\n\nRun folder contains:\n- %s/execution/ - step execution outputs\n- %s/execution/knowledgebase/ - persistent files across runs (templates, reference data, configurations - NEVER deleted during cleanup)\n- %s/logs/ - validation and execution logs\n\nUse list_workspace_files to explore:\n- Execution result files in %s/execution/\n- Knowledgebase files in %s/execution/knowledgebase/ (persistent across runs)\n- Detailed logs in %s/logs/step-X/ including:\n  * validation-{N}.json - validation responses for each validation attempt\n  * execution/execution-attempt-{N}-iteration-{M}.json - execution results with retry/loop information\n  * execution/execution-attempt-{N}-iteration-{M}-conversation.json - full conversation history for each execution attempt\n\nLearnings are stored at workspace root:\n- learnings/\n- learnings/{step_id}/ (regular steps, using step IDs from plan.json)\n- learnings/{step_id}/ (branch steps, using step IDs from plan.json where step_id is the branch step's own ID)\n- learnings/{step_id}/ (orchestration sub-agents, using step IDs from plan.json where step_id is the sub-agent's own ID)\n\nPlan is stored at:\n- planning/plan.json",
 		originalWorkspacePath,
+		validatedRunPath,
+		validatedRunPath,
 		validatedRunPath,
 		validatedRunPath,
 		validatedRunPath,
@@ -590,8 +597,8 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 	if agent.baseOrchestrator != nil {
 		eventBridge := agent.baseOrchestrator.GetContextAwareBridge()
 		if eventBridge != nil {
-			startedEvent := &events.OrchestratorAgentStartEvent{
-				BaseEventData: events.BaseEventData{
+			startedEvent := &orchestrator_events.OrchestratorAgentStartEvent{
+				BaseEventData: baseevents.BaseEventData{
 					Timestamp: time.Now(),
 					Component: "orchestrator",
 				},
@@ -600,8 +607,8 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 				Objective: "Improve plan based on execution results and user feedback",
 				InputData: planImprovementTemplateVars,
 			}
-			eventBridge.HandleEvent(ctx, &events.AgentEvent{
-				Type:      events.OrchestratorAgentStart,
+			eventBridge.HandleEvent(ctx, &baseevents.AgentEvent{
+				Type:      orchestrator_events.OrchestratorAgentStart,
 				Timestamp: time.Now(),
 				Data:      startedEvent,
 			})
@@ -728,8 +735,8 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 	if agent.baseOrchestrator != nil {
 		eventBridge := agent.baseOrchestrator.GetContextAwareBridge()
 		if eventBridge != nil {
-			completedEvent := &events.OrchestratorAgentEndEvent{
-				BaseEventData: events.BaseEventData{
+			completedEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+				BaseEventData: baseevents.BaseEventData{
 					Timestamp: time.Now(),
 					Component: "orchestrator",
 				},
@@ -740,8 +747,8 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 				Success:   true,
 				InputData: planImprovementTemplateVars,
 			}
-			eventBridge.HandleEvent(ctx, &events.AgentEvent{
-				Type:      events.OrchestratorAgentEnd,
+			eventBridge.HandleEvent(ctx, &baseevents.AgentEvent{
+				Type:      orchestrator_events.OrchestratorAgentEnd,
 				Timestamp: time.Now(),
 				Data:      completedEvent,
 			})
@@ -792,10 +799,13 @@ Run workspace absolute path: **%s**
 Before proposing changes, read:
 1. ✅ Current plan: planning/plan.json
 2. ✅ Execution outputs: ` + runPathRelative + `/execution/
-3. ✅ Validation logs: ` + runPathRelative + `/logs/step-X/validation-N.json
-4. ✅ Learnings (shared + step-specific): learnings/ and learnings/{step_id}/
+3. ✅ Knowledgebase files: ` + runPathRelative + `/execution/knowledgebase/ (persistent files across runs - templates, reference data, configurations)
+4. ✅ Validation logs: ` + runPathRelative + `/logs/step-X/validation-N.json
+5. ✅ Learnings (shared + step-specific): learnings/ and learnings/{step_id}/
 
 Include **Files inspected:** list in responses.
+
+**Note on Knowledgebase Folder**: The execution/knowledgebase/ folder contains files that persist across runs and are never deleted during cleanup. Check this folder for templates, reference data, or configurations that might be relevant to plan improvements.
 
 ---
 

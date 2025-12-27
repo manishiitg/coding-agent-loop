@@ -183,14 +183,14 @@ interface UsePlanToFlowOptions {
 // Dagre layout configuration
 const DAGRE_CONFIG = {
   rankdir: 'LR', // Left to right (tree layout)
-  // Increase vertical and horizontal spacing for a less congested layout
-  nodesep: 420,  // Vertical spacing between nodes in same rank
-  ranksep: 120,  // Horizontal spacing between ranks (columns)
-  marginx: 60,
-  marginy: 60
+  // Increased spacing for complex workflows (orchestrator, conditionals, loops)
+  nodesep: 550,  // Vertical spacing between nodes in same rank (increased from 420)
+  ranksep: 220,  // Horizontal spacing between ranks (columns) (increased from 120)
+  marginx: 80,   // Increased margins for better edge spacing
+  marginy: 80
 }
 
-// Node dimensions for layout calculation
+// Node dimensions for layout calculation (base dimensions)
 const NODE_DIMENSIONS = {
   step: { width: 340, height: 200 },
   conditional: { width: 300, height: 160 },
@@ -204,6 +204,94 @@ const NODE_DIMENSIONS = {
   end: { width: 80, height: 36 },
   variables: { width: 260, height: 180 },
   'execution-settings': { width: 240, height: 120 }
+}
+
+/**
+ * Estimate node height based on content
+ * This accounts for dynamic content like descriptions, success criteria, validation schemas, etc.
+ */
+function estimateNodeHeight(node: WorkflowNode): number {
+  const baseDimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+  let estimatedHeight = baseDimensions.height
+  
+  // Get node data (union of all possible node data types)
+  const data = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | Record<string, unknown>
+  
+  // Base height components (header, padding, footer)
+  const headerHeight = 80 // Header with buttons
+  const footerHeight = 60 // Config footer
+  const padding = 24 // Top and bottom padding (py-3 = 12px each)
+  
+  // Content height estimation
+  let contentHeight = 0
+  
+  // Description text (estimate ~20px per line, ~60 chars per line at 12px font)
+  if ('description' in data && typeof data.description === 'string' && data.description) {
+    const descLines = Math.ceil(data.description.length / 60)
+    contentHeight += Math.max(descLines * 20, 30) + 12 // min 30px + spacing
+  }
+  
+  // Success criteria (box with padding)
+  if ('success_criteria' in data && typeof data.success_criteria === 'string' && data.success_criteria) {
+    const criteriaLines = Math.ceil(data.success_criteria.length / 60)
+    contentHeight += Math.max(criteriaLines * 20, 50) + 12 // min 50px + spacing
+  }
+  
+  // Validation schema
+  if ('validation_schema' in data && data.validation_schema && typeof data.validation_schema === 'object') {
+    const validationSchema = data.validation_schema as ValidationSchema
+    if (validationSchema.files && Array.isArray(validationSchema.files) && validationSchema.files.length > 0) {
+      const fileCount = validationSchema.files.length
+      contentHeight += 60 + (fileCount * 20) + 12 // Base + per file + spacing
+    }
+  }
+  
+  // Prerequisite rules (from step.agent_configs)
+  if ('step' in data && data.step && typeof data.step === 'object') {
+    const step = data.step as PlanStep
+    if (step.agent_configs?.enable_prerequisite_detection && step.agent_configs?.prerequisite_rules) {
+      const ruleCount = step.agent_configs.prerequisite_rules.length
+      contentHeight += (ruleCount * 60) + 12 // ~60px per rule + spacing
+    }
+    
+    // Context files (inputs and outputs)
+    const contextInputs = Array.isArray(step.context_dependencies) ? step.context_dependencies : []
+    const contextOutput = step.context_output
+    const contextOutputs = Array.isArray(contextOutput) 
+      ? contextOutput 
+      : (contextOutput ? [contextOutput] : [])
+    if (contextInputs.length > 0 || contextOutputs.length > 0) {
+      const totalFiles = contextInputs.length + contextOutputs.length
+      contentHeight += 30 + (totalFiles * 25) + 12 // Base + per file + spacing
+    }
+  }
+  
+  // For orchestrator nodes, add extra height for sub-agents section
+  if (node.type === 'orchestrator') {
+    contentHeight += 40 // Extra space for orchestration info
+  }
+  
+  // For conditional nodes, add height for condition question
+  if (node.type === 'conditional' && 'condition_question' in data && typeof data.condition_question === 'string' && data.condition_question) {
+    const questionLines = Math.ceil(data.condition_question.length / 50)
+    contentHeight += Math.max(questionLines * 20, 40) + 12
+  }
+  
+  // For loop nodes, add height for iteration info
+  if (node.type === 'loop') {
+    contentHeight += 40 // Loop iteration badge and info
+  }
+  
+  // Calculate total estimated height
+  estimatedHeight = headerHeight + padding + contentHeight + footerHeight
+  
+  // Add safety margin (20% extra) to account for text wrapping, badges, etc.
+  estimatedHeight = Math.ceil(estimatedHeight * 1.2)
+  
+  // Ensure minimum height
+  estimatedHeight = Math.max(estimatedHeight, baseDimensions.height)
+  
+  return estimatedHeight
 }
 
 /**
@@ -301,6 +389,213 @@ function fixOverlappingBranches(nodes: WorkflowNode[]): WorkflowNode[] {
   }
 
   return adjustedNodes
+}
+
+/**
+ * Global collision detection and resolution
+ * Detects overlaps between all nodes and resolves them by shifting nodes
+ * This handles overlaps from orchestrator sub-agents, conditional branches, loops, etc.
+ */
+function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
+  const MIN_SEPARATION = 80 // Minimum gap between nodes (increased from 50 for better spacing)
+  const adjustedNodes = [...nodes]
+  let collisionCount = 0
+  
+  // Get bounding box for a node (using estimated height based on content)
+  const getBounds = (node: WorkflowNode): { left: number; right: number; top: number; bottom: number } => {
+    const baseDimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+    const estimatedHeight = estimateNodeHeight(node)
+    return {
+      left: node.position.x,
+      right: node.position.x + baseDimensions.width,
+      top: node.position.y,
+      bottom: node.position.y + estimatedHeight
+    }
+  }
+  
+  // Check if two bounding boxes overlap (with minimum separation)
+  const boxesOverlap = (
+    a: { left: number; right: number; top: number; bottom: number },
+    b: { left: number; right: number; top: number; bottom: number }
+  ): boolean => {
+    // Calculate overlap area (positive if overlapping, negative if separated)
+    const horizontalOverlap = Math.min(a.right, b.right) - Math.max(a.left, b.left)
+    const verticalOverlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
+    
+    // Overlap if both dimensions have positive overlap (boxes intersect)
+    // Also check if they're too close (within MIN_SEPARATION)
+    if (horizontalOverlap > 0 && verticalOverlap > 0) {
+      return true // Full overlap
+    }
+    
+    // Check if boxes are too close (within MIN_SEPARATION) even if not overlapping
+    const hDistance = horizontalOverlap < 0 ? -horizontalOverlap : 0
+    const vDistance = verticalOverlap < 0 ? -verticalOverlap : 0
+    
+    // If boxes are close horizontally and vertically, they need more separation
+    return (hDistance < MIN_SEPARATION && vDistance < MIN_SEPARATION) ||
+           (horizontalOverlap > 0 && vDistance < MIN_SEPARATION) ||
+           (verticalOverlap > 0 && hDistance < MIN_SEPARATION)
+  }
+  
+  // Calculate how much to shift node 'a' to resolve overlap with node 'b'
+  const calculateShift = (
+    a: { left: number; right: number; top: number; bottom: number },
+    b: { left: number; right: number; top: number; bottom: number }
+  ): { dx: number; dy: number } => {
+    // Calculate actual overlap amounts (positive = overlapping, negative = separated)
+    const horizontalOverlap = Math.min(a.right, b.right) - Math.max(a.left, b.left)
+    const verticalOverlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
+    
+    // Calculate distances if separated
+    const hDistance = horizontalOverlap < 0 ? -horizontalOverlap : 0
+    const vDistance = verticalOverlap < 0 ? -verticalOverlap : 0
+    
+    // Determine which dimension has the most overlap or needs the most separation
+    const hOverlapAmount = horizontalOverlap > 0 ? horizontalOverlap : 0
+    const vOverlapAmount = verticalOverlap > 0 ? verticalOverlap : 0
+    
+    // If fully overlapping (both dimensions overlap), prefer vertical shift for LR layout
+    if (hOverlapAmount > 0 && vOverlapAmount > 0) {
+      // Full overlap - shift vertically (prefer moving down for nodes that come later)
+      const shiftY = a.top < b.top 
+        ? (vOverlapAmount + MIN_SEPARATION)  // Move a down
+        : -(vOverlapAmount + MIN_SEPARATION)  // Move a up
+      return { dx: 0, dy: shiftY }
+    }
+    
+    // Partial overlap or too close - determine best direction
+    if (vOverlapAmount > 0) {
+      // Vertical overlap - shift vertically
+      const shiftY = a.top < b.top 
+        ? (vOverlapAmount + MIN_SEPARATION)  // Move a down
+        : -(vOverlapAmount + MIN_SEPARATION)  // Move a up
+      return { dx: 0, dy: shiftY }
+    } else if (hOverlapAmount > 0) {
+      // Horizontal overlap - shift horizontally
+      const shiftX = a.left < b.left
+        ? (hOverlapAmount + MIN_SEPARATION)  // Move a right
+        : -(hOverlapAmount + MIN_SEPARATION) // Move a left
+      return { dx: shiftX, dy: 0 }
+    } else if (hDistance < MIN_SEPARATION && vDistance < MIN_SEPARATION) {
+      // Too close but not overlapping - shift in direction that needs more space
+      if (vDistance < hDistance) {
+        // Need more vertical separation
+        const shiftY = a.top < b.top 
+          ? (MIN_SEPARATION - vDistance)  // Move a down
+          : -(MIN_SEPARATION - vDistance)  // Move a up
+        return { dx: 0, dy: shiftY }
+      } else {
+        // Need more horizontal separation
+        const shiftX = a.left < b.left
+          ? (MIN_SEPARATION - hDistance)  // Move a right
+          : -(MIN_SEPARATION - hDistance) // Move a left
+        return { dx: shiftX, dy: 0 }
+      }
+    }
+    
+    return { dx: 0, dy: 0 }
+  }
+  
+  // Sort nodes by position (top to bottom, then left to right)
+  const sortedNodes = [...adjustedNodes].sort((a, b) => {
+    const aBounds = getBounds(a)
+    const bBounds = getBounds(b)
+    if (Math.abs(aBounds.top - bBounds.top) > 10) {
+      return aBounds.top - bBounds.top
+    }
+    return aBounds.left - bBounds.left
+  })
+  
+  // Track cumulative shifts for each node
+  const shifts = new Map<string, { dx: number; dy: number }>()
+  adjustedNodes.forEach(node => {
+    shifts.set(node.id, { dx: 0, dy: 0 })
+  })
+  
+  // Check each node against all previous nodes
+  for (let i = 0; i < sortedNodes.length; i++) {
+    const currentNode = sortedNodes[i]
+    const currentBounds = getBounds(currentNode)
+    
+    // Apply any existing shifts to current bounds
+    const currentShift = shifts.get(currentNode.id) || { dx: 0, dy: 0 }
+    let adjustedCurrentBounds = {
+      left: currentBounds.left + currentShift.dx,
+      right: currentBounds.right + currentShift.dx,
+      top: currentBounds.top + currentShift.dy,
+      bottom: currentBounds.bottom + currentShift.dy
+    }
+    
+    // Check against all previous nodes
+    for (let j = 0; j < i; j++) {
+      const otherNode = sortedNodes[j]
+      const otherBounds = getBounds(otherNode)
+      
+      // Apply any existing shifts to other bounds
+      const otherShift = shifts.get(otherNode.id) || { dx: 0, dy: 0 }
+      const adjustedOtherBounds = {
+        left: otherBounds.left + otherShift.dx,
+        right: otherBounds.right + otherShift.dx,
+        top: otherBounds.top + otherShift.dy,
+        bottom: otherBounds.bottom + otherShift.dy
+      }
+      
+      // Check for overlap
+      if (boxesOverlap(adjustedCurrentBounds, adjustedOtherBounds)) {
+        collisionCount++
+        const shift = calculateShift(adjustedCurrentBounds, adjustedOtherBounds)
+        
+        if (shift.dx !== 0 || shift.dy !== 0) {
+          // Log collision details for debugging
+          if (collisionCount <= 5) { // Log first 5 collisions to avoid spam
+            console.log(`[CollisionDetection] Collision ${collisionCount}: ${currentNode.id} (${currentNode.type}) overlaps ${otherNode.id} (${otherNode.type})`, {
+              currentPos: { x: currentNode.position.x, y: currentNode.position.y },
+              otherPos: { x: otherNode.position.x, y: otherNode.position.y },
+              shift: { dx: shift.dx, dy: shift.dy }
+            })
+          }
+          
+          // Update shift for current node
+          const currentShiftValue = shifts.get(currentNode.id) || { dx: 0, dy: 0 }
+          shifts.set(currentNode.id, {
+            dx: currentShiftValue.dx + shift.dx,
+            dy: currentShiftValue.dy + shift.dy
+          })
+          
+          // Update adjusted bounds for next checks
+          adjustedCurrentBounds = {
+            left: adjustedCurrentBounds.left + shift.dx,
+            right: adjustedCurrentBounds.right + shift.dx,
+            top: adjustedCurrentBounds.top + shift.dy,
+            bottom: adjustedCurrentBounds.bottom + shift.dy
+          }
+        }
+      }
+    }
+  }
+  
+  // Log collision detection results
+  if (collisionCount > 0) {
+    console.log(`[CollisionDetection] Detected ${collisionCount} collisions, applying shifts to ${Array.from(shifts.values()).filter(s => s.dx !== 0 || s.dy !== 0).length} nodes`)
+  }
+  
+  // Apply all shifts to nodes
+  const shiftedNodes = adjustedNodes.map(node => {
+    const shift = shifts.get(node.id)
+    if (shift && (shift.dx !== 0 || shift.dy !== 0)) {
+      return {
+        ...node,
+        position: {
+          x: node.position.x + shift.dx,
+          y: node.position.y + shift.dy
+        }
+      }
+    }
+    return node
+  })
+  
+  return shiftedNodes
 }
 
 /**
@@ -2195,8 +2490,8 @@ export function usePlanToFlow(
         }
       })
       
-      const verticalSpacing = 1200 // Space between orchestrator node and sub-agents
-      const horizontalSpacing = 100 // Space between sub-agents horizontally
+      const verticalSpacing = 1500 // Space between orchestrator node and sub-agents (increased from 1200)
+      const horizontalSpacing = 120 // Space between sub-agents horizontally (increased from 100)
       
       // All sub-agents should be at the same Y position (same horizontal line)
       const subAgentY = orchestratorBottom + verticalSpacing
@@ -2399,6 +2694,15 @@ export function usePlanToFlow(
 
     // Replace nodes with the adjusted positions
     layoutedResult.nodes = positionedNodes
+    
+    // Apply global collision detection and resolution to fix any remaining overlaps
+    // This handles overlaps from orchestrator sub-agents, conditional branches, loops, etc.
+    const nodesBeforeCollision = layoutedResult.nodes.length
+    layoutedResult.nodes = detectAndResolveCollisions(layoutedResult.nodes)
+    const nodesAfterCollision = layoutedResult.nodes.length
+    if (nodesBeforeCollision !== nodesAfterCollision) {
+      console.warn('[CollisionDetection] Node count changed during collision detection!', { before: nodesBeforeCollision, after: nodesAfterCollision })
+    }
     
     // Helper to determine if a step can run
     // All steps can run regardless of previous step completion

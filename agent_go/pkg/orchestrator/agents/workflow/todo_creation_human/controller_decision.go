@@ -242,6 +242,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeDecisionStep(
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Setting UseCodeExecutionMode=%v in step config for conditional agent creation", isCodeExecutionMode))
 	}
 
+	// Ensure step execution folder exists before creating conditional agent (agent needs to write to this folder)
+	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
+	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, decisionStepPath)
+	if err := hcpo.ensureStepExecutionFolderExists(ctx, stepExecutionPath); err != nil {
+		// Non-blocking: log warning but continue execution (folder will be created when files are written)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure decision step execution folder exists: %v (continuing - folder will be created when files are written)", err))
+	}
+
 	// Get conditional agent for this step (step-specific or default), with phase customized for decision evaluation
 	conditionalAgent := hcpo.getConditionalAgentForStep(ctx, step, stepIndex, "decision-step-evaluation", "decision_evaluation")
 

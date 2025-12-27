@@ -52,6 +52,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeHumanInputStep(
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+	// Ensure step execution folder exists before writing response file
+	if err := hcpo.ensureStepExecutionFolderExists(ctx, stepExecutionPath); err != nil {
+		// Non-blocking: log warning but continue execution (folder will be created when files are written)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure human input step execution folder exists: %v (continuing - folder will be created when files are written)", err))
+	}
 
 	// Get context output path (default to step-{index}.json if not specified)
 	contextOutput := step.GetContextOutput().String()

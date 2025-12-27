@@ -539,8 +539,10 @@ export default function Workspace({
           // Expand children up to 4 levels deep (levels 0, 1, 2, 3, 4 = 5 levels total)
           // We use maxLevel=4 to get 4 levels below the workflow folder
           // Pass the workflow folder path as an additional folder to ensure it's expanded
+          // Exclude "planning" and "variables" folders to keep them closed by default
           const additionalFolders = workflowFolder ? [workflowFolder.filepath] : undefined
-          expandFoldersToLevel(filesToExpand, 4, additionalFolders)
+          const excludeFolders = ['planning', 'variables']
+          expandFoldersToLevel(filesToExpand, 4, additionalFolders, excludeFolders)
           
           if (workflowFolder) {
             console.log('[Workspace] Expanded workflow folder and children:', {

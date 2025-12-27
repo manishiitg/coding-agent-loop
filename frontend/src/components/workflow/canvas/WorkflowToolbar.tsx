@@ -8,6 +8,7 @@ import {
   ZoomOut,
   Loader2,
   ChevronDown,
+  ChevronRight,
   Check,
   Rocket,
   FolderOpen,
@@ -22,7 +23,6 @@ import {
   Brain,
   MessageSquare,
   Circle,
-  Layers,
   CheckSquare,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -83,6 +83,7 @@ interface WorkflowToolbarProps {
   showChatArea?: boolean
   onToggleChatArea?: () => void
   onBulkUpdateSteps?: (updates: Array<{ stepId: string; updates: Partial<PlanStep> }>) => Promise<void>  // Bulk update function
+  onRefresh?: () => Promise<void>  // Refresh plan and variables
   className?: string
 }
 
@@ -103,6 +104,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   showChatArea = false,
   onToggleChatArea,
   onBulkUpdateSteps,
+  onRefresh,
   className = ''
 }) => {
   // Workspace store for opening folders
@@ -196,6 +198,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   
   // Loading state for creating new folder
   const [isCreatingFolder, setIsCreatingFolder] = React.useState(false)
+  
+  // State for expanded iterations (only show groups when expanded)
+  const [expandedIterations, setExpandedIterations] = React.useState<Set<string>>(new Set())
   
   // Refs for dropdown click-outside detection
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -658,6 +663,51 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
     return { sortedIterations, iterationMap, items }
   }, [runFolders, variablesManifest])
+  
+  // Auto-expand the iteration containing the selected run folder
+  useEffect(() => {
+    if (!selectedRunFolder || selectedRunFolder === 'new' || !iterationGroups.sortedIterations.length) {
+      return
+    }
+    
+    // Find which iteration contains the selected run folder
+    let targetIteration: string | null = null
+    
+    // Check if selectedRunFolder is an iteration name itself
+    if (iterationGroups.sortedIterations.includes(selectedRunFolder)) {
+      targetIteration = selectedRunFolder
+    } else {
+      // Check if selectedRunFolder is a group within an iteration (format: iteration-X/group-name)
+      for (const iteration of iterationGroups.sortedIterations) {
+        const groups = iterationGroups.iterationMap.get(iteration) || []
+        if (groups.some(g => g.id === selectedRunFolder)) {
+          targetIteration = iteration
+          break
+        }
+      }
+    }
+    
+    // Expand only the target iteration, collapse all others
+    if (targetIteration) {
+      setExpandedIterations(new Set([targetIteration]))
+    } else {
+      // If no iteration found, collapse all
+      setExpandedIterations(new Set())
+    }
+  }, [selectedRunFolder, iterationGroups.sortedIterations, iterationGroups.iterationMap])
+  
+  // Toggle iteration expansion
+  const toggleIteration = useCallback((iteration: string) => {
+    setExpandedIterations(prev => {
+      const next = new Set(prev)
+      if (next.has(iteration)) {
+        next.delete(iteration)
+      } else {
+        next.add(iteration)
+      }
+      return next
+    })
+  }, [])
   
   // Generate start point options based on completed steps and branch steps
   // Use ref to track previous options and prevent recalculation loops
@@ -1291,6 +1341,35 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               )}
             </div>
 
+            {/* Refresh Button - Reload plan and variables */}
+            {onRefresh && (
+              <>
+                <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await onRefresh()
+                        } catch (err) {
+                          console.error('[WorkflowToolbar] Failed to refresh:', err)
+                        }
+                      }}
+                      className="flex items-center justify-center w-7 h-7 rounded-md transition-all text-xs
+                                 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Refresh plan, step config, and variables</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+                {executionPhase && <div className="w-px h-5 bg-border" />}
+              </>
+            )}
+
             {/* Execution Controls - Execute button and configuration dropdowns */}
             {executionPhase && (
               <>
@@ -1384,17 +1463,28 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                 const hasGroups = groups.some(g => g.groupId !== null)
                                 const enabledGroups = groups.filter(g => g.enabled !== false)
                                 const hasMultipleGroups = enabledGroups.length > 1
-                                const isAllGroupsSelected = selectedRunFolder === iteration && !selectedRunFolder.includes('/group-')
+                                const isExpanded = expandedIterations.has(iteration)
                                 
                                 return (
                                   <div key={iteration}>
                                     {/* Iteration header (only if it has groups or is a top-level folder) */}
                                     {hasGroups ? (
-                                      <div className="px-3 py-1.5 text-xs font-semibold text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50 flex items-center justify-between gap-2">
-                                        <span>{iteration}</span>
+                                      <button
+                                        onClick={() => toggleIteration(iteration)}
+                                        className="w-full px-3 py-1.5 text-xs font-semibold text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50 flex items-center justify-between gap-2 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                                        title={isExpanded ? 'Collapse iteration' : 'Expand iteration'}
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          {isExpanded ? (
+                                            <ChevronDown className="w-3.5 h-3.5" />
+                                          ) : (
+                                            <ChevronRight className="w-3.5 h-3.5" />
+                                          )}
+                                          <span>{iteration}</span>
+                                        </div>
                                         {/* Select All / Unselect All buttons - only show if multiple groups */}
-                                        {hasMultipleGroups && (
-                                          <div className="flex items-center gap-1">
+                                        {hasMultipleGroups && isExpanded && (
+                                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                                             <button
                                               onClick={(e) => {
                                                 e.stopPropagation()
@@ -1420,55 +1510,15 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                             </button>
                                           </div>
                                         )}
-                                      </div>
+                                      </button>
                                     ) : null}
                                     
-                                    {/* "All Groups" option - only show if there are multiple enabled groups */}
-                                    {hasMultipleGroups && (() => {
-                                      // Count how many groups from this iteration are selected
-                                      const selectedCount = enabledGroups.filter(g => selectedGroupIds.includes(g.groupId!)).length
-                                      
-                                      return (
-                                        <div
-                                          className={`
-                                            group flex items-center gap-1 px-1
-                                            ${isAllGroupsSelected 
-                                              ? 'bg-purple-100 dark:bg-purple-900/30' 
-                                              : ''
-                                            }
-                                          `}
-                                        >
-                                          <button
-                                            onClick={() => {
-                                              handleSelectRunFolder(iteration)
-                                              // When "All Groups" is selected, select all enabled groups
-                                              if (!isAllGroupsSelected) {
-                                                const allGroupIds = enabledGroups.map(g => g.groupId!).filter(Boolean) as string[]
-                                                setSelectedGroupIds(allGroupIds)
-                                              }
-                                            }}
-                                            className={`
-                                              flex-1 text-left px-3 py-2 rounded-md text-sm flex items-center gap-2 font-medium
-                                              ${isAllGroupsSelected 
-                                                ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' 
-                                                : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
-                                              }
-                                            `}
-                                            title={`Run all ${enabledGroups.length} enabled groups in ${iteration}`}
-                                          >
-                                            <Layers className="w-4 h-4" />
-                                            <span className="flex-1">
-                                              All Groups ({selectedCount > 0 ? `${selectedCount}/${enabledGroups.length}` : enabledGroups.length})
-                                            </span>
-                                            {isAllGroupsSelected && <Check className="w-4 h-4 ml-auto" />}
-                                          </button>
-                                        </div>
-                                      )
-                                    })()}
-                                    
-                                    {/* Groups under this iteration - show ALL groups from manifest, not just ones with folders */}
-                                    {/* Filter out iteration folders (groupId === null) since we already show the iteration header */}
-                                    {groups.filter(group => group.groupId !== null).map((group) => {
+                                    {/* Only show groups when iteration is expanded */}
+                                    {isExpanded && (
+                                      <>
+                                        {/* Groups under this iteration - show ALL groups from manifest, not just ones with folders */}
+                                        {/* Filter out iteration folders (groupId === null) since we already show the iteration header */}
+                                        {groups.filter(group => group.groupId !== null).map((group) => {
                                       const progress = group.progress
                                       const completedCount = progress?.completed_step_indices?.length || 0
                                       const totalSteps = progress?.total_steps || 0
@@ -1505,6 +1555,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                                 e.stopPropagation()
                                                 if (group.groupId) {
                                                   toggleGroupSelection(group.groupId)
+                                                  // Also set the selected run folder to update the dropdown header (without closing dropdown)
+                                                  setSelectedRunFolder(group.id)
                                                 }
                                               }}
                                               onClick={(e) => e.stopPropagation()}
@@ -1516,9 +1568,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                           <button
                                             onClick={() => {
                                               handleSelectRunFolder(group.id)
-                                              // When clicking a specific group, also toggle its checkbox
+                                              // When clicking a specific group, move it to the front of selectedGroupIds
+                                              // This makes it the first to execute, while keeping all other selected groups
                                               if (group.groupId) {
-                                                toggleGroupSelection(group.groupId)
+                                                const currentIds = selectedGroupIds
+                                                // Remove the group if it's already selected
+                                                const otherIds = currentIds.filter(id => id !== group.groupId)
+                                                // Put the clicked group first, then all others
+                                                setSelectedGroupIds([group.groupId, ...otherIds])
                                               }
                                             }}
                                             className={`
@@ -1579,6 +1636,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                         </div>
                                       )
                                     })}
+                                      </>
+                                    )}
                                   </div>
                                 )
                               })

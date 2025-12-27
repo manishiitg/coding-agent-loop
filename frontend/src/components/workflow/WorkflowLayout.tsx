@@ -701,7 +701,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   return (
     <div className={`flex flex-col h-full ${className}`}>
       {/* Main Content */}
-      <div className="flex-1 flex min-h-0">
+      <div className="flex-1 flex min-h-0 relative">
         {/* Canvas - main area, shrinks when ChatArea is shown */}
         <div className={`flex-1 min-w-0 transition-all duration-300 ${showChatArea ? 'w-1/2' : ''}`}>
           <WorkflowCanvas
@@ -717,32 +717,25 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           />
         </div>
 
-        {/* ChatArea Panel - single instance, show/hide via CSS */}
-        <div className={`${showChatArea ? 'w-1/2' : 'w-0 overflow-hidden'} border-l border-gray-200 dark:border-gray-700 flex flex-col h-full min-h-0 bg-white dark:bg-gray-900 relative z-20 transition-all duration-300`}>
+        {/* ChatArea Panel - appears on right side, positioned below toolbar */}
+        <div className={`${showChatArea ? 'w-1/2' : 'w-0 overflow-hidden'} border-l border-gray-200 dark:border-gray-700 flex flex-col min-h-0 bg-white dark:bg-gray-900 absolute right-0 top-0 bottom-0 transition-all duration-300`} style={{ top: '40px' }}>
           {showChatArea && (
             <>
-          {/* Header - only above ChatArea panel */}
-          <ChatHeader
-            chatSessionTitle={activeWorkflowPreset?.label || ''}
-            chatSessionId=""
-            sessionState="active"
-          />
-          
-          {/* Workflow Chat Tabs - only shows active workflow tabs */}
-          <div className="flex-shrink-0">
-            <WorkflowChatTabs />
-          </div>
-          
-          {/* Single ChatArea component - takes remaining space */}
-          <div className="flex-1 min-h-0">
+              {/* Workflow Chat Tabs - only shows active workflow tabs */}
+              <div className="flex-shrink-0">
+                <WorkflowChatTabs />
+              </div>
+              
+              {/* Single ChatArea component - takes remaining space */}
+              <div className="flex-1 min-h-0">
                 <ChatAreaWithObserverId
-              ref={chatAreaCallbackRef}
-              onNewChat={onNewChat}
-              hideHeader
-              hideInput
-              compact
-            />
-          </div>
+                  ref={chatAreaCallbackRef}
+                  onNewChat={onNewChat}
+                  hideHeader
+                  hideInput
+                  compact
+                />
+              </div>
             </>
           )}
         </div>

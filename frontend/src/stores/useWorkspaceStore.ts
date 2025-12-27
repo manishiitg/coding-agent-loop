@@ -116,7 +116,7 @@ interface WorkspaceState {
   setExpandedFolders: (folders: Set<string>) => void
   expandFoldersForFile: (filepath: string) => void
   toggleFolder: (folderPath: string) => void
-  expandFoldersToLevel: (files: PlannerFile[], maxLevel?: number, additionalFolders?: string[]) => void
+  expandFoldersToLevel: (files: PlannerFile[], maxLevel?: number, additionalFolders?: string[], excludeFolders?: string[]) => void
   
   // Auto-scroll functionality
   scrollToFile: (filepath: string) => Promise<void>
@@ -741,7 +741,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         })
       },
       
-      expandFoldersToLevel: (files: PlannerFile[], maxLevel: number = 2, additionalFolders?: string[]) => {
+      expandFoldersToLevel: (files: PlannerFile[], maxLevel: number = 2, additionalFolders?: string[], excludeFolders?: string[]) => {
         // Start with existing expanded folders to merge with them instead of replacing
         const currentExpanded = get().expandedFolders
         const foldersToExpand = new Set<string>(currentExpanded)
@@ -751,11 +751,24 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           additionalFolders.forEach(folder => foldersToExpand.add(folder))
         }
         
+        // Helper function to check if a folder path should be excluded
+        const shouldExcludeFolder = (folderPath: string): boolean => {
+          if (!excludeFolders || excludeFolders.length === 0) return false
+          const lowerPath = folderPath.toLowerCase()
+          return excludeFolders.some(excludeFolder => {
+            const lowerExclude = excludeFolder.toLowerCase()
+            return lowerPath.includes(`/${lowerExclude}`) || 
+                   lowerPath.startsWith(lowerExclude) ||
+                   lowerPath.endsWith(`/${lowerExclude}`)
+          })
+        }
+        
         const collectFoldersAtLevel = (fileList: PlannerFile[], currentLevel: number) => {
           fileList.forEach(file => {
             if (file.type === 'folder') {
               // Expand folders up to and including maxLevel (0-indexed, so maxLevel=4 means levels 0,1,2,3,4)
-              if (currentLevel <= maxLevel) {
+              // But skip excluded folders
+              if (currentLevel <= maxLevel && !shouldExcludeFolder(file.filepath)) {
                 // Use filepath (which is adjusted in workflow mode) to match rendering
                 foldersToExpand.add(file.filepath)
               }

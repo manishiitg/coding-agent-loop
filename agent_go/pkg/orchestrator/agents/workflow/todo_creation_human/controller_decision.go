@@ -246,7 +246,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeDecisionStep(
 	conditionalAgent := hcpo.getConditionalAgentForStep(ctx, step, stepIndex, "decision-step-evaluation", "decision_evaluation")
 
 	// Evaluate decision using ConditionalAgent (agent has access to workspace tools)
-	decisionResponse, err := conditionalAgent.EvaluateDecision(ctx, executionResult, decisionStep.DecisionEvaluationQuestion, stepIndex, 0, isCodeExecutionMode, learningHistory)
+	// Format variable names and values (same format as execution agent)
+	var variableNames, variableValues string
+	if hcpo.variablesManifest != nil {
+		variableNames = FormatVariableNames(hcpo.variablesManifest)
+		variableValues = FormatVariableValues(hcpo.variablesManifest, hcpo.variableValues)
+	}
+
+	decisionResponse, err := conditionalAgent.EvaluateDecision(ctx, executionResult, decisionStep.DecisionEvaluationQuestion, stepIndex, 0, isCodeExecutionMode, learningHistory, variableNames, variableValues)
 	if err != nil {
 		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate decision step %d: %v", stepIndex+1, err), nil)
 		// Emit error event using centralized method

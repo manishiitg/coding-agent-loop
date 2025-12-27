@@ -40,6 +40,7 @@ interface StepSidebarProps {
   plan?: PlanningResponse | null
   completedStepIndices?: number[]  // Deprecated: no longer used (all steps can run)
   isCompact?: boolean  // When true, use narrower width (400px instead of 600px)
+  showChatArea?: boolean  // When true, use lower z-index so ChatArea appears on top
 }
 
 export const StepSidebar: React.FC<StepSidebarProps> = ({
@@ -53,7 +54,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   presetQueryId,
   onStartPhase,
   plan,
-  isCompact = false
+  isCompact = false,
+  showChatArea = false
 }) => {
   const { availableLLMs } = useLLMStore()
   
@@ -203,8 +205,17 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     }
 
     // Get step ID from node data
-    const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
-    const stepId = stepData.step?.id
+    // For orchestration steps, use orchestration_step.ID (backend uses orchestration_step.ID for learnings)
+    // For other steps, use step.ID
+    const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
+    let stepId: string | undefined
+    
+    if (node.type === 'orchestrator') {
+      const orchestratorData = stepData as OrchestratorNodeData
+      stepId = orchestratorData.orchestration_step?.id ?? orchestratorData.step?.id
+    } else {
+      stepId = stepData.step?.id
+    }
     
     if (!stepId) {
       console.error('[StepSidebar] Cannot view learnings: step ID not available')
@@ -917,7 +928,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   const sidebarWidth = isCompact ? 'w-[400px]' : 'w-[600px]'
   
   return (
-    <div className={`absolute right-0 top-0 bottom-0 ${sidebarWidth} bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 shadow-xl z-50 flex flex-col transition-all duration-300`}>
+    <div className={`absolute right-0 top-0 bottom-0 ${sidebarWidth} bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 shadow-xl ${showChatArea ? 'z-10' : 'z-50'} flex flex-col transition-all duration-300`}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
         <div className="flex flex-col gap-0.5">
@@ -1683,7 +1694,15 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
             ? (() => {
                 const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
-                const stepId = stepData.step?.id || `step-${stepIndex + 1}`
+                // For orchestration steps, use orchestration_step.ID (backend uses orchestration_step.ID for learnings)
+                // For other steps, use step.ID
+                let stepId: string
+                if (node.type === 'orchestrator') {
+                  const orchestratorData = stepData as OrchestratorNodeData
+                  stepId = orchestratorData.orchestration_step?.id ?? orchestratorData.step?.id ?? `step-${stepIndex + 1}`
+                } else {
+                  stepId = stepData.step?.id || `step-${stepIndex + 1}`
+                }
                 return `Are you sure you want to delete all learnings for "${stepTitle}" (Step ${stepIndex + 1})? This will permanently delete the learnings folder at \`learnings/${stepId}/\` and all its contents. This action cannot be undone.`
               })()
             : `Are you sure you want to delete all learnings for Step ${stepIndex + 1}? This will permanently delete the learnings folder and all its contents. This action cannot be undone.`

@@ -52,7 +52,9 @@ func NewHumanControlledTodoPlannerConditionalAgent(config *agents.OrchestratorAg
 
 // Decide makes a true/false decision based on context and question
 // Returns ConditionalResponse for backward compatibility with conditional steps
-func (hctpca *HumanControlledTodoPlannerConditionalAgent) Decide(ctx context.Context, conditionContext, question, description string, stepIndex, iteration int, isCodeExecutionMode bool, learningHistory string) (*ConditionalResponse, error) {
+// variableNames: Variable names with descriptions ({{VAR_NAME}} - description)
+// variableValues: Variable names with actual values ({{VAR_NAME}} = value - description)
+func (hctpca *HumanControlledTodoPlannerConditionalAgent) Decide(ctx context.Context, conditionContext, question, description string, stepIndex, iteration int, isCodeExecutionMode bool, learningHistory string, variableNames, variableValues string) (*ConditionalResponse, error) {
 	// Verify event bridge is set (factory pattern ensures it's set, but check for safety)
 	// The factory pattern handles event bridge connection, so this is just a safety check
 	// Note: Event bridge is set by the factory pattern, so this check is mostly for debugging
@@ -65,6 +67,8 @@ func (hctpca *HumanControlledTodoPlannerConditionalAgent) Decide(ctx context.Con
 		"StepIndex":        fmt.Sprintf("%d", stepIndex),
 		"Iteration":        fmt.Sprintf("%d", iteration),
 		"LearningHistory":  learningHistory,
+		"VariableNames":    variableNames,
+		"VariableValues":   variableValues,
 	}
 
 	// Build system prompt
@@ -75,10 +79,30 @@ func (hctpca *HumanControlledTodoPlannerConditionalAgent) Decide(ctx context.Con
 		// Code execution mode: overwrite base prompt and include code execution instructions
 		codeExecutionInstructions := prompt.GetCodeExecutionInstructions()
 
+		// Build variable section if available
+		variableSection := ""
+		if variableNames != "" {
+			variableSection = fmt.Sprintf(`
+## 🔑 Available Variables
+%s`, variableNames)
+			if variableValues != "" {
+				variableSection += fmt.Sprintf(`
+
+**Current Values**: %s`, variableValues)
+			}
+			variableSection += `
+
+**Variable Handling**:
+- **Step descriptions already have variables resolved** - you'll see actual values in StepDescription, etc.
+- **For new tool calls or code**: Use actual values directly from the resolved step description
+- **Don't hardcode values** - reference them from the step context
+`
+		}
+
 		systemPrompt = fmt.Sprintf(`# Conditional Decision Agent
 
 You are an expert decision-making agent specialized in evaluating workflow conditions. Your role is to make accurate true/false decisions by systematically verifying current state using available tools.
-
+%s
 ## 🔍 DECISION-MAKING FRAMEWORK
 
 ### Step 1: Understand the Condition
@@ -143,14 +167,34 @@ You are an expert decision-making agent specialized in evaluating workflow condi
 - Use learnings to understand what typically needs verification
 - Reference learnings for investigation strategies, not as current state
 - Verify that learning patterns still apply to current situation using tools
-`, description, codeExecutionInstructions, learningHistory)
+`, variableSection, description, codeExecutionInstructions, learningHistory)
 		overwriteSystemPrompt = true // Overwrite base prompt in code execution mode
 	} else {
 		// Non-code execution mode: append to base prompt (keeps MCP tools available)
+		// Build variable section if available
+		variableSection := ""
+		if variableNames != "" {
+			variableSection = fmt.Sprintf(`
+## 🔑 Available Variables
+%s`, variableNames)
+			if variableValues != "" {
+				variableSection += fmt.Sprintf(`
+
+**Current Values**: %s`, variableValues)
+			}
+			variableSection += `
+
+**Variable Handling**:
+- **Step descriptions already have variables resolved** - you'll see actual values in StepDescription, etc.
+- **For new tool calls or code**: Use actual values directly from the resolved step description
+- **Don't hardcode values** - reference them from the step context
+`
+		}
+
 		systemPrompt = fmt.Sprintf(`# Conditional Decision Agent
 
 You are an expert decision-making agent specialized in evaluating workflow conditions. Your role is to make accurate true/false decisions by systematically verifying current state using available tools.
-
+%s
 ## 🔍 DECISION-MAKING FRAMEWORK
 
 ### Step 1: Understand the Condition
@@ -213,7 +257,7 @@ You are an expert decision-making agent specialized in evaluating workflow condi
 - Use learnings to understand what typically needs verification
 - Reference learnings for investigation strategies, not as current state
 - Verify that learning patterns still apply to current situation using tools
-`, description, learningHistory)
+`, variableSection, description, learningHistory)
 		overwriteSystemPrompt = false // Append to base prompt (keeps MCP tools)
 	}
 
@@ -286,7 +330,9 @@ Return ONLY valid JSON: {"result": true/false, "reason": "detailed explanation o
 
 // EvaluateDecision makes a structured decision evaluation for decision steps
 // Returns DecisionResponse with rich structured output similar to validation agent
-func (hctpca *HumanControlledTodoPlannerConditionalAgent) EvaluateDecision(ctx context.Context, executionOutput, question string, stepIndex, iteration int, isCodeExecutionMode bool, learningHistory string) (*DecisionResponse, error) {
+// variableNames: Variable names with descriptions ({{VAR_NAME}} - description)
+// variableValues: Variable names with actual values ({{VAR_NAME}} = value - description)
+func (hctpca *HumanControlledTodoPlannerConditionalAgent) EvaluateDecision(ctx context.Context, executionOutput, question string, stepIndex, iteration int, isCodeExecutionMode bool, learningHistory string, variableNames, variableValues string) (*DecisionResponse, error) {
 	// Build template variables
 	templateVars := map[string]string{
 		"ExecutionOutput": executionOutput,
@@ -294,16 +340,39 @@ func (hctpca *HumanControlledTodoPlannerConditionalAgent) EvaluateDecision(ctx c
 		"StepIndex":       fmt.Sprintf("%d", stepIndex),
 		"Iteration":       fmt.Sprintf("%d", iteration),
 		"LearningHistory": learningHistory,
+		"VariableNames":   variableNames,
+		"VariableValues":  variableValues,
 	}
 
 	// Build system prompt for decision evaluation
 	var systemPrompt string
+
+	// Build variable section if available
+	variableSection := ""
+	if variableNames != "" {
+		variableSection = fmt.Sprintf(`
+## 🔑 Available Variables
+%s`, variableNames)
+		if variableValues != "" {
+			variableSection += fmt.Sprintf(`
+
+**Current Values**: %s`, variableValues)
+		}
+		variableSection += `
+
+**Variable Handling**:
+- **Step descriptions already have variables resolved** - you'll see actual values in StepDescription, etc.
+- **For new tool calls or code**: Use actual values directly from the resolved step description
+- **Don't hardcode values** - reference them from the step context
+`
+	}
+
 	if isCodeExecutionMode {
 		codeExecutionInstructions := prompt.GetCodeExecutionInstructions()
 		systemPrompt = fmt.Sprintf(`# Decision Evaluation Agent
 
 You are an expert decision evaluation agent specialized in analyzing execution outputs and making structured decisions. Your role is to evaluate decision step execution results and provide comprehensive structured analysis.
-
+%s
 ## 🔍 DECISION EVALUATION FRAMEWORK
 
 ### Step 1: Analyze Execution Output
@@ -357,7 +426,7 @@ The tool accepts a structured object with:
 		systemPrompt = fmt.Sprintf(`# Decision Evaluation Agent
 
 You are an expert decision evaluation agent specialized in analyzing execution outputs and making structured decisions. Your role is to evaluate decision step execution results and provide comprehensive structured analysis.
-
+%s
 ## 🔍 DECISION EVALUATION FRAMEWORK
 
 ### Step 1: Analyze Execution Output
@@ -404,7 +473,7 @@ The tool accepts a structured object with:
 - Use learnings to understand typical evaluation patterns
 - Reference learnings for decision-making strategies, not as current state
 - Verify that learning patterns apply to current execution output
-`, learningHistory)
+`, variableSection, learningHistory)
 	}
 
 	// Build user message input processor

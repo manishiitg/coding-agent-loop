@@ -13,6 +13,7 @@ interface EventHierarchyProps {
   onFeedbackSubmitted?: () => void
   isApproving?: boolean  // Loading state for approve button
   compact?: boolean  // Compact mode for smaller font sizes
+  flatHierarchy?: boolean  // If true, removes left padding/indentation for hierarchy levels
 }
 
 interface EventNode {
@@ -22,7 +23,7 @@ interface EventNode {
   isExpanded: boolean;
 }
 
-export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact = false }) => {
+export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact = false, flatHierarchy = false }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
   // Track loaded older events from backend (prepended to props events)
@@ -270,7 +271,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     const { event, children, level, isExpanded } = node;
     const hasChildren = children.length > 0;
     // Support up to L10: L0 = 10px, L1 = 20px, ..., L10 = 110px
-    const indent = Math.min((level + 1) * 10, 110); // Cap at L10 (110px)
+    // If flatHierarchy is true, no indentation is applied
+    const indent = flatHierarchy ? 0 : Math.min((level + 1) * 10, 110); // Cap at L10 (110px)
     
     // Get session info for orchestrator_agent_start events
     const sessionKey = getAgentSessionKey(event);
@@ -327,7 +329,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
         )}
       </div>
     );
-  }, [collapsedSessions, findEventsBetweenStartEnd, getAgentSessionKey, toggleAgentSession, toggleNode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact]);
+  }, [collapsedSessions, findEventsBetweenStartEnd, getAgentSessionKey, toggleAgentSession, toggleNode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact, flatHierarchy]);
 
   // Build event tree from flat list - memoized to react to collapsedSessions changes
   // OPTIMIZATION: Filter collapsed events early to reduce processing

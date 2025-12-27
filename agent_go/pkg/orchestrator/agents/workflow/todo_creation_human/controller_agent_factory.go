@@ -23,7 +23,8 @@ import (
 
 // setupExecutionFolderGuard sets up folder guard paths for execution agents
 // Returns readPaths and writePaths for folder guard configuration
-func (hcpo *HumanControlledTodoPlannerOrchestrator) setupExecutionFolderGuard(stepPath string) (readPaths, writePaths []string) {
+// stepID: Step ID for step-specific learnings folder access (e.g., "step-3" or branch step ID)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) setupExecutionFolderGuard(stepPath string, stepID string) (readPaths, writePaths []string) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
 	var runWorkspacePath string
@@ -33,15 +34,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) setupExecutionFolderGuard(st
 		runWorkspacePath = baseWorkspacePath
 	}
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	// Always use learnings folder (unified folder for all learning types)
-	learningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
+	// Step-specific learnings folder: learnings/{stepID}/ (only this step's learnings, not full learnings folder)
+	stepLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
 
 	// Set folder guard paths:
-	// READ: learnings folder + execution folder (to read previous step results)
+	// READ: step-specific learnings folder + execution folder (to read previous step results)
 	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) to prevent writing to other steps
 	// Use getExecutionFolderPath to support both regular and branch steps
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
-	readPaths = []string{learningsPath, executionWorkspacePath}
+	readPaths = []string{stepLearningsPath, executionWorkspacePath}
 	writePaths = []string{stepFolderPath}
 	return readPaths, writePaths
 }
@@ -242,22 +243,49 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) selectExecutionLLM(
 	}
 }
 
+// hasEffectiveServers checks if the servers list is effectively empty
+// Returns false if servers is empty or only contains NO_SERVERS (should fall back to orchestrator defaults)
+// Returns true if servers contains at least one valid server name
+func hasEffectiveServers(servers []string) bool {
+	if len(servers) == 0 {
+		return false
+	}
+	// Check if all servers are NO_SERVERS (effectively empty)
+	for _, server := range servers {
+		if server != mcpclient.NoServers {
+			return true // Found at least one valid server
+		}
+	}
+	return false // All servers are NO_SERVERS or empty
+}
+
 // applyStepConfigToAgentConfig applies step-specific configuration overrides to agent config
 func (hcpo *HumanControlledTodoPlannerOrchestrator) applyStepConfigToAgentConfig(config *agents.OrchestratorAgentConfig, stepConfig *AgentConfigs, isCodeExecutionMode bool) {
-	// Use step-specific servers/tools if provided, otherwise use orchestrator defaults
-	if stepConfig != nil && len(stepConfig.SelectedServers) > 0 {
+	// Use step-specific servers if provided, otherwise use orchestrator defaults
+	// NO_SERVERS is a valid config value - if step explicitly sets it, use it
+	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
+		// Step has explicit server selection (including NO_SERVERS) - use it
 		config.ServerNames = stepConfig.SelectedServers
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only servers: %v", stepConfig.SelectedServers))
-	} else if stepConfig != nil {
-		// Log when stepConfig exists but SelectedServers is empty (will use orchestrator defaults)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but no SelectedServers specified - using orchestrator defaults"))
+	} else {
+		// Use orchestrator defaults when stepConfig is nil or SelectedServers is empty
+		config.ServerNames = hcpo.GetSelectedServers()
+		if stepConfig != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but SelectedServers is empty - using orchestrator defaults: %v", config.ServerNames))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config not found - using orchestrator defaults: %v", config.ServerNames))
+		}
 	}
 	if stepConfig != nil && len(stepConfig.SelectedTools) > 0 {
 		config.SelectedTools = stepConfig.SelectedTools
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only tools: %v", stepConfig.SelectedTools))
-	} else if stepConfig != nil {
-		// Log when stepConfig exists but SelectedTools is empty (will use orchestrator defaults)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but no SelectedTools specified - using orchestrator defaults"))
+	} else {
+		// Explicitly set orchestrator defaults when stepConfig is nil or SelectedTools is empty
+		config.SelectedTools = hcpo.GetSelectedTools()
+		if stepConfig != nil {
+			// Log when stepConfig exists but SelectedTools is empty (will use orchestrator defaults)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but no SelectedTools specified - using orchestrator defaults: %v", config.SelectedTools))
+		}
 	}
 
 	// Code execution mode: Priority: step config > preset default (already resolved above)
@@ -398,6 +426,33 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) setupValidationFolderGuard()
 	return readPaths, writePaths
 }
 
+// setupConditionalFolderGuard sets up folder guard paths for conditional agents
+// Returns readPaths and writePaths for folder guard configuration
+// stepPath: Step path identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
+// stepID: Step ID for step-specific learnings folder access (e.g., "step-3" or branch step ID)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) setupConditionalFolderGuard(stepPath string, stepID string) (readPaths, writePaths []string) {
+	baseWorkspacePath := hcpo.GetWorkspacePath()
+	// Use run folder if available, otherwise use base workspace (backward compatibility)
+	var runWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
+	} else {
+		runWorkspacePath = baseWorkspacePath
+	}
+	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
+	// Step-specific learnings folder: learnings/{stepID}/ (only this step's learnings, not full learnings folder)
+	stepLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
+	// Step-specific execution folder: execution/step-{X}/ or execution/step-{X}-{branch}/ (for writing evaluation results)
+	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+
+	// Set folder guard paths:
+	// READ: step-specific learnings folder + entire execution folder (to read all previous step results and verify conditions)
+	// WRITE: step-specific execution folder (to write evaluation results and intermediate files)
+	readPaths = []string{stepLearningsPath, executionWorkspacePath}
+	writePaths = []string{stepFolderPath}
+	return readPaths, writePaths
+}
+
 // setupLearningFolderGuard sets up folder guard paths for learning agents
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 func (hcpo *HumanControlledTodoPlannerOrchestrator) setupLearningFolderGuard(learningPathIdentifier string) (readPaths, writePaths []string) {
@@ -512,17 +567,19 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) applyPostSetupToAgent(agent 
 //
 //	When empty, the step ID will be derived from allSteps based on stepPath as before.
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, isRetryAfterValidationFailure bool, retryAttempt int, prerequisiteInfo *PrerequisiteInfo, allSteps []PlanStepInterface, currentStepIndex int, cancelFunc context.CancelFunc, prereqErrChan chan<- *PrerequisiteFailureError, stepIDOverride string) (agents.OrchestratorAgent, error) {
-	// 1. Setup folder guard (extracted method)
-	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath)
-	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for execution-only agent - Read paths: %v, Write paths: %v (can read learnings/ and execution/, can only write to %s)", readPaths, writePaths, stepPath))
+	// 1. Resolve stepID first (needed for folder guard setup)
+	stepID := hcpo.resolveStepID(stepPath, stepIDOverride, allSteps, currentStepIndex)
 
-	// 2. Determine settings (extracted methods)
+	// 2. Setup folder guard (extracted method) - uses step-specific learnings folder
+	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, stepID)
+	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for execution-only agent - Read paths: %v, Write paths: %v (can read learnings/%s/ and execution/, can only write to %s)", readPaths, writePaths, stepID, stepPath))
+
+	// 3. Determine settings (extracted methods)
 	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
 	maxTurns := hcpo.getExecutionMaxTurns(stepConfig)
 
-	// 3. Select LLM (extracted method)
-	stepID := hcpo.resolveStepID(stepPath, stepIDOverride, allSteps, currentStepIndex)
+	// 4. Select LLM (extracted method)
 	pathInfo := parseStepPath(stepPath)
 	stepIndexForCheck := pathInfo.ParentStepNumber - 1 // Convert to 0-based
 	learningsFolderEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, stepIndexForCheck, stepPath)
@@ -767,9 +824,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(c
 
 // createConditionalAgent creates a conditional agent using the standard factory pattern
 // This ensures proper event bridge connection, context setup, and tool registration
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createConditionalAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, conditionalLLMConfig *orchestrator.LLMConfig) (agents.OrchestratorAgent, error) {
-	// Conditional agent doesn't need folder guard (no file operations)
-	// It only evaluates conditions using tools
+// stepPath: Step path identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
+// stepID: Step ID for step-specific learnings folder access (e.g., "step-3" or branch step ID)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createConditionalAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, conditionalLLMConfig *orchestrator.LLMConfig, stepPath string, stepID string) (agents.OrchestratorAgent, error) {
+	// 1. Setup folder guard (similar to execution agent) - uses step-specific learnings folder and execution folder
+	readPaths, writePaths := hcpo.setupConditionalFolderGuard(stepPath, stepID)
+	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for conditional agent - Read paths: %v, Write paths: %v (can read learnings/%s/ and execution/, can write to %s)", readPaths, writePaths, stepID, stepPath))
 
 	// Determine max turns: use orchestrator default (conditional agents don't have step-specific max turns config)
 	maxTurns := hcpo.GetMaxTurns()
@@ -805,13 +866,20 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createConditionalAgent(ctx c
 	// Create agent config with custom LLM if needed
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 
-	// Use step-specific servers/tools if provided, otherwise use orchestrator defaults (same as execution agent)
-	if stepConfig != nil && len(stepConfig.SelectedServers) > 0 {
+	// Use step-specific servers if provided, otherwise use orchestrator defaults
+	// NO_SERVERS is a valid config value - if step explicitly sets it, use it
+	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
+		// Step has explicit server selection (including NO_SERVERS) - use it
 		config.ServerNames = stepConfig.SelectedServers
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional servers: %v", stepConfig.SelectedServers))
 	} else {
+		// Use orchestrator defaults when stepConfig is nil or SelectedServers is empty
 		config.ServerNames = hcpo.GetSelectedServers()
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional servers: %v", config.ServerNames))
+		if stepConfig != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but SelectedServers is empty - using orchestrator defaults: %v", config.ServerNames))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config not found - using orchestrator defaults: %v", config.ServerNames))
+		}
 	}
 	if stepConfig != nil && len(stepConfig.SelectedTools) > 0 {
 		config.SelectedTools = stepConfig.SelectedTools
@@ -876,14 +944,23 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createConditionalAgent(ctx c
 		return nil, fmt.Errorf("failed to create conditional agent: %w", err)
 	}
 
+	// 7. Post-setup: folder guard paths (conditional agents don't use code execution mode, so no registry update needed)
+	// Note: Folder guard paths are already set on orchestrator, but we need to apply them to the agent
+	if err := hcpo.applyPostSetupToAgent(agent, agentName, false); err != nil {
+		return nil, fmt.Errorf("failed to apply post-setup to conditional agent: %w", err)
+	}
+
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created conditional agent using standard factory pattern: %s (step %d, phase %s)", agentName, step+1, phase))
 	return agent, nil
 }
 
 // createOrchestrationOrchestratorAgent creates an orchestration orchestrator agent using the standard factory pattern
 // This agent executes the main orchestration step (orchestration and delegation, not direct execution)
+// Note: Folder guard paths should be set by the caller before calling this function (see controller_orchestration.go)
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createOrchestrationOrchestratorAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, orchestrationLLMConfig *orchestrator.LLMConfig) (agents.OrchestratorAgent, error) {
 	// Orchestration orchestrator agent needs folder guard (can write files)
+	// Note: Folder guard is set by caller in controller_orchestration.go before agent creation
+	// We apply it to the agent here via post-setup
 
 	// Determine max turns: use orchestrator default
 	maxTurns := hcpo.GetMaxTurns()
@@ -907,13 +984,20 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createOrchestrationOrchestra
 	// Create agent config with custom LLM if needed
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatText, llmConfig)
 
-	// Use step-specific servers/tools if provided, otherwise use orchestrator defaults
-	if stepConfig != nil && len(stepConfig.SelectedServers) > 0 {
+	// Use step-specific servers if provided, otherwise use orchestrator defaults
+	// NO_SERVERS is a valid config value - if step explicitly sets it, use it
+	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
+		// Step has explicit server selection (including NO_SERVERS) - use it
 		config.ServerNames = stepConfig.SelectedServers
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific orchestration orchestrator servers: %v", stepConfig.SelectedServers))
 	} else {
+		// Use orchestrator defaults when stepConfig is nil or SelectedServers is empty
 		config.ServerNames = hcpo.GetSelectedServers()
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default orchestration orchestrator servers: %v", config.ServerNames))
+		if stepConfig != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but SelectedServers is empty - using orchestrator defaults: %v", config.ServerNames))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config not found - using orchestrator defaults: %v", config.ServerNames))
+		}
 	}
 	if stepConfig != nil && len(stepConfig.SelectedTools) > 0 {
 		config.SelectedTools = stepConfig.SelectedTools
@@ -995,6 +1079,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createOrchestrationOrchestra
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create orchestration orchestrator agent: %w", err)
+	}
+
+	// Post-setup: folder guard paths (orchestration orchestrator agent may use code execution mode, so registry update may be needed)
+	// Note: Folder guard paths are already set on orchestrator by caller, but we need to apply them to the agent
+	if err := hcpo.applyPostSetupToAgent(agent, agentName, isCodeExecutionMode); err != nil {
+		return nil, fmt.Errorf("failed to apply post-setup to orchestration orchestrator agent: %w", err)
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created orchestration orchestrator agent using standard factory pattern: %s (step %d, phase %s)", agentName, step+1, phase))

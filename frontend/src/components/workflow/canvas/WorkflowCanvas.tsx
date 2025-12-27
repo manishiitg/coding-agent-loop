@@ -68,6 +68,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const hasInitializedView = React.useRef(false)
   // Store step ID to focus on after nodes update (from backend plan changes)
   const pendingFocusStepIdRef = React.useRef<string | null>(null)
+  // Store current viewport state (x, y, zoom) to preserve it during refresh
+  const viewportStateRef = React.useRef<{ x: number; y: number; zoom: number } | null>(null)
+  
+  // Generate localStorage key for viewport state (workspace-specific)
+  const getViewportStorageKey = React.useCallback(() => {
+    return workspacePath 
+      ? `workflow-viewport-${workspacePath}` 
+      : 'workflow-viewport-default'
+  }, [workspacePath])
 
   // Track completed step indices from selected iteration (for enabling/disabling run buttons)
   const [completedStepIndices, setCompletedStepIndices] = React.useState<number[]>([])
@@ -209,6 +218,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     
     console.log('[WorkflowCanvas] Refreshing plan, step config, and variables...')
     
+    // Save current viewport state before refresh
+    // Only save if viewport has been initialized (not on first load)
+    const currentViewport = hasInitializedView.current ? viewportStateRef.current : null
+    console.log('[WorkflowCanvas] Saving viewport state before refresh:', currentViewport, 'hasInitializedView:', hasInitializedView.current)
+    
     // Refresh plan data (this also loads step_config.json)
     await loadPlanRefresh()
     
@@ -231,8 +245,21 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       setIsLoadingVariables(false)
     }
     
+    // Restore viewport state after refresh completes
+    // Only restore if we had a saved viewport (not on first load)
+    // Use a small delay to ensure nodes have been updated
+    if (currentViewport && hasInitializedView.current) {
+      setTimeout(() => {
+        console.log('[WorkflowCanvas] Restoring viewport state after refresh:', currentViewport)
+        setViewport(
+          { x: currentViewport.x, y: currentViewport.y, zoom: currentViewport.zoom },
+          { duration: 300 }
+        )
+      }, 100)
+    }
+    
     console.log('[WorkflowCanvas] Refresh completed')
-  }, [workspacePath, loadPlanRefresh, setVariablesManifestInStore])
+  }, [workspacePath, loadPlanRefresh, setVariablesManifestInStore, setViewport])
 
   // Workflow execution
   const {
@@ -807,10 +834,43 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [nodes, selectedNode, focusNode]) // Include focusNode in dependencies
 
-  // Set initial view to show start node (left side) on first load
+  // Load saved viewport state from localStorage on mount
+  const savedViewportRef = React.useRef<{ x: number; y: number; zoom: number } | null>(null)
+  React.useEffect(() => {
+    try {
+      const storageKey = getViewportStorageKey()
+      const saved = localStorage.getItem(storageKey)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number' && typeof parsed.zoom === 'number') {
+          savedViewportRef.current = { x: parsed.x, y: parsed.y, zoom: parsed.zoom }
+          console.log('[WorkflowCanvas] Loaded saved viewport from localStorage:', savedViewportRef.current)
+        }
+      }
+    } catch (error) {
+      console.error('[WorkflowCanvas] Failed to load viewport from localStorage:', error)
+    }
+  }, [getViewportStorageKey])
+
+  // Set initial view to show start node (left side) on first load, or restore saved viewport
   React.useEffect(() => {
     if (!hasInitializedView.current && nodes.length > 0) {
-      // Find the start node
+      // If we have a saved viewport, use it instead of positioning on start node
+      if (savedViewportRef.current) {
+        setTimeout(() => {
+          setViewport({
+            x: savedViewportRef.current!.x,
+            y: savedViewportRef.current!.y,
+            zoom: savedViewportRef.current!.zoom
+          })
+          viewportStateRef.current = savedViewportRef.current
+          hasInitializedView.current = true
+          console.log('[WorkflowCanvas] Restored saved viewport from localStorage:', savedViewportRef.current)
+        }, 200)
+        return
+      }
+
+      // Otherwise, position on start node (default behavior)
       const startNode = nodes.find(node => node.id === 'start')
       if (startNode) {
         // Use a small timeout to ensure React Flow has rendered and layout is complete
@@ -826,10 +886,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             const padding = 150 // Padding from left edge
             const canvasHeight = window.innerHeight || 800
             const viewportX = padding - flowNode.position.x
-            const viewportY = (canvasHeight / 2) - flowNode.position.y - ((flowNode.height || 100) / 2)
+            const viewportY = (canvasHeight / 2) - flowNode.position.y - ((flowNode.height || 36) / 2)
             setViewport({ x: viewportX, y: viewportY, zoom: 0.9 })
+            // Update viewport ref to match
+            viewportStateRef.current = { x: viewportX, y: viewportY, zoom: 0.9 }
             hasInitializedView.current = true
-            // Log removed to reduce console noise
+            console.log('[WorkflowCanvas] Initial viewport set to show start node:', { viewportX, viewportY, nodePosition: flowNode.position })
           } else {
             // Fallback: use node position directly with simple calculation
             const padding = 150
@@ -837,10 +899,14 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             const viewportX = padding - startNode.position.x
             const viewportY = (canvasHeight / 2) - startNode.position.y
             setViewport({ x: viewportX, y: viewportY, zoom: 0.9 })
+            // Update viewport ref to match
+            viewportStateRef.current = { x: viewportX, y: viewportY, zoom: 0.9 }
             hasInitializedView.current = true
-            // Log removed to reduce console noise
+            console.log('[WorkflowCanvas] Initial viewport set (fallback) to show start node:', { viewportX, viewportY, nodePosition: startNode.position })
           }
-        }, 150) // Slightly longer timeout to ensure layout is complete
+        }, 200) // Slightly longer timeout to ensure layout is complete
+      } else {
+        console.warn('[WorkflowCanvas] Start node not found in nodes:', nodes.map(n => n.id))
       }
     }
   }, [nodes, setViewport, getNode])
@@ -1221,7 +1287,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       <div className="flex-1 relative flex">
         <div className={`flex-1 transition-all duration-300 ${
           selectedNode 
-            ? (isStepSidebarCompact ? 'mr-[400px]' : 'mr-[600px]')
+            ? (showChatArea ? 'mr-[50vw]' : (isStepSidebarCompact ? 'mr-[400px]' : 'mr-[600px]'))
             : showVariablesSidebar 
               ? 'mr-[450px]' 
               : ''
@@ -1233,6 +1299,25 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           onEdgesChange={onEdgesChange}
           onNodeClick={onNodeClick}
           onPaneClick={onPaneClick}
+          onViewportChange={(viewport) => {
+            // Track viewport state to preserve it during refresh
+            const viewportState = {
+              x: viewport.x,
+              y: viewport.y,
+              zoom: viewport.zoom
+            }
+            viewportStateRef.current = viewportState
+            
+            // Save to localStorage (only after initial view has been set)
+            if (hasInitializedView.current) {
+              try {
+                const storageKey = getViewportStorageKey()
+                localStorage.setItem(storageKey, JSON.stringify(viewportState))
+              } catch (error) {
+                console.error('[WorkflowCanvas] Failed to save viewport to localStorage:', error)
+              }
+            }
+          }}
           nodeTypes={nodeTypes}
           fitView={false}
           fitViewOptions={{ padding: 0.1, minZoom: 1.0, maxZoom: 1.5 }}

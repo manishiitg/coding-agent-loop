@@ -601,6 +601,7 @@ func validatePattern(path string, value interface{}, pattern string) JSONCheckRe
 		return result
 	}
 
+	// Try to compile and match with the pattern as-is
 	regex, err := regexp.Compile(pattern)
 	if err != nil {
 		// Invalid regex pattern from schema - treat as schema error, not validation failure
@@ -612,14 +613,68 @@ func validatePattern(path string, value interface{}, pattern string) JSONCheckRe
 		return result
 	}
 
-	if !regex.MatchString(strValue) {
-		result.ErrorMsg = fmt.Sprintf("String '%s' does not match pattern '%s'", strValue, pattern)
-		result.Actual = strValue
+	// If pattern matches, we're done
+	if regex.MatchString(strValue) {
+		result.Passed = true
 		return result
 	}
 
-	result.Passed = true
+	// Pattern didn't match - check if it's double-escaped
+	// Common regex escape sequences that might be double-escaped in JSON:
+	// \\d, \\s, \\w, \\D, \\S, \\W, \\n, \\t, \\r, \\f, \\v
+	fixedPattern := fixDoubleEscapedPattern(pattern)
+	if fixedPattern != pattern {
+		// Try with the fixed pattern
+		fixedRegex, err := regexp.Compile(fixedPattern)
+		if err == nil && fixedRegex.MatchString(strValue) {
+			// Fixed pattern works! Use it
+			result.Passed = true
+			result.Expected = fixedPattern // Update expected to show the fixed pattern
+			return result
+		}
+	}
+
+	// Pattern doesn't match even after fixing
+	result.ErrorMsg = fmt.Sprintf("String '%s' does not match pattern '%s'", strValue, pattern)
+	result.Actual = strValue
 	return result
+}
+
+// fixDoubleEscapedPattern fixes common double-escaped regex sequences
+// This handles cases where JSON contains "\\\\d" which unmarshals to "\\d" (literal backslash + d)
+// but should be "\d" (digit class)
+func fixDoubleEscapedPattern(pattern string) string {
+	// List of common regex escape sequences that might be double-escaped
+	// Format: double-escaped -> single-escaped
+	replacements := map[string]string{
+		"\\\\d": "\\d", // digit class
+		"\\\\s": "\\s", // whitespace
+		"\\\\w": "\\w", // word character
+		"\\\\D": "\\D", // non-digit
+		"\\\\S": "\\S", // non-whitespace
+		"\\\\W": "\\W", // non-word
+		"\\\\n": "\\n", // newline
+		"\\\\t": "\\t", // tab
+		"\\\\r": "\\r", // carriage return
+		"\\\\f": "\\f", // form feed
+		"\\\\v": "\\v", // vertical tab
+		"\\\\b": "\\b", // word boundary
+		"\\\\B": "\\B", // non-word boundary
+		"\\\\A": "\\A", // start of string
+		"\\\\Z": "\\Z", // end of string
+		"\\\\z": "\\z", // end of string
+		"\\\\G": "\\G", // start of match
+	}
+
+	fixed := pattern
+	for doubleEscaped, singleEscaped := range replacements {
+		// Only replace if the double-escaped sequence exists
+		if strings.Contains(fixed, doubleEscaped) {
+			fixed = strings.ReplaceAll(fixed, doubleEscaped, singleEscaped)
+		}
+	}
+
+	return fixed
 }
 
 // validateConsistency validates consistency checks between fields

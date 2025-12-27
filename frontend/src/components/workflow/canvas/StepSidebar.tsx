@@ -91,6 +91,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     loadPhases()
   }, [loadPhases])
 
+
   // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -104,6 +105,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
 
   // Handle phase selection
   const handleSelectPhase = async (phaseId: string) => {
@@ -793,7 +795,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       await onEditStep(parentStepId, updates)
     }
     
-    const sidebarWidth = isCompact ? 'w-[400px]' : 'w-[600px]'
+    // When ChatArea is visible, match its width (50% of viewport), otherwise use fixed widths
+    const sidebarWidth = showChatArea ? 'w-[50vw]' : (isCompact ? 'w-[400px]' : 'w-[600px]')
     
     return (
       <div className={`absolute right-0 top-0 bottom-0 ${sidebarWidth} bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 shadow-xl z-50 flex flex-col transition-all duration-300`}>
@@ -925,7 +928,14 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
   const step = stepData.step
 
-  const sidebarWidth = isCompact ? 'w-[400px]' : 'w-[600px]'
+  // When ChatArea is visible, match its width (50% of viewport), otherwise use fixed widths
+  const sidebarWidth = showChatArea ? 'w-[50vw]' : (isCompact ? 'w-[400px]' : 'w-[600px]')
+  
+  // Start node and execution-settings node don't need sidebar (they're simple nodes)
+  // Execution mode is now configured directly in the execution-settings node
+  if (node && (node.id === 'start' || node.id === 'execution-settings')) {
+    return null
+  }
   
   return (
     <div className={`absolute right-0 top-0 bottom-0 ${sidebarWidth} bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 shadow-xl ${showChatArea ? 'z-10' : 'z-50'} flex flex-col transition-all duration-300`}>

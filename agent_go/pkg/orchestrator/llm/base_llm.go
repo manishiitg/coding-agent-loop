@@ -5,8 +5,9 @@ import (
 	"fmt"
 	agentlogger "mcp-agent-builder-go/agent_go/pkg/logger"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "mcpagent/agent"
-	"mcpagent/events"
+	baseevents "mcpagent/events"
 	"mcpagent/llm"
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
@@ -20,7 +21,7 @@ type BaseLLM struct {
 	llm          llmtypes.Model
 	logger       loggerv2.Logger
 	tracer       observability.Tracer
-	eventEmitter func(context.Context, events.EventData)
+	eventEmitter func(context.Context, baseevents.EventData)
 }
 
 // NewBaseLLM creates a new BaseLLM instance with mandatory event bridge
@@ -61,12 +62,12 @@ func (b *BaseLLM) GetTracer() observability.Tracer {
 }
 
 // GetEventEmitter returns the event emitter function
-func (b *BaseLLM) GetEventEmitter() func(context.Context, events.EventData) {
+func (b *BaseLLM) GetEventEmitter() func(context.Context, baseevents.EventData) {
 	return b.eventEmitter
 }
 
 // SetEventEmitter sets the event emitter function
-func (b *BaseLLM) SetEventEmitter(emitter func(context.Context, events.EventData)) {
+func (b *BaseLLM) SetEventEmitter(emitter func(context.Context, baseevents.EventData)) {
 	b.eventEmitter = emitter
 }
 
@@ -167,8 +168,8 @@ func CreateEventEmitter(
 	eventBridge mcpagent.AgentEventListener,
 	logger loggerv2.Logger,
 	llmType string,
-) func(context.Context, events.EventData) {
-	return func(ctx context.Context, data events.EventData) {
+) func(context.Context, baseevents.EventData) {
+	return func(ctx context.Context, data baseevents.EventData) {
 		if eventBridge == nil {
 			logger.Warn(fmt.Sprintf("⚠️ No event bridge available, cannot emit %s LLM event", llmType))
 			return
@@ -180,7 +181,7 @@ func CreateEventEmitter(
 			eventType = events.OrchestratorAgentStart // Fallback to current default
 		}
 
-		agentEvent := &events.AgentEvent{
+		agentEvent := &baseevents.AgentEvent{
 			Type:      eventType,
 			Timestamp: time.Now(),
 			Data:      data,

@@ -3,7 +3,8 @@ package todo_creation_human
 import (
 	"time"
 
-	"mcpagent/events"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	baseevents "mcpagent/events"
 )
 
 // DecisionResponseEvent represents the decision response data for events
@@ -17,9 +18,9 @@ type DecisionResponseEvent struct {
 }
 
 // DecisionEvaluatedEvent represents the event when a decision step is evaluated
-// This implements events.EventData interface to work with the event bridge
+// This implements baseevents.EventData interface to work with the event bridge
 type DecisionEvaluatedEvent struct {
-	events.BaseEventData
+	baseevents.BaseEventData
 	StepID           string                `json:"step_id"`           // Step ID from plan
 	StepIndex        int                   `json:"step_index"`        // 0-based step index
 	StepTitle        string                `json:"step_title"`        // Step title
@@ -30,14 +31,14 @@ type DecisionEvaluatedEvent struct {
 	WorkspacePath    string                `json:"workspace_path"`    // Workspace path for file operations
 }
 
-// GetEventType implements events.EventData interface
-func (e *DecisionEvaluatedEvent) GetEventType() events.EventType {
+// GetEventType implements baseevents.EventData interface
+func (e *DecisionEvaluatedEvent) GetEventType() baseevents.EventType {
 	return events.DecisionEvaluated
 }
 
 // StepStartedEvent represents the event when a step execution starts
 type StepStartedEvent struct {
-	events.BaseEventData
+	baseevents.BaseEventData
 	StepID        string `json:"step_id"`        // Step ID from plan
 	StepIndex     int    `json:"step_index"`     // 0-based step index
 	StepTitle     string `json:"step_title"`     // Step title
@@ -47,12 +48,12 @@ type StepStartedEvent struct {
 	WorkspacePath string `json:"workspace_path"` // Workspace path for file operations
 }
 
-func (e *StepStartedEvent) GetEventType() events.EventType {
-	return events.StepExecutionStart
+func (e *StepStartedEvent) GetEventType() baseevents.EventType {
+	return baseevents.StepExecutionStart
 }
 
 type StepFinishedEvent struct {
-	events.BaseEventData
+	baseevents.BaseEventData
 	StepID       string `json:"step_id"`        // Step ID from plan
 	StepIndex    int    `json:"step_index"`     // 0-based step index
 	StepTitle    string `json:"step_title"`     // Step title
@@ -60,13 +61,13 @@ type StepFinishedEvent struct {
 	IsBranchStep bool   `json:"is_branch_step"` // Whether this is a branch step
 }
 
-func (e *StepFinishedEvent) GetEventType() events.EventType {
-	return events.StepExecutionEnd
+func (e *StepFinishedEvent) GetEventType() baseevents.EventType {
+	return baseevents.StepExecutionEnd
 }
 
 // StepFailedEvent represents the event when a step execution fails
 type StepFailedEvent struct {
-	events.BaseEventData
+	baseevents.BaseEventData
 	StepID       string `json:"step_id"`        // Step ID from plan
 	StepIndex    int    `json:"step_index"`     // 0-based step index
 	StepTitle    string `json:"step_title"`     // Step title
@@ -75,13 +76,14 @@ type StepFailedEvent struct {
 	Error        string `json:"error"`          // Error message
 }
 
-func (e *StepFailedEvent) GetEventType() events.EventType {
-	return events.StepExecutionFailed
+func (e *StepFailedEvent) GetEventType() baseevents.EventType {
+	return baseevents.StepExecutionFailed
 }
 
 // StepTokenUsageEvent represents token usage summary for a workflow step
+// Note: This is a local type, but uses orchestrator events.StepTokenUsageEvent from the orchestrator/events package
 type StepTokenUsageEvent struct {
-	events.BaseEventData
+	baseevents.BaseEventData
 	Phase                 string `json:"phase"`                // e.g., "execution"
 	Step                  int    `json:"step"`                 // step index (0-based)
 	StepTitle             string `json:"step_title,omitempty"` // optional step title for display
@@ -102,14 +104,14 @@ type StepTokenUsageEvent struct {
 	ContextUsagePercent float64 `json:"context_usage_percent,omitempty"`
 }
 
-func (e *StepTokenUsageEvent) GetEventType() events.EventType {
+func (e *StepTokenUsageEvent) GetEventType() baseevents.EventType {
 	return events.StepTokenUsage
 }
 
 // NewStepTokenUsageEvent creates a new StepTokenUsageEvent
 func NewStepTokenUsageEvent(phase string, step int, stepTitle string, promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCallCount, cacheEnabledCallCount int) *StepTokenUsageEvent {
 	return &StepTokenUsageEvent{
-		BaseEventData: events.BaseEventData{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 		},
 		Phase:                 phase,
@@ -127,7 +129,7 @@ func NewStepTokenUsageEvent(phase string, step int, stepTitle string, promptToke
 
 // StepProgressUpdatedEvent represents the event when step progress is updated (steps_done.json changes)
 type StepProgressUpdatedEvent struct {
-	events.BaseEventData
+	baseevents.BaseEventData
 	CompletedStepIndices []int                      `json:"completed_step_indices"` // 0-based indices of completed steps
 	TotalSteps           int                        `json:"total_steps"`            // Total number of steps in the plan
 	WorkspacePath        string                     `json:"workspace_path"`         // Workspace path for file operations
@@ -136,26 +138,26 @@ type StepProgressUpdatedEvent struct {
 	BranchSteps          map[int]BranchStepProgress `json:"branch_steps,omitempty"` // Branch step progress for conditional steps
 }
 
-func (e *StepProgressUpdatedEvent) GetEventType() events.EventType {
+func (e *StepProgressUpdatedEvent) GetEventType() baseevents.EventType {
 	return events.StepProgressUpdated
 }
 
 // IndependentStepsSelectedEvent represents the event when independent steps are selected for parallel execution
 type IndependentStepsSelectedEvent struct {
-	events.BaseEventData
+	baseevents.BaseEventData
 	StepIndices    []int    `json:"step_indices"`    // Indices of steps selected for parallel execution
 	StepTitles     []string `json:"step_titles"`     // Titles of selected steps
 	TotalSteps     int      `json:"total_steps"`     // Total number of steps in plan
 	ExecutionBatch int      `json:"execution_batch"` // Which batch of parallel execution this is
 }
 
-func (e *IndependentStepsSelectedEvent) GetEventType() events.EventType {
+func (e *IndependentStepsSelectedEvent) GetEventType() baseevents.EventType {
 	return events.IndependentStepsSelected
 }
 
 // PreValidationCompletedEvent represents the event when pre-validation completes
 type PreValidationCompletedEvent struct {
-	events.BaseEventData
+	baseevents.BaseEventData
 	StepID        string                    `json:"step_id"`          // Step ID from plan
 	StepIndex     int                       `json:"step_index"`       // 0-based step index
 	StepTitle     string                    `json:"step_title"`       // Step title
@@ -197,6 +199,6 @@ type ValidationErrorForEvent struct {
 	Message   string `json:"message"`    // Error message
 }
 
-func (e *PreValidationCompletedEvent) GetEventType() events.EventType {
+func (e *PreValidationCompletedEvent) GetEventType() baseevents.EventType {
 	return events.PreValidationCompleted
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
+	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	"mcpagent/events"
 	"mcpagent/mcpcache"
 
@@ -130,12 +131,12 @@ type EventDataUnion struct {
 	UnifiedCompletion *events.UnifiedCompletionEvent `json:"unified_completion,omitempty"`
 
 	// Orchestrator Events
-	OrchestratorStart      *events.OrchestratorStartEvent      `json:"orchestrator_start,omitempty"`
-	OrchestratorEnd        *events.OrchestratorEndEvent        `json:"orchestrator_end,omitempty"`
-	OrchestratorError      *events.OrchestratorErrorEvent      `json:"orchestrator_error,omitempty"`
-	OrchestratorAgentStart *events.OrchestratorAgentStartEvent `json:"orchestrator_agent_start,omitempty"`
-	OrchestratorAgentEnd   *events.OrchestratorAgentEndEvent   `json:"orchestrator_agent_end,omitempty"`
-	OrchestratorAgentError *events.OrchestratorAgentErrorEvent `json:"orchestrator_agent_error,omitempty"`
+	OrchestratorStart      *orchestrator_events.OrchestratorStartEvent      `json:"orchestrator_start,omitempty"`
+	OrchestratorEnd        *orchestrator_events.OrchestratorEndEvent        `json:"orchestrator_end,omitempty"`
+	OrchestratorError      *orchestrator_events.OrchestratorErrorEvent      `json:"orchestrator_error,omitempty"`
+	OrchestratorAgentStart *orchestrator_events.OrchestratorAgentStartEvent `json:"orchestrator_agent_start,omitempty"`
+	OrchestratorAgentEnd   *orchestrator_events.OrchestratorAgentEndEvent   `json:"orchestrator_agent_end,omitempty"`
+	OrchestratorAgentError *orchestrator_events.OrchestratorAgentErrorEvent `json:"orchestrator_agent_error,omitempty"`
 
 	// Step Execution Events
 	StepStarted            *todo_creation_human.StepStartedEvent            `json:"step_execution_start,omitempty"`
@@ -152,9 +153,9 @@ type EventDataUnion struct {
 	IndependentStepsSelected *todo_creation_human.IndependentStepsSelectedEvent `json:"independent_steps_selected,omitempty"`
 
 	// Human Feedback Events
-	RequestHumanFeedback      *events.RequestHumanFeedbackEvent      `json:"request_human_feedback,omitempty"`
-	BlockingHumanFeedback     *events.BlockingHumanFeedbackEvent     `json:"blocking_human_feedback,omitempty"`
-	HumanVerificationResponse *events.HumanVerificationResponseEvent `json:"human_verification_response,omitempty"`
+	RequestHumanFeedback      *orchestrator_events.RequestHumanFeedbackEvent      `json:"request_human_feedback,omitempty"`
+	BlockingHumanFeedback     *orchestrator_events.BlockingHumanFeedbackEvent     `json:"blocking_human_feedback,omitempty"`
+	HumanVerificationResponse *orchestrator_events.HumanVerificationResponseEvent `json:"human_verification_response,omitempty"`
 
 	// Structured Output Events
 	StructuredOutputStart *events.StructuredOutputStartEvent `json:"structured_output_start,omitempty"`
@@ -197,10 +198,10 @@ type EventDataUnion struct {
 	AgentProcessing      *events.AgentProcessingEvent      `json:"agent_processing,omitempty"`
 
 	// Batch Execution Events
-	BatchExecutionStart *events.BatchExecutionStartEvent `json:"batch_execution_start,omitempty"`
-	BatchGroupStart     *events.BatchGroupStartEvent     `json:"batch_group_start,omitempty"`
-	BatchGroupEnd       *events.BatchGroupEndEvent       `json:"batch_group_end,omitempty"`
-	BatchExecutionEnd   *events.BatchExecutionEndEvent   `json:"batch_execution_end,omitempty"`
+	BatchExecutionStart *orchestrator_events.BatchExecutionStartEvent `json:"batch_execution_start,omitempty"`
+	BatchGroupStart     *orchestrator_events.BatchGroupStartEvent     `json:"batch_group_start,omitempty"`
+	BatchGroupEnd       *orchestrator_events.BatchGroupEndEvent       `json:"batch_group_end,omitempty"`
+	BatchExecutionEnd   *orchestrator_events.BatchExecutionEndEvent   `json:"batch_execution_end,omitempty"`
 
 	// Prerequisite Navigation Event
 	PrerequisiteNavigation *events.PrerequisiteNavigationEvent `json:"prerequisite_navigation,omitempty"`
@@ -287,32 +288,32 @@ var EventTypeMapping = map[events.EventType]string{
 	events.EventTypeUnifiedCompletion: "unified_completion",
 
 	// Orchestrator Events
-	events.OrchestratorStart:      "orchestrator_start",
-	events.OrchestratorEnd:        "orchestrator_end",
-	events.OrchestratorError:      "orchestrator_error",
-	events.OrchestratorAgentStart: "orchestrator_agent_start",
-	events.OrchestratorAgentEnd:   "orchestrator_agent_end",
-	events.OrchestratorAgentError: "orchestrator_agent_error",
+	orchestrator_events.OrchestratorStart:      "orchestrator_start",
+	orchestrator_events.OrchestratorEnd:        "orchestrator_end",
+	orchestrator_events.OrchestratorError:      "orchestrator_error",
+	orchestrator_events.OrchestratorAgentStart: "orchestrator_agent_start",
+	orchestrator_events.OrchestratorAgentEnd:   "orchestrator_agent_end",
+	orchestrator_events.OrchestratorAgentError: "orchestrator_agent_error",
 
 	// Step Execution Events
-	events.StepExecutionStart:                    "step_execution_start",
-	events.StepExecutionEnd:                      "step_execution_end",
-	events.StepExecutionFailed:                   "step_execution_failed",
-	events.StepTokenUsage:                        "step_token_usage",
-	events.StepProgressUpdated:                   "step_progress_updated",
-	events.EventType("decision_evaluated"):       "decision_evaluated",
-	events.EventType("pre_validation_completed"): "pre_validation_completed",
-	events.PrerequisiteNavigation:                "prerequisite_navigation",
+	orchestrator_events.StepExecutionStart:     "step_execution_start",
+	orchestrator_events.StepExecutionEnd:       "step_execution_end",
+	orchestrator_events.StepExecutionFailed:    "step_execution_failed",
+	orchestrator_events.StepTokenUsage:         "step_token_usage",
+	orchestrator_events.StepProgressUpdated:    "step_progress_updated",
+	orchestrator_events.DecisionEvaluated:      "decision_evaluated",
+	orchestrator_events.PreValidationCompleted: "pre_validation_completed",
+	events.PrerequisiteNavigation:              "prerequisite_navigation",
 
 	// Todo/Planning Events
-	events.TodoStepsExtracted:       "todo_steps_extracted",
-	events.VariablesExtracted:       "variables_extracted",
-	events.IndependentStepsSelected: "independent_steps_selected",
+	orchestrator_events.TodoStepsExtracted:       "todo_steps_extracted",
+	orchestrator_events.VariablesExtracted:       "variables_extracted",
+	orchestrator_events.IndependentStepsSelected: "independent_steps_selected",
 
 	// Human Feedback Events
-	events.RequestHumanFeedback:      "request_human_feedback",
-	events.BlockingHumanFeedback:     "blocking_human_feedback",
-	events.HumanVerificationResponse: "human_verification_response",
+	orchestrator_events.RequestHumanFeedback:      "request_human_feedback",
+	orchestrator_events.BlockingHumanFeedback:     "blocking_human_feedback",
+	orchestrator_events.HumanVerificationResponse: "human_verification_response",
 
 	// Structured Output Events
 	events.StructuredOutputStart: "structured_output_start",
@@ -355,10 +356,10 @@ var EventTypeMapping = map[events.EventType]string{
 	events.AgentProcessing:      "agent_processing",
 
 	// Batch Execution Events
-	events.BatchExecutionStart: "batch_execution_start",
-	events.BatchGroupStart:     "batch_group_start",
-	events.BatchGroupEnd:       "batch_group_end",
-	events.BatchExecutionEnd:   "batch_execution_end",
+	orchestrator_events.BatchExecutionStart: "batch_execution_start",
+	orchestrator_events.BatchGroupStart:     "batch_group_start",
+	orchestrator_events.BatchGroupEnd:       "batch_group_end",
+	orchestrator_events.BatchExecutionEnd:   "batch_execution_end",
 }
 
 // =============================================================================
@@ -695,15 +696,15 @@ type UnifiedEvent struct {
 	SmartRoutingEndEvent   events.SmartRoutingEndEvent   `json:"smart_routing_end"`
 
 	// Orchestrator Events - now handled by unified events system
-	OrchestratorStartEvent      events.OrchestratorStartEvent      `json:"orchestrator_start"`
-	OrchestratorEndEvent        events.OrchestratorEndEvent        `json:"orchestrator_end"`
-	OrchestratorErrorEvent      events.OrchestratorErrorEvent      `json:"orchestrator_error"`
-	OrchestratorAgentStartEvent events.OrchestratorAgentStartEvent `json:"orchestrator_agent_start"`
-	OrchestratorAgentEndEvent   events.OrchestratorAgentEndEvent   `json:"orchestrator_agent_end"`
-	OrchestratorAgentErrorEvent events.OrchestratorAgentErrorEvent `json:"orchestrator_agent_error"`
+	OrchestratorStartEvent      orchestrator_events.OrchestratorStartEvent      `json:"orchestrator_start"`
+	OrchestratorEndEvent        orchestrator_events.OrchestratorEndEvent        `json:"orchestrator_end"`
+	OrchestratorErrorEvent      orchestrator_events.OrchestratorErrorEvent      `json:"orchestrator_error"`
+	OrchestratorAgentStartEvent orchestrator_events.OrchestratorAgentStartEvent `json:"orchestrator_agent_start"`
+	OrchestratorAgentEndEvent   orchestrator_events.OrchestratorAgentEndEvent   `json:"orchestrator_agent_end"`
+	OrchestratorAgentErrorEvent orchestrator_events.OrchestratorAgentErrorEvent `json:"orchestrator_agent_error"`
 
 	// Human Verification Events
-	RequestHumanFeedbackEvent events.RequestHumanFeedbackEvent `json:"request_human_feedback"`
+	RequestHumanFeedbackEvent orchestrator_events.RequestHumanFeedbackEvent `json:"request_human_feedback"`
 
 	// Step Execution Events
 	StepStartedEvent            todo_creation_human.StepStartedEvent            `json:"step_execution_start"`
@@ -732,7 +733,7 @@ type UnifiedEvent struct {
 
 	// Nested types that need to be included in schema (not events themselves)
 	// TodoStep is used by frontend but not directly in events, so we include it here to ensure it's generated
-	TodoStep events.TodoStep `json:"todo_step,omitempty"`
+	TodoStep orchestrator_events.TodoStep `json:"todo_step,omitempty"`
 }
 
 // =============================================================================

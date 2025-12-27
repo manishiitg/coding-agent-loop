@@ -28,7 +28,7 @@ type HumanControlledTodoPlannerExecutionOnlyTemplate struct {
 	HumanFeedback              string // Human guidance provided after validation failure (highest priority)
 	PreviousIterationOutput    string // Previous loop iteration execution output (for loop steps)
 	VariableNames              string // Variable names with descriptions ({{VAR_NAME}} - description)
-	VariableValues             string // Variable names with actual values ({{VAR_NAME}} = value - description)
+	VariableValues             string // Variable names with actual values ({{VAR_NAME}} = value)
 	HasLoop                    string // "true" or "false" as string
 	LoopCondition              string // Loop condition description (required when HasLoop="true")
 	LoopDescription            string // Human-readable explanation of the loop (optional)

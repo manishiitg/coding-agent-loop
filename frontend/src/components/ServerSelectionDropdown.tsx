@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import { Server, ChevronDown, Check } from 'lucide-react';
+import { Server, ChevronDown, Check, Settings } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Checkbox } from './ui/checkbox';
 import { Card } from './ui/Card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+import MCPConfigEditor from './MCPConfigEditor';
+import { useMCPStore } from '../stores';
 
 interface ServerSelectionDropdownProps {
   availableServers: string[];
@@ -23,6 +25,7 @@ export default function ServerSelectionDropdown({
   disabled = false
 }: ServerSelectionDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const { showConfigEditor, setShowConfigEditor } = useMCPStore();
 
   const handleServerToggle = (server: string) => {
     onServerToggle(server);
@@ -172,12 +175,46 @@ export default function ServerSelectionDropdown({
                           : `${actualSelectedServers.length} of ${availableServers.length} servers selected`
                     }
                   </div>
+
+                  {/* Configure MCP Server Button */}
+                  <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setIsOpen(false);
+                        setShowConfigEditor(true);
+                      }}
+                      className="w-full h-8 px-2 text-xs"
+                    >
+                      <Settings className="w-3 h-3 mr-1" />
+                      Configure MCP Server
+                    </Button>
+                    <div className="text-xs text-gray-500 mt-1 text-center">
+                      Manually add/edit servers via JSON
+                    </div>
+                  </div>
                 </div>
               </Card>
             </div>
           </>
         )}
       </div>
+
+      {/* MCP Config Editor Modal */}
+      {showConfigEditor && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 shadow-xl w-full max-w-6xl h-[90vh] overflow-y-auto">
+            <MCPConfigEditor
+              onConfigChange={() => {
+                // Close the modal after successful config change
+                setShowConfigEditor(false);
+              }}
+              onClose={() => setShowConfigEditor(false)}
+            />
+          </div>
+        </div>
+      )}
     </TooltipProvider>
   );
 }

@@ -1042,12 +1042,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[WORKFLOW DEBUG] Selected servers for workflow: %v", selectedServers)
 
 		// Create workflow event bridge for event emission
+		// Note: ChatDB is set to nil - workflow events are stored in memory only (for polling API)
+		// Chat history database storage is disabled for workflows to reduce database load
 		workflowEventBridge := &eventbridge.WorkflowEventBridge{
 			BaseEventBridge: &eventbridge.BaseEventBridge{
 				EventStore: api.eventStore,
 				SessionID:  sessionID,
 				Logger:     api.logger,
-				ChatDB:     api.chatDB,
+				ChatDB:     nil, // Disable database storage for workflows
 				BridgeName: "workflow",
 			},
 		}

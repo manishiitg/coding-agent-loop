@@ -230,6 +230,24 @@ func (s *SQLiteDB) DeleteChatSession(ctx context.Context, sessionID string) erro
 	return nil
 }
 
+// DeleteWorkflowSessions deletes all chat sessions with agent_mode = 'workflow' and all their events
+// Returns the number of sessions deleted
+func (s *SQLiteDB) DeleteWorkflowSessions(ctx context.Context) (int64, error) {
+	query := `DELETE FROM chat_sessions WHERE agent_mode = ?`
+
+	result, err := s.db.ExecContext(ctx, query, AgentModeWorkflow)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete workflow sessions: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return rowsAffected, nil
+}
+
 // ListChatSessions lists chat sessions with pagination
 func (s *SQLiteDB) ListChatSessions(ctx context.Context, limit, offset int, presetQueryID *string) ([]ChatHistorySummary, int, error) {
 	// Build WHERE clause for filtering

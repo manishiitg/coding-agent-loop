@@ -8,6 +8,7 @@ import { LearningNode } from './LearningNode'
 import { EvaluationNode } from './EvaluationNode'
 import { StartNode, EndNode } from './StartEndNodes'
 import { VariablesNode } from './VariablesNode'
+import { ExecutionSettingsNode } from './ExecutionSettingsNode'
 
 export { StepNode } from './StepNode'
 export { ConditionalNode } from './ConditionalNode'
@@ -19,6 +20,7 @@ export { LearningNode } from './LearningNode'
 export { EvaluationNode } from './EvaluationNode'
 export { StartNode, EndNode } from './StartEndNodes'
 export { VariablesNode } from './VariablesNode'
+export { ExecutionSettingsNode } from './ExecutionSettingsNode'
 export { NodeConfigFooter } from './NodeConfigFooter'
 
 // Node types map for React Flow
@@ -33,5 +35,6 @@ export const nodeTypes = {
   evaluation: EvaluationNode,
   start: StartNode,
   end: EndNode,
-  variables: VariablesNode
+  variables: VariablesNode,
+  'execution-settings': ExecutionSettingsNode
 } as const

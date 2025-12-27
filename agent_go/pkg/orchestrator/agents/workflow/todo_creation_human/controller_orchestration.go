@@ -191,15 +191,47 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 		// Update conversation history (in-memory only, not persisted)
 		conversationHistory = updatedConversationHistory
 
+		// Store orchestration routing JSON to logs folder (always saved, not conditional)
+		var validationWorkspacePath string
+		if hcpo.selectedRunFolder != "" {
+			validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+		} else {
+			validationWorkspacePath = hcpo.GetWorkspacePath()
+		}
+
+		validationFolderPath := getValidationFolderPath(validationWorkspacePath, orchestrationStepPath)
+		// Save routing decision with iteration number to track multiple routing decisions
+		routingFilePath := fmt.Sprintf("%s/orchestration-routing-iteration-%d.json", validationFolderPath, orchestrationIteration+1)
+		routingResponse := map[string]interface{}{
+			"step_index":            stepIndex + 1,
+			"step_path":             orchestrationStepPath,
+			"orchestration_step_id": step.GetID(),
+			"iteration":             orchestrationIteration + 1,
+			"orchestration_response": map[string]interface{}{
+				"selected_route_id":                  orchestrationResponse.SelectedRouteID,
+				"success_criteria_met":               orchestrationResponse.SuccessCriteriaMet,
+				"success_reasoning":                  orchestrationResponse.SuccessReasoning,
+				"instructions_to_sub_agent":          orchestrationResponse.InstructionsToSubAgent,
+				"success_criteria_for_sub_agent":     orchestrationResponse.SuccessCriteriaForSubAgent,
+				"context_dependencies_for_sub_agent": orchestrationResponse.ContextDependenciesForSubAgent,
+				"context_output_for_sub_agent":       orchestrationResponse.ContextOutputForSubAgent,
+			},
+			"timestamp": time.Now().Format(time.RFC3339),
+		}
+
+		routingJSON, err := json.MarshalIndent(routingResponse, "", "  ")
+		if err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal orchestration routing response to JSON: %v", err))
+		} else {
+			if err := hcpo.WriteWorkspaceFile(ctx, routingFilePath, string(routingJSON)); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write orchestration routing response to %s: %v", routingFilePath, err))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("💾 Orchestration routing response saved to: %s", routingFilePath))
+			}
+		}
+
 		// Store main step execution result to logs (if enabled)
 		if hcpo.saveValidationResponses {
-			var validationWorkspacePath string
-			if hcpo.selectedRunFolder != "" {
-				validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
-			} else {
-				validationWorkspacePath = hcpo.GetWorkspacePath()
-			}
-
 			executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, mainStepPath)
 			executionResultFilePath := fmt.Sprintf("%s/orchestration-main-step.json", executionLogsFolderPath)
 			executionResponse := map[string]interface{}{
@@ -236,13 +268,6 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 
 		// Store orchestration evaluation result to logs (if enabled)
 		if hcpo.saveValidationResponses {
-			var validationWorkspacePath string
-			if hcpo.selectedRunFolder != "" {
-				validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
-			} else {
-				validationWorkspacePath = hcpo.GetWorkspacePath()
-			}
-
 			validationFolderPath := getValidationFolderPath(validationWorkspacePath, orchestrationStepPath)
 			orchestrationEvaluationFilePath := fmt.Sprintf("%s/orchestration-evaluation.json", validationFolderPath)
 			orchestrationEvaluationResponse := map[string]interface{}{
@@ -522,14 +547,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			continue // Loop back to start of for loop
 		}
 
-		// 4. Success criteria not met - either continue working yourself, delegate to sub-agent, or end workflow
+		// 4. Success criteria not met - must delegate to sub-agent or end workflow
 		if orchestrationResponse.SelectedRouteID == "" {
-			// Orchestrator is continuing to work itself - loop back to continue in next iteration
-			hcpo.GetLogger().Info(fmt.Sprintf("🔄 Orchestrator continuing to work itself (iteration %d/%d) - no sub-agent needed", orchestrationIteration+2, maxOrchestrationIterations))
-			// Update progress and continue loop
-			// Note: Orchestration step progress is simplified - no need to save intermediate state
-			// Continue loop to next iteration
-			continue
+			// Orchestrator must always delegate when success criteria is not met
+			hcpo.GetLogger().Error(fmt.Sprintf("❌ Orchestrator did not select a route when success criteria is not met (iteration %d/%d) - orchestrator must always delegate to a sub-agent", orchestrationIteration+1, maxOrchestrationIterations), nil)
+			return false, "", fmt.Errorf("orchestration step %d: orchestrator must select a route (sub-agent) when success criteria is not met, but selected_route_id is empty", stepIndex+1)
 		}
 
 		// Find the selected route and capture its index

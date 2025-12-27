@@ -11,6 +11,7 @@ import { useAppStore } from '../../../stores/useAppStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { agentApi } from '../../../services/api'
 import LLMSelectionDropdown from '../../LLMSelectionDropdown'
+import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 import type { LLMOption } from '../../../types/llm'
 import type { AgentLLMConfig } from '../../../utils/stepConfigMatching'
 import type { 
@@ -1186,9 +1187,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                       </div>
                     </div>
                   ) : (
-                    <p className="text-sm text-gray-700 dark:text-gray-300 mt-2 whitespace-pre-wrap">
-                      {step.condition_question}
-                    </p>
+                    <div className="mt-2 text-sm text-gray-700 dark:text-gray-300">
+                      <MarkdownRenderer content={step.condition_question} className="text-sm text-gray-700 dark:text-gray-300" />
+                    </div>
                   )}
                 </div>
               )}
@@ -1251,9 +1252,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                       {step.title}
                     </h3>
                     {step.description && (
-                      <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed whitespace-pre-wrap">
-                        {step.description}
-                      </p>
+                      <div className="text-sm text-gray-600 dark:text-gray-400">
+                        <MarkdownRenderer content={step.description} className="text-sm text-gray-600 dark:text-gray-400" />
+                      </div>
                     )}
                   </div>
 
@@ -1262,9 +1263,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                       <span className="text-xs font-semibold text-green-700 dark:text-green-300 uppercase tracking-wide">
                         Success Criteria:
                       </span>
-                      <p className="text-sm text-gray-700 dark:text-gray-300 mt-2 whitespace-pre-wrap">
-                        {step.success_criteria}
-                      </p>
+                      <div className="mt-2 text-sm text-gray-700 dark:text-gray-300">
+                        <MarkdownRenderer content={step.success_criteria} className="text-sm text-gray-700 dark:text-gray-300" />
+                      </div>
                     </div>
                   )}
                 </>
@@ -1277,9 +1278,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                       <span className="text-xs font-medium text-purple-600 dark:text-purple-400">
                         Condition:
                       </span>
-                      <p className="text-sm text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-line">
-                        {step.condition_question}
-                      </p>
+                      <div className="mt-1 text-sm text-gray-700 dark:text-gray-300">
+                        <MarkdownRenderer content={step.condition_question} className="text-sm text-gray-700 dark:text-gray-300" />
+                      </div>
                     </div>
                   )}
                   

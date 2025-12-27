@@ -53,3 +53,5 @@ planning/changelog
 29. we cannot always, delete all execution when starting a research agent might want to reuse execution
 
 30. refractor how llm are setup and llm fallback
+
+31. high the discover page.. not required

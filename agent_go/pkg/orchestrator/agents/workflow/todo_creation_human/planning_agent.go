@@ -221,6 +221,7 @@ const (
 	StepTypeConditional   StepType = "conditional"
 	StepTypeDecision      StepType = "decision"
 	StepTypeOrchestration StepType = "orchestration"
+	StepTypeHumanInput    StepType = "human_input"
 )
 
 // CommonStepFields contains fields shared by all step types
@@ -559,6 +560,47 @@ func (o *OrchestrationPlanStep) MarshalJSON() ([]byte, error) {
 	return json.Marshal((*Alias)(o))
 }
 
+// HumanInputPlanStep represents a step that asks a question to a human and blocks for input
+// This step type has no LLM, no execution, no validation, and no learning - just human input
+type HumanInputPlanStep struct {
+	Type StepType `json:"type"` // Always "human_input" - required for JSON marshaling/unmarshaling
+	CommonStepFields
+	Question           string            `json:"question"`                      // Required: question to ask human
+	VariableName       string            `json:"variable_name,omitempty"`       // Optional: store response in variable
+	ResponseType       string            `json:"response_type,omitempty"`       // "text" (default), "yesno", "multiple_choice"
+	Options            []string          `json:"options,omitempty"`             // For multiple_choice type
+	NextStepID         string            `json:"next_step_id"`                  // Default: where to go after response (or "end") - used if conditional routing not specified
+	IfYesNextStepID    string            `json:"if_yes_next_step_id,omitempty"` // Optional: for yesno type when response is "yes"
+	IfNoNextStepID     string            `json:"if_no_next_step_id,omitempty"`  // Optional: for yesno type when response is "no"
+	OptionRoutes       map[string]string `json:"option_routes,omitempty"`       // Optional: for multiple_choice type - maps option index (as string "0", "1", etc.) or option value to next_step_id
+	SelectedNextStepID string            `json:"-"`                             // runtime: stores computed next step ID based on response - not stored in plan.json
+	AgentConfigs       *AgentConfigs     `json:"-"`                             // runtime: per-agent configuration (LLM, max turns, toggles) - not stored in plan.json
+}
+
+// Implement PlanStepInterface for HumanInputPlanStep
+func (h *HumanInputPlanStep) GetID() string                           { return h.ID }
+func (h *HumanInputPlanStep) GetTitle() string                        { return h.Title }
+func (h *HumanInputPlanStep) GetDescription() string                  { return h.Description }
+func (h *HumanInputPlanStep) GetSuccessCriteria() string              { return h.SuccessCriteria }
+func (h *HumanInputPlanStep) GetContextDependencies() []string        { return h.ContextDependencies }
+func (h *HumanInputPlanStep) GetContextOutput() FlexibleContextOutput { return h.ContextOutput }
+func (h *HumanInputPlanStep) GetEnablePrerequisiteDetection() *bool {
+	return h.EnablePrerequisiteDetection
+}
+func (h *HumanInputPlanStep) GetPrerequisiteRules() []PrerequisiteRule { return h.PrerequisiteRules }
+func (h *HumanInputPlanStep) GetValidationSchema() *ValidationSchema   { return h.ValidationSchema }
+func (h *HumanInputPlanStep) StepType() StepType                       { return StepTypeHumanInput }
+func (h *HumanInputPlanStep) GetCommonFields() CommonStepFields        { return h.CommonStepFields }
+
+// MarshalJSON ensures the type field is always set when marshaling
+func (h *HumanInputPlanStep) MarshalJSON() ([]byte, error) {
+	// Ensure type is set
+	h.Type = StepTypeHumanInput
+	// Use type alias to avoid infinite recursion
+	type Alias HumanInputPlanStep
+	return json.Marshal((*Alias)(h))
+}
+
 // UnmarshalJSON implements custom unmarshaling for OrchestrationPlanStep
 // This is needed to properly handle nested orchestration_step and orchestration_routes[].sub_agent_step
 func (o *OrchestrationPlanStep) UnmarshalJSON(data []byte) error {
@@ -658,7 +700,7 @@ func (pr *PlanningResponse) UnmarshalJSON(data []byte) error {
 		}
 
 		if stepWithType.Type == "" {
-			return fmt.Errorf("step %d is missing required 'type' field (must be: regular, conditional, decision, or orchestration)", i)
+			return fmt.Errorf("step %d is missing required 'type' field (must be: regular, conditional, decision, orchestration, or human_input)", i)
 		}
 
 		// Unmarshal based on type
@@ -688,8 +730,14 @@ func (pr *PlanningResponse) UnmarshalJSON(data []byte) error {
 				return fmt.Errorf("failed to parse orchestration step %d: %w", i, err)
 			}
 			typedStep = &step
+		case "human_input":
+			var step HumanInputPlanStep
+			if err := json.Unmarshal(stepData, &step); err != nil {
+				return fmt.Errorf("failed to parse human_input step %d: %w", i, err)
+			}
+			typedStep = &step
 		default:
-			return fmt.Errorf("unknown step type %q in step %d (must be: regular, conditional, decision, or orchestration)", stepWithType.Type, i)
+			return fmt.Errorf("unknown step type %q in step %d (must be: regular, conditional, decision, orchestration, or human_input)", stepWithType.Type, i)
 		}
 
 		pr.Steps[i] = typedStep
@@ -750,10 +798,18 @@ type PartialPlanStep struct {
 	OrchestrationStep   map[string]interface{}   `json:"orchestration_step,omitempty"`   // Optional: Updated orchestration step - will be converted to PlanStepInterface
 	OrchestrationRoutes []PlanOrchestrationRoute `json:"orchestration_routes,omitempty"` // Optional: Updated orchestration routes
 	// Routing fields (used by both conditional, decision, and routing steps)
-	IfTrueNextStepID  string            `json:"if_true_next_step_id,omitempty"`  // Optional: Updated if_true_next_step_id
-	IfFalseNextStepID string            `json:"if_false_next_step_id,omitempty"` // Optional: Updated if_false_next_step_id
-	NextStepID        string            `json:"next_step_id,omitempty"`          // Optional: Updated next_step_id (for routing steps)
-	ValidationSchema  *ValidationSchema `json:"validation_schema,omitempty"`     // Optional: Updated validation schema
+	IfTrueNextStepID  string `json:"if_true_next_step_id,omitempty"`  // Optional: Updated if_true_next_step_id
+	IfFalseNextStepID string `json:"if_false_next_step_id,omitempty"` // Optional: Updated if_false_next_step_id
+	NextStepID        string `json:"next_step_id,omitempty"`          // Optional: Updated next_step_id (for routing steps)
+	// Human input step fields
+	Question         string            `json:"question,omitempty"`            // Optional: Updated question
+	VariableName     string            `json:"variable_name,omitempty"`       // Optional: Updated variable name
+	ResponseType     string            `json:"response_type,omitempty"`       // Optional: Updated response type
+	Options          []string          `json:"options,omitempty"`             // Optional: Updated options (for multiple_choice)
+	IfYesNextStepID  string            `json:"if_yes_next_step_id,omitempty"` // Optional: Updated if_yes_next_step_id (for yesno)
+	IfNoNextStepID   string            `json:"if_no_next_step_id,omitempty"`  // Optional: Updated if_no_next_step_id (for yesno)
+	OptionRoutes     map[string]string `json:"option_routes,omitempty"`       // Optional: Updated option routes (for multiple_choice)
+	ValidationSchema *ValidationSchema `json:"validation_schema,omitempty"`   // Optional: Updated validation schema
 }
 
 // planFileMutex ensures thread-safe access to plan.json
@@ -1732,6 +1788,67 @@ func getAddLoopStepSchema() string {
 	}`
 }
 
+// getAddHumanInputStepSchema returns the JSON schema for add_human_input_step tool
+func getAddHumanInputStepSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"id": {
+				"type": "string",
+				"description": "REQUIRED: Stable step ID for this human input step. Generate a unique, URL-friendly ID based on the step title (e.g., 'ask-user-approval' from 'Ask User Approval')."
+			},
+			"title": {
+				"type": "string",
+				"description": "REQUIRED: Short, clear title for the human input step"
+			},
+			"question": {
+				"type": "string",
+				"description": "REQUIRED: The question to ask the human. This will be displayed to the user and execution will block until they respond."
+			},
+			"response_type": {
+				"type": "string",
+				"enum": ["text", "yesno", "multiple_choice"],
+				"description": "OPTIONAL: Type of response expected. 'text' (default) for free-form text, 'yesno' for yes/no questions, 'multiple_choice' for selecting from options. Default: 'text'."
+			},
+			"options": {
+				"type": "array",
+				"items": { "type": "string" },
+				"description": "OPTIONAL: Array of options for multiple_choice response type. Required if response_type is 'multiple_choice'."
+			},
+			"variable_name": {
+				"type": "string",
+				"description": "OPTIONAL: Variable name to store the human's response. If provided, the response will be stored in this variable and can be referenced in subsequent steps using {{variable_name}}."
+			},
+			"context_output": {
+				"type": "string",
+				"description": "OPTIONAL: Context file name to save the response (e.g., 'step-1.json'). Defaults to 'step-{index}.json' if not specified. The response will be saved as JSON with question, response, response_type, timestamp, and step details."
+			},
+			"next_step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the next step to execute after receiving the response, or 'end' to terminate the workflow. This is used as the default routing for 'text' response type, or as fallback if conditional routing is not specified."
+			},
+			"if_yes_next_step_id": {
+				"type": "string",
+				"description": "OPTIONAL: For 'yesno' response type, the step ID to route to when user responds 'yes', or 'end' to terminate. If not specified, next_step_id will be used."
+			},
+			"if_no_next_step_id": {
+				"type": "string",
+				"description": "OPTIONAL: For 'yesno' response type, the step ID to route to when user responds 'no', or 'end' to terminate. If not specified, next_step_id will be used."
+			},
+			"option_routes": {
+				"type": "object",
+				"additionalProperties": { "type": "string" },
+				"description": "OPTIONAL: For 'multiple_choice' response type, maps option index (as string '0', '1', etc.) or option value to next_step_id. Example: {'0': 'step-3', '1': 'step-4', 'Option C': 'step-5'}. If not specified, next_step_id will be used for all options."
+			},
+			"insert_after_step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string \"\" to insert at the beginning of the plan (before the first step)."
+			}
+		},
+		"required": ["id", "title", "question", "next_step_id", "insert_after_step_id"]
+	}`
+}
+
 // getConvertStepToConditionalSchema returns the JSON schema for convert_step_to_conditional tool
 func getConvertStepToConditionalSchema() string {
 	return `{
@@ -2303,6 +2420,85 @@ func getUpdateOrchestrationStepSchema() string {
 	}`
 }
 
+// getUpdateHumanInputStepSchema returns the JSON schema for update_human_input_step tool
+func getUpdateHumanInputStepSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"existing_step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the human input step to update. Use the step's id field from the plan."
+			},
+			"title": {
+				"type": "string",
+				"description": "OPTIONAL: New title for the step. Only include if you want to rename the step. If omitted, the existing title is preserved."
+			},
+			"question": {
+				"type": "string",
+				"description": "OPTIONAL: Updated question to ask the human. Only include if you want to change it. If omitted, the existing question is preserved."
+			},
+			"response_type": {
+				"type": "string",
+				"enum": ["text", "yesno", "multiple_choice"],
+				"description": "OPTIONAL: Updated response type. Only include if you want to change it. 'text' (default) for free-form text, 'yesno' for yes/no questions, 'multiple_choice' for selecting from options. If omitted, the existing response type is preserved."
+			},
+			"options": {
+				"type": "array",
+				"items": { "type": "string" },
+				"description": "OPTIONAL: Updated options for multiple_choice response type. Only include if you want to change them. Required if response_type is 'multiple_choice'. If omitted, the existing options are preserved."
+			},
+			"variable_name": {
+				"type": "string",
+				"description": "OPTIONAL: Updated variable name to store the response. Only include if you want to change it. If omitted, the existing variable name is preserved."
+			},
+			"context_output": {
+				"type": "string",
+				"description": "OPTIONAL: Updated context file name to save the response. Only include if you want to change it. Defaults to 'step-{index}.json' if not specified. If omitted, the existing context output is preserved."
+			},
+			"next_step_id": {
+				"type": "string",
+				"description": "OPTIONAL: Updated next step ID. Only include if you want to change it. The ID of the next step to execute after receiving the response, or 'end' to terminate the workflow. If omitted, the existing next_step_id is preserved."
+			},
+			"if_yes_next_step_id": {
+				"type": "string",
+				"description": "OPTIONAL: Updated if_yes_next_step_id. Only include if you want to change it. For 'yesno' response type, the step ID to route to when user responds 'yes', or 'end' to terminate. If omitted, the existing value is preserved."
+			},
+			"if_no_next_step_id": {
+				"type": "string",
+				"description": "OPTIONAL: Updated if_no_next_step_id. Only include if you want to change it. For 'yesno' response type, the step ID to route to when user responds 'no', or 'end' to terminate. If omitted, the existing value is preserved."
+			},
+			"option_routes": {
+				"type": "object",
+				"additionalProperties": { "type": "string" },
+				"description": "OPTIONAL: Updated option routes. Only include if you want to change them. For 'multiple_choice' response type, maps option index (as string '0', '1', etc.) or option value to next_step_id. If omitted, the existing option routes are preserved."
+			},
+			"enable_prerequisite_detection": {
+				"type": "boolean",
+				"description": "OPTIONAL: Updated enable_prerequisite_detection flag. Only include if you want to change it. Set to true when this step depends on outputs from previous steps that might expire or become invalid. If omitted, the existing value is preserved."
+			},
+			"prerequisite_rules": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"depends_on_step": {
+							"type": "string",
+							"description": "REQUIRED: The step ID this rule depends on. Must be a step that appears earlier in the plan."
+						},
+						"description": {
+							"type": "string",
+							"description": "REQUIRED: Natural language description of when to detect prerequisite failures for this specific step."
+						}
+					},
+					"required": ["depends_on_step", "description"]
+				},
+				"description": "OPTIONAL: Updated prerequisite rules. Only include if you want to change them. If omitted, the existing prerequisite rules are preserved."
+			}
+		},
+		"required": ["existing_step_id"]
+	}`
+}
+
 // getAddOrchestrationRouteSchema returns the JSON schema for add_orchestration_route tool
 func getAddOrchestrationRouteSchema() string {
 	return `{
@@ -2625,6 +2821,12 @@ func convertMapToStep(stepMap map[string]interface{}) (PlanStepInterface, error)
 			return nil, fmt.Errorf("failed to parse orchestration step: %w", err)
 		}
 		typedStep = &step
+	case "human_input":
+		var step HumanInputPlanStep
+		if err := json.Unmarshal(stepJSON, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse human_input step: %w", err)
+		}
+		typedStep = &step
 	default:
 		return nil, fmt.Errorf("unknown step type %q", stepType)
 	}
@@ -2750,6 +2952,8 @@ func updateValidationSchemaOnStep(step PlanStepInterface, schema *ValidationSche
 		if s.OrchestrationStep != nil {
 			updateValidationSchemaOnStep(s.OrchestrationStep, schema)
 		}
+	case *HumanInputPlanStep:
+		s.ValidationSchema = schema
 	}
 }
 
@@ -3395,6 +3599,58 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		if partialUpdate.ValidationSchema != nil && updated.OrchestrationStep != nil {
 			// Update validation schema on the inner OrchestrationStep (can be any step type)
 			updateValidationSchemaOnStep(updated.OrchestrationStep, partialUpdate.ValidationSchema)
+		}
+		return &updated
+
+	case *HumanInputPlanStep:
+		updated := *step
+		if partialUpdate.Title != "" {
+			updated.Title = partialUpdate.Title
+		}
+		if partialUpdate.Description != "" {
+			updated.Description = partialUpdate.Description
+		}
+		if partialUpdate.SuccessCriteria != "" {
+			updated.SuccessCriteria = partialUpdate.SuccessCriteria
+		}
+		if partialUpdate.ContextDependencies != nil {
+			updated.ContextDependencies = partialUpdate.ContextDependencies
+		}
+		if partialUpdate.ContextOutput != "" {
+			updated.ContextOutput = FlexibleContextOutput(partialUpdate.ContextOutput)
+		}
+		if partialUpdate.Question != "" {
+			updated.Question = partialUpdate.Question
+		}
+		if partialUpdate.VariableName != "" {
+			updated.VariableName = partialUpdate.VariableName
+		}
+		if partialUpdate.ResponseType != "" {
+			updated.ResponseType = partialUpdate.ResponseType
+		}
+		if partialUpdate.Options != nil {
+			updated.Options = partialUpdate.Options
+		}
+		if partialUpdate.NextStepID != "" {
+			updated.NextStepID = partialUpdate.NextStepID
+		}
+		if partialUpdate.IfYesNextStepID != "" {
+			updated.IfYesNextStepID = partialUpdate.IfYesNextStepID
+		}
+		if partialUpdate.IfNoNextStepID != "" {
+			updated.IfNoNextStepID = partialUpdate.IfNoNextStepID
+		}
+		if partialUpdate.OptionRoutes != nil {
+			updated.OptionRoutes = partialUpdate.OptionRoutes
+		}
+		if partialUpdate.EnablePrerequisiteDetection != nil {
+			updated.EnablePrerequisiteDetection = partialUpdate.EnablePrerequisiteDetection
+		}
+		if partialUpdate.PrerequisiteRules != nil {
+			updated.PrerequisiteRules = partialUpdate.PrerequisiteRules
+		}
+		if partialUpdate.ValidationSchema != nil {
+			updated.ValidationSchema = partialUpdate.ValidationSchema
 		}
 		return &updated
 
@@ -4417,6 +4673,86 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 	}
 }
 
+// createUpdateHumanInputStepExecutor creates an executor function for update_human_input_step tool
+func createUpdateHumanInputStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Convert args to JSON and unmarshal to PartialPlanStep
+		stepJSON, err := json.Marshal(args)
+		if err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("failed to marshal step: %w", err), nil)
+		}
+
+		var partialUpdate PartialPlanStep
+		if err := json.Unmarshal(stepJSON, &partialUpdate); err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("failed to parse step: %w", err), nil)
+		}
+
+		// Read current plan
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+		}
+
+		// Find the human input step
+		var existingStep PlanStepInterface
+		stepIndex := -1
+		for i, step := range plan.Steps {
+			if step.GetID() == partialUpdate.ExistingStepID {
+				existingStep = step
+				stepIndex = i
+				break
+			}
+		}
+		if existingStep == nil {
+			availableIDs := make([]string, 0, len(plan.Steps))
+			for _, step := range plan.Steps {
+				availableIDs = append(availableIDs, step.GetID())
+			}
+			return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs), nil)
+		}
+
+		// Validate it's a human input step before updating
+		_, ok := existingStep.(*HumanInputPlanStep)
+		if !ok {
+			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not a human input step", partialUpdate.ExistingStepID), nil)
+		}
+
+		// Track changes for changelog
+		fieldChanges := make([]PlanFieldChange, 0)
+
+		// Update the step
+		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
+		stepIndex, _, err = updateSingleStep(plan, partialUpdate, &fieldChanges)
+		if err != nil {
+			return "", err
+		}
+
+		// Validate all steps after update
+		if err := validatePlanStepIDs(plan.Steps); err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("plan validation failed after update: %w", err), nil)
+		}
+
+		// Write updated plan
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+		}
+
+		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
+
+		// Unlock learnings for updated step
+		if unlockLearningsFunc != nil && stepIndex >= 0 {
+			if err := unlockLearningsFunc(ctx, partialUpdate.ExistingStepID, stepIndex); err != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Failed to unlock learnings for updated step %s: %v", partialUpdate.ExistingStepID, err))
+			} else {
+				logger.Info(fmt.Sprintf("🔓 Unlocked learnings for updated step %s (plan was modified)", partialUpdate.ExistingStepID))
+			}
+		}
+
+		logger.Info(fmt.Sprintf("✅ Updated human input step '%s' in plan", partialUpdate.ExistingStepID))
+		return fmt.Sprintf("Successfully updated human input step '%s' in the plan", partialUpdate.ExistingStepID), nil
+	}
+}
+
 // createAddRegularStepExecutor creates an executor function for add_regular_step tool
 func createAddRegularStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "regular", unlockLearningsFunc)
@@ -4440,6 +4776,11 @@ func createAddOrchestrationStepExecutor(workspacePath string, logger loggerv2.Lo
 // createAddLoopStepExecutor creates an executor function for add_loop_step tool
 func createAddLoopStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "loop", unlockLearningsFunc)
+}
+
+// createAddHumanInputStepExecutor creates an executor function for add_human_input_step tool
+func createAddHumanInputStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
+	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "human_input", unlockLearningsFunc)
 }
 
 // validateDecisionStepFieldsTyped validates that a DecisionPlanStep has all required fields
@@ -4734,6 +5075,21 @@ func registerPlanModificationTools(
 		return fmt.Errorf(fmt.Sprintf("failed to register update_orchestration_step tool: %w", err), nil)
 	}
 
+	humanInputUpdateSchema := getUpdateHumanInputStepSchema()
+	humanInputUpdateParams, err := parseSchemaForToolParameters(humanInputUpdateSchema)
+	if err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to parse update human input step schema: %w", err), nil)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"update_human_input_step",
+		"Update a human input step in the plan. Provide existing_step_id (required) to identify which human input step to update, and only include the fields you want to change (question, response_type, options, variable_name, context_output, next_step_id, if_yes_next_step_id/if_no_next_step_id, option_routes). The plan.json file is updated immediately when this tool is called.",
+		humanInputUpdateParams,
+		createUpdateHumanInputStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to register update_human_input_step tool: %w", err), nil)
+	}
+
 	deleteSchema := getDeletePlanStepsSchema()
 	deleteParams, err := parseSchemaForToolParameters(deleteSchema)
 	if err != nil {
@@ -4823,6 +5179,21 @@ func registerPlanModificationTools(
 		"workflow",
 	); err != nil {
 		return fmt.Errorf(fmt.Sprintf("failed to register add_loop_step tool: %w", err), nil)
+	}
+
+	humanInputSchema := getAddHumanInputStepSchema()
+	humanInputParams, err := parseSchemaForToolParameters(humanInputSchema)
+	if err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to parse human input step schema: %w", err), nil)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"add_human_input_step",
+		"Add a human input step to the plan. Use this when you need to ask a question to a human and block execution until they respond. This step has no LLM, no execution, no validation, and no learning - it simply asks a question and waits for human input. The response is saved to a JSON file and passed to the next step. Provide: id, title, question (required), response_type (text/yesno/multiple_choice), options (for multiple_choice), variable_name (optional), context_output (optional, defaults to step-{index}.json), next_step_id (required), if_yes_next_step_id/if_no_next_step_id (for yesno), option_routes (for multiple_choice), insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
+		humanInputParams,
+		createAddHumanInputStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf(fmt.Sprintf("failed to register add_human_input_step tool: %w", err), nil)
 	}
 
 	// Register conditional step tools
@@ -6844,12 +7215,16 @@ When moving/deleting/adding steps:
 
 **Structure**:
 - execution/step-{X}/ - Step-specific folders containing context output files
+- execution/knowledgebase/ - **Persistent folder** for files that survive across runs (templates, reference data, configurations)
 - Files like step_1_results.json, login_session.json, etc. (as defined in step context_output fields)
 
 **Use Case**: When designing plans, understand that:
 - Each step writes its context_output file to execution/step-{X}/
 - Subsequent steps read these files via context_dependencies
 - These are the **actual work products** that flow between steps
+- **Knowledgebase folder** (execution/knowledgebase/) is for shared, persistent files that should NOT be deleted during cleanup
+  - Use for: templates, reference data, configurations, cached data
+  - Files in knowledgebase/ are NEVER deleted when execution folders are cleaned
 
 ### 2. Logs Execution Subfolder (Execution Logs)
 **Location**: runs/{iteration}/logs/step-{X}/execution/

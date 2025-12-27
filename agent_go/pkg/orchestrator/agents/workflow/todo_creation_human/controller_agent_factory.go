@@ -8,8 +8,9 @@ import (
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "mcpagent/agent"
-	"mcpagent/events"
+	baseevents "mcpagent/events"
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
@@ -36,14 +37,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) setupExecutionFolderGuard(st
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	// Step-specific learnings folder: learnings/{stepID}/ (only this step's learnings, not full learnings folder)
 	stepLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
+	// Knowledgebase folder: execution/knowledgebase/ (persistent files across runs)
+	knowledgebasePath := getKnowledgebasePath(executionWorkspacePath)
 
 	// Set folder guard paths:
-	// READ: step-specific learnings folder + execution folder (to read previous step results)
-	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) to prevent writing to other steps
+	// READ: step-specific learnings folder + execution folder (to read previous step results) + knowledgebase folder
+	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + knowledgebase folder to prevent writing to other steps
 	// Use getExecutionFolderPath to support both regular and branch steps
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
-	readPaths = []string{stepLearningsPath, executionWorkspacePath}
-	writePaths = []string{stepFolderPath}
+	readPaths = []string{stepLearningsPath, executionWorkspacePath, knowledgebasePath}
+	writePaths = []string{stepFolderPath, knowledgebasePath}
 	return readPaths, writePaths
 }
 
@@ -167,8 +170,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) selectExecutionLLM(
 			baseWorkspacePath := hcpo.GetWorkspacePath()
 			stepLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepPath)
 			pathInfo := parseStepPath(stepPath)
-			tempLLMSkippedEvent := &events.TempLLMSkippedEvent{
-				BaseEventData: events.BaseEventData{
+			tempLLMSkippedEvent := &orchestrator_events.TempLLMSkippedEvent{
+				BaseEventData: baseevents.BaseEventData{
 					Timestamp: time.Now(),
 					Component: "orchestrator",
 				},
@@ -184,8 +187,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) selectExecutionLLM(
 				RunFolder:       hcpo.selectedRunFolder,
 				WorkspacePath:   baseWorkspacePath,
 			}
-			eventBridge.HandleEvent(ctx, &events.AgentEvent{
-				Type:      events.TempLLMSkipped,
+			eventBridge.HandleEvent(ctx, &baseevents.AgentEvent{
+				Type:      orchestrator_events.TempLLMSkipped,
 				Timestamp: time.Now(),
 				Data:      tempLLMSkippedEvent,
 			})
@@ -444,12 +447,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) setupConditionalFolderGuard(
 	stepLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
 	// Step-specific execution folder: execution/step-{X}/ or execution/step-{X}-{branch}/ (for writing evaluation results)
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+	// Knowledgebase folder: execution/knowledgebase/ (persistent files across runs)
+	knowledgebasePath := getKnowledgebasePath(executionWorkspacePath)
 
 	// Set folder guard paths:
-	// READ: step-specific learnings folder + entire execution folder (to read all previous step results and verify conditions)
-	// WRITE: step-specific execution folder (to write evaluation results and intermediate files)
-	readPaths = []string{stepLearningsPath, executionWorkspacePath}
-	writePaths = []string{stepFolderPath}
+	// READ: step-specific learnings folder + entire execution folder (to read all previous step results and verify conditions) + knowledgebase folder
+	// WRITE: step-specific execution folder (to write evaluation results and intermediate files) + knowledgebase folder
+	readPaths = []string{stepLearningsPath, executionWorkspacePath, knowledgebasePath}
+	writePaths = []string{stepFolderPath, knowledgebasePath}
 	return readPaths, writePaths
 }
 

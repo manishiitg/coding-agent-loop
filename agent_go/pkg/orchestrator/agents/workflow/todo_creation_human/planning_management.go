@@ -9,8 +9,9 @@ import (
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "mcpagent/agent"
-	"mcpagent/events"
+	baseevents "mcpagent/events"
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/mcpclient"
 	"mcpagent/observability"
@@ -657,6 +658,47 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		step.AgentConfigs = agentConfigs
 		return nil
 
+	case *HumanInputPlanStep:
+		// Human input step: no execution, validation, or learning - just asks question and blocks
+		// Merge prerequisite detection settings from PlanStep into AgentConfigs
+		if step.EnablePrerequisiteDetection != nil || len(step.PrerequisiteRules) > 0 {
+			if agentConfigs == nil {
+				agentConfigs = &AgentConfigs{}
+			}
+			if agentConfigs.EnablePrerequisiteDetection == nil && step.EnablePrerequisiteDetection != nil {
+				agentConfigs.EnablePrerequisiteDetection = step.EnablePrerequisiteDetection
+			}
+			if len(agentConfigs.PrerequisiteRules) == 0 && len(step.PrerequisiteRules) > 0 {
+				agentConfigs.PrerequisiteRules = step.PrerequisiteRules
+			}
+		}
+
+		// Human input steps should never have validation, learning, or execution agents
+		if agentConfigs == nil {
+			val := true
+			agentConfigs = &AgentConfigs{
+				DisableValidation: &val,
+				DisableLearning:   &val,
+			}
+		} else {
+			// Ensure validation and learning are disabled
+			val := true
+			if agentConfigs.DisableValidation == nil || !*agentConfigs.DisableValidation {
+				disabledConfigs := *agentConfigs
+				disabledConfigs.DisableValidation = &val
+				agentConfigs = &disabledConfigs
+			}
+			if agentConfigs.DisableLearning == nil || !*agentConfigs.DisableLearning {
+				disabledConfigs := *agentConfigs
+				disabledConfigs.DisableLearning = &val
+				agentConfigs = &disabledConfigs
+			}
+		}
+
+		// Populate runtime field directly on plan step
+		step.AgentConfigs = agentConfigs
+		return nil
+
 	default:
 		return fmt.Errorf(fmt.Sprintf("unknown step type: %T", typedStep), nil)
 	}
@@ -847,7 +889,7 @@ func EmitTodoStepsExtractedEventWithMetadata(ctx context.Context, bo *orchestrat
 	}
 
 	// Create event data with metadata
-	baseEventData := events.BaseEventData{
+	baseEventData := baseevents.BaseEventData{
 		Timestamp: time.Now(),
 	}
 	if metadata != nil {
@@ -865,7 +907,7 @@ func EmitTodoStepsExtractedEventWithMetadata(ctx context.Context, bo *orchestrat
 	}
 
 	// Create unified event wrapper
-	unifiedEvent := &events.AgentEvent{
+	unifiedEvent := &baseevents.AgentEvent{
 		Type:      events.TodoStepsExtracted,
 		Timestamp: time.Now(),
 		Data:      eventData,

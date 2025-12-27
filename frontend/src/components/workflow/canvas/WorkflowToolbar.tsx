@@ -12,8 +12,6 @@ import {
   Check,
   Rocket,
   FolderOpen,
-  Zap,
-  SkipForward,
   RefreshCw,
   BookOpen,
   FolderTree,
@@ -27,7 +25,7 @@ import {
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useAppStore } from '../../../stores'
-import { useWorkflowStore, type ExecutionModeType, type RunFolder } from '../../../stores/useWorkflowStore'
+import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
 import { useChatStore } from '../../../stores/useChatStore'
 import type { PlannerFile, WorkflowPhase, StepProgress } from '../../../services/api-types'
 import type { PlanningResponse } from '../../../utils/stepConfigMatching'
@@ -44,12 +42,6 @@ import { isConditionalStep } from '../../../utils/stepConfigMatching'
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
 
-// Execution Mode options - how to run (human feedback, learning, etc.)
-const EXECUTION_MODE_OPTIONS: { id: ExecutionModeType; label: string; icon: typeof Play; description: string }[] = [
-  { id: 'human_approval', label: 'With Human Approval', icon: Play, description: 'Pause for human approval before going to next step (learning enabled)' },
-  { id: 'fast_execution', label: 'Fast Execution', icon: Zap, description: 'Execute all without pausing or learning' },
-  { id: 'with_learning', label: 'With Learning (No Human)', icon: SkipForward, description: 'Proceed to next step without human approval (learning enabled)' },
-]
 
 // Start Point options - where to start execution
 type StartPointType = 'from_beginning' | 'resume' | 'single_step' | 'resume_branch'
@@ -136,7 +128,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
   const loadProgress = useWorkflowStore(state => state.loadProgress)
   const loadFolderProgressOnDemand = useWorkflowStore(state => state.loadFolderProgressOnDemand)
-  const setExecutionMode = useWorkflowStore(state => state.setExecutionMode)
   const setStartPoint = useWorkflowStore(state => state.setStartPoint)
   const setBranchStep = useWorkflowStore(state => state.setBranchStep)
   const buildExecutionOptions = useWorkflowStore(state => state.buildExecutionOptions)
@@ -182,7 +173,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Local UI state (dropdowns)
   const [isDropdownOpen, setIsDropdownOpen] = React.useState(false)
   const [isIterationDropdownOpen, setIsIterationDropdownOpen] = React.useState(false)
-  const [isExecutionModeDropdownOpen, setIsExecutionModeDropdownOpen] = React.useState(false)
   const [isStartPointDropdownOpen, setIsStartPointDropdownOpen] = React.useState(false)
   
   // Delete confirmation dialog state
@@ -205,7 +195,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Refs for dropdown click-outside detection
   const dropdownRef = useRef<HTMLDivElement>(null)
   const iterationDropdownRef = useRef<HTMLDivElement>(null)
-  const executionModeDropdownRef = useRef<HTMLDivElement>(null)
   const startPointDropdownRef = useRef<HTMLDivElement>(null)
   
   // Keep isRunning for other uses (like dropdown disabled state)
@@ -348,9 +337,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       if (iterationDropdownRef.current && !iterationDropdownRef.current.contains(event.target as Node)) {
         setIsIterationDropdownOpen(false)
       }
-      if (executionModeDropdownRef.current && !executionModeDropdownRef.current.contains(event.target as Node)) {
-        setIsExecutionModeDropdownOpen(false)
-      }
       if (startPointDropdownRef.current && !startPointDropdownRef.current.contains(event.target as Node)) {
         setIsStartPointDropdownOpen(false)
       }
@@ -436,8 +422,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const hasExistingProgress = stepProgress !== null && completedStepIndices.length > 0
   const completedStepCount = completedStepIndices.length
 
-  // Get current execution mode info
-  const currentModeInfo = EXECUTION_MODE_OPTIONS.find(m => m.id === selectedExecutionMode) || EXECUTION_MODE_OPTIONS[0]
 
   // Helper to format the selected run folder display text
   const getSelectedRunFolderDisplay = useMemo(() => {
@@ -1011,11 +995,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
   }
 
-  // Handle selecting execution mode from dropdown
-  const handleSelectExecutionMode = useCallback((modeId: ExecutionModeType) => {
-    setExecutionMode(modeId)
-    setIsExecutionModeDropdownOpen(false)
-  }, [setExecutionMode])
   
 
   // Handle selecting start point from dropdown
@@ -1384,7 +1363,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                       : 'bg-purple-500 dark:bg-purple-600 text-white shadow-md hover:bg-purple-600 dark:hover:bg-purple-700 hover:shadow-lg'
                     }
                   `}
-                  title={isExecutionRunning ? 'Stop execution' : `Execute: ${currentModeInfo.label}`}
+                  title={isExecutionRunning ? 'Stop execution' : 'Execute workflow'}
                 >
                   {isExecutionRunning ? (
                     <>
@@ -1718,71 +1697,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   </div>
                 )}
 
-                {/* Dropdown 2: Execution Mode - How to run */}
-                <div className="relative" ref={executionModeDropdownRef}>
-                  <button
-                    onClick={() => !isRunning && setIsExecutionModeDropdownOpen(!isExecutionModeDropdownOpen)}
-                    disabled={isRunning}
-                    className={`
-                      flex items-center gap-1.5 px-2 py-1.5 rounded-md transition-all text-xs font-medium
-                      ${isRunning
-                        ? 'bg-muted text-muted-foreground cursor-not-allowed' 
-                        : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                      }
-                    `}
-                    title="Select execution mode"
-                  >
-                    {(() => {
-                      const Icon = currentModeInfo.icon
-                      return <Icon className="w-3.5 h-3.5" />
-                    })()}
-                    <span className="max-w-[110px] truncate">{currentModeInfo.label}</span>
-                    <ChevronDown className={`w-3 h-3 transition-transform ${isExecutionModeDropdownOpen ? 'rotate-180' : ''}`} />
-                  </button>
-                  
-                  {/* Execution Mode Dropdown */}
-                  {isExecutionModeDropdownOpen && !isRunning && (
-                    <div className="absolute top-full left-0 mt-1 w-64 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50">
-                      <div className="p-1">
-                        <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">
-                          Execution Mode
-                        </div>
-                        {EXECUTION_MODE_OPTIONS.map((mode) => {
-                          const Icon = mode.icon
-                          const isSelected = mode.id === selectedExecutionMode
-                          return (
-                            <button
-                              key={mode.id}
-                              onClick={() => handleSelectExecutionMode(mode.id)}
-                              className={`
-                                w-full text-left px-3 py-2.5 rounded-md transition-colors
-                                ${isSelected 
-                                  ? 'bg-purple-100 dark:bg-purple-900/30' 
-                                  : 'hover:bg-gray-100 dark:hover:bg-gray-700'
-                                }
-                              `}
-                            >
-                              <div className="flex items-start gap-3">
-                                <Icon className={`w-4 h-4 mt-0.5 ${isSelected ? 'text-purple-600 dark:text-purple-400' : 'text-gray-500 dark:text-gray-400'}`} />
-                                <div className="flex-1 min-w-0">
-                                  <div className={`font-medium text-sm ${isSelected ? 'text-purple-700 dark:text-purple-300' : 'text-gray-900 dark:text-gray-100'}`}>
-                                    {mode.label}
-                                  </div>
-                                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                                    {mode.description}
-                                  </div>
-                                </div>
-                                {isSelected && <Check className="w-4 h-4 text-purple-600 dark:text-purple-400 mt-0.5" />}
-                              </div>
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Dropdown 3: Start Point - Where to start */}
+                {/* Dropdown 2: Start Point - Where to start */}
                 <div className="relative" ref={startPointDropdownRef}>
                   <button
                     onClick={() => !isRunning && setIsStartPointDropdownOpen(!isStartPointDropdownOpen)}

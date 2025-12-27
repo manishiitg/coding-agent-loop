@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"mcpagent/events"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	baseevents "mcpagent/events"
 )
 
 // getStepsProgressPath returns the path to steps_done.json file in the run folder
@@ -95,7 +96,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepStartedEvent(ctx con
 	}
 
 	startedEvent := &StepStartedEvent{
-		BaseEventData: events.BaseEventData{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 			Component: "orchestrator",
 		},
@@ -108,8 +109,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepStartedEvent(ctx con
 		WorkspacePath: hcpo.GetWorkspacePath(),
 	}
 
-	agentEvent := &events.AgentEvent{
-		Type:      events.StepExecutionStart,
+	agentEvent := &baseevents.AgentEvent{
+		Type:      baseevents.StepExecutionStart,
 		Timestamp: time.Now(),
 		Data:      startedEvent,
 	}
@@ -138,7 +139,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepFinishedEvent(ctx co
 	}
 
 	finishedEvent := &StepFinishedEvent{
-		BaseEventData: events.BaseEventData{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 			Component: "orchestrator",
 		},
@@ -149,8 +150,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepFinishedEvent(ctx co
 		IsBranchStep: isBranchStep,
 	}
 
-	agentEvent := &events.AgentEvent{
-		Type:      events.StepExecutionEnd,
+	agentEvent := &baseevents.AgentEvent{
+		Type:      baseevents.StepExecutionEnd,
 		Timestamp: time.Now(),
 		Data:      finishedEvent,
 	}
@@ -187,7 +188,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitDecisionEvaluatedEvent(c
 	}
 
 	evaluatedEvent := &DecisionEvaluatedEvent{
-		BaseEventData: events.BaseEventData{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 			Component: "orchestrator",
 		},
@@ -206,8 +207,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitDecisionEvaluatedEvent(c
 		WorkspacePath:    hcpo.GetWorkspacePath(),
 	}
 
-	agentEvent := &events.AgentEvent{
-		Type:      events.EventType("decision_evaluated"),
+	agentEvent := &baseevents.AgentEvent{
+		Type:      events.DecisionEvaluated,
 		Timestamp: time.Now(),
 		Data:      evaluatedEvent,
 	}
@@ -240,7 +241,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepProgressUpdatedEvent
 	branchSteps := progress.BranchSteps
 
 	eventData := &StepProgressUpdatedEvent{
-		BaseEventData: events.BaseEventData{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 		},
 		CompletedStepIndices: progress.CompletedStepIndices,
@@ -252,7 +253,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepProgressUpdatedEvent
 	}
 
 	// Create unified event wrapper
-	unifiedEvent := &events.AgentEvent{
+	unifiedEvent := &baseevents.AgentEvent{
 		Type:      events.StepProgressUpdated,
 		Timestamp: time.Now(),
 		Data:      eventData,
@@ -315,7 +316,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitPreValidationCompletedEv
 	}
 
 	preValidationEvent := &PreValidationCompletedEvent{
-		BaseEventData: events.BaseEventData{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 			Component: "orchestrator",
 		},
@@ -334,8 +335,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitPreValidationCompletedEv
 		WorkspacePath: hcpo.GetWorkspacePath(),
 	}
 
-	agentEvent := &events.AgentEvent{
-		Type:      events.EventType("pre_validation_completed"),
+	agentEvent := &baseevents.AgentEvent{
+		Type:      events.PreValidationCompleted,
 		Timestamp: time.Now(),
 		Data:      preValidationEvent,
 	}

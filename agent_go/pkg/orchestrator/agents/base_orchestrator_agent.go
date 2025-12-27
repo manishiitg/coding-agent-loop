@@ -11,9 +11,11 @@ import (
 	"time"
 
 	mcpagent "mcpagent/agent"
-	"mcpagent/events"
+	baseevents "mcpagent/events"
 	"mcpagent/llm"
 	"mcpagent/observability"
+
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 
 	agentlogger "mcp-agent-builder-go/agent_go/pkg/logger"
 
@@ -458,7 +460,7 @@ type UserMessageProcessorSetter interface {
 }
 
 // emitEvent emits an event through the event bridge
-func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType events.EventType, data events.EventData) {
+func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType baseevents.EventType, data baseevents.EventData) {
 	// Check if event bridge is available
 	if boa.eventBridge == nil {
 		boa.logger.Debug(fmt.Sprintf("⚠️ Event bridge is nil, skipping event emission: %s", eventType))
@@ -466,7 +468,7 @@ func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType event
 	}
 
 	// Create agent event
-	agentEvent := &events.AgentEvent{
+	agentEvent := &baseevents.AgentEvent{
 		Type:      eventType,
 		Timestamp: time.Now(),
 		Data:      data,
@@ -485,7 +487,7 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 	// Removed verbose logging
 
 	// Generate unique agent session ID for correlating start/end events
-	boa.agentSessionID = events.GenerateEventID()
+	boa.agentSessionID = baseevents.GenerateEventID()
 
 	agentName := string(boa.agentType)
 	if boa.baseAgent != nil {
@@ -493,7 +495,7 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 	}
 
 	eventData := &events.OrchestratorAgentStartEvent{
-		BaseEventData: events.BaseEventData{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp:     time.Now(),
 			CorrelationID: boa.agentSessionID, // Use shared session ID for correlation
 		},
@@ -528,7 +530,7 @@ func (boa *BaseOrchestratorAgent) emitAgentEndEventWithStructuredResponse(ctx co
 	}
 
 	eventData := &events.OrchestratorAgentEndEvent{
-		BaseEventData: events.BaseEventData{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp:     time.Now(),
 			CorrelationID: boa.agentSessionID, // Use shared session ID for correlation
 		},

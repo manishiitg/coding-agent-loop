@@ -8,7 +8,8 @@ import (
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	"mcpagent/events"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	baseevents "mcpagent/events"
 )
 
 // RequestHumanFeedback is a common function for requesting human feedback with blocking behavior
@@ -27,7 +28,7 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 	// Note: YesNoOnly is false to allow text feedback in frontend (textarea + "Approve & Continue" button)
 	// But we'll still send buttons to Slack for convenience
 	feedbackEvent := &events.BlockingHumanFeedbackEvent{
-		BaseEventData: events.BaseEventData{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 		},
 		Question:      question,
@@ -42,7 +43,7 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 	}
 
 	// Emit the event using the public method
-	agentEvent := &events.AgentEvent{
+	agentEvent := &baseevents.AgentEvent{
 		Type:      events.BlockingHumanFeedback,
 		Timestamp: time.Now(),
 		Data:      feedbackEvent,
@@ -114,7 +115,7 @@ func (bo *BaseOrchestrator) RequestYesNoFeedback(
 
 	// Emit human feedback request event with yes/no only mode
 	feedbackEvent := &events.BlockingHumanFeedbackEvent{
-		BaseEventData: events.BaseEventData{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 		},
 		Question:      question,
@@ -129,7 +130,7 @@ func (bo *BaseOrchestrator) RequestYesNoFeedback(
 	}
 
 	// Emit the event
-	agentEvent := &events.AgentEvent{
+	agentEvent := &baseevents.AgentEvent{
 		Type:      events.BlockingHumanFeedback,
 		Timestamp: time.Now(),
 		Data:      feedbackEvent,
@@ -183,7 +184,7 @@ func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 
 	// Emit human feedback request event with multiple-choice mode
 	feedbackEvent := &events.BlockingHumanFeedbackEvent{
-		BaseEventData: events.BaseEventData{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 		},
 		Question:      question,
@@ -196,7 +197,7 @@ func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 	}
 
 	// Emit the event
-	agentEvent := &events.AgentEvent{
+	agentEvent := &baseevents.AgentEvent{
 		Type:      events.BlockingHumanFeedback,
 		Timestamp: time.Now(),
 		Data:      feedbackEvent,

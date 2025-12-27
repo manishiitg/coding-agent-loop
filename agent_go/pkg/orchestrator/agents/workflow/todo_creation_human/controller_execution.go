@@ -14,10 +14,21 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/shared"
 
-	"mcpagent/events"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	baseevents "mcpagent/events"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// KnowledgebaseFolderName is the name of the persistent knowledgebase folder inside execution/
+// This folder is never deleted during cleanup operations
+const KnowledgebaseFolderName = "knowledgebase"
+
+// getKnowledgebasePath returns the full path to the knowledgebase folder
+// Path format: {executionWorkspacePath}/knowledgebase/
+func getKnowledgebasePath(executionWorkspacePath string) string {
+	return fmt.Sprintf("%s/%s", executionWorkspacePath, KnowledgebaseFolderName)
+}
 
 // PrerequisiteFailureError is a special error type that signals a prerequisite failure detected during execution
 // When this error is returned from a tool call, it triggers navigation to the prerequisite step
@@ -792,6 +803,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 		learningsPath := fmt.Sprintf("%s/learnings", hcpo.GetWorkspacePath())
 		// Get execution folder path for this step (e.g., "execution/step-8" or "execution/step-3-true-0")
 		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+		// Get knowledgebase folder path (persistent files across runs)
+		knowledgebasePath := getKnowledgebasePath(executionWorkspacePath)
 
 		templateVars := map[string]string{
 			"StepTitle":           ResolveVariables(step.GetTitle(), hcpo.variableValues),
@@ -800,6 +813,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 			"StepContextOutput":   ResolveVariables(step.GetContextOutput().String(), hcpo.variableValues),
 			"WorkspacePath":       executionWorkspacePath,                 // Execution subdirectory (folder guard validates against this)
 			"LearningsPath":       learningsPath,                          // Learnings folder path for reading learning files and scripts/code
+			"KnowledgebasePath":   knowledgebasePath,                      // Knowledgebase folder path (persistent files across runs)
 			"IsCodeExecutionMode": fmt.Sprintf("%v", isCodeExecutionMode), // Code execution mode flag (step-specific or preset)
 			"HumanFeedback":       "",                                     // Human feedback for retry attempts (set after validation failure)
 			"StepNumber":          stepPath,                               // Step identifier (e.g., "step-8" or "step-3-if-true-0")
@@ -1050,35 +1064,51 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 				keepLearningFull = envVal == "true" || envVal == "1"
 			}
 
-			formattedLearningHistory, err = hcpo.readLearningHistory(
-				ctx,
-				stepIndex,
-				step.GetID(),
-				stepPath,
-			)
-			if err != nil {
-				return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("failed to read learning history for step %d: %w", stepIndex+1, err), nil)
+			// Check if learning is disabled - if so, skip reading learnings entirely
+			isLearningDisabledStep := agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning
+			isLearningDetailLevelNone := false
+			if agentConfigs != nil && agentConfigs.LearningDetailLevel == "none" {
+				isLearningDetailLevelNone = true
 			}
+			isLearningDisabled := isLearningDisabledStep || isLearningDetailLevelNone
 
-			// Get learning file paths for user message (when KeepLearningFull is false)
-			if !keepLearningFull {
-				// Generate file paths list for user message
-				baseWorkspacePath := hcpo.GetWorkspacePath()
-				stepLearningsPath := getLearningFolderPathByStepID(baseWorkspacePath, step.GetID(), stepPath)
-				learningFiles, readErr := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
-				if readErr == nil && len(learningFiles) > 0 {
-					// Build list of file paths
-					var paths []string
-					for filename := range learningFiles {
-						// Construct full path relative to workspace
-						filePath := fmt.Sprintf("%s/%s", stepLearningsPath, filename)
-						paths = append(paths, filePath)
-					}
-					// Format as bullet list
-					if len(paths) > 0 {
-						learningFilePaths = strings.Join(paths, "\n- ")
-						learningFilePaths = "- " + learningFilePaths
-						hcpo.GetLogger().Info(fmt.Sprintf("📁 Generated %d learning file path(s) for user message", len(paths)))
+			if isLearningDisabled {
+				// Learning is disabled - skip reading learnings and set empty strings
+				formattedLearningHistory = ""
+				learningFilePaths = ""
+				hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled for step %d - skipping learning history reading (no learnings will be passed to execution agent)", stepIndex+1))
+			} else {
+				// Learning is enabled - read learning history as normal
+				formattedLearningHistory, err = hcpo.readLearningHistory(
+					ctx,
+					stepIndex,
+					step.GetID(),
+					stepPath,
+				)
+				if err != nil {
+					return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("failed to read learning history for step %d: %w", stepIndex+1, err), nil)
+				}
+
+				// Get learning file paths for user message (when KeepLearningFull is false)
+				if !keepLearningFull {
+					// Generate file paths list for user message
+					baseWorkspacePath := hcpo.GetWorkspacePath()
+					stepLearningsPath := getLearningFolderPathByStepID(baseWorkspacePath, step.GetID(), stepPath)
+					learningFiles, readErr := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
+					if readErr == nil && len(learningFiles) > 0 {
+						// Build list of file paths
+						var paths []string
+						for filename := range learningFiles {
+							// Construct full path relative to workspace
+							filePath := fmt.Sprintf("%s/%s", stepLearningsPath, filename)
+							paths = append(paths, filePath)
+						}
+						// Format as bullet list
+						if len(paths) > 0 {
+							learningFilePaths = strings.Join(paths, "\n- ")
+							learningFilePaths = "- " + learningFilePaths
+							hcpo.GetLogger().Info(fmt.Sprintf("📁 Generated %d learning file path(s) for user message", len(paths)))
+						}
 					}
 				}
 			}
@@ -1295,8 +1325,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 							// Emit prerequisite navigation event
 							eventBridge := hcpo.GetContextAwareBridge()
 							if eventBridge != nil {
-								navigationEvent := &events.PrerequisiteNavigationEvent{
-									BaseEventData: events.BaseEventData{
+								navigationEvent := &baseevents.PrerequisiteNavigationEvent{
+									BaseEventData: baseevents.BaseEventData{
 										Timestamp: time.Now(),
 										Component: "orchestrator",
 									},
@@ -1307,8 +1337,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 									Reason:        retryReason,
 									FailureType:   "prerequisite",
 								}
-								eventBridge.HandleEvent(ctx, &events.AgentEvent{
-									Type:      events.PrerequisiteNavigation,
+								eventBridge.HandleEvent(ctx, &baseevents.AgentEvent{
+									Type:      baseevents.PrerequisiteNavigation,
 									Timestamp: time.Now(),
 									Data:      navigationEvent,
 								})
@@ -1725,7 +1755,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 										stepId = fmt.Sprintf("step-%d", stepIndex+1)
 									}
 									learningSkippedEvent := &events.LearningSkippedEvent{
-										BaseEventData: events.BaseEventData{
+										BaseEventData: baseevents.BaseEventData{
 											Timestamp: time.Now(),
 											Component: "orchestrator",
 										},
@@ -1740,7 +1770,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 										RunFolder:       hcpo.selectedRunFolder,
 										WorkspacePath:   hcpo.GetWorkspacePath(),
 									}
-									eventBridge.HandleEvent(ctx, &events.AgentEvent{
+									eventBridge.HandleEvent(ctx, &baseevents.AgentEvent{
 										Type:      events.LearningSkipped,
 										Timestamp: time.Now(),
 										Data:      learningSkippedEvent,
@@ -1990,7 +2020,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 								stepId = fmt.Sprintf("step-%d", stepIndex+1)
 							}
 							learningSkippedEvent := &events.LearningSkippedEvent{
-								BaseEventData: events.BaseEventData{
+								BaseEventData: baseevents.BaseEventData{
 									Timestamp: time.Now(),
 									Component: "orchestrator",
 								},
@@ -2005,7 +2035,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 								RunFolder:       hcpo.selectedRunFolder,
 								WorkspacePath:   hcpo.GetWorkspacePath(),
 							}
-							eventBridge.HandleEvent(ctx, &events.AgentEvent{
+							eventBridge.HandleEvent(ctx, &baseevents.AgentEvent{
 								Type:      events.LearningSkipped,
 								Timestamp: time.Now(),
 								Data:      learningSkippedEvent,
@@ -2090,30 +2120,25 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 
 								// Re-read learnings after failure learning updates them (if we're going to retry)
 								// This ensures the next retry attempt uses the updated learnings from failure analysis
+								// BUT: Skip re-reading if learning is disabled
 								if retryAttempt < maxRetryAttempts {
-									hcpo.GetLogger().Info(fmt.Sprintf("📚 Re-reading learnings after failure learning update (for retry attempt %d)", retryAttempt+1))
-									// Force re-read by temporarily disabling cache check for non-loop steps
-									// For loop steps, respect the LearningAfterLoopIteration setting
-									if !hasLoop(step) {
-										// For regular steps, always re-read after failure learning
-										updatedLearningHistory, readErr := hcpo.readLearningHistory(
-											ctx,
-											stepIndex,
-											step.GetID(),
-											stepPath,
-										)
-										if readErr != nil {
-											hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to re-read learnings after failure learning: %v - will use previous learnings", readErr))
-										} else {
-											formattedLearningHistory = updatedLearningHistory
-											templateVars["LearningHistory"] = formattedLearningHistory // Update template vars for next retry
-											hcpo.GetLogger().Info(fmt.Sprintf("✅ Re-read learnings after failure learning update (length: %d chars)", len(formattedLearningHistory)))
-										}
+									// Check if learning is disabled before re-reading
+									agentConfigs := getAgentConfigs(step)
+									isLearningDisabledStep := agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning
+									isLearningDetailLevelNone := false
+									if agentConfigs != nil && agentConfigs.LearningDetailLevel == "none" {
+										isLearningDetailLevelNone = true
+									}
+									isLearningDisabled := isLearningDisabledStep || isLearningDetailLevelNone
+
+									if isLearningDisabled {
+										hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled - skipping re-read after failure learning (for retry attempt %d)", retryAttempt+1))
 									} else {
-										// For loop steps, only re-read if LearningAfterLoopIteration is true
-										// Default to true for loop steps
-										learningAfterLoopIteration := hasLoop(step) // Always true for loop steps
-										if learningAfterLoopIteration {
+										hcpo.GetLogger().Info(fmt.Sprintf("📚 Re-reading learnings after failure learning update (for retry attempt %d)", retryAttempt+1))
+										// Force re-read by temporarily disabling cache check for non-loop steps
+										// For loop steps, respect the LearningAfterLoopIteration setting
+										if !hasLoop(step) {
+											// For regular steps, always re-read after failure learning
 											updatedLearningHistory, readErr := hcpo.readLearningHistory(
 												ctx,
 												stepIndex,
@@ -2128,7 +2153,26 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 												hcpo.GetLogger().Info(fmt.Sprintf("✅ Re-read learnings after failure learning update (length: %d chars)", len(formattedLearningHistory)))
 											}
 										} else {
-											hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping re-read for loop step (LearningAfterLoopIteration=false, will use cached learnings)"))
+											// For loop steps, only re-read if LearningAfterLoopIteration is true
+											// Default to true for loop steps
+											learningAfterLoopIteration := hasLoop(step) // Always true for loop steps
+											if learningAfterLoopIteration {
+												updatedLearningHistory, readErr := hcpo.readLearningHistory(
+													ctx,
+													stepIndex,
+													step.GetID(),
+													stepPath,
+												)
+												if readErr != nil {
+													hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to re-read learnings after failure learning: %v - will use previous learnings", readErr))
+												} else {
+													formattedLearningHistory = updatedLearningHistory
+													templateVars["LearningHistory"] = formattedLearningHistory // Update template vars for next retry
+													hcpo.GetLogger().Info(fmt.Sprintf("✅ Re-read learnings after failure learning update (length: %d chars)", len(formattedLearningHistory)))
+												}
+											} else {
+												hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping re-read for loop step (LearningAfterLoopIteration=false, will use cached learnings)"))
+											}
 										}
 									}
 								}
@@ -2419,6 +2463,12 @@ func isRegularStep(step PlanStepInterface) bool {
 	return ok
 }
 
+// isHumanInputStep returns true if the step is a human input step (asks question and blocks for input)
+func isHumanInputStep(step PlanStepInterface) bool {
+	_, ok := step.(*HumanInputPlanStep)
+	return ok
+}
+
 // hasLoop returns true if the step has loop mode enabled
 func hasLoop(step PlanStepInterface) bool {
 	switch s := step.(type) {
@@ -2602,9 +2652,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 					// Resolve variables in context output (consistent with conditional steps)
 					resolvedOutput := ResolveVariables(contextOutput, hcpo.variableValues)
 					previousContextFiles = append(previousContextFiles, resolvedOutput)
+					hcpo.GetLogger().Info(fmt.Sprintf("📝 Added context file from step %d (%s): %s", prevIdx+1, breakdownSteps[prevIdx].GetTitle(), resolvedOutput))
+				} else {
+					hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Step %d (%s) has no context_output - skipping", prevIdx+1, breakdownSteps[prevIdx].GetTitle()))
 				}
 			}
 		}
+		hcpo.GetLogger().Info(fmt.Sprintf("📋 Built previousContextFiles for step %d (%s): %v", i+1, step.GetTitle(), previousContextFiles))
 
 		// Route execution based on step type using helper functions
 		// Check if this is a conditional step
@@ -2969,6 +3023,131 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 
 					// Update startFromStep to allow execution from target step
 					// This prevents the skip check (i < startFromStep) from blocking execution
+					if targetStepIndex < startFromStep {
+						startFromStep = targetStepIndex
+						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Updated startFromStep to %d to allow execution from routed step", startFromStep+1))
+					}
+
+					// Set loop index to jump to target step (subtract 1 because loop will increment)
+					i = targetStepIndex - 1
+					continue
+				} else {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Target step ID '%s' not found in plan - defaulting to next sequential step", nextStepID))
+					// Fall through to default behavior (continue to next step)
+				}
+			}
+
+			// Default: continue to next sequential step
+			continue
+		}
+
+		// Check if this is a human input step
+		if isHumanInputStep(step) {
+			// Execute human input step - asks question and blocks for input
+			hcpo.GetLogger().Info(fmt.Sprintf("👤 Starting human input step execution: %s", step.GetTitle()))
+
+			// Build context files from previous steps
+			previousContextFiles := make([]string, 0)
+			for prevIdx := 0; prevIdx < i; prevIdx++ {
+				if prevIdx < len(breakdownSteps) {
+					contextOutput := breakdownSteps[prevIdx].GetContextOutput().String()
+					if contextOutput != "" {
+						// Resolve variables in context output
+						resolvedOutput := ResolveVariables(contextOutput, hcpo.variableValues)
+						previousContextFiles = append(previousContextFiles, resolvedOutput)
+					}
+				}
+			}
+
+			_, err := hcpo.executeHumanInputStep(ctx, step, i, progress, previousContextFiles, execCtx, breakdownSteps)
+			if err != nil {
+				hcpo.GetLogger().Error(fmt.Sprintf("❌ Human input step %d execution failed: %v", i+1, err), nil)
+				// Emit error event using centralized method
+				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "human-input-step-execution", fmt.Sprintf("Execute human input step: %s", step.GetTitle()), err.Error(), i, iteration)
+				return fmt.Errorf(fmt.Sprintf("human input step %d execution failed: %w", i+1, err), nil)
+			}
+
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Human input step %d completed successfully: %s", i+1, step.GetTitle()))
+
+			// Track execution result in memory for use by subsequent steps
+			// Extract the response from the saved JSON file to create an execution result summary
+			// Get the context output path to read the saved response
+			contextOutput := step.GetContextOutput().String()
+			if contextOutput == "" {
+				contextOutput = fmt.Sprintf("step-%d.json", i+1)
+			}
+			resolvedContextOutput := ResolveVariables(contextOutput, hcpo.variableValues)
+
+			// Read the saved response file to get the actual response
+			runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+			executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
+			stepPath := fmt.Sprintf("step-%d", i+1)
+			stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+			responseFilePath := filepath.Join(stepExecutionPath, resolvedContextOutput)
+
+			var executionResult string
+			responseContent, err := hcpo.ReadWorkspaceFile(ctx, responseFilePath)
+			if err == nil {
+				// Parse JSON to extract response
+				var responseData map[string]interface{}
+				if err := json.Unmarshal([]byte(responseContent), &responseData); err == nil {
+					if response, ok := responseData["response"].(string); ok {
+						question, _ := responseData["question"].(string)
+						executionResult = fmt.Sprintf("Human input response to '%s': %s", question, response)
+					} else {
+						executionResult = fmt.Sprintf("Human input step completed: %s", step.GetTitle())
+					}
+				} else {
+					executionResult = fmt.Sprintf("Human input step completed: %s", step.GetTitle())
+				}
+			} else {
+				// Fallback if file can't be read
+				executionResult = fmt.Sprintf("Human input step completed: %s", step.GetTitle())
+			}
+
+			// Ensure slice is large enough (pad with empty strings if needed)
+			for len(previousExecutionResults) <= i {
+				previousExecutionResults = append(previousExecutionResults, "")
+			}
+			previousExecutionResults[i] = executionResult
+			hcpo.GetLogger().Info(fmt.Sprintf("💾 Stored execution result for human input step %d (will be used by subsequent steps): %s", i+1, executionResult))
+
+			// Check if we're in single step mode and should stop
+			if hcpo.runSingleStepOnly && i == hcpo.singleStepTarget {
+				hcpo.GetLogger().Info(fmt.Sprintf("🎯 Single step mode: completed target step %d, stopping execution", i+1))
+				hcpo.SetRunSingleStepMode(false, -1) // Reset mode
+				break
+			}
+
+			// Determine next step based on conditional routing (computed during execution)
+			humanInputStep, ok := step.(*HumanInputPlanStep)
+			if !ok {
+				return fmt.Errorf(fmt.Sprintf("step %d is not a HumanInputPlanStep", i+1), nil)
+			}
+			// Use SelectedNextStepID if computed, otherwise fallback to NextStepID
+			nextStepID := humanInputStep.SelectedNextStepID
+			if nextStepID == "" {
+				nextStepID = humanInputStep.NextStepID
+			}
+
+			// Handle next step navigation
+			if nextStepID == "end" {
+				// End workflow
+				hcpo.GetLogger().Info(fmt.Sprintf("🏁 Human input step %d specified 'end' - terminating workflow", i+1))
+				break
+			} else if nextStepID != "" {
+				// Find target step by ID and jump to it
+				targetStepIndex := -1
+				for idx, s := range breakdownSteps {
+					if s.GetID() == nextStepID {
+						targetStepIndex = idx
+						break
+					}
+				}
+				if targetStepIndex >= 0 {
+					hcpo.GetLogger().Info(fmt.Sprintf("🔗 Jumping to step %d (ID: %s) as specified by next_step_id", targetStepIndex+1, nextStepID))
+
+					// Update startFromStep to allow execution from target step
 					if targetStepIndex < startFromStep {
 						startFromStep = targetStepIndex
 						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Updated startFromStep to %d to allow execution from routed step", startFromStep+1))

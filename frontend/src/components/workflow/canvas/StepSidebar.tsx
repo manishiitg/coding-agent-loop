@@ -25,7 +25,7 @@ import type {
 } from '../hooks/usePlanToFlow'
 import type { PlanStep, PlanningResponse, AgentConfigs, ValidationSchema } from '../../../utils/stepConfigMatching'
 import type { TodoStepWithConfigs } from '../../../utils/stepConfigMatching'
-import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep } from '../../../utils/stepConfigMatching'
+import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep, isHumanInputStep } from '../../../utils/stepConfigMatching'
 
 interface StepSidebarProps {
   node: WorkflowNode | null
@@ -429,6 +429,21 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
           sub_agent_step: convertPlanStepToTodoStep(route.sub_agent_step)
         })),
         next_step_id: planStep.next_step_id,
+      } as TodoStepWithConfigs
+    }
+
+    if (isHumanInputStep(planStep)) {
+      return {
+        ...base,
+        has_human_input: true,
+        question: planStep.question,
+        variable_name: planStep.variable_name,
+        response_type: planStep.response_type,
+        options: planStep.options,
+        next_step_id: planStep.next_step_id,
+        if_yes_next_step_id: planStep.if_yes_next_step_id,
+        if_no_next_step_id: planStep.if_no_next_step_id,
+        option_routes: planStep.option_routes,
       } as TodoStepWithConfigs
     }
 

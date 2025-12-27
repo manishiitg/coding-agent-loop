@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"time"
 
-	"mcpagent/events"
+	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	baseevents "mcpagent/events"
 )
 
 // emitEvent emits an event through the event bridge
-func (bo *BaseOrchestrator) emitEvent(ctx context.Context, eventType events.EventType, data events.EventData) {
+func (bo *BaseOrchestrator) emitEvent(ctx context.Context, eventType baseevents.EventType, data baseevents.EventData) {
 	// Create agent event
-	agentEvent := &events.AgentEvent{
+	agentEvent := &baseevents.AgentEvent{
 		Type:      eventType,
 		Timestamp: time.Now(),
 		Data:      data,
@@ -27,8 +28,8 @@ func (bo *BaseOrchestrator) emitEvent(ctx context.Context, eventType events.Even
 func (bo *BaseOrchestrator) EmitOrchestratorStart(ctx context.Context, objective string, agentsCount int, executionMode string) {
 	// Removed verbose logging
 
-	eventData := &events.OrchestratorStartEvent{
-		BaseEventData: events.BaseEventData{
+	eventData := &orchestrator_events.OrchestratorStartEvent{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 		},
 		Objective:        objective,
@@ -38,7 +39,7 @@ func (bo *BaseOrchestrator) EmitOrchestratorStart(ctx context.Context, objective
 		ExecutionMode:    executionMode,
 	}
 
-	bo.emitEvent(ctx, events.OrchestratorStart, eventData)
+	bo.emitEvent(ctx, orchestrator_events.OrchestratorStart, eventData)
 }
 
 // EmitOrchestratorEnd emits an orchestrator end event
@@ -46,8 +47,8 @@ func (bo *BaseOrchestrator) EmitOrchestratorEnd(ctx context.Context, objective, 
 	// Removed verbose logging
 
 	duration := time.Since(bo.startTime)
-	eventData := &events.OrchestratorEndEvent{
-		BaseEventData: events.BaseEventData{
+	eventData := &orchestrator_events.OrchestratorEndEvent{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 		},
 		Objective:        objective,
@@ -58,7 +59,7 @@ func (bo *BaseOrchestrator) EmitOrchestratorEnd(ctx context.Context, objective, 
 		ExecutionMode:    executionMode,
 	}
 
-	bo.emitEvent(ctx, events.OrchestratorEnd, eventData)
+	bo.emitEvent(ctx, orchestrator_events.OrchestratorEnd, eventData)
 }
 
 // EmitUnifiedCompletionEvent emits a unified completion event
@@ -66,7 +67,7 @@ func (bo *BaseOrchestrator) EmitUnifiedCompletionEvent(ctx context.Context, agen
 	// Removed verbose logging
 
 	duration := time.Since(bo.startTime)
-	completionEventData := events.NewUnifiedCompletionEvent(
+	completionEventData := baseevents.NewUnifiedCompletionEvent(
 		agentType,
 		agentMode,
 		question,
@@ -76,7 +77,7 @@ func (bo *BaseOrchestrator) EmitUnifiedCompletionEvent(ctx context.Context, agen
 		turns,
 	)
 
-	agentEvent := events.NewAgentEvent(completionEventData)
+	agentEvent := baseevents.NewAgentEvent(completionEventData)
 
 	// Emit through event bridge directly
 	if err := bo.contextAwareBridge.HandleEvent(ctx, agentEvent); err != nil {
@@ -86,8 +87,8 @@ func (bo *BaseOrchestrator) EmitUnifiedCompletionEvent(ctx context.Context, agen
 
 // EmitOrchestratorAgentError emits an orchestrator agent error event
 func (bo *BaseOrchestrator) EmitOrchestratorAgentError(ctx context.Context, agentType, agentName, objective, errorMsg string, stepIndex, iteration int) {
-	eventData := &events.OrchestratorAgentErrorEvent{
-		BaseEventData: events.BaseEventData{
+	eventData := &orchestrator_events.OrchestratorAgentErrorEvent{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 		},
 		AgentType: agentType,
@@ -98,13 +99,13 @@ func (bo *BaseOrchestrator) EmitOrchestratorAgentError(ctx context.Context, agen
 		Iteration: iteration,
 	}
 
-	bo.emitEvent(ctx, events.OrchestratorAgentError, eventData)
+	bo.emitEvent(ctx, orchestrator_events.OrchestratorAgentError, eventData)
 }
 
 // EmitStepFailedEvent emits a step failed event
 func (bo *BaseOrchestrator) EmitStepFailedEvent(ctx context.Context, stepID, stepTitle, stepPath, errorMsg string, stepIndex int, isBranchStep bool) {
-	eventData := &events.StepFailedEvent{
-		BaseEventData: events.BaseEventData{
+	eventData := &orchestrator_events.StepFailedEvent{
+		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 			Component: "orchestrator",
 		},
@@ -116,5 +117,5 @@ func (bo *BaseOrchestrator) EmitStepFailedEvent(ctx context.Context, stepID, ste
 		Error:        errorMsg,
 	}
 
-	bo.emitEvent(ctx, events.StepExecutionFailed, eventData)
+	bo.emitEvent(ctx, orchestrator_events.StepExecutionFailed, eventData)
 }

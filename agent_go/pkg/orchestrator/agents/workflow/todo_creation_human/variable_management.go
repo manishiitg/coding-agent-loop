@@ -177,7 +177,7 @@ func FormatVariableValues(manifest *VariablesManifest, variableValues map[string
 				actualValue = resolvedValue
 			}
 		}
-		builder.WriteString(fmt.Sprintf("- {{%s}} = %s - %s\n", variable.Name, actualValue, variable.Description))
+		builder.WriteString(fmt.Sprintf("- {{%s}} = %s\n", variable.Name, actualValue))
 	}
 	return builder.String()
 }

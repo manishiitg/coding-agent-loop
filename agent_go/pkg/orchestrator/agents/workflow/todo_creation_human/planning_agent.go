@@ -131,6 +131,31 @@ type ValidationSchema struct {
 	Files []FileValidationRule `json:"files,omitempty"`
 }
 
+// UnmarshalJSON implements custom unmarshaling to fix double-escaped regex patterns
+// This fixes patterns at the source (during JSON unmarshaling) rather than during validation
+func (vs *ValidationSchema) UnmarshalJSON(data []byte) error {
+	// Use type alias to avoid infinite recursion
+	type Alias ValidationSchema
+	alias := (*Alias)(vs)
+
+	// Unmarshal normally first
+	if err := json.Unmarshal(data, alias); err != nil {
+		return err
+	}
+
+	// Fix double-escaped patterns in all checks
+	for i := range vs.Files {
+		for j := range vs.Files[i].JSONChecks {
+			if vs.Files[i].JSONChecks[j].Pattern != "" {
+				fixed := fixDoubleEscapedPattern(vs.Files[i].JSONChecks[j].Pattern)
+				vs.Files[i].JSONChecks[j].Pattern = fixed
+			}
+		}
+	}
+
+	return nil
+}
+
 // FileValidationRule represents validation rules for a specific file
 type FileValidationRule struct {
 	FileName   string                `json:"file_name"`             // e.g., "results.json"
@@ -2874,6 +2899,8 @@ func unmarshalStepsFromJSON(stepsData []json.RawMessage) ([]PlanStepInterface, e
 
 // validateRegexPatternsInSchema validates all regex patterns in a ValidationSchema
 // Returns an error with details if any pattern is invalid
+// Note: Patterns are already fixed during JSON unmarshaling (see ValidationSchema.UnmarshalJSON),
+// but we keep a safety net here in case patterns come from other sources
 func validateRegexPatternsInSchema(schema *ValidationSchema) error {
 	if schema == nil {
 		return nil
@@ -2881,8 +2908,18 @@ func validateRegexPatternsInSchema(schema *ValidationSchema) error {
 
 	var errors []string
 	for _, fileRule := range schema.Files {
-		for _, check := range fileRule.JSONChecks {
+		for i := range fileRule.JSONChecks {
+			check := &fileRule.JSONChecks[i]
 			if check.Pattern != "" {
+				// Safety net: Fix double-escaped patterns if they weren't fixed during unmarshaling
+				// (e.g., if schema was created programmatically rather than from JSON)
+				fixedPattern := fixDoubleEscapedPattern(check.Pattern)
+				if fixedPattern != check.Pattern {
+					// Update the pattern in the schema to the fixed version
+					check.Pattern = fixedPattern
+				}
+
+				// Validate the pattern
 				_, err := regexp.Compile(check.Pattern)
 				if err != nil {
 					errors = append(errors, fmt.Sprintf("Invalid regex pattern in file '%s' at path '%s': %v (pattern: '%s')", fileRule.FileName, check.Path, err, check.Pattern))

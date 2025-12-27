@@ -6,6 +6,7 @@ import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep, 
 import type { ChangeType, PlanChanges } from './usePlanData'
 import type { VariablesManifest } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
+import type { ExecutionSettingsNodeData } from '../nodes/ExecutionSettingsNode'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 
@@ -152,7 +153,7 @@ export interface EvaluationNodeData extends Record<string, unknown> {
   llmModel?: string  // LLM model name
 }
 
-export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | HumanInputNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData
+export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | HumanInputNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -201,7 +202,8 @@ const NODE_DIMENSIONS = {
   learning: { width: 120, height: 50 },
   start: { width: 80, height: 36 },
   end: { width: 80, height: 36 },
-  variables: { width: 260, height: 180 }
+  variables: { width: 260, height: 180 },
+  'execution-settings': { width: 240, height: 120 }
 }
 
 /**
@@ -1943,7 +1945,15 @@ export function usePlanToFlow(
       }
     }
 
-    // Add variables node (between start and first step)
+    // Add execution settings node (between start and variables)
+    const executionSettingsNode: WorkflowNode = {
+      id: 'execution-settings',
+      type: 'execution-settings',
+      position: { x: 0, y: 0 },
+      data: {} as ExecutionSettingsNodeData
+    }
+
+    // Add variables node (between execution-settings and first step)
     const variablesNode: WorkflowNode = {
       id: 'variables',
       type: 'variables',
@@ -1969,16 +1979,25 @@ export function usePlanToFlow(
       }
     }
 
-    // Node order: Start -> Variables -> Steps -> End
-    const nodes = [startNode, variablesNode, ...processedNodes, endNode]
+    // Node order: Start -> Execution Settings -> Variables -> Steps -> End
+    const nodes = [startNode, executionSettingsNode, variablesNode, ...processedNodes, endNode]
 
-    // Create edges: Start -> Variables -> First step (or End if no steps)
+    // Create edges: Start -> Execution Settings -> Variables -> First step (or End if no steps)
     const edges: WorkflowEdge[] = []
     
-    // Start to Variables
+    // Start to Execution Settings
     edges.push({
-      id: 'start-to-variables',
+      id: 'start-to-execution-settings',
       source: 'start',
+      target: 'execution-settings',
+      type: 'smoothstep',
+      style: { stroke: '#6b7280', strokeWidth: 2 }
+    })
+    
+    // Execution Settings to Variables
+    edges.push({
+      id: 'execution-settings-to-variables',
+      source: 'execution-settings',
       target: 'variables',
       type: 'smoothstep',
       style: { stroke: '#6b7280', strokeWidth: 2 }

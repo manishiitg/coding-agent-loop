@@ -38,6 +38,13 @@
       "command": "node",
       "args": ["/Users/mipl/ai-work/mcp-googledocs-server/dist/server.js"],
       "env": {}
+    },
+    "notionApi": {
+      "command": "npx",
+      "args": ["-y", "@notionhq/notion-mcp-server"],
+      "env": {
+        
+      }
     }
   }
 }

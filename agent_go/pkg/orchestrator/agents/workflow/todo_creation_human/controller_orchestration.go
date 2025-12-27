@@ -846,6 +846,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 	isCodeExecutionMode := hcpo.getCodeExecutionMode(orchestrationStepConfig)
 
 	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+	// Ensure step execution folder exists before creating orchestration agent (agent needs to write to this folder)
+	if err := hcpo.ensureStepExecutionFolderExists(ctx, stepExecutionPath); err != nil {
+		// Non-blocking: log warning but continue execution (folder will be created when files are written)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure orchestration step execution folder exists: %v (continuing - folder will be created when files are written)", err))
+	}
 
 	// Build orchestration routes description
 	routesDescription := ""

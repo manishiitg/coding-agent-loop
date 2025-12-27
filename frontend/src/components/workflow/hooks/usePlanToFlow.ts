@@ -737,10 +737,10 @@ function stepToNode(
   parentId?: string, 
   branchType?: 'true' | 'false',
   changes?: PlanChanges | null,
-  completedStepIndices: number[] = [],
   stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'>,
   workspacePath?: string | null,
-  selectedRunFolder?: string
+  selectedRunFolder?: string,
+  completedStepIds?: Set<string> // Set of completed step IDs (converted from indices for step_id-based matching)
 ): WorkflowNode {
   const nodeId = parentId 
     ? `${parentId}-${branchType}-${stepIndex}`
@@ -749,19 +749,20 @@ function stepToNode(
   // Determine change type for highlighting
   const changeType = getChangeType(step.id || nodeId, changes)
 
-  // Determine status: priority is stepStatusMap (from events) > completedStepIndices > pending
+  // Determine status: Use step_id as primary matching method (stepStatusMap > completedStepIds > pending)
   let status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
   const stepId = step.id || nodeId
   
-  // First check stepStatusMap (from events) - this is the most up-to-date
+  // Primary: Check stepStatusMap (from events) - this is the most up-to-date and uses step_id
   if (stepStatusMap && stepStatusMap.has(stepId)) {
     status = stepStatusMap.get(stepId)!
+  } else if (!parentId && completedStepIds && completedStepIds.has(stepId)) {
+    // Primary: Check completedStepIds (converted from completedStepIndices) - uses step_id for matching
+    // Only for main plan steps, not nested branches (nested steps are tracked differently)
+    status = 'completed' as const
   } else {
-    // Fall back to completedStepIndices (only for main plan steps, not nested branches)
-    // For main plan steps, stepIndex matches the global index
-    // For nested steps, we don't check completion status (they're tracked differently)
-    const isCompleted = !parentId && completedStepIndices.includes(stepIndex)
-    status = isCompleted ? 'completed' as const : 'pending' as const
+    // Default: pending
+    status = 'pending' as const
   }
 
   // For conditional nodes, use condition_question as title if step.title is missing
@@ -1071,7 +1072,8 @@ function processSteps(
   stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'>,
   workspacePath?: string | null,
   selectedRunFolder?: string,
-  stepIdToNodeIdMap?: Map<string, string> // Map of step ID to node ID for next_step_id lookups
+  stepIdToNodeIdMap?: Map<string, string>, // Map of step ID to node ID for next_step_id lookups
+  completedStepIds?: Set<string> // Set of completed step IDs (converted from indices for step_id-based matching)
 ): { nodes: WorkflowNode[], edges: WorkflowEdge[] } {
   const nodes: WorkflowNode[] = []
   const edges: WorkflowEdge[] = []
@@ -1083,7 +1085,7 @@ function processSteps(
   const conditionalEmptyBranches = new Map<string, { trueEmpty: boolean; falseEmpty: boolean }>()
 
   steps.forEach((step, index) => {
-    const node = stepToNode(step, index, parentId, branchType, changes, completedStepIndices, stepStatusMap, workspacePath, selectedRunFolder)
+    const node = stepToNode(step, index, parentId, branchType, changes, stepStatusMap, workspacePath, selectedRunFolder, completedStepIds)
     nodes.push(node)
 
     // Create edge from previous step's exit node (sequential flow)
@@ -1233,7 +1235,8 @@ function processSteps(
           stepStatusMap,
           workspacePath,
           selectedRunFolder,
-          stepIdToNodeIdMap
+          stepIdToNodeIdMap,
+          completedStepIds
         )
         nodes.push(...trueBranch.nodes)
         edges.push(...trueBranch.edges)
@@ -1290,7 +1293,8 @@ function processSteps(
           stepStatusMap,
           workspacePath,
           selectedRunFolder,
-          stepIdToNodeIdMap
+          stepIdToNodeIdMap,
+          completedStepIds
         )
         nodes.push(...falseBranch.nodes)
         edges.push(...falseBranch.edges)
@@ -2228,6 +2232,21 @@ export function usePlanToFlow(
       return { nodes: [], edges: [] }
     }
 
+    // Convert completedStepIndices to completedStepIds (Set of step IDs) for step_id-based matching
+    // This ensures we match by step_id instead of index for better reliability
+    const completedStepIds = new Set<string>()
+    const convertIndicesToIds = (steps: PlanStep[], indices: number[]) => {
+      indices.forEach(index => {
+        if (index >= 0 && index < steps.length) {
+          const step = steps[index]
+          if (step?.id) {
+            completedStepIds.add(step.id)
+          }
+        }
+      })
+    }
+    convertIndicesToIds(plan.steps, completedStepIndices)
+
     // Create step ID to node ID map for next_step_id lookups
     // First pass: create all nodes to build the map
     const stepIdToNodeIdMap = new Map<string, string>()
@@ -2269,7 +2288,8 @@ export function usePlanToFlow(
       stepStatusMap,
       options.workspacePath,
       options.selectedRunFolder,
-      stepIdToNodeIdMap
+      stepIdToNodeIdMap,
+      completedStepIds
     )
 
     // Add start node

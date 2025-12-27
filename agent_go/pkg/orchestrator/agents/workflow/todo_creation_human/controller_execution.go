@@ -155,6 +155,25 @@ func getExecutionFolderPath(executionWorkspacePath string, stepPath string) stri
 	return fmt.Sprintf("%s/step-%d", executionWorkspacePath, pathInfo.ParentStepNumber)
 }
 
+// ensureStepExecutionFolderExists ensures the step execution folder exists by creating it if needed
+// This is called when a step starts running to ensure the folder exists even if it was previously deleted
+func (hcpo *HumanControlledTodoPlannerOrchestrator) ensureStepExecutionFolderExists(ctx context.Context, stepExecutionPath string) error {
+	// Create .keep file to ensure directory is created
+	keepFile := fmt.Sprintf("%s/.keep", stepExecutionPath)
+	if err := hcpo.WriteWorkspaceFile(ctx, keepFile, "# This file ensures the step execution folder exists"); err != nil {
+		// Check if error is because folder already exists (non-critical)
+		errStr := err.Error()
+		if strings.Contains(errStr, "already exists") || strings.Contains(errStr, "file exists") {
+			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Step execution folder already exists: %s", stepExecutionPath))
+			return nil
+		}
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step execution folder: %s: %v (continuing)", stepExecutionPath, err))
+		return fmt.Errorf(fmt.Sprintf("failed to create step execution folder: %w", err), nil)
+	}
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created step execution folder: %s", stepExecutionPath))
+	return nil
+}
+
 // getValidationFolderPath returns the validation folder path based on stepPath
 // For regular steps: "logs/step-{X}/"
 // For branch steps: "logs/step-{parentStep}-{true/false}-{branchIdx}/"
@@ -803,6 +822,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 		learningsPath := fmt.Sprintf("%s/learnings", hcpo.GetWorkspacePath())
 		// Get execution folder path for this step (e.g., "execution/step-8" or "execution/step-3-true-0")
 		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+		// Ensure step execution folder exists (create if it was previously deleted)
+		if err := hcpo.ensureStepExecutionFolderExists(ctx, stepExecutionPath); err != nil {
+			// Non-blocking: log warning but continue execution (folder will be created when files are written)
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure step execution folder exists: %v (continuing - folder will be created when files are written)", err))
+		}
 		// Get knowledgebase folder path (persistent files across runs)
 		knowledgebasePath := getKnowledgebasePath(executionWorkspacePath)
 

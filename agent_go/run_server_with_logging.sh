@@ -68,14 +68,14 @@ export ENABLE_CONTEXT_SUMMARIZATION="true"
 export SUMMARIZE_ON_TOKEN_THRESHOLD="true"
 export TOKEN_THRESHOLD_PERCENT="0.7"  # 70% threshold (default: 0.7 = 70%)
 export SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD="true"  # Enable fixed token threshold
-export FIXED_TOKEN_THRESHOLD="100000"  # Trigger summarization at 100k tokens (default: 100000)
+export FIXED_TOKEN_THRESHOLD="200000"  # Trigger summarization at 200k tokens (default: 200000)
 export SUMMARY_KEEP_LAST_MESSAGES="4"  # Keep last 4 messages when summarizing (roughly 2 turns)
 
 # Context editing configuration (compacts large tool outputs)
 # Note: Higher thresholds preserve cached tokens for cost efficiency
 export ENABLE_CONTEXT_EDITING="true"  # Enable context editing (default: true)
 export CONTEXT_EDITING_THRESHOLD="10000"  # Compact outputs larger than 10k tokens (default: 10000)
-export CONTEXT_EDITING_TURN_THRESHOLD="10"  # Compact outputs older than 10 turns (default: 10)
+export CONTEXT_EDITING_TURN_THRESHOLD="20"  # Compact outputs older than 20 turns (default: 20)
 
 # Set main LLM configuration
 export DEEP_SEARCH_MAIN_LLM_PROVIDER="openrouter"

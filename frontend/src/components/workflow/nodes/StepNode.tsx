@@ -11,6 +11,7 @@ import type { StepNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 import { getToolsByCategory } from '../../../utils/customToolNames'
 import { NodeConfigFooter } from './NodeConfigFooter'
+import { NodeMarkdown } from './NodeMarkdown'
 
 interface StepNodeProps {
   data: StepNodeData
@@ -76,6 +77,18 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
 
 export const StepNode = memo(({ data, selected }: StepNodeProps) => {
   const { id, title, description, success_criteria, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder, validation_schema } = data
+
+  // Process text to convert escaped newlines to actual newlines
+  const processText = (text: string | undefined): string | undefined => {
+    if (!text) return undefined
+    return text
+      .replace(/\\n/g, '\n')  // Convert \n to actual newlines
+      .replace(/\\t/g, '\t')  // Convert \t to actual tabs
+      .replace(/\\r/g, '\r')  // Convert \r to actual carriage returns
+  }
+
+  const processedDescription = processText(description)
+  const processedSuccessCriteria = processText(success_criteria)
   
   const { availableLLMs } = useLLMStore()
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
@@ -549,18 +562,18 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
 
       {/* Content */}
       <div className="px-4 py-3 space-y-3">
-        {description && (
-          <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-            {description}
-          </p>
+        {processedDescription && (
+          <div>
+            <NodeMarkdown content={processedDescription} textSize="xs" />
+          </div>
         )}
         
-        {success_criteria && (
+        {processedSuccessCriteria && (
           <div className="flex gap-2 p-2.5 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50">
             <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-green-700 dark:text-green-300 leading-relaxed">
-              {success_criteria}
-            </p>
+            <div className="flex-1 text-green-700 dark:text-green-300">
+              <NodeMarkdown content={processedSuccessCriteria} textSize="xs" />
+            </div>
           </div>
         )}
 

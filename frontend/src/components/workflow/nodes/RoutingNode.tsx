@@ -9,6 +9,7 @@ import { agentApi } from '../../../services/api'
 import { isValidJSON } from '../../../utils/event-helpers'
 import { getToolsByCategory } from '../../../utils/customToolNames'
 import { NodeConfigFooter } from './NodeConfigFooter'
+import { NodeMarkdown } from './NodeMarkdown'
 import type { OrchestratorNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 
@@ -81,6 +82,20 @@ export const OrchestratorNode = memo(({ data, selected }: OrchestratorNodeProps)
   const routingSuccessCriteria = step?.success_criteria
   const mainStepDescription = orchestration_step?.description
   const mainStepSuccessCriteria = orchestration_step?.success_criteria
+
+  // Process text to convert escaped newlines to actual newlines
+  const processText = (text: string | undefined): string | undefined => {
+    if (!text) return undefined
+    return text
+      .replace(/\\n/g, '\n')  // Convert \n to actual newlines
+      .replace(/\\t/g, '\t')  // Convert \t to actual tabs
+      .replace(/\\r/g, '\r')  // Convert \r to actual carriage returns
+  }
+
+  const processedRoutingDescription = processText(routingDescription)
+  const processedRoutingSuccessCriteria = processText(routingSuccessCriteria)
+  const processedMainStepDescription = processText(mainStepDescription)
+  const processedMainStepSuccessCriteria = processText(mainStepSuccessCriteria)
 
   // Context inputs and outputs from the MAIN STEP (orchestration_step) - this is what actually executes
   const contextInputs = useMemo(() => orchestration_step?.context_dependencies || [], [orchestration_step?.context_dependencies])
@@ -550,19 +565,19 @@ export const OrchestratorNode = memo(({ data, selected }: OrchestratorNodeProps)
           </h3>
           
           {/* Routing step description (main step) */}
-          {routingDescription && (
-            <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed mb-2 px-1">
-              {routingDescription}
-            </p>
+          {processedRoutingDescription && (
+            <div className="mb-2 px-1">
+              <NodeMarkdown content={processedRoutingDescription} textSize="xs" />
+            </div>
           )}
           
           {/* Routing step success criteria (main step) */}
-          {routingSuccessCriteria && (
+          {processedRoutingSuccessCriteria && (
             <div className="flex gap-2 p-2.5 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50 mb-2">
               <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-green-700 dark:text-green-300 leading-relaxed">
-                {routingSuccessCriteria}
-              </p>
+              <div className="flex-1 text-green-700 dark:text-green-300">
+                <NodeMarkdown content={processedRoutingSuccessCriteria} textSize="xs" />
+              </div>
             </div>
           )}
           
@@ -573,22 +588,22 @@ export const OrchestratorNode = memo(({ data, selected }: OrchestratorNodeProps)
                 Orchestrator: {orchestration_step.title || 'Untitled Step'}
               </p>
               {/* Main step description - REQUIRED */}
-              {mainStepDescription ? (
-                <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-relaxed">
-                  {mainStepDescription}
-                </p>
+              {processedMainStepDescription ? (
+                <div className="text-gray-600 dark:text-gray-400">
+                  <NodeMarkdown content={processedMainStepDescription} textSize="tiny" />
+                </div>
               ) : (
                 <p className="text-[10px] text-red-600 dark:text-red-400 italic">
                   ⚠️ Description is required
                 </p>
               )}
               {/* Main step success criteria - REQUIRED */}
-              {mainStepSuccessCriteria ? (
+              {processedMainStepSuccessCriteria ? (
                 <div className="flex gap-1.5 mt-2 p-2 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50">
                   <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-[10px] text-green-700 dark:text-green-300 leading-relaxed">
-                    {mainStepSuccessCriteria}
-                  </p>
+                  <div className="flex-1 text-green-700 dark:text-green-300">
+                    <NodeMarkdown content={processedMainStepSuccessCriteria} textSize="tiny" />
+                  </div>
                 </div>
               ) : (
                 <div className="flex gap-1.5 mt-2 p-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50">

@@ -1270,14 +1270,72 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 </>
               )}
 
-              {isConditionalStep(step) && step.condition_question && (
-                <div className="p-2 bg-purple-50 dark:bg-purple-900/20 rounded">
-                  <span className="text-xs font-medium text-purple-600 dark:text-purple-400">
-                    Condition:
-                  </span>
-                  <p className="text-sm text-gray-700 dark:text-gray-300 mt-1">
-                    {step.condition_question}
-                  </p>
+              {isConditionalStep(step) && (
+                <div className="space-y-3">
+                  {step.condition_question && (
+                    <div className="p-2 bg-purple-50 dark:bg-purple-900/20 rounded">
+                      <span className="text-xs font-medium text-purple-600 dark:text-purple-400">
+                        Condition:
+                      </span>
+                      <p className="text-sm text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-line">
+                        {step.condition_question}
+                      </p>
+                    </div>
+                  )}
+                  
+                  {/* Branch routing information */}
+                  <div className="p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800/50">
+                    <span className="text-xs font-semibold text-purple-700 dark:text-purple-300 uppercase tracking-wide">
+                      Branch Routing:
+                    </span>
+                    <div className="mt-2 space-y-2">
+                      {/* True branch (Yes) */}
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-medium text-green-600 dark:text-green-400">
+                            ✓ Yes Branch:
+                          </span>
+                          {step.if_true_steps && step.if_true_steps.length > 0 ? (
+                            <span className="text-xs text-gray-600 dark:text-gray-400">
+                              {step.if_true_steps.length} step{step.if_true_steps.length !== 1 ? 's' : ''}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-500 dark:text-gray-500 italic">
+                              (no steps)
+                            </span>
+                          )}
+                        </div>
+                        {step.if_true_next_step_id && (
+                          <p className="text-xs text-gray-700 dark:text-gray-300 ml-4">
+                            → {step.if_true_next_step_id === 'end' ? 'End workflow' : step.if_true_next_step_id}
+                          </p>
+                        )}
+                      </div>
+                      
+                      {/* False branch (No) */}
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-medium text-red-600 dark:text-red-400">
+                            ✗ No Branch:
+                          </span>
+                          {step.if_false_steps && step.if_false_steps.length > 0 ? (
+                            <span className="text-xs text-gray-600 dark:text-gray-400">
+                              {step.if_false_steps.length} step{step.if_false_steps.length !== 1 ? 's' : ''}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-500 dark:text-gray-500 italic">
+                              (no steps)
+                            </span>
+                          )}
+                        </div>
+                        {step.if_false_next_step_id && (
+                          <p className="text-xs text-gray-700 dark:text-gray-300 ml-4">
+                            → {step.if_false_next_step_id === 'end' ? 'End workflow' : step.if_false_next_step_id}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
 

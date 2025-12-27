@@ -11,6 +11,7 @@ import type { LoopNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 import { getToolsByCategory } from '../../../utils/customToolNames'
 import { NodeConfigFooter } from './NodeConfigFooter'
+import { NodeMarkdown } from './NodeMarkdown'
 
 interface LoopNodeProps {
   data: LoopNodeData
@@ -121,6 +122,19 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
   // Get step details (same as StepNode)
   const description = step.description
   const success_criteria = step.success_criteria
+
+  // Process text to convert escaped newlines to actual newlines
+  const processText = (text: string | undefined): string | undefined => {
+    if (!text) return undefined
+    return text
+      .replace(/\\n/g, '\n')  // Convert \n to actual newlines
+      .replace(/\\t/g, '\t')  // Convert \t to actual tabs
+      .replace(/\\r/g, '\r')  // Convert \r to actual carriage returns
+  }
+
+  const processedLoopCondition = processText(loop_condition)
+  const processedDescription = processText(description)
+  const processedSuccessCriteria = processText(success_criteria)
 
   const stepConfig = step as { agent_configs?: { 
     use_code_execution_mode?: boolean
@@ -515,29 +529,29 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
       {/* Content */}
       <div className="px-4 py-3 space-y-3">
         {/* Loop Condition */}
-        {loop_condition && (
+        {processedLoopCondition && (
           <div className="p-2.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
             <div className="text-[10px] font-bold text-cyan-600 dark:text-cyan-400 uppercase tracking-wide mb-1">Until</div>
-            <p className="text-xs text-gray-700 dark:text-gray-300 leading-relaxed">
-              {loop_condition}
-            </p>
+            <div className="text-gray-700 dark:text-gray-300">
+              <NodeMarkdown content={processedLoopCondition} textSize="xs" />
+            </div>
           </div>
         )}
 
         {/* Description */}
-        {description && (
-          <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-            {description}
-          </p>
+        {processedDescription && (
+          <div>
+            <NodeMarkdown content={processedDescription} textSize="xs" />
+          </div>
         )}
         
         {/* Success Criteria */}
-        {success_criteria && (
+        {processedSuccessCriteria && (
           <div className="flex gap-2 p-2.5 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50">
             <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-green-700 dark:text-green-300 leading-relaxed">
-              {success_criteria}
-            </p>
+            <div className="flex-1 text-green-700 dark:text-green-300">
+              <NodeMarkdown content={processedSuccessCriteria} textSize="xs" />
+            </div>
           </div>
         )}
 

@@ -9,6 +9,7 @@ import { agentApi } from '../../../services/api'
 import { isValidJSON } from '../../../utils/event-helpers'
 import { getToolsByCategory } from '../../../utils/customToolNames'
 import { NodeConfigFooter } from './NodeConfigFooter'
+import { NodeMarkdown } from './NodeMarkdown'
 import type { DecisionNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 
@@ -82,6 +83,19 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
   const decisionDescription = step?.description
   const innerStepDescription = decision_step?.description
   const innerStepSuccessCriteria = decision_step?.success_criteria
+
+  // Process text to convert escaped newlines to actual newlines
+  const processText = (text: string | undefined): string | undefined => {
+    if (!text) return undefined
+    return text
+      .replace(/\\n/g, '\n')  // Convert \n to actual newlines
+      .replace(/\\t/g, '\t')  // Convert \t to actual tabs
+      .replace(/\\r/g, '\r')  // Convert \r to actual carriage returns
+  }
+
+  const processedDecisionDescription = processText(decisionDescription)
+  const processedInnerStepDescription = processText(innerStepDescription)
+  const processedInnerStepSuccessCriteria = processText(innerStepSuccessCriteria)
 
   // Context inputs and outputs from the INNER STEP (decision_step) - this is what actually executes
   // The inner step is what reads context dependencies and produces context output
@@ -576,10 +590,10 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
           </h3>
           
           {/* Decision step description */}
-          {decisionDescription && (
-            <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed mb-2 text-center px-1">
-              {decisionDescription}
-            </p>
+          {processedDecisionDescription && (
+            <div className="mb-2 text-center px-1">
+              <NodeMarkdown content={processedDecisionDescription} textSize="xs" />
+            </div>
           )}
           
           {/* Inner step info - always show if decision_step exists */}
@@ -589,18 +603,18 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
                 Executes: {decision_step.title || 'Untitled Step'}
               </p>
               {/* Inner step description */}
-              {innerStepDescription && (
-                <p className="text-[10px] text-indigo-600 dark:text-indigo-400 leading-relaxed mt-1">
-                  {innerStepDescription}
-                </p>
+              {processedInnerStepDescription && (
+                <div className="text-indigo-600 dark:text-indigo-400 mt-1">
+                  <NodeMarkdown content={processedInnerStepDescription} textSize="tiny" />
+                </div>
               )}
               {/* Inner step success criteria */}
-              {innerStepSuccessCriteria && (
+              {processedInnerStepSuccessCriteria && (
                 <div className="flex gap-1.5 mt-1.5 p-1.5 rounded bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50">
                   <CheckCircle className="w-3 h-3 text-green-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-[10px] text-green-700 dark:text-green-300 leading-relaxed">
-                    {innerStepSuccessCriteria}
-                  </p>
+                  <div className="flex-1 text-green-700 dark:text-green-300">
+                    <NodeMarkdown content={processedInnerStepSuccessCriteria} textSize="tiny" />
+                  </div>
                 </div>
               )}
             </div>

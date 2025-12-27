@@ -6,8 +6,10 @@ import { useLLMStore } from '../../../stores/useLLMStore'
 import { agentApi } from '../../../services/api'
 import { getToolsByCategory } from '../../../utils/customToolNames'
 import { NodeConfigFooter } from './NodeConfigFooter'
+import { NodeMarkdown } from './NodeMarkdown'
 import type { ConditionalNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
+import type { ConditionalPlanStep } from '../../../utils/stepConfigMatching'
 
 // Helper to parse tool entry (format: "category:tool" or "category:*")
 const parseToolEntry = (entry: string): { category: string; tool: string } | null => {
@@ -70,6 +72,18 @@ const statusIcons: Record<string, ReactElement | null> = {
 
 export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) => {
   const { id, title, description, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, validation_schema, workspacePath } = data
+
+  // Process text to convert escaped newlines to actual newlines
+  const processText = (text: string | undefined): string | undefined => {
+    if (!text) return undefined
+    return text
+      .replace(/\\n/g, '\n')  // Convert \n to actual newlines
+      .replace(/\\t/g, '\t')  // Convert \t to actual tabs
+      .replace(/\\r/g, '\r')  // Convert \r to actual carriage returns
+  }
+
+  const processedDescription = processText(description)
+  const processedConditionQuestion = processText(condition_question)
 
   // Get preset for config badges
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -484,22 +498,85 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
       </div>
 
       {/* Description below the diamond */}
-      {description && (
+      {processedDescription && (
         <div className="mt-3 mx-4">
-          <p className="text-xs text-gray-600 dark:text-gray-400 text-center leading-relaxed">
-            {description}
-          </p>
+          <div className="text-center">
+            <NodeMarkdown content={processedDescription} textSize="xs" />
+          </div>
         </div>
       )}
 
       {/* Question below the diamond */}
-      {condition_question && (
-        <div className={`mx-4 ${description ? 'mt-2' : 'mt-3'}`}>
-          <p className="text-[11px] text-gray-600 dark:text-gray-400 text-center leading-relaxed p-2.5 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800/50">
-            {condition_question}
-          </p>
+      {processedConditionQuestion && (
+        <div className={`mx-4 ${processedDescription ? 'mt-2' : 'mt-3'}`}>
+          <div className="p-2.5 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800/50 text-center">
+            <NodeMarkdown content={processedConditionQuestion} textSize="tiny" />
+          </div>
         </div>
       )}
+
+      {/* Branch Routing Information */}
+      {(() => {
+        // Type guard: check if step is a conditional step
+        const conditionalStep = step.type === 'conditional' ? step as ConditionalPlanStep : null
+        if (!conditionalStep) return null
+        
+        const hasRoutingInfo = conditionalStep.if_true_next_step_id || 
+                               conditionalStep.if_false_next_step_id || 
+                               (conditionalStep.if_true_steps && conditionalStep.if_true_steps.length > 0) || 
+                               (conditionalStep.if_false_steps && conditionalStep.if_false_steps.length > 0)
+        
+        if (!hasRoutingInfo) return null
+        
+        return (
+          <div className={`mx-4 ${condition_question ? 'mt-2' : description ? 'mt-2' : 'mt-3'}`}>
+            <div className="p-2 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700">
+              <div className="text-[10px] font-semibold text-gray-700 dark:text-gray-300 mb-1.5 text-center">
+                Branch Routing
+              </div>
+              <div className="space-y-1.5">
+                {/* Yes Branch */}
+                <div className="flex items-center justify-between text-[10px]">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-green-600 dark:text-green-400 font-medium">✓ Yes:</span>
+                    {conditionalStep.if_true_steps && conditionalStep.if_true_steps.length > 0 ? (
+                      <span className="text-gray-600 dark:text-gray-400">
+                        {conditionalStep.if_true_steps.length} step{conditionalStep.if_true_steps.length !== 1 ? 's' : ''}
+                      </span>
+                    ) : (
+                      <span className="text-gray-500 dark:text-gray-500 italic text-[9px]">(empty)</span>
+                    )}
+                  </div>
+                  {conditionalStep.if_true_next_step_id && (
+                    <span className="text-gray-600 dark:text-gray-400 text-[9px]">
+                      → {conditionalStep.if_true_next_step_id === 'end' ? 'End' : conditionalStep.if_true_next_step_id}
+                    </span>
+                  )}
+                </div>
+                
+                {/* No Branch */}
+                <div className="flex items-center justify-between text-[10px]">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-red-600 dark:text-red-400 font-medium">✗ No:</span>
+                    {conditionalStep.if_false_steps && conditionalStep.if_false_steps.length > 0 ? (
+                      <span className="text-gray-600 dark:text-gray-400">
+                        {conditionalStep.if_false_steps.length} step{conditionalStep.if_false_steps.length !== 1 ? 's' : ''}
+                      </span>
+                    ) : (
+                      <span className="text-gray-500 dark:text-gray-500 italic text-[9px]">(empty)</span>
+                    )}
+                  </div>
+                  {conditionalStep.if_false_next_step_id && (
+                    <span className="text-gray-600 dark:text-gray-400 text-[9px]">
+                      → {conditionalStep.if_false_next_step_id === 'end' ? 'End' : conditionalStep.if_false_next_step_id}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Validation Schema */}
       {validation_schema && validation_schema.files && validation_schema.files.length > 0 && (

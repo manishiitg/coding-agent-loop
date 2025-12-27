@@ -184,11 +184,7 @@ interface UsePlanToFlowOptions {
 const DAGRE_CONFIG = {
   rankdir: 'LR', // Left to right (tree layout)
   // Increased spacing for complex workflows (orchestrator, conditionals, loops)
-<<<<<<< HEAD
   nodesep: 600,  // Vertical spacing between nodes in same rank (increased from 550 for markdown rendering)
-=======
-  nodesep: 550,  // Vertical spacing between nodes in same rank (increased from 420)
->>>>>>> 4324283c09b89c2eb9b6d7a44522d7ce9ed844ed
   ranksep: 220,  // Horizontal spacing between ranks (columns) (increased from 120)
   marginx: 80,   // Increased margins for better edge spacing
   marginy: 80
@@ -211,7 +207,6 @@ const NODE_DIMENSIONS = {
 }
 
 /**
-<<<<<<< HEAD
  * Estimate markdown overhead (extra spacing from markdown rendering)
  * Counts lists, code blocks, headings, and paragraphs to estimate extra height
  */
@@ -243,10 +238,6 @@ function estimateMarkdownOverhead(text: string): number {
  * Estimate node height based on content
  * This accounts for dynamic content like descriptions, success criteria, validation schemas, etc.
  * Now includes markdown rendering overhead (paragraph margins, list spacing, code blocks, etc.)
-=======
- * Estimate node height based on content
- * This accounts for dynamic content like descriptions, success criteria, validation schemas, etc.
->>>>>>> 4324283c09b89c2eb9b6d7a44522d7ce9ed844ed
  */
 function estimateNodeHeight(node: WorkflowNode): number {
   const baseDimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
@@ -263,7 +254,6 @@ function estimateNodeHeight(node: WorkflowNode): number {
   // Content height estimation
   let contentHeight = 0
   
-<<<<<<< HEAD
   // Line height increased from 20px to 24px to account for markdown spacing
   const LINE_HEIGHT = 24 // Increased for markdown rendering (paragraph margins, list spacing, etc.)
   const CHARS_PER_LINE = 60 // Approximate characters per line at 12px font
@@ -274,25 +264,14 @@ function estimateNodeHeight(node: WorkflowNode): number {
     const baseDescHeight = Math.max(descLines * LINE_HEIGHT, 30)
     const markdownOverhead = estimateMarkdownOverhead(data.description)
     contentHeight += baseDescHeight + markdownOverhead + 12 // min 30px + markdown overhead + spacing
-=======
-  // Description text (estimate ~20px per line, ~60 chars per line at 12px font)
-  if ('description' in data && typeof data.description === 'string' && data.description) {
-    const descLines = Math.ceil(data.description.length / 60)
-    contentHeight += Math.max(descLines * 20, 30) + 12 // min 30px + spacing
->>>>>>> 4324283c09b89c2eb9b6d7a44522d7ce9ed844ed
   }
   
   // Success criteria (box with padding)
   if ('success_criteria' in data && typeof data.success_criteria === 'string' && data.success_criteria) {
-<<<<<<< HEAD
     const criteriaLines = Math.ceil(data.success_criteria.length / CHARS_PER_LINE)
     const baseCriteriaHeight = Math.max(criteriaLines * LINE_HEIGHT, 50)
     const markdownOverhead = estimateMarkdownOverhead(data.success_criteria)
     contentHeight += baseCriteriaHeight + markdownOverhead + 12 // min 50px + markdown overhead + spacing
-=======
-    const criteriaLines = Math.ceil(data.success_criteria.length / 60)
-    contentHeight += Math.max(criteriaLines * 20, 50) + 12 // min 50px + spacing
->>>>>>> 4324283c09b89c2eb9b6d7a44522d7ce9ed844ed
   }
   
   // Validation schema
@@ -332,19 +311,14 @@ function estimateNodeHeight(node: WorkflowNode): number {
   // For conditional nodes, add height for condition question
   if (node.type === 'conditional' && 'condition_question' in data && typeof data.condition_question === 'string' && data.condition_question) {
     const questionLines = Math.ceil(data.condition_question.length / 50)
-<<<<<<< HEAD
     const baseQuestionHeight = Math.max(questionLines * LINE_HEIGHT, 40)
     const markdownOverhead = estimateMarkdownOverhead(data.condition_question)
     contentHeight += baseQuestionHeight + markdownOverhead + 12
-=======
-    contentHeight += Math.max(questionLines * 20, 40) + 12
->>>>>>> 4324283c09b89c2eb9b6d7a44522d7ce9ed844ed
   }
   
   // For loop nodes, add height for iteration info
   if (node.type === 'loop') {
     contentHeight += 40 // Loop iteration badge and info
-<<<<<<< HEAD
     // Also check for loop_condition if it exists
     if ('loop_condition' in data && typeof data.loop_condition === 'string' && data.loop_condition) {
       const loopLines = Math.ceil(data.loop_condition.length / CHARS_PER_LINE)
@@ -352,20 +326,13 @@ function estimateNodeHeight(node: WorkflowNode): number {
       const markdownOverhead = estimateMarkdownOverhead(data.loop_condition)
       contentHeight += baseLoopHeight + markdownOverhead + 12
     }
-=======
->>>>>>> 4324283c09b89c2eb9b6d7a44522d7ce9ed844ed
   }
   
   // Calculate total estimated height
   estimatedHeight = headerHeight + padding + contentHeight + footerHeight
   
-<<<<<<< HEAD
   // Add safety margin (40% extra) to account for text wrapping, badges, markdown rendering overhead, etc.
   estimatedHeight = Math.ceil(estimatedHeight * 1.4)
-=======
-  // Add safety margin (20% extra) to account for text wrapping, badges, etc.
-  estimatedHeight = Math.ceil(estimatedHeight * 1.2)
->>>>>>> 4324283c09b89c2eb9b6d7a44522d7ce9ed844ed
   
   // Ensure minimum height
   estimatedHeight = Math.max(estimatedHeight, baseDimensions.height)
@@ -476,11 +443,7 @@ function fixOverlappingBranches(nodes: WorkflowNode[]): WorkflowNode[] {
  * This handles overlaps from orchestrator sub-agents, conditional branches, loops, etc.
  */
 function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
-<<<<<<< HEAD
   const MIN_SEPARATION = 100 // Minimum gap between nodes (increased from 80 for markdown rendering)
-=======
-  const MIN_SEPARATION = 80 // Minimum gap between nodes (increased from 50 for better spacing)
->>>>>>> 4324283c09b89c2eb9b6d7a44522d7ce9ed844ed
   const adjustedNodes = [...nodes]
   let collisionCount = 0
   

@@ -104,6 +104,15 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator code execution mode for conditional evaluation: %v", isCodeExecutionMode))
 	}
 
+	// Ensure step execution folder exists before creating conditional agent (agent needs to write to this folder)
+	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
+	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, conditionalStepPath)
+	if err := hcpo.ensureStepExecutionFolderExists(ctx, stepExecutionPath); err != nil {
+		// Non-blocking: log warning but continue execution (folder will be created when files are written)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure conditional step execution folder exists: %v (continuing - folder will be created when files are written)", err))
+	}
+
 	// Get conditional agent for this step (step-specific or default)
 	// Pass stepIndex for proper factory setup
 	// Note: CreateAndSetupStandardAgentWithConfig already sets the orchestrator context during agent creation

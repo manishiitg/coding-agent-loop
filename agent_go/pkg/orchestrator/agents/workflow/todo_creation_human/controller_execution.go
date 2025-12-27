@@ -158,15 +158,8 @@ func getExecutionFolderPath(executionWorkspacePath string, stepPath string) stri
 // ensureStepExecutionFolderExists ensures the step execution folder exists by creating it if needed
 // This is called when a step starts running to ensure the folder exists even if it was previously deleted
 func (hcpo *HumanControlledTodoPlannerOrchestrator) ensureStepExecutionFolderExists(ctx context.Context, stepExecutionPath string) error {
-	// Create .keep file to ensure directory is created
-	keepFile := fmt.Sprintf("%s/.keep", stepExecutionPath)
-	if err := hcpo.WriteWorkspaceFile(ctx, keepFile, "# This file ensures the step execution folder exists"); err != nil {
-		// Check if error is because folder already exists (non-critical)
-		errStr := err.Error()
-		if strings.Contains(errStr, "already exists") || strings.Contains(errStr, "file exists") {
-			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Step execution folder already exists: %s", stepExecutionPath))
-			return nil
-		}
+	// Create directory if it doesn't exist
+	if err := os.MkdirAll(stepExecutionPath, 0755); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step execution folder: %s: %v (continuing)", stepExecutionPath, err))
 		return fmt.Errorf(fmt.Sprintf("failed to create step execution folder: %w", err), nil)
 	}

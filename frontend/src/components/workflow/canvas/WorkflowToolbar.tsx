@@ -3,9 +3,6 @@ import {
   Play, 
   Square, 
   Plus,
-  Maximize2,
-  ZoomIn,
-  ZoomOut,
   Loader2,
   ChevronDown,
   ChevronRight,
@@ -22,6 +19,7 @@ import {
   MessageSquare,
   Circle,
   CheckSquare,
+  Save,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useAppStore } from '../../../stores'
@@ -69,13 +67,13 @@ interface WorkflowToolbarProps {
   onStartPhase: (phaseId: string, executionOptions?: ExecutionOptions) => void
   onStop: () => void
   onCreatePlan: () => void
-  onZoomIn: () => void
-  onZoomOut: () => void
-  onFitView: () => void
   showChatArea?: boolean
   onToggleChatArea?: () => void
   onBulkUpdateSteps?: (updates: Array<{ stepId: string; updates: Partial<PlanStep> }>) => Promise<void>  // Bulk update function
   onRefresh?: () => Promise<void>  // Refresh plan and variables
+  onSaveLayout?: () => Promise<void>  // Save workflow layout
+  hasUnsavedLayoutChanges?: boolean  // Whether there are unsaved layout changes
+  isSavingLayout?: boolean  // Whether layout is currently being saved
   className?: string
 }
 
@@ -90,13 +88,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   onStartPhase,
   onStop,
   onCreatePlan,
-  onZoomIn,
-  onZoomOut,
-  onFitView,
   showChatArea = false,
   onToggleChatArea,
   onBulkUpdateSteps,
   onRefresh,
+  onSaveLayout,
+  hasUnsavedLayoutChanges = false,
+  isSavingLayout = false,
   className = ''
 }) => {
   // Workspace store for opening folders
@@ -1992,29 +1990,48 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </button>
         )}
         
-        <div className="w-px h-5 bg-gray-200 dark:bg-gray-700 mx-0.5" />
-        
-        <button
-          onClick={onZoomOut}
-          className="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400 transition-colors"
-          title="Zoom out"
-        >
-          <ZoomOut className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={onZoomIn}
-          className="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400 transition-colors"
-          title="Zoom in"
-        >
-          <ZoomIn className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={onFitView}
-          className="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400 transition-colors"
-          title="Fit to view"
-        >
-          <Maximize2 className="w-3.5 h-3.5" />
-        </button>
+        {/* Save Layout Button */}
+        {onSaveLayout && (
+          <>
+            <div className="w-px h-5 bg-gray-200 dark:bg-gray-700 mx-0.5" />
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={async () => {
+                      console.log('[WorkflowToolbar] Save button clicked')
+                      if (onSaveLayout && !isSavingLayout) {
+                        try {
+                          await onSaveLayout()
+                        } catch (error) {
+                          console.error('[WorkflowToolbar] Error saving layout:', error)
+                        }
+                      }
+                    }}
+                    disabled={isSavingLayout}
+                    className={`p-1.5 rounded-md transition-colors ${
+                      isSavingLayout
+                        ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                        : hasUnsavedLayoutChanges
+                        ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 animate-pulse'
+                        : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400'
+                    }`}
+                    title={isSavingLayout ? 'Saving layout...' : (hasUnsavedLayoutChanges ? 'Save layout (unsaved changes)' : 'Save layout')}
+                  >
+                    {isSavingLayout ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Save className={`w-3.5 h-3.5 ${hasUnsavedLayoutChanges ? 'text-blue-600 dark:text-blue-400' : ''}`} />
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {isSavingLayout ? 'Saving layout...' : (hasUnsavedLayoutChanges ? 'Save layout (unsaved changes)' : 'Save layout')}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </>
+        )}
       </div>
     </div>
     {/* Delete Confirmation Dialog */}

@@ -1610,7 +1610,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			ToolChoice:         "auto",
 			StreamingChunkSize: 50,
 			Timeout:            2 * time.Minute,
-			SelectedTools:      selectedTools, // NEW: Pass selected tools
+			ToolTimeout: func() time.Duration {
+				// Check environment variable
+				if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
+					if timeout, err := time.ParseDuration(envVal); err == nil && timeout > 0 {
+						return timeout
+					}
+				}
+				// Default to 2 minutes if not specified
+				return 2 * time.Minute
+			}(),
+			SelectedTools: selectedTools, // NEW: Pass selected tools
 
 			// Enable smart routing by default for both React and Simple agents
 			EnableSmartRouting:     true,

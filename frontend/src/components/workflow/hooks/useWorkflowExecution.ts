@@ -277,6 +277,49 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
         }
       }
 
+      // Handle batch_group_start event - when a new group starts during batch execution
+      if (event.type === 'batch_group_start') {
+        const rawData = event.data as Record<string, unknown> | undefined
+        let runFolder: string | undefined
+        let workspacePath: string | undefined
+
+        if (rawData && typeof rawData === 'object') {
+          // Try direct access first
+          runFolder = rawData.run_folder as string | undefined
+          workspacePath = rawData.workspace_path as string | undefined
+
+          // If not found, try accessing through 'data' property
+          if (!runFolder && rawData.data && typeof rawData.data === 'object') {
+            const nestedData = rawData.data as Record<string, unknown>
+            runFolder = nestedData.run_folder as string | undefined
+            if (!workspacePath) {
+              workspacePath = nestedData.workspace_path as string | undefined
+            }
+          }
+        }
+
+        // Update selected run folder when a new group starts
+        if (runFolder && runFolder !== 'new') {
+          console.log('[useWorkflowExecution] Batch group started, updating selectedRunFolder:', {
+            runFolder,
+            workspacePath
+          })
+          setSelectedRunFolder(runFolder)
+          
+          // Reload run folders to ensure the folder is in the list
+          if (workspacePath) {
+            loadRunFolders(workspacePath).catch(err => {
+              console.warn('[useWorkflowExecution] Failed to reload run folders:', err)
+            })
+            
+            // Load progress for the new group's folder
+            loadProgress(workspacePath, runFolder).catch(err => {
+              console.warn('[useWorkflowExecution] Failed to load progress:', err)
+            })
+          }
+        }
+      }
+
       // Handle prerequisite_navigation event
       if (event.type === 'prerequisite_navigation') {
         const rawData = event.data as Record<string, unknown> | undefined

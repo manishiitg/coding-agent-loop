@@ -195,7 +195,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) detectNewLearningWithLLM(
 }
 
 // updateLearningMetadata updates the learning metadata file with detection results
-// Returns true if auto-lock should be triggered (consecutive_no_new_learning >= 2 OR total_iterations >= 5)
+// Returns true if auto-lock should be triggered (consecutive_no_new_learning >= 2 OR total_iterations >= 10)
 func (hcpo *HumanControlledTodoPlannerOrchestrator) updateLearningMetadata(
 	ctx context.Context,
 	stepIndex int,
@@ -280,13 +280,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) updateLearningMetadata(
 
 	// Check if auto-lock should be triggered
 	// Condition 1: 3 consecutive iterations with no new learning (ConsecutiveNoNewLearning >= 2 means 2, 3, 4...)
-	// Condition 2: 5 maximum learnings (TotalIterations >= 5 means after 5 learning attempts, always lock)
-	shouldAutoLock := metadata.ConsecutiveNoNewLearning >= 2 || metadata.TotalIterations >= 5
+	// Condition 2: 10 maximum learnings (TotalIterations >= 10 means after 10 learning attempts, always lock)
+	shouldAutoLock := metadata.ConsecutiveNoNewLearning >= 2 || metadata.TotalIterations >= 10
 
 	if shouldAutoLock {
 		// Determine which condition triggered the auto-lock
 		var autoLockReason string
-		if metadata.TotalIterations >= 5 {
+		if metadata.TotalIterations >= 10 {
 			autoLockReason = "maximum_learnings"
 			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-lock threshold reached for %s: %d total iterations (maximum learnings reached)", learningPathIdentifier, metadata.TotalIterations))
 		} else {

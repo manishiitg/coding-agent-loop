@@ -500,6 +500,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 	if err := hcpo.CleanupDirectory(ctx, stepFolderPath, fmt.Sprintf("execution/step-%d", stepNumber)); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete execution folder for step %d: %w", stepNumber, err))
 		// Continue to try deleting branch step folders even if main folder deletion failed
+	} else {
+		// CleanupDirectory only deletes contents, not the root folder itself
+		// Explicitly delete the root step folder after contents are cleaned
+		if err := hcpo.DeleteWorkspaceFile(ctx, stepFolderPath); err != nil {
+			errStr := err.Error()
+			if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") {
+				hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Step folder %s already deleted or doesn't exist", stepFolderPath))
+			} else if strings.Contains(errStr, "directory not empty") {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step folder %s not empty after cleanup - may have remaining files", stepFolderPath))
+			} else {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete step folder %s: %v", stepFolderPath, err))
+			}
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted step folder: %s", stepFolderPath))
+		}
 	}
 
 	// Also archive logs folder for this step: logs/step-{stepNumber}
@@ -546,8 +561,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 				if err := hcpo.CleanupDirectory(ctx, branchFolderPath, fmt.Sprintf("execution/%s", file)); err != nil {
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete branch step folder %s: %w", file, err))
 				} else {
-					branchFoldersDeleted++
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted branch step folder: %s", file))
+					// CleanupDirectory only deletes contents, not the root folder itself
+					// Explicitly delete the root branch folder after contents are cleaned
+					if err := hcpo.DeleteWorkspaceFile(ctx, branchFolderPath); err != nil {
+						errStr := err.Error()
+						if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") {
+							hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Branch step folder %s already deleted or doesn't exist", branchFolderPath))
+						} else if strings.Contains(errStr, "directory not empty") {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Branch step folder %s not empty after cleanup - may have remaining files", branchFolderPath))
+						} else {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete branch step folder %s: %v", branchFolderPath, err))
+						}
+					} else {
+						branchFoldersDeleted++
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted branch step folder: %s", file))
+					}
 				}
 				// Also archive corresponding branch step logs folder
 				branchLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)
@@ -561,8 +589,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 				if err := hcpo.CleanupDirectory(ctx, decisionFolderPath, fmt.Sprintf("execution/%s", file)); err != nil {
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete decision step folder %s: %w", file, err))
 				} else {
-					decisionFoldersDeleted++
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted decision step folder: %s", file))
+					// CleanupDirectory only deletes contents, not the root folder itself
+					// Explicitly delete the root decision folder after contents are cleaned
+					if err := hcpo.DeleteWorkspaceFile(ctx, decisionFolderPath); err != nil {
+						errStr := err.Error()
+						if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") {
+							hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Decision step folder %s already deleted or doesn't exist", decisionFolderPath))
+						} else if strings.Contains(errStr, "directory not empty") {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Decision step folder %s not empty after cleanup - may have remaining files", decisionFolderPath))
+						} else {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete decision step folder %s: %v", decisionFolderPath, err))
+						}
+					} else {
+						decisionFoldersDeleted++
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted decision step folder: %s", file))
+					}
 				}
 				// Also archive corresponding decision step logs folder
 				decisionLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)
@@ -578,8 +619,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 				if err := hcpo.CleanupDirectory(ctx, subAgentFolderPath, fmt.Sprintf("execution/%s", file)); err != nil {
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete sub-agent step folder %s: %w", file, err))
 				} else {
-					subAgentFoldersDeleted++
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted sub-agent step folder: %s", file))
+					// CleanupDirectory only deletes contents, not the root folder itself
+					// Explicitly delete the root sub-agent folder after contents are cleaned
+					if err := hcpo.DeleteWorkspaceFile(ctx, subAgentFolderPath); err != nil {
+						errStr := err.Error()
+						if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") {
+							hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Sub-agent step folder %s already deleted or doesn't exist", subAgentFolderPath))
+						} else if strings.Contains(errStr, "directory not empty") {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Sub-agent step folder %s not empty after cleanup - may have remaining files", subAgentFolderPath))
+						} else {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete sub-agent step folder %s: %v", subAgentFolderPath, err))
+						}
+					} else {
+						subAgentFoldersDeleted++
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted sub-agent step folder: %s", file))
+					}
 				}
 				// Also archive corresponding sub-agent step logs folder
 				subAgentLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)

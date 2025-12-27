@@ -2895,7 +2895,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 		if isOrchestrationStep(step) {
 			// Execute orchestration step - executes main step, evaluates output, routes to sub-agents, loops until success
 			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Starting orchestration step execution: %s", step.GetTitle()))
-			successCriteriaMet, nextStepID, err := hcpo.executeOrchestrationStep(ctx, step, i, progress, previousContextFiles, previousExecutionResults, iteration, execCtx, breakdownSteps)
+			// Generate step path for regular orchestration step
+			orchestrationStepPath := fmt.Sprintf("step-%d", i+1)
+			successCriteriaMet, nextStepID, err := hcpo.executeOrchestrationStep(ctx, step, i, progress, previousContextFiles, previousExecutionResults, iteration, execCtx, breakdownSteps, orchestrationStepPath)
 			if err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Orchestration step %d execution failed: %v", i+1, err), nil)
 				// Emit error event using centralized method

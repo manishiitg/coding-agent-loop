@@ -307,6 +307,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(c
 			actualPhase = "conditional_evaluation"
 		}
 
+		// Construct stepPath from stepIndex (e.g., "step-3" for stepIndex=2)
+		stepPath := fmt.Sprintf("step-%d", stepIndex+1)
+
 		// Use factory method - this handles initialization, event bridge connection, and tool registration
 		agent, err := hcpo.createConditionalAgent(
 			ctx,
@@ -316,6 +319,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getConditionalAgentForStep(c
 			actualAgentName, // agent name (from parameter)
 			agentConfigs,    // step config (includes UseCodeExecutionMode)
 			llmConfig,       // conditional LLM config
+			stepPath,        // step path for execution folder write access
+			stepID,          // step ID for step-specific learnings folder access
 		)
 		if err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step-specific conditional agent for step '%s': %v, falling back to default", step.GetTitle(), err))

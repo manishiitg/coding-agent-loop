@@ -36,16 +36,10 @@ planning/changelog
 
 16. diff patch tool, corrupts json
 
-17. saving set config is taking too long
-
 21. see how we can integrate learning locking and make it more automatic
 
 22. we should have a human notification tool also.
 
-23.. in basic event we should show the user message also
-
-
-27. learning in background?
 
 28. need to simply tool filter.
 
@@ -57,3 +51,5 @@ planning/changelog
 
 29.. get credit card, mutual funds, itr complete finacal info
 29. we cannot always, delete all execution when starting a research agent might want to reuse execution
+
+30. refractor how llm are setup and llm fallback

@@ -7,12 +7,14 @@ interface VariablesSidebarProps {
   workspacePath: string | null
   onClose: () => void
   onUpdate?: (manifest: VariablesManifest) => void
+  showChatArea?: boolean  // When true, use lower z-index so ChatArea appears on top
 }
 
 export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
   workspacePath,
   onClose,
-  onUpdate
+  onUpdate,
+  showChatArea = false
 }) => {
   const [manifest, setManifest] = useState<VariablesManifest | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -211,7 +213,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
   const isMultiGroup = groups.length > 1
 
   return (
-    <div className="absolute right-0 top-0 bottom-0 w-[450px] bg-background border-l border-border flex flex-col shadow-lg z-50">
+    <div className={`absolute right-0 top-0 bottom-0 w-[450px] bg-background border-l border-border flex flex-col shadow-lg ${showChatArea ? 'z-10' : 'z-50'}`}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-background">
         <div className="flex items-center gap-2">
@@ -316,13 +318,33 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
                         value={group.display_name || ''}
                         onChange={(e) => {
                           // Update display name for this specific group
+                          // Handle both cases: when groups exist in manifest, and when we're in single-group mode
                           if (manifest.groups && manifest.groups.length > 0) {
+                            // Multi-group mode: update existing groups
                             const updatedGroups = manifest.groups.map(g => {
                               if (g.group_id === group.group_id) {
                                 return { ...g, display_name: e.target.value }
                               }
                               return g
                             })
+                            const updatedManifest = { ...manifest, groups: updatedGroups }
+                            setManifest(updatedManifest)
+                            setHasChanges(true)
+                            if (onUpdate) {
+                              onUpdate(updatedManifest)
+                            }
+                          } else {
+                            // Single-group mode: create groups array from virtual group
+                            // Migrate existing values to a proper group structure
+                            const values: Record<string, string> = {}
+                            manifest.variables.forEach(v => {
+                              values[v.name] = v.value || ''
+                            })
+                            const updatedGroups = [{
+                              ...group,
+                              display_name: e.target.value,
+                              values
+                            }]
                             const updatedManifest = { ...manifest, groups: updatedGroups }
                             setManifest(updatedManifest)
                             setHasChanges(true)

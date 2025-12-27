@@ -21,6 +21,7 @@ import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { useAppStore } from '../../../stores/useAppStore'
+import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { agentApi } from '../../../services/api'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
@@ -116,6 +117,43 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [selectedRunFolder, stepProgress]) // Don't include completedStepIndices to prevent loop
 
+  // Highlight execution folder in workspace when selectedRunFolder changes
+  // This ensures workspace shows the correct group folder during multi-group execution
+  const { highlightFile, fetchFiles } = useWorkspaceStore()
+  const prevSelectedRunFolderRef = useRef<string | null>(null)
+  useEffect(() => {
+    // Reset ref if selectedRunFolder is cleared
+    if (!selectedRunFolder || selectedRunFolder === 'new') {
+      prevSelectedRunFolderRef.current = null
+      return
+    }
+    
+    // Only highlight if selectedRunFolder actually changed and is valid
+    if (selectedRunFolder !== prevSelectedRunFolderRef.current && workspacePath) {
+      prevSelectedRunFolderRef.current = selectedRunFolder
+      
+      // Construct execution folder path
+      const executionPath = `${workspacePath}/runs/${selectedRunFolder}/execution`
+      
+      console.log('[WorkflowCanvas] Highlighting execution folder due to selectedRunFolder change:', {
+        selectedRunFolder,
+        executionPath
+      })
+      
+      // Refresh files first to ensure the folder exists in the tree
+      fetchFiles().then(() => {
+        // Small delay to ensure files are loaded before highlighting
+        setTimeout(() => {
+          highlightFile(executionPath)
+        }, 100)
+      }).catch(err => {
+        console.error('[WorkflowCanvas] Failed to refresh files before highlighting:', err)
+        // Still try to highlight even if refresh fails
+        highlightFile(executionPath)
+      })
+    }
+  }, [selectedRunFolder, workspacePath, highlightFile, fetchFiles])
+
   // Load plan data with change detection
   const { plan, loading, error, changes, updateStep, deleteStep, refresh: loadPlanRefresh, clearChanges, setChanges } = usePlanData(workspacePath)
 
@@ -164,6 +202,37 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     // Also update in workflow store for buildExecutionOptions to access
     setVariablesManifestInStore(manifest)
   }, [setVariablesManifestInStore])
+
+  // Refresh handler - reloads plan, step config, and variables
+  const handleRefresh = useCallback(async () => {
+    if (!workspacePath) return
+    
+    console.log('[WorkflowCanvas] Refreshing plan, step config, and variables...')
+    
+    // Refresh plan data (this also loads step_config.json)
+    await loadPlanRefresh()
+    
+    // Reload variables
+    setIsLoadingVariables(true)
+    try {
+      const response = await agentApi.getVariableGroups(workspacePath)
+      if (response.success && response.manifest) {
+        setVariablesManifest(response.manifest)
+        setVariablesManifestInStore(response.manifest)
+      } else {
+        setVariablesManifest(null)
+        setVariablesManifestInStore(null)
+      }
+    } catch (err) {
+      console.error('[WorkflowCanvas] Failed to reload variables:', err)
+      setVariablesManifest(null)
+      setVariablesManifestInStore(null)
+    } finally {
+      setIsLoadingVariables(false)
+    }
+    
+    console.log('[WorkflowCanvas] Refresh completed')
+  }, [workspacePath, loadPlanRefresh, setVariablesManifestInStore])
 
   // Workflow execution
   const {
@@ -1096,6 +1165,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           onFitView={handleFitView}
           showChatArea={showChatArea}
           onToggleChatArea={onToggleChatArea}
+          onRefresh={handleRefresh}
         />
         <div className="flex-1 flex items-center justify-center">
           <div className="flex flex-col items-center gap-4 text-center">
@@ -1144,6 +1214,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         onFitView={handleFitView}
         showChatArea={showChatArea}
         onToggleChatArea={onToggleChatArea}
+        onRefresh={handleRefresh}
       />
 
       {/* React Flow Canvas with Sidebar */}
@@ -1207,6 +1278,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             plan={plan}
             completedStepIndices={completedStepIndices}
             isCompact={isStepSidebarCompact}
+            showChatArea={showChatArea}
           />
         )}
 
@@ -1216,6 +1288,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             workspacePath={workspacePath}
             onClose={() => setShowVariablesSidebar(false)}
             onUpdate={handleVariablesUpdate}
+            showChatArea={showChatArea}
           />
         )}
       </div>

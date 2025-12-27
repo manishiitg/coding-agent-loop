@@ -38,6 +38,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 	iteration int,
 	execCtx *ExecutionContext,
 	allSteps []PlanStepInterface,
+	stepPath string, // Optional: if empty, will be generated from stepIndex (e.g., "step-1" or "step-1-if-true-0" for branch steps)
 ) (bool, string, error) {
 	// Steps are already PlanStepInterface - no conversion needed
 
@@ -49,6 +50,16 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🎯 Executing orchestration step %d: %s", stepIndex+1, step.GetTitle()))
 
+	// Use provided stepPath or generate from stepIndex (for backward compatibility)
+	orchestrationStepPath := stepPath
+	if orchestrationStepPath == "" {
+		orchestrationStepPath = fmt.Sprintf("step-%d", stepIndex+1)
+	}
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Using orchestration step path: %s", orchestrationStepPath))
+
+	// Check if this is a branch step (branch steps don't need next_step_id - routing is handled by conditional step)
+	isBranchStep := strings.Contains(orchestrationStepPath, "-if-true-") || strings.Contains(orchestrationStepPath, "-if-false-")
+
 	// Validate orchestration step has required fields
 	if orchestrationStepPlan.OrchestrationStep == nil {
 		return false, "", fmt.Errorf("orchestration step %d (%s) is missing required orchestration_step field", stepIndex+1, step.GetTitle())
@@ -56,12 +67,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 	if len(orchestrationStepPlan.OrchestrationRoutes) == 0 {
 		return false, "", fmt.Errorf("orchestration step %d (%s) has no orchestration routes defined", stepIndex+1, step.GetTitle())
 	}
-	if orchestrationStepPlan.NextStepID == "" {
+	// next_step_id is only required for regular orchestration steps, not branch steps
+	if !isBranchStep && orchestrationStepPlan.NextStepID == "" {
 		return false, "", fmt.Errorf("orchestration step %d (%s) is missing required next_step_id field", stepIndex+1, step.GetTitle())
+	}
+	if isBranchStep && orchestrationStepPlan.NextStepID == "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Orchestration branch step %d (%s) has no next_step_id - this is expected for branch steps (routing handled by conditional step)", stepIndex+1, step.GetTitle()))
+		// Set a default empty nextStepID for branch steps to avoid issues later
+		orchestrationStepPlan.NextStepID = ""
 	}
 
 	// Emit step_started event for orchestration step
-	orchestrationStepPath := fmt.Sprintf("step-%d", stepIndex+1)
 	hcpo.emitStepStartedEvent(ctx, step, stepIndex, orchestrationStepPath, false)
 
 	// Simplified: Keep conversation history in-memory only (not persisted)
@@ -70,7 +86,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 
 	// Determine max iterations: use step-specific if provided, otherwise use orchestrator default
 	maxOrchestrationIterations := hcpo.GetMaxTurns()
-	stepConfig := getAgentConfigs(orchestrationStepPlan.OrchestrationStep)
+	stepConfig := getAgentConfigs(orchestrationStepPlan)
 	if stepConfig != nil && stepConfig.OrchestrationMaxIterations != nil {
 		maxOrchestrationIterations = *stepConfig.OrchestrationMaxIterations
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific orchestration max iterations: %d (orchestrator default was: %d)", maxOrchestrationIterations, hcpo.GetMaxTurns()))
@@ -93,19 +109,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 		orchestrationContext := previousContextFiles
 
 		// 1. Execute main orchestration step using OrchestrationOrchestratorAgent
-		mainStepPath := fmt.Sprintf("step-%d-orchestration", stepIndex+1)
+		// Use orchestrationStepPath as base to support branch steps (e.g., "step-1-if-true-0-orchestration")
+		mainStepPath := fmt.Sprintf("%s-orchestration", orchestrationStepPath)
 		if orchestrationIteration > 0 {
-			mainStepPath = fmt.Sprintf("step-%d-orchestration-%d", stepIndex+1, orchestrationIteration+1)
+			mainStepPath = fmt.Sprintf("%s-orchestration-%d", orchestrationStepPath, orchestrationIteration+1)
 		}
 
 		hcpo.GetLogger().Info(fmt.Sprintf("📋 Executing main orchestration step: %s (iteration %d)", orchestrationStepPlan.OrchestrationStep.GetTitle(), orchestrationIteration+1))
 
-		// Apply step config to inner orchestration step (loads UseCodeExecutionMode and other configs from step_config.json)
-		// This ensures the inner step's config is loaded before execution
-		// Priority: inner step's own config > wrapper step's config > preset default
-		innerStepID := orchestrationStepPlan.OrchestrationStep.GetID()
-		wrapperStepID := orchestrationStepPlan.GetID()
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 Loading step config for inner orchestration step (ID: %s, wrapper ID: %s)", innerStepID, wrapperStepID))
+		// Load the main step's own config by its ID
+		stepID := orchestrationStepPlan.GetID()
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 Loading step config for orchestration step (ID: %s)", stepID))
 
 		// Log available step config IDs for debugging
 		stepConfigs, err := hcpo.ReadStepConfigs(ctx)
@@ -119,70 +133,25 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			hcpo.GetLogger().Info(fmt.Sprintf("📋 Available step config IDs in step_config.json: %v", configIDs))
 		}
 
-		// First, try to load inner step's own config
-		if err := ApplyStepConfigFromFile(ctx, orchestrationStepPlan.OrchestrationStep, hcpo); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to load step config for inner orchestration step '%s' (ID: %s): %v", orchestrationStepPlan.OrchestrationStep.GetTitle(), innerStepID, err))
+		// Load the main step's own config by its ID
+		if err := ApplyStepConfigFromFile(ctx, orchestrationStepPlan, hcpo); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to load step config for orchestration step '%s' (ID: %s): %v - will use preset defaults", orchestrationStepPlan.GetTitle(), stepID, err))
 		}
 
-		// Check if inner step config was applied
-		innerStepConfig := getAgentConfigs(orchestrationStepPlan.OrchestrationStep)
-		if innerStepConfig == nil || innerStepConfig.UseCodeExecutionMode == nil {
-			// Inner step config not found or UseCodeExecutionMode not set - try to inherit from wrapper step config
-			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Inner step config not found or UseCodeExecutionMode not set (ID: %s) - checking wrapper step config (ID: %s)", innerStepID, wrapperStepID))
-
-			// Try to load wrapper step config and inherit UseCodeExecutionMode
-			wrapperConfig := getAgentConfigs(orchestrationStepPlan)
-			if wrapperConfig != nil && wrapperConfig.UseCodeExecutionMode != nil {
-				// Initialize inner step config if needed
-				if innerStepConfig == nil {
-					switch s := orchestrationStepPlan.OrchestrationStep.(type) {
-					case *RegularPlanStep:
-						s.AgentConfigs = &AgentConfigs{}
-					case *ConditionalPlanStep:
-						s.AgentConfigs = &AgentConfigs{}
-					case *DecisionPlanStep:
-						s.AgentConfigs = &AgentConfigs{}
-					case *OrchestrationPlanStep:
-						s.AgentConfigs = &AgentConfigs{}
-					}
-					innerStepConfig = getAgentConfigs(orchestrationStepPlan.OrchestrationStep)
-				}
-				// Inherit UseCodeExecutionMode from wrapper step
-				innerStepConfig.UseCodeExecutionMode = wrapperConfig.UseCodeExecutionMode
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Inherited UseCodeExecutionMode from wrapper step (ID: %s) to inner step (ID: %s): %v", wrapperStepID, innerStepID, *wrapperConfig.UseCodeExecutionMode))
-			} else {
-				// Try to load wrapper step config from file if not already loaded
-				if err := ApplyStepConfigFromFile(ctx, orchestrationStepPlan, hcpo); err == nil {
-					wrapperConfig = getAgentConfigs(orchestrationStepPlan)
-					if wrapperConfig != nil && wrapperConfig.UseCodeExecutionMode != nil {
-						// Initialize inner step config if needed
-						if innerStepConfig == nil {
-							switch s := orchestrationStepPlan.OrchestrationStep.(type) {
-							case *RegularPlanStep:
-								s.AgentConfigs = &AgentConfigs{}
-							case *ConditionalPlanStep:
-								s.AgentConfigs = &AgentConfigs{}
-							case *DecisionPlanStep:
-								s.AgentConfigs = &AgentConfigs{}
-							case *OrchestrationPlanStep:
-								s.AgentConfigs = &AgentConfigs{}
-							}
-							innerStepConfig = getAgentConfigs(orchestrationStepPlan.OrchestrationStep)
-						}
-						// Inherit UseCodeExecutionMode from wrapper step
-						innerStepConfig.UseCodeExecutionMode = wrapperConfig.UseCodeExecutionMode
-						hcpo.GetLogger().Info(fmt.Sprintf("✅ Loaded and inherited UseCodeExecutionMode from wrapper step (ID: %s) to inner step (ID: %s): %v", wrapperStepID, innerStepID, *wrapperConfig.UseCodeExecutionMode))
-					}
-				}
+		// Check if step config was applied and log the result
+		stepConfig := getAgentConfigs(orchestrationStepPlan)
+		if stepConfig != nil {
+			if stepConfig.UseCodeExecutionMode != nil {
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Step config loaded for orchestration step (ID: %s) - use_code_execution_mode: %v", stepID, *stepConfig.UseCodeExecutionMode))
 			}
-		}
-
-		// Final check - log the result
-		innerStepConfig = getAgentConfigs(orchestrationStepPlan.OrchestrationStep)
-		if innerStepConfig != nil && innerStepConfig.UseCodeExecutionMode != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Step config loaded for inner orchestration step (ID: %s) - use_code_execution_mode: %v", innerStepID, *innerStepConfig.UseCodeExecutionMode))
+			if stepConfig.SelectedServers != nil {
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Step config loaded for orchestration step (ID: %s) - selected_servers: %v", stepID, stepConfig.SelectedServers))
+			}
+			if stepConfig.UseCodeExecutionMode == nil && stepConfig.SelectedServers == nil {
+				hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Step config found for orchestration step (ID: %s) but incomplete - will use preset defaults for missing fields", stepID))
+			}
 		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Step config not found or UseCodeExecutionMode not set for inner orchestration step (ID: %s) - will use preset default", innerStepID))
+			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Step config not found for orchestration step (ID: %s) - will use preset defaults", stepID))
 		}
 
 		// Execute using OrchestrationOrchestratorAgent with structured output
@@ -201,7 +170,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 		}
 		orchestrationResponse, updatedConversationHistory, err := hcpo.executeOrchestrationOrchestratorStep(
 			ctx,
-			orchestrationStepPlan.OrchestrationStep,
+			orchestrationStepPlan, // Pass main step so it can use its own config
 			stepIndex,
 			mainStepPath,
 			iteration,
@@ -363,8 +332,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			var validationResponse *ValidationResponse
 
 			// Check if we should skip LLM validation
-			innerStepConfigs := getAgentConfigs(orchestrationStepPlan.OrchestrationStep)
-			skipLLMValidation := innerStepConfigs != nil && innerStepConfigs.SkipLLMValidationIfPreValidationPasses != nil && *innerStepConfigs.SkipLLMValidationIfPreValidationPasses
+			stepConfigs := getAgentConfigs(orchestrationStepPlan)
+			skipLLMValidation := stepConfigs != nil && stepConfigs.SkipLLMValidationIfPreValidationPasses != nil && *stepConfigs.SkipLLMValidationIfPreValidationPasses
 
 			if skipLLMValidation {
 				// Skip LLM validation and assume validation success
@@ -379,7 +348,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 				// Proceed to LLM validation (pre-validation is skipped for orchestration steps)
 				// Create validation agent
 				validationAgentName := fmt.Sprintf("orchestration-validation-step-%d", stepIndex+1)
-				validationAgent, err := hcpo.createValidationAgent(ctx, "validation", stepIndex+1, validationAgentName, innerStepConfigs)
+				validationAgent, err := hcpo.createValidationAgent(ctx, "validation", stepIndex+1, validationAgentName, stepConfigs)
 				if err != nil {
 					hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to create validation agent for orchestration step %d: %v", stepIndex+1, err), nil)
 					return false, "", fmt.Errorf("failed to create validation agent for orchestration step: %w", err)
@@ -422,7 +391,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 				// Note: Orchestration step progress is simplified - completion tracked via CompletedStepIndices only
 
 				// Determine code execution mode using helper method
-				orchestrationStepConfig := getAgentConfigs(orchestrationStepPlan.OrchestrationStep)
+				orchestrationStepConfig := getAgentConfigs(orchestrationStepPlan)
 				isCodeExecutionMode := hcpo.getCodeExecutionMode(orchestrationStepConfig)
 
 				// Check learning flags (similar to regular steps)
@@ -588,14 +557,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			return true, "end", nil
 		}
 
-		hcpo.GetLogger().Info(fmt.Sprintf("🔀 Executing sub-agent: %s (route: %s, index: %d)", subAgentStepPlan.GetTitle(), selectedRoutePlan.RouteID, subAgentIndex))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔀 Executing sub-agent: %s (route: %s, index: %d, ID: %s)", subAgentStepPlan.GetTitle(), selectedRoutePlan.RouteID, subAgentIndex, subAgentStepPlan.GetID()))
 
 		// Prepare sub-agent step with validation disabled
-		// Apply step config directly to PlanStepInterface
-		_ = ApplyStepConfigFromFile(ctx, subAgentStepPlan, hcpo)
-		// Ignore error - use defaults if config loading fails
-
-		// Ensure AgentConfigs exists on the sub-agent step
+		// First, ensure AgentConfigs exists (create empty if needed) before loading config
+		// This ensures ApplyStepConfigFromFile can properly merge config
 		subAgentConfigs := getAgentConfigs(subAgentStepPlan)
 		if subAgentConfigs == nil {
 			// Set AgentConfigs on the step if it doesn't exist
@@ -609,16 +575,27 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			case *OrchestrationPlanStep:
 				subAgentStep.AgentConfigs = &AgentConfigs{}
 			}
+			subAgentConfigs = getAgentConfigs(subAgentStepPlan)
 		}
-		// Get AgentConfigs again after ensuring it exists
+
+		// Match sub-agent's own step config from step_config.json (mandatory - no inheritance from parent)
+		// Load config after ensuring AgentConfigs exists so merge works correctly
+		if err := ApplyStepConfigFromFile(ctx, subAgentStepPlan, hcpo); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to load step config for sub-agent '%s' (ID: %s): %v - will use defaults", subAgentStepPlan.GetTitle(), subAgentStepPlan.GetID(), err))
+		} else {
+			// Log what config was loaded
+			subAgentConfigs = getAgentConfigs(subAgentStepPlan)
+			if subAgentConfigs != nil && subAgentConfigs.UseCodeExecutionMode != nil {
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Loaded step config for sub-agent '%s' (ID: %s) - use_code_execution_mode: %v", subAgentStepPlan.GetTitle(), subAgentStepPlan.GetID(), *subAgentConfigs.UseCodeExecutionMode))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Step config loaded for sub-agent '%s' (ID: %s) but UseCodeExecutionMode not set - will use preset default", subAgentStepPlan.GetTitle(), subAgentStepPlan.GetID()))
+			}
+		}
+
+		// Get AgentConfigs again after config loading
 		subAgentConfigs = getAgentConfigs(subAgentStepPlan)
 		val := true
 		subAgentConfigs.DisableValidation = &val
-
-		// Match sub-agent's own step config from step_config.json (mandatory - no inheritance from parent)
-		_ = ApplyStepConfigFromFile(ctx, subAgentStepPlan, hcpo)
-		// Ignore error - use defaults if config loading fails
-		// Preserve DisableValidation = true (already set above)
 
 		// Sub-agents don't receive previous steps history - they work independently based on orchestrator instructions
 
@@ -748,7 +725,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 	// Max iterations reached without success
 	// Trigger failure learning before returning error
 	// Determine code execution mode using helper method
-	orchestrationStepConfig := getAgentConfigs(orchestrationStepPlan.OrchestrationStep)
+	orchestrationStepConfig := getAgentConfigs(orchestrationStepPlan)
 	isCodeExecutionMode := hcpo.getCodeExecutionMode(orchestrationStepConfig)
 
 	// Check learning flags (similar to regular steps)
@@ -833,18 +810,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 
-	// Determine code execution mode using helper method
-	// Note: This function receives the inner OrchestrationStep (which is a PlanStepInterface itself),
-	// not the wrapper step. So the config is in step.AgentConfigs, not step.OrchestrationStep.AgentConfigs
-	var orchestrationStepConfig *AgentConfigs
-	orchestrationStepPlan, isOrchestrationWrapper := step.(*OrchestrationPlanStep)
-	if isOrchestrationWrapper && orchestrationStepPlan.OrchestrationStep != nil {
-		// This is the wrapper step - get config from inner step
-		orchestrationStepConfig = getAgentConfigs(orchestrationStepPlan.OrchestrationStep)
-	} else {
-		// This is the inner step itself - get config directly from step
-		orchestrationStepConfig = getAgentConfigs(step)
+	// Get the inner step for metadata (title, description, etc.) if this is an OrchestrationPlanStep
+	// The main step's config is used, but inner step's metadata is used for template variables
+	var innerStep PlanStepInterface = step
+	orchestrationStepPlan, isOrchestrationStep := step.(*OrchestrationPlanStep)
+	if isOrchestrationStep && orchestrationStepPlan.OrchestrationStep != nil {
+		innerStep = orchestrationStepPlan.OrchestrationStep
 	}
+
+	// Determine code execution mode using helper method
+	// Every step has its own config by its own ID - use main step's config
+	orchestrationStepConfig := getAgentConfigs(step)
 	isCodeExecutionMode := hcpo.getCodeExecutionMode(orchestrationStepConfig)
 
 	stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
@@ -867,11 +843,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 	}
 
 	// Prepare template variables
+	// Use inner step's metadata (title, description, etc.) for template variables
 	templateVars := map[string]string{
-		"StepTitle":            ResolveVariables(step.GetTitle(), hcpo.variableValues),
-		"StepDescription":      ResolveVariables(step.GetDescription(), hcpo.variableValues),
-		"StepSuccessCriteria":  ResolveVariables(step.GetSuccessCriteria(), hcpo.variableValues),
-		"StepContextOutput":    ResolveVariables(step.GetContextOutput().String(), hcpo.variableValues),
+		"StepTitle":            ResolveVariables(innerStep.GetTitle(), hcpo.variableValues),
+		"StepDescription":      ResolveVariables(innerStep.GetDescription(), hcpo.variableValues),
+		"StepSuccessCriteria":  ResolveVariables(innerStep.GetSuccessCriteria(), hcpo.variableValues),
+		"StepContextOutput":    ResolveVariables(innerStep.GetContextOutput().String(), hcpo.variableValues),
 		"WorkspacePath":        executionWorkspacePath,
 		"IsCodeExecutionMode":  fmt.Sprintf("%v", isCodeExecutionMode),
 		"StepNumber":           stepPath,
@@ -881,7 +858,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 	}
 
 	// Add context dependencies
-	contextDeps := step.GetContextDependencies()
+	contextDeps := innerStep.GetContextDependencies()
 	if len(contextDeps) > 0 {
 		resolvedDeps := ResolveVariablesArray(contextDeps, hcpo.variableValues)
 		templateVars["StepContextDependencies"] = strings.Join(resolvedDeps, ", ")
@@ -897,15 +874,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 		templateVars["VariableValues"] = variableValues
 	}
 
-	// Set folder guard paths: allow reads from learnings and execution, writes only to current step folder
+	// Set folder guard paths: allow reads from step-specific learnings, execution, and run folder, writes only to current step folder
 	baseWorkspacePath := hcpo.GetWorkspacePath()
-	learningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
-	// READ: learnings folder + execution folder (to read previous step results)
+	stepID := step.GetID()
+	if stepID == "" {
+		stepID = fmt.Sprintf("step-%d", stepIndex+1) // Fallback to step number if ID not available
+	}
+	// Step-specific learnings folder: learnings/{stepID}/ (only this step's learnings, not full learnings folder)
+	stepLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
+	// READ: step-specific learnings folder + execution folder + run folder (to read previous step results and run folder files)
+	// Note: runWorkspacePath is already defined earlier in this function (line 810)
 	// WRITE: only the specific step folder (execution/step-{X}-orchestration/ or execution/step-{X}-orchestration-{N}/)
-	readPaths := []string{learningsPath, executionWorkspacePath}
+	readPaths := []string{stepLearningsPath, executionWorkspacePath, runWorkspacePath}
 	writePaths := []string{stepExecutionPath}
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for orchestration orchestrator agent - Read paths: %v, Write paths: %v (can read learnings/ and execution/, can only write to %s)", readPaths, writePaths, stepPath))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for orchestration orchestrator agent - Read paths: %v, Write paths: %v (can read learnings/%s/, execution/, and run folder, can only write to %s)", readPaths, writePaths, stepID, stepPath))
 
 	// Get orchestration orchestrator agent with tempLLM logic
 	// Determine retryAttempt from orchestrationIteration (1-based: first iteration = 1, second = 2, etc.)
@@ -951,53 +934,35 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getOrchestrationOrchestrator
 		return nil, fmt.Errorf("event bridge is required for orchestration orchestrator agent")
 	}
 
-	// Get orchestration step config
-	// Note: This function receives the inner OrchestrationStep (which is a PlanStepInterface itself),
-	// not the wrapper step. So the config is in step.GetAgentConfigs(), not step.OrchestrationStep.GetAgentConfigs()
-	var orchestrationStepConfig *AgentConfigs
-	orchestrationStepPlan, isOrchestrationWrapper := step.(*OrchestrationPlanStep)
-	if isOrchestrationWrapper && orchestrationStepPlan.OrchestrationStep != nil {
-		// This is the wrapper step - get config from inner step
-		orchestrationStepConfig = getAgentConfigs(orchestrationStepPlan.OrchestrationStep)
-		innerStepID := orchestrationStepPlan.OrchestrationStep.GetID()
-		if orchestrationStepConfig != nil && orchestrationStepConfig.UseCodeExecutionMode != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Orchestration step config found (from wrapper) - UseCodeExecutionMode: %v (step ID: %s)", *orchestrationStepConfig.UseCodeExecutionMode, innerStepID))
-		} else if orchestrationStepConfig != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Orchestration step config found (from wrapper) but UseCodeExecutionMode is nil (step ID: %s)", innerStepID))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Orchestration step config is nil (from wrapper) (step ID: %s)", innerStepID))
-		}
+	// Get step config - every step has its own config by its own ID
+	orchestrationStepConfig := getAgentConfigs(step)
+	stepID := step.GetID()
+	if orchestrationStepConfig != nil && orchestrationStepConfig.UseCodeExecutionMode != nil {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Step config found - UseCodeExecutionMode: %v (step ID: %s)", *orchestrationStepConfig.UseCodeExecutionMode, stepID))
+	} else if orchestrationStepConfig != nil {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Step config found but UseCodeExecutionMode is nil (step ID: %s)", stepID))
 	} else {
-		// This is the inner step itself - get config directly from step.GetAgentConfigs()
-		orchestrationStepConfig = getAgentConfigs(step)
-		stepID := step.GetID()
-		if orchestrationStepConfig != nil && orchestrationStepConfig.UseCodeExecutionMode != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Orchestration step config found (from inner step) - UseCodeExecutionMode: %v (step ID: %s)", *orchestrationStepConfig.UseCodeExecutionMode, stepID))
-		} else if orchestrationStepConfig != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Orchestration step config found (from inner step) but UseCodeExecutionMode is nil (step ID: %s)", stepID))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Orchestration step config is nil (from inner step) (step ID: %s)", stepID))
-		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Step config is nil (step ID: %s)", stepID))
 	}
 
-	// Get step ID for orchestration learnings:
-	// Orchestration learnings are stored using the inner orchestration step ID.
-	// Note: This function receives the inner OrchestrationStep (which is a PlanStepInterface itself),
-	// not the wrapper step. So we use step.GetID() directly.
-	stepID := ""
-	if isOrchestrationWrapper && orchestrationStepPlan.OrchestrationStep != nil {
-		// This is the wrapper step - get ID from inner step
-		stepID = orchestrationStepPlan.OrchestrationStep.GetID()
-	} else {
-		// This is the inner step itself - use step.GetID() directly
-		stepID = step.GetID()
-	}
-
-	// If inner step ID is not available, use stepPath as fallback (never fall back to parent wrapper ID)
+	// Get step ID for orchestration learnings (use step's own ID)
+	// For OrchestrationPlanStep, learnings are stored using the inner step's ID (for folder organization)
 	stepPath := fmt.Sprintf("step-%d", stepIndex+1)
-	if stepID == "" {
-		stepID = stepPath // Fallback: use stepPath as identifier
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not determine inner orchestration step ID for step %d, using stepPath as fallback", stepIndex+1))
+	orchestrationStepPlan, isOrchestrationStep := step.(*OrchestrationPlanStep)
+	if isOrchestrationStep && orchestrationStepPlan.OrchestrationStep != nil {
+		// For orchestration steps, use inner step ID for learnings folder path
+		stepID = orchestrationStepPlan.OrchestrationStep.GetID()
+		if stepID == "" {
+			stepID = stepPath // Fallback: use stepPath as identifier
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not determine step ID for step %d, using stepPath as fallback", stepIndex+1))
+		}
+	} else {
+		// Not an orchestration step - use step's own ID
+		stepID = step.GetID()
+		if stepID == "" {
+			stepID = stepPath // Fallback: use stepPath as identifier
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not determine step ID for step %d, using stepPath as fallback", stepIndex+1))
+		}
 	}
 
 	// Check if learnings folder has files
@@ -1030,12 +995,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getOrchestrationOrchestrator
 		}
 	}
 
-	// Create agent name
-	agentName := fmt.Sprintf("orchestration-orchestrator-step-%d", stepIndex+1)
+	// Create agent name with step ID
+	agentName := fmt.Sprintf("orchestrator-%s", stepID)
 
 	// Create orchestration orchestrator agent using factory
 	// orchestrationStepConfig already set above
-	orchestrationOrchestratorAgent, err := hcpo.createOrchestrationOrchestratorAgent(ctx, "orchestration_orchestrator", stepIndex, iteration, agentName, orchestrationStepConfig, llmConfig)
+	orchestrationOrchestratorAgent, err := hcpo.createOrchestrationOrchestratorAgent(ctx, "orchestrator", stepIndex, iteration, agentName, orchestrationStepConfig, llmConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create orchestration orchestrator agent: %w", err)
 	}

@@ -229,7 +229,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 			if lockErr := hcpo.autoLockStepLearningsInConfig(ctx, step.GetID(), reasoning); lockErr != nil {
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-lock learnings for step %s: %v", step.GetID(), lockErr))
 			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-locked learnings for step %s (threshold reached: 3 consecutive no-new-learning OR 5 maximum learnings)", step.GetID()))
+				hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-locked learnings for step %s (threshold reached: 3 consecutive no-new-learning OR 10 maximum learnings)", step.GetID()))
 			}
 		} else if metadataErr != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update learning metadata for %s: %v", learningPathIdentifier, metadataErr))
@@ -457,7 +457,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 			if lockErr := hcpo.autoLockStepLearningsInConfig(ctx, step.GetID(), reasoning); lockErr != nil {
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-lock learnings for step %s: %v", step.GetID(), lockErr))
 			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-locked learnings for step %s (threshold reached: 3 consecutive no-new-learning OR 5 maximum learnings)", step.GetID()))
+				hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-locked learnings for step %s (threshold reached: 3 consecutive no-new-learning OR 10 maximum learnings)", step.GetID()))
 			}
 		} else if metadataErr != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update learning metadata for %s: %v", learningPathIdentifier, metadataErr))

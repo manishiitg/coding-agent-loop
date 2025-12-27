@@ -198,12 +198,12 @@ export const OrchestratorNode = memo(({ data, selected }: OrchestratorNodeProps)
     checkLearningsExist()
   }, [workspacePath, stepIdForLearnings])
 
-  // Lock learnings - check orchestration_step config first AND verify learnings exist (backend uses orchestration_step.ID for lock check)
+  // Lock learnings - check orchestration_step config only (backend uses orchestration_step.ID for lock check)
   const isLockedInConfig = useMemo(() => {
     // For orchestration steps, backend checks lock status using orchestration_step.ID
-    // So we should check orchestration_step.agent_configs first
-    return orchestration_step?.agent_configs?.lock_learnings ?? stepConfig?.agent_configs?.lock_learnings ?? false
-  }, [orchestration_step?.agent_configs?.lock_learnings, stepConfig?.agent_configs?.lock_learnings])
+    // So we only check orchestration_step.agent_configs
+    return orchestration_step?.agent_configs?.lock_learnings ?? false
+  }, [orchestration_step?.agent_configs?.lock_learnings])
 
   const lockLearnings = useMemo(() => {
     // Backend only considers learnings locked if BOTH:

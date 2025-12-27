@@ -1794,7 +1794,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             )}
             
             {activeTab?.sessionId && (
-              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} />
+              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} flatHierarchy={true} />
             )}
           </WorkflowModeHandler>
         ) : (

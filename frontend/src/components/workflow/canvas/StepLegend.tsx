@@ -385,7 +385,7 @@ export const StepLegend: React.FC<StepLegendProps> = ({
               // 2. learnings actually exist
               const orchestrationStepConfigs = isOrchestrationStep(step) ? step.orchestration_step?.agent_configs : undefined
               const isLockedInConfig = (
-                (orchestrationStepConfigs?.lock_learnings ?? step.agent_configs?.lock_learnings) === true
+                (orchestrationStepConfigs?.lock_learnings ?? false) === true
               ) && (
                 (orchestrationStepConfigs?.disable_learning ?? step.agent_configs?.disable_learning) !== true
               )

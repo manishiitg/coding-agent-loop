@@ -1,8 +1,9 @@
-import { memo, useCallback, useMemo, type ReactElement, type MouseEvent } from 'react'
+import { memo, useCallback, useMemo, useState, useEffect, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, GitBranch, Play, Settings, Code, Terminal, AlertTriangle, Lock, ShieldCheck, SkipForward } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
+import { agentApi } from '../../../services/api'
 import { getToolsByCategory } from '../../../utils/customToolNames'
 import { NodeConfigFooter } from './NodeConfigFooter'
 import type { ConditionalNodeData } from '../hooks/usePlanToFlow'
@@ -68,7 +69,7 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) => {
-  const { id, title, description, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, validation_schema } = data
+  const { id, title, description, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, validation_schema, workspacePath } = data
 
   // Get preset for config badges
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -171,10 +172,54 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
     return stepConfig?.agent_configs?.learning_detail_level || 'exact'
   }, [stepConfig?.agent_configs?.learning_detail_level, stepConfig?.agent_configs?.disable_learning, useCodeExecutionMode])
 
-  // Lock learnings status
+  // Check if learnings exist in backend (for conditional steps, use step.ID)
+  const [learningsExist, setLearningsExist] = useState<boolean | null>(null) // null = checking, true/false = result
+  const stepIdForLearnings = step?.id
+
+  useEffect(() => {
+    // Only check if we have workspace path and step ID
+    if (!workspacePath || !stepIdForLearnings) {
+      setLearningsExist(false)
+      return
+    }
+
+    // Check if learnings folder exists and has content
+    const checkLearningsExist = async () => {
+      try {
+        const learningsPath = `${workspacePath}/learnings/${stepIdForLearnings}`
+        const files = await agentApi.getPlannerFiles(learningsPath, 100)
+        
+        // Check if there are any learning files (exclude .learning_metadata.json)
+        const hasLearningFiles = files && Array.isArray(files) && files.some((file: { filepath?: string; name?: string }) => {
+          const fileName = file.filepath || file.name || ''
+          return fileName.endsWith('.md') || (fileName.startsWith('code/') && fileName.endsWith('.go'))
+        })
+        
+        setLearningsExist(hasLearningFiles)
+      } catch (error) {
+        // If folder doesn't exist or error, assume no learnings
+        console.debug('[ConditionalNode] Failed to check learnings:', error)
+        setLearningsExist(false)
+      }
+    }
+
+    checkLearningsExist()
+  }, [workspacePath, stepIdForLearnings])
+
+  // Lock learnings - check step config only (backend uses step.ID for lock check)
+  const isLockedInConfig = useMemo(() => {
+    // For conditional steps, backend checks lock status using step.ID
+    // So we only check step.agent_configs
+    return stepConfig?.agent_configs?.lock_learnings ?? false
+  }, [stepConfig?.agent_configs?.lock_learnings])
+
   const lockLearnings = useMemo(() => {
-    return stepConfig?.agent_configs?.lock_learnings === true && stepConfig?.agent_configs?.disable_learning !== true
-  }, [stepConfig?.agent_configs?.lock_learnings, stepConfig?.agent_configs?.disable_learning])
+    // Backend only considers learnings locked if BOTH:
+    // 1. lock_learnings is true in config
+    // 2. learnings actually exist
+    // If learnings don't exist, backend will still run learning to create initial learnings
+    return isLockedInConfig && (learningsExist === true) && stepConfig?.agent_configs?.disable_learning !== true
+  }, [isLockedInConfig, learningsExist, stepConfig?.agent_configs?.disable_learning])
 
   // Execution max turns (defaults to 100)
   const executionMaxTurns = useMemo(() => {
@@ -353,7 +398,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
           </div>
         )}
         {/* Lock Learnings Badge */}
-        {stepConfig?.agent_configs?.lock_learnings && !stepConfig?.agent_configs?.disable_learning && (
+        {lockLearnings && (
           <div 
             className="flex items-center gap-1 px-2 py-1 rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 text-[10px] font-semibold border border-purple-200 dark:border-purple-800"
             title="Learnings are locked - learning agent will not run but existing learnings will be used"

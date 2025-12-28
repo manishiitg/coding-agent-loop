@@ -198,7 +198,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           if (saved) {
             const parsed = JSON.parse(saved) as AgentLLMConfig
             if (parsed.provider && parsed.model_id) {
-              console.log(`[WorkflowStore] Loaded temp override LLM1 from localStorage: ${parsed.provider}/${parsed.model_id}`)
               return parsed
             }
           }
@@ -213,7 +212,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           if (saved) {
             const parsed = JSON.parse(saved) as AgentLLMConfig
             if (parsed.provider && parsed.model_id) {
-              console.log(`[WorkflowStore] Loaded temp override LLM2 from localStorage: ${parsed.provider}/${parsed.model_id}`)
               return parsed
             }
           }
@@ -229,7 +227,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           const saved = localStorage.getItem(TEMP_OVERRIDE_LLM_ENABLED_KEY)
           if (saved !== null) {
             const parsed = JSON.parse(saved) as boolean
-            console.log(`[WorkflowStore] Loaded temp override LLM enabled state from localStorage: ${parsed}`)
             return parsed
           }
           // Default to true if we have any temp LLM configured
@@ -248,7 +245,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           const saved = localStorage.getItem(FALLBACK_TO_ORIGINAL_LLM_KEY)
           if (saved !== null) {
             const parsed = JSON.parse(saved) as boolean
-            console.log(`[WorkflowStore] Loaded fallback to original LLM on failure from localStorage: ${parsed}`)
             return parsed
           }
         } catch (error) {
@@ -263,7 +259,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           const saved = localStorage.getItem(SKIP_LEARNING_WHEN_TEMP_LLM1_KEY)
           if (saved !== null) {
             const parsed = JSON.parse(saved) as boolean
-            console.log(`[WorkflowStore] Loaded skip learning when tempLLM1 from localStorage: ${parsed}`)
             return parsed
           }
         } catch (error) {
@@ -278,7 +273,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           const saved = localStorage.getItem(SKIP_LEARNING_WHEN_TEMP_LLM2_KEY)
           if (saved !== null) {
             const parsed = JSON.parse(saved) as boolean
-            console.log(`[WorkflowStore] Loaded skip learning when tempLLM2 from localStorage: ${parsed}`)
             return parsed
           }
         } catch (error) {
@@ -293,7 +287,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           const saved = localStorage.getItem(SAVE_VALIDATION_RESPONSES_KEY)
           if (saved !== null) {
             const parsed = JSON.parse(saved) as boolean
-            console.log(`[WorkflowStore] Loaded save validation responses from localStorage: ${parsed}`)
             return parsed
           }
         } catch (error) {

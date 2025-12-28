@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react'
-import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Repeat, Zap, Lock } from 'lucide-react'
+import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Repeat, Zap, Lock, SkipForward, ShieldCheck } from 'lucide-react'
 import type { WorkflowNode, StepNodeData, ConditionalNodeData, LoopNodeData, DecisionNodeData, OrchestratorNodeData } from '../hooks/usePlanToFlow'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep, isOrchestrationStep } from '../../../utils/stepConfigMatching'
@@ -335,7 +335,7 @@ export const StepLegend: React.FC<StepLegendProps> = ({
   }
 
   return (
-    <div className="absolute bottom-4 left-4 z-10 w-64">
+    <div className="absolute bottom-4 left-4 z-10 w-72">
       <div className="bg-background/98 dark:bg-gray-900/98 backdrop-blur-md rounded-lg border border-border shadow-xl">
         {/* Header */}
         <button
@@ -372,25 +372,34 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                 ? stepCodeExecSetting === true  // Step has explicit setting
                 : presetUseCodeExecutionMode     // Fall back to preset default
 
-              // Get step ID for learnings check (for orchestration steps, use orchestration_step.ID)
-              const stepIdForLearnings = (isOrchestrationStep(step) && step.orchestration_step?.id) ?? step.id
-              
-              // Check if learnings exist (cached)
-              const learningsExist = stepIdForLearnings ? (learningsExistCache.get(stepIdForLearnings) ?? null) : false
-              
-              // Check if learnings are locked (same logic as StepNode and RoutingNode)
-              // For orchestration steps, backend checks lock status using orchestration_step.ID
-              // Backend only considers learnings locked if BOTH:
-              // 1. lock_learnings is true in config
-              // 2. learnings actually exist
+              // Check if learnings are locked (matching StepNode logic - show icon if lock_learnings is true)
+              // For orchestration steps, check orchestration_step.agent_configs
+              // For regular steps, check step.agent_configs
               const orchestrationStepConfigs = isOrchestrationStep(step) ? step.orchestration_step?.agent_configs : undefined
-              const isLockedInConfig = (
-                (orchestrationStepConfigs?.lock_learnings ?? false) === true
-              ) && (
-                (orchestrationStepConfigs?.disable_learning ?? step.agent_configs?.disable_learning) !== true
-              )
+              const stepConfigs = step.agent_configs
               
-              const lockLearnings = isLockedInConfig && (learningsExist === true)
+              // Check lock_learnings in the appropriate config based on step type
+              const lockLearningsConfig = isOrchestrationStep(step)
+                ? orchestrationStepConfigs?.lock_learnings
+                : stepConfigs?.lock_learnings
+              
+              // Check disable_learning in the appropriate config
+              const isLearningDisabled = isOrchestrationStep(step)
+                ? (orchestrationStepConfigs?.disable_learning ?? stepConfigs?.disable_learning) === true
+                : stepConfigs?.disable_learning === true
+              
+              // Show lock icon if lock_learnings is true and learning is not disabled (matching StepNode behavior)
+              const lockLearnings = lockLearningsConfig === true && !isLearningDisabled
+
+              // Check validation skipped (skip_llm_validation_if_pre_validation_passes)
+              const skipLLMValidation = isOrchestrationStep(step)
+                ? orchestrationStepConfigs?.skip_llm_validation_if_pre_validation_passes
+                : stepConfigs?.skip_llm_validation_if_pre_validation_passes
+              
+              // Check if validation is disabled (only pre-validation runs)
+              const isValidationDisabled = isOrchestrationStep(step)
+                ? orchestrationStepConfigs?.disable_validation === true
+                : stepConfigs?.disable_validation === true
 
               // Check if this is a sub-agent (node ID contains '-sub-agent-')
               const isSubAgent = nodeId.includes('-sub-agent-')
@@ -471,6 +480,16 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                         {lockLearnings && (
                           <span title="Learnings are locked" className="flex-shrink-0">
                             <Lock className="w-3 h-3 text-purple-500" />
+                          </span>
+                        )}
+                        {skipLLMValidation && (
+                          <span title="LLM validation will be skipped if pre-validation passes" className="flex-shrink-0">
+                            <SkipForward className="w-3 h-3 text-cyan-500" />
+                          </span>
+                        )}
+                        {isValidationDisabled && (
+                          <span title="Validation disabled - only pre-validation runs" className="flex-shrink-0">
+                            <ShieldCheck className="w-3 h-3 text-orange-500" />
                           </span>
                         )}
                       </div>

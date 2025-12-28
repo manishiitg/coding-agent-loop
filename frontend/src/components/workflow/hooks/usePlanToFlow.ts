@@ -2777,6 +2777,7 @@ export function usePlanToFlow(
     }
     
     // Inject onRunFromStep callback, onOpenSidebar callback, isExecuting state, canRun, workspacePath, and selectedRunFolder into step-type nodes
+    // Also make validation, learning, and evaluation nodes non-draggable
     layoutedResult.nodes = layoutedResult.nodes.map(node => {
       if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator' || node.type === 'human_input') {
         const canRun = canStepRun()
@@ -2796,6 +2797,16 @@ export function usePlanToFlow(
           }
         } as WorkflowNode
       }
+      
+      // Make validation, learning, and evaluation nodes non-draggable
+      // They should only move with their parent nodes
+      if (node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation') {
+        return {
+          ...node,
+          draggable: false
+        } as WorkflowNode
+      }
+      
       return node
     }) as WorkflowNode[]
     

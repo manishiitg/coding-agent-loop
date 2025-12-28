@@ -57,8 +57,8 @@ export DEEP_SEARCH_AGENT_MODE="simple"
 # Enable split execution learning feature (separates learning reading from execution)
 export SPLIT_EXECUTION_LEARNING="true"
 
-# Set tool execution timeout to 10 minutes
-export TOOL_EXECUTION_TIMEOUT="10m"
+# Set tool execution timeout to 2 minutes
+export TOOL_EXECUTION_TIMEOUT="2m"
 
 # Set MCP cache TTL to 7 days (10080 minutes)
 export MCP_CACHE_TTL_MINUTES="10080"

@@ -114,7 +114,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveStepID(stepPath, step
 }
 
 // selectExecutionLLM selects the LLM config with cascading fallback logic
-// Priority: tempLLM1 (attempt 1) > tempLLM2 (attempt 2) > step config > preset default > orchestrator default
+// Priority:
+// - If disable_temp_llm is true: step config > preset > orchestrator (skip tempLLM)
+// - Otherwise: tempLLM1 (attempt 1) > tempLLM2 (attempt 2) > step config > preset default > orchestrator default
 // Only uses tempLLM if learnings folder has files (has existing learnings to improve upon)
 func (hcpo *HumanControlledTodoPlannerOrchestrator) selectExecutionLLM(
 	ctx context.Context,
@@ -128,6 +130,33 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) selectExecutionLLM(
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	shouldSkipTempOverride := isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure
 
+	// Check if step config explicitly disables tempLLM
+	disableTempLLM := stepConfig != nil && stepConfig.DisableTempLLM != nil && *stepConfig.DisableTempLLM
+	if disableTempLLM {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step %s has disable_temp_llm=true - skipping tempLLM override and using base LLM (step config > preset > orchestrator)", stepPath))
+		// Skip tempLLM entirely and go straight to step config > preset > orchestrator
+		if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only LLM: %s/%s", stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
+			return &orchestrator.LLMConfig{
+				Provider:       stepConfig.ExecutionLLM.Provider,
+				ModelID:        stepConfig.ExecutionLLM.ModelID,
+				FallbackModels: []string{},                    // Use empty fallback for step-specific configs
+				APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			}
+		} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution-only LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
+			return &orchestrator.LLMConfig{
+				Provider:       hcpo.presetExecutionLLM.Provider,
+				ModelID:        hcpo.presetExecutionLLM.ModelID,
+				FallbackModels: []string{},                    // Use empty fallback for preset defaults
+				APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			}
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default execution-only LLM: %s/%s", orchestratorLLMConfig.Provider, orchestratorLLMConfig.ModelID))
+			return orchestratorLLMConfig
+		}
+	}
+
 	// Cascading LLM selection based on retry attempt:
 	// - retryAttempt == 1: Use tempLLM1 (if available AND learnings folder has files)
 	// - retryAttempt == 2: Use tempLLM2 (if tempLLM1 was used and tempLLM2 is available AND learnings folder has files)
@@ -135,7 +164,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) selectExecutionLLM(
 	hasTempLLM1 := hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != ""
 	hasTempLLM2 := hcpo.tempOverrideLLM2 != nil && hcpo.tempOverrideLLM2.Provider != "" && hcpo.tempOverrideLLM2.ModelID != ""
 
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] LLM selection - retryAttempt=%d, isRetryAfterValidationFailure=%v, fallbackToOriginalLLMOnFailure=%v, shouldSkipTempOverride=%v, hasTempLLM1=%v, hasTempLLM2=%v, learningsFolderEmpty=%v", retryAttempt, isRetryAfterValidationFailure, hcpo.fallbackToOriginalLLMOnFailure, shouldSkipTempOverride, hasTempLLM1, hasTempLLM2, learningsFolderEmpty))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] LLM selection - retryAttempt=%d, isRetryAfterValidationFailure=%v, fallbackToOriginalLLMOnFailure=%v, shouldSkipTempOverride=%v, hasTempLLM1=%v, hasTempLLM2=%v, learningsFolderEmpty=%v, disableTempLLM=%v", retryAttempt, isRetryAfterValidationFailure, hcpo.fallbackToOriginalLLMOnFailure, shouldSkipTempOverride, hasTempLLM1, hasTempLLM2, learningsFolderEmpty, disableTempLLM))
 
 	if shouldSkipTempOverride && (hasTempLLM1 || hasTempLLM2) {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Validation failed - skipping temp override LLM and falling back to original LLM (fallback_to_original_llm_on_failure enabled)"))
@@ -301,10 +330,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) applyStepConfigToAgentConfig
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode disabled for execution-only agent - MCP tools will be exposed directly"))
 	}
 
-	// Set EnableLargeOutputVirtualTools if specified
-	if stepConfig != nil && stepConfig.EnableLargeOutputVirtualTools != nil {
-		config.EnableLargeOutputVirtualTools = stepConfig.EnableLargeOutputVirtualTools
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools))
+	// Set EnableContextOffloading if specified
+	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
+		config.EnableContextOffloading = stepConfig.EnableContextOffloading
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
 	}
 }
 
@@ -677,10 +706,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 	config.UseCodeExecutionMode = false
 	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for validation agent (only execution agents use MCP tools)"))
 
-	// Set EnableLargeOutputVirtualTools if specified
-	if stepConfig != nil && stepConfig.EnableLargeOutputVirtualTools != nil {
-		config.EnableLargeOutputVirtualTools = stepConfig.EnableLargeOutputVirtualTools
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools))
+	// Set EnableContextOffloading if specified
+	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
+		config.EnableContextOffloading = stepConfig.EnableContextOffloading
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
 	}
 
 	// 4. Prepare custom tools (filtered by step config)
@@ -754,7 +783,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgentInternal(
 	// Disable large output virtual tools (context offloading) for learning agents
 	// Learning agents should not offload their outputs to prevent issues with learning content
 	disabled := false
-	config.EnableLargeOutputVirtualTools = &disabled
+	config.EnableContextOffloading = &disabled
 	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling large output virtual tools (context offloading) for %s", agentType))
 
 	// 4. Prepare custom tools (filtered by step config)
@@ -905,10 +934,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createConditionalAgent(ctx c
 	}
 	config.UseCodeExecutionMode = isCodeExecutionMode
 
-	// Set EnableLargeOutputVirtualTools if specified
-	if stepConfig != nil && stepConfig.EnableLargeOutputVirtualTools != nil {
-		config.EnableLargeOutputVirtualTools = stepConfig.EnableLargeOutputVirtualTools
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools))
+	// Set EnableContextOffloading if specified
+	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
+		config.EnableContextOffloading = stepConfig.EnableContextOffloading
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
 	}
 
 	// Prepare custom tools and executors (same as execution agent)
@@ -1017,10 +1046,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createOrchestrationOrchestra
 	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
 	config.UseCodeExecutionMode = isCodeExecutionMode
 
-	// Set EnableLargeOutputVirtualTools if specified
-	if stepConfig != nil && stepConfig.EnableLargeOutputVirtualTools != nil {
-		config.EnableLargeOutputVirtualTools = stepConfig.EnableLargeOutputVirtualTools
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific large output virtual tools setting: %v", *stepConfig.EnableLargeOutputVirtualTools))
+	// Set EnableContextOffloading if specified
+	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
+		config.EnableContextOffloading = stepConfig.EnableContextOffloading
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
 	}
 
 	// Prepare custom tools and executors

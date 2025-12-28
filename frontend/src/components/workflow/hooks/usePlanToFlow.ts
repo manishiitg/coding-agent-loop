@@ -32,6 +32,10 @@ export interface StepNodeData extends Record<string, unknown> {
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
   validation_schema?: ValidationSchema  // Validation schema from plan.json
+  // Sub-agent specific fields
+  parentOrchestratorTitle?: string  // Title of parent orchestrator node (for sub-agents)
+  routeName?: string  // Route name from orchestration_routes (for sub-agents)
+  routeCondition?: string  // Condition from orchestration_routes (for sub-agents)
 }
 
 export interface ConditionalNodeData extends Record<string, unknown> {
@@ -1723,6 +1727,8 @@ function processSteps(
             
             // Get the stepIndex from the node data (parent routing step's index)
             const parentStepIndex = (node.data as OrchestratorNodeData).stepIndex
+            const orchestratorNodeData = node.data as OrchestratorNodeData
+            const orchestratorTitle = orchestratorNodeData.title || step.title || `Orchestrator ${parentStepIndex + 1}`
             
             // Create sub-agent node directly (don't use stepToNode to avoid wrong ID generation)
             const subAgentStep = route.sub_agent_step
@@ -1753,7 +1759,11 @@ function processSteps(
                 changeType,
                 validation_schema: subAgentStep.validation_schema, // Include validation schema for sub-agent
                 workspacePath,
-                selectedRunFolder
+                selectedRunFolder,
+                // Sub-agent specific info for display
+                parentOrchestratorTitle: orchestratorTitle,
+                routeName: route.route_name || undefined,
+                routeCondition: route.condition || undefined
               } as StepNodeData
             }
             
@@ -2798,15 +2808,8 @@ export function usePlanToFlow(
         } as WorkflowNode
       }
       
-      // Make validation, learning, and evaluation nodes non-draggable
-      // They should only move with their parent nodes
-      if (node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation') {
-        return {
-          ...node,
-          draggable: false
-        } as WorkflowNode
-      }
-      
+      // Validation, learning, and evaluation nodes are now draggable (can be manually positioned)
+      // They can be moved independently or will move with their parent nodes
       return node
     }) as WorkflowNode[]
     

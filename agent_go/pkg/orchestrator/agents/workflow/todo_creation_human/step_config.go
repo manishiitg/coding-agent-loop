@@ -229,6 +229,10 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	if source.KeepLearningFull != nil {
 		target.KeepLearningFull = source.KeepLearningFull
 	}
+	if source.DisableTempLLM != nil {
+		target.DisableTempLLM = source.DisableTempLLM
+		logger.Info(fmt.Sprintf("🔧 Using step config (ID: %s) - disable_temp_llm: %v", stepID, *source.DisableTempLLM))
+	}
 }
 
 // ApplyStepConfigFromFile loads step_config.json and applies matched config to the step.

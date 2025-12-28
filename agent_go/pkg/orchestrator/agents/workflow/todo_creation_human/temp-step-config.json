@@ -305,7 +305,7 @@
         "workspace_tools:diff_patch_workspace_file",
         "workspace_tools:move_workspace_file"
       ],
-      "enable_large_output_virtual_tools": false
+      "enable_context_offloading": false
     }
   },
   {

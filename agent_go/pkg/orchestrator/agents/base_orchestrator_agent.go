@@ -124,9 +124,9 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.MaxTurns,
 		boa.config.Provider,
 		boa.logger,
-		false,                                    // cacheOnly - not used in orchestrator agents
-		boa.config.EnableLargeOutputVirtualTools, // NEW: Pass large output virtual tools setting
-		boa.config.EnableContextSummarization,    // Context summarization configuration
+		false,                                 // cacheOnly - not used in orchestrator agents
+		boa.config.EnableContextOffloading,    // NEW: Pass context offloading setting
+		boa.config.EnableContextSummarization, // Context summarization configuration
 		boa.config.SummarizeOnTokenThreshold,
 		boa.config.TokenThresholdPercent,
 		boa.config.SummarizeOnFixedTokenThreshold,

@@ -111,7 +111,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
     selected_servers?: string[]
     selected_tools?: string[]
     enabled_custom_tools?: string[]
-    enable_large_output_virtual_tools?: boolean
+    enable_context_offloading?: boolean
     skip_llm_validation_if_pre_validation_passes?: boolean
   } }
 
@@ -310,7 +310,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
 
   const hasWorkspaceTools = workspaceToolsInfo.enabled > 0
   const hasHumanTools = humanToolsInfo.enabled > 0
-  const hasLargeOutput = stepConfig?.agent_configs?.enable_large_output_virtual_tools !== false // Default is enabled
+  const hasLargeOutput = stepConfig?.agent_configs?.enable_context_offloading !== false // Default is enabled
 
   // Button is disabled if executing or no callback
   const isRunDisabled = isExecuting || !onRunFromStep

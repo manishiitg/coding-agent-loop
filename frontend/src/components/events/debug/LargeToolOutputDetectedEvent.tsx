@@ -13,7 +13,7 @@ export const LargeToolOutputDetectedEventDisplay: React.FC<LargeToolOutputDetect
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            Large Output Detected
+            Context Offloading Detected
           </span>
           {event.tool_name && (
             <span className="text-xs text-gray-600 dark:text-gray-400">

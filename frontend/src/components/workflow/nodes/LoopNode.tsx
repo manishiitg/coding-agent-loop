@@ -148,7 +148,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
     selected_servers?: string[]
     selected_tools?: string[]
     enabled_custom_tools?: string[]
-    enable_large_output_virtual_tools?: boolean
+    enable_context_offloading?: boolean
     skip_llm_validation_if_pre_validation_passes?: boolean
   } }
   
@@ -294,7 +294,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
   
   const hasWorkspaceTools = workspaceToolsInfo.enabled > 0
   const hasHumanTools = humanToolsInfo.enabled > 0
-  const hasLargeOutput = stepConfig?.agent_configs?.enable_large_output_virtual_tools !== false // Default is enabled
+  const hasLargeOutput = stepConfig?.agent_configs?.enable_context_offloading !== false // Default is enabled
   // Default to true for loop steps if not explicitly set
   const learningAfterLoopIteration = stepConfig?.agent_configs?.learning_after_loop_iteration !== undefined 
     ? stepConfig.agent_configs.learning_after_loop_iteration 

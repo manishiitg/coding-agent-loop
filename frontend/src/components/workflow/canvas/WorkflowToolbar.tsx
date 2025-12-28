@@ -20,6 +20,7 @@ import {
   Circle,
   CheckSquare,
   Save,
+  RotateCcw,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useAppStore } from '../../../stores'
@@ -1973,90 +1974,92 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </button>
         )}
         
-        {/* Save Layout Button */}
-        {onSaveLayout && (
+        {/* Layout Controls Group - Save and Reset */}
+        {(onSaveLayout || onDeleteLayout) && (
           <>
             <div className="w-px h-5 bg-gray-200 dark:bg-gray-700 mx-0.5" />
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={async () => {
-                      console.log('[WorkflowToolbar] Save button clicked')
-                      if (onSaveLayout && !isSavingLayout) {
-                        try {
-                          await onSaveLayout()
-                        } catch (error) {
-                          console.error('[WorkflowToolbar] Error saving layout:', error)
-                        }
-                      }
-                    }}
-                    disabled={isSavingLayout}
-                    className={`p-1.5 rounded-md transition-colors ${
-                      isSavingLayout
-                        ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
-                        : hasUnsavedLayoutChanges
-                        ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 animate-pulse'
-                        : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400'
-                    }`}
-                    title={isSavingLayout ? 'Saving layout...' : (hasUnsavedLayoutChanges ? 'Save layout (unsaved changes)' : 'Save layout')}
-                  >
-                    {isSavingLayout ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Save className={`w-3.5 h-3.5 ${hasUnsavedLayoutChanges ? 'text-blue-600 dark:text-blue-400' : ''}`} />
-                    )}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {isSavingLayout ? 'Saving layout...' : (hasUnsavedLayoutChanges ? 'Save layout (unsaved changes)' : 'Save layout')}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </>
-        )}
-        
-        {/* Delete/Reset Layout Button */}
-        {onDeleteLayout && (
-          <>
-            <div className="w-px h-5 bg-gray-200 dark:bg-gray-700 mx-0.5" />
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={async () => {
-                      console.log('[WorkflowToolbar] Delete layout button clicked')
-                      if (onDeleteLayout && !isDeletingLayout) {
-                        // Confirm before deleting
-                        if (window.confirm('Are you sure you want to delete the saved layout and reset to default? This cannot be undone.')) {
+            <div className="flex items-center gap-1">
+              {/* Save Layout Button */}
+              {onSaveLayout && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                    <button
+                      onClick={async () => {
+                        console.log('[WorkflowToolbar] Save button clicked')
+                        if (onSaveLayout && !isSavingLayout) {
                           try {
-                            await onDeleteLayout()
+                            await onSaveLayout()
                           } catch (error) {
-                            console.error('[WorkflowToolbar] Error deleting layout:', error)
+                            console.error('[WorkflowToolbar] Error saving layout:', error)
                           }
                         }
-                      }
-                    }}
-                    disabled={isDeletingLayout}
-                    className={`p-1.5 rounded-md transition-colors ${
-                      isDeletingLayout
-                        ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
-                        : 'hover:bg-red-100 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300'
-                    }`}
-                    title={isDeletingLayout ? 'Resetting layout...' : 'Delete saved layout and reset to default'}
-                  >
-                    {isDeletingLayout ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Trash2 className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {isDeletingLayout ? 'Resetting layout...' : 'Delete saved layout and reset to default'}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+                      }}
+                      disabled={isSavingLayout}
+                      className={`p-1.5 rounded-md transition-colors ${
+                        isSavingLayout
+                          ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                          : hasUnsavedLayoutChanges
+                          ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 animate-pulse'
+                          : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400'
+                      }`}
+                      title={isSavingLayout ? 'Saving layout...' : (hasUnsavedLayoutChanges ? 'Save layout (unsaved changes)' : 'Save layout')}
+                    >
+                      {isSavingLayout ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Save className={`w-3.5 h-3.5 ${hasUnsavedLayoutChanges ? 'text-blue-600 dark:text-blue-400' : ''}`} />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {isSavingLayout ? 'Saving layout...' : (hasUnsavedLayoutChanges ? 'Save layout (unsaved changes)' : 'Save layout')}
+                  </TooltipContent>
+                </Tooltip>
+                </TooltipProvider>
+              )}
+              
+              {/* Delete/Reset Layout Button */}
+              {onDeleteLayout && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={async () => {
+                          console.log('[WorkflowToolbar] Delete layout button clicked')
+                          if (onDeleteLayout && !isDeletingLayout) {
+                            // Confirm before deleting
+                            if (window.confirm('Are you sure you want to delete the saved layout and reset to default? This cannot be undone.')) {
+                              try {
+                                await onDeleteLayout()
+                              } catch (error) {
+                                console.error('[WorkflowToolbar] Error deleting layout:', error)
+                              }
+                            }
+                          }
+                        }}
+                        disabled={isDeletingLayout}
+                        className={`p-1.5 rounded-md transition-colors ${
+                          isDeletingLayout
+                            ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                            : 'hover:bg-orange-100 dark:hover:bg-orange-900/30 text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300'
+                        }`}
+                        title={isDeletingLayout ? 'Resetting layout...' : 'Reset layout to default'}
+                      >
+                        {isDeletingLayout ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {isDeletingLayout ? 'Resetting layout...' : 'Reset layout to default'}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+            </div>
           </>
         )}
       </div>

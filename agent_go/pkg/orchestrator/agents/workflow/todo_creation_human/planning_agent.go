@@ -202,11 +202,12 @@ type AgentConfigs struct {
 	SelectedTools                          []string           `json:"selected_tools,omitempty"`                               // step-level tool selection (format: "server:tool" or "server:*" for all tools)
 	EnabledCustomToolCategories            []string           `json:"enabled_custom_tool_categories,omitempty"`               // e.g., ["workspace_tools", "human_tools"] - enables all tools in category
 	EnabledCustomTools                     []string           `json:"enabled_custom_tools,omitempty"`                         // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
-	EnableLargeOutputVirtualTools          *bool              `json:"enable_large_output_virtual_tools,omitempty"`            // Enable/disable large output tools (default: true if nil)
+	EnableContextOffloading                *bool              `json:"enable_context_offloading,omitempty"`                    // Enable/disable context offloading (default: true if nil)
 	UseCodeExecutionMode                   *bool              `json:"use_code_execution_mode,omitempty"`                      // Step-level code execution mode override (nil = use preset default, true/false = override)
 	EnablePrerequisiteDetection            *bool              `json:"enable_prerequisite_detection,omitempty"`                // Enable prerequisite failure detection for this step (default: false)
 	PrerequisiteRules                      []PrerequisiteRule `json:"prerequisite_rules,omitempty"`                           // Array of prerequisite rules, each with one step dependency and one description
 	KeepLearningFull                       *bool              `json:"keep_learning_full,omitempty"`                           // Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (default: false, can be overridden by KEEP_LEARNING_FULL env var)
+	DisableTempLLM                         *bool              `json:"disable_temp_llm,omitempty"`                             // If true, skip tempLLM override and use step config base LLM (step config > preset > orchestrator default)
 }
 
 // ============================================================================

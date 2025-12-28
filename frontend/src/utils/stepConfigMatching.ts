@@ -24,10 +24,11 @@ export interface AgentConfigs {
   selected_servers?: string[];
   selected_tools?: string[];
   enabled_custom_tools?: string[]; // Format: "category:tool" or "category:*" (e.g., "workspace_tools:*", "human_tools:human_feedback")
-  enable_large_output_virtual_tools?: boolean;
+  enable_context_offloading?: boolean;
   use_code_execution_mode?: boolean; // Step-level code execution mode override (undefined = use preset default)
   enable_prerequisite_detection?: boolean; // Enable prerequisite failure detection for this step (default: false)
   prerequisite_rules?: PrerequisiteRule[]; // Array of prerequisite rules, each with one step dependency and one description
+  disable_temp_llm?: boolean; // If true, skip tempLLM override and use step's base LLM (step config > preset > orchestrator default)
 }
 
 // PrerequisiteRule represents a single prerequisite rule with one step dependency and one description

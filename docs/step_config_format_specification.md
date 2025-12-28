@@ -47,14 +47,15 @@ Both frontend and backend **read and write** only the object format with `steps`
         "disable_learning": false,
         "lock_learnings": false,
         "learning_detail_level": "general",
-        "enable_large_output_virtual_tools": false,
+        "enable_context_offloading": false,
         "enable_prerequisite_detection": true,
         "prerequisite_rules": [
           {
             "depends_on_step": "step-0",
             "description": "If login session is missing or expired, go back to step 0"
           }
-        ]
+        ],
+        "disable_temp_llm": false
       }
     }
   ]
@@ -145,9 +146,10 @@ content, err := json.MarshalIndent(file, "", "  ")
 | `disable_learning` | `boolean` | `false` | Disable learning capture for this step |
 | `lock_learnings` | `boolean` | `false` | Prevent learning updates for this step |
 | `learning_detail_level` | `"exact"\|"general"` | `"general"` | Level of detail in learnings |
-| `enable_large_output_virtual_tools` | `boolean` | `false` | Enable virtual tools for large outputs |
+| `enable_context_offloading` | `boolean` | `false` | Enable context offloading virtual tools |
 | `enable_prerequisite_detection` | `boolean` | `false` | Enable prerequisite failure detection |
 | `prerequisite_rules` | `array` | `[]` | Rules for prerequisite failure handling |
+| `disable_temp_llm` | `boolean` | `false` | If true, skip tempLLM override and use step's base LLM (step config > preset > orchestrator default) |
 
 ---
 

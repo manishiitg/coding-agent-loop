@@ -1,6 +1,5 @@
-import { Server, Loader2, AlertCircle, Search } from 'lucide-react'
+import { Server, Loader2, AlertCircle, Settings } from 'lucide-react'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
-import MCPRegistryModal from '../MCPRegistryModal'
 import MCPConfigEditor from '../MCPConfigEditor'
 import MCPToolApiTester from '../MCPToolApiTester'
 import { useMCPStore } from '../../stores'
@@ -34,8 +33,6 @@ export default function MCPServersSection() {
     setSelectedTool,
     toolDetails,
     loadingToolDetails,
-    showRegistryModal,
-    setShowRegistryModal,
     showConfigEditor,
     setShowConfigEditor,
     showApiTester,
@@ -56,23 +53,6 @@ export default function MCPServersSection() {
         </span>
       </div>
 
-      {/* Action Buttons */}
-      <div className="space-y-2 mb-2">
-        <button
-          onClick={() => setShowRegistryModal(true)}
-          className="w-full p-2 bg-blue-50 dark:bg-blue-800 hover:bg-blue-100 dark:hover:bg-blue-700 rounded-md transition-colors text-left"
-        >
-          <div className="flex items-center gap-2">
-            <Search className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
-              Discover Servers
-            </span>
-          </div>
-          <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
-            Browse and install servers from MCP Registry
-          </div>
-        </button>
-      </div>
 
       {isLoadingTools && (
         <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
@@ -118,12 +98,24 @@ export default function MCPServersSection() {
               <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
                 MCP Server Details
               </h3>
-              <button 
-                onClick={() => setShowMCPDetails(false)}
-                className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setShowMCPDetails(false)
+                    setShowConfigEditor(true)
+                  }}
+                  className="px-3 py-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded-md transition-colors flex items-center gap-2"
+                >
+                  <Settings className="w-4 h-4" />
+                  Configure MCP Server
+                </button>
+                <button 
+                  onClick={() => setShowMCPDetails(false)}
+                  className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
             
             {/* Server Groups with Individual Controls */}
@@ -325,18 +317,6 @@ export default function MCPServersSection() {
         </div>
       )}
         </div>
-      )}
-
-      {/* MCP Registry Modal */}
-      {showRegistryModal && (
-        <MCPRegistryModal
-          isOpen={showRegistryModal}
-          onClose={() => setShowRegistryModal(false)}
-          onOpenConfigEditor={() => {
-            setShowRegistryModal(false)
-            setShowConfigEditor(true)
-          }}
-        />
       )}
 
       {/* MCP Config Editor Modal */}

@@ -113,11 +113,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             
             // After both selectedServers and selectedTools are loaded, add "*" markers for servers in "all tools" mode
             // A server is in "all tools" mode if it's in selectedServers but has no specific tools
-            console.log('[PRESET_LOAD] Raw data:', {
-              selectedServers,
-              selectedTools
-            });
-            
             if (selectedServers.length > 0) {
               selectedServers.forEach(server => {
                 const hasSpecificTools = selectedTools.some(t => 
@@ -125,15 +120,9 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 )
                 if (!hasSpecificTools && !selectedTools.includes(`${server}:*`)) {
                   selectedTools.push(`${server}:*`)
-                  console.log(`[PRESET_LOAD] Added "all tools" marker for server: ${server}`)
                 }
               })
             }
-            
-            console.log('[PRESET_LOAD] Final data:', {
-              selectedServers,
-              selectedTools
-            });
             
             // Handle selected_folder - could be string, null, or undefined
             if (preset.selected_folder && typeof preset.selected_folder === 'string') {
@@ -826,13 +815,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           const folderPath = preset.selectedFolder?.filepath || null
           set({ selectedPresetFolder: folderPath })
           
-          // Debug: Log the entire preset object to see what's available
-          console.log('[PRESET] Full preset object:', preset)
-          console.log('[PRESET] Preset llmConfig:', preset.llmConfig)
-          
           // Apply LLM configuration if preset has one
           if (preset.llmConfig) {
-            console.log('[PRESET] Applying LLM config:', preset.llmConfig)
             const { setPrimaryConfig, primaryConfig } = useLLMStore.getState()
             const updatedConfig: typeof primaryConfig = {
               ...primaryConfig, // Preserve existing configuration
@@ -844,9 +828,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               updatedConfig.model_id = preset.llmConfig.model_id
             }
             setPrimaryConfig(updatedConfig)
-            console.log('[PRESET] LLM config applied successfully')
-          } else {
-            console.log('[PRESET] No LLM config found in preset')
           }
           
           // Handle workspace folder selection

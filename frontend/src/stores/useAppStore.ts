@@ -57,31 +57,51 @@ interface AppState {
 export const useAppStore = create<AppState>()(
   devtools(
     persist(
-      (set, get) => ({
-        // Initial state
-        agentMode: 'simple',
-        requiresNewChat: false,
-        chatFileContext: [],
-        currentQuery: '',
-        chatSessionId: '',
-        chatSessionTitle: '',
-        selectedPresetId: null,
-        sidebarMinimized: false,
-        workspaceMinimized: false,
-        useCodeExecutionMode: true, // Default to enabled
+      (set, get) => {
+        // Sync flag to prevent circular updates
+        let isSyncing = false
+        
+        return {
+          // Initial state
+          agentMode: 'simple',
+          requiresNewChat: false,
+          chatFileContext: [],
+          currentQuery: '',
+          chatSessionId: '',
+          chatSessionTitle: '',
+          selectedPresetId: null,
+          sidebarMinimized: false,
+          workspaceMinimized: false,
+          useCodeExecutionMode: true, // Default to enabled
 
-        // Actions
-        setAgentMode: (mode) => {
-          const currentMode = get().agentMode
-          // Keep ModeStore category in sync
-          const { getModeCategoryFromAgentMode, setModeCategory } = useModeStore.getState()
-          const category = getModeCategoryFromAgentMode(mode)
-          if (category) setModeCategory(category)
-          set({ 
-            agentMode: mode,
-            requiresNewChat: currentMode !== mode
-          })
-        },
+          // Actions
+          setAgentMode: (mode) => {
+            const currentMode = get().agentMode
+            
+            // Only update if mode actually changed
+            if (currentMode === mode) {
+              return
+            }
+            
+            set({ 
+              agentMode: mode,
+              requiresNewChat: currentMode !== mode
+            })
+            
+            // Sync ModeStore category when agentMode changes
+            // Only sync if not already syncing to prevent circular updates
+            if (!isSyncing) {
+              isSyncing = true
+              const { getModeCategoryFromAgentMode, setModeCategory } = useModeStore.getState()
+              const category = getModeCategoryFromAgentMode(mode)
+              
+              // Update ModeStore if category would be different
+              if (category && category !== useModeStore.getState().selectedModeCategory) {
+                setModeCategory(category)
+              }
+              isSyncing = false
+            }
+          },
 
         // Mode category helpers
         getModeCategory: () => {
@@ -89,10 +109,9 @@ export const useAppStore = create<AppState>()(
           return getModeCategoryFromAgentMode(get().agentMode)
         },
 
+        // Simplified: Just delegate to ModeStore, which handles all synchronization
         setModeCategory: (category) => {
-          const { getAgentModeFromCategory } = useModeStore.getState()
-          const agentMode = getAgentModeFromCategory(category)
-          get().setAgentMode(agentMode as AgentMode)
+          useModeStore.getState().setModeCategory(category)
         },
 
         clearRequiresNewChat: () => {
@@ -161,7 +180,8 @@ export const useAppStore = create<AppState>()(
           const state = get()
           return state.chatFileContext.length
         }
-      }),
+        }
+      },
       {
         name: 'app-store',
         partialize: (state) => ({

@@ -510,6 +510,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
   // Handle phase start from toolbar (now accepts execution options directly)
   const handleStartPhase = useCallback(async (phaseId: string, executionOptions?: ExecutionOptions) => {
+    // Ensure we're in workflow mode before starting phase (only if we have an active preset)
+    if (activePresetId) {
+      const currentMode = useModeStore.getState().selectedModeCategory
+      if (currentMode !== 'workflow') {
+        useModeStore.getState().setModeCategory('workflow')
+      }
+    }
+    
     // Validate phaseId is actually a string, not a Promise
     if (typeof phaseId !== 'string') {
       console.error('[WorkflowLayout] ❌ Invalid phaseId: expected string, got', typeof phaseId, phaseId)
@@ -653,6 +661,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
   // Handle create plan - starts the planning phase (ID: "planning")
   const handleCreatePlan = useCallback(() => {
+    // Ensure we're in workflow mode before creating plan (only if we have an active preset)
+    if (activePresetId) {
+      const currentMode = useModeStore.getState().selectedModeCategory
+      if (currentMode !== 'workflow') {
+        useModeStore.getState().setModeCategory('workflow')
+      }
+    }
+    
     const phases = useWorkflowStore.getState().phases
     // Look for the "planning" phase explicitly, fallback to second phase (index 1) if not found
     const planningPhase = phases.find(p => p.id === 'planning') || (phases.length > 1 ? phases[1] : phases[0])
@@ -665,7 +681,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     
     // Then start the phase (which will also set showChatArea, but this ensures it's visible immediately)
     handleStartPhase(planningPhaseId)
-  }, [handleStartPhase, setShowChatArea])
+  }, [handleStartPhase, setShowChatArea, activePresetId])
 
   // No preset selected state
   if (!activeWorkflowPreset) {

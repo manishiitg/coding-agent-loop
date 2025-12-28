@@ -6,7 +6,8 @@ import {
   useEdgesState,
   useReactFlow,
   BackgroundVariant,
-  ReactFlowProvider
+  ReactFlowProvider,
+  type NodeChange
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
@@ -64,7 +65,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 }, ref) => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const { fitView, zoomIn, zoomOut, setViewport, getNode } = useReactFlow()
+  const { setViewport, getNode } = useReactFlow()
   const hasInitializedView = React.useRef(false)
   // Store step ID to focus on after nodes update (from backend plan changes)
   const pendingFocusStepIdRef = React.useRef<string | null>(null)
@@ -77,6 +78,179 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       ? `workflow-viewport-${workspacePath}` 
       : 'workflow-viewport-default'
   }, [workspacePath])
+
+  // Get workflow layout file path
+  const getLayoutFilePath = React.useCallback(() => {
+    return workspacePath 
+      ? `${workspacePath}/planning/workflow_layout.json`
+      : null
+  }, [workspacePath])
+
+  // Load saved node positions and offsets from workspace
+  const loadSavedLayout = React.useCallback(async (): Promise<{
+    positions: Map<string, { x: number; y: number }>;
+    offsets: Map<string, { parentId: string; dx: number; dy: number }>;
+  } | null> => {
+    const layoutPath = getLayoutFilePath()
+    if (!layoutPath) return null
+
+    try {
+      const response = await agentApi.getPlannerFileContent(layoutPath)
+      if (response.success && response.data?.content) {
+        const layout = JSON.parse(response.data.content)
+        const positions = new Map<string, { x: number; y: number }>()
+        const offsets = new Map<string, { parentId: string; dx: number; dy: number }>()
+        
+        if (layout.nodePositions && typeof layout.nodePositions === 'object') {
+          Object.entries(layout.nodePositions).forEach(([nodeId, pos]: [string, unknown]) => {
+            if (pos && typeof pos === 'object' && 'x' in pos && 'y' in pos) {
+              positions.set(nodeId, { x: (pos as { x: number }).x, y: (pos as { x: number; y: number }).y })
+            }
+          })
+        }
+        
+        // Load child offsets if available (version 1.1+)
+        if (layout.childOffsets && typeof layout.childOffsets === 'object') {
+          Object.entries(layout.childOffsets).forEach(([nodeId, offset]: [string, unknown]) => {
+            if (offset && typeof offset === 'object' && 'parentId' in offset && 'dx' in offset && 'dy' in offset) {
+              offsets.set(nodeId, {
+                parentId: (offset as { parentId: string }).parentId,
+                dx: (offset as { dx: number }).dx,
+                dy: (offset as { dy: number }).dy
+              })
+            }
+          })
+        }
+        
+        console.log('[WorkflowCanvas] Loaded saved layout:', positions.size, 'node positions', offsets.size, 'child offsets')
+        return { positions, offsets }
+      }
+    } catch {
+      // File doesn't exist yet - that's okay
+      console.log('[WorkflowCanvas] No saved layout found (this is normal for new workspaces)')
+    }
+    return null
+  }, [getLayoutFilePath])
+
+  // Save node positions to workspace
+  const saveLayout = React.useCallback(async (): Promise<void> => {
+    const layoutPath = getLayoutFilePath()
+    if (!layoutPath || !workspacePath) {
+      console.warn('[WorkflowCanvas] Cannot save layout: no workspace path')
+      alert('Cannot save layout: no workspace path')
+      return
+    }
+
+    console.log('[WorkflowCanvas] Saving layout...', { layoutPath, workspacePath })
+
+    // Only save parent node positions (children are calculated from offsets)
+    // Do NOT save positions for validation, learning, evaluation, or sub-agents
+    const parentPositions: Record<string, { x: number; y: number }> = {}
+    nodesRef.current.forEach(node => {
+      // Skip if this is a child node (has a parent) - these should not be saved
+      if (childToParentRef.current.has(node.id)) {
+        return
+      }
+      
+      // Only save positions for main parent nodes (step, conditional, decision, loop, orchestrator, human_input, start, end)
+      if (node.type === 'step' || 
+          node.type === 'conditional' || 
+          node.type === 'decision' || 
+          node.type === 'loop' || 
+          node.type === 'orchestrator' ||
+          node.type === 'human_input' ||
+          node.type === 'start' ||
+          node.type === 'end') {
+        parentPositions[node.id] = { x: node.position.x, y: node.position.y }
+      }
+    })
+
+    // Also save offsets for child nodes (sub-agents, learning, validation) relative to their parents
+    // This ensures we can restore the exact layout the user had
+    const childOffsets: Record<string, { parentId: string; dx: number; dy: number }> = {}
+    nodesRef.current.forEach(node => {
+      const parentId = childToParentRef.current.get(node.id)
+      if (parentId) {
+        const parentNode = nodesRef.current.find(n => n.id === parentId)
+        if (parentNode) {
+          const offset = childOffsetsRef.current.get(node.id)
+          if (offset) {
+            childOffsets[node.id] = {
+              parentId,
+              dx: offset.dx,
+              dy: offset.dy
+            }
+          }
+        }
+      }
+    })
+
+    console.log('[WorkflowCanvas] Parent positions to save:', Object.keys(parentPositions).length, parentPositions)
+    console.log('[WorkflowCanvas] Child offsets to save:', Object.keys(childOffsets).length, childOffsets)
+
+    const layoutData = {
+      nodePositions: parentPositions,
+      childOffsets: childOffsets,
+      version: '1.1',
+      savedAt: new Date().toISOString()
+    }
+
+    setIsSavingLayout(true)
+    try {
+      console.log('[WorkflowCanvas] Calling updatePlannerFile...', { layoutPath, dataSize: JSON.stringify(layoutData).length })
+      const response = await agentApi.updatePlannerFile(layoutPath, JSON.stringify(layoutData, null, 2), 'Save workflow layout')
+      console.log('[WorkflowCanvas] Save response:', response)
+      setHasUnsavedLayoutChanges(false)
+      console.log('[WorkflowCanvas] ✅ Saved layout to workspace:', Object.keys(parentPositions).length, 'node positions')
+    } catch (error) {
+      console.error('[WorkflowCanvas] ❌ Failed to save layout:', error)
+      alert(`Failed to save layout: ${error instanceof Error ? error.message : String(error)}`)
+      throw error
+    } finally {
+      setIsSavingLayout(false)
+    }
+  }, [getLayoutFilePath, workspacePath])
+
+  // Delete layout file and reset to default (auto-layout)
+  const deleteLayout = React.useCallback(async (): Promise<void> => {
+    const layoutPath = getLayoutFilePath()
+    if (!layoutPath || !workspacePath) {
+      console.warn('[WorkflowCanvas] Cannot delete layout: no workspace path')
+      alert('Cannot delete layout: no workspace path')
+      return
+    }
+
+    console.log('[WorkflowCanvas] Deleting layout file...', { layoutPath, workspacePath })
+
+    setIsDeletingLayout(true)
+    try {
+      // Delete the layout file
+      await agentApi.deletePlannerFile(layoutPath, 'Reset workflow layout to default')
+      console.log('[WorkflowCanvas] ✅ Deleted layout file')
+      
+      // Clear unsaved changes flag
+      setHasUnsavedLayoutChanges(false)
+      
+      // Clear any saved layout state
+      // The layout will automatically use auto-layout on next refresh since the file is gone
+      
+      // Trigger a refresh to re-apply auto-layout
+      // This will happen naturally when the component re-renders or when nodes are updated
+      // We can force a refresh by clearing current positions and triggering a node update
+      currentPositionsRef.current.clear()
+      currentOffsetsRef.current.clear()
+      
+      // Force a re-layout by updating nodes (this will trigger auto-layout since no saved layout exists)
+      // The existing layout restoration logic will handle this automatically
+      console.log('[WorkflowCanvas] Layout reset - will use auto-layout on next render')
+    } catch (error) {
+      console.error('[WorkflowCanvas] ❌ Failed to delete layout:', error)
+      alert(`Failed to delete layout: ${error instanceof Error ? error.message : String(error)}`)
+      throw error
+    } finally {
+      setIsDeletingLayout(false)
+    }
+  }, [getLayoutFilePath, workspacePath])
 
   // Track completed step indices from selected iteration (for enabling/disabling run buttons)
   const [completedStepIndices, setCompletedStepIndices] = React.useState<number[]>([])
@@ -276,7 +450,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const handleOpenSidebarRef = React.useRef<((nodeId: string) => void) | null>(null)
   
   // React Flow state (need to define before usePlanToFlow to use in callbacks)
-  const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowNode>([])
+  const [nodes, setNodes, onNodesChangeBase] = useNodesState<WorkflowNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<WorkflowEdge>([])
   const [selectedNode, setSelectedNode] = React.useState<WorkflowNode | null>(null)
 
@@ -285,6 +459,231 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   React.useEffect(() => {
     nodesRef.current = nodes
   }, [nodes])
+
+  // Track unsaved layout changes
+  const [hasUnsavedLayoutChanges, setHasUnsavedLayoutChanges] = React.useState(false)
+  const [isSavingLayout, setIsSavingLayout] = React.useState(false)
+  const [isDeletingLayout, setIsDeletingLayout] = React.useState(false)
+  const saveLayoutTimeoutRef = React.useRef<NodeJS.Timeout | null>(null)
+  
+  // Map of parent node ID to child node IDs (for grouped movement)
+  const nodeGroupsRef = React.useRef<Map<string, string[]>>(new Map())
+  
+  // Map of child node ID to parent node ID (for quick lookup)
+  const childToParentRef = React.useRef<Map<string, string>>(new Map())
+  
+  // Map of child node ID to relative offset from parent { dx, dy }
+  const childOffsetsRef = React.useRef<Map<string, { dx: number; dy: number }>>(new Map())
+
+  // Store current node positions before refresh (to preserve layout when saving from sidebar)
+  const currentPositionsRef = React.useRef<Map<string, { x: number; y: number }>>(new Map())
+  const currentOffsetsRef = React.useRef<Map<string, { parentId: string; dx: number; dy: number }>>(new Map())
+
+  // Build node groups: map parent nodes to their child nodes (validation, learning, evaluation, sub-agents)
+  const buildNodeGroups = useCallback((currentNodes: WorkflowNode[]) => {
+    const groups = new Map<string, string[]>()
+    const childToParent = new Map<string, string>()
+    const offsets = new Map<string, { dx: number; dy: number }>()
+
+    // Helper to check if a node is a parent node type
+    const isParentNode = (node: WorkflowNode): boolean => {
+      return node.type === 'step' || 
+             node.type === 'conditional' || 
+             node.type === 'decision' || 
+             node.type === 'loop' || 
+             node.type === 'orchestrator' ||
+             node.type === 'human_input'
+    }
+
+    // Also treat sub-agents as parent nodes (they have learning/validation children)
+    const isSubAgentNode = (node: WorkflowNode): boolean => {
+      return node.id.includes('-sub-agent-')
+    }
+
+    // First pass: Build groups for regular parent nodes (step, conditional, decision, loop, orchestrator, human_input)
+    currentNodes.forEach(parentNode => {
+      if (!isParentNode(parentNode)) return
+
+      const children: string[] = []
+      
+      // Find validation, learning, and evaluation nodes by parentStepId
+      currentNodes.forEach(childNode => {
+        if (childNode.type === 'validation') {
+          const data = childNode.data as { parentStepId?: string }
+          if (data.parentStepId === parentNode.id) {
+            children.push(childNode.id)
+            childToParent.set(childNode.id, parentNode.id)
+            // Calculate relative offset
+            const dx = childNode.position.x - parentNode.position.x
+            const dy = childNode.position.y - parentNode.position.y
+            offsets.set(childNode.id, { dx, dy })
+          }
+        } else if (childNode.type === 'learning') {
+          const data = childNode.data as { parentStepId?: string }
+          if (data.parentStepId === parentNode.id) {
+            children.push(childNode.id)
+            childToParent.set(childNode.id, parentNode.id)
+            const dx = childNode.position.x - parentNode.position.x
+            const dy = childNode.position.y - parentNode.position.y
+            offsets.set(childNode.id, { dx, dy })
+          }
+        } else if (childNode.type === 'evaluation') {
+          const data = childNode.data as { parentStepId?: string }
+          if (data.parentStepId === parentNode.id) {
+            children.push(childNode.id)
+            childToParent.set(childNode.id, parentNode.id)
+            const dx = childNode.position.x - parentNode.position.x
+            const dy = childNode.position.y - parentNode.position.y
+            offsets.set(childNode.id, { dx, dy })
+          }
+        }
+      })
+
+      // Find sub-agents for orchestrator nodes (node IDs start with orchestrator node ID)
+      if (parentNode.type === 'orchestrator') {
+        currentNodes.forEach(childNode => {
+          if (childNode.id.includes('-sub-agent-') && childNode.id.startsWith(parentNode.id + '-')) {
+            children.push(childNode.id)
+            childToParent.set(childNode.id, parentNode.id)
+            const dx = childNode.position.x - parentNode.position.x
+            const dy = childNode.position.y - parentNode.position.y
+            offsets.set(childNode.id, { dx, dy })
+          }
+        })
+      }
+
+      if (children.length > 0) {
+        groups.set(parentNode.id, children)
+      }
+    })
+
+    // Second pass: Build groups for sub-agents (they have learning/validation children)
+    currentNodes.forEach(subAgentNode => {
+      if (!isSubAgentNode(subAgentNode)) return
+
+      const children: string[] = []
+      
+      // Find validation, learning, and evaluation nodes that belong to this sub-agent
+      currentNodes.forEach(childNode => {
+        if (childNode.type === 'validation' || childNode.type === 'learning' || childNode.type === 'evaluation') {
+          const data = childNode.data as { parentStepId?: string }
+          if (data.parentStepId === subAgentNode.id) {
+            children.push(childNode.id)
+            childToParent.set(childNode.id, subAgentNode.id)
+            const dx = childNode.position.x - subAgentNode.position.x
+            const dy = childNode.position.y - subAgentNode.position.y
+            offsets.set(childNode.id, { dx, dy })
+          }
+        }
+      })
+
+      if (children.length > 0) {
+        groups.set(subAgentNode.id, children)
+      }
+    })
+
+    nodeGroupsRef.current = groups
+    childToParentRef.current = childToParent
+    childOffsetsRef.current = offsets
+  }, [])
+
+  // Custom onNodesChange handler that groups nodes together
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    // Filter out position changes for non-draggable nodes (validation, learning, evaluation)
+    // These nodes should only move with their parent nodes
+    const filteredChanges = changes.filter(change => {
+      if (change.type === 'position') {
+        const nodeId = change.id
+        // Check if this is a child node (has a parent) - these should not be draggable
+        if (childToParentRef.current.has(nodeId)) {
+          return false // Ignore position changes for child nodes
+        }
+      }
+      return true
+    })
+
+    // Apply filtered changes
+    onNodesChangeBase(filteredChanges)
+
+    // Check if any parent node position changed
+    const parentPositionChanges = new Map<string, { x: number; y: number }>()
+    
+    filteredChanges.forEach(change => {
+      if (change.type === 'position' && change.position) {
+        const nodeId = change.id
+        // Check if this is a parent node (not a child)
+        if (nodeGroupsRef.current.has(nodeId) && !childToParentRef.current.has(nodeId)) {
+          parentPositionChanges.set(nodeId, { x: change.position.x, y: change.position.y })
+        }
+      }
+    })
+
+    // If any parent nodes moved, update their children (with cascading updates)
+    if (parentPositionChanges.size > 0) {
+      setNodes((nds) => {
+        // First pass: update direct children
+        let updatedNodes = nds.map(node => {
+          const parentId = childToParentRef.current.get(node.id)
+          if (parentId && parentPositionChanges.has(parentId)) {
+            const newParentPos = parentPositionChanges.get(parentId)!
+            const offset = childOffsetsRef.current.get(node.id)
+            if (offset) {
+              return {
+                ...node,
+                position: {
+                  x: newParentPos.x + offset.dx,
+                  y: newParentPos.y + offset.dy
+                }
+              }
+            }
+          }
+          return node
+        })
+
+        // Second pass: update children of nodes that moved in first pass (cascading)
+        // This handles orchestrator -> sub-agents -> learning nodes
+        const nodesThatMoved = new Set<string>()
+        updatedNodes.forEach(node => {
+          const parentId = childToParentRef.current.get(node.id)
+          if (parentId && parentPositionChanges.has(parentId)) {
+            nodesThatMoved.add(node.id)
+          }
+        })
+
+        // Update children of nodes that moved
+        updatedNodes = updatedNodes.map(node => {
+          const parentId = childToParentRef.current.get(node.id)
+          if (parentId && nodesThatMoved.has(parentId)) {
+            // Find the updated parent node
+            const updatedParent = updatedNodes.find(n => n.id === parentId)
+            if (updatedParent) {
+              const offset = childOffsetsRef.current.get(node.id)
+              if (offset) {
+                return {
+                  ...node,
+                  position: {
+                    x: updatedParent.position.x + offset.dx,
+                    y: updatedParent.position.y + offset.dy
+                  }
+                }
+              }
+            }
+          }
+          return node
+        })
+
+        return updatedNodes
+      })
+
+      // Mark as unsaved
+      setHasUnsavedLayoutChanges(true)
+      
+      // Debounce save (will be saved manually via button, but track changes)
+      if (saveLayoutTimeoutRef.current) {
+        clearTimeout(saveLayoutTimeoutRef.current)
+      }
+    }
+  }, [onNodesChangeBase, setNodes])
 
   // Single reusable function to focus/position a node at the top-left of the screen
   const focusNode = useCallback((
@@ -589,6 +988,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const prevNodesRef = React.useRef<typeof initialNodes>([])
   const prevEdgesRef = React.useRef<typeof initialEdges>([])
 
+  // Rebuild node groups when nodes change
+  React.useEffect(() => {
+    if (nodes.length > 0) {
+      buildNodeGroups(nodes)
+    }
+  }, [nodes, buildNodeGroups])
+
   // Update nodes when plan changes (only if nodes actually changed)
   React.useEffect(() => {
     // Compare by reference first (fast path)
@@ -669,6 +1075,148 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       
       setNodes(initialNodes)
       
+      // Always try to restore positions after nodes regenerate
+      // Priority: 1) Saved layout from file, 2) Current positions (captured before refresh), 3) Auto-layout
+      if (initialNodes.length > 0) {
+        // First try to load saved layout from file
+        loadSavedLayout().then(savedLayout => {
+          // Use saved layout if available, otherwise use current positions (captured before refresh)
+          const positionsToUse = savedLayout?.positions && savedLayout.positions.size > 0 
+            ? savedLayout.positions 
+            : currentPositionsRef.current
+          const offsetsToUse = savedLayout?.offsets && savedLayout.offsets.size > 0
+            ? savedLayout.offsets
+            : currentOffsetsRef.current
+          
+          if (positionsToUse.size > 0) {
+            setNodes((nds) => {
+              // First, apply saved/current positions to parent nodes
+              let updated = nds.map(node => {
+                const savedPos = positionsToUse.get(node.id)
+                if (savedPos) {
+                  return { ...node, position: savedPos }
+                }
+                return node
+              })
+              
+            // Build groups from original auto-layout to get parent-child relationships
+              buildNodeGroups(nds)
+              
+              // If we have saved/current offsets, use them (version 1.1+)
+              // Otherwise, fall back to calculating from original auto-layout
+              if (offsetsToUse.size > 0) {
+                // Apply offsets in multiple passes to handle cascading parent-child relationships
+                // Pass 1: Apply sub-agent offsets (relative to orchestrator)
+                // Pass 2: Apply learning/validation offsets (relative to sub-agents)
+                
+                // First pass: Apply offsets for nodes whose parent is a top-level parent (orchestrator, step, etc.)
+                updated = updated.map(node => {
+                  const savedOffset = offsetsToUse.get(node.id)
+                  if (savedOffset) {
+                    const parentNode = updated.find(n => n.id === savedOffset.parentId)
+                    // Only apply if parent is a top-level parent (not a sub-agent)
+                    if (parentNode && !parentNode.id.includes('-sub-agent-')) {
+                      return {
+                        ...node,
+                        position: {
+                          x: parentNode.position.x + savedOffset.dx,
+                          y: parentNode.position.y + savedOffset.dy
+                        }
+                      }
+                    }
+                  }
+                  return node
+                })
+                
+                // Second pass: Apply offsets for nodes whose parent is a sub-agent (learning/validation nodes)
+                updated = updated.map(node => {
+                  const savedOffset = offsetsToUse.get(node.id)
+                  if (savedOffset) {
+                    const parentNode = updated.find(n => n.id === savedOffset.parentId)
+                    // Only apply if parent is a sub-agent
+                    if (parentNode && parentNode.id.includes('-sub-agent-')) {
+                      return {
+                        ...node,
+                        position: {
+                          x: parentNode.position.x + savedOffset.dx,
+                          y: parentNode.position.y + savedOffset.dy
+                        }
+                      }
+                    }
+                  }
+                  return node
+                })
+              } else {
+                // Fallback: calculate offsets from original auto-layout (for old saved layouts)
+                updated = updated.map(node => {
+                  const parentId = childToParentRef.current.get(node.id)
+                  if (parentId) {
+                    const parentNode = updated.find(n => n.id === parentId)
+                    const originalParentNode = nds.find(n => n.id === parentId)
+                    const originalNode = nds.find(n => n.id === node.id)
+                    
+                    if (parentNode && originalParentNode && originalNode) {
+                      const originalOffset = {
+                        dx: originalNode.position.x - originalParentNode.position.x,
+                        dy: originalNode.position.y - originalParentNode.position.y
+                      }
+                      
+                      return {
+                        ...node,
+                        position: {
+                          x: parentNode.position.x + originalOffset.dx,
+                          y: parentNode.position.y + originalOffset.dy
+                        }
+                      }
+                    }
+                  }
+                  return node
+                })
+              }
+              
+              // Rebuild groups with final positions to ensure offsets are correct for future moves
+              buildNodeGroups(updated)
+              
+              console.log('[WorkflowCanvas] Restored layout:', {
+                usedSavedLayout: savedLayout?.positions && savedLayout.positions.size > 0,
+                usedCurrentPositions: !savedLayout || savedLayout.positions.size === 0,
+                positionsCount: positionsToUse.size,
+                offsetsCount: offsetsToUse.size
+              })
+              
+              // Clear current positions after use (they've been applied)
+              if (positionsToUse === currentPositionsRef.current) {
+                currentPositionsRef.current.clear()
+                currentOffsetsRef.current.clear()
+              }
+              
+              return updated
+            })
+          } else {
+            console.log('[WorkflowCanvas] No saved or current positions to restore, using auto-layout')
+          }
+        }).catch(err => {
+          console.error('[WorkflowCanvas] Failed to load saved layout:', err)
+          // If saved layout fails, try to use current positions
+          if (currentPositionsRef.current.size > 0) {
+            setNodes((nds) => {
+              const updated = nds.map(node => {
+                const savedPos = currentPositionsRef.current.get(node.id)
+                if (savedPos) {
+                  return { ...node, position: savedPos }
+                }
+                return node
+              })
+              buildNodeGroups(updated)
+              // Clear current positions after use
+              currentPositionsRef.current.clear()
+              currentOffsetsRef.current.clear()
+              return updated
+            })
+          }
+        })
+      }
+      
       // Only reset view initialization flag if we don't have a selected node
       // If we have a selected node, we'll re-focus on it after nodes update
       if (!hasSelectedNode) {
@@ -745,7 +1293,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       setEdges(initialEdges)
       prevEdgesRef.current = initialEdges
     }
-  }, [initialNodes, initialEdges, setNodes, setEdges, focusNode])
+  }, [initialNodes, initialEdges, setNodes, setEdges, focusNode, buildNodeGroups, loadSavedLayout])
 
   // Store selected node ID in ref to track which node is selected
   const selectedNodeIdRef = React.useRef<string | null>(null)
@@ -1043,6 +1591,30 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const handleEditStep = useCallback(async (stepId: string, updates: Partial<PlanStep>) => {
     if (!plan) return
     
+    // Capture current node positions before refresh to preserve layout
+    const positions = new Map<string, { x: number; y: number }>()
+    const offsets = new Map<string, { parentId: string; dx: number; dy: number }>()
+    nodesRef.current.forEach(node => {
+      // Save parent node positions
+      if (!childToParentRef.current.has(node.id)) {
+        positions.set(node.id, { x: node.position.x, y: node.position.y })
+      } else {
+        // Save child offsets
+        const parentId = childToParentRef.current.get(node.id)
+        const offset = childOffsetsRef.current.get(node.id)
+        if (parentId && offset) {
+          offsets.set(node.id, {
+            parentId,
+            dx: offset.dx,
+            dy: offset.dy
+          })
+        }
+      }
+    })
+    currentPositionsRef.current = positions
+    currentOffsetsRef.current = offsets
+    console.log('[WorkflowCanvas] Captured current positions before save:', positions.size, 'positions', offsets.size, 'offsets')
+    
     // First try to find in top-level steps (for backward compatibility)
     const stepIndex = plan.steps.findIndex(s => s.id === stepId)
     
@@ -1173,11 +1745,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [plan, workspacePath, loadPlanRefresh])
 
 
-  // Handle fit view
-  const handleFitView = useCallback(() => {
-    fitView({ padding: 0.2 })
-  }, [fitView])
-
   // Handle toggle dependency edges
 
   // Loading state
@@ -1226,9 +1793,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           onStartPhase={handleStartPhase}
           onStop={stopWorkflow}
           onCreatePlan={onCreatePlan || (() => {})}
-          onZoomIn={zoomIn}
-          onZoomOut={zoomOut}
-          onFitView={handleFitView}
           showChatArea={showChatArea}
           onToggleChatArea={onToggleChatArea}
           onRefresh={handleRefresh}
@@ -1271,16 +1835,18 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         workspacePath={workspacePath}
         totalSteps={totalSteps}
         presetQueryId={presetQueryId}
-        onStartPhase={handleStartPhase}
-        onStop={stopWorkflow}
-        onBulkUpdateSteps={handleBulkUpdateSteps}
-        onCreatePlan={onCreatePlan || (() => {})}
-        onZoomIn={zoomIn}
-        onZoomOut={zoomOut}
-        onFitView={handleFitView}
-        showChatArea={showChatArea}
+          onStartPhase={handleStartPhase}
+          onStop={stopWorkflow}
+          onBulkUpdateSteps={handleBulkUpdateSteps}
+          onCreatePlan={onCreatePlan || (() => {})}
+          showChatArea={showChatArea}
         onToggleChatArea={onToggleChatArea}
         onRefresh={handleRefresh}
+        onSaveLayout={saveLayout}
+        onDeleteLayout={deleteLayout}
+        hasUnsavedLayoutChanges={hasUnsavedLayoutChanges}
+        isSavingLayout={isSavingLayout}
+        isDeletingLayout={isDeletingLayout}
       />
 
       {/* React Flow Canvas with Sidebar */}

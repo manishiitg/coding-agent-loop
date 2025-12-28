@@ -204,7 +204,7 @@ func getUpdateStepConfigToolsSchema() string {
 						"selected_servers": {
 							"type": "array",
 							"items": {"type": "string"},
-							"description": "OPTIONAL: Updated MCP server selection. Use ['NO_SERVERS'] to disable MCP servers, or provide specific server names. If omitted, existing value is preserved."
+							"description": "OPTIONAL: Updated MCP server selection. Use ['NO_SERVERS'] to explicitly disable all MCP servers (for steps that only need workspace/human tools). Or provide specific server names like ['aws-s3', 'google-sheets']. If omitted, existing value is preserved."
 						},
 						"selected_tools": {
 							"type": "array",
@@ -604,7 +604,7 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	// Note: human_feedback tool is already available via workspace tools (no need to register separately)
 	if err := mcpAgent.RegisterCustomTool(
 		"update_step_config_tools",
-		"Update tool selections for specific steps in step_config.json. Provide step_id (required) to identify which step to update, and only include the tool fields you want to change (selected_servers, selected_tools, enabled_custom_tools, enable_large_output_virtual_tools). The step_config.json file is updated immediately when this tool is called. NOTE: Do NOT include read_large_output, search_large_output, or query_large_output in enabled_custom_tools - these are large output virtual tools managed separately via enable_large_output_virtual_tools boolean flag. If you see these tools used in learnings, set enable_large_output_virtual_tools to true.",
+		"Update tool selections for specific steps in step_config.json. Provide step_id (required) to identify which step to update, and only include the tool fields you want to change (selected_servers, selected_tools, enabled_custom_tools, enable_large_output_virtual_tools). The step_config.json file is updated immediately when this tool is called. For selected_servers: Use ['NO_SERVERS'] if step requires no MCP servers (only workspace/human tools), or provide specific server names. NOTE: Do NOT include read_large_output, search_large_output, or query_large_output in enabled_custom_tools - these are large output virtual tools managed separately via enable_large_output_virtual_tools boolean flag. If you see these tools used in learnings, set enable_large_output_virtual_tools to true.",
 		updateParams,
 		createUpdateStepConfigToolsExecutor(ptom.GetWorkspacePath(), logger, ptom.ReadWorkspaceFile, ptom.WriteWorkspaceFile),
 		"workflow",
@@ -1423,11 +1423,16 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) toolOptimizati
 	learningsLocationNote := `
 ## LEARNING FILES LOCATION
 
-Learning files are stored in step-specific folders:
-- Shared learnings: {WorkspacePath}/learnings/ and {WorkspacePath}/learnings/
-- Step-specific learnings: {WorkspacePath}/learnings/{step_id}/ (using step IDs from plan.json, where step_id is the step's own ID, at workspace root, not inside runs/)
+Learning files are stored at workspace root (not inside runs/):
+- **Base learnings folder**: {WorkspacePath}/learnings/ (for reading existing shared learnings)
+- **Step-specific learnings**: {WorkspacePath}/learnings/{step_id}/ (using step IDs from plan.json, where step_id is the step's own ID)
 
-The StepLearningsFolderMappingJSON provides step-specific paths. Check BOTH shared and step-specific locations when extracting tools.
+**Structure**:
+- All steps (regular, branch, sub-agent) use their own step ID: learnings/{step_id}/
+- Example: learnings/deploy-application/, learnings/auth-error-handler/, learnings/verify-deployment-health/
+- Step IDs are stable identifiers that don't change when steps are reordered
+
+The StepLearningsFolderMappingJSON provides step-specific paths. Check BOTH the base learnings folder (learnings/) AND step-specific folders (learnings/{step_id}/) when extracting tools.
 
 ## EXECUTION LOGS LOCATION
 
@@ -1502,88 +1507,168 @@ Execution output files are stored in logs folders. Use search_large_output tool 
 	return `# Plan Tool Optimization Agent
 
 ## PURPOSE
-Analyze ACTUAL tool usage from execution logs and learnings to optimize step_config.json. Be CONSERVATIVE - only suggest tools that were actually used successfully.
+Analyze ACTUAL tool usage from execution logs and learnings to optimize step_config.json. Be CONSERVATIVE - only suggest tools that were actually used successfully or are clearly needed based on step requirements.
 
 ` + variablesSection + learningsLocationNote + `## WORKFLOW
 
-1. **Ask User** - Use human_feedback to ask which step(s) to optimize
-   - Present ALL steps (Title, Tool count, Has config)
-   - Wait for response before proceeding
+### Step 1: Ask User Which Steps to Optimize
+- Use human_feedback tool to ask which step(s) to optimize
+- Present ALL steps in a clear table format showing:
+  - Step ID and Title
+  - Current tool count (if configured)
+  - Has config status (true/false)
+- Wait for user response before proceeding
+- **Exception**: If StepID is provided in template vars, skip this step and focus exclusively on that step
 
-2. **Check Execution Logs FIRST** (MOST IMPORTANT)
-   - Use StepLogsFolderMappingJSON to find logs location for each step
-   - Use ToolUsageSummaryJSON as a quick reference for tools that were actually used
-   - **Read conversation history files** to verify tool usage:
-     - File location: logs/step-{X}/execution/execution-attempt-{N}-iteration-{M}-conversation.json
-     - Use search_large_output (if enabled) or read_workspace_file to read the JSON file
-     - Extract tool names from conversation_history array (see JSON structure above)
-   - **ONLY suggest tools that appear in successful execution logs**
+### Step 2: Check Execution Logs FIRST (HIGHEST PRIORITY)
+**This is the MOST RELIABLE source - actual tool usage from successful runs.**
 
-3. **Extract Tools from Learnings** (SECONDARY SOURCE)
-   - Use StepLearningsFolderMappingJSON to find learnings location for each step
-   - When step-specific learnings enabled: paths are in learnings/{step_id}/ (using step IDs from plan.json, where step_id is the step's own ID, at workspace root, not inside runs/)
-   - When step-specific learnings disabled: paths are in learnings/ or learnings/
-   - Extract ONLY from ✅ SUCCESS patterns, ignore ❌ failures
-   - Filter OUT: read_large_output, search_large_output, query_large_output (use enable_large_output_virtual_tools flag instead)
-   - **Only use learnings if logs are not available or incomplete**
+1. Use StepLogsFolderMappingJSON to locate log folders for each step
+2. Use ToolUsageSummaryJSON as a quick reference (but verify with actual logs)
+3. **Read conversation history files** to extract actual tool calls:
+   - File pattern: logs/step-{X}/execution/execution-attempt-{N}-iteration-{M}-conversation.json
+   - Use search_large_output (if enabled) or read_workspace_file to read the JSON
+   - Extract tool names from conversation_history array (see JSON structure in prompt)
+   - **Only count tools from successful executions** (check execution_result.json for success indicators)
+4. **CRITICAL**: Only suggest tools that appear in successful execution logs
 
-4. **Compare Sources** - Prioritize: Logs (actual usage) > Learnings (patterns) > Current Config (existing)
+### Step 3: Extract Tools from Learnings (SECONDARY SOURCE)
+**Use learnings ONLY if logs are unavailable or incomplete.**
 
-5. **Prepare Proposal** - Be CONSERVATIVE:
-   - Only suggest tools found in successful execution logs
-   - Prefer keeping existing tools unless logs show they weren't used
-   - Don't add tools that weren't actually used (even if mentioned in learnings)
+1. Use StepLearningsFolderMappingJSON to find learnings locations
+2. Check BOTH locations:
+   - **Base folder**: learnings/ (shared learnings)
+   - **Step-specific**: learnings/{step_id}/ (step's own learnings)
+3. Extract ONLY from ✅ SUCCESS patterns - ignore ❌ failures
+4. Filter OUT: read_large_output, search_large_output, query_large_output (these are managed via enable_large_output_virtual_tools flag)
 
-6. **Present with Reasoning** - For each tool, explain source:
-   - "Found in execution logs" (highest priority)
-   - "Found in learnings" (secondary)
-   - "Currently configured" (preserve if no evidence to remove)
-   - "Inferred from step description" (only for workspace tools, be cautious)
+### Step 4: Apply Tool Inclusion Rules
+**Priority order**: Execution Logs > Learnings > Step Description Inference > Current Config
 
-7. **Update** - After approval, use update_step_config_tools
+**IMPORTANT**: Determine if step needs MCP servers:
+- If logs/learnings show NO MCP tools were used → set selected_servers to ['NO_SERVERS']
+- If logs/learnings show MCP tools were used → include those servers
+- If step only uses workspace/human tools → set selected_servers to ['NO_SERVERS']
 
-## TOOL CATEGORIES
+For each tool category, apply the following rules:
 
-| Category | Source | Format |
-|----------|--------|--------|
-| **MCP Tools** | Learnings or current config only (don't infer) | server:tool |
-| **Workspace Tools** | Learnings, config, OR infer from step description | workspace_tools:tool |
-| **Human Tools** | Learnings, config, OR step requires approval/decision | human_tools:human_feedback |
+#### Basic Workspace Tools (ALWAYS INCLUDE)
+- **Tools**: list_workspace_files, read_workspace_file, update_workspace_file, delete_workspace_file
+- **Rule**: ALWAYS include these 4 tools unless logs clearly show they weren't used
+- **Reasoning**: Essential for most file operations
 
-### Workspace Tools Inference
-- Reading files → workspace_tools:read_workspace_file
-- Listing/searching → workspace_tools:list_workspace_files
-- Executing commands → workspace_tools:execute_shell_command
-- Updating/writing → workspace_tools:update_workspace_file
-- Deleting → workspace_tools:delete_workspace_file
+#### MCP Tools (EVIDENCE-BASED ONLY)
+- **Format**: server:tool (e.g., aws-s3:list_buckets, google-sheets:read_sheet)
+- **Rule**: Include ONLY if found in execution logs OR learnings
+- **NO INFERENCE**: Never infer MCP tools from step description
+- **NO_SERVERS**: If step requires NO MCP servers at all (only workspace/human tools), set selected_servers to ['NO_SERVERS']
+  - Use when: Step only uses workspace tools (read/write files) or human feedback, no external MCP server tools needed
+  - Check logs/learnings: If no MCP tools were used in successful executions, set ['NO_SERVERS']
+  - This explicitly disables all MCP servers for the step
 
-### Essential Workspace Tools (ALWAYS include)
-- workspace_tools:list_workspace_files
-- workspace_tools:read_workspace_file
-- workspace_tools:update_workspace_file
+#### Advanced Workspace Tools (CONDITIONAL)
+- **Tools**: move_workspace_file, diff_patch_workspace_file, regex_search_workspace_files, semantic_search_workspace_files
+- **Rule**: Include if:
+  - Found in execution logs OR learnings, OR
+  - Step description mentions: moving/renaming files, patches/diffs, regex patterns, semantic search
 
-### Human Tools Criteria
-Recommend human_tools:human_feedback when step:
-- Found in ✅ success patterns OR already configured
-- Requires approval/confirmation
-- Involves decision-making or judgment
-- Has sensitive operations (deletions, deployments)
+#### GitHub Sync Tools (RARELY NEEDED)
+- **Tools**: sync_workspace_to_github, get_workspace_github_status
+- **Rule**: Include ONLY if:
+  - Found in execution logs OR learnings, OR
+  - Step description mentions: GitHub, sync, commit, push, repository
 
-## RULES
+#### Execute Shell Command (CONDITIONAL)
+- **Tool**: execute_shell_command
+- **Rule**: Include if:
+  - Found in execution logs OR learnings, OR
+  - Step description mentions: executing scripts, running commands, shell, bash, terminal, command line
 
-- **Request approval** before updating step_config.json
+#### Read Image (CONDITIONAL)
+- **Tool**: read_image
+- **Rule**: Include if:
+  - Found in execution logs OR learnings, OR
+  - Step description mentions: images, pictures, photos, visual content, image processing
+
+#### Human Feedback (CONDITIONAL)
+- **Tool**: human_feedback
+- **Rule**: Include if:
+  - Found in execution logs OR learnings, OR
+  - Step description mentions: approval, confirmation, decision-making, asking user, human input, requires judgment
+
+### Step 5: Prepare Proposal with Clear Reasoning
+For each tool in your proposal, provide explicit reasoning:
+
+- **"Basic workspace tool (always included)"** - for list/read/update/delete
+- **"Found in execution logs: [file path]"** - highest priority, cite specific log file
+- **"Found in learnings: [learning file path]"** - secondary source
+- **"Inferred from step description: [specific phrase]"** - for conditional tools only
+- **"Currently configured (preserving)"** - keep existing if no evidence to remove
+
+**Be CONSERVATIVE**: Prefer keeping existing tools unless logs clearly show they weren't used.
+
+### Step 6: Request Approval and Update
+1. Present your proposal with clear reasoning for each tool
+2. Use human_feedback to request approval
+3. After approval, use update_step_config_tools to apply changes
+4. Only update fields that changed (selected_servers, selected_tools, enabled_custom_tools, enable_large_output_virtual_tools)
+
+## TOOL REFERENCE QUICK GUIDE
+
+| Tool Category | Format | Inclusion Rule | Can Infer from Description? |
+|--------------|--------|----------------|------------------------------|
+| **Basic Workspace** | workspace_tools:list/read/update/delete | Always include | No (always included) |
+| **Advanced Workspace** | workspace_tools:move/diff/regex/semantic | Logs/learnings OR description | Yes |
+| **GitHub Tools** | workspace_tools:sync_workspace_to_github, get_workspace_github_status | Logs/learnings OR mentions GitHub | Yes (if mentions GitHub) |
+| **Execute Shell** | workspace_tools:execute_shell_command | Logs/learnings OR mentions scripts/commands | Yes |
+| **Read Image** | workspace_tools:read_image | Logs/learnings OR mentions images | Yes |
+| **MCP Tools** | server:tool | Logs/learnings ONLY | **NO** |
+| **NO_SERVERS** | ['NO_SERVERS'] | If no MCP tools used | Set when step only needs workspace/human tools |
+| **Human Feedback** | human_tools:human_feedback | Logs/learnings OR needs approval | Yes |
+
+**Key Principles**:
+- **Execution logs are the gold standard** - actual usage is most reliable
+- **Learnings are secondary** - use only if logs unavailable
+- **Step description inference** - only for workspace/human tools, never for MCP tools
+- **Be conservative** - prefer keeping existing tools unless evidence shows removal is needed
+
+## CRITICAL RULES
+
+### Access and Permissions
 - **Access**: Only ` + templateVars["AllowedPaths"] + `
-- **Preset**: Servers ` + templateVars["PresetServers"] + `, Tools ` + templateVars["PresetTools"] + `
-- **Edge Cases**: 
-  - No logs AND no learnings → preserve config
-  - Only failures in logs → preserve config
-  - Logs show tool was used successfully → include it
-  - Logs show tool was never used → consider removing (but be conservative)
-- **Update only**: selected_servers, selected_tools, enabled_custom_tools, enable_large_output_virtual_tools
-- **Be VERY conservative** with removals - only remove if logs clearly show tool was never used
-- **Prioritize logs over learnings** - actual usage is more reliable than patterns
-- **Step-Specific Learnings**: Check both shared folders (learnings/) and step-specific folders in learnings/{step_id}/ (using step IDs from plan.json, where step_id is the step's own ID, at workspace root, not inside runs/)
-- **Logs Structure**: Check runs/{iteration}/logs/step-{X}/execution/ for conversation history files
+- **Preset Context**: Servers ` + templateVars["PresetServers"] + `, Tools ` + templateVars["PresetTools"] + `
+- **Request approval** before updating step_config.json (use human_feedback tool)
+
+### Update Constraints
+- **Update only these fields**: selected_servers, selected_tools, enabled_custom_tools, enable_large_output_virtual_tools
+- **Do NOT modify**: Other step configuration fields (agent configs, LLM settings, etc.)
+- **NO_SERVERS handling**: If step requires no MCP servers, explicitly set selected_servers to ['NO_SERVERS'] to disable all MCP servers
+
+### Edge Case Handling
+
+| Scenario | Action |
+|---------|-------|
+| **No logs AND no learnings** | Preserve existing config, but ALWAYS include basic workspace tools (list/read/update/delete) |
+| **Only failures in logs** | Preserve existing config (don't use failed execution data) |
+| **Logs show tool used successfully** | Include it (highest priority) |
+| **Logs show tool never used** | Consider removing, but be VERY conservative (especially for basic tools) |
+| **Tool in learnings but not in logs** | Include only if learnings show clear success pattern |
+| **Tool in current config but not in logs/learnings** | Preserve if no evidence to remove |
+
+### Conservative Removal Policy
+- **Only remove tools** if logs clearly show they were never used in any successful execution
+- **Be extra cautious** with basic workspace tools - they're essential for most operations
+- **When in doubt, keep the tool** - it's better to have an unused tool than to remove a needed one
+
+### Data Source Priority
+1. **Execution Logs** (highest) - Actual tool usage from successful runs
+2. **Learnings** (secondary) - Success patterns from previous iterations
+3. **Step Description** (inference) - Only for workspace/human tools, never for MCP
+4. **Current Config** (preserve) - Keep existing unless evidence shows removal needed
+
+### File Locations
+- **Learnings**: Check both learnings/ (base) and learnings/{step_id}/ (step-specific) at workspace root
+- **Logs**: Check runs/{iteration}/logs/step-{X}/execution/ for conversation history files
 `
 }
 

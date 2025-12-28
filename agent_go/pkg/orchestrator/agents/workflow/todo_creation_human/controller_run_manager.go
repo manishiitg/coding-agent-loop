@@ -3,6 +3,7 @@ package todo_creation_human
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -221,14 +222,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolderWithOptions(
 
 // workspaceFileExists checks if a file or directory exists in the workspace
 func (hcpo *HumanControlledTodoPlannerOrchestrator) workspaceFileExists(ctx context.Context, path string) bool {
-	// Try to read a .keep file to check if directory exists
-	_, err := hcpo.ReadWorkspaceFile(ctx, fmt.Sprintf("%s/.keep", path))
-	if err == nil {
-		return true
-	}
-
 	// Try to read the path directly (for files)
-	_, err = hcpo.ReadWorkspaceFile(ctx, path)
+	_, err := hcpo.ReadWorkspaceFile(ctx, path)
 	if err == nil {
 		return true
 	}
@@ -281,24 +276,21 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) listRunFolders(ctx context.C
 
 // createRunFolderStructure creates the basic structure for a run folder
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createRunFolderStructure(ctx context.Context, runPath string) error {
-	// Create .keep file to ensure directory is created
-	keepFile := fmt.Sprintf("%s/.keep", runPath)
-	if err := hcpo.WriteWorkspaceFile(ctx, keepFile, "# This file ensures the run folder exists"); err != nil {
+	// Create run folder directory
+	if err := os.MkdirAll(runPath, 0755); err != nil {
 		return fmt.Errorf(fmt.Sprintf("failed to create run folder: %w", err), nil)
 	}
 
 	// Create execution/knowledgebase folder structure
 	executionPath := fmt.Sprintf("%s/execution", runPath)
 	knowledgebasePath := getKnowledgebasePath(executionPath)
-	knowledgebaseKeepFile := fmt.Sprintf("%s/.keep", knowledgebasePath)
-	if err := hcpo.WriteWorkspaceFile(ctx, knowledgebaseKeepFile, "# This file ensures the knowledgebase folder exists\n# Files in this folder persist across runs and are never deleted during cleanup"); err != nil {
+	if err := os.MkdirAll(knowledgebasePath, 0755); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create knowledgebase folder: %v (continuing)", err))
 		// Don't fail - knowledgebase folder will be created when first file is written
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Created knowledgebase folder: %s", knowledgebasePath))
 	}
 
-	// The actual folder creation will happen when files are written
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created run folder structure: %s", runPath))
 	return nil
 }

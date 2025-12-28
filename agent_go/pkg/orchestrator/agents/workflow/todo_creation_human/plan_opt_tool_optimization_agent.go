@@ -798,6 +798,16 @@ func createMinimalPlan(fullPlan *PlanningResponse, currentToolConfigsMap map[str
 					extractSteps(conditionalStep.IfFalseSteps)
 				}
 			}
+			// Recursively extract sub-agents from orchestration routes
+			if orchestrationStep, ok := step.(*OrchestrationPlanStep); ok {
+				// Extract sub-agents from routes
+				for _, route := range orchestrationStep.OrchestrationRoutes {
+					if route.SubAgentStep != nil {
+						// Recursively process sub-agent step (may have nested structures)
+						extractSteps([]PlanStepInterface{route.SubAgentStep})
+					}
+				}
+			}
 		}
 	}
 
@@ -859,13 +869,23 @@ func createStepLearningsFolderMapping(stepConfigs []StepConfig, plan *PlanningRe
 				currentParentStepID = parentStepID
 			}
 
-			// Only ConditionalPlanStep has branch steps
+			// Recursively extract branch steps (only for ConditionalPlanStep)
 			if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
 				if len(conditionalStep.IfTrueSteps) > 0 {
 					extractMappings(conditionalStep.IfTrueSteps, currentParentStepID, "true", branchIdx)
 				}
 				if len(conditionalStep.IfFalseSteps) > 0 {
 					extractMappings(conditionalStep.IfFalseSteps, currentParentStepID, "false", branchIdx)
+				}
+			}
+			// Recursively extract sub-agents from orchestration routes
+			if orchestrationStep, ok := step.(*OrchestrationPlanStep); ok {
+				// Extract sub-agents from routes
+				for _, route := range orchestrationStep.OrchestrationRoutes {
+					if route.SubAgentStep != nil {
+						// Recursively process sub-agent step (may have nested structures)
+						extractMappings([]PlanStepInterface{route.SubAgentStep}, currentParentStepID, "", -1)
+					}
 				}
 			}
 		}
@@ -948,6 +968,29 @@ func createStepLogsFolderMapping(plan *PlanningResponse, stepConfigs []StepConfi
 				}
 				if len(conditionalStep.IfFalseSteps) > 0 {
 					extractMappings(conditionalStep.IfFalseSteps, currentStepNumber, "false", branchIdx)
+				}
+			}
+			// Recursively extract sub-agents from orchestration routes
+			if orchestrationStep, ok := step.(*OrchestrationPlanStep); ok {
+				// Extract sub-agents from routes
+				// Sub-agents use step-X-sub-agent-{index} format for logs
+				for routeIdx, route := range orchestrationStep.OrchestrationRoutes {
+					if route.SubAgentStep != nil {
+						// Sub-agents have their own step number tracking
+						// Use parent step number with sub-agent index
+						subAgentStepNumber := currentStepNumber
+						subAgentLogsPathBase := fmt.Sprintf("step-%d-sub-agent-%d", subAgentStepNumber, routeIdx)
+						subAgentLogsPaths := []string{
+							fmt.Sprintf("runs/*/logs/%s/", subAgentLogsPathBase),
+							fmt.Sprintf("logs/%s/", subAgentLogsPathBase),
+						}
+						mappings = append(mappings, StepLogsFolderMapping{
+							StepID:    route.SubAgentStep.GetID(),
+							LogsPaths: subAgentLogsPaths,
+						})
+						// Recursively process sub-agent step (may have nested structures)
+						extractMappings([]PlanStepInterface{route.SubAgentStep}, subAgentStepNumber, "", -1)
+					}
 				}
 			}
 		}

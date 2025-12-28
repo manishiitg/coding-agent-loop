@@ -45,6 +45,38 @@ type PlanOrchestrationRoute struct {
 	ContextToPass string            `json:"context_to_pass,omitempty"` // Optional: specific context to pass to sub-agent
 }
 
+// MarshalJSON implements custom marshaling for PlanOrchestrationRoute
+// This is needed to properly handle the SubAgentStep field which is a PlanStepInterface
+func (r PlanOrchestrationRoute) MarshalJSON() ([]byte, error) {
+	type routeJSON struct {
+		RouteID       string          `json:"route_id"`
+		RouteName     string          `json:"route_name"`
+		Condition     string          `json:"condition"`
+		SubAgentStep  json.RawMessage `json:"sub_agent_step"`
+		ContextToPass string          `json:"context_to_pass,omitempty"`
+	}
+
+	result := routeJSON{
+		RouteID:       r.RouteID,
+		RouteName:     r.RouteName,
+		Condition:     r.Condition,
+		ContextToPass: r.ContextToPass,
+	}
+
+	// Marshal SubAgentStep if it exists
+	if r.SubAgentStep != nil {
+		subAgentJSON, err := json.Marshal(r.SubAgentStep)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal sub_agent_step: %w", err)
+		}
+		result.SubAgentStep = subAgentJSON
+	} else {
+		result.SubAgentStep = []byte("null")
+	}
+
+	return json.Marshal(result)
+}
+
 // UnmarshalJSON implements custom unmarshaling for PlanOrchestrationRoute
 // This is needed to properly handle the SubAgentStep field which is a PlanStepInterface
 func (r *PlanOrchestrationRoute) UnmarshalJSON(data []byte) error {
@@ -340,9 +372,52 @@ func (c *ConditionalPlanStep) GetCommonFields() CommonStepFields {
 func (c *ConditionalPlanStep) MarshalJSON() ([]byte, error) {
 	// Ensure type is set
 	c.Type = StepTypeConditional
-	// Use type alias to avoid infinite recursion
-	type Alias ConditionalPlanStep
-	return json.Marshal((*Alias)(c))
+
+	type conditionalJSON struct {
+		Type StepType `json:"type"`
+		CommonStepFields
+		ConditionQuestion string            `json:"condition_question,omitempty"`
+		ConditionContext  string            `json:"condition_context,omitempty"`
+		IfTrueSteps       []json.RawMessage `json:"if_true_steps,omitempty"`
+		IfFalseSteps      []json.RawMessage `json:"if_false_steps,omitempty"`
+		IfTrueNextStepID  string            `json:"if_true_next_step_id,omitempty"`
+		IfFalseNextStepID string            `json:"if_false_next_step_id,omitempty"`
+	}
+
+	result := conditionalJSON{
+		Type:              c.Type,
+		CommonStepFields:  c.CommonStepFields,
+		ConditionQuestion: c.ConditionQuestion,
+		ConditionContext:  c.ConditionContext,
+		IfTrueNextStepID:  c.IfTrueNextStepID,
+		IfFalseNextStepID: c.IfFalseNextStepID,
+	}
+
+	// Marshal IfTrueSteps
+	if len(c.IfTrueSteps) > 0 {
+		result.IfTrueSteps = make([]json.RawMessage, len(c.IfTrueSteps))
+		for i, step := range c.IfTrueSteps {
+			stepJSON, err := json.Marshal(step)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal if_true_steps[%d]: %w", i, err)
+			}
+			result.IfTrueSteps[i] = stepJSON
+		}
+	}
+
+	// Marshal IfFalseSteps
+	if len(c.IfFalseSteps) > 0 {
+		result.IfFalseSteps = make([]json.RawMessage, len(c.IfFalseSteps))
+		for i, step := range c.IfFalseSteps {
+			stepJSON, err := json.Marshal(step)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal if_false_steps[%d]: %w", i, err)
+			}
+			result.IfFalseSteps[i] = stepJSON
+		}
+	}
+
+	return json.Marshal(result)
 }
 
 // UnmarshalJSON implements custom unmarshaling for ConditionalPlanStep
@@ -455,9 +530,38 @@ func (d *DecisionPlanStep) GetCommonFields() CommonStepFields {
 func (d *DecisionPlanStep) MarshalJSON() ([]byte, error) {
 	// Ensure type is set
 	d.Type = StepTypeDecision
-	// Use type alias to avoid infinite recursion
-	type Alias DecisionPlanStep
-	return json.Marshal((*Alias)(d))
+
+	type decisionJSON struct {
+		Type                       StepType        `json:"type"`
+		ID                         string          `json:"id"`
+		Title                      string          `json:"title"`
+		DecisionStep               json.RawMessage `json:"decision_step,omitempty"`
+		DecisionEvaluationQuestion string          `json:"decision_evaluation_question,omitempty"`
+		IfTrueNextStepID           string          `json:"if_true_next_step_id,omitempty"`
+		IfFalseNextStepID          string          `json:"if_false_next_step_id,omitempty"`
+	}
+
+	result := decisionJSON{
+		Type:                       d.Type,
+		ID:                         d.ID,
+		Title:                      d.Title,
+		DecisionEvaluationQuestion: d.DecisionEvaluationQuestion,
+		IfTrueNextStepID:           d.IfTrueNextStepID,
+		IfFalseNextStepID:          d.IfFalseNextStepID,
+	}
+
+	// Marshal DecisionStep if it exists
+	if d.DecisionStep != nil {
+		stepJSON, err := json.Marshal(d.DecisionStep)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal decision_step: %w", err)
+		}
+		result.DecisionStep = stepJSON
+	} else {
+		result.DecisionStep = []byte("null")
+	}
+
+	return json.Marshal(result)
 }
 
 // UnmarshalJSON implements custom unmarshaling for DecisionPlanStep
@@ -556,9 +660,36 @@ func (o *OrchestrationPlanStep) GetCommonFields() CommonStepFields {
 func (o *OrchestrationPlanStep) MarshalJSON() ([]byte, error) {
 	// Ensure type is set
 	o.Type = StepTypeOrchestration
-	// Use type alias to avoid infinite recursion
-	type Alias OrchestrationPlanStep
-	return json.Marshal((*Alias)(o))
+
+	type orchestrationJSON struct {
+		Type                StepType                 `json:"type"`
+		ID                  string                   `json:"id"`
+		Title               string                   `json:"title"`
+		OrchestrationStep   json.RawMessage          `json:"orchestration_step,omitempty"`
+		OrchestrationRoutes []PlanOrchestrationRoute `json:"orchestration_routes,omitempty"`
+		NextStepID          string                   `json:"next_step_id,omitempty"`
+	}
+
+	result := orchestrationJSON{
+		Type:                o.Type,
+		ID:                  o.ID,
+		Title:               o.Title,
+		OrchestrationRoutes: o.OrchestrationRoutes, // Go will call MarshalJSON on each PlanOrchestrationRoute
+		NextStepID:          o.NextStepID,
+	}
+
+	// Marshal OrchestrationStep if it exists
+	if o.OrchestrationStep != nil {
+		stepJSON, err := json.Marshal(o.OrchestrationStep)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal orchestration_step: %w", err)
+		}
+		result.OrchestrationStep = stepJSON
+	} else {
+		result.OrchestrationStep = []byte("null")
+	}
+
+	return json.Marshal(result)
 }
 
 // HumanInputPlanStep represents a step that asks a question to a human and blocks for input
@@ -2748,6 +2879,43 @@ func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningRe
 	}
 
 	return nil
+}
+
+// countSubAgentsInPlan counts all sub-agents in orchestration steps (recursively)
+// This is a helper function for debugging marshaling issues
+func countSubAgentsInPlan(plan *PlanningResponse) int {
+	if plan == nil {
+		return 0
+	}
+	count := 0
+	for _, step := range plan.Steps {
+		if orchestrationStep, ok := step.(*OrchestrationPlanStep); ok {
+			count += len(orchestrationStep.OrchestrationRoutes)
+			// Recursively count sub-agents in nested structures
+			for _, route := range orchestrationStep.OrchestrationRoutes {
+				if route.SubAgentStep != nil {
+					// Check if sub-agent itself has nested orchestration steps
+					if subOrchestration, ok := route.SubAgentStep.(*OrchestrationPlanStep); ok {
+						count += countSubAgentsInPlan(&PlanningResponse{Steps: []PlanStepInterface{subOrchestration}})
+					}
+				}
+			}
+		}
+		// Also check conditional steps for nested orchestration
+		if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
+			for _, branchStep := range conditionalStep.IfTrueSteps {
+				if branchOrchestration, ok := branchStep.(*OrchestrationPlanStep); ok {
+					count += countSubAgentsInPlan(&PlanningResponse{Steps: []PlanStepInterface{branchOrchestration}})
+				}
+			}
+			for _, branchStep := range conditionalStep.IfFalseSteps {
+				if branchOrchestration, ok := branchStep.(*OrchestrationPlanStep); ok {
+					count += countSubAgentsInPlan(&PlanningResponse{Steps: []PlanStepInterface{branchOrchestration}})
+				}
+			}
+		}
+	}
+	return count
 }
 
 // validateNestingDepth checks if the maximum nesting depth (2 levels) is exceeded

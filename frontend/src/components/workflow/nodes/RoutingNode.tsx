@@ -132,7 +132,7 @@ export const OrchestratorNode = memo(({ data, selected }: OrchestratorNodeProps)
     selected_servers?: string[]
     selected_tools?: string[]
     enabled_custom_tools?: string[]
-    enable_large_output_virtual_tools?: boolean
+    enable_context_offloading?: boolean
   } }
 
   // Determine code execution mode: step config > preset default
@@ -296,7 +296,7 @@ export const OrchestratorNode = memo(({ data, selected }: OrchestratorNodeProps)
 
   const hasWorkspaceTools = workspaceToolsInfo.enabled > 0
   const hasHumanTools = humanToolsInfo.enabled > 0
-  const hasLargeOutput = stepConfig?.agent_configs?.enable_large_output_virtual_tools !== false
+  const hasLargeOutput = stepConfig?.agent_configs?.enable_context_offloading !== false
 
   // Button states
   const isRunDisabled = isExecuting || !onRunFromStep

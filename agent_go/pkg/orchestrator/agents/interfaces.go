@@ -88,8 +88,8 @@ type OrchestratorAgentConfig struct {
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed via generated Go code using discover_code_files and write_code
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
-	// Large output virtual tools configuration
-	EnableLargeOutputVirtualTools *bool `json:"enable_large_output_virtual_tools,omitempty"` // Enable/disable large output tools (default: true if nil)
+	// Context offloading configuration
+	EnableContextOffloading *bool `json:"enable_context_offloading,omitempty"` // Enable/disable context offloading (default: true if nil)
 
 	// System prompt configuration
 	OverwriteSystemPrompt *bool `json:"overwrite_system_prompt,omitempty"` // Overwrite (true) or append (false) system prompt during execution (default: false if nil)

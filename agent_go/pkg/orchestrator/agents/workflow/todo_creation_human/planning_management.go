@@ -432,8 +432,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPlanningAgent(ctx cont
 
 	// Disable large output virtual tools for planning agent
 	disabled := false
-	agentConfig.EnableLargeOutputVirtualTools = &disabled
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling large output virtual tools for planning agent"))
+	agentConfig.EnableContextOffloading = &disabled
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling context offloading for planning agent"))
 
 	// Planning agent uses plan modification tools (registered in runPlanningPhase, not here)
 	// Pass empty tools/executors - tools will be registered separately

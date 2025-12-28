@@ -76,7 +76,7 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
 }
 
 export const StepNode = memo(({ data, selected }: StepNodeProps) => {
-  const { id, title, description, success_criteria, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder, validation_schema } = data
+  const { id, title, description, success_criteria, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder, validation_schema, parentOrchestratorTitle, routeName, routeCondition } = data
 
   // Process text to convert escaped newlines to actual newlines
   const processText = (text: string | undefined): string | undefined => {
@@ -145,7 +145,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     selected_servers?: string[]
     selected_tools?: string[]
     enabled_custom_tools?: string[]
-    enable_large_output_virtual_tools?: boolean
+    enable_context_offloading?: boolean
     enable_prerequisite_detection?: boolean
     prerequisite_rules?: Array<{ depends_on_step: string; description: string }>
     skip_llm_validation_if_pre_validation_passes?: boolean
@@ -304,7 +304,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
   
   const hasWorkspaceTools = workspaceToolsInfo.enabled > 0
   const hasHumanTools = humanToolsInfo.enabled > 0
-  const hasLargeOutput = stepConfig?.agent_configs?.enable_large_output_virtual_tools !== false // Default is enabled
+  const hasLargeOutput = stepConfig?.agent_configs?.enable_context_offloading !== false // Default is enabled
 
   const hasContext = contextInputs.length > 0 || contextOutputs.length > 0
 
@@ -672,6 +672,40 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Sub-agent info: Parent orchestrator and route condition (shown at bottom for sub-agents) */}
+        {isSubAgent && (
+          <div className="px-4 py-2.5 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/30">
+            <div className="flex flex-col gap-1.5 text-[10px] text-gray-600 dark:text-gray-400">
+              {parentOrchestratorTitle ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="font-medium text-gray-700 dark:text-gray-300">Parent:</span>
+                  <span className="truncate text-gray-800 dark:text-gray-200">{parentOrchestratorTitle}</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <span className="font-medium text-gray-700 dark:text-gray-300">Parent:</span>
+                  <span className="truncate">Orchestrator</span>
+                </div>
+              )}
+              {(routeName || routeCondition) && (
+                <div className="flex items-start gap-1.5">
+                  <span className="font-medium text-gray-700 dark:text-gray-300 flex-shrink-0">Route:</span>
+                  <div className="flex-1 min-w-0">
+                    {routeName && (
+                      <div className="truncate text-gray-800 dark:text-gray-200">{routeName}</div>
+                    )}
+                    {routeCondition && (
+                      <div className="truncate text-gray-500 dark:text-gray-500 italic mt-0.5" title={routeCondition}>
+                        {routeCondition.length > 40 ? `${routeCondition.substring(0, 40)}...` : routeCondition}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

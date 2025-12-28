@@ -829,7 +829,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningDetectionAgent
 	// Disable large output virtual tools (context offloading) for learning detection agent
 	// Detection agent should not offload its outputs to prevent issues with learning content comparison
 	disabled := false
-	config.EnableLargeOutputVirtualTools = &disabled
+	config.EnableContextOffloading = &disabled
 	hcpo.GetLogger().Info("🔧 Disabling large output virtual tools (context offloading) for learning detection agent")
 
 	// Detection agent doesn't need tools (pure LLM analysis)

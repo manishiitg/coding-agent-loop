@@ -214,11 +214,11 @@ func getUpdateStepConfigToolsSchema() string {
 						"enabled_custom_tools": {
 							"type": "array",
 							"items": {"type": "string"},
-							"description": "OPTIONAL: Updated custom tool selection. Format: ['workspace_tools:*'] for all workspace tools, ['workspace_tools:read_workspace_file'] for specific tools, ['human_tools:human_feedback'] for human tools. If omitted, existing value is preserved. NOTE: Do NOT include read_large_output, search_large_output, or query_large_output - these are large output virtual tools managed separately via enable_large_output_virtual_tools boolean flag."
+							"description": "OPTIONAL: Updated custom tool selection. Format: ['workspace_tools:*'] for all workspace tools, ['workspace_tools:read_workspace_file'] for specific tools, ['human_tools:human_feedback'] for human tools. If omitted, existing value is preserved. NOTE: Do NOT include read_large_output, search_large_output, or query_large_output - these are context offloading virtual tools managed separately via enable_context_offloading boolean flag."
 						},
-						"enable_large_output_virtual_tools": {
+						"enable_context_offloading": {
 							"type": "boolean",
-							"description": "OPTIONAL: Enable or disable large output virtual tools (read_large_output, search_large_output, query_large_output) for this step. Set to true to enable, false to disable. If omitted, existing value is preserved (default: true if not set)."
+							"description": "OPTIONAL: Enable or disable context offloading virtual tools (read_large_output, search_large_output, query_large_output) for this step. Set to true to enable, false to disable. If omitted, existing value is preserved (default: true if not set)."
 						}
 					},
 					"required": ["step_id"]
@@ -280,11 +280,11 @@ func writeStepConfigToFile(ctx context.Context, workspacePath string, configs []
 
 // PartialStepConfigUpdate represents a partial update to a step's tool configuration (used only in tool schemas)
 type PartialStepConfigUpdate struct {
-	StepID                        string   `json:"step_id"`                                     // Required: ID of existing step to update
-	SelectedServers               []string `json:"selected_servers,omitempty"`                  // Optional: Updated server selection
-	SelectedTools                 []string `json:"selected_tools,omitempty"`                    // Optional: Updated tool selection
-	EnabledCustomTools            []string `json:"enabled_custom_tools,omitempty"`              // Optional: Updated custom tool selection
-	EnableLargeOutputVirtualTools *bool    `json:"enable_large_output_virtual_tools,omitempty"` // Optional: Enable/disable large output virtual tools
+	StepID                  string   `json:"step_id"`                             // Required: ID of existing step to update
+	SelectedServers         []string `json:"selected_servers,omitempty"`          // Optional: Updated server selection
+	SelectedTools           []string `json:"selected_tools,omitempty"`            // Optional: Updated tool selection
+	EnabledCustomTools      []string `json:"enabled_custom_tools,omitempty"`      // Optional: Updated custom tool selection
+	EnableContextOffloading *bool    `json:"enable_context_offloading,omitempty"` // Optional: Enable/disable context offloading
 }
 
 // mergePartialStepConfigUpdate merges a PartialStepConfigUpdate into an existing StepConfig
@@ -304,8 +304,8 @@ func mergePartialStepConfigUpdate(existingConfig *StepConfig, partialUpdate Part
 	if partialUpdate.EnabledCustomTools != nil {
 		existingConfig.AgentConfigs.EnabledCustomTools = partialUpdate.EnabledCustomTools
 	}
-	if partialUpdate.EnableLargeOutputVirtualTools != nil {
-		existingConfig.AgentConfigs.EnableLargeOutputVirtualTools = partialUpdate.EnableLargeOutputVirtualTools
+	if partialUpdate.EnableContextOffloading != nil {
+		existingConfig.AgentConfigs.EnableContextOffloading = partialUpdate.EnableContextOffloading
 	}
 }
 
@@ -378,8 +378,8 @@ func createUpdateStepConfigToolsExecutor(workspacePath string, logger loggerv2.L
 			if update.EnabledCustomTools != nil {
 				changes = append(changes, fmt.Sprintf("custom_tools: %v", update.EnabledCustomTools))
 			}
-			if update.EnableLargeOutputVirtualTools != nil {
-				changes = append(changes, fmt.Sprintf("large_output_virtual_tools: %v", *update.EnableLargeOutputVirtualTools))
+			if update.EnableContextOffloading != nil {
+				changes = append(changes, fmt.Sprintf("context_offloading: %v", *update.EnableContextOffloading))
 			}
 			if len(changes) > 0 {
 				changeDescriptions = append(changeDescriptions, fmt.Sprintf("%s: %s", update.StepID, strings.Join(changes, ", ")))
@@ -604,7 +604,7 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	// Note: human_feedback tool is already available via workspace tools (no need to register separately)
 	if err := mcpAgent.RegisterCustomTool(
 		"update_step_config_tools",
-		"Update tool selections for specific steps in step_config.json. Provide step_id (required) to identify which step to update, and only include the tool fields you want to change (selected_servers, selected_tools, enabled_custom_tools, enable_large_output_virtual_tools). The step_config.json file is updated immediately when this tool is called. For selected_servers: Use ['NO_SERVERS'] if step requires no MCP servers (only workspace/human tools), or provide specific server names. NOTE: Do NOT include read_large_output, search_large_output, or query_large_output in enabled_custom_tools - these are large output virtual tools managed separately via enable_large_output_virtual_tools boolean flag. If you see these tools used in learnings, set enable_large_output_virtual_tools to true.",
+		"Update tool selections for specific steps in step_config.json. Provide step_id (required) to identify which step to update, and only include the tool fields you want to change (selected_servers, selected_tools, enabled_custom_tools, enable_context_offloading). The step_config.json file is updated immediately when this tool is called. For selected_servers: Use ['NO_SERVERS'] if step requires no MCP servers (only workspace/human tools), or provide specific server names. NOTE: Do NOT include read_large_output, search_large_output, or query_large_output in enabled_custom_tools - these are context offloading virtual tools managed separately via enable_context_offloading boolean flag. If you see these tools used in learnings, set enable_context_offloading to true.",
 		updateParams,
 		createUpdateStepConfigToolsExecutor(ptom.GetWorkspacePath(), logger, ptom.ReadWorkspaceFile, ptom.WriteWorkspaceFile),
 		"workflow",
@@ -1540,7 +1540,7 @@ Analyze ACTUAL tool usage from execution logs and learnings to optimize step_con
    - **Base folder**: learnings/ (shared learnings)
    - **Step-specific**: learnings/{step_id}/ (step's own learnings)
 3. Extract ONLY from ✅ SUCCESS patterns - ignore ❌ failures
-4. Filter OUT: read_large_output, search_large_output, query_large_output (these are managed via enable_large_output_virtual_tools flag)
+4. Filter OUT: read_large_output, search_large_output, query_large_output (these are managed via enable_context_offloading flag)
 
 ### Step 4: Apply Tool Inclusion Rules
 **Priority order**: Execution Logs > Learnings > Step Description Inference > Current Config
@@ -1611,7 +1611,7 @@ For each tool in your proposal, provide explicit reasoning:
 1. Present your proposal with clear reasoning for each tool
 2. Use human_feedback to request approval
 3. After approval, use update_step_config_tools to apply changes
-4. Only update fields that changed (selected_servers, selected_tools, enabled_custom_tools, enable_large_output_virtual_tools)
+4. Only update fields that changed (selected_servers, selected_tools, enabled_custom_tools, enable_context_offloading)
 
 ## TOOL REFERENCE QUICK GUIDE
 
@@ -1640,7 +1640,7 @@ For each tool in your proposal, provide explicit reasoning:
 - **Request approval** before updating step_config.json (use human_feedback tool)
 
 ### Update Constraints
-- **Update only these fields**: selected_servers, selected_tools, enabled_custom_tools, enable_large_output_virtual_tools
+- **Update only these fields**: selected_servers, selected_tools, enabled_custom_tools, enable_context_offloading
 - **Do NOT modify**: Other step configuration fields (agent configs, LLM settings, etc.)
 - **NO_SERVERS handling**: If step requires no MCP servers, explicitly set selected_servers to ['NO_SERVERS'] to disable all MCP servers
 

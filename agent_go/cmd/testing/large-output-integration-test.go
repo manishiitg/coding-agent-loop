@@ -118,7 +118,7 @@ func testVirtualToolsForLargeOutput(testDir string) error {
 
 	// Create an agent with large output virtual tools enabled
 	agent := &mcpagent.Agent{
-		EnableLargeOutputVirtualTools: true,
+		EnableContextOffloading: true,
 	}
 
 	// Set up the tool output handler
@@ -210,7 +210,7 @@ func testRealAgentConversation(testDir string) error {
 
 	// Create a simple agent for testing
 	agent := &mcpagent.Agent{
-		EnableLargeOutputVirtualTools: true,
+		EnableContextOffloading: true,
 	}
 
 	// Set up tool output handler for testing

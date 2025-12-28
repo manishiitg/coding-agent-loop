@@ -174,13 +174,13 @@ func testLargeOutputVirtualTools(testDir string) error {
 
 	// Create a test agent with large output virtual tools enabled
 	agent := &mcpagent.Agent{
-		EnableLargeOutputVirtualTools: true,
+		EnableContextOffloading: true,
 	}
 	agent.SetToolOutputHandler(mcpagent.NewToolOutputHandler())
 
 	// Test 1: Check if large output virtual tools are enabled by default
 	logger.Info("Test 1: Default Configuration")
-	logger.Info(fmt.Sprintf("EnableLargeOutputVirtualTools: %v", agent.EnableLargeOutputVirtualTools))
+	logger.Info(fmt.Sprintf("EnableContextOffloading: %v", agent.EnableContextOffloading))
 
 	// Test 2: Create virtual tools and check if large output tools are included
 	logger.Info("Test 2: Virtual Tools Creation")
@@ -198,7 +198,7 @@ func testLargeOutputVirtualTools(testDir string) error {
 
 	// Test 3: Test with disabled large output virtual tools
 	logger.Info("Test 3: Disabled Configuration")
-	agent.EnableLargeOutputVirtualTools = false
+	agent.EnableContextOffloading = false
 	disabledTools := agent.CreateLargeOutputVirtualTools()
 	logger.Info(fmt.Sprintf("Large output virtual tools when disabled: %d", len(disabledTools)))
 
@@ -231,7 +231,7 @@ func testLargeOutputVirtualTools(testDir string) error {
 	logger.Info(fmt.Sprintf("get_prompt result: %s, error: %v", result, err))
 
 	// Test large output tool when enabled (should work)
-	agent.EnableLargeOutputVirtualTools = true
+	agent.EnableContextOffloading = true
 
 	// Create a test file to read from
 	testFilePath := filepath.Join(testDir, "test-session", "tool_20250731_143800_test_tool.json")
@@ -257,7 +257,7 @@ func testLargeOutputVirtualTools(testDir string) error {
 	logger.Info(fmt.Sprintf("read_large_output when enabled: %s, error: %v", result, err))
 
 	// Test large output tool when disabled (should fail)
-	agent.EnableLargeOutputVirtualTools = false
+	agent.EnableContextOffloading = false
 	result, err = agent.HandleLargeOutputVirtualTool(ctx, "read_large_output", map[string]interface{}{
 		"filename": "test.json",
 		"start":    float64(1),

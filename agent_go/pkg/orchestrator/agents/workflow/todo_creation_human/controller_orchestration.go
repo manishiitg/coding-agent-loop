@@ -13,6 +13,42 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
+// appendOrchestrationLogEntry appends a JSON entry to the orchestration execution log file (JSONL format)
+// Each entry is a single JSON object on its own line
+func (hcpo *HumanControlledTodoPlannerOrchestrator) appendOrchestrationLogEntry(ctx context.Context, filePath string, entry map[string]interface{}) error {
+	// Marshal the entry to a single JSON line (no indentation for JSONL format)
+	entryJSON, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("failed to marshal orchestration log entry to JSON: %w", err)
+	}
+
+	// Read existing file content if it exists
+	existingContent := ""
+	existingContent, err = hcpo.ReadWorkspaceFile(ctx, filePath)
+	if err != nil {
+		// File doesn't exist yet - this is expected for the first entry
+		// Only log if it's not a "file not found" type error
+		if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read existing orchestration log file %s: %v (will create new file)", filePath, err))
+		}
+		existingContent = ""
+	}
+
+	// Append new entry (with newline if file already has content)
+	newContent := existingContent
+	if existingContent != "" {
+		newContent += "\n"
+	}
+	newContent += string(entryJSON)
+
+	// Write the updated content back
+	if err := hcpo.WriteWorkspaceFile(ctx, filePath, newContent); err != nil {
+		return fmt.Errorf("failed to append orchestration log entry to %s: %w", filePath, err)
+	}
+
+	return nil
+}
+
 // executeOrchestrationStep executes an orchestration step by:
 //  1. Looping until success criteria is met:
 //     a. Execute main orchestration step using OrchestrationOrchestratorAgent (with sub-agent output in context if available)
@@ -200,9 +236,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 		}
 
 		validationFolderPath := getValidationFolderPath(validationWorkspacePath, orchestrationStepPath)
-		// Save routing decision with iteration number to track multiple routing decisions
-		routingFilePath := fmt.Sprintf("%s/orchestration-routing-iteration-%d.json", validationFolderPath, orchestrationIteration+1)
-		routingResponse := map[string]interface{}{
+		// Append routing decision to single orchestration execution log file (JSONL format)
+		orchestrationLogFilePath := fmt.Sprintf("%s/orchestration-execution.json", validationFolderPath)
+		routingEntry := map[string]interface{}{
+			"type":                  "routing",
 			"step_index":            stepIndex + 1,
 			"step_path":             orchestrationStepPath,
 			"orchestration_step_id": step.GetID(),
@@ -219,39 +256,38 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			"timestamp": time.Now().Format(time.RFC3339),
 		}
 
-		routingJSON, err := json.MarshalIndent(routingResponse, "", "  ")
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal orchestration routing response to JSON: %v", err))
+		if err := hcpo.appendOrchestrationLogEntry(ctx, orchestrationLogFilePath, routingEntry); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to append orchestration routing entry to log: %v", err))
 		} else {
-			if err := hcpo.WriteWorkspaceFile(ctx, routingFilePath, string(routingJSON)); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write orchestration routing response to %s: %v", routingFilePath, err))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("💾 Orchestration routing response saved to: %s", routingFilePath))
-			}
+			hcpo.GetLogger().Info(fmt.Sprintf("💾 Orchestration routing entry appended to: %s", orchestrationLogFilePath))
 		}
 
 		// Store main step execution result to logs (if enabled)
 		if hcpo.saveValidationResponses {
-			executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, mainStepPath)
-			executionResultFilePath := fmt.Sprintf("%s/orchestration-main-step.json", executionLogsFolderPath)
-			executionResponse := map[string]interface{}{
-				"step_index":             stepIndex + 1,
-				"step_path":              mainStepPath,
-				"orchestration_step_id":  step.GetID(),
-				"iteration":              orchestrationIteration + 1,
-				"orchestration_response": orchestrationResponse,
-				"timestamp":              time.Now().Format(time.RFC3339),
+			validationFolderPath := getValidationFolderPath(validationWorkspacePath, orchestrationStepPath)
+			orchestrationLogFilePath := fmt.Sprintf("%s/orchestration-execution.json", validationFolderPath)
+			mainStepEntry := map[string]interface{}{
+				"type":                  "main_step",
+				"step_index":            stepIndex + 1,
+				"step_path":             mainStepPath,
+				"orchestration_step_id": step.GetID(),
+				"iteration":             orchestrationIteration + 1,
+				"orchestration_response": map[string]interface{}{
+					"selected_route_id":                  orchestrationResponse.SelectedRouteID,
+					"success_criteria_met":               orchestrationResponse.SuccessCriteriaMet,
+					"success_reasoning":                  orchestrationResponse.SuccessReasoning,
+					"instructions_to_sub_agent":          orchestrationResponse.InstructionsToSubAgent,
+					"success_criteria_for_sub_agent":     orchestrationResponse.SuccessCriteriaForSubAgent,
+					"context_dependencies_for_sub_agent": orchestrationResponse.ContextDependenciesForSubAgent,
+					"context_output_for_sub_agent":       orchestrationResponse.ContextOutputForSubAgent,
+				},
+				"timestamp": time.Now().Format(time.RFC3339),
 			}
 
-			executionJSON, err := json.MarshalIndent(executionResponse, "", "  ")
-			if err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal orchestration main step execution response to JSON: %v", err))
+			if err := hcpo.appendOrchestrationLogEntry(ctx, orchestrationLogFilePath, mainStepEntry); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to append orchestration main step entry to log: %v", err))
 			} else {
-				if err := hcpo.WriteWorkspaceFile(ctx, executionResultFilePath, string(executionJSON)); err != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write orchestration main step execution response to %s: %v", executionResultFilePath, err))
-				} else {
-					hcpo.GetLogger().Info(fmt.Sprintf("💾 Orchestration main step execution response saved to: %s", executionResultFilePath))
-				}
+				hcpo.GetLogger().Info(fmt.Sprintf("💾 Orchestration main step entry appended to: %s", orchestrationLogFilePath))
 			}
 		}
 
@@ -269,8 +305,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 		// Store orchestration evaluation result to logs (if enabled)
 		if hcpo.saveValidationResponses {
 			validationFolderPath := getValidationFolderPath(validationWorkspacePath, orchestrationStepPath)
-			orchestrationEvaluationFilePath := fmt.Sprintf("%s/orchestration-evaluation.json", validationFolderPath)
-			orchestrationEvaluationResponse := map[string]interface{}{
+			orchestrationLogFilePath := fmt.Sprintf("%s/orchestration-execution.json", validationFolderPath)
+			evaluationEntry := map[string]interface{}{
+				"type":                  "evaluation",
 				"step_index":            stepIndex + 1,
 				"step_path":             orchestrationStepPath,
 				"orchestration_step_id": step.GetID(),
@@ -282,15 +319,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 				"timestamp":             time.Now().Format(time.RFC3339),
 			}
 
-			orchestrationJSON, err := json.MarshalIndent(orchestrationEvaluationResponse, "", "  ")
-			if err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal orchestration evaluation response to JSON: %v", err))
+			if err := hcpo.appendOrchestrationLogEntry(ctx, orchestrationLogFilePath, evaluationEntry); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to append orchestration evaluation entry to log: %v", err))
 			} else {
-				if err := hcpo.WriteWorkspaceFile(ctx, orchestrationEvaluationFilePath, string(orchestrationJSON)); err != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write orchestration evaluation response to %s: %v", orchestrationEvaluationFilePath, err))
-				} else {
-					hcpo.GetLogger().Info(fmt.Sprintf("💾 Orchestration evaluation response saved to: %s", orchestrationEvaluationFilePath))
-				}
+				hcpo.GetLogger().Info(fmt.Sprintf("💾 Orchestration evaluation entry appended to: %s", orchestrationLogFilePath))
 			}
 		}
 

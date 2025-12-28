@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { devtools } from 'zustand/middleware'
+import type { AgentMode } from './types'
 
 export type ModeCategory = 'chat' | 'workflow' | null
 
@@ -28,65 +29,97 @@ interface ModeState {
 export const useModeStore = create<ModeState>()(
   devtools(
     persist(
-      (set) => ({
-        // Initial state
-        selectedModeCategory: null,
-        hasCompletedInitialSetup: false,
-        lastSelectedPreset: {
-          'workflow': null
-        },
+      (set, get) => {
+        // Sync flag to prevent circular updates
+        let isSyncing = false
+        
+        return {
+          // Initial state
+          selectedModeCategory: null,
+          hasCompletedInitialSetup: false,
+          lastSelectedPreset: {
+            'workflow': null
+          },
 
-        // Actions
-        setModeCategory: (category) => {
-          set({ selectedModeCategory: category })
-        },
-
-        completeInitialSetup: () => {
-          set({ hasCompletedInitialSetup: true })
-        },
-
-        setLastPreset: (category, presetId) => {
-          set((state) => ({
-            lastSelectedPreset: {
-              ...state.lastSelectedPreset,
-              [category]: presetId
+          // Actions
+          setModeCategory: (category) => {
+            const currentCategory = get().selectedModeCategory
+            
+            // Only update if category actually changed
+            if (currentCategory === category) {
+              return
             }
-          }))
-        },
-
-        resetModeSelection: () => {
-          set({
-            selectedModeCategory: null,
-            hasCompletedInitialSetup: false,
-            lastSelectedPreset: {
-              'workflow': null
+            
+            set({ selectedModeCategory: category })
+            
+            // Automatically sync AppStore's agentMode when category changes
+            // Use dynamic import to avoid circular dependency at module level
+            if (!isSyncing) {
+              isSyncing = true
+              import('./useAppStore').then(({ useAppStore }) => {
+                const { getAgentModeFromCategory } = get()
+                const agentMode = getAgentModeFromCategory(category)
+                const appStore = useAppStore.getState()
+                
+                // Only update if agentMode would be different
+                if (appStore.agentMode !== agentMode) {
+              // Call setAgentMode to sync AppStore
+              appStore.setAgentMode(agentMode as AgentMode)
+                }
+                isSyncing = false
+              }).catch(() => {
+                isSyncing = false
+              })
             }
-          })
-        },
+          },
 
-        // Helpers
-        getModeCategoryFromAgentMode: (agentMode) => {
-          switch (agentMode) {
-            case 'simple':
-              return 'chat'
-            case 'workflow':
-              return 'workflow'
-            default:
-              return null
-          }
-        },
+          completeInitialSetup: () => {
+            set({ hasCompletedInitialSetup: true })
+          },
 
-        getAgentModeFromCategory: (category) => {
-          switch (category) {
-            case 'chat':
-              return 'simple' // Default to simple for chat mode
-            case 'workflow':
-              return 'workflow'
-            default:
-              return 'simple'
+          setLastPreset: (category, presetId) => {
+            set((state) => ({
+              lastSelectedPreset: {
+                ...state.lastSelectedPreset,
+                [category]: presetId
+              }
+            }))
+          },
+
+          resetModeSelection: () => {
+            set({
+              selectedModeCategory: null,
+              hasCompletedInitialSetup: false,
+              lastSelectedPreset: {
+                'workflow': null
+              }
+            })
+          },
+
+          // Helpers
+          getModeCategoryFromAgentMode: (agentMode) => {
+            switch (agentMode) {
+              case 'simple':
+                return 'chat'
+              case 'workflow':
+                return 'workflow'
+              default:
+                return null
+            }
+          },
+
+          getAgentModeFromCategory: (category) => {
+            switch (category) {
+              case 'chat':
+                return 'simple' // Default to simple for chat mode
+              case 'workflow':
+                return 'workflow'
+              default:
+                return 'simple'
+            }
           }
         }
-      }),
+      },
       {
         name: 'mode-store',
         partialize: (state) => ({

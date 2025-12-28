@@ -1042,12 +1042,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[WORKFLOW DEBUG] Selected servers for workflow: %v", selectedServers)
 
 		// Create workflow event bridge for event emission
+		// Note: ChatDB is set to nil - workflow events are stored in memory only (for polling API)
+		// Chat history database storage is disabled for workflows to reduce database load
 		workflowEventBridge := &eventbridge.WorkflowEventBridge{
 			BaseEventBridge: &eventbridge.BaseEventBridge{
 				EventStore: api.eventStore,
 				SessionID:  sessionID,
 				Logger:     api.logger,
-				ChatDB:     api.chatDB,
+				ChatDB:     nil, // Disable database storage for workflows
 				BridgeName: "workflow",
 			},
 		}
@@ -1610,7 +1612,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			ToolChoice:         "auto",
 			StreamingChunkSize: 50,
 			Timeout:            2 * time.Minute,
-			SelectedTools:      selectedTools, // NEW: Pass selected tools
+			ToolTimeout: func() time.Duration {
+				// Check environment variable
+				if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
+					if timeout, err := time.ParseDuration(envVal); err == nil && timeout > 0 {
+						return timeout
+					}
+				}
+				// Default to 2 minutes if not specified
+				return 2 * time.Minute
+			}(),
+			SelectedTools: selectedTools, // NEW: Pass selected tools
 
 			// Enable smart routing by default for both React and Simple agents
 			EnableSmartRouting:     true,

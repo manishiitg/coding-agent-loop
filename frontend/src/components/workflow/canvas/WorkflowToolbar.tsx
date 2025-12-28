@@ -72,8 +72,10 @@ interface WorkflowToolbarProps {
   onBulkUpdateSteps?: (updates: Array<{ stepId: string; updates: Partial<PlanStep> }>) => Promise<void>  // Bulk update function
   onRefresh?: () => Promise<void>  // Refresh plan and variables
   onSaveLayout?: () => Promise<void>  // Save workflow layout
+  onDeleteLayout?: () => Promise<void>  // Delete workflow layout and reset to default
   hasUnsavedLayoutChanges?: boolean  // Whether there are unsaved layout changes
   isSavingLayout?: boolean  // Whether layout is currently being saved
+  isDeletingLayout?: boolean  // Whether layout is currently being deleted
   className?: string
 }
 
@@ -93,8 +95,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   onBulkUpdateSteps,
   onRefresh,
   onSaveLayout,
+  onDeleteLayout,
   hasUnsavedLayoutChanges = false,
   isSavingLayout = false,
+  isDeletingLayout = false,
   className = ''
 }) => {
   // Workspace store for opening folders
@@ -273,17 +277,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   useEffect(() => {
     const settingsKey = `${presetQueryId}|${selectedRunFolder}|${selectedExecutionMode}|${selectedStartPoint}|${JSON.stringify(selectedGroupIds)}`
     
-    console.log('[EFFECT_DEBUG] saveSettings effect triggered:', {
-      presetQueryId,
-      selectedRunFolder,
-      selectedExecutionMode,
-      selectedStartPoint,
-      selectedGroupIds,
-      prevSettingsKey: prevSettingsRef.current,
-      currentSettingsKey: settingsKey,
-      willSave: prevSettingsRef.current !== settingsKey && !!presetQueryId
-    })
-    
     // Only save if settings actually changed
     if (prevSettingsRef.current !== settingsKey && presetQueryId) {
       prevSettingsRef.current = settingsKey
@@ -304,15 +297,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   useEffect(() => {
     const loadKey = `${workspacePath}|${selectedRunFolder}`
     const shouldLoad = workspacePath && selectedRunFolder !== 'new'
-    
-    console.log('[EFFECT_DEBUG] loadProgress effect triggered:', {
-      workspacePath,
-      selectedRunFolder,
-      condition: shouldLoad,
-      prevLoadKey: prevLoadProgressRef.current,
-      currentLoadKey: loadKey,
-      willLoad: prevLoadProgressRef.current !== loadKey && shouldLoad
-    })
     
     // Only load if workspacePath or selectedRunFolder actually changed
     if (prevLoadProgressRef.current !== loadKey && shouldLoad) {
@@ -378,18 +362,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     const indices = stepProgress?.completed_step_indices || []
     const sorted = indices.slice().sort((a, b) => a - b)
     
-    // Debug: Track dependency changes
+    // Track dependency changes
     const prevDeps = completedStepIndicesDepsRef.current
     const depsChanged = prevDeps.indices !== indices || prevDeps.totalSteps !== totalSteps
     if (depsChanged) {
-      console.log('[MEMO_DEBUG] completedStepIndices useMemo dependencies changed:', {
-        prevIndices: prevDeps.indices,
-        currentIndices: indices,
-        indicesReferenceChanged: prevDeps.indices !== indices,
-        prevTotalSteps: prevDeps.totalSteps,
-        currentTotalSteps: totalSteps,
-        totalStepsChanged: prevDeps.totalSteps !== totalSteps
-      })
       completedStepIndicesDepsRef.current = { indices, totalSteps }
     }
     
@@ -398,20 +374,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     
     // Only update if data actually changed
     if (stepProgressDataRef.current !== dataStr) {
-      console.log('[MEMO_DEBUG] completedStepIndices useMemo recalculating:', {
-        prevDataStr: stepProgressDataRef.current,
-        newDataStr: dataStr,
-        dataChanged: stepProgressDataRef.current !== dataStr
-      })
       stepProgressDataRef.current = dataStr
       completedStepIndicesRef.current = sorted
-      console.log('[PROGRESS_DEBUG] WorkflowToolbar - completedStepIndices changed:', {
-        raw: indices,
-        sorted,
-        totalSteps
-      })
-    } else {
-      console.log('[MEMO_DEBUG] completedStepIndices useMemo returning cached value (data unchanged)')
     }
     
     return completedStepIndicesRef.current
@@ -721,18 +685,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       prevDeps.branchSteps !== stepProgressBranchSteps
     
     if (depsChanged) {
-      console.log('[MEMO_DEBUG] startPointOptions useMemo dependencies changed:', {
-        completedStepIndicesRefChanged: prevDeps.completedStepIndices !== completedStepIndices,
-        totalStepsChanged: prevDeps.totalSteps !== totalSteps,
-        planStepsLengthChanged: prevDeps.planStepsLength !== planStepsCount,
-        branchStepsRefChanged: prevDeps.branchSteps !== stepProgressBranchSteps,
-        prevCompletedStepIndices: prevDeps.completedStepIndices,
-        currentCompletedStepIndices: completedStepIndices,
-        prevTotalSteps: prevDeps.totalSteps,
-        currentTotalSteps: totalSteps,
-        prevPlanStepsLength: prevDeps.planStepsLength,
-        currentPlanStepsLength: planStepsCount
-      })
       startPointOptionsDepsRef.current = {
         completedStepIndices,
         totalSteps,
@@ -748,27 +700,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     
     // Only recalculate if data actually changed
     if (startPointOptionsDataRef.current === dataStr && startPointOptionsRef.current.length > 0) {
-      console.log('[MEMO_DEBUG] startPointOptions useMemo returning cached value (data unchanged):', {
-        dataStr,
-        cachedOptionsLength: startPointOptionsRef.current.length
-      })
       return startPointOptionsRef.current
     }
     
-    console.log('[MEMO_DEBUG] startPointOptions useMemo recalculating:', {
-      prevDataStr: startPointOptionsDataRef.current,
-      newDataStr: dataStr,
-      dataChanged: startPointOptionsDataRef.current !== dataStr,
-      hasCachedValue: startPointOptionsRef.current.length > 0
-    })
     startPointOptionsDataRef.current = dataStr
-    
-    console.log('[PROGRESS_DEBUG] Generating startPointOptions:', {
-      completedStepIndices,
-      completedStepIndicesLength: completedStepIndices.length,
-      totalSteps,
-      condition: completedStepIndices.length > 0 && totalSteps > 0
-    })
     
     // Add resume options for all completed steps plus the next step after all completed
     if (completedStepIndices.length > 0 && totalSteps > 0) {
@@ -809,7 +744,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     
     // Add branch step resume options for conditional steps with incomplete branches
     if (planSteps && stepProgressBranchSteps && Object.keys(stepProgressBranchSteps).length > 0) {
-      console.log('[WorkflowToolbar] Processing branch steps:', stepProgressBranchSteps)
       Object.entries(stepProgressBranchSteps).forEach(([stepIndexStr, branchProgress]) => {
         const parentStepIndex = parseInt(stepIndexStr, 10)
         const parentStep = planSteps[parentStepIndex]
@@ -1105,9 +1039,49 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [deleteDialog.folderName, workspacePath, selectedRunFolder, setSelectedRunFolder, loadRunFolders, loadProgress, fetchFiles])
 
   // Handle execution button click - finds/reuses execution tab
-  const handleExecute = useCallback(() => {
+  const handleExecute = useCallback(async () => {
     // Use isExecutionRunning instead of isRunning to allow execution even when other phases are running
     if (!isExecutionRunning && executionPhase) {
+      // CRITICAL: If "new" is selected, create a new iteration folder first
+      // This ensures we always have a specific iteration selected before execution
+      if (selectedRunFolder === 'new' && workspacePath) {
+        console.log('[WorkflowToolbar] "New Run" selected - creating new iteration folder before execution')
+        setIsCreatingFolder(true)
+        try {
+          // Create new folder via API
+          const response = await agentApi.createRunFolder(workspacePath)
+          
+          if (response.success && response.folder_name) {
+            // Select the newly created folder FIRST (before loading folders)
+            // This ensures the selection is set immediately and won't be reset by validation
+            setSelectedRunFolder(response.folder_name)
+            
+            // Refresh folder list to include the new folder
+            await loadRunFolders(workspacePath)
+            
+            // Load progress for the new folder (will be empty, but ensures consistency)
+            await loadProgress(workspacePath, response.folder_name)
+            
+            // Refresh workspace files to show the new folder
+            await fetchFiles()
+            
+            console.log(`[WorkflowToolbar] Created and selected new iteration folder: ${response.folder_name}`)
+          } else {
+            console.error('[WorkflowToolbar] Failed to create folder before execution:', response)
+            // Don't proceed with execution if folder creation failed
+            setIsCreatingFolder(false)
+            return
+          }
+        } catch (error) {
+          console.error('[WorkflowToolbar] Error creating new folder before execution:', error)
+          // Don't proceed with execution if folder creation failed
+          setIsCreatingFolder(false)
+          return
+        } finally {
+          setIsCreatingFolder(false)
+        }
+      }
+      
       // Find existing execution phase tab
       // Get execution tabs from generalized chat store
       const chatStore = useChatStore.getState()
@@ -1131,18 +1105,20 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         console.log('[WorkflowToolbar] No existing execution tab, creating new one')
       }
       
-      // Build execution options
+      // Build execution options (now with the newly created folder if it was 'new')
       const options = buildExecutionOptions()
       console.log('[RESUME_DEBUG] 🚀 Starting execution with options:', JSON.stringify({
         execution_strategy: options.execution_strategy,
         resume_from_step: options.resume_from_step,
-        resume_from_branch_step: options.resume_from_branch_step
+        resume_from_branch_step: options.resume_from_branch_step,
+        selected_run_folder: options.selected_run_folder,
+        run_mode: options.run_mode
       }, null, 2))
       
       // Start phase (will create new tab if none exists, or use existing if we switched to it)
       onStartPhase(executionPhase.id, options)
     }
-  }, [isExecutionRunning, executionPhase, buildExecutionOptions, onStartPhase])
+  }, [isExecutionRunning, executionPhase, buildExecutionOptions, onStartPhase, selectedRunFolder, workspacePath, setSelectedRunFolder, loadRunFolders, loadProgress, fetchFiles])
 
   return (
     <>
@@ -1353,20 +1329,27 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 {/* Execute/Stop Button - Changes to Stop when execution phase is running */}
                 <button
                   onClick={isExecutionRunning ? onStop : handleExecute}
-                  disabled={false}
+                  disabled={isCreatingFolder}
                   className={`
                     flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-semibold
                     ${isExecutionRunning
                       ? 'bg-red-500 dark:bg-red-600 text-white shadow-md hover:bg-red-600 dark:hover:bg-red-700 hover:shadow-lg'
+                      : isCreatingFolder
+                      ? 'bg-purple-400 dark:bg-purple-500 text-white shadow-md cursor-not-allowed opacity-75'
                       : 'bg-purple-500 dark:bg-purple-600 text-white shadow-md hover:bg-purple-600 dark:hover:bg-purple-700 hover:shadow-lg'
                     }
                   `}
-                  title={isExecutionRunning ? 'Stop execution' : 'Execute workflow'}
+                  title={isExecutionRunning ? 'Stop execution' : isCreatingFolder ? 'Creating new iteration folder...' : 'Execute workflow'}
                 >
                   {isExecutionRunning ? (
                     <>
                       <Square className="w-3.5 h-3.5" />
                       <span>Stop</span>
+                    </>
+                  ) : isCreatingFolder ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Creating...</span>
                     </>
                   ) : (
                     <>
@@ -2027,6 +2010,50 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 </TooltipTrigger>
                 <TooltipContent>
                   {isSavingLayout ? 'Saving layout...' : (hasUnsavedLayoutChanges ? 'Save layout (unsaved changes)' : 'Save layout')}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </>
+        )}
+        
+        {/* Delete/Reset Layout Button */}
+        {onDeleteLayout && (
+          <>
+            <div className="w-px h-5 bg-gray-200 dark:bg-gray-700 mx-0.5" />
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={async () => {
+                      console.log('[WorkflowToolbar] Delete layout button clicked')
+                      if (onDeleteLayout && !isDeletingLayout) {
+                        // Confirm before deleting
+                        if (window.confirm('Are you sure you want to delete the saved layout and reset to default? This cannot be undone.')) {
+                          try {
+                            await onDeleteLayout()
+                          } catch (error) {
+                            console.error('[WorkflowToolbar] Error deleting layout:', error)
+                          }
+                        }
+                      }
+                    }}
+                    disabled={isDeletingLayout}
+                    className={`p-1.5 rounded-md transition-colors ${
+                      isDeletingLayout
+                        ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                        : 'hover:bg-red-100 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300'
+                    }`}
+                    title={isDeletingLayout ? 'Resetting layout...' : 'Delete saved layout and reset to default'}
+                  >
+                    {isDeletingLayout ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {isDeletingLayout ? 'Resetting layout...' : 'Delete saved layout and reset to default'}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

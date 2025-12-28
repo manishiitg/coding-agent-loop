@@ -202,14 +202,53 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       console.log('[WorkflowCanvas] Save response:', response)
       setHasUnsavedLayoutChanges(false)
       console.log('[WorkflowCanvas] ✅ Saved layout to workspace:', Object.keys(parentPositions).length, 'node positions')
-      // Show success feedback (you could replace this with a toast notification)
-      alert(`Layout saved successfully! (${Object.keys(parentPositions).length} nodes)`)
     } catch (error) {
       console.error('[WorkflowCanvas] ❌ Failed to save layout:', error)
       alert(`Failed to save layout: ${error instanceof Error ? error.message : String(error)}`)
       throw error
     } finally {
       setIsSavingLayout(false)
+    }
+  }, [getLayoutFilePath, workspacePath])
+
+  // Delete layout file and reset to default (auto-layout)
+  const deleteLayout = React.useCallback(async (): Promise<void> => {
+    const layoutPath = getLayoutFilePath()
+    if (!layoutPath || !workspacePath) {
+      console.warn('[WorkflowCanvas] Cannot delete layout: no workspace path')
+      alert('Cannot delete layout: no workspace path')
+      return
+    }
+
+    console.log('[WorkflowCanvas] Deleting layout file...', { layoutPath, workspacePath })
+
+    setIsDeletingLayout(true)
+    try {
+      // Delete the layout file
+      await agentApi.deletePlannerFile(layoutPath, 'Reset workflow layout to default')
+      console.log('[WorkflowCanvas] ✅ Deleted layout file')
+      
+      // Clear unsaved changes flag
+      setHasUnsavedLayoutChanges(false)
+      
+      // Clear any saved layout state
+      // The layout will automatically use auto-layout on next refresh since the file is gone
+      
+      // Trigger a refresh to re-apply auto-layout
+      // This will happen naturally when the component re-renders or when nodes are updated
+      // We can force a refresh by clearing current positions and triggering a node update
+      currentPositionsRef.current.clear()
+      currentOffsetsRef.current.clear()
+      
+      // Force a re-layout by updating nodes (this will trigger auto-layout since no saved layout exists)
+      // The existing layout restoration logic will handle this automatically
+      console.log('[WorkflowCanvas] Layout reset - will use auto-layout on next render')
+    } catch (error) {
+      console.error('[WorkflowCanvas] ❌ Failed to delete layout:', error)
+      alert(`Failed to delete layout: ${error instanceof Error ? error.message : String(error)}`)
+      throw error
+    } finally {
+      setIsDeletingLayout(false)
     }
   }, [getLayoutFilePath, workspacePath])
 
@@ -424,6 +463,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Track unsaved layout changes
   const [hasUnsavedLayoutChanges, setHasUnsavedLayoutChanges] = React.useState(false)
   const [isSavingLayout, setIsSavingLayout] = React.useState(false)
+  const [isDeletingLayout, setIsDeletingLayout] = React.useState(false)
   const saveLayoutTimeoutRef = React.useRef<NodeJS.Timeout | null>(null)
   
   // Map of parent node ID to child node IDs (for grouped movement)
@@ -1059,7 +1099,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 return node
               })
               
-              // Build groups from original auto-layout to get parent-child relationships
+            // Build groups from original auto-layout to get parent-child relationships
               buildNodeGroups(nds)
               
               // If we have saved/current offsets, use them (version 1.1+)
@@ -1803,8 +1843,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         onToggleChatArea={onToggleChatArea}
         onRefresh={handleRefresh}
         onSaveLayout={saveLayout}
+        onDeleteLayout={deleteLayout}
         hasUnsavedLayoutChanges={hasUnsavedLayoutChanges}
         isSavingLayout={isSavingLayout}
+        isDeletingLayout={isDeletingLayout}
       />
 
       {/* React Flow Canvas with Sidebar */}

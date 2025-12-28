@@ -43,7 +43,9 @@ export const ModePresetBar: React.FC = () => {
     customPresets, 
     savePreset,
     deletePreset,
-    duplicatePreset
+    duplicatePreset,
+    refreshPresets,
+    loading: presetsLoading
   } = usePresetManagement()
   
   const { 
@@ -52,9 +54,12 @@ export const ModePresetBar: React.FC = () => {
     isPresetActive,
     getPresetsForMode
   } = usePresetApplication()
-
+  
   // Get active preset for current mode
   const activePreset = getActivePreset(selectedModeCategory as 'chat' | 'workflow')
+  
+  // Get presets for current mode
+  const presetsForMode = getPresetsForMode(selectedModeCategory as 'chat' | 'workflow')
 
   const [showModeSwitch, setShowModeSwitch] = useState(false)
   const [showPresetDropdown, setShowPresetDropdown] = useState(false)
@@ -64,14 +69,27 @@ export const ModePresetBar: React.FC = () => {
 
   // Preset click handler - now uses the global store
   const handlePresetClick = useCallback((preset: CustomPreset | PredefinedPreset) => {
-    const result = applyPreset(preset, selectedModeCategory as 'chat' | 'workflow')
+    // Determine the mode category based on the preset's agentMode
+    const presetModeCategory = preset.agentMode === 'workflow' ? 'workflow' : 'chat'
+    
+    // If preset is for workflow mode, ensure we're in workflow mode
+    if (presetModeCategory === 'workflow' && selectedModeCategory !== 'workflow') {
+      setModeCategory('workflow')
+    }
+    // If preset is for chat mode, ensure we're in chat mode
+    else if (presetModeCategory === 'chat' && selectedModeCategory !== 'chat') {
+      setModeCategory('chat')
+    }
+    
+    // Apply the preset with the correct mode category
+    const result = applyPreset(preset, presetModeCategory)
     
     if (result.success) {
       setShowPresetDropdown(false)
     } else {
       console.error('Failed to apply preset:', result.error)
     }
-  }, [applyPreset, selectedModeCategory])
+  }, [applyPreset, selectedModeCategory, setModeCategory])
 
   // Memoized callbacks for PresetModal
   const handleClosePresetModal = useCallback(() => {
@@ -143,6 +161,34 @@ export const ModePresetBar: React.FC = () => {
       alert('Failed to duplicate preset. Please try again.')
     }
   }, [duplicatePreset, handlePresetClick])
+
+  // Refresh presets when switching to workflow mode
+  useEffect(() => {
+    if (selectedModeCategory === 'workflow') {
+      // Refresh presets to ensure workflow presets are loaded
+      refreshPresets().catch(error => {
+        console.error('[ModePresetBar] Failed to refresh presets:', error)
+      })
+    }
+  }, [selectedModeCategory, refreshPresets])
+  
+  // Refresh presets when dropdown is opened for workflow mode
+  const handlePresetDropdownToggle = useCallback(() => {
+    const newState = !showPresetDropdown
+    setShowPresetDropdown(newState)
+    
+    // If opening dropdown and in workflow mode, ensure presets are refreshed
+    if (newState && selectedModeCategory === 'workflow') {
+      const currentPresets = getPresetsForMode('workflow')
+      
+      // Always refresh when opening dropdown in workflow mode to ensure latest presets
+      if (currentPresets.length === 0 && !presetsLoading) {
+        refreshPresets().catch(error => {
+          console.error('[ModePresetBar] Failed to refresh presets when opening dropdown:', error)
+        })
+      }
+    }
+  }, [showPresetDropdown, selectedModeCategory, presetsLoading, refreshPresets, getPresetsForMode])
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -256,15 +302,15 @@ export const ModePresetBar: React.FC = () => {
             
             {/* Center: Preset Information */}
             <div className="flex items-center gap-3">
-              {/* Preset Information - Show for chat mode even when no preset is selected */}
+              {/* Preset Information - Show for chat and workflow modes even when no preset is selected */}
               {(() => {
-                // For chat mode, always show preset selector
-                if (selectedModeCategory === 'chat' || activePreset) {
+                // For chat and workflow modes, always show preset selector
+                if (selectedModeCategory === 'chat' || selectedModeCategory === 'workflow' || activePreset) {
                   return (
                     <div className="relative flex items-center">
                       <div className="flex items-center bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md overflow-hidden">
                         <button
-                          onClick={() => setShowPresetDropdown(!showPresetDropdown)}
+                          onClick={handlePresetDropdownToggle}
                           className="flex items-center gap-2 px-3 py-1 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
                         >
                           {activePreset ? (
@@ -357,8 +403,24 @@ export const ModePresetBar: React.FC = () => {
                               </div>
                             </button>
                             
+                            {/* Loading state */}
+                            {presetsLoading && (
+                              <div className="p-2 text-sm text-gray-500 dark:text-gray-400 text-center">
+                                Loading presets...
+                              </div>
+                            )}
+                            
+                            {/* No presets message */}
+                            {!presetsLoading && presetsForMode.length === 0 && (
+                              <div className="p-2 text-sm text-gray-500 dark:text-gray-400 text-center">
+                                {selectedModeCategory === 'workflow' 
+                                  ? 'No workflow presets available. Create one to get started.'
+                                  : 'No chat presets available. Create one to get started.'}
+                              </div>
+                            )}
+                            
                             {/* Available Presets */}
-                            {getPresetsForMode(selectedModeCategory as 'chat' | 'workflow')
+                            {!presetsLoading && presetsForMode.length > 0 && presetsForMode
                               .map((preset: CustomPreset | PredefinedPreset) => (
                                 <div key={preset.id} className="flex items-center gap-1">
                                   <button

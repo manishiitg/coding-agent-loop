@@ -7,7 +7,7 @@ import ChatHistorySection from './sidebar/ChatHistorySection'
 import LLMConfigurationModal from './LLMConfigurationModal'
 import type { ActiveSessionInfo } from '../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
-import { useAppStore, useMCPStore, useLLMStore } from '../stores'
+import { useMCPStore, useLLMStore } from '../stores'
 
 interface WorkspaceSidebarProps {
   // Chat session selection
@@ -25,7 +25,6 @@ export default function WorkspaceSidebar({
 }: WorkspaceSidebarProps) {
   
   // Store subscriptions
-  const { agentMode, setAgentMode } = useAppStore()
   const { showMCPDetails, setShowMCPDetails } = useMCPStore()
   const { showLLMModal, setShowLLMModal } = useLLMStore()
   const [showShortcuts, setShowShortcuts] = useState(false)
@@ -145,26 +144,6 @@ export default function WorkspaceSidebar({
             </TooltipTrigger>
             <TooltipContent>
               <p>Expand sidebar (Ctrl+5)</p>
-            </TooltipContent>
-          </Tooltip>
-
-          {/* Agent Mode Icon */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setAgentMode('simple')
-                }}
-                className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                </svg>
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>Agent Mode: {agentMode} ({agentMode === 'simple' ? 'Ctrl/Cmd + 1' : 'Ctrl/Cmd + 2'})</p>
             </TooltipContent>
           </Tooltip>
 

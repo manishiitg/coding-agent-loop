@@ -459,18 +459,12 @@ function App() {
     if (hasCompletedInitialSetup && selectedModeCategory) {
       // Add a small delay to ensure stores are fully initialized
       const timer = setTimeout(() => {
-        console.log('[APP] Restoring active preset for mode:', selectedModeCategory)
         const activePreset = getActivePreset(selectedModeCategory)
         if (activePreset) {
-          console.log('[APP] Found active preset:', activePreset.label)
           const result = applyPreset(activePreset.id, selectedModeCategory)
           if (!result.success) {
             console.error('[APP] Failed to restore preset:', result.error)
-          } else {
-            console.log('[APP] Successfully restored preset:', activePreset.label)
           }
-        } else {
-          console.log('[APP] No active preset found for mode:', selectedModeCategory)
         }
       }, 500) // 500ms delay to ensure stores are ready
 

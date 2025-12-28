@@ -276,8 +276,30 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, orig
 	// Plan exists - use it for plan improvement
 	pim.GetLogger().Info(fmt.Sprintf("✅ Found plan.json with %d steps for plan improvement", len(existingPlan.Steps)))
 
-	// Prepare plan JSON for template
-	planJSONBytes, err := json.MarshalIndent(existingPlan, "", "  ")
+	// Count sub-agents in orchestration steps before filtering
+	totalSubAgentsBefore := countSubAgents(existingPlan)
+	if totalSubAgentsBefore > 0 {
+		pim.GetLogger().Info(fmt.Sprintf("📊 Found %d sub-agent(s) in orchestration steps", totalSubAgentsBefore))
+	}
+
+	// Filter out human input steps before passing to agent (they don't need optimization)
+	filteredPlan := filterHumanInputSteps(existingPlan)
+	humanInputCount := len(existingPlan.Steps) - len(filteredPlan.Steps)
+	if humanInputCount > 0 {
+		pim.GetLogger().Info(fmt.Sprintf("🔍 Filtered out %d human input step(s) from plan (no optimization needed)", humanInputCount))
+	}
+
+	// Count sub-agents after filtering
+	totalSubAgentsAfter := countSubAgents(filteredPlan)
+	if totalSubAgentsAfter > 0 {
+		pim.GetLogger().Info(fmt.Sprintf("📊 After filtering: %d sub-agent(s) remain in orchestration steps", totalSubAgentsAfter))
+	}
+	if totalSubAgentsBefore != totalSubAgentsAfter {
+		pim.GetLogger().Info(fmt.Sprintf("⚠️ Sub-agent count changed: %d → %d (some may have been human input steps)", totalSubAgentsBefore, totalSubAgentsAfter))
+	}
+
+	// Prepare plan JSON for template (using filtered plan)
+	planJSONBytes, err := json.MarshalIndent(filteredPlan, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal plan to JSON: %w", err)
 	}
@@ -360,6 +382,136 @@ func (pim *PlanImprovementManager) checkExistingPlan(ctx context.Context, planPa
 
 	pim.GetLogger().Info(fmt.Sprintf("✅ Found existing plan at %s with %d steps", planPath, len(plan.Steps)))
 	return true, plan, nil
+}
+
+// filterHumanInputSteps removes human input steps from the plan (including from branch steps)
+// Human input steps don't need optimization - they only ask questions and block for user input
+func filterHumanInputSteps(plan *PlanningResponse) *PlanningResponse {
+	filteredPlan := &PlanningResponse{
+		Steps: make([]PlanStepInterface, 0, len(plan.Steps)),
+	}
+
+	// Helper function to recursively filter steps (handles branch steps)
+	var filterStep func(step PlanStepInterface) PlanStepInterface
+	filterStep = func(step PlanStepInterface) PlanStepInterface {
+		// Skip human input steps
+		if isHumanInputStep(step) {
+			return nil
+		}
+
+		// Handle conditional steps (they have branch steps that also need filtering)
+		if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
+			filteredConditional := &ConditionalPlanStep{
+				Type:              conditionalStep.Type,
+				CommonStepFields:  conditionalStep.CommonStepFields,
+				ConditionQuestion: conditionalStep.ConditionQuestion,
+				ConditionContext:  conditionalStep.ConditionContext,
+				IfTrueNextStepID:  conditionalStep.IfTrueNextStepID,
+				IfFalseNextStepID: conditionalStep.IfFalseNextStepID,
+				IfTrueSteps:       make([]PlanStepInterface, 0),
+				IfFalseSteps:      make([]PlanStepInterface, 0),
+				AgentConfigs:      conditionalStep.AgentConfigs,
+			}
+
+			// Filter if_true_steps
+			for _, branchStep := range conditionalStep.IfTrueSteps {
+				if filteredBranchStep := filterStep(branchStep); filteredBranchStep != nil {
+					filteredConditional.IfTrueSteps = append(filteredConditional.IfTrueSteps, filteredBranchStep)
+				}
+			}
+
+			// Filter if_false_steps
+			for _, branchStep := range conditionalStep.IfFalseSteps {
+				if filteredBranchStep := filterStep(branchStep); filteredBranchStep != nil {
+					filteredConditional.IfFalseSteps = append(filteredConditional.IfFalseSteps, filteredBranchStep)
+				}
+			}
+
+			return filteredConditional
+		}
+
+		// Handle orchestration steps (they have sub-agent steps that also need filtering)
+		if orchestrationStep, ok := step.(*OrchestrationPlanStep); ok {
+			filteredOrchestration := &OrchestrationPlanStep{
+				Type:                orchestrationStep.Type,
+				ID:                  orchestrationStep.ID,
+				Title:               orchestrationStep.Title,
+				OrchestrationStep:   orchestrationStep.OrchestrationStep,
+				NextStepID:          orchestrationStep.NextStepID,
+				OrchestrationRoutes: make([]PlanOrchestrationRoute, 0, len(orchestrationStep.OrchestrationRoutes)),
+				AgentConfigs:        orchestrationStep.AgentConfigs,
+			}
+
+			// Filter orchestration routes (sub-agents)
+			// IMPORTANT: We keep ALL non-human-input sub-agents - they need optimization
+			for _, route := range orchestrationStep.OrchestrationRoutes {
+				// Skip only if sub-agent is a human input step
+				if isHumanInputStep(route.SubAgentStep) {
+					continue // Skip this route (human input sub-agent)
+				}
+
+				// Recursively filter sub-agent step (in case it has nested structures like conditional branches)
+				filteredSubAgentStep := filterStep(route.SubAgentStep)
+				if filteredSubAgentStep != nil {
+					// Create a copy of the route with filtered sub-agent
+					filteredRoute := PlanOrchestrationRoute{
+						RouteID:       route.RouteID,
+						RouteName:     route.RouteName,
+						Condition:     route.Condition,
+						SubAgentStep:  filteredSubAgentStep,
+						ContextToPass: route.ContextToPass,
+					}
+					filteredOrchestration.OrchestrationRoutes = append(filteredOrchestration.OrchestrationRoutes, filteredRoute)
+				}
+			}
+
+			return filteredOrchestration
+		}
+
+		// For all other step types, keep as-is (regular, decision, loop steps)
+		return step
+	}
+
+	// Filter all top-level steps
+	for _, step := range plan.Steps {
+		if filteredStep := filterStep(step); filteredStep != nil {
+			filteredPlan.Steps = append(filteredPlan.Steps, filteredStep)
+		}
+	}
+
+	return filteredPlan
+}
+
+// countSubAgents counts all sub-agents in orchestration steps (recursively)
+func countSubAgents(plan *PlanningResponse) int {
+	count := 0
+	for _, step := range plan.Steps {
+		if orchestrationStep, ok := step.(*OrchestrationPlanStep); ok {
+			count += len(orchestrationStep.OrchestrationRoutes)
+			// Recursively count sub-agents in conditional steps (if any sub-agents are conditional)
+			for _, route := range orchestrationStep.OrchestrationRoutes {
+				if conditionalSubAgent, ok := route.SubAgentStep.(*ConditionalPlanStep); ok {
+					// Count branch steps in conditional sub-agents
+					count += len(conditionalSubAgent.IfTrueSteps)
+					count += len(conditionalSubAgent.IfFalseSteps)
+				}
+			}
+		}
+		// Also check if conditional steps contain orchestration steps
+		if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
+			for _, branchStep := range conditionalStep.IfTrueSteps {
+				if branchOrchestration, ok := branchStep.(*OrchestrationPlanStep); ok {
+					count += len(branchOrchestration.OrchestrationRoutes)
+				}
+			}
+			for _, branchStep := range conditionalStep.IfFalseSteps {
+				if branchOrchestration, ok := branchStep.(*OrchestrationPlanStep); ok {
+					count += len(branchOrchestration.OrchestrationRoutes)
+				}
+			}
+		}
+	}
+	return count
 }
 
 // requestAndValidateFullPath asks the user for the path via blocking human feedback and validates it has execution/ folder
@@ -796,12 +948,30 @@ Run workspace absolute path: **%s**
 ---
 
 ## 📋 EVIDENCE CHECKLIST
-Before proposing changes, read:
-1. ✅ Current plan: planning/plan.json
-2. ✅ Execution outputs: ` + runPathRelative + `/execution/
-3. ✅ Knowledgebase files: ` + runPathRelative + `/execution/knowledgebase/ (persistent files across runs - templates, reference data, configurations)
-4. ✅ Validation logs: ` + runPathRelative + `/logs/step-X/validation-N.json
-5. ✅ Learnings (shared + step-specific): learnings/ and learnings/{step_id}/
+
+### Default Analysis (Fast & Efficient)
+**By default, prioritize these sources** (they are smaller and faster to check):
+1. ✅ **Current plan**: planning/plan.json - Check step titles, descriptions, success criteria, context dependencies
+2. ✅ **Learnings** (shared + step-specific): learnings/ and learnings/{step_id}/ - Check for patterns and guidance
+3. ✅ **Execution outputs**: ` + runPathRelative + `/execution/ - Check final outputs and results (not full logs)
+4. ✅ **Knowledgebase files**: ` + runPathRelative + `/execution/knowledgebase/ - Persistent reference data
+
+### Execution Logs (Only When Requested)
+**⚠️ IMPORTANT**: Execution logs are LARGE and SLOW to read. **Only check execution logs when:**
+- User explicitly asks about execution details, failures, or conversation history
+- User asks "why did step X fail?" or "what happened in step Y?"
+- User requests analysis of specific execution attempts or validation failures
+
+**When NOT to check logs** (default behavior):
+- General plan improvements based on step descriptions
+- Updating success criteria or descriptions
+- Adding/removing steps based on plan structure
+- Learning-based improvements
+
+**Execution logs location** (only check when user requests):
+- Validation logs: ` + runPathRelative + `/logs/step-X/validation-N.json
+- Execution logs: ` + runPathRelative + `/logs/step-X/execution/execution-attempt-{N}-iteration-{M}.json
+- Conversation history: ` + runPathRelative + `/logs/step-X/execution/execution-attempt-{N}-iteration-{M}-conversation.json
 
 Include **Files inspected:** list in responses.
 
@@ -833,14 +1003,47 @@ For decision steps that route incorrectly:
 - Verify success_criteria encode **logical correctness**, not just "file exists"
 
 ### 3b. Orchestration Step Analysis
-For orchestration steps that route incorrectly or fail:
+
+**CRITICAL**: Orchestration steps have TWO types of agents that must be analyzed:
+1. **Main Orchestrator Agent**: Evaluates success criteria and delegates to sub-agents
+2. **Sub-Agents (Routes)**: Separate execution agents that do the actual work
+
+**How Orchestration Works**:
+- Orchestrator loops until success criteria is met:
+  1. Evaluate success criteria using tools
+  2. If met → complete step (success_criteria_met: true)
+  3. If NOT met → delegate to sub-agent (select route, provide instructions)
+  4. Sub-agent executes work independently
+  5. Orchestrator re-evaluates with sub-agent output in context
+  6. Loop continues until success or max iterations
+
+**Analysis Checklist - Main Orchestrator**:
 - Read logs/step-X/orchestration-evaluation.json - see what routes were selected and why
-- Read logs/step-X/execution/orchestration-main-step.json - see main orchestrator execution
-- Read logs/step-X/execution/step-X-orchestration/ - see sub-agent execution results
+- Read logs/step-X/execution/orchestration-main-step.json - see main orchestrator execution and conversation
 - Check orchestration_step success_criteria - is it clear when orchestrator should complete vs delegate?
 - Review orchestration_routes conditions - do they clearly match different error/situation types?
-- Verify sub-agent success_criteria are file-verifiable and execution-based
 - Check if orchestrator is looping unnecessarily - may need better success_criteria or route conditions
+- Verify orchestrator is providing detailed instructions to sub-agents (instructions_to_sub_agent field)
+
+**Analysis Checklist - Sub-Agents (CRITICAL - Often Missing)**:
+- **Sub-agent logs location**: logs/step-X-sub-agent-{index}/ (e.g., logs/step-2-sub-agent-1/)
+- **Sub-agent execution location**: execution/step-X-sub-agent-{index}/ (e.g., execution/step-2-sub-agent-1/)
+- Read sub-agent execution logs: logs/step-X-sub-agent-{index}/execution/execution-attempt-{N}-iteration-{M}.json
+- Read sub-agent conversation: logs/step-X-sub-agent-{index}/execution/execution-attempt-{N}-iteration-{M}-conversation.json
+- Read sub-agent validation logs: logs/step-X-sub-agent-{index}/validation-N.json
+- Check sub-agent success_criteria - are they file-verifiable and execution-based?
+- Verify sub-agent received proper instructions from orchestrator (check orchestration-evaluation.json)
+- Check if sub-agent is failing validation - may need to improve sub-agent success_criteria
+- Check if sub-agent is producing correct outputs - may need to improve sub-agent description or instructions
+
+**Common Issues**:
+| Issue | Where to Look | Fix |
+|-------|---------------|-----|
+| **Sub-agent not executing** | Check orchestration-evaluation.json - is route being selected? | Fix route conditions or orchestrator evaluation logic |
+| **Sub-agent failing validation** | Check sub-agent validation logs | Improve sub-agent success_criteria (make file-verifiable) |
+| **Sub-agent wrong output** | Check sub-agent execution logs and conversation | Improve sub-agent description or orchestrator instructions |
+| **Orchestrator looping forever** | Check orchestration-evaluation.json - is it always delegating? | Improve orchestrator success_criteria or route conditions |
+| **Wrong route selected** | Check orchestration-evaluation.json - why was this route chosen? | Improve route conditions to match situation types |
 
 ### 4. Validation Failures
 When validation fails repeatedly:
@@ -870,7 +1073,7 @@ Good learnings are:
 | Step | Action |
 |------|--------|
 | **1. Ask User** | Use human_feedback: "What would you like to improve?" |
-| **2. Gather Evidence** | Read plan, logs, execution outputs, learnings (see checklist above) |
+| **2. Gather Evidence** | **By default**: Read plan (titles, descriptions, success criteria), learnings, execution outputs. **Only read execution logs if user explicitly asks about execution details or failures** |
 | **3. Analyze** | Apply root cause analysis, identify issues |
 | **4. Propose** | Use human_feedback: describe what/why/how to change |
 | **5. Interpret** | "yes"/"ok" = proceed; questions = answer; "no" = adjust |
@@ -921,7 +1124,8 @@ Good learnings are:
 | decision-evaluation.json | Decision routing logic (for decision steps) |
 | orchestration-evaluation.json | Route selection reasoning (for orchestration steps) |
 | execution/orchestration-main-step.json | Main orchestrator execution results |
-| execution/step-X-orchestration/ | Sub-agent execution results (for orchestration steps) |
+| logs/step-X-sub-agent-{index}/ | Sub-agent logs (validation, execution, conversation) |
+| execution/step-X-sub-agent-{index}/ | Sub-agent execution outputs (for orchestration steps) |
 
 ---
 
@@ -1001,8 +1205,11 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) planImprovementUser
 
 **Decision Steps** (if present): %s/%s/logs/step-X/decision-evaluation.json, %s/%s/logs/step-X/execution/decision-inner-step.json, %s/%s/execution/step-X-decision/ (see system prompt for details)
 
-**Orchestration Steps** (if present): %s/%s/logs/step-X/orchestration-evaluation.json, %s/%s/logs/step-X/execution/orchestration-main-step.json, %s/%s/execution/step-X-orchestration/ (see system prompt for details)
-`, runPathRelative, workspacePath, workspacePath, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative)
+**Orchestration Steps** (if present): 
+- Main orchestrator: %s/%s/logs/step-X/orchestration-evaluation.json, %s/%s/logs/step-X/execution/orchestration-main-step.json
+- Sub-agents: %s/%s/logs/step-X-sub-agent-{index}/ (logs), %s/%s/execution/step-X-sub-agent-{index}/ (execution results)
+- See system prompt for detailed analysis guidance
+`, runPathRelative, workspacePath, workspacePath, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative)
 
 	return `# Plan Improvement Task
 
@@ -1022,11 +1229,14 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) planImprovementUser
 ## IMPORTANT INSTRUCTIONS
 
 **You can update plan.json directly, but ALWAYS get user confirmation first.** Your role is to:
-1. Analyze the execution results and logs
-2. Identify issues and areas for improvement
-3. **Propose** specific changes via human_feedback (what, why, and how)
-4. **Get user approval** before making any changes
-5. **Update plan.json** using plan modification tools after approval
+1. Analyze the plan structure, step descriptions, success criteria, and learnings (default - fast)
+2. **Only check execution logs when user explicitly asks** about execution details, failures, or conversation history
+3. Identify issues and areas for improvement
+4. **Propose** specific changes via human_feedback (what, why, and how)
+5. **Get user approval** before making any changes
+6. **Update plan.json** using plan modification tools after approval
+
+**Efficiency Note**: Execution logs are large and slow to read. By default, focus on plan structure (titles, descriptions, success criteria) and learnings. Only dive into execution logs when the user specifically asks about execution failures, validation issues, or conversation history.
 
 Follow the workflow in the system prompt. Use human_feedback FIRST to ask what to improve, then propose changes and get approval before updating the plan.
 `

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"text/template"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -100,9 +101,8 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 
 	// Build read paths list - explicit read-only access
 	// Use current workspace for execution/logs, original workspace for learnings/planning
-	// Knowledgebase folder: execution/knowledgebase/ (persistent files across runs)
-	executionPath := fmt.Sprintf("%s/execution", currentWorkspacePath)
-	knowledgebasePath := getKnowledgebasePath(executionPath)
+	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
+	knowledgebasePath := getKnowledgebasePath(originalWorkspacePath)
 	readPaths := []string{
 		currentWorkspacePath, // Read execution results and logs from current workspace
 		knowledgebasePath,    // Read knowledgebase folder (persistent files across runs)
@@ -307,14 +307,13 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, orig
 	// Create execution results summary based on the selected run folder.
 	// Execution/logs live under runs/<run>/..., while plan/learnings are at workspace root.
 	executionResultsSummary := fmt.Sprintf(
-		"Workspace root: %s\nSelected run folder: %s\n\nRun folder contains:\n- %s/execution/ - step execution outputs\n- %s/execution/knowledgebase/ - persistent files across runs (templates, reference data, configurations - NEVER deleted during cleanup)\n- %s/logs/ - validation and execution logs\n\nUse list_workspace_files to explore:\n- Execution result files in %s/execution/\n- Knowledgebase files in %s/execution/knowledgebase/ (persistent across runs)\n- Detailed logs in %s/logs/step-X/ including:\n  * validation-{N}.json - validation responses for each validation attempt\n  * execution/execution-attempt-{N}-iteration-{M}.json - execution results with retry/loop information\n  * execution/execution-attempt-{N}-iteration-{M}-conversation.json - full conversation history for each execution attempt\n\nLearnings are stored at workspace root:\n- learnings/\n- learnings/{step_id}/ (regular steps, using step IDs from plan.json)\n- learnings/{step_id}/ (branch steps, using step IDs from plan.json where step_id is the branch step's own ID)\n- learnings/{step_id}/ (orchestration sub-agents, using step IDs from plan.json where step_id is the sub-agent's own ID)\n\nPlan is stored at:\n- planning/plan.json",
+		"Workspace root: %s\nSelected run folder: %s\n\nRun folder contains:\n- %s/execution/ - step execution outputs\n- %s/logs/ - validation and execution logs\n\nKnowledgebase folder (shared across all runs):\n- %s/knowledgebase/ - persistent files across all runs (templates, reference data, configurations - NEVER deleted during cleanup)\n\nUse list_workspace_files to explore:\n- Execution result files in %s/execution/\n- Knowledgebase files in %s/knowledgebase/ (persistent across all runs, at workspace root)\n- Detailed logs in %s/logs/step-X/ including:\n  * validation-{N}.json - validation responses for each validation attempt\n  * execution/execution-attempt-{N}-iteration-{M}.json - execution results with retry/loop information\n  * execution/execution-attempt-{N}-iteration-{M}-conversation.json - full conversation history for each execution attempt\n\nLearnings are stored at workspace root:\n- learnings/\n- learnings/{step_id}/ (regular steps, using step IDs from plan.json)\n- learnings/{step_id}/ (branch steps, using step IDs from plan.json where step_id is the branch step's own ID)\n- learnings/{step_id}/ (orchestration sub-agents, using step IDs from plan.json where step_id is the sub-agent's own ID)\n\nPlan is stored at:\n- planning/plan.json",
 		originalWorkspacePath,
 		validatedRunPath,
 		validatedRunPath,
+		originalWorkspacePath,
 		validatedRunPath,
-		validatedRunPath,
-		validatedRunPath,
-		validatedRunPath,
+		originalWorkspacePath,
 		validatedRunPath,
 	)
 
@@ -717,6 +716,42 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 	// This ensures all changes during this execution are written to the same changelog file
 	resetChangelogSession()
 
+	// Store initial plan state BEFORE agent execution for changelog comparison
+	// This captures the state before any modifications are made
+	var initialPlan *PlanningResponse
+	existingPlan, err := readPlanFromFile(ctx, workspacePath, readFile)
+	if err != nil {
+		// If plan doesn't exist or can't be read, use empty plan
+		initialPlan = &PlanningResponse{Steps: []PlanStep{}}
+		if logger != nil {
+			logger.Warn(fmt.Sprintf("⚠️ Failed to read initial plan for changelog comparison: %v, using empty plan", err))
+		}
+	} else {
+		// Deep copy the existing plan to avoid mutations
+		planJSONBytes, err := json.Marshal(existingPlan)
+		if err == nil {
+			var copiedPlan PlanningResponse
+			if err := json.Unmarshal(planJSONBytes, &copiedPlan); err == nil {
+				initialPlan = &copiedPlan
+				if logger != nil {
+					logger.Info(fmt.Sprintf("📝 Stored initial plan state (%d steps) for changelog comparison", len(initialPlan.Steps)))
+				}
+			} else {
+				// Deep copy failed - use empty plan to ensure changelog generation still works
+				initialPlan = &PlanningResponse{Steps: []PlanStep{}}
+				if logger != nil {
+					logger.Warn(fmt.Sprintf("⚠️ Failed to deep copy initial plan: %v, using empty plan", err))
+				}
+			}
+		} else {
+			// Marshal failed - use empty plan to ensure changelog generation still works
+			initialPlan = &PlanningResponse{Steps: []PlanStep{}}
+			if logger != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Failed to marshal initial plan: %v, using empty plan", err))
+			}
+		}
+	}
+
 	// Register all plan modification tools using shared function
 	// Pass unlock function to automatically unlock learnings when plan is modified
 	// Use base orchestrator to create unlock function (plan improvement agent only has base orchestrator)
@@ -883,6 +918,29 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 		logger.Info(fmt.Sprintf("🔍 [PlanImprovementAgent] CheckAndEmitPlanUpdateEvent call completed"))
 	}
 
+	// Generate changelog from plan diff (AFTER agent execution, BEFORE emitting completion event)
+	// This captures ALL changes made during the agent execution in one comprehensive changelog entry
+	planResponse, err := readPlanFromFile(ctx, workspacePath, readFile)
+	if err != nil {
+		if logger != nil {
+			logger.Warn(fmt.Sprintf("⚠️ Failed to read plan for changelog generation: %v", err))
+		}
+	} else {
+		// Ensure initialPlan is never nil (safety check)
+		if initialPlan == nil {
+			initialPlan = &PlanningResponse{Steps: []PlanStep{}}
+			if logger != nil {
+				logger.Warn(fmt.Sprintf("⚠️ initialPlan was nil, using empty plan for changelog generation"))
+			}
+		}
+		if err := generateChangelogFromPlanDiff(ctx, workspacePath, initialPlan, planResponse, readFile, writeFile, logger); err != nil {
+			if logger != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Failed to generate changelog from plan diff: %v", err))
+			}
+			// Don't fail the entire operation if changelog generation fails
+		}
+	}
+
 	// Emit plan improvement completed event
 	if agent.baseOrchestrator != nil {
 		eventBridge := agent.baseOrchestrator.GetContextAwareBridge()
@@ -915,329 +973,90 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 
 // planImprovementSystemPromptProcessor creates the system prompt for plan improvement
 func (agent *HumanControlledTodoPlannerPlanImprovementAgent) planImprovementSystemPromptProcessor(templateVars map[string]string) string {
-	runPathRelative := templateVars["RunPathRelative"]
-	runWorkspacePath := templateVars["RunWorkspacePath"]
+	templateStr := `# Plan Improvement Agent
+**Context**: Analyzing run path '{{.RunPathRelative}}'
 
-	runPathNote := fmt.Sprintf(`
-## VALIDATED RUN PATH
-The user has specified the run path to analyze: **%s**
-Execution results and logs are under: **%s/execution/** and **%s/logs/** (relative to workspace root)
-Run workspace absolute path: **%s**
-`, runPathRelative, runPathRelative, runPathRelative, runWorkspacePath)
-
-	return `# Plan Improvement Agent
-
-## 🤖 AGENT IDENTITY
-**Role**: Plan Improvement Agent (Post-Execution Analysis)
-**Task**: Analyze execution results and logs to identify and fix plan issues based on ACTUAL execution failures
-**When to Use**: After execution has run and steps have failed or produced incorrect results
-**Workflow**: Read execution logs → Identify root causes → Propose fixes → Get approval → Update plan.json` + runPathNote + `
-
----
+## 🤖 ROLE
+Post-execution analyst. Identify and fix plan issues by analyzing ACTUAL tool calls and failures.
 
 ## ⚠️ CRITICAL RULES
+1. **Confirm First**: Use 'human_feedback' BEFORE any plan changes.
+2. **Start with Questions**: Ask "What would you like to improve?" first.
+3. **Gather Evidence**: Read files (plan, logs, learnings) before proposing fixes.
+4. **Concrete Criteria**: Success criteria MUST be file-verifiable (counts, samples) and hard to fake.
 
-| Rule | Description |
-|------|-------------|
-| **1. Confirm First** | ALWAYS use human_feedback BEFORE any plan changes |
-| **2. Start with Question** | First action: Ask "What would you like to improve?" via human_feedback |
-| **3. Gather Evidence** | Read files BEFORE proposing changes (plan, logs, execution results, learnings) |
-| **4. File-Verifiable Criteria** | Success criteria must be file-verifiable AND evidence-based (counts, lists, samples), not just status flags or external state |
-| **5. Evidence-Based Criteria** | Avoid status-only criteria like 'status: \"success\"' or 'all checks passed' as the sole requirement – they can be gamed by flipping a flag. Require concrete evidence that is hard to fake. |
-
----
-
-## 📋 EVIDENCE CHECKLIST
-
-### Default Analysis (Fast & Efficient)
-**By default, prioritize these sources** (they are smaller and faster to check):
-1. ✅ **Current plan**: planning/plan.json - Check step titles, descriptions, success criteria, context dependencies
-2. ✅ **Learnings** (shared + step-specific): learnings/ and learnings/{step_id}/ - Check for patterns and guidance
-3. ✅ **Execution outputs**: ` + runPathRelative + `/execution/ - Check final outputs and results (not full logs)
-4. ✅ **Knowledgebase files**: ` + runPathRelative + `/execution/knowledgebase/ - Persistent reference data
-
-### Execution Logs (Only When Requested)
-**⚠️ IMPORTANT**: Execution logs are LARGE and SLOW to read. **Only check execution logs when:**
-- User explicitly asks about execution details, failures, or conversation history
-- User asks "why did step X fail?" or "what happened in step Y?"
-- User requests analysis of specific execution attempts or validation failures
-
-**When NOT to check logs** (default behavior):
-- General plan improvements based on step descriptions
-- Updating success criteria or descriptions
-- Adding/removing steps based on plan structure
-- Learning-based improvements
-
-**Execution logs location** (only check when user requests):
-- Validation logs: ` + runPathRelative + `/logs/step-X/validation-N.json
-- Execution logs: ` + runPathRelative + `/logs/step-X/execution/execution-attempt-{N}-iteration-{M}.json
-- Conversation history: ` + runPathRelative + `/logs/step-X/execution/execution-attempt-{N}-iteration-{M}-conversation.json
-
-Include **Files inspected:** list in responses.
-
-**Note on Knowledgebase Folder**: The execution/knowledgebase/ folder contains files that persist across runs and are never deleted during cleanup. Check this folder for templates, reference data, or configurations that might be relevant to plan improvements.
+## 📋 EVIDENCE SOURCES
+- **Default (Fast)**: 'planning/plan.json', 'learnings/', '{{.RunPathRelative}}/execution/'.
+- **Logs (Slow/Requested)**: Only read '{{.RunPathRelative}}/logs/' if user asks about specific failures or "why" a step failed.
 
 ---
 
-## 🧩 HOW TO ANALYZE AND IMPROVE PLANS
+## 🧩 ANALYSIS CHECKLISTS
 
-### 1. Root Cause Analysis
-- **Don't treat symptoms**: If step 5 fails validation, check if steps 1-4 produced correct outputs
-- **Trace backwards**: Failed verification → check what was verified → check what produced the data
-- **Check assumptions**: Does step description match what actually happened in logs?
+### 1. Orchestration Steps (Main + Sub-Agents)
+Orchestration involves a Main Orchestrator looping over Sub-Agents.
+- **Main Orchestrator**: Read 'orchestration-evaluation.json'. Is it looping forever? Are route conditions clear?
+- **Sub-Agents**: Read 'logs/step-X-sub-agent-{i}/'. Are sub-agent success criteria file-verifiable? Did they receive correct instructions?
+- **Root Cause**: If a sub-agent fails, check if the main orchestrator provided the right context.
 
-### 2. Common Issues to Check
+### 2. Validation Failures
+- **Pre-Validation (Structural)**: If this fails, update the 'validation_schema' (file exists, JSON format).
+- **LLM Validation (Authenticity)**: If this fails, update 'success_criteria' to focus on execution history (proving work was done).
 
-| Issue | Where to Look | Fix |
-|-------|---------------|-----|
-| **Weak success criteria** | Compare criteria to validation logs | Make file-verifiable with specific content checks |
-| **Missing verification** | Check if critical operations are verified | Add verification step + decision routing |
-| **Wrong step sequence** | Review context_dependencies and execution order | Reorder steps, fix dependencies |
-| **Incomplete descriptions** | Compare step description to conversation history | Add missing details execution agent needs |
-| **Outdated learnings** | Check learnings vs current execution patterns | Update or remove obsolete guidance |
-
-### 3. Decision Step Analysis
-For decision steps that route incorrectly:
-- Read logs/step-X/decision-evaluation.json - see what LLM decided and why
-- Check decision_evaluation_question - does it force re-verification from evidence?
-- Verify success_criteria encode **logical correctness**, not just "file exists"
-
-### 3b. Orchestration Step Analysis
-
-**CRITICAL**: Orchestration steps have TWO types of agents that must be analyzed:
-1. **Main Orchestrator Agent**: Evaluates success criteria and delegates to sub-agents
-2. **Sub-Agents (Routes)**: Separate execution agents that do the actual work
-
-**How Orchestration Works**:
-- Orchestrator loops until success criteria is met:
-  1. Evaluate success criteria using tools
-  2. If met → complete step (success_criteria_met: true)
-  3. If NOT met → delegate to sub-agent (select route, provide instructions)
-  4. Sub-agent executes work independently
-  5. Orchestrator re-evaluates with sub-agent output in context
-  6. Loop continues until success or max iterations
-
-**Analysis Checklist - Main Orchestrator**:
-- Read logs/step-X/orchestration-evaluation.json - see what routes were selected and why
-- Read logs/step-X/execution/orchestration-main-step.json - see main orchestrator execution and conversation
-- Check orchestration_step success_criteria - is it clear when orchestrator should complete vs delegate?
-- Review orchestration_routes conditions - do they clearly match different error/situation types?
-- Check if orchestrator is looping unnecessarily - may need better success_criteria or route conditions
-- Verify orchestrator is providing detailed instructions to sub-agents (instructions_to_sub_agent field)
-
-**Analysis Checklist - Sub-Agents (CRITICAL - Often Missing)**:
-- **Sub-agent logs location**: logs/step-X-sub-agent-{index}/ (e.g., logs/step-2-sub-agent-1/)
-- **Sub-agent execution location**: execution/step-X-sub-agent-{index}/ (e.g., execution/step-2-sub-agent-1/)
-- Read sub-agent execution logs: logs/step-X-sub-agent-{index}/execution/execution-attempt-{N}-iteration-{M}.json
-- Read sub-agent conversation: logs/step-X-sub-agent-{index}/execution/execution-attempt-{N}-iteration-{M}-conversation.json
-- Read sub-agent validation logs: logs/step-X-sub-agent-{index}/validation-N.json
-- Check sub-agent success_criteria - are they file-verifiable and execution-based?
-- Verify sub-agent received proper instructions from orchestrator (check orchestration-evaluation.json)
-- Check if sub-agent is failing validation - may need to improve sub-agent success_criteria
-- Check if sub-agent is producing correct outputs - may need to improve sub-agent description or instructions
-
-**Common Issues**:
-| Issue | Where to Look | Fix |
-|-------|---------------|-----|
-| **Sub-agent not executing** | Check orchestration-evaluation.json - is route being selected? | Fix route conditions or orchestrator evaluation logic |
-| **Sub-agent failing validation** | Check sub-agent validation logs | Improve sub-agent success_criteria (make file-verifiable) |
-| **Sub-agent wrong output** | Check sub-agent execution logs and conversation | Improve sub-agent description or orchestrator instructions |
-| **Orchestrator looping forever** | Check orchestration-evaluation.json - is it always delegating? | Improve orchestrator success_criteria or route conditions |
-| **Wrong route selected** | Check orchestration-evaluation.json - why was this route chosen? | Improve route conditions to match situation types |
-
-### 4. Validation Failures
-When validation fails repeatedly:
-- Read logs/step-X/validation-N.json for each attempt
-- Check if failure is due to:
-  - Weak success criteria (too vague) → Use update_success_criteria tool to make it more specific and execution-based
-  - Missing or incorrect validation schema → Use update_validation_schema tool to add/update structured validation rules
-  - Wrong file reference (file name mismatch) → Update validation schema file_name or success criteria
-  - Unrealistic criteria (requires external state validation agent can't check) → Make criteria file-verifiable only
-- **Pre-validation failures**: If pre-validation fails (structural checks), the validation schema needs updating
-  - Use update_validation_schema tool to fix file existence, JSON structure, or consistency checks
-  - Pre-validation runs before LLM validation and blocks it if structural checks fail
-- **LLM validation failures**: If pre-validation passes but LLM validation fails, focus on success criteria
-  - Use update_success_criteria tool to emphasize execution history verification
-  - Success criteria should focus on what work was actually done, not just file structure
-
-### 5. Learnings Quality
-Good learnings are:
-- **Specific**: "Use jq '.items[] | select(.status == \"active\")'" not "filter the data"
-- **Contextual**: When to use approach X vs Y
-- **Current**: Reflect latest successful patterns, not outdated attempts
+### 3. Anti-Gaming Principle
+Avoid status-only criteria like 'status: "success"'. Require concrete evidence:
+- ✅ "File 'X' contains array 'Y' with length 'Z'".
+- ❌ "Step shows as success in verification file".
 
 ---
 
 ## 🔄 WORKFLOW
+1. **Ask**: Use 'human_feedback' to align with user needs.
+2. **Read**: Inspect logs/outputs/learnings.
+3. **Propose**: Describe what/why/how to the user.
+4. **Update**: After approval ("yes", "ok"), use plan modification tools.
 
-| Step | Action |
-|------|--------|
-| **1. Ask User** | Use human_feedback: "What would you like to improve?" |
-| **2. Gather Evidence** | **By default**: Read plan (titles, descriptions, success criteria), learnings, execution outputs. **Only read execution logs if user explicitly asks about execution details or failures** |
-| **3. Analyze** | Apply root cause analysis, identify issues |
-| **4. Propose** | Use human_feedback: describe what/why/how to change |
-| **5. Interpret** | "yes"/"ok" = proceed; questions = answer; "no" = adjust |
-| **6. Update** | After approval: use plan modification tools + write learnings |
+## 🛠️ PLAN MODIFICATION TOOLS
+Use 'update_*', 'add_*', 'delete_plan_steps', 'convert_step_to_conditional', etc., ONLY after user approval.
 
----
+{{if .AllowedPaths}}**Allowed Paths**: {{.AllowedPaths}}{{end}}`
 
-## 🛠️ TOOLS
-
-### Workspace Tools
-| Tool | Purpose |
-|------|---------|
-| human_feedback | **REQUIRED FIRST** - Get approval before plan changes |
-| read_workspace_file | Read logs, execution results, learnings |
-| list_workspace_files | Explore folder structure |
-| write_workspace_file | Update learnings files |
-
-### Plan Modification Tools (After Approval Only)
-| Tool | Use For |
-|------|---------|
-| update_regular_step, update_conditional_step, update_decision_step, update_orchestration_step | Update existing steps |
-| update_validation_schema | Update validation schema for an existing step (fast code-based pre-validation rules) |
-| update_success_criteria | Update success criteria for an existing step (execution-based validation focus) |
-| add_regular_step, add_conditional_step, add_decision_step, add_orchestration_step, add_loop_step | Add new steps |
-| delete_plan_steps | Remove steps |
-| convert_step_to_conditional, add_branch_steps, update_branch_steps, delete_branch_steps | Manage conditionals |
-| add_orchestration_route, update_orchestration_route, delete_orchestration_route | Manage orchestration routes (sub-agents) |
-
-### Response Interpretation
-| User Response | Your Action |
-|---------------|-------------|
-| "yes", "ok", "proceed" | Execute plan changes immediately |
-| Questions/clarifications | Answer conversationally, NO tool calls |
-| "no", "change X instead" | Revise proposal, ask again |
-| Unclear | Ask for clarification via human_feedback |
-
----
-
-## 📊 LOGS STRUCTURE
-
-**Location**: ` + runPathRelative + `/logs/step-X/
-
-| File | Contains |
-|------|----------|
-| validation-N.json | Validation attempts and failures |
-| execution/execution-attempt-N-iteration-M.json | Execution results with retry info |
-| execution/execution-attempt-N-iteration-M-conversation.json | Full LLM conversation (tool calls, responses) |
-| decision-evaluation.json | Decision routing logic (for decision steps) |
-| orchestration-evaluation.json | Route selection reasoning (for orchestration steps) |
-| execution/orchestration-main-step.json | Main orchestrator execution results |
-| logs/step-X-sub-agent-{index}/ | Sub-agent logs (validation, execution, conversation) |
-| execution/step-X-sub-agent-{index}/ | Sub-agent execution outputs (for orchestration steps) |
-
----
-
-## ✅ SUCCESS CRITERIA RULES
-
-**CRITICAL**: Validation agent has NO MCP tools - only reads/lists files.
-
-### Two-Layer Validation System
-The system uses a two-layer validation approach:
-1. **Pre-Validation (Code)**: Fast structural checks - file existence, JSON structure, consistency
-   - Handled by validation_schema field (mandatory for all steps)
-   - Use update_validation_schema tool to update these rules
-   - Blocks LLM validation if structural checks fail
-2. **LLM Validation**: Deep authenticity checks - execution history verification, anti-hallucination
-   - Handled by success_criteria field (execution-based validation focus)
-   - Use update_success_criteria tool to update these rules
-   - Focuses on proving work was actually done, not just file structure
-
-### Anti-gaming principle
-The execution agent creates both the evidence and any status fields in the same files. If success criteria only checks for a status like 'status: \"success\"' or 'all checks passed', the agent can satisfy it by flipping flags without doing the real work.
-
-To avoid this, success criteria MUST:
-- Be file-verifiable, and
-- Require concrete evidence (counts, lists, data samples, consistency checks) that would be hard to fake.
-
-### Rules
-| Rule | Example |
-|------|---------|
-| **File-verifiable only** | ✅ File 'results.json' contains a 'databases' array and 'database_count' field equal to the array length <br> ❌ API returns 200 (validation agent can't call APIs) |
-| **Check evidence, not just status** | ✅ File 'verification.json' lists tab names, row counts per tab, and sample dates that can be recomputed and checked <br> ❌ File 'verification.json' only has 'status: \"passed\"' |
-| **For verification steps** | ✅ Encode that ALL checks pass when recomputed from the raw evidence (counts, lists, samples), not just that a 'passed' flag exists <br> ❌ "verification file exists" or "all checks show passed" with no underlying evidence |
-
----
-
-## 📚 LEARNINGS
-
-**Location**: learnings/ (shared) + learnings/{step_id}/ (step-specific, using step IDs from plan.json)
-
-**Structure depends on execution mode**:
-- **Simple Mode**: .md files + scripts/*.py
-- **Code Execution Mode**: .md files + code/*.go
-
-Check conversation history for write_code tool calls to determine mode.
-
-**Quality criteria**:
-- Specific (exact commands/code that worked)
-- Contextual (when to use each approach)
-- Current (reflect latest successful patterns)
-
----
-
-## 📋 FINAL REMINDERS
-
-- **Folder access**: Only ` + templateVars["AllowedPaths"] + `
-- **All paths relative** to workspace root
-- **Confirmation required**: human_feedback BEFORE plan changes
-- **Tools update immediately**: plan.json and learnings/ written on tool call
-`
+	tmpl, err := template.New("improvementSystem").Parse(templateStr)
+	if err != nil {
+		return "Error parsing improvement system prompt template: " + err.Error()
+	}
+	var result strings.Builder
+	if err := tmpl.Execute(&result, templateVars); err != nil {
+		return "Error executing improvement system prompt template: " + err.Error()
+	}
+	return result.String()
 }
 
-// planImprovementUserMessageProcessor creates the user message for plan improvement
 func (agent *HumanControlledTodoPlannerPlanImprovementAgent) planImprovementUserMessageProcessor(templateVars map[string]string) string {
-	workspacePath := templateVars["WorkspacePath"]
-	runPathRelative := templateVars["RunPathRelative"]
+	templateStr := `# Plan Improvement Task
+## 📋 CONTEXT
+- **Workspace**: {{.WorkspacePath}}
+- **Selected Run**: {{.RunPathRelative}}
 
-	dataSourcesSection := ""
-	// Run path is always provided (validated before execution).
-	dataSourcesSection = fmt.Sprintf(`
-## AVAILABLE DATA SOURCES (Selected Run Path: %s)
-
-1. **Plan**: %s/planning/plan.json
-2. **Learnings**: %s/learnings/ (structure depends on execution mode - see system prompt for details)
-3. **Execution Results**: %s/%s/execution/ - Step execution outputs
-4. **Validation Logs**: %s/%s/logs/step-X/validation.json (or validation-2.json, validation-3.json, etc.)
-5. **Execution Logs**: %s/%s/logs/step-X/execution/execution-attempt-{N}-iteration-{M}.json - Execution results
-6. **Conversation History**: %s/%s/logs/step-X/execution/execution-attempt-{N}-iteration-{M}-conversation.json - Full LLM conversation (original JSON structure)
-
-**Decision Steps** (if present): %s/%s/logs/step-X/decision-evaluation.json, %s/%s/logs/step-X/execution/decision-inner-step.json, %s/%s/execution/step-X-decision/ (see system prompt for details)
-
-**Orchestration Steps** (if present): 
-- Main orchestrator: %s/%s/logs/step-X/orchestration-evaluation.json, %s/%s/logs/step-X/execution/orchestration-main-step.json
-- Sub-agents: %s/%s/logs/step-X-sub-agent-{index}/ (logs), %s/%s/execution/step-X-sub-agent-{index}/ (execution results)
-- See system prompt for detailed analysis guidance
-`, runPathRelative, workspacePath, workspacePath, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative, workspacePath, runPathRelative)
-
-	return `# Plan Improvement Task
-
-## DATA
-
-**Workspace**: ` + workspacePath + `
-**Execution Results & Logs**: ` + templateVars["ExecutionResultsSummary"] + `
+## 📊 DATA
+**Execution Summary**:
+{{.ExecutionResultsSummary}}
 
 **Current Plan**:
-` + func() string {
-		if templateVars["PlanJSON"] != "" {
-			return templateVars["PlanJSON"]
-		}
-		return "No plan provided."
-	}() + dataSourcesSection + `
+{{if .PlanJSON}}{{.PlanJSON}}{{else}}No plan provided.{{end}}
 
-## IMPORTANT INSTRUCTIONS
+## 🧠 TASK
+1. Analyze the plan vs. execution results.
+2. Ask the user what to improve via 'human_feedback'.
+3. Propose specific fixes and get approval before updating the plan.`
 
-**You can update plan.json directly, but ALWAYS get user confirmation first.** Your role is to:
-1. Analyze the plan structure, step descriptions, success criteria, and learnings (default - fast)
-2. **Only check execution logs when user explicitly asks** about execution details, failures, or conversation history
-3. Identify issues and areas for improvement
-4. **Propose** specific changes via human_feedback (what, why, and how)
-5. **Get user approval** before making any changes
-6. **Update plan.json** using plan modification tools after approval
-
-**Efficiency Note**: Execution logs are large and slow to read. By default, focus on plan structure (titles, descriptions, success criteria) and learnings. Only dive into execution logs when the user specifically asks about execution failures, validation issues, or conversation history.
-
-Follow the workflow in the system prompt. Use human_feedback FIRST to ask what to improve, then propose changes and get approval before updating the plan.
-`
+	tmpl, err := template.New("improvementUser").Parse(templateStr)
+	if err != nil {
+		return "Error parsing improvement user message template: " + err.Error()
+	}
+	var result strings.Builder
+	if err := tmpl.Execute(&result, templateVars); err != nil {
+		return "Error executing improvement user message template: " + err.Error()
+	}
+	return result.String()
 }

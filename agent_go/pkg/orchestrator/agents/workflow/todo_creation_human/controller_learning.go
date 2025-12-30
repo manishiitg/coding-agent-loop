@@ -194,7 +194,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runSuccessLearningPhase(ctx 
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning extraction completed for %s (detail level: %s)", learningPathIdentifier, learningDetailLevel))
 
-	// Extraction agent now consolidates and writes directly to final file
+	// Extraction agent consolidates and writes directly to final file via LLM instructions
 	// No temp file handling needed - detection agent will read the final consolidated file
 
 	// Run learning detection (extraction agent already consolidated)
@@ -423,7 +423,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runFailureLearningPhase(ctx 
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Failure learning extraction completed for %s (detail level: %s)", learningPathIdentifier, learningDetailLevel))
 
-	// Extraction agent now consolidates and writes directly to final file
+	// Extraction agent consolidates and writes directly to final file via LLM instructions
 	// No temp file handling needed - detection agent will read the final consolidated file
 
 	// Run learning detection (extraction agent already consolidated)

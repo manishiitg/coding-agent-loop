@@ -20,14 +20,15 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// KnowledgebaseFolderName is the name of the persistent knowledgebase folder inside execution/
-// This folder is never deleted during cleanup operations
+// KnowledgebaseFolderName is the name of the persistent knowledgebase folder at workspace root
+// This folder is never deleted during cleanup operations and is shared across all runs
 const KnowledgebaseFolderName = "knowledgebase"
 
 // getKnowledgebasePath returns the full path to the knowledgebase folder
-// Path format: {executionWorkspacePath}/knowledgebase/
-func getKnowledgebasePath(executionWorkspacePath string) string {
-	return fmt.Sprintf("%s/%s", executionWorkspacePath, KnowledgebaseFolderName)
+// Path format: {workspaceRoot}/knowledgebase/
+// Knowledgebase is at workspace root level (same as runs/, planning/, learnings/) to be shared across all runs
+func getKnowledgebasePath(workspaceRoot string) string {
+	return fmt.Sprintf("%s/%s", workspaceRoot, KnowledgebaseFolderName)
 }
 
 // PrerequisiteFailureError is a special error type that signals a prerequisite failure detected during execution
@@ -820,8 +821,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 			// Non-blocking: log warning but continue execution (folder will be created when files are written)
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure step execution folder exists: %v (continuing - folder will be created when files are written)", err))
 		}
-		// Get knowledgebase folder path (persistent files across runs)
-		knowledgebasePath := getKnowledgebasePath(executionWorkspacePath)
+		// Get knowledgebase folder path (persistent files across runs, at workspace root)
+		knowledgebasePath := getKnowledgebasePath(hcpo.GetWorkspacePath())
 
 		templateVars := map[string]string{
 			"StepTitle":           ResolveVariables(step.GetTitle(), hcpo.variableValues),

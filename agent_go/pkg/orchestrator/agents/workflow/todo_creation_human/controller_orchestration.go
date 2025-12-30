@@ -611,6 +611,117 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			return true, "end", nil
 		}
 
+		// Check if the selected route is "learning" - trigger orchestrator learning agent
+		if strings.ToLower(selectedRoutePlan.RouteID) == "learning" || strings.ToLower(selectedRoutePlan.RouteID) == "orchestrator-learning" {
+			hcpo.GetLogger().Info("🧠 Orchestrator chose to learn from recent decisions (route: 'learning') - triggering orchestration learning agent")
+
+			// Get orchestration step ID for learning path
+			orchestrationStepID := orchestrationStepPlan.OrchestrationStep.GetID()
+			if orchestrationStepID == "" {
+				orchestrationStepID = orchestrationStepPath // Fallback to stepPath
+			}
+			learningPathIdentifier := getLearningPathIdentifier(orchestrationStepID, orchestrationStepPath)
+
+			// Get step config for learning agent
+			orchestrationStepConfig := getAgentConfigs(orchestrationStepPlan)
+
+			// Create orchestration learning agent
+			learningAgentName := fmt.Sprintf("orchestration-learning-step-%d", stepIndex+1)
+			learningAgent, err := hcpo.createOrchestrationLearningAgent(ctx, "orchestration_learning", learningPathIdentifier, learningAgentName, orchestrationStepConfig)
+			if err != nil {
+				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to create orchestration learning agent: %v", err), nil)
+				return false, "", fmt.Errorf("failed to create orchestration learning agent: %w", err)
+			}
+
+			// Prepare template variables for learning agent
+			runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+			executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
+			stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, orchestrationStepPath)
+
+			// Build orchestration routes description
+			routesDescription := ""
+			for i, route := range orchestrationStepPlan.OrchestrationRoutes {
+				routesDescription += fmt.Sprintf("\n**Route %d: %s** (ID: %s)\n", i+1, route.RouteName, route.RouteID)
+				routesDescription += fmt.Sprintf("- Condition: %s\n", route.Condition)
+				if route.ContextToPass != "" {
+					routesDescription += fmt.Sprintf("- Context to pass: %s\n", route.ContextToPass)
+				}
+				if route.SubAgentStep != nil {
+					routesDescription += fmt.Sprintf("- Sub-agent: %s\n", route.SubAgentStep.GetTitle())
+				}
+			}
+
+			// Format conversation history as orchestration history
+			orchestrationHistory := shared.FormatConversationHistory(conversationHistory)
+
+			// Read existing orchestrator learnings
+			existingLearningsContent := ""
+			baseWorkspacePath := hcpo.GetWorkspacePath()
+			stepLearningsPath := getLearningFolderPathByStepID(baseWorkspacePath, orchestrationStepID, orchestrationStepPath)
+			orchestratorLearningPath := fmt.Sprintf("%s/orchestrator_learning.md", stepLearningsPath)
+			existingLearnings, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningPath)
+			if err == nil && existingLearnings != "" {
+				existingLearningsContent = existingLearnings
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Read existing orchestrator learnings from: %s", orchestratorLearningPath))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ No existing orchestrator learnings found at: %s (will create new)", orchestratorLearningPath))
+			}
+
+			// Prepare validation result (use last validation response if available)
+			validationResult := "No validation results available yet."
+			if orchestrationStepPlan.OrchestrationResponse != nil {
+				if orchestrationStepPlan.OrchestrationResponse.SuccessCriteriaMet {
+					validationResult = fmt.Sprintf("Success criteria met: %s", orchestrationStepPlan.OrchestrationResponse.SuccessReasoning)
+				} else {
+					validationResult = fmt.Sprintf("Success criteria not met: %s", orchestrationStepPlan.OrchestrationResponse.SuccessReasoning)
+				}
+			}
+
+			learningTemplateVars := map[string]string{
+				"StepTitle":                orchestrationStepPlan.OrchestrationStep.GetTitle(),
+				"StepDescription":          orchestrationStepPlan.OrchestrationStep.GetDescription(),
+				"StepSuccessCriteria":      orchestrationStepPlan.OrchestrationStep.GetSuccessCriteria(),
+				"StepContextDependencies":  strings.Join(orchestrationStepPlan.OrchestrationStep.GetContextDependencies(), ", "),
+				"StepContextOutput":        orchestrationStepPlan.OrchestrationStep.GetContextOutput().String(),
+				"WorkspacePath":            executionWorkspacePath,
+				"OrchestrationHistory":     orchestrationHistory,
+				"ValidationResult":         validationResult,
+				"OrchestrationRoutes":      routesDescription,
+				"StepExecutionPath":        stepExecutionPath,
+				"StepNumber":               learningPathIdentifier,
+				"ExistingLearningsContent": existingLearningsContent,
+			}
+
+			// Add variable names if available
+			if variableNames := FormatVariableNames(hcpo.variablesManifest); variableNames != "" {
+				learningTemplateVars["VariableNames"] = variableNames
+			}
+
+			// Execute learning agent
+			learningResult, _, err := learningAgent.Execute(ctx, learningTemplateVars, []llmtypes.MessageContent{})
+			if err != nil {
+				hcpo.GetLogger().Error(fmt.Sprintf("❌ Orchestration learning agent failed: %v", err), nil)
+				return false, "", fmt.Errorf("orchestration learning agent failed: %w", err)
+			}
+
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration learning completed. Result: %s", learningResult))
+
+			// Add learning result to conversation history
+			learningMessage := llmtypes.MessageContent{
+				Role: llmtypes.ChatMessageTypeAI,
+				Parts: []llmtypes.ContentPart{
+					llmtypes.TextContent{
+						Text: fmt.Sprintf("Orchestration learning agent completed:\n\n%s", learningResult),
+					},
+				},
+			}
+			conversationHistory = append(conversationHistory, learningMessage)
+
+			// Loop back to execute main orchestration step again with learnings applied
+			hcpo.GetLogger().Info(fmt.Sprintf("🔄 Orchestration learning completed, looping back to main orchestration step (iteration %d/%d)", orchestrationIteration+2, maxOrchestrationIterations))
+			continue // Loop back to start of for loop
+		}
+
 		hcpo.GetLogger().Info(fmt.Sprintf("🔀 Executing sub-agent: %s (route: %s, index: %d, ID: %s)", subAgentStepPlan.GetTitle(), selectedRoutePlan.RouteID, subAgentIndex, subAgentStepPlan.GetID()))
 
 		// Prepare sub-agent step with validation disabled
@@ -742,6 +853,28 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			workspaceResults, err := RunPreValidation(ctx, validationSchema, subAgentExecutionPath, hcpo.BaseOrchestrator)
 			if err != nil {
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation error for sub-agent '%s': %v", subAgentStepPlan.GetTitle(), err))
+				// Pre-validation error means we can't verify structure - create error result
+				workspaceResults = &WorkspaceVerificationResult{
+					OverallPass:  false, // Block on pre-validation errors
+					FilesChecked: []FileCheckResult{},
+					Summary: ValidationSummary{
+						TotalChecks:  0,
+						PassedChecks: 0,
+						FailedChecks: 1,
+						SchemaErrors: 0,
+						Errors: []ValidationError{
+							{
+								File:      "",
+								Path:      "",
+								CheckType: "pre_validation_error",
+								Expected:  "pre-validation to run successfully",
+								Actual:    "error occurred",
+								Message:   fmt.Sprintf("Pre-validation failed to run: %v", err),
+							},
+						},
+						SchemaWarnings: []ValidationError{},
+					},
+				}
 			} else if workspaceResults.OverallPass {
 				hcpo.GetLogger().Info(fmt.Sprintf("✅ Pre-validation passed for sub-agent '%s'", subAgentStepPlan.GetTitle()))
 			} else {
@@ -751,6 +884,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 					hcpo.GetLogger().Warn(fmt.Sprintf("  - %s: %s (expected: %s, actual: %s)", validationError.File, validationError.Message, validationError.Expected, validationError.Actual))
 				}
 			}
+
+			// Emit pre-validation completed event for sub-agent
+			hcpo.emitPreValidationCompletedEvent(ctx, subAgentStepPlan, stepIndex, subAgentPath, true, workspaceResults)
 		} else {
 			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping pre-validation for sub-agent '%s' (no validation schema provided)", subAgentStepPlan.GetTitle()))
 		}
@@ -901,6 +1037,41 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 Added previous steps summary to template variables for orchestration step %d (%d previous steps)", stepIndex+1, len(previousContextFiles)))
 	}
 
+	// Read orchestrator learnings (like regular execution agents read learning history)
+	var formattedOrchestratorLearningHistory string
+	orchestrationStepID := innerStep.GetID()
+	if orchestrationStepID == "" {
+		orchestrationStepID = stepPath // Fallback to stepPath
+	}
+
+	// Check if learning is disabled (orchestrationStepConfig already declared above)
+	isLearningDisabledStep := orchestrationStepConfig != nil && orchestrationStepConfig.DisableLearning != nil && *orchestrationStepConfig.DisableLearning
+	isLearningDetailLevelNone := false
+	if orchestrationStepConfig != nil && orchestrationStepConfig.LearningDetailLevel == "none" {
+		isLearningDetailLevelNone = true
+	}
+	isLearningDisabled := isLearningDisabledStep || isLearningDetailLevelNone
+
+	if isLearningDisabled {
+		formattedOrchestratorLearningHistory = ""
+		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled for orchestration step %d - skipping orchestrator learning history reading", stepIndex+1))
+	} else {
+		// Read orchestrator learnings from orchestrator_learning.md
+		baseWorkspacePath := hcpo.GetWorkspacePath()
+		stepLearningsPath := getLearningFolderPathByStepID(baseWorkspacePath, orchestrationStepID, stepPath)
+		orchestratorLearningPath := fmt.Sprintf("%s/orchestrator_learning.md", stepLearningsPath)
+
+		orchestratorLearnings, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningPath)
+		if err == nil && orchestratorLearnings != "" {
+			// Format orchestrator learnings similar to regular learning history
+			formattedOrchestratorLearningHistory = fmt.Sprintf("## 📚 ORCHESTRATOR LEARNINGS\n\n%s", orchestratorLearnings)
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Read orchestrator learnings from: %s (length: %d chars)", orchestratorLearningPath, len(orchestratorLearnings)))
+		} else {
+			formattedOrchestratorLearningHistory = ""
+			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ No orchestrator learnings found for orchestration step %d - learnings folder: %s", stepIndex+1, stepLearningsPath))
+		}
+	}
+
 	// Prepare template variables
 	// Use inner step's metadata (title, description, etc.) for template variables
 	templateVars := map[string]string{
@@ -914,6 +1085,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 		"StepExecutionPath":    stepExecutionPath,
 		"PreviousStepsSummary": previousStepsSummary,
 		"OrchestrationRoutes":  routesDescription,
+		"LearningHistory":      formattedOrchestratorLearningHistory, // Pass orchestrator learnings (like regular execution agents)
 	}
 
 	// Add context dependencies
@@ -941,8 +1113,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationOrchestr
 	}
 	// Step-specific learnings folder: learnings/{stepID}/ (only this step's learnings, not full learnings folder)
 	stepLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
-	// Knowledgebase folder: execution/knowledgebase/ (persistent files across runs)
-	knowledgebasePath := getKnowledgebasePath(executionWorkspacePath)
+	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
+	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 	// READ: step-specific learnings folder + execution folder + run folder + knowledgebase folder (to read previous step results and run folder files)
 	// Note: runWorkspacePath is already defined earlier in this function (line 810)
 	// WRITE: only the specific step folder (execution/step-{X}-orchestration/ or execution/step-{X}-orchestration-{N}/) + knowledgebase folder

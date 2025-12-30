@@ -16,7 +16,7 @@ import (
 
 // ReadWorkspaceFile reads a file from the workspace using MCP tools
 func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath string) (string, error) {
-	// Removed verbose logging
+	startTime := time.Now()
 
 	// Prepare tool call parameters (MCP tools expect map[string]interface{})
 	readArgs := map[string]interface{}{
@@ -26,11 +26,15 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 	// Get the tool executor
 	readExecutorInterface, exists := bo.WorkspaceToolExecutors["read_workspace_file"]
 	if !exists {
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ReadWorkspaceFile(%s) failed: executor not found (took %v)", filePath, duration))
 		return "", fmt.Errorf(fmt.Sprintf("read_workspace_file tool executor not found"), nil)
 	}
 
 	readExecutor, ok := readExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ReadWorkspaceFile(%s) failed: executor wrong type (took %v)", filePath, duration))
 		return "", fmt.Errorf(fmt.Sprintf("read_workspace_file tool executor has wrong type"), nil)
 	}
 
@@ -40,12 +44,16 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 	// Execute the tool call using existing workspace tool logic
 	readResult, err := readExecutor(ctx, readArgs)
 	if err != nil {
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ReadWorkspaceFile(%s) failed: %v (took %v)", filePath, err, duration))
 		return "", fmt.Errorf(fmt.Sprintf("failed to read file %s: %w", filePath, err), nil)
 	}
 
 	// Parse the response using proper type from virtualtools
 	var fileData virtualtools.WorkspaceFileContent
 	if err := json.Unmarshal([]byte(readResult), &fileData); err != nil {
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ReadWorkspaceFile(%s) failed: parse error %v (took %v)", filePath, err, duration))
 		return "", fmt.Errorf(fmt.Sprintf("failed to parse workspace response: %w", err), nil)
 	}
 
@@ -53,10 +61,13 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 	fileContent := fileData.Content
 
 	if fileContent == "" {
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ReadWorkspaceFile(%s) failed: no content found (took %v)", filePath, duration))
 		return "", fmt.Errorf(fmt.Sprintf("no content found in workspace response"), nil)
 	}
 
-	// Removed verbose logging
+	duration := time.Since(startTime)
+	bo.GetLogger().Debug(fmt.Sprintf("⏱️ [WORKSPACE] ReadWorkspaceFile(%s) completed successfully (took %v)", filePath, duration))
 	return fileContent, nil
 }
 
@@ -82,7 +93,8 @@ func (bo *BaseOrchestrator) CheckWorkspaceFileExists(ctx context.Context, filePa
 
 // WriteWorkspaceFile writes content to a file in the workspace using MCP tools
 func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath string, content string) error {
-	// Removed verbose logging
+	startTime := time.Now()
+	contentSize := len(content)
 
 	// Prepare tool call parameters (MCP tools expect map[string]interface{})
 	writeArgs := map[string]interface{}{
@@ -93,11 +105,15 @@ func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath str
 	// Get the tool executor
 	writeExecutorInterface, exists := bo.WorkspaceToolExecutors["update_workspace_file"]
 	if !exists {
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] WriteWorkspaceFile(%s, %d bytes) failed: executor not found (took %v)", filePath, contentSize, duration))
 		return fmt.Errorf(fmt.Sprintf("update_workspace_file tool executor not found"), nil)
 	}
 
 	writeExecutor, ok := writeExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] WriteWorkspaceFile(%s, %d bytes) failed: executor wrong type (took %v)", filePath, contentSize, duration))
 		return fmt.Errorf(fmt.Sprintf("update_workspace_file tool executor has wrong type"), nil)
 	}
 
@@ -107,16 +123,19 @@ func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath str
 	// Execute the tool call using existing workspace tool logic
 	_, err := writeExecutor(ctx, writeArgs)
 	if err != nil {
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] WriteWorkspaceFile(%s, %d bytes) failed: %v (took %v)", filePath, contentSize, err, duration))
 		return fmt.Errorf(fmt.Sprintf("failed to write file %s: %w", filePath, err), nil)
 	}
 
-	// Removed verbose logging
+	duration := time.Since(startTime)
+	bo.GetLogger().Debug(fmt.Sprintf("⏱️ [WORKSPACE] WriteWorkspaceFile(%s, %d bytes) completed successfully (took %v)", filePath, contentSize, duration))
 	return nil
 }
 
 // DeleteWorkspaceFile deletes a file from the workspace using MCP tools
 func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath string) error {
-	// Removed verbose logging
+	startTime := time.Now()
 
 	// Prepare tool call parameters (MCP tools expect map[string]interface{})
 	deleteArgs := map[string]interface{}{
@@ -126,11 +145,15 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 	// Get the tool executor
 	deleteExecutorInterface, exists := bo.WorkspaceToolExecutors["delete_workspace_file"]
 	if !exists {
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] DeleteWorkspaceFile(%s) failed: executor not found (took %v)", filePath, duration))
 		return fmt.Errorf(fmt.Sprintf("delete_workspace_file tool executor not found"), nil)
 	}
 
 	deleteExecutor, ok := deleteExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] DeleteWorkspaceFile(%s) failed: executor wrong type (took %v)", filePath, duration))
 		return fmt.Errorf(fmt.Sprintf("delete_workspace_file tool executor has wrong type"), nil)
 	}
 
@@ -140,15 +163,20 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 	// Execute the tool call using existing workspace tool logic
 	_, err := deleteExecutor(ctx, deleteArgs)
 	if err != nil {
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] DeleteWorkspaceFile(%s) failed: %v (took %v)", filePath, err, duration))
 		return fmt.Errorf(fmt.Sprintf("failed to delete file %s: %w", filePath, err), nil)
 	}
 
-	// Removed verbose logging
+	duration := time.Since(startTime)
+	bo.GetLogger().Debug(fmt.Sprintf("⏱️ [WORKSPACE] DeleteWorkspaceFile(%s) completed successfully (took %v)", filePath, duration))
 	return nil
 }
 
 // MoveWorkspaceFile moves a file or directory from one location to another in the workspace using MCP tools
 func (bo *BaseOrchestrator) MoveWorkspaceFile(ctx context.Context, sourcePath string, destinationPath string) error {
+	startTime := time.Now()
+
 	// Prepare tool call parameters (MCP tools expect map[string]interface{})
 	moveArgs := map[string]interface{}{
 		"source_filepath":      sourcePath,
@@ -158,11 +186,15 @@ func (bo *BaseOrchestrator) MoveWorkspaceFile(ctx context.Context, sourcePath st
 	// Get the tool executor
 	moveExecutorInterface, exists := bo.WorkspaceToolExecutors["move_workspace_file"]
 	if !exists {
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] MoveWorkspaceFile(%s -> %s) failed: executor not found (took %v)", sourcePath, destinationPath, duration))
 		return fmt.Errorf(fmt.Sprintf("move_workspace_file tool executor not found"), nil)
 	}
 
 	moveExecutor, ok := moveExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] MoveWorkspaceFile(%s -> %s) failed: executor wrong type (took %v)", sourcePath, destinationPath, duration))
 		return fmt.Errorf(fmt.Sprintf("move_workspace_file tool executor has wrong type"), nil)
 	}
 
@@ -172,9 +204,13 @@ func (bo *BaseOrchestrator) MoveWorkspaceFile(ctx context.Context, sourcePath st
 	// Execute the tool call using existing workspace tool logic
 	_, err := moveExecutor(ctx, moveArgs)
 	if err != nil {
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] MoveWorkspaceFile(%s -> %s) failed: %v (took %v)", sourcePath, destinationPath, err, duration))
 		return fmt.Errorf(fmt.Sprintf("failed to move %s to %s: %w", sourcePath, destinationPath, err), nil)
 	}
 
+	duration := time.Since(startTime)
+	bo.GetLogger().Debug(fmt.Sprintf("⏱️ [WORKSPACE] MoveWorkspaceFile(%s -> %s) completed successfully (took %v)", sourcePath, destinationPath, duration))
 	return nil
 }
 
@@ -365,18 +401,21 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 // ListWorkspaceDirectories lists all directories in a given path
 // Returns a slice of directory names (not full paths)
 func (bo *BaseOrchestrator) ListWorkspaceDirectories(ctx context.Context, dirPath string) ([]string, error) {
+	startTime := time.Now()
 	bo.GetLogger().Info(fmt.Sprintf("📁 Listing directories in: %s", dirPath))
 
 	// Use list_workspace_files to enumerate directories
 	listExecutorInterface, exists := bo.WorkspaceToolExecutors["list_workspace_files"]
 	if !exists {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ list_workspace_files executor not found, returning empty list"))
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceDirectories(%s) failed: executor not found (took %v)", dirPath, duration))
 		return []string{}, nil
 	}
 
 	listExecutor, ok := listExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ list_workspace_files executor has wrong type, returning empty list"))
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceDirectories(%s) failed: executor wrong type (took %v)", dirPath, duration))
 		return []string{}, nil
 	}
 
@@ -394,7 +433,8 @@ func (bo *BaseOrchestrator) ListWorkspaceDirectories(ctx context.Context, dirPat
 	fileListJSON, err := listExecutor(ctx, listArgs)
 	bo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG ListWorkspaceDirectories: list_workspace_files returned, error=%v, response_length=%d", err, len(fileListJSON)))
 	if err != nil {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to list files in %s directory: %v (directory may not exist or be empty)", dirPath, err))
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceDirectories(%s) failed: %v (took %v)", dirPath, err, duration))
 		return []string{}, nil // Don't fail - directory may be empty or not exist
 	}
 
@@ -410,7 +450,8 @@ func (bo *BaseOrchestrator) ListWorkspaceDirectories(ctx context.Context, dirPat
 			filesList = altFormat.Files
 		}
 		if len(filesList) == 0 {
-			bo.GetLogger().Info(fmt.Sprintf("ℹ️ No files found in %s directory (may be empty)", dirPath))
+			duration := time.Since(startTime)
+			bo.GetLogger().Info(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceDirectories(%s) completed: no directories found (took %v)", dirPath, duration))
 			return []string{}, nil
 		}
 	}
@@ -448,25 +489,29 @@ func (bo *BaseOrchestrator) ListWorkspaceDirectories(ctx context.Context, dirPat
 		}
 	}
 
-	bo.GetLogger().Info(fmt.Sprintf("📁 Found %d directories: %v", len(directoryNames), directoryNames))
+	duration := time.Since(startTime)
+	bo.GetLogger().Info(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceDirectories(%s) completed: found %d directories (took %v)", dirPath, len(directoryNames), duration))
 	return directoryNames, nil
 }
 
 // ListWorkspaceFiles lists all files and directories in a given path
 // Returns a slice of file/directory names (not full paths)
 func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath string) ([]string, error) {
+	startTime := time.Now()
 	bo.GetLogger().Info(fmt.Sprintf("📁 Listing files and directories in: %s", dirPath))
 
 	// Use list_workspace_files to enumerate files and directories
 	listExecutorInterface, exists := bo.WorkspaceToolExecutors["list_workspace_files"]
 	if !exists {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ list_workspace_files executor not found, returning empty list"))
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceFiles(%s) failed: executor not found (took %v)", dirPath, duration))
 		return []string{}, nil
 	}
 
 	listExecutor, ok := listExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ list_workspace_files executor has wrong type, returning empty list"))
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceFiles(%s) failed: executor wrong type (took %v)", dirPath, duration))
 		return []string{}, nil
 	}
 
@@ -481,6 +526,7 @@ func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath stri
 
 	fileListJSON, err := listExecutor(ctx, listArgs)
 	if err != nil {
+		duration := time.Since(startTime)
 		// Check if error indicates folder doesn't exist
 		errStr := err.Error()
 		if strings.Contains(errStr, "does not exist") ||
@@ -488,11 +534,11 @@ func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath stri
 			strings.Contains(errStr, "Folder does not exist") ||
 			strings.Contains(errStr, "Folder not found") {
 			// Return error for non-existent folders
-			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Folder does not exist: %s", dirPath))
+			bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceFiles(%s) failed: folder does not exist (took %v)", dirPath, duration))
 			return nil, fmt.Errorf("folder does not exist: %s", dirPath)
 		}
 		// For other errors, log and return empty (backward compatibility)
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to list files in %s directory: %v (directory may be empty)", dirPath, err))
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceFiles(%s) failed: %v (took %v)", dirPath, err, duration))
 		return []string{}, nil
 	}
 
@@ -501,13 +547,15 @@ func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath stri
 	if (strings.Contains(fileListJSON, "Folder does not exist") ||
 		strings.Contains(fileListJSON, "does not exist")) &&
 		!strings.Contains(fileListJSON, "exists but contains no files") {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Folder does not exist: %s", dirPath))
+		duration := time.Since(startTime)
+		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceFiles(%s) failed: folder does not exist (took %v)", dirPath, duration))
 		return nil, fmt.Errorf("folder does not exist: %s", dirPath)
 	}
 
 	// Handle empty folder case (executor returns a message string, not JSON)
 	if strings.Contains(fileListJSON, "exists but contains no files") {
-		bo.GetLogger().Info(fmt.Sprintf("ℹ️ Folder exists but is empty: %s", dirPath))
+		duration := time.Since(startTime)
+		bo.GetLogger().Info(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceFiles(%s) completed: folder exists but is empty (took %v)", dirPath, duration))
 		return []string{}, nil
 	}
 
@@ -523,7 +571,8 @@ func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath stri
 			filesList = altFormat.Files
 		}
 		if len(filesList) == 0 {
-			bo.GetLogger().Info(fmt.Sprintf("ℹ️ No files found in %s directory (may be empty)", dirPath))
+			duration := time.Since(startTime)
+			bo.GetLogger().Info(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceFiles(%s) completed: no files found (took %v)", dirPath, duration))
 			return []string{}, nil
 		}
 	}
@@ -554,7 +603,8 @@ func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath stri
 		}
 	}
 
-	bo.GetLogger().Info(fmt.Sprintf("📁 Found %d files/directories: %v", len(names), names))
+	duration := time.Since(startTime)
+	bo.GetLogger().Info(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceFiles(%s) completed: found %d files/directories (took %v)", dirPath, len(names), duration))
 	return names, nil
 }
 

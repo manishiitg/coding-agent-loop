@@ -508,6 +508,9 @@ func GetDocument(c *gin.Context) {
 		return
 	}
 
+	// Read operations don't need locks - os.ReadFile is atomic and safe
+	// Only write operations need locks to prevent concurrent modifications
+
 	// Check if file exists and get file info
 	fileInfo, err := os.Stat(filePath)
 	if os.IsNotExist(err) {

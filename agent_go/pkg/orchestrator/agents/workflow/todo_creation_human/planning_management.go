@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"text/template"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -179,11 +180,20 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 			validationErr := validatePlanStepIDs(existingPlan.Steps)
 			if validationErr != nil {
 				// Fallback: concise instruction for plan updates with validation error fix
-				userMessage = fmt.Sprintf(
-					"Review the existing plan, fix the following validation issues, and then update the plan based on the objective and my feedback: %v. "+
-						"Always use the human_feedback tool first to confirm any changes with me.",
-					validationErr,
-				)
+				templateStr := `Review the existing plan, fix the following validation issues, and then update the plan based on the objective and my feedback: {{.ValidationErr}}. Always use the human_feedback tool first to confirm any changes with me.`
+				tmpl, err := template.New("planningUpdateValidationError").Parse(templateStr)
+				if err != nil {
+					userMessage = "Review the existing plan and update it based on the objective and my feedback. Always use the human_feedback tool first to confirm any changes with me."
+				} else {
+					var result strings.Builder
+					if err := tmpl.Execute(&result, map[string]interface{}{
+						"ValidationErr": validationErr,
+					}); err != nil {
+						userMessage = "Review the existing plan and update it based on the objective and my feedback. Always use the human_feedback tool first to confirm any changes with me."
+					} else {
+						userMessage = result.String()
+					}
+				}
 			} else {
 				// Fallback: concise instruction for plan updates
 				userMessage = "Review the existing plan and update it based on the objective and my feedback. Always use the human_feedback tool first to confirm any changes with me."
@@ -192,7 +202,22 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runPlanningPhase(ctx context
 	} else {
 		// CREATE mode: concise, action-oriented instruction for first-time plan generation.
 		// Include the objective explicitly since it's no longer shown in the system prompt.
-		userMessage = fmt.Sprintf("Objective: %s\n\nGenerate a comprehensive structured plan to achieve this objective.", hcpo.GetObjective())
+		templateStr := `Objective: {{.Objective}}
+
+Generate a comprehensive structured plan to achieve this objective.`
+		tmpl, err := template.New("planningCreateUserMessage").Parse(templateStr)
+		if err != nil {
+			userMessage = fmt.Sprintf("Objective: %s\n\nGenerate a comprehensive structured plan to achieve this objective.", hcpo.GetObjective())
+		} else {
+			var result strings.Builder
+			if err := tmpl.Execute(&result, map[string]interface{}{
+				"Objective": hcpo.GetObjective(),
+			}); err != nil {
+				userMessage = fmt.Sprintf("Objective: %s\n\nGenerate a comprehensive structured plan to achieve this objective.", hcpo.GetObjective())
+			} else {
+				userMessage = result.String()
+			}
+		}
 	}
 
 	// Create fresh planning agent with proper context

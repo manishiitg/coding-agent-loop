@@ -1477,16 +1477,16 @@ Learning files are stored at workspace root (not inside runs/):
 
 The StepLearningsFolderMappingJSON provides step-specific paths. Check BOTH the base learnings folder (learnings/) AND step-specific folders (learnings/{step_id}/) when extracting tools.
 
-## EXECUTION LOGS LOCATION
+## EXECUTION LOGS LOCATION (OPTIONAL - ONLY IF USER REQUESTS)
 
-Execution logs contain ACTUAL tool usage from previous runs:
+Execution logs contain ACTUAL tool usage from previous runs (available if user requests log checking):
 - Logs location: {WorkspacePath}/runs/{iteration}/logs/step-{X}/ or {WorkspacePath}/logs/step-{X}/
 - Conversation history: logs/step-{X}/execution/execution-attempt-{N}-iteration-{M}-conversation.json
 - Execution results: logs/step-{X}/execution/execution-attempt-{N}-iteration-{M}.json
 
 The StepLogsFolderMappingJSON provides step-specific log paths. The ToolUsageSummaryJSON shows tools that were ACTUALLY USED in successful executions.
 
-**CRITICAL**: Always check logs/ for ACTUAL tool usage before making suggestions. Only suggest tools that appear in successful execution logs.
+**IMPORTANT**: Execution logs are OPTIONAL. Only check logs if the user explicitly asks for it (e.g., "check logs", "verify with logs", "use execution logs"). By default, base decisions on learnings and step description only.
 
 ## READING EXECUTION OUTPUT FILES
 
@@ -1550,7 +1550,7 @@ Execution output files are stored in logs folders. Use search_large_output tool 
 	return `# Plan Tool Optimization Agent
 
 ## PURPOSE
-Analyze ACTUAL tool usage from execution logs and learnings to optimize step_config.json. Be CONSERVATIVE - only suggest tools that were actually used successfully or are clearly needed based on step requirements.
+Analyze tool usage from learnings and step descriptions to optimize step_config.json. Be CONSERVATIVE - only suggest tools that were used successfully in learnings or are clearly needed based on step requirements. Execution logs are OPTIONAL and only checked if the user explicitly requests it.
 
 ` + variablesSection + learningsLocationNote + `## WORKFLOW
 
@@ -1563,20 +1563,8 @@ Analyze ACTUAL tool usage from execution logs and learnings to optimize step_con
 - Wait for user response before proceeding
 - **Exception**: If StepID is provided in template vars, skip this step and focus exclusively on that step
 
-### Step 2: Check Execution Logs FIRST (HIGHEST PRIORITY)
-**This is the MOST RELIABLE source - actual tool usage from successful runs.**
-
-1. Use StepLogsFolderMappingJSON to locate log folders for each step
-2. Use ToolUsageSummaryJSON as a quick reference (but verify with actual logs)
-3. **Read conversation history files** to extract actual tool calls:
-   - File pattern: logs/step-{X}/execution/execution-attempt-{N}-iteration-{M}-conversation.json
-   - Use search_large_output (if enabled) or read_workspace_file to read the JSON
-   - Extract tool names from conversation_history array (see JSON structure in prompt)
-   - **Only count tools from successful executions** (check execution_result.json for success indicators)
-4. **CRITICAL**: Only suggest tools that appear in successful execution logs
-
-### Step 3: Extract Tools from Learnings (SECONDARY SOURCE)
-**Use learnings ONLY if logs are unavailable or incomplete.**
+### Step 2: Extract Tools from Learnings (PRIMARY SOURCE)
+**This is the DEFAULT source - success patterns from previous iterations.**
 
 1. Use StepLearningsFolderMappingJSON to find learnings locations
 2. Check BOTH locations:
@@ -1584,73 +1572,108 @@ Analyze ACTUAL tool usage from execution logs and learnings to optimize step_con
    - **Step-specific**: learnings/{step_id}/ (step's own learnings)
 3. Extract ONLY from ✅ SUCCESS patterns - ignore ❌ failures
 4. Filter OUT: read_large_output, search_large_output, query_large_output (these are managed via enable_context_offloading flag)
+5. Extract tool names and patterns from learning files
 
-### Step 4: Apply Tool Inclusion Rules
-**Priority order**: Execution Logs > Learnings > Step Description Inference > Current Config
+### Step 3: Analyze Step Description and Title (SECONDARY SOURCE)
+**Use step description/title to infer tool needs when learnings are insufficient.**
+
+1. Read step title and description from PlanJSON
+2. Analyze step requirements to infer necessary tools:
+   - Look for keywords indicating specific tool needs (e.g., "GitHub", "shell command", "image", "approval")
+   - Match step requirements to available tool categories
+3. **IMPORTANT**: Only infer workspace/human tools from description - NEVER infer MCP tools
+4. Use this as supplementary information when learnings are sparse
+
+### Step 4: Check Execution Logs (OPTIONAL - ONLY IF USER REQUESTS)
+**Execution logs are OPTIONAL and only checked when user explicitly asks for it.**
+
+**When to check logs:**
+- User explicitly asks: "check logs", "check execution logs", "verify with logs", "use logs", etc.
+- User wants to verify learnings against actual execution data
+- User requests more detailed analysis
+
+**If user requests log checking:**
+1. Use StepLogsFolderMappingJSON to locate log folders for each step
+2. Use ToolUsageSummaryJSON as a quick reference (but verify with actual logs)
+3. **Read conversation history files** to extract actual tool calls:
+   - File pattern: logs/step-{X}/execution/execution-attempt-{N}-iteration-{M}-conversation.json
+   - Use search_large_output (if enabled) or read_workspace_file to read the JSON
+   - Extract tool names from conversation_history array (see JSON structure in prompt)
+   - **Only count tools from successful executions** (check execution_result.json for success indicators)
+4. Compare log data with learnings and step description
+5. Update tool suggestions based on log findings
+
+**If user does NOT request logs:**
+- Skip log checking entirely
+- Base decisions solely on learnings and step description
+
+### Step 5: Apply Tool Inclusion Rules
+**Priority order**: Learnings > Step Description Inference > Current Config > Execution Logs (only if user requested)
 
 **IMPORTANT**: Determine if step needs MCP servers:
-- If logs/learnings show NO MCP tools were used → set selected_servers to ['NO_SERVERS']
-- If logs/learnings show MCP tools were used → include those servers
+- If learnings show NO MCP tools were used → set selected_servers to ['NO_SERVERS']
+- If learnings show MCP tools were used → include those servers
 - If step only uses workspace/human tools → set selected_servers to ['NO_SERVERS']
+- If user requested logs and logs show different MCP usage → update based on logs
 
 For each tool category, apply the following rules:
 
 #### Basic Workspace Tools (ALWAYS INCLUDE)
 - **Tools**: list_workspace_files, read_workspace_file, update_workspace_file, delete_workspace_file
-- **Rule**: ALWAYS include these 4 tools unless logs clearly show they weren't used
+- **Rule**: ALWAYS include these 4 tools unless learnings clearly show they weren't used
 - **Reasoning**: Essential for most file operations
 
 #### MCP Tools (EVIDENCE-BASED ONLY)
 - **Format**: server:tool (e.g., aws-s3:list_buckets, google-sheets:read_sheet)
-- **Rule**: Include ONLY if found in execution logs OR learnings
+- **Rule**: Include ONLY if found in learnings (or execution logs if user requested log checking)
 - **NO INFERENCE**: Never infer MCP tools from step description
 - **NO_SERVERS**: If step requires NO MCP servers at all (only workspace/human tools), set selected_servers to ['NO_SERVERS']
   - Use when: Step only uses workspace tools (read/write files) or human feedback, no external MCP server tools needed
-  - Check logs/learnings: If no MCP tools were used in successful executions, set ['NO_SERVERS']
+  - Check learnings: If no MCP tools were used in successful executions, set ['NO_SERVERS']
   - This explicitly disables all MCP servers for the step
 
 #### Advanced Workspace Tools (CONDITIONAL)
 - **Tools**: move_workspace_file, diff_patch_workspace_file, regex_search_workspace_files, semantic_search_workspace_files
 - **Rule**: Include if:
-  - Found in execution logs OR learnings, OR
+  - Found in learnings (or execution logs if user requested), OR
   - Step description mentions: moving/renaming files, patches/diffs, regex patterns, semantic search
 
 #### GitHub Sync Tools (RARELY NEEDED)
 - **Tools**: sync_workspace_to_github, get_workspace_github_status
 - **Rule**: Include ONLY if:
-  - Found in execution logs OR learnings, OR
+  - Found in learnings (or execution logs if user requested), OR
   - Step description mentions: GitHub, sync, commit, push, repository
 
 #### Execute Shell Command (CONDITIONAL)
 - **Tool**: execute_shell_command
 - **Rule**: Include if:
-  - Found in execution logs OR learnings, OR
+  - Found in learnings (or execution logs if user requested), OR
   - Step description mentions: executing scripts, running commands, shell, bash, terminal, command line
 
 #### Read Image (CONDITIONAL)
 - **Tool**: read_image
 - **Rule**: Include if:
-  - Found in execution logs OR learnings, OR
+  - Found in learnings (or execution logs if user requested), OR
   - Step description mentions: images, pictures, photos, visual content, image processing
 
 #### Human Feedback (CONDITIONAL)
 - **Tool**: human_feedback
 - **Rule**: Include if:
-  - Found in execution logs OR learnings, OR
+  - Found in learnings (or execution logs if user requested), OR
   - Step description mentions: approval, confirmation, decision-making, asking user, human input, requires judgment
 
-### Step 5: Prepare Proposal with Clear Reasoning
+### Step 6: Prepare Proposal with Clear Reasoning
 For each tool in your proposal, provide explicit reasoning:
 
 - **"Basic workspace tool (always included)"** - for list/read/update/delete
-- **"Found in execution logs: [file path]"** - highest priority, cite specific log file
-- **"Found in learnings: [learning file path]"** - secondary source
-- **"Inferred from step description: [specific phrase]"** - for conditional tools only
+- **"Found in learnings: [learning file path]"** - primary source, cite specific learning file
+- **"Inferred from step description: [specific phrase]"** - for conditional tools based on step title/description
+- **"Found in execution logs: [file path]"** - only if user requested log checking, cite specific log file
 - **"Currently configured (preserving)"** - keep existing if no evidence to remove
 
-**Be CONSERVATIVE**: Prefer keeping existing tools unless logs clearly show they weren't used.
+**Be CONSERVATIVE**: Prefer keeping existing tools unless learnings clearly show they weren't used.
 
-### Step 6: Request Approval and Update
+### Step 7: Request Approval and Update
 1. Present your proposal with clear reasoning for each tool
 2. Use human_feedback to request approval
 3. After approval, use update_step_config_tools to apply changes
@@ -1661,19 +1684,20 @@ For each tool in your proposal, provide explicit reasoning:
 | Tool Category | Format | Inclusion Rule | Can Infer from Description? |
 |--------------|--------|----------------|------------------------------|
 | **Basic Workspace** | workspace_tools:list/read/update/delete | Always include | No (always included) |
-| **Advanced Workspace** | workspace_tools:move/diff/regex/semantic | Logs/learnings OR description | Yes |
-| **GitHub Tools** | workspace_tools:sync_workspace_to_github, get_workspace_github_status | Logs/learnings OR mentions GitHub | Yes (if mentions GitHub) |
-| **Execute Shell** | workspace_tools:execute_shell_command | Logs/learnings OR mentions scripts/commands | Yes |
-| **Read Image** | workspace_tools:read_image | Logs/learnings OR mentions images | Yes |
-| **MCP Tools** | server:tool | Logs/learnings ONLY | **NO** |
+| **Advanced Workspace** | workspace_tools:move/diff/regex/semantic | Learnings OR description | Yes |
+| **GitHub Tools** | workspace_tools:sync_workspace_to_github, get_workspace_github_status | Learnings OR mentions GitHub | Yes (if mentions GitHub) |
+| **Execute Shell** | workspace_tools:execute_shell_command | Learnings OR mentions scripts/commands | Yes |
+| **Read Image** | workspace_tools:read_image | Learnings OR mentions images | Yes |
+| **MCP Tools** | server:tool | Learnings ONLY (or logs if user requested) | **NO** |
 | **NO_SERVERS** | ['NO_SERVERS'] | If no MCP tools used | Set when step only needs workspace/human tools |
-| **Human Feedback** | human_tools:human_feedback | Logs/learnings OR needs approval | Yes |
+| **Human Feedback** | human_tools:human_feedback | Learnings OR needs approval | Yes |
 
 **Key Principles**:
-- **Execution logs are the gold standard** - actual usage is most reliable
-- **Learnings are secondary** - use only if logs unavailable
-- **Step description inference** - only for workspace/human tools, never for MCP tools
-- **Be conservative** - prefer keeping existing tools unless evidence shows removal is needed
+- **Learnings are the primary source** - success patterns from previous iterations
+- **Step description inference** - use step title/description to infer workspace/human tools when learnings are sparse
+- **Execution logs are optional** - only check if user explicitly requests it
+- **Never infer MCP tools** - only include MCP tools found in learnings (or logs if user requested)
+- **Be conservative** - prefer keeping existing tools unless learnings clearly show removal is needed
 
 ## CRITICAL RULES
 
@@ -1691,23 +1715,25 @@ For each tool in your proposal, provide explicit reasoning:
 
 | Scenario | Action |
 |---------|-------|
-| **No logs AND no learnings** | Preserve existing config, but ALWAYS include basic workspace tools (list/read/update/delete) |
-| **Only failures in logs** | Preserve existing config (don't use failed execution data) |
-| **Logs show tool used successfully** | Include it (highest priority) |
-| **Logs show tool never used** | Consider removing, but be VERY conservative (especially for basic tools) |
-| **Tool in learnings but not in logs** | Include only if learnings show clear success pattern |
-| **Tool in current config but not in logs/learnings** | Preserve if no evidence to remove |
+| **No learnings available** | Use step description/title to infer tools, preserve existing config, ALWAYS include basic workspace tools (list/read/update/delete) |
+| **Only failures in learnings** | Preserve existing config (don't use failed execution data), rely on step description |
+| **Learnings show tool used successfully** | Include it (primary source) |
+| **Learnings show tool never used** | Consider removing, but be VERY conservative (especially for basic tools) |
+| **Tool in step description but not in learnings** | Include if it's a workspace/human tool (never for MCP tools) |
+| **Tool in current config but not in learnings/description** | Preserve if no evidence to remove |
+| **User requests log checking** | Check logs and compare with learnings/description, update suggestions if logs show different patterns |
 
 ### Conservative Removal Policy
-- **Only remove tools** if logs clearly show they were never used in any successful execution
+- **Only remove tools** if learnings clearly show they were never used in any successful execution
 - **Be extra cautious** with basic workspace tools - they're essential for most operations
 - **When in doubt, keep the tool** - it's better to have an unused tool than to remove a needed one
+- **If user requests logs** - use log data to verify learnings, but don't remove tools unless logs clearly show they weren't used
 
 ### Data Source Priority
-1. **Execution Logs** (highest) - Actual tool usage from successful runs
-2. **Learnings** (secondary) - Success patterns from previous iterations
-3. **Step Description** (inference) - Only for workspace/human tools, never for MCP
-4. **Current Config** (preserve) - Keep existing unless evidence shows removal needed
+1. **Learnings** (primary) - Success patterns from previous iterations
+2. **Step Description/Title** (secondary) - Infer workspace/human tools from step requirements
+3. **Current Config** (preserve) - Keep existing unless evidence shows removal needed
+4. **Execution Logs** (optional) - Only check if user explicitly requests it
 
 ### File Locations
 - **Learnings**: Check both learnings/ (base) and learnings/{step_id}/ (step-specific) at workspace root
@@ -1764,7 +1790,7 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) toolOptimizati
 		return "No logs mapping provided."
 	}() + `
 
-**Tool Usage Summary** (tools actually used in successful executions - check logs to verify):
+**Tool Usage Summary** (tools actually used in successful executions - available if user requests log checking):
 ` + func() string {
 		if templateVars["ToolUsageSummaryJSON"] != "" {
 			return templateVars["ToolUsageSummaryJSON"]
@@ -1772,6 +1798,6 @@ func (agent *HumanControlledTodoPlannerPlanToolOptimizationAgent) toolOptimizati
 		return "No tool usage data available."
 	}() + `
 
-Follow the workflow in the system prompt. **ALWAYS check execution logs FIRST** before making tool suggestions. Present ALL steps when asking user which to optimize.
+Follow the workflow in the system prompt. **By default, use learnings and step description/title** to make tool suggestions. **Only check execution logs if the user explicitly requests it** (e.g., "check logs", "verify with logs", "use execution logs"). Present ALL steps when asking user which to optimize.
 `
 }

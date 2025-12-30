@@ -25,7 +25,7 @@ func NewLockManager() *LockManager {
 	}
 }
 
-// AcquireLock acquires an in-memory lock for the given filepath
+// AcquireLock acquires an in-memory exclusive lock for the given filepath (for write operations)
 func (lm *LockManager) AcquireLock(filePath string, timeout time.Duration) (*FileLock, error) {
 	lm.mutex.Lock()
 	defer lm.mutex.Unlock()

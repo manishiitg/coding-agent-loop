@@ -55,3 +55,19 @@ planning/changelog
 30. refractor how llm are setup and llm fallback
 
 31. high the discover page.. not required
+
+32. delete memory/
+
+33. check scripts/'
+
+34. generated/ is pushed to repo
+
+34. why is llm-providers/ at top level of repo?
+
+35. fix tests most not relevent anymore
+
+36. rename toto create human to a better name
+
+37. auto choose models based on llm and generation?
+
+38. plan debugging, does do changelogs?

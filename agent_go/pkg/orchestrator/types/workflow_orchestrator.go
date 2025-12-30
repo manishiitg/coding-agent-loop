@@ -77,6 +77,24 @@ func GetWorkflowConstants() WorkflowConstants {
 				Description: "Analyze plan.json and learnings folder to optimize tool selections in step_config.json. Compares configured tools vs actually used tools and updates step_config.json to include only tools that were used.",
 				Options:     []WorkflowPhaseOption{}, // No options for tool optimization phase
 			},
+			{
+				ID:          "learning-anonymization",
+				Title:       "Learning Anonymization",
+				Description: "Scan learnings folder and replace actual values with variable placeholders. For .md files: replace with {{VARIABLE_NAME}} placeholders. For .py files: refactor to accept variables as parameters (argparse/env vars). Makes learnings reusable across different environments.",
+				Options:     []WorkflowPhaseOption{}, // No options for anonymization phase
+			},
+			{
+				ID:          "plan-learnings-alignment",
+				Title:       "Plan-Learnings Alignment",
+				Description: "Analyze alignment between plan.json and learnings folders to identify and categorize learning files. Checks if files match steps, are in correct folders, and identifies orphaned or mismatched files.",
+				Options:     []WorkflowPhaseOption{}, // No options for alignment phase
+			},
+			{
+				ID:          "learning-consolidation",
+				Title:       "Learning Consolidation",
+				Description: "Analyze and consolidate learning files to identify duplicate patterns, similar patterns, and outdated patterns. Merges redundant patterns and optimizes learning structure for better future execution efficiency.",
+				Options:     []WorkflowPhaseOption{}, // No options for consolidation phase
+			},
 		},
 	}
 }
@@ -366,6 +384,9 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	// IMPORTANT: Each phase is isolated and should NOT trigger other phases
 	// Note: Variable extraction is now handled by planning agent tools, no separate phase needed
 
+	wo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG executeFlow - Received workflowStatus: '%s' (length: %d)", workflowStatus, len(workflowStatus)))
+	wo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG executeFlow - Checking routing conditions..."))
+
 	if workflowStatus == "planning" {
 		wo.GetLogger().Info(fmt.Sprintf("📋 Routing to planning phase (workflowStatus: %s)", workflowStatus))
 		return wo.runPlanningOnly(ctx, objective, selectedOptions)
@@ -382,6 +403,23 @@ func (wo *WorkflowOrchestrator) executeFlow(
 			wo.GetLogger().Info(fmt.Sprintf("🔧 Step-specific execution for step: %s", stepID))
 		}
 		return wo.runPlanToolOptimization(ctx, objective, selectedOptions, stepID)
+	}
+
+	if workflowStatus == "learning-anonymization" {
+		wo.GetLogger().Info(fmt.Sprintf("🔒 Routing to learning anonymization phase (workflowStatus: %s)", workflowStatus))
+		return wo.runLearningAnonymization(ctx, objective, selectedOptions)
+	}
+
+	wo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG executeFlow - Checking if workflowStatus == 'plan-learnings-alignment': %v", workflowStatus == "plan-learnings-alignment"))
+	wo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG executeFlow - workflowStatus bytes: %v", []byte(workflowStatus)))
+	if workflowStatus == "plan-learnings-alignment" {
+		wo.GetLogger().Info(fmt.Sprintf("🔍 Routing to plan-learnings alignment phase (workflowStatus: %s)", workflowStatus))
+		return wo.runPlanLearningsAlignment(ctx, objective, selectedOptions)
+	}
+
+	if workflowStatus == "learning-consolidation" {
+		wo.GetLogger().Info(fmt.Sprintf("🔍 Routing to learning consolidation phase (workflowStatus: %s)", workflowStatus))
+		return wo.runLearningConsolidation(ctx, objective, selectedOptions)
 	}
 
 	// All other workflow statuses (execution) go through execution phase
@@ -490,6 +528,72 @@ func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, obj
 	}
 
 	wo.GetLogger().Info(fmt.Sprintf("✅ Plan tool optimization completed successfully"))
+	return result, nil
+}
+
+// runLearningAnonymization runs only the learning anonymization phase
+func (wo *WorkflowOrchestrator) runLearningAnonymization(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Info(fmt.Sprintf("🔒 Starting Learning Anonymization Phase"))
+
+	// Create anonymization manager directly (independent from controller)
+	anonymizationManager := todo_creation_human.NewAnonymizationManager(
+		wo.BaseOrchestrator,
+		wo.getSessionID(),
+		wo.getWorkflowID(),
+		wo.presetLearningLLM, // Pass learning LLM (primary LLM for anonymization)
+	)
+
+	// Run only anonymization
+	result, err := anonymizationManager.AnonymizeLearningsOnly(ctx, wo.GetWorkspacePath())
+	if err != nil {
+		return "", fmt.Errorf("learning anonymization failed: %w", err)
+	}
+
+	wo.GetLogger().Info(fmt.Sprintf("✅ Learning anonymization completed successfully"))
+	return result, nil
+}
+
+// runPlanLearningsAlignment runs only the plan-learnings alignment phase
+func (wo *WorkflowOrchestrator) runPlanLearningsAlignment(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Plan-Learnings Alignment Phase"))
+
+	// Create plan learnings alignment manager directly (independent from controller)
+	alignmentManager := todo_creation_human.NewPlanLearningsAlignmentManager(
+		wo.BaseOrchestrator,
+		wo.getSessionID(),
+		wo.getWorkflowID(),
+		wo.presetLearningLLM, // Pass learning LLM (primary LLM for alignment)
+	)
+
+	// Run only alignment check
+	result, err := alignmentManager.CheckAlignmentOnly(ctx, wo.GetWorkspacePath())
+	if err != nil {
+		return "", fmt.Errorf("plan-learnings alignment failed: %w", err)
+	}
+
+	wo.GetLogger().Info(fmt.Sprintf("✅ Plan-learnings alignment completed successfully"))
+	return result, nil
+}
+
+// runLearningConsolidation runs only the learning consolidation phase
+func (wo *WorkflowOrchestrator) runLearningConsolidation(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Learning Consolidation Phase"))
+
+	// Create learning consolidation manager directly (independent from controller)
+	consolidationManager := todo_creation_human.NewLearningConsolidationManager(
+		wo.BaseOrchestrator,
+		wo.getSessionID(),
+		wo.getWorkflowID(),
+		wo.presetLearningLLM, // Pass learning LLM (primary LLM for consolidation)
+	)
+
+	// Run only consolidation
+	result, err := consolidationManager.ConsolidateLearningsOnly(ctx, wo.GetWorkspacePath())
+	if err != nil {
+		return "", fmt.Errorf("learning consolidation failed: %w", err)
+	}
+
+	wo.GetLogger().Info(fmt.Sprintf("✅ Learning consolidation completed successfully"))
 	return result, nil
 }
 
@@ -680,6 +784,9 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 					database.WorkflowStatusPreVerification, // Execution phase
 					"plan-improvement",                     // Plan improvement phase
 					"plan-tool-optimization",               // Plan tool optimization phase
+					"learning-anonymization",               // Learning anonymization phase
+					"plan-learnings-alignment",             // Plan-learnings alignment phase
+					"learning-consolidation",               // Learning consolidation phase
 				}
 				valid := false
 				for _, status := range validStatuses {

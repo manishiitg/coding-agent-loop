@@ -37,8 +37,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) setupExecutionFolderGuard(st
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	// Step-specific learnings folder: learnings/{stepID}/ (only this step's learnings, not full learnings folder)
 	stepLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
-	// Knowledgebase folder: execution/knowledgebase/ (persistent files across runs)
-	knowledgebasePath := getKnowledgebasePath(executionWorkspacePath)
+	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
+	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 
 	// Set folder guard paths:
 	// READ: step-specific learnings folder + execution folder (to read previous step results) + knowledgebase folder
@@ -451,9 +451,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) setupValidationFolderGuard()
 		runWorkspacePath = baseWorkspacePath
 	}
 	executionPath := fmt.Sprintf("%s/execution", runWorkspacePath)
+	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
+	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 
 	// Validation agent only reads - no write permissions needed
-	readPaths = []string{executionPath}
+	// Read access to execution folder (for step outputs) and knowledgebase folder (for reference data)
+	readPaths = []string{executionPath, knowledgebasePath}
 	writePaths = []string{} // No write permissions - validation agent only reads and returns structured JSON
 	return readPaths, writePaths
 }
@@ -476,8 +479,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) setupConditionalFolderGuard(
 	stepLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
 	// Step-specific execution folder: execution/step-{X}/ or execution/step-{X}-{branch}/ (for writing evaluation results)
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
-	// Knowledgebase folder: execution/knowledgebase/ (persistent files across runs)
-	knowledgebasePath := getKnowledgebasePath(executionWorkspacePath)
+	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
+	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 
 	// Set folder guard paths:
 	// READ: step-specific learnings folder + entire execution folder (to read all previous step results and verify conditions) + knowledgebase folder
@@ -1122,6 +1125,60 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createOrchestrationOrchestra
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created orchestration orchestrator agent using standard factory pattern: %s (step %d, phase %s)", agentName, step+1, phase))
+	return agent, nil
+}
+
+// createOrchestrationLearningAgent creates an orchestration learning agent for analyzing orchestrator decisions
+// learningPathIdentifier: Learning folder identifier (e.g., "step-3" for orchestration step 3)
+// stepConfig: Step config for learning agent settings
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createOrchestrationLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs) (agents.OrchestratorAgent, error) {
+	// Setup folder guard for learning agent (similar to regular learning agent)
+	readPaths, writePaths := hcpo.setupLearningFolderGuard(learningPathIdentifier)
+	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
+	agentType := "orchestration learning agent"
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for %s - Read paths: %v, Write paths: %v", agentType, readPaths, writePaths))
+
+	// Determine settings
+	maxTurns := hcpo.getLearningMaxTurns(stepConfig)
+	// Use learning LLM config - Priority: step config > preset default > orchestrator default
+	llmConfig := hcpo.selectLearningLLM(stepConfig)
+
+	// Create config
+	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+
+	// Orchestration learning agents always use NoServers (pure LLM analysis agent)
+	config.ServerNames = []string{mcpclient.NoServers}
+
+	// Code execution mode doesn't apply to learning agents
+	config.UseCodeExecutionMode = false
+
+	// Prepare tools (learning agents need workspace tools for file operations)
+	toolsToRegister := hcpo.WorkspaceTools
+	executorsToUse := hcpo.WorkspaceToolExecutors
+
+	// Use base factory to create agent
+	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
+		ctx,
+		config,
+		phase,
+		0, // step (not used for learning agents)
+		0, // iteration (not used for learning agents)
+		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+			return NewHumanControlledTodoPlannerOrchestrationLearningAgent(cfg, logger, tracer, eventBridge)
+		},
+		toolsToRegister,
+		executorsToUse,
+		false, // overwriteSystemPrompt
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create and setup %s: %w", agentType, err)
+	}
+
+	// Post-setup: folder guard paths
+	if err := hcpo.applyPostSetupToAgent(agent, agentName, false); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Post-setup configuration failed for %s: %v", agentName, err))
+	}
+
 	return agent, nil
 }
 

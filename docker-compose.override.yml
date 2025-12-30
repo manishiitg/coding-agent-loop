@@ -27,7 +27,7 @@ services:
       
       # Agent Configuration (matching run_server_with_logging.sh)
       - ORCHESTRATOR_AGENT_MODE=simple
-      - TOOL_EXECUTION_TIMEOUT=2m
+      - TOOL_EXECUTION_TIMEOUT=5m
       - AGENT_PROVIDER=openrouter
       - AGENT_MODEL=x-ai/grok-code-fast-1
       

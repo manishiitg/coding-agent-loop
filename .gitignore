@@ -96,3 +96,6 @@ gcp-oauth.keys.json
 ./agent_go/generated/*
 
 .claude/
+
+Downloads/*
+Workflow/*

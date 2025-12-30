@@ -59,14 +59,14 @@ func (vm *VariableManager) checkExistingVariables(ctx context.Context, variables
 			return false, nil, nil
 		}
 		// Other errors should be returned
-		return false, nil, fmt.Errorf(fmt.Sprintf("failed to check existing variables: %w", err), nil)
+		return false, nil, fmt.Errorf("failed to check existing variables: %w", err)
 	}
 
 	// Parse the existing variables manifest
 	var manifest VariablesManifest
 	if err := json.Unmarshal([]byte(variablesContent), &manifest); err != nil {
-		vm.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse existing variables.json: %w", err))
-		return false, nil, fmt.Errorf(fmt.Sprintf("failed to parse variables.json: %w", err), nil)
+		vm.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse existing variables.json: %v", err))
+		return false, nil, fmt.Errorf("failed to parse variables.json: %w", err)
 	}
 
 	vm.GetLogger().Info(fmt.Sprintf("✅ Found existing variables.json with %d variables", len(manifest.Variables)))
@@ -93,7 +93,7 @@ func LoadVariableValues(ctx context.Context, bo *orchestrator.BaseOrchestrator, 
 		// Fallback to workspace folder
 		variablesContent, err = bo.ReadWorkspaceFile(ctx, workspaceVariablesPath)
 		if err != nil {
-			return nil, fmt.Errorf(fmt.Sprintf("failed to read variables.json from both locations: %w", err), nil)
+			return nil, fmt.Errorf("failed to read variables.json from both locations: %w", err)
 		}
 		bo.GetLogger().Info(fmt.Sprintf("📁 Loaded variables from workspace folder: %s", workspaceVariablesPath))
 	} else {
@@ -103,7 +103,7 @@ func LoadVariableValues(ctx context.Context, bo *orchestrator.BaseOrchestrator, 
 	// Parse variables.json to get current values
 	var manifest VariablesManifest
 	if err := json.Unmarshal([]byte(variablesContent), &manifest); err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to parse variables.json: %w", err), nil)
+		return nil, fmt.Errorf("failed to parse variables.json: %w", err)
 	}
 
 	// Load values into the variableValues map
@@ -210,7 +210,7 @@ func EmitVariablesExtractedEvent(ctx context.Context, bo *orchestrator.BaseOrche
 	// Emit through the context-aware bridge
 	bridge := bo.GetContextAwareBridge()
 	if err := bridge.HandleEvent(ctx, unifiedEvent); err != nil {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit variables extracted event: %w", err))
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit variables extracted event: %v", err))
 	} else {
 		bo.GetLogger().Info(fmt.Sprintf("✅ Emitted variables extracted event: %d variables", len(variables)))
 	}

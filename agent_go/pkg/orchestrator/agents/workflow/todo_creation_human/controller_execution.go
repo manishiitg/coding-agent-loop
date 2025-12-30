@@ -162,7 +162,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) ensureStepExecutionFolderExi
 	// Create directory if it doesn't exist
 	if err := os.MkdirAll(stepExecutionPath, 0755); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step execution folder: %s: %v (continuing)", stepExecutionPath, err))
-		return fmt.Errorf(fmt.Sprintf("failed to create step execution folder: %w", err), nil)
+		return fmt.Errorf("failed to create step execution folder: %w", err)
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created step execution folder: %s", stepExecutionPath))
 	return nil
@@ -237,6 +237,17 @@ func getLearningFolderPathByStepID(baseWorkspacePath string, stepID string, step
 	// All steps (regular, branch, sub-agent) have their own unique step IDs
 	// Just use the stepID directly without any suffix
 	return fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
+}
+
+// ensureStepLearningsFolderExists ensures the step learnings folder exists by creating it if needed
+func (hcpo *HumanControlledTodoPlannerOrchestrator) ensureStepLearningsFolderExists(ctx context.Context, stepLearningsPath string) error {
+	// Create directory if it doesn't exist
+	if err := os.MkdirAll(stepLearningsPath, 0755); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step learnings folder: %s: %v (continuing)", stepLearningsPath, err))
+		return fmt.Errorf("failed to create step learnings folder: %w", err)
+	}
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created step learnings folder: %s", stepLearningsPath))
+	return nil
 }
 
 // addCompletedStepIndex safely adds a step index to the completed list, preventing duplicates
@@ -793,7 +804,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 		select {
 		case <-ctx.Done():
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled during retry loop for step %d", stepIndex+1))
-			return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("step execution canceled: %w", ctx.Err()), nil)
+			return "", updatedContextFiles, fmt.Errorf("step execution canceled: %v", ctx.Err())
 		default:
 		}
 
@@ -925,10 +936,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 			stepHasLoop, loopCondition, maxIterations, _ := getLoopFields(step)
 			if !stepHasLoop {
 				// Should not happen, but handle gracefully
-				return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("step %d: hasLoop returned true but getLoopFields returned false", stepIndex+1), nil)
+				return "", updatedContextFiles, fmt.Errorf("step %d: hasLoop returned true but getLoopFields returned false", stepIndex+1)
 			}
 			if loopCondition == "" {
-				return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("step %d has has_loop=true but loop_condition is empty (required)", stepIndex+1), nil)
+				return "", updatedContextFiles, fmt.Errorf("step %d has has_loop=true but loop_condition is empty (required)", stepIndex+1)
 			}
 			// Set default max_iterations if not provided
 			if maxIterations == 0 {
@@ -963,7 +974,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 			select {
 			case <-ctx.Done():
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled during loop iteration %d for step %d", loopIteration, stepIndex+1))
-				return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("step execution canceled: %w", ctx.Err()), nil)
+				return "", updatedContextFiles, fmt.Errorf("step execution canceled: %v", ctx.Err())
 			default:
 			}
 
@@ -1003,7 +1014,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 					approved, _, err = hcpo.requestHumanFeedback(ctx, stepIndex+1, totalSteps,
 						fmt.Sprintf("Loop reached max iterations (%d) without meeting condition: %s", maxIterations, loopCondition))
 					if err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Human feedback request failed: %w", err))
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Human feedback request failed: %v", err))
 						// Default to not approved so step doesn't complete
 						approved = false
 					}
@@ -1104,7 +1115,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 					stepPath,
 				)
 				if err != nil {
-					return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("failed to read learning history for step %d: %w", stepIndex+1, err), nil)
+					return "", updatedContextFiles, fmt.Errorf("failed to read learning history for step %d: %v", stepIndex+1, err)
 				}
 
 				// Get learning file paths for user message (when KeepLearningFull is false)
@@ -1143,7 +1154,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 				select {
 				case <-ctx.Done():
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled during retry attempt %d for step %d", retryAttempt, stepIndex+1))
-					return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("step execution canceled: %w", ctx.Err()), nil)
+					return "", updatedContextFiles, fmt.Errorf("step execution canceled: %v", ctx.Err())
 				default:
 				}
 
@@ -1195,7 +1206,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 				select {
 				case <-ctx.Done():
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled before creating execution agent for step %d", stepIndex+1))
-					return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("step execution canceled: %w", ctx.Err()), nil)
+					return "", updatedContextFiles, fmt.Errorf("step execution canceled: %v", ctx.Err())
 				default:
 				}
 
@@ -1272,14 +1283,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 				// allSteps is already []PlanStepInterface - no conversion needed
 				executionAgent, err = hcpo.createExecutionOnlyAgent(executionCtx, "execution_only", stepPath, executionAgentName, agentConfigs, isRetryAfterValidationFailure, retryAttempt, prerequisiteInfoForExecution, allSteps, stepIndex, cancelExecution, prereqErrChan, step.GetID())
 				if err != nil {
-					return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("failed to create execution-only agent for step %d: %w", stepIndex+1, err), nil)
+					return "", updatedContextFiles, fmt.Errorf("failed to create execution-only agent for step %d: %v", stepIndex+1, err)
 				}
 
 				// Check for context cancellation before executing agent
 				select {
 				case <-ctx.Done():
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled before agent execution for step %d", stepIndex+1))
-					return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("step execution canceled: %w", ctx.Err()), nil)
+					return "", updatedContextFiles, fmt.Errorf("step execution canceled: %v", ctx.Err())
 				default:
 				}
 
@@ -1337,7 +1348,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 							// Clean up progress from target step onward
 							if err := hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress); err != nil {
 								hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to cleanup progress from step %d: %v", targetStepIndex+1, err), nil)
-								return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("failed to cleanup progress for prerequisite navigation: %w", err), nil)
+								return "", updatedContextFiles, fmt.Errorf("failed to cleanup progress for prerequisite navigation: %w", err)
 							}
 
 							// Emit prerequisite navigation event
@@ -1626,7 +1637,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 							select {
 							case <-ctx.Done():
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled before validation for step %d", stepIndex+1))
-								return "", updatedContextFiles, fmt.Errorf(fmt.Sprintf("step execution canceled: %w", ctx.Err()), nil)
+								return "", updatedContextFiles, fmt.Errorf("step execution canceled: %v", ctx.Err())
 							default:
 							}
 
@@ -1806,6 +1817,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 						// Preserve validation response for next loop iteration (for fallback LLM detection)
 						// If validation failed (success criteria not met) in this iteration, next iteration will use original LLM
 						if isValidationFailure(validationResponse) {
+							// Increment validation failure count for UI display
+							if err := hcpo.IncrementValidationFailureCount(ctx, stepPath); err != nil {
+								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to increment validation failure count for %s: %v", stepPath, err))
+							}
+
 							previousValidationResponse = validationResponse
 							if hcpo.fallbackToOriginalLLMOnFailure {
 								hcpo.GetLogger().Info(fmt.Sprintf("🔄 Loop iteration %d validation failed - next iteration will use original LLM (fallback enabled)", loopIterationCount))
@@ -2227,6 +2243,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 						}
 						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step %d failed validation - success criteria not met (Status: %s, attempt %d/%d)", stepIndex+1, statusStr, retryAttempt, maxRetryAttempts))
 
+						// Increment validation failure count for UI display
+						if err := hcpo.IncrementValidationFailureCount(ctx, stepPath); err != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to increment validation failure count for %s: %v", stepPath, err))
+						}
+
 						if retryAttempt >= maxRetryAttempts {
 							hcpo.GetLogger().Error(fmt.Sprintf("❌ Step %d failed validation after %d attempts", stepIndex+1, maxRetryAttempts), nil)
 							// Mark that validation failed after exhausting all retries
@@ -2311,7 +2332,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 				} else {
 					validationDetails = "No validation response available"
 				}
-				err := fmt.Errorf(fmt.Sprintf("step %d failed validation after %d retry attempts. %s. Please review the execution results and update the plan if needed", stepIndex+1, maxRetryAttempts, validationDetails), nil)
+				err := fmt.Errorf("step %d failed validation after %d retry attempts. %s. Please review the execution results and update the plan if needed", stepIndex+1, maxRetryAttempts, validationDetails)
 				// Emit step_failed event using centralized method
 				stepTitle := step.GetTitle()
 				if stepTitle == "" {
@@ -2387,7 +2408,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 			var err error
 			approved, feedback, err = hcpo.requestHumanFeedback(ctx, stepIndex+1, totalSteps, validationSummary)
 			if err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Human feedback request failed: %w", err))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Human feedback request failed: %v", err))
 				// Default to continue if feedback fails
 				approved = true
 			}
@@ -2408,7 +2429,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 				hcpo.addCompletedStepIndex(progress, stepIndex)
 				// Always save progress after marking a step as completed (both fast and normal mode)
 				if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save step progress: %w", err))
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save step progress: %v", err))
 				} else {
 					modeStr := "fast mode"
 					if !isFastExecuteStep {
@@ -2432,7 +2453,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 			// User provided feedback (didn't approve) - stop workflow and ask user to manually update plan
 			hcpo.GetLogger().Info(fmt.Sprintf("🛑 User provided feedback - stopping workflow. Feedback: %s", feedback))
 			planPath := fmt.Sprintf("%s/planning/plan.json", hcpo.GetWorkspacePath())
-			return executionResult, updatedContextFiles, fmt.Errorf(fmt.Sprintf("workflow stopped: user feedback received. please manually update the plan at %s with the following feedback, then restart the workflow: %s", planPath, feedback), nil)
+			return executionResult, updatedContextFiles, fmt.Errorf("workflow stopped: user feedback received. please manually update the plan at %s with the following feedback, then restart the workflow: %s", planPath, feedback)
 		}
 	} // End of outer loop for step execution
 
@@ -2590,7 +2611,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 		select {
 		case <-ctx.Done():
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Workflow execution canceled before step %d/%d: %s", i+1, len(breakdownSteps), step.GetTitle()))
-			return fmt.Errorf(fmt.Sprintf("workflow execution canceled: %w", ctx.Err()), nil)
+			return fmt.Errorf("workflow execution canceled: %v", ctx.Err())
 		default:
 		}
 
@@ -2611,7 +2632,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			// Ensure progress is saved when transitioning from fast to normal mode
 			// This catches any steps that were completed in fast mode but not yet saved
 			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress during fast→normal transition: %w", err))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress during fast→normal transition: %v", err))
 			} else {
 				hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved progress during fast→normal mode transition: %d/%d steps completed", len(progress.CompletedStepIndices), progress.TotalSteps))
 			}
@@ -2690,14 +2711,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 					// Mark step as completed and break to end workflow
 					hcpo.addCompletedStepIndex(progress, i)
 					if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after conditional step termination: %w", err))
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after conditional step termination: %v", err))
 					}
 					break // Break out of the execution loop to end workflow
 				}
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Conditional step %d execution failed: %v", i+1, err), nil)
 				// Emit error event using centralized method
 				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "conditional-step-execution", fmt.Sprintf("Execute conditional step: %s", step.GetTitle()), err.Error(), i, iteration)
-				return fmt.Errorf(fmt.Sprintf("conditional step %d execution failed: %w", i+1, err), nil)
+				return fmt.Errorf("conditional step %d execution failed: %v", i+1, err)
 			}
 
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Conditional step %d completed successfully: %s", i+1, step.GetTitle()))
@@ -2705,7 +2726,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			// Mark conditional step as completed (executeConditionalStep handles progress internally)
 			hcpo.addCompletedStepIndex(progress, i)
 			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after conditional step: %w", err))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after conditional step: %v", err))
 			} else {
 				hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved progress: conditional step %d marked as completed", i+1))
 			}
@@ -2807,7 +2828,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 					// Mark step as completed and break to end workflow
 					hcpo.addCompletedStepIndex(progress, i)
 					if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after decision step termination: %w", err))
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after decision step termination: %v", err))
 					}
 					break // Break out of the execution loop to end workflow
 				}
@@ -2822,7 +2843,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			// Mark decision step as completed
 			hcpo.addCompletedStepIndex(progress, i)
 			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after decision step: %w", err))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after decision step: %v", err))
 			} else {
 				hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved progress: decision step %d marked as completed", i+1))
 			}
@@ -2874,7 +2895,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 
 			// Save progress with updated decision count
 			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after decision evaluation: %w", err))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after decision evaluation: %v", err))
 			}
 
 			// Handle next step navigation
@@ -2982,7 +3003,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			// Mark orchestration step as completed
 			hcpo.addCompletedStepIndex(progress, i)
 			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after orchestration step: %w", err))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after orchestration step: %v", err))
 			} else {
 				hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved progress: orchestration step %d marked as completed", i+1))
 			}
@@ -3082,7 +3103,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Human input step %d execution failed: %v", i+1, err), nil)
 				// Emit error event using centralized method
 				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "human-input-step-execution", fmt.Sprintf("Execute human input step: %s", step.GetTitle()), err.Error(), i, iteration)
-				return fmt.Errorf(fmt.Sprintf("human input step %d execution failed: %w", i+1, err), nil)
+				return fmt.Errorf("human input step %d execution failed: %v", i+1, err)
 			}
 
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Human input step %d completed successfully: %s", i+1, step.GetTitle()))
@@ -3140,7 +3161,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			// Determine next step based on conditional routing (computed during execution)
 			humanInputStep, ok := step.(*HumanInputPlanStep)
 			if !ok {
-				return fmt.Errorf(fmt.Sprintf("step %d is not a HumanInputPlanStep", i+1), nil)
+				return fmt.Errorf("step %d is not a HumanInputPlanStep", i+1)
 			}
 			// Use SelectedNextStepID if computed, otherwise fallback to NextStepID
 			nextStepID := humanInputStep.SelectedNextStepID
@@ -3303,7 +3324,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 			}
 			hcpo.EmitStepFailedEvent(ctx, stepId, stepTitle, stepPath, err.Error(), i, false)
 			hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_failed event for step %d: %s", i+1, stepTitle))
-			return fmt.Errorf(fmt.Sprintf("step %d execution failed: %w", i+1, err), nil)
+			return fmt.Errorf("step %d execution failed: %v", i+1, err)
 		}
 
 		// Log execution result (for debugging)
@@ -3332,7 +3353,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) runExecutionPhase(
 	// Final save to ensure all completed steps are persisted
 	// This is a safety measure to catch any steps that might have been missed
 	if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save final step progress: %w", err))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save final step progress: %v", err))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("💾 Final progress save completed: %d/%d steps completed", len(progress.CompletedStepIndices), progress.TotalSteps))
 	}

@@ -270,7 +270,7 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, orig
 		return "", fmt.Errorf("failed to check for existing plan: %w", err)
 	}
 	if !planExist {
-		return "", fmt.Errorf(fmt.Sprintf("plan.json not found at %s - planning must be run first as a separate phase", planPath), nil)
+		return "", fmt.Errorf("plan.json not found at %s - planning must be run first as a separate phase", planPath)
 	}
 
 	// Plan exists - use it for plan improvement
@@ -309,6 +309,7 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, orig
 	executionResultsSummary := fmt.Sprintf(
 		"Workspace root: %s\nSelected run folder: %s\n\nRun folder contains:\n- %s/execution/ - step execution outputs\n- %s/logs/ - validation and execution logs\n\nKnowledgebase folder (shared across all runs):\n- %s/knowledgebase/ - persistent files across all runs (templates, reference data, configurations - NEVER deleted during cleanup)\n\nUse list_workspace_files to explore:\n- Execution result files in %s/execution/\n- Knowledgebase files in %s/knowledgebase/ (persistent across all runs, at workspace root)\n- Detailed logs in %s/logs/step-X/ including:\n  * validation-{N}.json - validation responses for each validation attempt\n  * execution/execution-attempt-{N}-iteration-{M}.json - execution results with retry/loop information\n  * execution/execution-attempt-{N}-iteration-{M}-conversation.json - full conversation history for each execution attempt\n\nLearnings are stored at workspace root:\n- learnings/\n- learnings/{step_id}/ (regular steps, using step IDs from plan.json)\n- learnings/{step_id}/ (branch steps, using step IDs from plan.json where step_id is the branch step's own ID)\n- learnings/{step_id}/ (orchestration sub-agents, using step IDs from plan.json where step_id is the sub-agent's own ID)\n\nPlan is stored at:\n- planning/plan.json",
 		originalWorkspacePath,
+		validatedRunPath,
 		validatedRunPath,
 		validatedRunPath,
 		originalWorkspacePath,
@@ -592,7 +593,7 @@ func (pim *PlanImprovementManager) requestAndValidateFullPath(ctx context.Contex
 		return fmt.Sprintf("runs/%s", userPath), nil
 	}
 
-	return "", fmt.Errorf(fmt.Sprintf("failed to get valid path after %d attempts", maxAttempts), nil)
+	return "", fmt.Errorf("failed to get valid path after %d attempts", maxAttempts)
 }
 
 // validateRunPath validates a run path without asking the user
@@ -847,6 +848,37 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 			}
 		}
 
+		// Generate changelog from plan diff (AFTER each iteration, BEFORE human feedback)
+		// This captures ALL changes made during the agent execution session so far in one comprehensive changelog entry
+		// Ensure initialPlan is never nil (safety check)
+		if initialPlan == nil {
+			initialPlan = &PlanningResponse{Steps: []PlanStep{}}
+			if logger != nil {
+				logger.Warn(fmt.Sprintf("⚠️ initialPlan was nil, using empty plan for changelog generation"))
+			}
+		}
+
+		planResponse, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			if logger != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Failed to read plan for changelog generation (iteration %d): %v", iteration, err))
+			}
+		} else {
+			if logger != nil {
+				logger.Info(fmt.Sprintf("📝 Generating changelog after iteration %d: initialPlan has %d steps, planResponse has %d steps", iteration, len(initialPlan.Steps), len(planResponse.Steps)))
+			}
+			if err := generateChangelogFromPlanDiff(ctx, workspacePath, initialPlan, planResponse, readFile, writeFile, logger); err != nil {
+				if logger != nil {
+					logger.Warn(fmt.Sprintf("⚠️ Failed to generate changelog from plan diff (iteration %d): %v", iteration, err))
+				}
+				// Don't fail the entire operation if changelog generation fails
+			} else {
+				if logger != nil {
+					logger.Info(fmt.Sprintf("✅ Changelog generation completed successfully after iteration %d", iteration))
+				}
+			}
+		}
+
 		// After execution, ask if user wants to continue (blocking feedback)
 		if iteration < maxIterations && agent.baseOrchestrator != nil {
 			if logger != nil {
@@ -908,6 +940,37 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 		logger.Info(fmt.Sprintf("📊 Plan improvement completed after %d iterations", iteration))
 	}
 
+	// Final changelog generation (safety measure - ensures changelog is written even if user never responded to blocking feedback)
+	// This captures the final state after all iterations complete
+	// Ensure initialPlan is never nil (safety check)
+	if initialPlan == nil {
+		initialPlan = &PlanningResponse{Steps: []PlanStep{}}
+		if logger != nil {
+			logger.Warn(fmt.Sprintf("⚠️ initialPlan was nil, using empty plan for final changelog generation"))
+		}
+	}
+
+	planResponse, err := readPlanFromFile(ctx, workspacePath, readFile)
+	if err != nil {
+		if logger != nil {
+			logger.Warn(fmt.Sprintf("⚠️ Failed to read plan for final changelog generation: %v", err))
+		}
+	} else {
+		if logger != nil {
+			logger.Info(fmt.Sprintf("📝 Generating final changelog after all iterations: initialPlan has %d steps, planResponse has %d steps", len(initialPlan.Steps), len(planResponse.Steps)))
+		}
+		if err := generateChangelogFromPlanDiff(ctx, workspacePath, initialPlan, planResponse, readFile, writeFile, logger); err != nil {
+			if logger != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Failed to generate final changelog from plan diff: %v", err))
+			}
+			// Don't fail the entire operation if changelog generation fails
+		} else {
+			if logger != nil {
+				logger.Info(fmt.Sprintf("✅ Final changelog generation completed successfully"))
+			}
+		}
+	}
+
 	// Check if plan modification tools were called and emit event if needed
 	// This ensures the frontend is notified of plan changes
 	if logger != nil {
@@ -916,29 +979,6 @@ func (agent *HumanControlledTodoPlannerPlanImprovementAgent) Execute(ctx context
 	CheckAndEmitPlanUpdateEvent(ctx, agent.baseOrchestrator, currentConversationHistory, workspacePath, readFile)
 	if logger != nil {
 		logger.Info(fmt.Sprintf("🔍 [PlanImprovementAgent] CheckAndEmitPlanUpdateEvent call completed"))
-	}
-
-	// Generate changelog from plan diff (AFTER agent execution, BEFORE emitting completion event)
-	// This captures ALL changes made during the agent execution in one comprehensive changelog entry
-	planResponse, err := readPlanFromFile(ctx, workspacePath, readFile)
-	if err != nil {
-		if logger != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to read plan for changelog generation: %v", err))
-		}
-	} else {
-		// Ensure initialPlan is never nil (safety check)
-		if initialPlan == nil {
-			initialPlan = &PlanningResponse{Steps: []PlanStep{}}
-			if logger != nil {
-				logger.Warn(fmt.Sprintf("⚠️ initialPlan was nil, using empty plan for changelog generation"))
-			}
-		}
-		if err := generateChangelogFromPlanDiff(ctx, workspacePath, initialPlan, planResponse, readFile, writeFile, logger); err != nil {
-			if logger != nil {
-				logger.Warn(fmt.Sprintf("⚠️ Failed to generate changelog from plan diff: %v", err))
-			}
-			// Don't fail the entire operation if changelog generation fails
-		}
 	}
 
 	// Emit plan improvement completed event
@@ -986,7 +1026,8 @@ Post-execution analyst. Identify and fix plan issues by analyzing ACTUAL tool ca
 4. **Concrete Criteria**: Success criteria MUST be file-verifiable (counts, samples) and hard to fake.
 
 ## 📋 EVIDENCE SOURCES
-- **Default (Fast)**: 'planning/plan.json', 'learnings/', '{{.RunPathRelative}}/execution/'.
+- **Default (Fast)**: 'planning/plan.json', 'learnings/', '{{.RunPathRelative}}/execution/', 'knowledgebase/'.
+- **Knowledgebase**: Read 'knowledgebase/' for persistent templates, reference data, or global configs shared across all runs.
 - **Logs (Slow/Requested)**: Only read '{{.RunPathRelative}}/logs/' if user asks about specific failures or "why" a step failed.
 
 ---
@@ -1007,6 +1048,13 @@ Orchestration involves a Main Orchestrator looping over Sub-Agents.
 Avoid status-only criteria like 'status: "success"'. Require concrete evidence:
 - ✅ "File 'X' contains array 'Y' with length 'Z'".
 - ❌ "Step shows as success in verification file".
+
+### 4. JSON File Size Issues
+If JSON context output files are too large (> 100KB), they will fail to load during pre-validation:
+- **Problem**: Large JSON files cause parsing failures ("invalid character 'd' after object key:value pair", file loading failures)
+- **Solution**: Update step's context_output structure to reference markdown files for large content
+- **Recommendation**: Suggest splitting large JSON into structured data (JSON) + large text (markdown file reference)
+- **Example Fix**: Change {"large_content": "very long text..."} to {"summary": "brief", "details_file": "step_X_details.md"}
 
 ---
 

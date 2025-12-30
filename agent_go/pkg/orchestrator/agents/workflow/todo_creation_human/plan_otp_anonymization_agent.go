@@ -144,7 +144,7 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 		true, // overwriteSystemPrompt
 	)
 	if err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to create and setup anonymization agent: %w", err), nil)
+		return nil, fmt.Errorf("failed to create and setup anonymization agent: %w", err)
 	}
 
 	return agent, nil
@@ -162,10 +162,10 @@ func (am *AnonymizationManager) AnonymizeLearningsOnly(ctx context.Context, work
 	variablesPath := fmt.Sprintf("%s/variables/variables.json", am.GetWorkspacePath())
 	variablesExist, existingVariablesManifest, err := am.checkExistingVariables(ctx, variablesPath)
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to check for existing variables: %w", err), nil)
+		return "", fmt.Errorf("failed to check for existing variables: %w", err)
 	}
 	if !variablesExist {
-		return "", fmt.Errorf(fmt.Sprintf("variables.json not found at %s - variable extraction must be run first as a separate phase", variablesPath), nil)
+		return "", fmt.Errorf("variables.json not found at %s - variable extraction must be run first as a separate phase", variablesPath)
 	}
 
 	// Variables exist - use them for anonymization
@@ -182,13 +182,13 @@ func (am *AnonymizationManager) AnonymizeLearningsOnly(ctx context.Context, work
 
 	variablesJSONBytes, err := json.MarshalIndent(existingVariablesManifest, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to marshal variables to JSON: %w", err), nil)
+		return "", fmt.Errorf("failed to marshal variables to JSON: %w", err)
 	}
 
 	// Create anonymization agent
 	anonymizationAgent, err := am.createAnonymizationAgent(ctx, am.GetWorkspacePath())
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to create anonymization agent: %w", err), nil)
+		return "", fmt.Errorf("failed to create anonymization agent: %w", err)
 	}
 
 	// Prepare template variables
@@ -204,7 +204,7 @@ func (am *AnonymizationManager) AnonymizeLearningsOnly(ctx context.Context, work
 	am.GetLogger().Info(fmt.Sprintf("🔒 Executing anonymization agent..."))
 	result, conversationHistory, err := anonymizationAgent.Execute(ctx, anonymizationTemplateVars, nil)
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("anonymization agent execution failed: %w", err), nil)
+		return "", fmt.Errorf("anonymization agent execution failed: %w", err)
 	}
 
 	am.GetLogger().Info(fmt.Sprintf("✅ Anonymization completed successfully"))
@@ -228,14 +228,14 @@ func (am *AnonymizationManager) checkExistingVariables(ctx context.Context, vari
 			return false, nil, nil
 		}
 		// Other errors should be returned
-		return false, nil, fmt.Errorf(fmt.Sprintf("failed to check existing variables: %w", err), nil)
+		return false, nil, fmt.Errorf("failed to check existing variables: %w", err)
 	}
 
 	// Parse JSON content to VariablesManifest
 	var variablesManifest VariablesManifest
 	if err := json.Unmarshal([]byte(variablesContent), &variablesManifest); err != nil {
 		am.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse existing variables.json: %v", err))
-		return false, nil, fmt.Errorf(fmt.Sprintf("failed to parse variables.json: %w", err), nil)
+		return false, nil, fmt.Errorf("failed to parse variables.json: %w", err)
 	}
 
 	am.GetLogger().Info(fmt.Sprintf("✅ Found existing variables at %s with %d variables", variablesPath, len(variablesManifest.Variables)))

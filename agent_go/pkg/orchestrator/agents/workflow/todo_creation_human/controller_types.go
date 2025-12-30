@@ -44,8 +44,9 @@ type StepProgress struct {
 	CompletedStepIndices     []int                      `json:"completed_step_indices"` // 0-based indices
 	TotalSteps               int                        `json:"total_steps"`
 	LastUpdated              time.Time                  `json:"last_updated"`
-	BranchSteps              map[int]BranchStepProgress `json:"branch_steps,omitempty"` // key is step index (0-based)
-	DecisionEvaluationCounts DecisionEvaluationCount    `json:"-"`                      // in-memory only: tracks decision step evaluations to prevent infinite loops (not persisted)
+	BranchSteps              map[int]BranchStepProgress `json:"branch_steps,omitempty"`        // key is step index (0-based)
+	ValidationFailures       map[string]int             `json:"validation_failures,omitempty"` // key is step path, value is failure count
+	DecisionEvaluationCounts DecisionEvaluationCount    `json:"-"`                             // in-memory only: tracks decision step evaluations to prevent infinite loops (not persisted)
 }
 
 // BranchStepResumeTarget represents a branch step to resume from

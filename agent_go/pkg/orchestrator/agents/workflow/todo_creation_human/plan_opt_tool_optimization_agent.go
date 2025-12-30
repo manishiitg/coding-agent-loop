@@ -168,11 +168,11 @@ func writeToolConfigChangelogEntry(ctx context.Context, workspacePath string, en
 	// Write updated changelog
 	data, err := json.MarshalIndent(changelog, "", "  ")
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to marshal tool config changelog: %w", err), nil)
+		return fmt.Errorf("failed to marshal tool config changelog: %w", err)
 	}
 
 	if err := writeFile(ctx, changelogPath, string(data)); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to write tool config changelog file: %w", err), nil)
+		return fmt.Errorf("failed to write tool config changelog file: %w", err)
 	}
 
 	logger.Info(fmt.Sprintf("📝 Appended tool config changelog entry to %s: %s - %s", toolConfigChangelogSessionFile, entry.ChangeType, entry.Description))
@@ -243,12 +243,12 @@ func readStepConfigFromFile(ctx context.Context, workspacePath string, readFile 
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
 			return []StepConfig{}, nil
 		}
-		return nil, fmt.Errorf(fmt.Sprintf("failed to read step_config.json: %w", err), nil)
+		return nil, fmt.Errorf("failed to read step_config.json: %w", err)
 	}
 
 	configs, err := ParseStepConfigContent(content)
 	if err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to parse step_config.json: %w", err), nil)
+		return nil, fmt.Errorf("failed to parse step_config.json: %w", err)
 	}
 
 	return configs, nil
@@ -268,11 +268,11 @@ func writeStepConfigToFile(ctx context.Context, workspacePath string, configs []
 	}
 	data, err := json.MarshalIndent(configFile, "", "  ")
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to marshal step_config.json: %w", err), nil)
+		return fmt.Errorf("failed to marshal step_config.json: %w", err)
 	}
 
 	if err := writeFile(ctx, configPath, string(data)); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to write step_config.json: %w", err), nil)
+		return fmt.Errorf("failed to write step_config.json: %w", err)
 	}
 
 	return nil
@@ -321,18 +321,18 @@ func createUpdateStepConfigToolsExecutor(workspacePath string, logger loggerv2.L
 		// Convert to JSON and unmarshal to PartialStepConfigUpdate array
 		updatedStepsJSON, err := json.Marshal(updatedStepsRaw)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to marshal updated_steps: %w", err), nil)
+			return "", fmt.Errorf("failed to marshal updated_steps: %w", err)
 		}
 
 		var partialUpdates []PartialStepConfigUpdate
 		if err := json.Unmarshal(updatedStepsJSON, &partialUpdates); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to parse updated_steps: %w", err), nil)
+			return "", fmt.Errorf("failed to parse updated_steps: %w", err)
 		}
 
 		// Read current step_config.json
 		configs, err := readStepConfigFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read step_config.json: %w", err), nil)
+			return "", fmt.Errorf("failed to read step_config.json: %w", err)
 		}
 
 		// Create map of existing step configs by ID
@@ -360,7 +360,7 @@ func createUpdateStepConfigToolsExecutor(workspacePath string, logger loggerv2.L
 
 		// Write updated step_config.json
 		if err := writeStepConfigToFile(ctx, workspacePath, configs, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write step_config.json: %w", err), nil)
+			return "", fmt.Errorf("failed to write step_config.json: %w", err)
 		}
 
 		// Write changelog entry for tool configuration changes
@@ -483,7 +483,7 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 		true, // overwriteSystemPrompt
 	)
 	if err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to create and setup plan tool optimization agent: %w", err), nil)
+		return nil, fmt.Errorf("failed to create and setup plan tool optimization agent: %w", err)
 	}
 
 	return agent, nil
@@ -505,10 +505,10 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	planPath := fmt.Sprintf("%s/planning/plan.json", ptom.GetWorkspacePath())
 	planExist, existingPlan, err := ptom.checkExistingPlan(ctx, planPath)
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to check for existing plan: %w", err), nil)
+		return "", fmt.Errorf("failed to check for existing plan: %w", err)
 	}
 	if !planExist {
-		return "", fmt.Errorf(fmt.Sprintf("plan.json not found at %s - planning must be run first as a separate phase", planPath), nil)
+		return "", fmt.Errorf("plan.json not found at %s - planning must be run first as a separate phase", planPath)
 	}
 
 	// Plan exists - use it for tool optimization
@@ -517,7 +517,7 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	// Read current step_config.json
 	stepConfigs, err := readStepConfigFromFile(ctx, ptom.GetWorkspacePath(), ptom.ReadWorkspaceFile)
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to read step_config.json: %w", err), nil)
+		return "", fmt.Errorf("failed to read step_config.json: %w", err)
 	}
 
 	// Get preset code execution mode for filtering
@@ -527,7 +527,7 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	currentToolConfigsMap := createCurrentToolConfigsMapping(stepConfigs, existingPlan, presetCodeExecMode)
 	currentToolConfigsJSONBytes, err := json.MarshalIndent(currentToolConfigsMap, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to marshal current tool configs mapping to JSON: %w", err), nil)
+		return "", fmt.Errorf("failed to marshal current tool configs mapping to JSON: %w", err)
 	}
 
 	// Create lookup map for tool counts (step ID -> StepCurrentToolConfig)
@@ -540,13 +540,13 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	minimalPlan := createMinimalPlan(existingPlan, toolConfigsLookup, stepConfigs, presetCodeExecMode)
 	planJSONBytes, err := json.MarshalIndent(minimalPlan, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to marshal minimal plan to JSON: %w", err), nil)
+		return "", fmt.Errorf("failed to marshal minimal plan to JSON: %w", err)
 	}
 
 	// Prepare step_config.json for template
 	stepConfigJSONBytes, err := json.MarshalIndent(stepConfigs, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to marshal step_config.json to JSON: %w", err), nil)
+		return "", fmt.Errorf("failed to marshal step_config.json to JSON: %w", err)
 	}
 
 	// Get preset tools info for context
@@ -576,7 +576,7 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	// Create tool optimization agent
 	toolOptimizationAgent, err := ptom.createPlanToolOptimizationAgent(ctx, ptom.GetWorkspacePath())
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to create plan tool optimization agent: %w", err), nil)
+		return "", fmt.Errorf("failed to create plan tool optimization agent: %w", err)
 	}
 
 	// Register custom tool for updating step_config.json
@@ -594,7 +594,7 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	updateSchema := getUpdateStepConfigToolsSchema()
 	updateParams, err := parseSchemaForToolParameters(updateSchema)
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to parse update schema: %w", err), nil)
+		return "", fmt.Errorf("failed to parse update schema: %w", err)
 	}
 
 	// Get logger from MCP agent
@@ -616,7 +616,7 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	stepLearningsFolderMapping := createStepLearningsFolderMapping(stepConfigs, existingPlan, presetCodeExecMode, ptom.GetWorkspacePath())
 	stepLearningsFolderMappingJSONBytes, err := json.MarshalIndent(stepLearningsFolderMapping, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to marshal step learnings folder mapping to JSON: %w", err), nil)
+		return "", fmt.Errorf("failed to marshal step learnings folder mapping to JSON: %w", err)
 	}
 	ptom.GetLogger().Info(fmt.Sprintf("✅ Created learnings folder mapping for %d steps (excluding code exec mode steps)", len(stepLearningsFolderMapping)))
 
@@ -624,7 +624,7 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	stepLogsFolderMapping := createStepLogsFolderMapping(existingPlan, stepConfigs, presetCodeExecMode, ptom.GetWorkspacePath())
 	stepLogsFolderMappingJSONBytes, err := json.MarshalIndent(stepLogsFolderMapping, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to marshal step logs folder mapping to JSON: %w", err), nil)
+		return "", fmt.Errorf("failed to marshal step logs folder mapping to JSON: %w", err)
 	}
 	ptom.GetLogger().Info(fmt.Sprintf("✅ Created logs folder mapping for %d steps", len(stepLogsFolderMapping)))
 
@@ -633,7 +633,7 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	toolUsageSummary := extractToolUsageFromLogs(ctx, ptom.GetWorkspacePath(), stepLogsFolderMapping, ptom.ReadWorkspaceFile, ptom.GetLogger())
 	toolUsageSummaryJSONBytes, err := json.MarshalIndent(toolUsageSummary, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to marshal tool usage summary to JSON: %w", err), nil)
+		return "", fmt.Errorf("failed to marshal tool usage summary to JSON: %w", err)
 	}
 	ptom.GetLogger().Info(fmt.Sprintf("✅ Extracted tool usage from logs for %d steps", len(toolUsageSummary)))
 
@@ -675,7 +675,7 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 	}
 	result, conversationHistory, err := toolOptimizationAgent.Execute(ctx, toolOptimizationTemplateVars, nil)
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("plan tool optimization agent execution failed: %w", err), nil)
+		return "", fmt.Errorf("plan tool optimization agent execution failed: %w", err)
 	}
 
 	ptom.GetLogger().Info(fmt.Sprintf("✅ Plan tool optimization completed successfully"))
@@ -1259,7 +1259,7 @@ func (ptom *PlanToolOptimizationManager) checkExistingPlan(ctx context.Context, 
 			return false, nil, nil
 		}
 		// Other errors should be returned
-		return false, nil, fmt.Errorf(fmt.Sprintf("failed to check existing plan: %w", err), nil)
+		return false, nil, fmt.Errorf("failed to check existing plan: %w", err)
 	}
 
 	ptom.GetLogger().Info(fmt.Sprintf("✅ Found existing plan at %s with %d steps", planPath, len(plan.Steps)))
@@ -1551,6 +1551,7 @@ Execution output files are stored in logs folders. Use search_large_output tool 
 
 ## PURPOSE
 Analyze tool usage from learnings and step descriptions to optimize step_config.json. Be CONSERVATIVE - only suggest tools that were used successfully in learnings or are clearly needed based on step requirements. Execution logs are OPTIONAL and only checked if the user explicitly requests it.
+You also have access to the 'knowledgebase/' folder for persistent templates and global configurations. Check it if the step mentions shared assets.
 
 ` + variablesSection + learningsLocationNote + `## WORKFLOW
 

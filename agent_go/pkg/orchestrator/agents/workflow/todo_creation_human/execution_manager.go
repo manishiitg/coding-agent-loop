@@ -886,7 +886,7 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 	// 4. Initialize fresh progress if needed
 	if scope.InitFreshProgress {
 		if err := orch.initializeFreshProgress(ctx, scope.NewTotalSteps); err != nil {
-			return fmt.Errorf(fmt.Sprintf("failed to initialize progress: %w", err), nil)
+			return fmt.Errorf("failed to initialize progress: %w", err)
 		}
 		orch.GetLogger().Info(fmt.Sprintf("📝 Initialized fresh progress with %d steps", scope.NewTotalSteps))
 	}
@@ -1145,7 +1145,7 @@ func (em *ExecutionManager) CleanupForFreshStart(ctx context.Context, totalSteps
 
 	// Initialize fresh progress
 	if err := orch.initializeFreshProgress(ctx, totalSteps); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to initialize progress: %w", err), nil)
+		return fmt.Errorf("failed to initialize progress: %w", err)
 	}
 
 	orch.GetLogger().Info(fmt.Sprintf("✅ Fresh start cleanup completed"))
@@ -1191,7 +1191,7 @@ func (em *ExecutionManager) CleanupForPlanChange(ctx context.Context, totalSteps
 
 	// Initialize fresh progress
 	if err := orch.initializeFreshProgress(ctx, totalSteps); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to initialize progress: %w", err), nil)
+		return fmt.Errorf("failed to initialize progress: %w", err)
 	}
 
 	orch.GetLogger().Info(fmt.Sprintf("✅ Plan change cleanup completed"))

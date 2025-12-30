@@ -30,7 +30,7 @@ func ParseStepConfigContent(content string) ([]StepConfig, error) {
 	// Parse as object format with "steps" field
 	var configFile StepConfigFile
 	if err := json.Unmarshal([]byte(content), &configFile); err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to parse step_config.json: expected format { \"steps\": [...] }, got error: %w", err), nil)
+		return nil, fmt.Errorf("failed to parse step_config.json: expected format { \"steps\": [...] }, got error: %w", err)
 	}
 
 	// Return the steps array directly
@@ -47,7 +47,7 @@ func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, wor
 		// Run folder config exists - use it
 		configs, err := ParseStepConfigContent(content)
 		if err != nil {
-			return nil, fmt.Errorf(fmt.Sprintf("failed to parse run folder step_config.json: %w", err), nil)
+			return nil, fmt.Errorf("failed to parse run folder step_config.json: %w", err)
 		}
 		bo.GetLogger().Info(fmt.Sprintf("📁 Using run-specific step_config.json from: %s", runConfigPath))
 		return configs, nil
@@ -63,12 +63,12 @@ func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, wor
 			bo.GetLogger().Info(fmt.Sprintf("📁 No step_config.json found (neither run-specific nor default) - using defaults"))
 			return []StepConfig{}, nil
 		}
-		return nil, fmt.Errorf(fmt.Sprintf("failed to read step_config.json: %w", err), nil)
+		return nil, fmt.Errorf("failed to read step_config.json: %w", err)
 	}
 
 	configs, err := ParseStepConfigContent(content)
 	if err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to parse step_config.json: %w", err), nil)
+		return nil, fmt.Errorf("failed to parse step_config.json: %w", err)
 	}
 
 	bo.GetLogger().Info(fmt.Sprintf("📁 Using default step_config.json from: %s", configPath))
@@ -106,12 +106,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) WriteStepConfigs(ctx context
 	}
 	jsonData, err := json.MarshalIndent(configFile, "", "  ")
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to marshal step_config.json: %w", err), nil)
+		return fmt.Errorf("failed to marshal step_config.json: %w", err)
 	}
 
 	// WriteWorkspaceFile will automatically create the directory structure via the workspace API
 	if err := hcpo.WriteWorkspaceFile(ctx, configPath, string(jsonData)); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to write step_config.json: %w", err), nil)
+		return fmt.Errorf("failed to write step_config.json: %w", err)
 	}
 
 	return nil
@@ -144,7 +144,7 @@ func MatchStepConfigs(newSteps []PlanStepInterface, oldConfigs []StepConfig) (ma
 			if step.GetTitle() != "" {
 				stepTitle = step.GetTitle()
 			}
-			return nil, fmt.Errorf(fmt.Sprintf("step at index %d is missing required ID field. Step title: %q", i, stepTitle), nil)
+			return nil, fmt.Errorf("step at index %d is missing required ID field. Step title: %q", i, stepTitle)
 		}
 
 		// Match config by ID

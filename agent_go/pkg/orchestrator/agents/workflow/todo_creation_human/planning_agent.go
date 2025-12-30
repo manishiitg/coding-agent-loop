@@ -19,6 +19,7 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/r3labs/diff/v3"
+	"github.com/PaesslerAG/jsonpath"
 )
 
 // HumanControlledTodoPlannerPlanningTemplate holds template variables for human-controlled planning prompts
@@ -1029,11 +1030,11 @@ func writeChangelogEntry(ctx context.Context, workspacePath string, entry PlanCh
 	// Write updated changelog
 	data, err := json.MarshalIndent(changelog, "", "  ")
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to marshal changelog: %w", err), nil)
+		return fmt.Errorf("failed to marshal changelog: %w", err)
 	}
 
 	if err := writeFile(ctx, changelogPath, string(data)); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to write changelog file: %w", err), nil)
+		return fmt.Errorf("failed to write changelog file: %w", err)
 	}
 
 	logger.Info(fmt.Sprintf("📝 Appended changelog entry to %s: %s - %s", changelogSessionFile, entry.ChangeType, entry.Description))
@@ -1205,7 +1206,7 @@ func generateChangelogFromPlanDiff(ctx context.Context, workspacePath string, ol
 
 	// Write changelog entry
 	if err := writeChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to write changelog entry: %w", err), nil)
+		return fmt.Errorf("failed to write changelog entry: %w", err)
 	}
 
 	logger.Info(fmt.Sprintf("📝 Generated changelog entry: %s - %d diff changes across %d step(s)", changeType, len(diffChangelog), len(stepIDsList)))
@@ -1393,7 +1394,7 @@ func getAddRegularStepSchema() string {
 			},
 			"context_output": {
 				"type": "string",
-				"description": "REQUIRED: What context file this step will create for subsequent steps - e.g., 'step_1_results.json'. IMPORTANT: Execution agents work ONLY in the execution folder, so context output files will be written to the execution folder."
+				"description": "REQUIRED: What context file this step will create for subsequent steps - e.g., 'step_1_results.json'. IMPORTANT: Execution agents work ONLY in the execution folder, so context output files will be written to the execution folder. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content (descriptions, logs, content > 1KB), store it in a separate markdown file (e.g., 'step_1_details.md') and reference it from JSON (e.g., {\"details_file\": \"step_1_details.md\"}). JSON should contain only structured data: counts, IDs, status, file references, brief summaries. Large text content belongs in markdown files."
 			},
 			"has_loop": {
 				"type": "boolean",
@@ -1439,7 +1440,7 @@ func getAddRegularStepSchema() string {
 			},
 			"validation_schema": {
 				"type": "object",
-				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. You MUST generate this by parsing the success_criteria and extracting file names, field requirements, and validation rules. This enables pre-validation before LLM validation (improves speed by 50-70%). Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath like $.field_name), must_exist: boolean, value_type?: string (string/number/boolean/array/object), min_length?: number, max_length?: number, pattern?: string (VALID Go regex - must compile with regexp.Compile, ensure balanced parentheses, escape special chars), min_value?: number, max_value?: number, consistency_check?: {type: string (array_length/equals/greater_than/less_than), compare_with_path: string}}]}]}. Example: If success_criteria mentions 'File results.json contains status field and count field equals items array length', generate schema with file_name: 'results.json', json_checks for $.status and $.count with consistency_check. IMPORTANT: For pattern field, only use if you can generate a VALID Go regex pattern. Invalid patterns will be skipped. Examples of valid patterns: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Do NOT use incomplete patterns.",
+				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. You MUST generate this by parsing the success_criteria and extracting file names, field requirements, and validation rules. This enables pre-validation before LLM validation (improves speed by 50-70%). Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath like $.field_name), must_exist: boolean, value_type?: string (string/number/boolean/array/object), min_length?: number, max_length?: number, pattern?: string (VALID Go regex - must compile with regexp.Compile, ensure balanced parentheses, escape special chars), min_value?: number, max_value?: number, consistency_check?: {type: string (array_length/equals/greater_than/less_than), compare_with_path: string}}]}]}. Example: If success_criteria mentions 'File results.json contains status field and count field equals items array length', generate schema with file_name: 'results.json', json_checks: [{path: '$.status', must_exist: true}, {path: '$.count', must_exist: true, consistency_check: {type: 'array_length', compare_with_path: '$.items'}}]. CRITICAL FOR array_length CONSISTENCY CHECKS - AVOID COMMON MISTAKE: For array_length checks, path MUST point to COUNT/NUMBER field (e.g., '$.count', '$.total_expected_count', '$.length'), and compare_with_path MUST point to ARRAY field (e.g., '$.items', '$.downloaded_files', '$.files'). CORRECT examples: {path: '$.count', consistency_check: {type: 'array_length', compare_with_path: '$.items'}}, {path: '$.total_expected_count', consistency_check: {type: 'array_length', compare_with_path: '$.downloaded_files'}}. INCORRECT (SWAPPED) - DO NOT DO THIS: {path: '$.items', consistency_check: {type: 'array_length', compare_with_path: '$.count'}} ❌ WRONG - paths are swapped! Field name hints: Number fields often contain 'count', 'total', 'length', 'size', 'num'. Array fields often contain 'files', 'items', 'list', 'array', 'entries', 'results'. IMPORTANT: For pattern field, only use if you can generate a VALID Go regex pattern. Invalid patterns will be skipped. Examples of valid patterns: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Do NOT use incomplete patterns.",
 				"properties": {
 					"files": {
 						"type": "array",
@@ -1464,8 +1465,8 @@ func getAddRegularStepSchema() string {
 											"consistency_check": {
 												"type": "object",
 												"properties": {
-													"type": {"type": "string", "description": "Type of consistency check: 'array_length', 'equals', 'greater_than', 'less_than', or 'in_array'"},
-													"compare_with_path": {"type": "string", "description": "REQUIRED: JSONPath to compare with (e.g., '$.items', '$.count'). Must be a valid, non-empty JSONPath string."}
+													"type": {"type": "string", "description": "Type of consistency check: 'array_length' (CRITICAL - AVOID COMMON MISTAKE: path must point to COUNT/number field like '$.count' or '$.total_expected_count', compare_with_path must point to ARRAY field like '$.items' or '$.downloaded_files'. DO NOT SWAP THEM! Correct: path='$.count', compare_with_path='$.items'. Wrong: path='$.items', compare_with_path='$.count' ❌), 'equals', 'greater_than', 'less_than', or 'in_array'"},
+													"compare_with_path": {"type": "string", "description": "REQUIRED: JSONPath to compare with. For 'array_length' type: MUST point to the ARRAY field (e.g., '$.items', '$.downloaded_files', '$.files', '$.databases', '$.entries'). DO NOT use number fields here! For other types: JSONPath to compare with (e.g., '$.count', '$.status'). Must be a valid, non-empty JSONPath string."}
 												},
 												"required": ["type", "compare_with_path"]
 											}
@@ -1510,7 +1511,7 @@ func getAddConditionalStepSchema() string {
 			},
 			"context_output": {
 				"type": "string",
-				"description": "OPTIONAL: Context file this conditional step wrapper will create. Can be empty string if not needed."
+				"description": "OPTIONAL: Context file this conditional step wrapper will create. Can be empty string if not needed. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."
 			},
 			"condition_question": {
 				"type": "string",
@@ -1531,11 +1532,11 @@ func getAddConditionalStepSchema() string {
 						"description": {"type": "string"},
 						"success_criteria": {"type": "string"},
 						"context_dependencies": {"type": "array", "items": {"type": "string"}},
-						"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create"},
+						"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."},
 						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
 						"validation_schema": {
 							"type": "object",
-							"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string (VALID Go regex only - must compile, balanced parentheses, properly escaped), min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}. IMPORTANT: Only use pattern field if you can generate a valid Go regex. Invalid patterns will be skipped.",
+							"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string (VALID Go regex only - must compile, balanced parentheses, properly escaped), min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}. CRITICAL FOR array_length CONSISTENCY CHECKS - AVOID COMMON MISTAKE: path MUST point to COUNT/number field (e.g., '$.count', '$.total_expected_count'), compare_with_path MUST point to ARRAY field (e.g., '$.items', '$.downloaded_files'). CORRECT example: If 'count equals items array length', use path='$.count', consistency_check={type='array_length', compare_with_path='$.items'}. CORRECT example: If 'total_expected_count equals downloaded_files array length', use path='$.total_expected_count', consistency_check={type='array_length', compare_with_path='$.downloaded_files'}. INCORRECT (SWAPPED) - DO NOT DO THIS: path='$.items', compare_with_path='$.count' ❌ WRONG! Field name hints: Number fields contain 'count', 'total', 'length', 'size'. Array fields contain 'files', 'items', 'list', 'array', 'entries'. IMPORTANT: Only use pattern field if you can generate a valid Go regex. Invalid patterns will be skipped.",
 							"properties": {
 								"files": {
 									"type": "array",
@@ -1588,11 +1589,11 @@ func getAddConditionalStepSchema() string {
 						"description": {"type": "string"},
 						"success_criteria": {"type": "string"},
 						"context_dependencies": {"type": "array", "items": {"type": "string"}},
-						"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create"},
+						"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."},
 						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
 						"validation_schema": {
 							"type": "object",
-							"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string (VALID Go regex only - must compile, balanced parentheses, properly escaped), min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}. IMPORTANT: Only use pattern field if you can generate a valid Go regex. Invalid patterns will be skipped.",
+							"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string (VALID Go regex only - must compile, balanced parentheses, properly escaped), min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}. CRITICAL FOR array_length CONSISTENCY CHECKS - AVOID COMMON MISTAKE: path MUST point to COUNT/number field (e.g., '$.count', '$.total_expected_count'), compare_with_path MUST point to ARRAY field (e.g., '$.items', '$.downloaded_files'). CORRECT example: If 'count equals items array length', use path='$.count', consistency_check={type='array_length', compare_with_path='$.items'}. CORRECT example: If 'total_expected_count equals downloaded_files array length', use path='$.total_expected_count', consistency_check={type='array_length', compare_with_path='$.downloaded_files'}. INCORRECT (SWAPPED) - DO NOT DO THIS: path='$.items', compare_with_path='$.count' ❌ WRONG! Field name hints: Number fields contain 'count', 'total', 'length', 'size'. Array fields contain 'files', 'items', 'list', 'array', 'entries'. IMPORTANT: Only use pattern field if you can generate a valid Go regex. Invalid patterns will be skipped.",
 							"properties": {
 								"files": {
 									"type": "array",
@@ -1674,14 +1675,14 @@ func getAddDecisionStepSchema() string {
 					"description": {"type": "string", "description": "REQUIRED: Description of what the decision step does"},
 					"success_criteria": {"type": "string", "description": "REQUIRED: How to verify the decision step completed successfully"},
 					"context_dependencies": {"type": "array", "items": {"type": "string"}, "description": "REQUIRED: List of context files from previous steps that this step depends on. Use empty array [] if no dependencies."},
-					"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create"},
+					"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."},
 					"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
 					"loop_condition": {"type": "string", "description": "OPTIONAL: Condition that must be met to exit the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
 					"max_iterations": {"type": "integer", "description": "OPTIONAL: Maximum number of loop iterations allowed. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
 					"loop_description": {"type": "string", "description": "OPTIONAL: Describe what happens in EACH ITERATION of the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
 					"validation_schema": {
 						"type": "object",
-						"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string, min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}",
+						"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string, min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}. CRITICAL FOR array_length - AVOID COMMON MISTAKE: path=COUNT/number field (e.g., '$.count', '$.total_expected_count'), compare_with_path=ARRAY field (e.g., '$.items', '$.downloaded_files'). CORRECT: path='$.count', consistency_check={type='array_length', compare_with_path='$.items'}. WRONG (SWAPPED): path='$.items', compare_with_path='$.count' ❌. Field hints: Number='count', 'total', 'length'. Array='files', 'items', 'list', 'array'.",
 						"properties": {
 							"files": {
 								"type": "array",
@@ -1706,8 +1707,8 @@ func getAddDecisionStepSchema() string {
 													"consistency_check": {
 														"type": "object",
 														"properties": {
-															"type": {"type": "string"},
-															"compare_with_path": {"type": "string"}
+															"type": {"type": "string", "description": "Type of consistency check: 'array_length' (CRITICAL - AVOID COMMON MISTAKE: path must point to COUNT/number field like '$.count' or '$.total_expected_count', compare_with_path must point to ARRAY field like '$.items' or '$.downloaded_files'. DO NOT SWAP THEM! Correct: path='$.count', compare_with_path='$.items'. Wrong: path='$.items', compare_with_path='$.count' ❌), 'equals', 'greater_than', 'less_than', or 'in_array'"},
+															"compare_with_path": {"type": "string", "description": "REQUIRED: JSONPath to compare with. For 'array_length' type: MUST point to the ARRAY field (e.g., '$.items', '$.downloaded_files', '$.files', '$.databases', '$.entries'). DO NOT use number fields here! For other types: JSONPath to compare with (e.g., '$.count', '$.status')."}
 														}
 													}
 												}
@@ -1765,7 +1766,7 @@ func getAddOrchestrationStepSchema() string {
 					"description": {"type": "string", "description": "REQUIRED: Description of what the orchestration orchestrator step does"},
 					"success_criteria": {"type": "string", "description": "REQUIRED: How to verify the orchestration orchestrator step completed successfully"},
 					"context_dependencies": {"type": "array", "items": {"type": "string"}, "description": "REQUIRED: List of context files from previous steps that this step depends on. Use empty array [] if no dependencies."},
-					"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create"},
+					"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."},
 					"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
 					"loop_condition": {"type": "string", "description": "OPTIONAL: Condition that must be met to exit the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
 					"max_iterations": {"type": "integer", "description": "OPTIONAL: Maximum number of loop iterations allowed. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
@@ -1800,7 +1801,7 @@ func getAddOrchestrationStepSchema() string {
 								"description": {"type": "string", "description": "REQUIRED: Description of what the sub-agent step does"},
 								"success_criteria": {"type": "string", "description": "REQUIRED: How to verify the sub-agent step completed successfully"},
 								"context_dependencies": {"type": "array", "items": {"type": "string"}},
-								"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create"},
+								"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."},
 								"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
 								"loop_condition": {"type": "string"},
 								"max_iterations": {"type": "integer"},
@@ -1897,7 +1898,7 @@ func getAddLoopStepSchema() string {
 			},
 			"context_output": {
 				"type": "string",
-				"description": "REQUIRED: What context file this step will create for subsequent steps - e.g., 'step_1_results.json'."
+				"description": "REQUIRED: What context file this step will create for subsequent steps - e.g., 'step_1_results.json'. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content (descriptions, logs, content > 1KB), store it in a separate markdown file (e.g., 'step_1_details.md') and reference it from JSON (e.g., {\"details_file\": \"step_1_details.md\"}). JSON should contain only structured data: counts, IDs, status, file references, brief summaries."
 			},
 			"loop_condition": {
 				"type": "string",
@@ -2402,7 +2403,7 @@ func getUpdateDecisionStepSchema() string {
 					"description": {"type": "string", "description": "REQUIRED: Description of what the decision step does"},
 					"success_criteria": {"type": "string", "description": "REQUIRED: How to verify the decision step completed successfully"},
 					"context_dependencies": {"type": "array", "items": {"type": "string"}},
-					"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create"},
+					"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."},
 					"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
 					"loop_condition": {"type": "string", "description": "OPTIONAL: Condition that must be met to exit the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
 					"max_iterations": {"type": "integer", "description": "OPTIONAL: Maximum number of loop iterations allowed. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
@@ -2504,7 +2505,7 @@ func getUpdateOrchestrationStepSchema() string {
 					"description": {"type": "string", "description": "REQUIRED: Description of what the orchestration orchestrator step does"},
 					"success_criteria": {"type": "string", "description": "REQUIRED: How to verify the orchestration orchestrator step completed successfully"},
 					"context_dependencies": {"type": "array", "items": {"type": "string"}},
-					"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create"},
+					"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."},
 					"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
 					"loop_condition": {"type": "string", "description": "OPTIONAL: Condition that must be met to exit the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
 					"max_iterations": {"type": "integer", "description": "OPTIONAL: Maximum number of loop iterations allowed. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
@@ -2529,7 +2530,7 @@ func getUpdateOrchestrationStepSchema() string {
 								"description": {"type": "string", "description": "REQUIRED: Description of what the sub-agent step does"},
 								"success_criteria": {"type": "string", "description": "REQUIRED: How to verify the sub-agent step completed successfully"},
 								"context_dependencies": {"type": "array", "items": {"type": "string"}},
-								"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create"},
+								"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."},
 								"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
 								"loop_condition": {"type": "string"},
 								"max_iterations": {"type": "integer"},
@@ -2585,7 +2586,7 @@ func getUpdateHumanInputStepSchema() string {
 			},
 			"context_output": {
 				"type": "string",
-				"description": "OPTIONAL: Updated context file name to save the response. Only include if you want to change it. Defaults to 'step-{index}.json' if not specified. If omitted, the existing context output is preserved."
+				"description": "OPTIONAL: Updated context file name to save the response. Only include if you want to change it. Defaults to 'step-{index}.json' if not specified. If omitted, the existing context output is preserved. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."
 			},
 			"next_step_id": {
 				"type": "string",
@@ -2665,7 +2666,7 @@ func getAddOrchestrationRouteSchema() string {
 							"description": {"type": "string", "description": "REQUIRED: Description of what the sub-agent step does"},
 							"success_criteria": {"type": "string", "description": "REQUIRED: How to verify the sub-agent step completed successfully"},
 							"context_dependencies": {"type": "array", "items": {"type": "string"}},
-							"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create"},
+							"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."},
 							"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
 							"loop_condition": {"type": "string"},
 							"max_iterations": {"type": "integer"},
@@ -2715,7 +2716,7 @@ func getUpdateOrchestrationRouteSchema() string {
 					"description": {"type": "string", "description": "REQUIRED: Description of what the sub-agent step does"},
 					"success_criteria": {"type": "string", "description": "REQUIRED: How to verify the sub-agent step completed successfully"},
 					"context_dependencies": {"type": "array", "items": {"type": "string"}},
-					"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create"},
+					"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."},
 					"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
 					"loop_condition": {"type": "string"},
 					"max_iterations": {"type": "integer"},
@@ -2775,7 +2776,7 @@ func getUpdateValidationSchemaSchema() string {
 			},
 			"validation_schema": {
 				"type": "object",
-				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. You MUST generate this by parsing the success_criteria and extracting file names, field requirements, and validation rules. This enables pre-validation before LLM validation (improves speed by 50-70%). Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath like $.field_name), must_exist: boolean, value_type?: string (string/number/boolean/array/object), min_length?: number, max_length?: number, pattern?: string (VALID Go regex - must compile with regexp.Compile, ensure balanced parentheses, escape special chars), min_value?: number, max_value?: number, consistency_check?: {type: string (array_length/equals/greater_than/less_than), compare_with_path: string}}]}]}. Example: If success_criteria mentions 'File results.json contains status field and count field equals items array length', generate schema with file_name: 'results.json', json_checks for $.status and $.count with consistency_check. IMPORTANT: For pattern field, only use if you can generate a VALID Go regex pattern. Invalid patterns will be skipped. Examples of valid patterns: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Do NOT use incomplete patterns.",
+				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. You MUST generate this by parsing the success_criteria and extracting file names, field requirements, and validation rules. This enables pre-validation before LLM validation (improves speed by 50-70%). Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath like $.field_name), must_exist: boolean, value_type?: string (string/number/boolean/array/object), min_length?: number, max_length?: number, pattern?: string (VALID Go regex - must compile with regexp.Compile, ensure balanced parentheses, escape special chars), min_value?: number, max_value?: number, consistency_check?: {type: string (array_length/equals/greater_than/less_than), compare_with_path: string}}]}]}. Example: If success_criteria mentions 'File results.json contains status field and count field equals items array length', generate schema with file_name: 'results.json', json_checks: [{path: '$.status', must_exist: true}, {path: '$.count', must_exist: true, consistency_check: {type: 'array_length', compare_with_path: '$.items'}}]. CRITICAL FOR array_length CONSISTENCY CHECKS - AVOID COMMON MISTAKE: For array_length checks, path MUST point to COUNT/NUMBER field (e.g., '$.count', '$.total_expected_count', '$.length'), and compare_with_path MUST point to ARRAY field (e.g., '$.items', '$.downloaded_files', '$.files'). CORRECT examples: {path: '$.count', consistency_check: {type: 'array_length', compare_with_path: '$.items'}}, {path: '$.total_expected_count', consistency_check: {type: 'array_length', compare_with_path: '$.downloaded_files'}}. INCORRECT (SWAPPED) - DO NOT DO THIS: {path: '$.items', consistency_check: {type: 'array_length', compare_with_path: '$.count'}} ❌ WRONG - paths are swapped! Field name hints: Number fields often contain 'count', 'total', 'length', 'size', 'num'. Array fields often contain 'files', 'items', 'list', 'array', 'entries', 'results'. IMPORTANT: For pattern field, only use if you can generate a VALID Go regex pattern. Invalid patterns will be skipped. Examples of valid patterns: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Do NOT use incomplete patterns.",
 				"properties": {
 					"files": {
 						"type": "array",
@@ -2800,8 +2801,8 @@ func getUpdateValidationSchemaSchema() string {
 											"consistency_check": {
 												"type": "object",
 												"properties": {
-													"type": {"type": "string", "description": "Type of consistency check: 'array_length', 'equals', 'greater_than', 'less_than', or 'in_array'"},
-													"compare_with_path": {"type": "string", "description": "REQUIRED: JSONPath to compare with (e.g., '$.items', '$.count'). Must be a valid, non-empty JSONPath string."}
+													"type": {"type": "string", "description": "Type of consistency check: 'array_length' (CRITICAL - AVOID COMMON MISTAKE: path must point to COUNT/number field like '$.count' or '$.total_expected_count', compare_with_path must point to ARRAY field like '$.items' or '$.downloaded_files'. DO NOT SWAP THEM! Correct: path='$.count', compare_with_path='$.items'. Wrong: path='$.items', compare_with_path='$.count' ❌), 'equals', 'greater_than', 'less_than', or 'in_array'"},
+													"compare_with_path": {"type": "string", "description": "REQUIRED: JSONPath to compare with. For 'array_length' type: MUST point to the ARRAY field (e.g., '$.items', '$.downloaded_files', '$.files', '$.databases', '$.entries'). DO NOT use number fields here! For other types: JSONPath to compare with (e.g., '$.count', '$.status'). Must be a valid, non-empty JSONPath string."}
 												},
 												"required": ["type", "compare_with_path"]
 											}
@@ -2845,12 +2846,12 @@ func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(c
 
 	content, err := readFile(ctx, planPath)
 	if err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to read plan.json: %w", err), nil)
+		return nil, fmt.Errorf("failed to read plan.json: %w", err)
 	}
 
 	var plan PlanningResponse
 	if err := json.Unmarshal([]byte(content), &plan); err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to parse plan.json: %w", err), nil)
+		return nil, fmt.Errorf("failed to parse plan.json: %w", err)
 	}
 
 	return &plan, nil
@@ -2866,16 +2867,16 @@ func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningRe
 
 	// Validate that all steps have IDs (planning agent should always generate them)
 	if err := validatePlanStepIDs(plan.Steps); err != nil {
-		return fmt.Errorf(fmt.Sprintf("plan validation failed: %w", err), nil)
+		return fmt.Errorf("plan validation failed: %w", err)
 	}
 
 	data, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to marshal plan: %w", err), nil)
+		return fmt.Errorf("failed to marshal plan: %w", err)
 	}
 
 	if err := writeFile(ctx, planPath, string(data)); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to write plan.json: %w", err), nil)
+		return fmt.Errorf("failed to write plan.json: %w", err)
 	}
 
 	return nil
@@ -2923,7 +2924,7 @@ func countSubAgentsInPlan(plan *PlanningResponse) int {
 func validateNestingDepth(step PlanStepInterface, currentDepth int) error {
 	const maxDepth = 2
 	if currentDepth > maxDepth {
-		return fmt.Errorf(fmt.Sprintf("nesting depth exceeds maximum allowed depth of %d (current: %d)", maxDepth, currentDepth), nil)
+		return fmt.Errorf("nesting depth exceeds maximum allowed depth of %d (current: %d)", maxDepth, currentDepth)
 	}
 
 	// Check nested steps in branches (only ConditionalPlanStep has branches)
@@ -3099,6 +3100,152 @@ func validateRegexPatternsInSchema(schema *ValidationSchema) error {
 
 	if len(errors) > 0 {
 		return fmt.Errorf("validation schema contains invalid regex patterns:\n%s", strings.Join(errors, "\n"))
+	}
+
+	return nil
+}
+
+// validateJSONPathSyntax validates that all JSONPaths in the schema are syntactically valid
+func validateJSONPathSyntax(schema *ValidationSchema) error {
+	if schema == nil {
+		return nil
+	}
+
+	var errors []string
+	dummyData := map[string]interface{}{}
+
+	for _, fileRule := range schema.Files {
+		for _, check := range fileRule.JSONChecks {
+			// Validate check.Path
+			path := strings.TrimSpace(check.Path)
+			if path == "" {
+				errors = append(errors, fmt.Sprintf("File '%s': Empty path is not allowed", fileRule.FileName))
+			} else {
+				if !strings.HasPrefix(path, "$.") {
+					errors = append(errors, fmt.Sprintf("File '%s': Path '%s' must start with '$.'", fileRule.FileName, path))
+				} else {
+					// Check syntax by attempting to evaluate against dummy data
+					_, err := jsonpath.Get(path, dummyData)
+					if err != nil && strings.Contains(err.Error(), "parsing error") {
+						errors = append(errors, fmt.Sprintf("File '%s': Invalid JSONPath syntax in '%s': %v", fileRule.FileName, path, err))
+					}
+				}
+			}
+
+			// Validate compare_with_path if it exists
+			if check.ConsistencyCheck != nil {
+				comparePath := strings.TrimSpace(check.ConsistencyCheck.CompareWithPath)
+				if comparePath == "" {
+					errors = append(errors, fmt.Sprintf("File '%s': Empty compare_with_path is not allowed in consistency check", fileRule.FileName))
+				} else {
+					if !strings.HasPrefix(comparePath, "$.") {
+						errors = append(errors, fmt.Sprintf("File '%s': compare_with_path '%s' must start with '$.'", fileRule.FileName, comparePath))
+					} else {
+						// Check syntax
+						_, err := jsonpath.Get(comparePath, dummyData)
+						if err != nil && strings.Contains(err.Error(), "parsing error") {
+							errors = append(errors, fmt.Sprintf("File '%s': Invalid JSONPath syntax in compare_with_path '%s': %v", fileRule.FileName, comparePath, err))
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("validation schema contains invalid JSONPaths:\n%s", strings.Join(errors, "\n"))
+	}
+
+	return nil
+}
+
+// detectFieldTypeFromPath analyzes a JSONPath to determine if it likely points to a number/count field or an array field
+// Returns: (isNumberField, isArrayField)
+func detectFieldTypeFromPath(path string) (bool, bool) {
+	pathLower := strings.ToLower(path)
+
+	// Number/count field indicators
+	numberIndicators := []string{"count", "total", "length", "size", "num", "number", "amount", "quantity", "sum"}
+	for _, indicator := range numberIndicators {
+		if strings.Contains(pathLower, indicator) {
+			return true, false
+		}
+	}
+
+	// Array field indicators
+	arrayIndicators := []string{"files", "items", "list", "array", "entries", "results", "data", "records", "elements", "objects", "values"}
+	for _, indicator := range arrayIndicators {
+		if strings.Contains(pathLower, indicator) {
+			return false, true
+		}
+	}
+
+	return false, false
+}
+
+// validateArrayLengthConsistencyChecks validates array_length consistency checks in a ValidationSchema
+// This performs basic structural validation and detects ambiguous paths based on field name patterns
+// Runtime validation (pre_validation.go) supports bidirectional checks (array_length(count, array) OR array_length(array, count))
+func validateArrayLengthConsistencyChecks(schema *ValidationSchema) error {
+	if schema == nil {
+		return nil
+	}
+
+	var errors []string
+	for _, fileRule := range schema.Files {
+		for _, check := range fileRule.JSONChecks {
+			if check.ConsistencyCheck == nil || check.ConsistencyCheck.Type != "array_length" {
+				continue
+			}
+
+			path := strings.TrimSpace(check.Path)
+			comparePath := strings.TrimSpace(check.ConsistencyCheck.CompareWithPath)
+
+			// Basic validation: paths must be non-empty and different
+			if path == "" {
+				errors = append(errors, fmt.Sprintf(
+					"File '%s': array_length consistency check has empty path. Path must be a valid JSONPath.",
+					fileRule.FileName))
+				continue
+			}
+
+			if comparePath == "" {
+				errors = append(errors, fmt.Sprintf(
+					"File '%s': array_length consistency check has empty compare_with_path. compare_with_path must be a valid JSONPath.",
+					fileRule.FileName))
+				continue
+			}
+
+			if path == comparePath {
+				errors = append(errors, fmt.Sprintf(
+					"File '%s': array_length consistency check has path '%s' equal to compare_with_path '%s'. They must be different - one should point to a COUNT/number field, the other to an ARRAY field.",
+					fileRule.FileName, path, comparePath))
+				continue
+			}
+
+			// Detect field types to check for ambiguity
+			pathIsNumber, pathIsArray := detectFieldTypeFromPath(path)
+			compareIsNumber, compareIsArray := detectFieldTypeFromPath(comparePath)
+
+			// Check for ambiguous configurations
+			if pathIsArray && compareIsArray {
+				errors = append(errors, fmt.Sprintf(
+					"File '%s': AMBIGUOUS CHECK! Both path '%s' and compare_with_path '%s' contain array field indicators. One must be a NUMBER/COUNT field. Please check your paths.",
+					fileRule.FileName, path, comparePath))
+			} else if pathIsNumber && compareIsNumber {
+				errors = append(errors, fmt.Sprintf(
+					"File '%s': AMBIGUOUS CHECK! Both path '%s' and compare_with_path '%s' contain number field indicators. One must be an ARRAY field. Please check your paths.",
+					fileRule.FileName, path, comparePath))
+			}
+
+			// Note: We no longer enforce strict order (Number, Array) vs (Array, Number)
+			// because the runtime validator now handles both cases.
+			// We only flag if both look like the SAME type.
+		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("validation schema contains misconfigured array_length consistency checks:\n%s", strings.Join(errors, "\n"))
 	}
 
 	return nil
@@ -3862,7 +4009,7 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 		for _, step := range plan.Steps {
 			availableIDs = append(availableIDs, step.GetID())
 		}
-		return -1, nil, fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs), nil)
+		return -1, nil, fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs)
 	}
 
 	changedFields := []string{}
@@ -4357,6 +4504,16 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 		if err := validateRegexPatternsInSchema(partialUpdate.ValidationSchema); err != nil {
 			return -1, nil, fmt.Errorf("invalid regex patterns in validation schema: %w", err)
 		}
+
+		// Validate JSONPath syntax
+		if err := validateJSONPathSyntax(partialUpdate.ValidationSchema); err != nil {
+			return -1, nil, fmt.Errorf("invalid JSONPath syntax in validation schema: %w", err)
+		}
+
+		// Validate array_length consistency checks
+		if err := validateArrayLengthConsistencyChecks(partialUpdate.ValidationSchema); err != nil {
+			return -1, nil, fmt.Errorf("invalid array_length consistency checks in validation schema: %w", err)
+		}
 	}
 
 	// Merge partial update
@@ -4371,18 +4528,18 @@ func createUpdateRegularStepExecutor(workspacePath string, logger loggerv2.Logge
 		// Convert args to JSON and unmarshal to PartialPlanStep
 		stepJSON, err := json.Marshal(args)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to marshal step: %w", err), nil)
+			return "", fmt.Errorf("failed to marshal step: %w", err)
 		}
 
 		var partialUpdate PartialPlanStep
 		if err := json.Unmarshal(stepJSON, &partialUpdate); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to parse step: %w", err), nil)
+			return "", fmt.Errorf("failed to parse step: %w", err)
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Track changes for changelog
@@ -4397,12 +4554,12 @@ func createUpdateRegularStepExecutor(workspacePath string, logger loggerv2.Logge
 
 		// Validate all steps after update
 		if err := validatePlanStepIDs(plan.Steps); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("plan validation failed after update: %w", err), nil)
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Unlock learnings for updated step
@@ -4425,18 +4582,18 @@ func createUpdateConditionalStepExecutor(workspacePath string, logger loggerv2.L
 		// Convert args to JSON and unmarshal to PartialPlanStep
 		stepJSON, err := json.Marshal(args)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to marshal step: %w", err), nil)
+			return "", fmt.Errorf("failed to marshal step: %w", err)
 		}
 
 		var partialUpdate PartialPlanStep
 		if err := json.Unmarshal(stepJSON, &partialUpdate); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to parse step: %w", err), nil)
+			return "", fmt.Errorf("failed to parse step: %w", err)
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Find the conditional step
@@ -4454,12 +4611,12 @@ func createUpdateConditionalStepExecutor(workspacePath string, logger loggerv2.L
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.GetID())
 			}
-			return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs), nil)
+			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs)
 		}
 
 		conditionalStep, ok := existingStep.(*ConditionalPlanStep)
 		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not a conditional step", partialUpdate.ExistingStepID), nil)
+			return "", fmt.Errorf("step with ID '%s' is not a conditional step", partialUpdate.ExistingStepID)
 		}
 
 		// Track changes for changelog
@@ -4509,12 +4666,12 @@ func createUpdateConditionalStepExecutor(workspacePath string, logger loggerv2.L
 
 		// Validate all steps after update
 		if err := validatePlanStepIDs(plan.Steps); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("plan validation failed after update: %w", err), nil)
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
@@ -4539,18 +4696,18 @@ func createUpdateDecisionStepExecutor(workspacePath string, logger loggerv2.Logg
 		// Convert args to JSON and unmarshal to PartialPlanStep
 		stepJSON, err := json.Marshal(args)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to marshal step: %w", err), nil)
+			return "", fmt.Errorf("failed to marshal step: %w", err)
 		}
 
 		var partialUpdate PartialPlanStep
 		if err := json.Unmarshal(stepJSON, &partialUpdate); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to parse step: %w", err), nil)
+			return "", fmt.Errorf("failed to parse step: %w", err)
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Find the decision step
@@ -4568,13 +4725,13 @@ func createUpdateDecisionStepExecutor(workspacePath string, logger loggerv2.Logg
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.GetID())
 			}
-			return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs), nil)
+			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs)
 		}
 
 		// Validate it's a decision step before updating
 		_, ok := existingStep.(*DecisionPlanStep)
 		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not a decision step", partialUpdate.ExistingStepID), nil)
+			return "", fmt.Errorf("step with ID '%s' is not a decision step", partialUpdate.ExistingStepID)
 		}
 
 		// Track changes for changelog
@@ -4597,17 +4754,17 @@ func createUpdateDecisionStepExecutor(workspacePath string, logger loggerv2.Logg
 		// Validate the updated step has all required fields for decision steps
 		// This ensures the agent gets immediate feedback if validation fails
 		if err := validateDecisionStepFieldsTyped(updatedDecisionStep); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("validation failed after update: %w", err), nil)
+			return "", fmt.Errorf("validation failed after update: %w", err)
 		}
 
 		// Validate all steps after update
 		if err := validatePlanStepIDs(plan.Steps); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("plan validation failed after update: %w", err), nil)
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
@@ -4632,18 +4789,18 @@ func createUpdateOrchestrationStepExecutor(workspacePath string, logger loggerv2
 		// Convert args to JSON and unmarshal to PartialPlanStep
 		stepJSON, err := json.Marshal(args)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to marshal step: %w", err), nil)
+			return "", fmt.Errorf("failed to marshal step: %w", err)
 		}
 
 		var partialUpdate PartialPlanStep
 		if err := json.Unmarshal(stepJSON, &partialUpdate); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to parse step: %w", err), nil)
+			return "", fmt.Errorf("failed to parse step: %w", err)
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Find the orchestration step
@@ -4661,13 +4818,13 @@ func createUpdateOrchestrationStepExecutor(workspacePath string, logger loggerv2
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.GetID())
 			}
-			return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs), nil)
+			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs)
 		}
 
 		// Validate it's an orchestration step before updating
 		_, ok := existingStep.(*OrchestrationPlanStep)
 		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not an orchestration step", partialUpdate.ExistingStepID), nil)
+			return "", fmt.Errorf("step with ID '%s' is not an orchestration step", partialUpdate.ExistingStepID)
 		}
 
 		// Track changes for changelog
@@ -4709,17 +4866,17 @@ func createUpdateOrchestrationStepExecutor(workspacePath string, logger loggerv2
 		// Validate the updated step has all required fields for orchestration steps
 		// This ensures the agent gets immediate feedback if validation fails
 		if err := validateOrchestrationStepFieldsTyped(updatedOrchestrationStep); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("validation failed after update: %w", err), nil)
+			return "", fmt.Errorf("validation failed after update: %w", err)
 		}
 
 		// Validate all steps after update
 		if err := validatePlanStepIDs(plan.Steps); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("plan validation failed after update: %w", err), nil)
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
@@ -4755,14 +4912,14 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 			if idStr, ok := id.(string); ok {
 				deletedIDs = append(deletedIDs, idStr)
 			} else {
-				return "", fmt.Errorf(fmt.Sprintf("invalid step ID in deleted_step_ids: %v", id), nil)
+				return "", fmt.Errorf("invalid step ID in deleted_step_ids: %v", id)
 			}
 		}
 
 		// Read current plan
 		oldPlan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Create set of deleted step IDs
@@ -4783,7 +4940,7 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 				for _, step := range oldPlan.Steps {
 					availableIDs = append(availableIDs, step.GetID())
 				}
-				return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan (cannot delete). Available step IDs: %v", id, availableIDs), nil)
+				return "", fmt.Errorf("step ID '%s' not found in existing plan (cannot delete). Available step IDs: %v", id, availableIDs)
 			}
 		}
 
@@ -4818,7 +4975,7 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 
 		// Write updated plan (creates backup automatically)
 		if err := writePlanToFile(ctx, workspacePath, newPlan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
@@ -4848,18 +5005,18 @@ func createUpdateHumanInputStepExecutor(workspacePath string, logger loggerv2.Lo
 		// Convert args to JSON and unmarshal to PartialPlanStep
 		stepJSON, err := json.Marshal(args)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to marshal step: %w", err), nil)
+			return "", fmt.Errorf("failed to marshal step: %w", err)
 		}
 
 		var partialUpdate PartialPlanStep
 		if err := json.Unmarshal(stepJSON, &partialUpdate); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to parse step: %w", err), nil)
+			return "", fmt.Errorf("failed to parse step: %w", err)
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Find the human input step
@@ -4877,13 +5034,13 @@ func createUpdateHumanInputStepExecutor(workspacePath string, logger loggerv2.Lo
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.GetID())
 			}
-			return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs), nil)
+			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs)
 		}
 
 		// Validate it's a human input step before updating
 		_, ok := existingStep.(*HumanInputPlanStep)
 		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not a human input step", partialUpdate.ExistingStepID), nil)
+			return "", fmt.Errorf("step with ID '%s' is not a human input step", partialUpdate.ExistingStepID)
 		}
 
 		// Track changes for changelog
@@ -4898,12 +5055,12 @@ func createUpdateHumanInputStepExecutor(workspacePath string, logger loggerv2.Lo
 
 		// Validate all steps after update
 		if err := validatePlanStepIDs(plan.Steps); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("plan validation failed after update: %w", err), nil)
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
@@ -5014,12 +5171,12 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		// Convert map to typed step
 		typedStep, err := convertMapToStep(args)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to parse step: %w", err), nil)
+			return "", fmt.Errorf("failed to parse step: %w", err)
 		}
 
 		// Validate step has ID
 		if typedStep.GetID() == "" {
-			return "", fmt.Errorf(fmt.Sprintf("step is missing required ID field. Step title: %q", typedStep.GetTitle()), nil)
+			return "", fmt.Errorf("step is missing required ID field. Step title: %q", typedStep.GetTitle())
 		}
 
 		// Validation schema is LLM-generated only - no code-based auto-generation
@@ -5027,7 +5184,17 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		// Validate regex patterns in validation schema before proceeding
 		if validationSchema := typedStep.GetValidationSchema(); validationSchema != nil {
 			if err := validateRegexPatternsInSchema(validationSchema); err != nil {
-				return "", fmt.Errorf(fmt.Sprintf("invalid regex patterns in validation schema: %w", err), nil)
+				return "", fmt.Errorf("invalid regex patterns in validation schema: %w", err)
+			}
+
+			// Validate JSONPath syntax
+			if err := validateJSONPathSyntax(validationSchema); err != nil {
+				return "", fmt.Errorf("invalid JSONPath syntax in validation schema: %w", err)
+			}
+
+			// Validate array_length consistency checks
+			if err := validateArrayLengthConsistencyChecks(validationSchema); err != nil {
+				return "", fmt.Errorf("invalid array_length consistency checks in validation schema: %w", err)
 			}
 		}
 
@@ -5037,13 +5204,13 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		case "decision":
 			if decisionStep, ok := typedStep.(*DecisionPlanStep); ok {
 				if err := validateDecisionStepFieldsTyped(decisionStep); err != nil {
-					return "", fmt.Errorf(fmt.Sprintf("validation failed: %w", err), nil)
+					return "", fmt.Errorf("validation failed: %w", err)
 				}
 			}
 		case "orchestration":
 			if orchestrationStep, ok := typedStep.(*OrchestrationPlanStep); ok {
 				if err := validateOrchestrationStepFieldsTyped(orchestrationStep); err != nil {
-					return "", fmt.Errorf(fmt.Sprintf("validation failed: %w", err), nil)
+					return "", fmt.Errorf("validation failed: %w", err)
 				}
 			}
 		}
@@ -5051,7 +5218,7 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		// Read current plan
 		oldPlan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Find insertion point
@@ -5083,7 +5250,7 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 				for _, s := range oldPlan.Steps {
 					availableIDs = append(availableIDs, s.GetID())
 				}
-				return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan (cannot insert after it). Available step IDs: %v", insertAfterStepID, availableIDs), nil)
+				return "", fmt.Errorf("step ID '%s' not found in existing plan (cannot insert after it). Available step IDs: %v", insertAfterStepID, availableIDs)
 			}
 		}
 
@@ -5108,12 +5275,12 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 
 		// Validate all steps including the new one
 		if err := validatePlanStepIDs(newPlan.Steps); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("plan validation failed before writing: %w", err), nil)
+			return "", fmt.Errorf("plan validation failed before writing: %w", err)
 		}
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, newPlan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
@@ -5187,7 +5354,7 @@ func registerPlanModificationTools(
 	regularUpdateSchema := getUpdateRegularStepSchema()
 	regularUpdateParams, err := parseSchemaForToolParameters(regularUpdateSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse update regular step schema: %w", err), nil)
+		return fmt.Errorf("failed to parse update regular step schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_regular_step",
@@ -5196,13 +5363,13 @@ func registerPlanModificationTools(
 		createUpdateRegularStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register update_regular_step tool: %w", err), nil)
+		return fmt.Errorf("failed to register update_regular_step tool: %w", err)
 	}
 
 	conditionalUpdateSchema := getUpdateConditionalStepSchema()
 	conditionalUpdateParams, err := parseSchemaForToolParameters(conditionalUpdateSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse update conditional step schema: %w", err), nil)
+		return fmt.Errorf("failed to parse update conditional step schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_conditional_step",
@@ -5211,13 +5378,13 @@ func registerPlanModificationTools(
 		createUpdateConditionalStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register update_conditional_step tool: %w", err), nil)
+		return fmt.Errorf("failed to register update_conditional_step tool: %w", err)
 	}
 
 	decisionUpdateSchema := getUpdateDecisionStepSchema()
 	decisionUpdateParams, err := parseSchemaForToolParameters(decisionUpdateSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse update decision step schema: %w", err), nil)
+		return fmt.Errorf("failed to parse update decision step schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_decision_step",
@@ -5226,13 +5393,13 @@ func registerPlanModificationTools(
 		createUpdateDecisionStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register update_decision_step tool: %w", err), nil)
+		return fmt.Errorf("failed to register update_decision_step tool: %w", err)
 	}
 
 	orchestrationUpdateSchema := getUpdateOrchestrationStepSchema()
 	orchestrationUpdateParams, err := parseSchemaForToolParameters(orchestrationUpdateSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse update orchestration step schema: %w", err), nil)
+		return fmt.Errorf("failed to parse update orchestration step schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_orchestration_step",
@@ -5241,13 +5408,13 @@ func registerPlanModificationTools(
 		createUpdateOrchestrationStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register update_orchestration_step tool: %w", err), nil)
+		return fmt.Errorf("failed to register update_orchestration_step tool: %w", err)
 	}
 
 	humanInputUpdateSchema := getUpdateHumanInputStepSchema()
 	humanInputUpdateParams, err := parseSchemaForToolParameters(humanInputUpdateSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse update human input step schema: %w", err), nil)
+		return fmt.Errorf("failed to parse update human input step schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_human_input_step",
@@ -5256,13 +5423,13 @@ func registerPlanModificationTools(
 		createUpdateHumanInputStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register update_human_input_step tool: %w", err), nil)
+		return fmt.Errorf("failed to register update_human_input_step tool: %w", err)
 	}
 
 	deleteSchema := getDeletePlanStepsSchema()
 	deleteParams, err := parseSchemaForToolParameters(deleteSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse delete schema: %w", err), nil)
+		return fmt.Errorf("failed to parse delete schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"delete_plan_steps",
@@ -5271,14 +5438,14 @@ func registerPlanModificationTools(
 		createDeletePlanStepsExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register delete_plan_steps tool: %w", err), nil)
+		return fmt.Errorf("failed to register delete_plan_steps tool: %w", err)
 	}
 
 	// Register type-specific step addition tools
 	regularSchema := getAddRegularStepSchema()
 	regularParams, err := parseSchemaForToolParameters(regularSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse regular step schema: %w", err), nil)
+		return fmt.Errorf("failed to parse regular step schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_regular_step",
@@ -5287,13 +5454,13 @@ func registerPlanModificationTools(
 		createAddRegularStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register add_regular_step tool: %w", err), nil)
+		return fmt.Errorf("failed to register add_regular_step tool: %w", err)
 	}
 
 	conditionalSchema := getAddConditionalStepSchema()
 	conditionalParams, err := parseSchemaForToolParameters(conditionalSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse conditional step schema: %w", err), nil)
+		return fmt.Errorf("failed to parse conditional step schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_conditional_step",
@@ -5302,13 +5469,13 @@ func registerPlanModificationTools(
 		createAddConditionalStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register add_conditional_step tool: %w", err), nil)
+		return fmt.Errorf("failed to register add_conditional_step tool: %w", err)
 	}
 
 	decisionSchema := getAddDecisionStepSchema()
 	decisionParams, err := parseSchemaForToolParameters(decisionSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse decision step schema: %w", err), nil)
+		return fmt.Errorf("failed to parse decision step schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_decision_step",
@@ -5317,13 +5484,13 @@ func registerPlanModificationTools(
 		createAddDecisionStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register add_decision_step tool: %w", err), nil)
+		return fmt.Errorf("failed to register add_decision_step tool: %w", err)
 	}
 
 	orchestrationSchema := getAddOrchestrationStepSchema()
 	orchestrationParams, err := parseSchemaForToolParameters(orchestrationSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse orchestration step schema: %w", err), nil)
+		return fmt.Errorf("failed to parse orchestration step schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_orchestration_step",
@@ -5332,13 +5499,13 @@ func registerPlanModificationTools(
 		createAddOrchestrationStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register add_orchestration_step tool: %w", err), nil)
+		return fmt.Errorf("failed to register add_orchestration_step tool: %w", err)
 	}
 
 	loopSchema := getAddLoopStepSchema()
 	loopParams, err := parseSchemaForToolParameters(loopSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse loop step schema: %w", err), nil)
+		return fmt.Errorf("failed to parse loop step schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_loop_step",
@@ -5347,13 +5514,13 @@ func registerPlanModificationTools(
 		createAddLoopStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register add_loop_step tool: %w", err), nil)
+		return fmt.Errorf("failed to register add_loop_step tool: %w", err)
 	}
 
 	humanInputSchema := getAddHumanInputStepSchema()
 	humanInputParams, err := parseSchemaForToolParameters(humanInputSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse human input step schema: %w", err), nil)
+		return fmt.Errorf("failed to parse human input step schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_human_input_step",
@@ -5362,14 +5529,14 @@ func registerPlanModificationTools(
 		createAddHumanInputStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register add_human_input_step tool: %w", err), nil)
+		return fmt.Errorf("failed to register add_human_input_step tool: %w", err)
 	}
 
 	// Register conditional step tools
 	convertToConditionalSchema := getConvertStepToConditionalSchema()
 	convertToConditionalParams, err := parseSchemaForToolParameters(convertToConditionalSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse convert_step_to_conditional schema: %w", err), nil)
+		return fmt.Errorf("failed to parse convert_step_to_conditional schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"convert_step_to_conditional",
@@ -5378,13 +5545,13 @@ func registerPlanModificationTools(
 		createConvertStepToConditionalExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register convert_step_to_conditional tool: %w", err), nil)
+		return fmt.Errorf("failed to register convert_step_to_conditional tool: %w", err)
 	}
 
 	addBranchStepsSchema := getAddBranchStepsSchema()
 	addBranchStepsParams, err := parseSchemaForToolParameters(addBranchStepsSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse add_branch_steps schema: %w", err), nil)
+		return fmt.Errorf("failed to parse add_branch_steps schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_branch_steps",
@@ -5393,13 +5560,13 @@ func registerPlanModificationTools(
 		createAddBranchStepsExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register add_branch_steps tool: %w", err), nil)
+		return fmt.Errorf("failed to register add_branch_steps tool: %w", err)
 	}
 
 	updateBranchStepsSchema := getUpdateBranchStepsSchema()
 	updateBranchStepsParams, err := parseSchemaForToolParameters(updateBranchStepsSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse update_branch_steps schema: %w", err), nil)
+		return fmt.Errorf("failed to parse update_branch_steps schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_branch_steps",
@@ -5408,13 +5575,13 @@ func registerPlanModificationTools(
 		createUpdateBranchStepsExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register update_branch_steps tool: %w", err), nil)
+		return fmt.Errorf("failed to register update_branch_steps tool: %w", err)
 	}
 
 	deleteBranchStepsSchema := getDeleteBranchStepsSchema()
 	deleteBranchStepsParams, err := parseSchemaForToolParameters(deleteBranchStepsSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse delete_branch_steps schema: %w", err), nil)
+		return fmt.Errorf("failed to parse delete_branch_steps schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"delete_branch_steps",
@@ -5423,13 +5590,13 @@ func registerPlanModificationTools(
 		createDeleteBranchStepsExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register delete_branch_steps tool: %w", err), nil)
+		return fmt.Errorf("failed to register delete_branch_steps tool: %w", err)
 	}
 
 	convertToRegularSchema := getConvertConditionalToRegularSchema()
 	convertToRegularParams, err := parseSchemaForToolParameters(convertToRegularSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse convert_conditional_to_regular schema: %w", err), nil)
+		return fmt.Errorf("failed to parse convert_conditional_to_regular schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"convert_conditional_to_regular",
@@ -5438,14 +5605,14 @@ func registerPlanModificationTools(
 		createConvertConditionalToRegularExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register convert_conditional_to_regular tool: %w", err), nil)
+		return fmt.Errorf("failed to register convert_conditional_to_regular tool: %w", err)
 	}
 
 	// Register orchestration route management tools
 	addOrchestrationRouteSchema := getAddOrchestrationRouteSchema()
 	addOrchestrationRouteParams, err := parseSchemaForToolParameters(addOrchestrationRouteSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse add_orchestration_route schema: %w", err), nil)
+		return fmt.Errorf("failed to parse add_orchestration_route schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_orchestration_route",
@@ -5454,13 +5621,13 @@ func registerPlanModificationTools(
 		createAddOrchestrationRouteExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register add_orchestration_route tool: %w", err), nil)
+		return fmt.Errorf("failed to register add_orchestration_route tool: %w", err)
 	}
 
 	updateOrchestrationRouteSchema := getUpdateOrchestrationRouteSchema()
 	updateOrchestrationRouteParams, err := parseSchemaForToolParameters(updateOrchestrationRouteSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse update_orchestration_route schema: %w", err), nil)
+		return fmt.Errorf("failed to parse update_orchestration_route schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_orchestration_route",
@@ -5469,13 +5636,13 @@ func registerPlanModificationTools(
 		createUpdateOrchestrationRouteExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register update_orchestration_route tool: %w", err), nil)
+		return fmt.Errorf("failed to register update_orchestration_route tool: %w", err)
 	}
 
 	deleteOrchestrationRouteSchema := getDeleteOrchestrationRouteSchema()
 	deleteOrchestrationRouteParams, err := parseSchemaForToolParameters(deleteOrchestrationRouteSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse delete_orchestration_route schema: %w", err), nil)
+		return fmt.Errorf("failed to parse delete_orchestration_route schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"delete_orchestration_route",
@@ -5484,14 +5651,14 @@ func registerPlanModificationTools(
 		createDeleteOrchestrationRouteExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register delete_orchestration_route tool: %w", err), nil)
+		return fmt.Errorf("failed to register delete_orchestration_route tool: %w", err)
 	}
 
 	// Register validation schema and success criteria update tools
 	updateValidationSchemaSchema := getUpdateValidationSchemaSchema()
 	updateValidationSchemaParams, err := parseSchemaForToolParameters(updateValidationSchemaSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse update_validation_schema schema: %w", err), nil)
+		return fmt.Errorf("failed to parse update_validation_schema schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_validation_schema",
@@ -5500,13 +5667,13 @@ func registerPlanModificationTools(
 		createUpdateValidationSchemaExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register update_validation_schema tool: %w", err), nil)
+		return fmt.Errorf("failed to register update_validation_schema tool: %w", err)
 	}
 
 	updateSuccessCriteriaSchema := getUpdateSuccessCriteriaSchema()
 	updateSuccessCriteriaParams, err := parseSchemaForToolParameters(updateSuccessCriteriaSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse update_success_criteria schema: %w", err), nil)
+		return fmt.Errorf("failed to parse update_success_criteria schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_success_criteria",
@@ -5515,7 +5682,7 @@ func registerPlanModificationTools(
 		createUpdateSuccessCriteriaExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register update_success_criteria tool: %w", err), nil)
+		return fmt.Errorf("failed to register update_success_criteria tool: %w", err)
 	}
 
 	if logger != nil {
@@ -5561,7 +5728,7 @@ func createExtractVariablesExecutor(workspacePath string, logger loggerv2.Logger
 			}
 			// Write the new manifest
 			if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
-				return "", fmt.Errorf(fmt.Sprintf("failed to create variables.json: %w", err), nil)
+				return "", fmt.Errorf("failed to create variables.json: %w", err)
 			}
 		}
 
@@ -5616,7 +5783,7 @@ func registerVariableExtractionTools(
 	extractSchema := getExtractVariablesSchema()
 	extractParams, err := parseSchemaForToolParameters(extractSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse extract_variables schema: %w", err), nil)
+		return fmt.Errorf("failed to parse extract_variables schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"extract_variables",
@@ -5625,14 +5792,14 @@ func registerVariableExtractionTools(
 		createExtractVariablesExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register extract_variables tool: %w", err), nil)
+		return fmt.Errorf("failed to register extract_variables tool: %w", err)
 	}
 
 	// Register update_variable tool (reuse from variable_extraction_agent.go)
 	updateVariableSchema := getUpdateVariableSchema()
 	updateVariableParams, err := parseSchemaForToolParameters(updateVariableSchema)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to parse update_variable schema: %w", err), nil)
+		return fmt.Errorf("failed to parse update_variable schema: %w", err)
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_variable",
@@ -5641,7 +5808,7 @@ func registerVariableExtractionTools(
 		createUpdateVariableExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
 	); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to register update_variable tool: %w", err), nil)
+		return fmt.Errorf("failed to register update_variable tool: %w", err)
 	}
 
 	if logger != nil {
@@ -5689,7 +5856,7 @@ func createConvertStepToConditionalExecutor(workspacePath string, logger loggerv
 			}
 			typedStep, err := convertMapToStep(stepMap)
 			if err != nil {
-				return "", fmt.Errorf(fmt.Sprintf("failed to parse if_true step: %w", err), nil)
+				return "", fmt.Errorf("failed to parse if_true step: %w", err)
 			}
 			ifTrueSteps = append(ifTrueSteps, typedStep)
 		}
@@ -5706,7 +5873,7 @@ func createConvertStepToConditionalExecutor(workspacePath string, logger loggerv
 			}
 			typedStep, err := convertMapToStep(stepMap)
 			if err != nil {
-				return "", fmt.Errorf(fmt.Sprintf("failed to parse if_false step: %w", err), nil)
+				return "", fmt.Errorf("failed to parse if_false step: %w", err)
 			}
 			ifFalseSteps = append(ifFalseSteps, typedStep)
 		}
@@ -5714,7 +5881,7 @@ func createConvertStepToConditionalExecutor(workspacePath string, logger loggerv
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Find the step to convert by ID
@@ -5732,18 +5899,18 @@ func createConvertStepToConditionalExecutor(workspacePath string, logger loggerv
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.GetID())
 			}
-			return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan. Available step IDs: %v", stepID, availableIDs), nil)
+			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", stepID, availableIDs)
 		}
 
 		// Validate nesting depth for branch steps (starting from depth 1 since this step becomes conditional)
 		for _, branchStep := range ifTrueSteps {
 			if err := validateNestingDepth(branchStep, 1); err != nil {
-				return "", fmt.Errorf(fmt.Sprintf("if_true_steps validation failed: %w", err), nil)
+				return "", fmt.Errorf("if_true_steps validation failed: %w", err)
 			}
 		}
 		for _, branchStep := range ifFalseSteps {
 			if err := validateNestingDepth(branchStep, 1); err != nil {
-				return "", fmt.Errorf(fmt.Sprintf("if_false_steps validation failed: %w", err), nil)
+				return "", fmt.Errorf("if_false_steps validation failed: %w", err)
 			}
 		}
 
@@ -5775,7 +5942,7 @@ func createConvertStepToConditionalExecutor(workspacePath string, logger loggerv
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Write changelog entry with old/new values
@@ -5860,7 +6027,7 @@ func createAddBranchStepsExecutor(workspacePath string, logger loggerv2.Logger, 
 			}
 			typedStep, err := convertMapToStep(stepMap)
 			if err != nil {
-				return "", fmt.Errorf(fmt.Sprintf("failed to parse new step: %w", err), nil)
+				return "", fmt.Errorf("failed to parse new step: %w", err)
 			}
 			newSteps = append(newSteps, typedStep)
 		}
@@ -5868,7 +6035,7 @@ func createAddBranchStepsExecutor(workspacePath string, logger loggerv2.Logger, 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Find the parent conditional step by ID
@@ -5886,25 +6053,25 @@ func createAddBranchStepsExecutor(workspacePath string, logger loggerv2.Logger, 
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.GetID())
 			}
-			return "", fmt.Errorf(fmt.Sprintf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs), nil)
+			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
 		}
 
 		conditionalStep, ok := parentStep.(*ConditionalPlanStep)
 		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not a conditional step", parentStepID), nil)
+			return "", fmt.Errorf("step with ID '%s' is not a conditional step", parentStepID)
 		}
 
 		// Validate that all new branch steps have IDs (required for config matching)
 		for i, newStep := range newSteps {
 			if newStep.GetID() == "" {
-				return "", fmt.Errorf(fmt.Sprintf("branch step at index %d is missing required ID field. Step title: %q", i, newStep.GetTitle()), nil)
+				return "", fmt.Errorf("branch step at index %d is missing required ID field. Step title: %q", i, newStep.GetTitle())
 			}
 		}
 
 		// Validate nesting depth for new steps (starting from depth 1 since they're being added to a conditional)
 		for _, newStep := range newSteps {
 			if err := validateNestingDepth(newStep, 1); err != nil {
-				return "", fmt.Errorf(fmt.Sprintf("new_steps validation failed: %w", err), nil)
+				return "", fmt.Errorf("new_steps validation failed: %w", err)
 			}
 		}
 
@@ -5923,7 +6090,7 @@ func createAddBranchStepsExecutor(workspacePath string, logger loggerv2.Logger, 
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
@@ -5954,17 +6121,17 @@ func createUpdateBranchStepsExecutor(workspacePath string, logger loggerv2.Logge
 		// Convert to JSON and unmarshal to PartialPlanStep array
 		updatedStepsJSON, err := json.Marshal(updatedStepsRaw)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to marshal updated_steps: %w", err), nil)
+			return "", fmt.Errorf("failed to marshal updated_steps: %w", err)
 		}
 		var partialUpdates []PartialPlanStep
 		if err := json.Unmarshal(updatedStepsJSON, &partialUpdates); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to parse updated_steps: %w", err), nil)
+			return "", fmt.Errorf("failed to parse updated_steps: %w", err)
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Find the parent conditional step by ID
@@ -5982,12 +6149,12 @@ func createUpdateBranchStepsExecutor(workspacePath string, logger loggerv2.Logge
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.GetID())
 			}
-			return "", fmt.Errorf(fmt.Sprintf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs), nil)
+			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
 		}
 
 		conditionalStep, ok := parentStep.(*ConditionalPlanStep)
 		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not a conditional step", parentStepID), nil)
+			return "", fmt.Errorf("step with ID '%s' is not a conditional step", parentStepID)
 		}
 
 		// Get the appropriate branch
@@ -6016,7 +6183,7 @@ func createUpdateBranchStepsExecutor(workspacePath string, logger loggerv2.Logge
 				for _, step := range *branchSteps {
 					availableIDs = append(availableIDs, step.GetID())
 				}
-				return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in %s branch. Available step IDs: %v", partialUpdate.ExistingStepID, branchType, availableIDs), nil)
+				return "", fmt.Errorf("step ID '%s' not found in %s branch. Available step IDs: %v", partialUpdate.ExistingStepID, branchType, availableIDs)
 			}
 
 			// Track old values before updating (using interface methods)
@@ -6126,7 +6293,7 @@ func createUpdateBranchStepsExecutor(workspacePath string, logger loggerv2.Logge
 
 			// Validate nesting depth after update
 			if err := validateNestingDepth(updatedStep, 1); err != nil {
-				return "", fmt.Errorf(fmt.Sprintf("updated step validation failed: %w", err), nil)
+				return "", fmt.Errorf("updated step validation failed: %w", err)
 			}
 		}
 
@@ -6135,7 +6302,7 @@ func createUpdateBranchStepsExecutor(workspacePath string, logger loggerv2.Logge
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Write changelog entry
@@ -6170,14 +6337,14 @@ func createDeleteBranchStepsExecutor(workspacePath string, logger loggerv2.Logge
 			if idStr, ok := id.(string); ok {
 				deletedIDs = append(deletedIDs, idStr)
 			} else {
-				return "", fmt.Errorf(fmt.Sprintf("invalid step ID in deleted_step_ids: %v", id), nil)
+				return "", fmt.Errorf("invalid step ID in deleted_step_ids: %v", id)
 			}
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Find the parent conditional step by ID
@@ -6195,12 +6362,12 @@ func createDeleteBranchStepsExecutor(workspacePath string, logger loggerv2.Logge
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.GetID())
 			}
-			return "", fmt.Errorf(fmt.Sprintf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs), nil)
+			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
 		}
 
 		conditionalStep, ok := parentStep.(*ConditionalPlanStep)
 		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not a conditional step", parentStepID), nil)
+			return "", fmt.Errorf("step with ID '%s' is not a conditional step", parentStepID)
 		}
 
 		// Get the appropriate branch
@@ -6237,7 +6404,7 @@ func createDeleteBranchStepsExecutor(workspacePath string, logger loggerv2.Logge
 				for _, step := range *branchSteps {
 					availableIDs = append(availableIDs, step.GetID())
 				}
-				return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in %s branch (cannot delete). Available step IDs: %v", id, branchType, availableIDs), nil)
+				return "", fmt.Errorf("step ID '%s' not found in %s branch (cannot delete). Available step IDs: %v", id, branchType, availableIDs)
 			}
 		}
 
@@ -6259,7 +6426,7 @@ func createDeleteBranchStepsExecutor(workspacePath string, logger loggerv2.Logge
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Write changelog entry with old/new values
@@ -6294,17 +6461,17 @@ func createAddOrchestrationRouteExecutor(workspacePath string, logger loggerv2.L
 		// Convert to JSON and unmarshal to PlanOrchestrationRoute
 		newRouteJSON, err := json.Marshal(newRouteRaw)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to marshal new_route: %w", err), nil)
+			return "", fmt.Errorf("failed to marshal new_route: %w", err)
 		}
 		var newRoute PlanOrchestrationRoute
 		if err := json.Unmarshal(newRouteJSON, &newRoute); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to parse new_route: %w", err), nil)
+			return "", fmt.Errorf("failed to parse new_route: %w", err)
 		}
 
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Find the parent orchestration step by ID
@@ -6322,12 +6489,12 @@ func createAddOrchestrationRouteExecutor(workspacePath string, logger loggerv2.L
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.GetID())
 			}
-			return "", fmt.Errorf(fmt.Sprintf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs), nil)
+			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
 		}
 
 		orchestrationStep, ok := parentStep.(*OrchestrationPlanStep)
 		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not an orchestration step", parentStepID), nil)
+			return "", fmt.Errorf("step with ID '%s' is not an orchestration step", parentStepID)
 		}
 
 		// Validate that the new route has a route_id
@@ -6338,7 +6505,7 @@ func createAddOrchestrationRouteExecutor(workspacePath string, logger loggerv2.L
 		// Check if route_id already exists
 		for _, existingRoute := range orchestrationStep.OrchestrationRoutes {
 			if existingRoute.RouteID == newRoute.RouteID {
-				return "", fmt.Errorf(fmt.Sprintf("route with route_id '%s' already exists in orchestration step '%s'", newRoute.RouteID, parentStepID), nil)
+				return "", fmt.Errorf("route with route_id '%s' already exists in orchestration step '%s'", newRoute.RouteID, parentStepID)
 			}
 		}
 
@@ -6357,7 +6524,7 @@ func createAddOrchestrationRouteExecutor(workspacePath string, logger loggerv2.L
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
@@ -6383,7 +6550,7 @@ func createUpdateOrchestrationRouteExecutor(workspacePath string, logger loggerv
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Find the parent orchestration step by ID
@@ -6401,12 +6568,12 @@ func createUpdateOrchestrationRouteExecutor(workspacePath string, logger loggerv
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.GetID())
 			}
-			return "", fmt.Errorf(fmt.Sprintf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs), nil)
+			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
 		}
 
 		orchestrationStep, ok := parentStep.(*OrchestrationPlanStep)
 		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not an orchestration step", parentStepID), nil)
+			return "", fmt.Errorf("step with ID '%s' is not an orchestration step", parentStepID)
 		}
 
 		// Find the route to update
@@ -6424,7 +6591,7 @@ func createUpdateOrchestrationRouteExecutor(workspacePath string, logger loggerv
 			for _, route := range orchestrationStep.OrchestrationRoutes {
 				availableRouteIDs = append(availableRouteIDs, route.RouteID)
 			}
-			return "", fmt.Errorf(fmt.Sprintf("route with route_id '%s' not found in orchestration step '%s'. Available route IDs: %v", existingRouteID, parentStepID, availableRouteIDs), nil)
+			return "", fmt.Errorf("route with route_id '%s' not found in orchestration step '%s'. Available route IDs: %v", existingRouteID, parentStepID, availableRouteIDs)
 		}
 
 		// Track field changes for changelog
@@ -6469,7 +6636,7 @@ func createUpdateOrchestrationRouteExecutor(workspacePath string, logger loggerv
 			}
 			updatedSubAgentStep, err := convertMapToStep(subAgentStepRaw)
 			if err != nil {
-				return "", fmt.Errorf(fmt.Sprintf("failed to parse sub_agent_step: %w", err), nil)
+				return "", fmt.Errorf("failed to parse sub_agent_step: %w", err)
 			}
 
 			oldSubAgentStepID := ""
@@ -6490,7 +6657,7 @@ func createUpdateOrchestrationRouteExecutor(workspacePath string, logger loggerv
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
@@ -6516,7 +6683,7 @@ func createDeleteOrchestrationRouteExecutor(workspacePath string, logger loggerv
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Find the parent orchestration step by ID
@@ -6534,17 +6701,17 @@ func createDeleteOrchestrationRouteExecutor(workspacePath string, logger loggerv
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.GetID())
 			}
-			return "", fmt.Errorf(fmt.Sprintf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs), nil)
+			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
 		}
 
 		orchestrationStep, ok := parentStep.(*OrchestrationPlanStep)
 		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not an orchestration step", parentStepID), nil)
+			return "", fmt.Errorf("step with ID '%s' is not an orchestration step", parentStepID)
 		}
 
 		// Validate that we have at least one route remaining after deletion
 		if len(orchestrationStep.OrchestrationRoutes) <= 1 {
-			return "", fmt.Errorf(fmt.Sprintf("cannot delete route '%s' - orchestration step must have at least one route", deletedRouteID), nil)
+			return "", fmt.Errorf("cannot delete route '%s' - orchestration step must have at least one route", deletedRouteID)
 		}
 
 		// Find the route to delete
@@ -6562,7 +6729,7 @@ func createDeleteOrchestrationRouteExecutor(workspacePath string, logger loggerv
 			for _, route := range orchestrationStep.OrchestrationRoutes {
 				availableRouteIDs = append(availableRouteIDs, route.RouteID)
 			}
-			return "", fmt.Errorf(fmt.Sprintf("route with route_id '%s' not found in orchestration step '%s'. Available route IDs: %v", deletedRouteID, parentStepID, availableRouteIDs), nil)
+			return "", fmt.Errorf("route with route_id '%s' not found in orchestration step '%s'. Available route IDs: %v", deletedRouteID, parentStepID, availableRouteIDs)
 		}
 
 		// Capture old routes BEFORE deleting (for changelog)
@@ -6578,7 +6745,7 @@ func createDeleteOrchestrationRouteExecutor(workspacePath string, logger loggerv
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Write changelog entry with old/new values
@@ -6600,7 +6767,7 @@ func createConvertConditionalToRegularExecutor(workspacePath string, logger logg
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Find the conditional step by ID
@@ -6618,12 +6785,12 @@ func createConvertConditionalToRegularExecutor(workspacePath string, logger logg
 			for _, step := range plan.Steps {
 				availableIDs = append(availableIDs, step.GetID())
 			}
-			return "", fmt.Errorf(fmt.Sprintf("step ID '%s' not found in existing plan. Available step IDs: %v", stepID, availableIDs), nil)
+			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", stepID, availableIDs)
 		}
 
 		conditionalStep, ok := stepToConvert.(*ConditionalPlanStep)
 		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("step with ID '%s' is not a conditional step", stepID), nil)
+			return "", fmt.Errorf("step with ID '%s' is not a conditional step", stepID)
 		}
 
 		// Capture old values BEFORE converting (for changelog)
@@ -6646,7 +6813,7 @@ func createConvertConditionalToRegularExecutor(workspacePath string, logger logg
 		// Write updated plan
 		plan.Steps[stepIndex] = regularStep
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Write changelog entry with old/new values
@@ -6694,7 +6861,7 @@ func createUpdateValidationSchemaExecutor(workspacePath string, logger loggerv2.
 		// Convert args to JSON and unmarshal to extract validation schema
 		stepJSON, err := json.Marshal(args)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to marshal step: %w", err), nil)
+			return "", fmt.Errorf("failed to marshal step: %w", err)
 		}
 
 		var updateData struct {
@@ -6702,7 +6869,7 @@ func createUpdateValidationSchemaExecutor(workspacePath string, logger loggerv2.
 			ValidationSchema *ValidationSchema `json:"validation_schema"`
 		}
 		if err := json.Unmarshal(stepJSON, &updateData); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to parse update data: %w", err), nil)
+			return "", fmt.Errorf("failed to parse update data: %w", err)
 		}
 
 		if updateData.ExistingStepID == "" {
@@ -6714,7 +6881,17 @@ func createUpdateValidationSchemaExecutor(workspacePath string, logger loggerv2.
 
 		// Validate regex patterns before updating the plan
 		if err := validateRegexPatternsInSchema(updateData.ValidationSchema); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("invalid regex patterns in validation schema: %w", err), nil)
+			return "", fmt.Errorf("invalid regex patterns in validation schema: %w", err)
+		}
+
+		// Validate JSONPath syntax
+		if err := validateJSONPathSyntax(updateData.ValidationSchema); err != nil {
+			return "", fmt.Errorf("invalid JSONPath syntax in validation schema: %w", err)
+		}
+
+		// Validate array_length consistency checks
+		if err := validateArrayLengthConsistencyChecks(updateData.ValidationSchema); err != nil {
+			return "", fmt.Errorf("invalid array_length consistency checks in validation schema: %w", err)
 		}
 
 		// Create PartialPlanStep with only validation schema
@@ -6726,7 +6903,7 @@ func createUpdateValidationSchemaExecutor(workspacePath string, logger loggerv2.
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Track changes for changelog
@@ -6741,12 +6918,12 @@ func createUpdateValidationSchemaExecutor(workspacePath string, logger loggerv2.
 
 		// Validate all steps after update
 		if err := validatePlanStepIDs(plan.Steps); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("plan validation failed after update: %w", err), nil)
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Unlock learnings for updated step
@@ -6769,7 +6946,7 @@ func createUpdateSuccessCriteriaExecutor(workspacePath string, logger loggerv2.L
 		// Convert args to JSON and unmarshal to extract success criteria
 		stepJSON, err := json.Marshal(args)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to marshal step: %w", err), nil)
+			return "", fmt.Errorf("failed to marshal step: %w", err)
 		}
 
 		var updateData struct {
@@ -6777,7 +6954,7 @@ func createUpdateSuccessCriteriaExecutor(workspacePath string, logger loggerv2.L
 			SuccessCriteria string `json:"success_criteria"`
 		}
 		if err := json.Unmarshal(stepJSON, &updateData); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to parse update data: %w", err), nil)
+			return "", fmt.Errorf("failed to parse update data: %w", err)
 		}
 
 		if updateData.ExistingStepID == "" {
@@ -6796,7 +6973,7 @@ func createUpdateSuccessCriteriaExecutor(workspacePath string, logger loggerv2.L
 		// Read current plan
 		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
 		// Track changes for changelog
@@ -6811,12 +6988,12 @@ func createUpdateSuccessCriteriaExecutor(workspacePath string, logger loggerv2.L
 
 		// Validate all steps after update
 		if err := validatePlanStepIDs(plan.Steps); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("plan validation failed after update: %w", err), nil)
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write plan: %w", err), nil)
+			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
 
 		// Unlock learnings for updated step
@@ -6841,7 +7018,7 @@ func createUpdateSuccessCriteriaExecutor(workspacePath string, logger loggerv2.L
 func parseSchemaForToolParameters(schemaString string) (map[string]interface{}, error) {
 	var schema map[string]interface{}
 	if err := json.Unmarshal([]byte(schemaString), &schema); err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to parse schema JSON: %w", err), nil)
+		return nil, fmt.Errorf("failed to parse schema JSON: %w", err)
 	}
 
 	// Extract properties - this becomes the tool parameters
@@ -6904,6 +7081,22 @@ func planningSystemPromptProcessorForUpdate(templateVars map[string]string) stri
 - **Conditional**: Inspection-only branch (no execution).
 - **Orchestration**: Iterative routing between sub-agents until success.
 - **Loop**: Repeat until criteria met (polled progress).
+
+### 📁 Persistent Storage (Knowledgebase)
+- **knowledgebase/**: Persistent folder at workspace root. Never deleted across runs.
+- **How to Use**: Use for global templates, reference data, or configurations shared across ALL runs. Design steps to read from here for persistent context. Use 'knowledgebase/file.ext' in descriptions.
+
+### 📄 JSON FILE STRUCTURE BEST PRACTICES
+**CRITICAL**: Keep JSON context output files SMALL (< 100KB). Large JSON files cause parsing failures and performance issues.
+
+**DO**:
+- Store structured data in JSON: counts, IDs, status, file references, brief summaries (< 1KB per field)
+- For large text content (> 1KB), create a separate markdown file and reference it: {"details_file": "step_1_details.md"}
+- Example good structure: {"status": "completed", "count": 5, "files": ["file1.md"], "summary": "Brief summary", "details_file": "step_1_details.md"}
+
+**DON'T**:
+- Put large text content directly in JSON fields (descriptions, logs, content > 1KB)
+- Create JSON files > 100KB - they will fail to load during pre-validation
 
 ### 🔍 Validation Schemas
 Every step MUST have a 'validation_schema' to enable fast code-based pre-validation.

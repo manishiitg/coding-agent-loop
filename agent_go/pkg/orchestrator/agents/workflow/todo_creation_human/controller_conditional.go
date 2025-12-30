@@ -32,7 +32,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 
 	const maxDepth = 2
 	if depth > maxDepth {
-		return fmt.Errorf(fmt.Sprintf("nesting depth %d exceeds maximum allowed depth of %d", depth, maxDepth), nil)
+		return fmt.Errorf("nesting depth %d exceeds maximum allowed depth of %d", depth, maxDepth)
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🔀 Executing conditional step %d (depth %d): %s", stepIndex+1, depth, step.GetTitle()))
@@ -135,7 +135,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate condition for step %d: %v", stepIndex+1, err), nil)
 		// Emit error event using centralized method
 		hcpo.EmitOrchestratorAgentError(ctx, "conditional", "conditional-step-evaluation", fmt.Sprintf("Evaluate condition: %s", conditionalStep.ConditionQuestion), err.Error(), stepIndex, 0)
-		return fmt.Errorf(fmt.Sprintf("failed to evaluate condition: %w", err), nil)
+		return fmt.Errorf("failed to evaluate condition: %w", err)
 	}
 
 	// Store result
@@ -289,7 +289,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 			hcpo.GetLogger().Info(fmt.Sprintf("🔀 Executing nested conditional step in branch: %s (depth %d)", branchStepPlan.GetTitle(), depth+1))
 			if err := hcpo.executeConditionalStep(ctx, branchStepPlan, stepIndex, depth+1, progress, branchExecutionResults, iteration, execCtx, allSteps); err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute nested conditional step '%s' at depth %d: %v", branchStepPlan.GetTitle(), depth+1, err), nil)
-				return fmt.Errorf(fmt.Sprintf("failed to execute nested conditional step '%s': %w", branchStepPlan.GetTitle(), err), nil)
+				return fmt.Errorf("failed to execute nested conditional step '%s': %v", branchStepPlan.GetTitle(), err)
 			}
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Completed nested conditional step: %s", branchStepPlan.GetTitle()))
 		} else if isOrchestrationStep(branchStepPlan) {
@@ -323,7 +323,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 			successCriteriaMet, nextStepID, err := hcpo.executeOrchestrationStep(ctx, branchStepPlan, stepIndex, progress, combinedBranchContextFiles, previousExecutionResults, iteration, execCtx, allSteps, branchStepPath)
 			if err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute orchestration branch step '%s': %v", branchStepPlan.GetTitle(), err), nil)
-				return fmt.Errorf(fmt.Sprintf("failed to execute orchestration branch step '%s': %w", branchStepPlan.GetTitle(), err), nil)
+				return fmt.Errorf("failed to execute orchestration branch step '%s': %v", branchStepPlan.GetTitle(), err)
 			}
 
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration branch step completed successfully: %s (SuccessCriteriaMet: %t, NextStepID: %s)", branchStepPlan.GetTitle(), successCriteriaMet, nextStepID))
@@ -334,7 +334,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 			progress.BranchSteps[stepIndex] = branchProgress
 			// Save progress after each branch step completion
 			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save branch step progress: %w", err))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save branch step progress: %v", err))
 			} else {
 				hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved branch step progress: %s completed", branchStepPath))
 			}
@@ -470,7 +470,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 			)
 			if err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute branch step '%s': %v", branchStepPlan.GetTitle(), err), nil)
-				return fmt.Errorf(fmt.Sprintf("failed to execute branch step '%s': %w", branchStepPlan.GetTitle(), err), nil)
+				return fmt.Errorf("failed to execute branch step '%s': %v", branchStepPlan.GetTitle(), err)
 			}
 
 			// Track branch step completion
@@ -479,7 +479,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeConditionalStep(
 			progress.BranchSteps[stepIndex] = branchProgress
 			// Save progress after each branch step completion
 			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save branch step progress: %w", err))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save branch step progress: %v", err))
 			} else {
 				hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved branch step progress: %s completed", branchStepPath))
 			}

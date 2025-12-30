@@ -235,11 +235,11 @@ func writeVariableChangelogEntry(ctx context.Context, workspacePath string, entr
 	// Write updated changelog
 	data, err := json.MarshalIndent(changelog, "", "  ")
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to marshal variable changelog: %w", err), nil)
+		return fmt.Errorf("failed to marshal variable changelog: %w", err)
 	}
 
 	if err := writeFile(ctx, changelogPath, string(data)); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to write variable changelog file: %w", err), nil)
+		return fmt.Errorf("failed to write variable changelog file: %w", err)
 	}
 
 	logger.Info(fmt.Sprintf("📝 Appended variable changelog entry to %s: %s - %s", variableChangelogSessionFile, entry.ChangeType, entry.Description))
@@ -328,12 +328,12 @@ func readVariablesFromFile(ctx context.Context, workspacePath string, readFile f
 
 	content, err := readFile(ctx, variablesPath)
 	if err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to read variables.json: %w", err), nil)
+		return nil, fmt.Errorf("failed to read variables.json: %w", err)
 	}
 
 	var manifest VariablesManifest
 	if err := json.Unmarshal([]byte(content), &manifest); err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to parse variables.json: %w", err), nil)
+		return nil, fmt.Errorf("failed to parse variables.json: %w", err)
 	}
 
 	return &manifest, nil
@@ -348,11 +348,11 @@ func writeVariablesToFile(ctx context.Context, workspacePath string, manifest *V
 
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to marshal variables: %w", err), nil)
+		return fmt.Errorf("failed to marshal variables: %w", err)
 	}
 
 	if err := writeFile(ctx, variablesPath, string(data)); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to write variables.json: %w", err), nil)
+		return fmt.Errorf("failed to write variables.json: %w", err)
 	}
 
 	return nil
@@ -416,7 +416,7 @@ func createUpdateVariableExecutor(workspacePath string, logger loggerv2.Logger, 
 		// Read current variables
 		manifest, err := readVariablesFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read variables: %w", err), nil)
+			return "", fmt.Errorf("failed to read variables: %w", err)
 		}
 
 		switch action {
@@ -437,7 +437,7 @@ func createUpdateVariableExecutor(workspacePath string, logger loggerv2.Logger, 
 			// Check if variable already exists
 			for _, v := range manifest.Variables {
 				if v.Name == name {
-					return "", fmt.Errorf(fmt.Sprintf("variable %s already exists", name), nil)
+					return "", fmt.Errorf("variable %s already exists", name)
 				}
 			}
 
@@ -493,7 +493,7 @@ func createUpdateVariableExecutor(workspacePath string, logger loggerv2.Logger, 
 						if nameRaw != existingName {
 							for _, v := range manifest.Variables {
 								if v.Name == nameRaw {
-									return "", fmt.Errorf(fmt.Sprintf("variable %s already exists, cannot rename to it", nameRaw), nil)
+									return "", fmt.Errorf("variable %s already exists, cannot rename to it", nameRaw)
 								}
 							}
 						}
@@ -534,7 +534,7 @@ func createUpdateVariableExecutor(workspacePath string, logger loggerv2.Logger, 
 				}
 			}
 			if !found {
-				return "", fmt.Errorf(fmt.Sprintf("variable %s not found", existingName), nil)
+				return "", fmt.Errorf("variable %s not found", existingName)
 			}
 
 			// Write changelog entry if there were changes
@@ -577,7 +577,7 @@ func createUpdateVariableExecutor(workspacePath string, logger loggerv2.Logger, 
 				}
 			}
 			if !found {
-				return "", fmt.Errorf(fmt.Sprintf("variable %s not found", existingName), nil)
+				return "", fmt.Errorf("variable %s not found", existingName)
 			}
 			manifest.Variables = filtered
 			logger.Info(fmt.Sprintf("✅ Deleted variable: %s", existingName))
@@ -600,7 +600,7 @@ func createUpdateVariableExecutor(workspacePath string, logger loggerv2.Logger, 
 			}
 
 		default:
-			return "", fmt.Errorf(fmt.Sprintf("invalid action: %s (must be 'add', 'update', or 'delete')", action), nil)
+			return "", fmt.Errorf("invalid action: %s (must be 'add', 'update', or 'delete')", action)
 		}
 
 		// Preserve extraction_date
@@ -610,7 +610,7 @@ func createUpdateVariableExecutor(workspacePath string, logger loggerv2.Logger, 
 
 		// Write updated variables
 		if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write variables: %w", err), nil)
+			return "", fmt.Errorf("failed to write variables: %w", err)
 		}
 
 		return fmt.Sprintf("Successfully performed %s action on variables", action), nil
@@ -630,7 +630,7 @@ func createUpdateObjectiveExecutor(workspacePath string, logger loggerv2.Logger,
 		// Read current variables
 		manifest, err := readVariablesFromFile(ctx, workspacePath, readFile)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to read variables: %w", err), nil)
+			return "", fmt.Errorf("failed to read variables: %w", err)
 		}
 
 		// Capture old objective before updating
@@ -646,7 +646,7 @@ func createUpdateObjectiveExecutor(workspacePath string, logger loggerv2.Logger,
 
 		// Write updated variables
 		if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to write variables: %w", err), nil)
+			return "", fmt.Errorf("failed to write variables: %w", err)
 		}
 
 		// Write changelog entry

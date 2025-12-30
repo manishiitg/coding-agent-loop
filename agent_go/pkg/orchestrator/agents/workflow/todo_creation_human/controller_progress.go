@@ -29,18 +29,24 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) loadStepProgress(ctx context
 	content, err := hcpo.ReadWorkspaceFile(ctx, progressPath)
 	if err != nil {
 		// File doesn't exist or error reading
-		return nil, fmt.Errorf(fmt.Sprintf("failed to load step progress: %w", err), nil)
+		return nil, fmt.Errorf("failed to load step progress: %w", err)
 	}
 
 	var progress StepProgress
 	if err := json.Unmarshal([]byte(content), &progress); err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to parse steps_done.json: %w", err), nil)
+		return nil, fmt.Errorf("failed to parse steps_done.json: %w", err)
 	}
 
 	// Backward compatibility: initialize BranchSteps if nil (old files won't have this field)
 	if progress.BranchSteps == nil {
 		progress.BranchSteps = make(map[int]BranchStepProgress)
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 Initialized BranchSteps for backward compatibility"))
+	}
+
+	// Backward compatibility: initialize ValidationFailures if nil
+	if progress.ValidationFailures == nil {
+		progress.ValidationFailures = make(map[string]int)
+		hcpo.GetLogger().Info(fmt.Sprintf("📝 Initialized ValidationFailures for backward compatibility"))
 	}
 
 	// Always initialize DecisionEvaluationCounts fresh (in-memory only, not persisted)
@@ -64,11 +70,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) saveStepProgress(ctx context
 
 	progressJSON, err := json.MarshalIndent(progress, "", "  ")
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to marshal progress: %w", err), nil)
+		return fmt.Errorf("failed to marshal progress: %w", err)
 	}
 
 	if err := hcpo.WriteWorkspaceFile(ctx, progressPath, string(progressJSON)); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to write steps_done.json: %w", err), nil)
+		return fmt.Errorf("failed to write steps_done.json: %w", err)
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Saved step progress to %s", progressPath))
@@ -250,6 +256,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepProgressUpdatedEvent
 		RunFolder:            hcpo.selectedRunFolder,
 		LastCompletedStep:    lastCompletedStep,
 		BranchSteps:          branchSteps,
+		ValidationFailures:   progress.ValidationFailures,
 	}
 
 	// Create unified event wrapper
@@ -387,9 +394,27 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupProgressFromStep(ctx 
 		}
 	}
 
+	// Clean up validation failures from target step onward
+	if progress.ValidationFailures != nil {
+		pathsToRemove := make([]string, 0)
+		for path := range progress.ValidationFailures {
+			pathInfo := parseStepPath(path)
+			// Reset if parent step is >= targetStepIndex+1 (1-based)
+			if pathInfo.ParentStepNumber >= targetStepIndex+1 {
+				pathsToRemove = append(pathsToRemove, path)
+			}
+		}
+		for _, path := range pathsToRemove {
+			delete(progress.ValidationFailures, path)
+		}
+		if len(pathsToRemove) > 0 {
+			hcpo.GetLogger().Info(fmt.Sprintf("🧹 Removed %d validation failure entries from step %d onward", len(pathsToRemove), targetStepIndex+1))
+		}
+	}
+
 	// Save updated progress
 	if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to save progress after cleanup: %w", err), nil)
+		return fmt.Errorf("failed to save progress after cleanup: %w", err)
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Progress cleanup completed: removed %d completed step indices from step %d onward. Remaining completed steps: %d", removedCount, targetStepIndex+1, len(progress.CompletedStepIndices)))
@@ -409,7 +434,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepProgress(ctx conte
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
 			return nil
 		}
-		return fmt.Errorf(fmt.Sprintf("failed to delete steps_done.json: %w", err), nil)
+		return fmt.Errorf("failed to delete steps_done.json: %w", err)
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleted step progress file: %s", progressPath))
@@ -423,11 +448,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) initializeFreshProgress(ctx 
 		TotalSteps:               newTotalSteps,
 		LastUpdated:              time.Now(),
 		BranchSteps:              make(map[int]BranchStepProgress),
+		ValidationFailures:       make(map[string]int),
 		DecisionEvaluationCounts: make(DecisionEvaluationCount),
 	}
 
 	if err := hcpo.saveStepProgress(ctx, freshProgress); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to initialize fresh progress: %w", err), nil)
+		return fmt.Errorf("failed to initialize fresh progress: %w", err)
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Initialized fresh progress with %d total steps", newTotalSteps))
@@ -440,7 +466,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) archiveLogsFolder(ctx contex
 	// Check if the logs folder exists
 	exists, err := hcpo.CheckWorkspaceFileExists(ctx, logsFolderPath)
 	if err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to check if logs folder exists: %w", err), nil)
+		return fmt.Errorf("failed to check if logs folder exists: %w", err)
 	}
 
 	if !exists {
@@ -457,7 +483,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) archiveLogsFolder(ctx contex
 	// Extract parent directory from logsFolderPath
 	lastSlash := strings.LastIndex(logsFolderPath, "/")
 	if lastSlash == -1 {
-		return fmt.Errorf(fmt.Sprintf("invalid logs folder path: %s", logsFolderPath), nil)
+		return fmt.Errorf("invalid logs folder path: %s", logsFolderPath)
 	}
 	parentDir := logsFolderPath[:lastSlash]
 	archivedFolderPath := fmt.Sprintf("%s/%s", parentDir, archivedFolderName)
@@ -466,7 +492,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) archiveLogsFolder(ctx contex
 
 	// Use MoveWorkspaceFile to rename the folder
 	if err := hcpo.MoveWorkspaceFile(ctx, logsFolderPath, archivedFolderPath); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to archive logs folder %s: %w", folderName, err), nil)
+		return fmt.Errorf("failed to archive logs folder %s: %v", folderName, err)
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully archived logs folder: %s -> %s", folderName, archivedFolderName))
@@ -499,7 +525,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 	// This removes all files and subdirectories within the step's execution folder
 	// CleanupDirectory handles the recursive deletion and depth-first directory removal
 	if err := hcpo.CleanupDirectory(ctx, stepFolderPath, fmt.Sprintf("execution/step-%d", stepNumber)); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete execution folder for step %d: %w", stepNumber, err))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete execution folder for step %d: %v", stepNumber, err))
 		// Continue to try deleting branch step folders even if main folder deletion failed
 	} else {
 		// CleanupDirectory only deletes contents, not the root folder itself
@@ -522,7 +548,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 	logsWorkspacePath := fmt.Sprintf("%s/logs", runWorkspacePath)
 	stepLogsFolderPath := fmt.Sprintf("%s/step-%d", logsWorkspacePath, stepNumber)
 	if err := hcpo.archiveLogsFolder(ctx, stepLogsFolderPath, fmt.Sprintf("step-%d", stepNumber)); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive logs folder for step %d: %w", stepNumber, err))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive logs folder for step %d: %v", stepNumber, err))
 		// Continue even if logs archiving failed
 	}
 
@@ -547,7 +573,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 	// List all files/folders in the execution directory
 	files, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, executionWorkspacePath)
 	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to list execution directory to find branch step folders: %w", err))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to list execution directory to find branch step folders: %v", err))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("📁 Found %d items in execution directory", len(files)))
 
@@ -560,7 +586,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 				branchFolderPath := fmt.Sprintf("%s/%s", executionWorkspacePath, file)
 				hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleting branch step folder: %s", file))
 				if err := hcpo.CleanupDirectory(ctx, branchFolderPath, fmt.Sprintf("execution/%s", file)); err != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete branch step folder %s: %w", file, err))
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete branch step folder %s: %v", file, err))
 				} else {
 					// CleanupDirectory only deletes contents, not the root folder itself
 					// Explicitly delete the root branch folder after contents are cleaned
@@ -581,14 +607,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 				// Also archive corresponding branch step logs folder
 				branchLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)
 				if err := hcpo.archiveLogsFolder(ctx, branchLogsFolderPath, file); err != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive branch step logs folder %s: %w", file, err))
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive branch step logs folder %s: %v", file, err))
 				}
 			} else if file == decisionStepFolder {
 				// Delete decision step folder
 				decisionFolderPath := fmt.Sprintf("%s/%s", executionWorkspacePath, file)
 				hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleting decision step folder: %s", file))
 				if err := hcpo.CleanupDirectory(ctx, decisionFolderPath, fmt.Sprintf("execution/%s", file)); err != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete decision step folder %s: %w", file, err))
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete decision step folder %s: %v", file, err))
 				} else {
 					// CleanupDirectory only deletes contents, not the root folder itself
 					// Explicitly delete the root decision folder after contents are cleaned
@@ -609,7 +635,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 				// Also archive corresponding decision step logs folder
 				decisionLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)
 				if err := hcpo.archiveLogsFolder(ctx, decisionLogsFolderPath, file); err != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive decision step logs folder %s: %w", file, err))
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive decision step logs folder %s: %v", file, err))
 				}
 			} else if strings.HasPrefix(file, subAgentStepPrefix) {
 				// Check if this is a sub-agent step folder for the current step
@@ -618,7 +644,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 				subAgentFolderPath := fmt.Sprintf("%s/%s", executionWorkspacePath, file)
 				hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleting sub-agent step folder: %s", file))
 				if err := hcpo.CleanupDirectory(ctx, subAgentFolderPath, fmt.Sprintf("execution/%s", file)); err != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete sub-agent step folder %s: %w", file, err))
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete sub-agent step folder %s: %v", file, err))
 				} else {
 					// CleanupDirectory only deletes contents, not the root folder itself
 					// Explicitly delete the root sub-agent folder after contents are cleaned
@@ -639,7 +665,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 				// Also archive corresponding sub-agent step logs folder
 				subAgentLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)
 				if err := hcpo.archiveLogsFolder(ctx, subAgentLogsFolderPath, file); err != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive sub-agent step logs folder %s: %w", file, err))
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive sub-agent step logs folder %s: %v", file, err))
 				}
 			}
 		}
@@ -660,5 +686,38 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) deleteStepExecutionFolder(ct
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Deleted execution folder for step %d", stepNumber))
+	return nil
+}
+
+// IncrementValidationFailureCount increments the validation failure counter for a specific step path
+func (hcpo *HumanControlledTodoPlannerOrchestrator) IncrementValidationFailureCount(ctx context.Context, stepPath string) error {
+	progress, err := hcpo.loadStepProgress(ctx)
+	if err != nil {
+		return err
+	}
+
+	if progress.ValidationFailures == nil {
+		progress.ValidationFailures = make(map[string]int)
+	}
+
+	progress.ValidationFailures[stepPath]++
+	hcpo.GetLogger().Info(fmt.Sprintf("📊 Incrementing validation failure count for %s: %d", stepPath, progress.ValidationFailures[stepPath]))
+
+	return hcpo.saveStepProgress(ctx, progress)
+}
+
+// ResetValidationFailureCount resets the validation failure counter for a specific step path
+func (hcpo *HumanControlledTodoPlannerOrchestrator) ResetValidationFailureCount(ctx context.Context, stepPath string) error {
+	progress, err := hcpo.loadStepProgress(ctx)
+	if err != nil {
+		return err
+	}
+
+	if progress.ValidationFailures != nil {
+		delete(progress.ValidationFailures, stepPath)
+		hcpo.GetLogger().Info(fmt.Sprintf("📊 Reset validation failure count for %s", stepPath))
+		return hcpo.saveStepProgress(ctx, progress)
+	}
+
 	return nil
 }

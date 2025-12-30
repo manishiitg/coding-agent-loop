@@ -228,7 +228,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeHumanInputStep(
 	// Mark step as completed
 	hcpo.addCompletedStepIndex(progress, stepIndex)
 	if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save step progress: %w", err))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save step progress: %v", err))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved progress: human input step %d marked as completed", stepIndex+1))
 	}

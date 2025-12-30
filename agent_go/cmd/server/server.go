@@ -456,7 +456,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Create streaming API server
 	configPath := config.MCPConfigPath
-	mcpConfig, err := mcpclient.LoadConfig(configPath)
+	mcpConfig, err := mcpclient.LoadConfig(configPath, nil) // Logger not yet available, will be created later
 	if err != nil {
 		log.Fatalf("Failed to load MCP config: %w", err)
 	}

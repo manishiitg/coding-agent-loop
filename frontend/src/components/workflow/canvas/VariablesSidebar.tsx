@@ -124,11 +124,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
     
     setManifest(updatedManifest)
     setHasChanges(true)
-    // Update parent immediately so node UI reflects the change
-    if (onUpdate) {
-      onUpdate(updatedManifest)
-    }
-  }, [manifest, onUpdate])
+  }, [manifest])
 
   // Toggle group enabled/disabled
   const handleToggleGroup = useCallback((groupId: string) => {
@@ -141,11 +137,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
     const updatedManifest = { ...manifest, groups: updatedGroups }
     setManifest(updatedManifest)
     setHasChanges(true)
-    // Update parent immediately so node UI reflects the change
-    if (onUpdate) {
-      onUpdate(updatedManifest)
-    }
-  }, [manifest, onUpdate])
+  }, [manifest])
 
   // Delete group
   const handleDeleteGroup = useCallback((groupId: string) => {
@@ -155,11 +147,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
     const updatedManifest = { ...manifest, groups: updatedGroups }
     setManifest(updatedManifest)
     setHasChanges(true)
-    // Update parent immediately so node UI reflects the change
-    if (onUpdate) {
-      onUpdate(updatedManifest)
-    }
-  }, [manifest, onUpdate])
+  }, [manifest])
 
   // Update variable value in single-group mode
   const handleUpdateValue = useCallback((variableName: string, newValue: string) => {
@@ -172,10 +160,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
     const updatedManifest = { ...manifest, variables: updatedVariables }
     setManifest(updatedManifest)
     setHasChanges(true)
-    if (onUpdate) {
-      onUpdate(updatedManifest)
-    }
-  }, [manifest, onUpdate])
+  }, [manifest])
 
   // Save changes
   const handleSave = useCallback(async () => {
@@ -330,9 +315,6 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
                             const updatedManifest = { ...manifest, groups: updatedGroups }
                             setManifest(updatedManifest)
                             setHasChanges(true)
-                            if (onUpdate) {
-                              onUpdate(updatedManifest)
-                            }
                           } else {
                             // Single-group mode: create groups array from virtual group
                             // Migrate existing values to a proper group structure
@@ -348,9 +330,6 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
                             const updatedManifest = { ...manifest, groups: updatedGroups }
                             setManifest(updatedManifest)
                             setHasChanges(true)
-                            if (onUpdate) {
-                              onUpdate(updatedManifest)
-                            }
                           }
                         }}
                         placeholder={group.group_id.toUpperCase()}
@@ -407,9 +386,6 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
                             const updatedManifest = { ...manifest, groups: updatedGroups }
                             setManifest(updatedManifest)
                             setHasChanges(true)
-                            if (onUpdate) {
-                              onUpdate(updatedManifest)
-                            }
                           } else {
                             // Single group mode
                             handleUpdateValue(variable.name, e.target.value)
@@ -432,4 +408,3 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
     </div>
   )
 }
-

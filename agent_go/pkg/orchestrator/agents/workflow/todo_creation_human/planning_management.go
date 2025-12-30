@@ -38,19 +38,19 @@ type LearningFileInfo struct {
 func validateDecisionStepTyped(step PlanStepInterface, stepIndex int) error {
 	if decisionStep, ok := step.(*DecisionPlanStep); ok {
 		if decisionStep.DecisionStep == nil {
-			return fmt.Errorf(fmt.Sprintf("decision step at index %d (title: %q) is missing required decision_step field", stepIndex, step.GetTitle()), nil)
+			return fmt.Errorf("decision step at index %d (title: %q) is missing required decision_step field", stepIndex, step.GetTitle())
 		}
 		if decisionStep.DecisionStep.GetID() == "" {
-			return fmt.Errorf(fmt.Sprintf("decision step at index %d (title: %q) has decision_step with missing required ID field", stepIndex, step.GetTitle()), nil)
+			return fmt.Errorf("decision step at index %d (title: %q) has decision_step with missing required ID field", stepIndex, step.GetTitle())
 		}
 		if decisionStep.DecisionEvaluationQuestion == "" {
-			return fmt.Errorf(fmt.Sprintf("decision step at index %d (title: %q) is missing required decision_evaluation_question field", stepIndex, step.GetTitle()), nil)
+			return fmt.Errorf("decision step at index %d (title: %q) is missing required decision_evaluation_question field", stepIndex, step.GetTitle())
 		}
 		if decisionStep.IfTrueNextStepID == "" {
-			return fmt.Errorf(fmt.Sprintf("decision step at index %d (title: %q) is missing required if_true_next_step_id field", stepIndex, step.GetTitle()), nil)
+			return fmt.Errorf("decision step at index %d (title: %q) is missing required if_true_next_step_id field", stepIndex, step.GetTitle())
 		}
 		if decisionStep.IfFalseNextStepID == "" {
-			return fmt.Errorf(fmt.Sprintf("decision step at index %d (title: %q) is missing required if_false_next_step_id field", stepIndex, step.GetTitle()), nil)
+			return fmt.Errorf("decision step at index %d (title: %q) is missing required if_false_next_step_id field", stepIndex, step.GetTitle())
 		}
 		// Recursively validate nested decision step
 		if err := validateDecisionStepTyped(decisionStep.DecisionStep, stepIndex); err != nil {
@@ -78,7 +78,7 @@ func validateDecisionStepTyped(step PlanStepInterface, stepIndex int) error {
 func validatePlanStepIDs(steps []PlanStepInterface) error {
 	for i, step := range steps {
 		if step.GetID() == "" {
-			return fmt.Errorf(fmt.Sprintf("step at index %d is missing required ID field. Step title: %q", i, step.GetTitle()), nil)
+			return fmt.Errorf("step at index %d is missing required ID field. Step title: %q", i, step.GetTitle())
 		}
 
 		// Validate decision step fields
@@ -107,7 +107,7 @@ func validatePlanStepIDs(steps []PlanStepInterface) error {
 func validateBranchStepIDs(steps []PlanStepInterface, parentTitle, branchType string) error {
 	for i, step := range steps {
 		if step.GetID() == "" {
-			return fmt.Errorf(fmt.Sprintf("branch step at index %d in %s branch of parent %q is missing required ID field. Step title: %q", i, branchType, parentTitle, step.GetTitle()), nil)
+			return fmt.Errorf("branch step at index %d in %s branch of parent %q is missing required ID field. Step title: %q", i, branchType, parentTitle, step.GetTitle())
 		}
 
 		// Recursively validate nested branch steps
@@ -223,7 +223,7 @@ Generate a comprehensive structured plan to achieve this objective.`
 	// Create fresh planning agent with proper context
 	planningAgent, err := hcpo.createPlanningAgent(ctx, "planning", 0, iteration)
 	if err != nil {
-		return nil, nil, fmt.Errorf(fmt.Sprintf("failed to create planning agent: %w", err), nil)
+		return nil, nil, fmt.Errorf("failed to create planning agent: %w", err)
 	}
 
 	// Execute planning agent using plan modification tools (unified for both CREATE and UPDATE modes)
@@ -262,7 +262,7 @@ Generate a comprehensive structured plan to achieve this objective.`
 	if !isUpdateMode {
 		emptyPlan := &PlanningResponse{Steps: []PlanStep{}}
 		if err := writePlanToFile(ctx, workspacePath, emptyPlan, nil, hcpo.WriteWorkspaceFile, hcpo.GetLogger()); err != nil {
-			return nil, nil, fmt.Errorf(fmt.Sprintf("failed to create empty plan.json: %w", err), nil)
+			return nil, nil, fmt.Errorf("failed to create empty plan.json: %w", err)
 		}
 	}
 
@@ -348,7 +348,7 @@ Generate a comprehensive structured plan to achieve this objective.`
 	// This includes automatic event emission (agent start/end events)
 	_, updatedConversationHistory, err := planningAgentTyped.BaseOrchestratorAgent.ExecuteWithTemplateValidation(ctx, planningTemplateVars, inputProcessor, conversationHistory, nil, systemPrompt, true)
 	if err != nil {
-		return nil, updatedConversationHistory, fmt.Errorf(fmt.Sprintf("agent execution failed: %w", err), nil)
+		return nil, updatedConversationHistory, fmt.Errorf("agent execution failed: %w", err)
 	}
 
 	// Check if any plan modification tools were called
@@ -365,7 +365,7 @@ Generate a comprehensive structured plan to achieve this objective.`
 	// Read the current plan.json (whether tools were called or not)
 	planResponse, err := readPlanFromFile(ctx, workspacePath, hcpo.ReadWorkspaceFile)
 	if err != nil {
-		return nil, updatedConversationHistory, fmt.Errorf(fmt.Sprintf("failed to read plan: %w", err), nil)
+		return nil, updatedConversationHistory, fmt.Errorf("failed to read plan: %w", err)
 	}
 
 	// Generate changelog from plan diff (AFTER agent execution, BEFORE human feedback)
@@ -399,7 +399,7 @@ Generate a comprehensive structured plan to achieve this objective.`
 
 	// Validate that all steps have IDs (planning agent should always generate them)
 	if err := validatePlanStepIDs(planResponse.Steps); err != nil {
-		return nil, nil, fmt.Errorf(fmt.Sprintf("plan validation failed: %w", err), nil)
+		return nil, nil, fmt.Errorf("plan validation failed: %w", err)
 	}
 
 	// Plan is already saved by tools (both CREATE and UPDATE modes)
@@ -500,14 +500,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) checkExistingPlan(ctx contex
 			return false, nil, nil
 		}
 		// Other errors should be returned
-		return false, nil, fmt.Errorf(fmt.Sprintf("failed to check existing plan: %w", err), nil)
+		return false, nil, fmt.Errorf("failed to check existing plan: %w", err)
 	}
 
 	// Parse JSON content to PlanningResponse
 	var planResponse PlanningResponse
 	if err := json.Unmarshal([]byte(planContent), &planResponse); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse existing plan.json: %v", err))
-		return false, nil, fmt.Errorf(fmt.Sprintf("failed to parse plan.json: %w", err), nil)
+		return false, nil, fmt.Errorf("failed to parse plan.json: %w", err)
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Found existing plan at %s with %d steps", planPath, len(planResponse.Steps)))
@@ -550,7 +550,7 @@ func convertBranchSteps(planSteps []PlanStepInterface, stepConfigs []StepConfig)
 		// Use type switch to handle different step types
 		todoStep, err := populateStepRuntimeFields(step, stepConfigs)
 		if err != nil {
-			return nil, fmt.Errorf(fmt.Sprintf("failed to populate runtime fields for step %d: %w", i, err), nil)
+			return nil, fmt.Errorf("failed to populate runtime fields for step %d: %v", i, err)
 		}
 		todoSteps[i] = todoStep
 	}
@@ -564,7 +564,7 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 	var agentConfigs *AgentConfigs
 	stepID := typedStep.GetID()
 	if stepID == "" {
-		return fmt.Errorf(fmt.Sprintf("step is missing required ID field. Step title: %q", typedStep.GetTitle()), nil)
+		return fmt.Errorf("step is missing required ID field. Step title: %q", typedStep.GetTitle())
 	} else if stepConfigs != nil {
 		agentConfigs = MatchStepConfigByID(stepID, stepConfigs)
 	}
@@ -603,7 +603,7 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		if len(step.IfTrueSteps) > 0 {
 			for _, branchStep := range step.IfTrueSteps {
 				if err := populateRuntimeFields(branchStep, stepConfigs); err != nil {
-					return fmt.Errorf(fmt.Sprintf("failed to populate if_true branch step: %w", err), nil)
+					return fmt.Errorf("failed to populate if_true branch step: %w", err)
 				}
 			}
 		}
@@ -611,7 +611,7 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		if len(step.IfFalseSteps) > 0 {
 			for _, branchStep := range step.IfFalseSteps {
 				if err := populateRuntimeFields(branchStep, stepConfigs); err != nil {
-					return fmt.Errorf(fmt.Sprintf("failed to populate if_false branch step: %w", err), nil)
+					return fmt.Errorf("failed to populate if_false branch step: %w", err)
 				}
 			}
 		}
@@ -637,7 +637,7 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		// Decision step: populate inner DecisionStep recursively
 		if step.DecisionStep != nil {
 			if err := populateRuntimeFields(step.DecisionStep, stepConfigs); err != nil {
-				return fmt.Errorf(fmt.Sprintf("failed to populate decision inner step: %w", err), nil)
+				return fmt.Errorf("failed to populate decision inner step: %w", err)
 			}
 		}
 
@@ -649,7 +649,7 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		// Orchestration step: populate inner OrchestrationStep recursively
 		if step.OrchestrationStep != nil {
 			if err := populateRuntimeFields(step.OrchestrationStep, stepConfigs); err != nil {
-				return fmt.Errorf(fmt.Sprintf("failed to populate orchestration inner step: %w", err), nil)
+				return fmt.Errorf("failed to populate orchestration inner step: %w", err)
 			}
 		}
 
@@ -658,7 +658,7 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 			route := &step.OrchestrationRoutes[i]
 			if route.SubAgentStep != nil {
 				if err := populateRuntimeFields(route.SubAgentStep, stepConfigs); err != nil {
-					return fmt.Errorf(fmt.Sprintf("failed to populate sub-agent step for route '%s': %w", route.RouteID, err), nil)
+					return fmt.Errorf("failed to populate sub-agent step for route '%s': %v", route.RouteID, err)
 				}
 				// Sub-agents should have validation disabled
 				// Get the populated config from the sub-agent step
@@ -725,7 +725,7 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		return nil
 
 	default:
-		return fmt.Errorf(fmt.Sprintf("unknown step type: %T", typedStep), nil)
+		return fmt.Errorf("unknown step type: %T", typedStep)
 	}
 }
 
@@ -745,14 +745,14 @@ func populateStepRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepCo
 		if len(step.IfTrueSteps) > 0 {
 			for _, branchStep := range step.IfTrueSteps {
 				if err := populateRuntimeFields(branchStep, stepConfigs); err != nil {
-					return nil, fmt.Errorf(fmt.Sprintf("failed to populate if_true branch step: %w", err), nil)
+					return nil, fmt.Errorf("failed to populate if_true branch step: %w", err)
 				}
 			}
 		}
 		if len(step.IfFalseSteps) > 0 {
 			for _, branchStep := range step.IfFalseSteps {
 				if err := populateRuntimeFields(branchStep, stepConfigs); err != nil {
-					return nil, fmt.Errorf(fmt.Sprintf("failed to populate if_false branch step: %w", err), nil)
+					return nil, fmt.Errorf("failed to populate if_false branch step: %w", err)
 				}
 			}
 		}
@@ -761,7 +761,7 @@ func populateStepRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepCo
 		// Populate inner DecisionStep
 		if step.DecisionStep != nil {
 			if err := populateRuntimeFields(step.DecisionStep, stepConfigs); err != nil {
-				return nil, fmt.Errorf(fmt.Sprintf("failed to populate decision inner step: %w", err), nil)
+				return nil, fmt.Errorf("failed to populate decision inner step: %w", err)
 			}
 		}
 
@@ -769,14 +769,14 @@ func populateStepRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepCo
 		// Populate inner OrchestrationStep
 		if step.OrchestrationStep != nil {
 			if err := populateRuntimeFields(step.OrchestrationStep, stepConfigs); err != nil {
-				return nil, fmt.Errorf(fmt.Sprintf("failed to populate orchestration inner step: %w", err), nil)
+				return nil, fmt.Errorf("failed to populate orchestration inner step: %w", err)
 			}
 		}
 		// Populate sub-agent steps in routes
 		for _, route := range step.OrchestrationRoutes {
 			if route.SubAgentStep != nil {
 				if err := populateRuntimeFields(route.SubAgentStep, stepConfigs); err != nil {
-					return nil, fmt.Errorf(fmt.Sprintf("failed to populate sub-agent step: %w", err), nil)
+					return nil, fmt.Errorf("failed to populate sub-agent step: %w", err)
 				}
 			}
 		}
@@ -810,7 +810,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) populateStepsRuntimeFields(c
 	// Match configs by step index (0-based)
 	matchedConfigs, err := MatchStepConfigs(planSteps, stepConfigs)
 	if err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to match step configs: %w", err), nil)
+		return nil, fmt.Errorf("failed to match step configs: %w", err)
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf("📋 Matched %d/%d step configs from step_config.json", len(matchedConfigs), len(planSteps)))
 
@@ -835,7 +835,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) populateStepsRuntimeFields(c
 		// Populate runtime fields (this properly handles inner steps for decision/orchestration)
 		todoStep, err := populateStepRuntimeFields(step, stepConfigs)
 		if err != nil {
-			return nil, fmt.Errorf(fmt.Sprintf("failed to populate runtime fields for step %d (title: %q, ID: %s): %w", i, step.GetTitle(), step.GetID(), err), nil)
+			return nil, fmt.Errorf("failed to populate runtime fields for step %d (title: %q, ID: %s): %v", i, step.GetTitle(), step.GetID(), err)
 		}
 
 		// Merge matched configs with existing configs (if any)
@@ -946,7 +946,7 @@ func EmitTodoStepsExtractedEventWithMetadata(ctx context.Context, bo *orchestrat
 	}
 	bo.GetLogger().Info(fmt.Sprintf("📤 [EmitTodoStepsExtractedEventWithMetadata] About to emit event through bridge (bridge type: %T, metadata keys: %v)", bridge, getMetadataKeys(metadata)))
 	if err := bridge.HandleEvent(ctx, unifiedEvent); err != nil {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ [EmitTodoStepsExtractedEventWithMetadata] Failed to emit todo steps extracted event: %w", err))
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ [EmitTodoStepsExtractedEventWithMetadata] Failed to emit todo steps extracted event: %v", err))
 	} else {
 		bo.GetLogger().Info(fmt.Sprintf("✅ [EmitTodoStepsExtractedEventWithMetadata] Successfully emitted todo steps extracted event: %d steps extracted", len(extractedSteps)))
 	}
@@ -1363,7 +1363,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 	// Load runtime variable values if provided
 	variableValues, err := LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
 	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to load variable values: %w", err))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to load variable values: %v", err))
 	} else {
 		hcpo.variableValues = variableValues
 	}
@@ -1372,7 +1372,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 	planPath := fmt.Sprintf("%s/planning/plan.json", hcpo.GetWorkspacePath())
 	planExists, existingPlan, err := hcpo.checkExistingPlan(ctx, planPath)
 	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check for existing plan: %w", err))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check for existing plan: %v", err))
 		planExists = false
 	}
 
@@ -1494,12 +1494,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 						extractedFeedback := strings.TrimSpace(parts[1])
 						humanFeedback = extractedFeedback
 						if revisionAttempt >= maxPlanRevisions {
-							return "", fmt.Errorf(fmt.Sprintf("max plan revision attempts (%d) reached", maxPlanRevisions), nil)
+							return "", fmt.Errorf("max plan revision attempts (%d) reached", maxPlanRevisions)
 						}
 						continue
 					}
 				}
-				return "", fmt.Errorf(fmt.Sprintf("planning phase failed: %w", err), nil)
+				return "", fmt.Errorf("planning phase failed: %w", err)
 			}
 
 			if len(approvedPlan.Steps) == 0 {
@@ -1509,7 +1509,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 			// Populate runtime fields for approved plan steps
 			breakdownSteps, err := hcpo.populateStepsRuntimeFields(ctx, approvedPlan.Steps)
 			if err != nil {
-				return "", fmt.Errorf(fmt.Sprintf("failed to convert approved plan steps: %w", err), nil)
+				return "", fmt.Errorf("failed to convert approved plan steps: %w", err)
 			}
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Converted new plan: %d steps extracted", len(breakdownSteps)))
 
@@ -1522,7 +1522,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 			// Request human approval for JSON plan
 			approvedInternal, feedbackInternal, err := hcpo.requestPlanApproval(ctx, revisionAttempt)
 			if err != nil {
-				return "", fmt.Errorf(fmt.Sprintf("plan approval request failed: %w", err), nil)
+				return "", fmt.Errorf("plan approval request failed: %w", err)
 			}
 
 			if approvedInternal {
@@ -1534,7 +1534,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 			humanFeedback = feedbackInternal
 
 			if revisionAttempt >= maxPlanRevisions {
-				return "", fmt.Errorf(fmt.Sprintf("max plan revision attempts (%d) reached", maxPlanRevisions), nil)
+				return "", fmt.Errorf("max plan revision attempts (%d) reached", maxPlanRevisions)
 			}
 		}
 
@@ -1547,7 +1547,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreatePlanOnly(ctx context.C
 	// if approvedPlan != nil && !eventEmitted {
 	// 	breakdownSteps, err := hcpo.populateStepsRuntimeFields(ctx, approvedPlan.Steps)
 	// 	if err != nil {
-	// 		return "", fmt.Errorf(fmt.Sprintf("failed to convert approved plan steps: %w", err), nil)
+	// 		return "", fmt.Errorf("failed to convert approved plan steps: %w", err)
 	// 	}
 	// 	// Determine correct source if not already set
 	// 	if planSource == "" {

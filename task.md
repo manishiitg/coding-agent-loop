@@ -71,3 +71,29 @@ planning/changelog
 37. auto choose models based on llm and generation?
 
 38. plan debugging, does do changelogs?
+
+39. check learning for validation failure in a loop
+
+40. completely decouple chat from workspace.. right now mcp tool/context comes from workspace.
+
+41. the iteration/eecution settings etc should be workflow specific right now its shared
+
+42. when we update variables,, the entire plan canvas renders.. so its not smooth at all  -done
+
+43. with latest changes, auto highlight of worksace stoppped working
+
+44. before running,, create empty learning folder as agent always checks  -done
+
+1. High Complexity in Retry Loop
+File: agent/llm_generation.go:368
+Issue: High cyclomatic complexity in GenerateContentWithRetry.
+Recommendation: Refactor retry logic into a separate strategy function.
+
+
+45. the plan step optimization should optimize, max turns, context editing, sumiization etc
+
+46. we need to some unlock learnings when plan updates and able to converge fast
+
+47. if we have failure learning, no point in doing detection ? because in the end we are going call success -done
+
+48. in ui its not clear how many times validation has failed

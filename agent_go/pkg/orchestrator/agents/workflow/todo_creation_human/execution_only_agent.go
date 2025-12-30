@@ -178,9 +178,9 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 ## 📁 File System Access
 - **READ**: 'learnings/', 'execution/' (previous steps), 'knowledgebase/'.
 - **WRITE/CLEANUP**:
-  - **Step Folder**: '{{.StepExecutionPath}}/' - **VOLATILE**. Deleted on re-execution/restart.
-  - **Knowledgebase**: '{{.KnowledgebasePath}}/' - **PERSISTENT**. Shared across all runs. Use for templates/config.
-  - **Rule**: Only write to your specific step folder or knowledgebase. Path validation is enforced.
+- **Step Folder**: '{{.StepExecutionPath}}/' - **VOLATILE**. Deleted on re-execution/restart. Only write your primary results here.
+- **Knowledgebase**: '{{.KnowledgebasePath}}/' - **PERSISTENT**. Shared across all runs. Use for templates, reference data, or global configs that must survive across execution attempts. Path validation is enforced.
+- **Rule**: Read from any allowed folder (learnings, execution, knowledgebase), but only write to your specific step folder or the persistent knowledgebase.
 
 {{if .HasLoop}}
 ## 🔄 Loop Execution

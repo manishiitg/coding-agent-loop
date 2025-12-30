@@ -289,18 +289,34 @@ func validateFile(
 		return result
 	}
 
+	// Check if file has JSON checks - if not, skip JSON parsing
+	hasJSONChecks := len(fileRule.JSONChecks) > 0
+
+	// If file doesn't have .json extension and has JSON checks, it might be incorrectly configured
+	// But we'll still try to parse it - if it fails, we'll only fail if there are JSON checks
+	hasJSONExtension := strings.HasSuffix(strings.ToLower(fileRule.FileName), ".json")
+
 	// Try to parse as JSON
 	var jsonData interface{}
 	if err := json.Unmarshal([]byte(content), &jsonData); err != nil {
-		// Not valid JSON - add error
-		result.JSONChecks = append(result.JSONChecks, JSONCheckResult{
-			Path:      "",
-			Passed:    false,
-			CheckType: "json_parse",
-			Expected:  "valid JSON",
-			Actual:    err.Error(),
-			ErrorMsg:  fmt.Sprintf("File is not valid JSON: %v", err),
-		})
+		// Not valid JSON
+		if hasJSONChecks {
+			// File has JSON checks but isn't valid JSON - add error
+			result.JSONChecks = append(result.JSONChecks, JSONCheckResult{
+				Path:      "",
+				Passed:    false,
+				CheckType: "json_parse",
+				Expected:  "valid JSON",
+				Actual:    err.Error(),
+				ErrorMsg:  fmt.Sprintf("File is not valid JSON: %v", err),
+			})
+			// If file doesn't have .json extension, suggest updating the validation schema
+			if !hasJSONExtension {
+				result.JSONChecks[len(result.JSONChecks)-1].ErrorMsg += fmt.Sprintf(" (File '%s' does not have .json extension - validation schema may need to exclude this file or remove JSON checks)", fileRule.FileName)
+			}
+			return result
+		}
+		// No JSON checks - file doesn't need to be JSON, just return with exists check
 		return result
 	}
 
@@ -664,6 +680,22 @@ func fixDoubleEscapedPattern(pattern string) string {
 		"\\\\Z": "\\Z", // end of string
 		"\\\\z": "\\z", // end of string
 		"\\\\G": "\\G", // start of match
+		"\\\\.": "\\.", // escaped dot
+		"\\\\(": "\\(", // open paren
+		"\\\\)": "\\)", // close paren
+		"\\\\[": "\\[", // open bracket
+		"\\\\]": "\\]", // close bracket
+		"\\\\{": "\\{", // open brace
+		"\\\\}": "\\}", // close brace
+		"\\\\*": "\\*", // star
+		"\\\\+": "\\+", // plus
+		"\\\\?": "\\?", // question mark
+		"\\\\|": "\\|", // pipe
+		"\\\\^": "\\^", // caret
+		"\\\\$": "\\$", // dollar sign
+		"\\\\\"": "\\\"", // double quote
+		"\\\\'":  "\\'",  // single quote
+		"\\\\/":  "/",    // forward slash
 	}
 
 	fixed := pattern
@@ -756,44 +788,57 @@ func validateConsistency(
 			return result
 		}
 	case "array_length":
-		// Current value can be either:
-		// 1. A number (count field) - compare with array length
-		// 2. An array (if Path incorrectly points to array) - use its length
-		var currentNum float64
+		// Handle bidirectional array length check
+		// Case 1: Path points to count (number), ComparePath points to array (standard)
+		// Case 2: Path points to array, ComparePath points to count (number) (swapped but valid intent)
 
-		// Check if currentValue is an array (Path points to array itself)
-		if currentArray, ok := currentValue.([]interface{}); ok {
-			// Path points to an array, use its length
-			currentNum = float64(len(currentArray))
-		} else {
-			// Try to extract number from currentValue
-			switch v := currentValue.(type) {
-			case float64:
-				currentNum = v
-			case int:
-				currentNum = float64(v)
-			case int64:
-				currentNum = float64(v)
-			case float32:
-				currentNum = float64(v)
-			default:
-				result.ErrorMsg = fmt.Sprintf("Array length check requires number or array at %s, got %T", check.Path, currentValue)
-				return result
+		var arrayLen int
+		var countVal float64
+		var matched bool
+
+		// Check Case 1: Path=Number, Compare=Array
+		if compareArray, ok := compareValue.([]interface{}); ok {
+			if num, ok := getNumericValue(currentValue); ok {
+				arrayLen = len(compareArray)
+				countVal = num
+				matched = true
 			}
 		}
 
-		var compareArray []interface{}
-		if arr, ok := compareValue.([]interface{}); ok {
-			compareArray = arr
-		} else {
-			result.ErrorMsg = fmt.Sprintf("Array length check requires array at %s, got %T", comparePath, compareValue)
+		// Check Case 2: Path=Array, Compare=Number
+		if !matched {
+			if currentArray, ok := currentValue.([]interface{}); ok {
+				if num, ok := getNumericValue(compareValue); ok {
+					arrayLen = len(currentArray)
+					countVal = num
+					matched = true
+				}
+			}
+		}
+
+		if !matched {
+			// Determine specific error message
+			_, currentIsArray := currentValue.([]interface{})
+			_, compareIsArray := compareValue.([]interface{})
+			_, currentIsNum := getNumericValue(currentValue)
+			_, compareIsNum := getNumericValue(compareValue)
+
+			if currentIsArray && compareIsArray {
+				result.ErrorMsg = fmt.Sprintf("Ambiguous array length check: Both %s and %s point to arrays. One must be a number (count).", check.Path, comparePath)
+			} else if currentIsNum && compareIsNum {
+				result.ErrorMsg = fmt.Sprintf("Ambiguous array length check: Both %s and %s point to numbers. One must be an array.", check.Path, comparePath)
+			} else {
+				result.ErrorMsg = fmt.Sprintf("Invalid array length check: Requires one array and one number. Got %T at %s and %T at %s", currentValue, check.Path, compareValue, comparePath)
+			}
+			result.Expected = "one array and one number"
+			result.Actual = fmt.Sprintf("%T and %T", currentValue, compareValue)
 			return result
 		}
 
-		if int(currentNum) != len(compareArray) {
-			result.ErrorMsg = fmt.Sprintf("Count %v does not match array length %d", currentNum, len(compareArray))
-			result.Expected = fmt.Sprintf("equals array length (%d)", len(compareArray))
-			result.Actual = fmt.Sprintf("%v", currentNum)
+		if int(countVal) != arrayLen {
+			result.ErrorMsg = fmt.Sprintf("Count %v does not match array length %d", countVal, arrayLen)
+			result.Expected = fmt.Sprintf("count equals array length (%d)", arrayLen)
+			result.Actual = fmt.Sprintf("%v", countVal)
 			return result
 		}
 	case "greater_than":

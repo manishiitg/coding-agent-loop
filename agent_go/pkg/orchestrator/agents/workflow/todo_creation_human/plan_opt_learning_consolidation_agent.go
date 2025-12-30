@@ -149,7 +149,7 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 		true, // overwriteSystemPrompt
 	)
 	if err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to create and setup learning consolidation agent: %w", err), nil)
+		return nil, fmt.Errorf("failed to create and setup learning consolidation agent: %w", err)
 	}
 
 	return agent, nil
@@ -171,7 +171,7 @@ func (lcm *LearningConsolidationManager) ConsolidateLearningsOnly(ctx context.Co
 	// Create consolidation agent
 	consolidationAgent, err := lcm.createLearningConsolidationAgent(ctx, lcm.GetWorkspacePath())
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to create learning consolidation agent: %w", err), nil)
+		return "", fmt.Errorf("failed to create learning consolidation agent: %w", err)
 	}
 
 	// Prepare template variables with selected folder only
@@ -187,7 +187,7 @@ func (lcm *LearningConsolidationManager) ConsolidateLearningsOnly(ctx context.Co
 	lcm.GetLogger().Info(fmt.Sprintf("🔍 Executing learning consolidation agent for folder: %s", selectedFolder))
 	result, conversationHistory, err := consolidationAgent.Execute(ctx, consolidationTemplateVars, nil)
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("learning consolidation agent execution failed: %w", err), nil)
+		return "", fmt.Errorf("learning consolidation agent execution failed: %w", err)
 	}
 
 	lcm.GetLogger().Info(fmt.Sprintf("✅ Learning consolidation completed successfully for folder: %s", selectedFolder))

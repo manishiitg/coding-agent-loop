@@ -141,7 +141,7 @@ func NewHumanControlledTodoPlannerOrchestrator(
 		toolCategories, // NEW: Pass category map
 	)
 	if err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to create base orchestrator: %w", err), nil)
+		return nil, fmt.Errorf("failed to create base orchestrator: %w", err)
 	}
 
 	// Create ConditionalAgent for conditional step evaluation
@@ -192,7 +192,7 @@ func NewHumanControlledTodoPlannerOrchestrator(
 		false,               // Don't overwrite system prompt - conditional agent manages its own prompt
 	)
 	if err != nil {
-		return nil, fmt.Errorf(fmt.Sprintf("failed to create default conditional agent: %w", err), nil)
+		return nil, fmt.Errorf("failed to create default conditional agent: %w", err)
 	}
 
 	// Type assert to conditional agent
@@ -483,10 +483,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	planPath := fmt.Sprintf("%s/planning/plan.json", hcpo.GetWorkspacePath())
 	planExists, existingPlan, err := hcpo.checkExistingPlan(ctx, planPath)
 	if err != nil {
-		return "", fmt.Errorf(fmt.Sprintf("failed to check for existing plan: %w", err), nil)
+		return "", fmt.Errorf("failed to check for existing plan: %w", err)
 	}
 	if !planExists {
-		return "", fmt.Errorf(fmt.Sprintf("plan.json not found at %s - planning must be run first as a separate phase", planPath), nil)
+		return "", fmt.Errorf("plan.json not found at %s - planning must be run first as a separate phase", planPath)
 	}
 
 	// Plan exists - use it
@@ -519,7 +519,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			var err error
 			variableValues, err = LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
 			if err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [VARIABLE LOADING] Failed to load variable values: %w", err))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [VARIABLE LOADING] Failed to load variable values: %v", err))
 			} else {
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [VARIABLE LOADING] Loaded from fallback LoadVariableValues (may not match requested group %s)", requestedGroupID))
 			}
@@ -558,7 +558,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		var err error
 		variableValues, err = LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
 		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [VARIABLE LOADING] Failed to load variable values: %w", err))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [VARIABLE LOADING] Failed to load variable values: %v", err))
 		}
 	}
 
@@ -581,7 +581,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	}
 	for _, step := range existingPlan.Steps {
 		if err := populateRuntimeFields(step, stepConfigs); err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to populate runtime fields: %w", err), nil)
+			return "", fmt.Errorf("failed to populate runtime fields: %w", err)
 		}
 	}
 	breakdownSteps := existingPlan.Steps // Use PlanStepInterface directly
@@ -614,7 +614,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		var err error
 		selectedRunFolder, err = hcpo.resolveRunFolderWithOptions(ctx, hcpo.GetWorkspacePath(), selectedRunMode, execOpts.SelectedRunFolder)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to resolve run folder with frontend options: %w", err), nil)
+			return "", fmt.Errorf("failed to resolve run folder with frontend options: %w", err)
 		}
 		hcpo.selectedRunFolder = selectedRunFolder
 		hcpo.GetLogger().Info(fmt.Sprintf("📁 Resolved run folder: %s", selectedRunFolder))
@@ -643,7 +643,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			hcpo.getWorkflowID(),
 		)
 		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to get user decision for run mode: %w, defaulting to 'use_same_run'", err))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to get user decision for run mode: %v, defaulting to 'use_same_run'", err))
 			runModeChoice = "option0" // Default to use_same_run
 		}
 
@@ -664,7 +664,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		hcpo.selectedRunMode = selectedRunMode
 		selectedRunFolder, err = hcpo.resolveRunFolder(ctx, hcpo.GetWorkspacePath(), selectedRunMode)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("failed to resolve run folder with selected run mode: %w", err), nil)
+			return "", fmt.Errorf("failed to resolve run folder with selected run mode: %w", err)
 		}
 		hcpo.selectedRunFolder = selectedRunFolder
 		hcpo.GetLogger().Info(fmt.Sprintf("📁 Resolved run folder with selected run mode: %s", selectedRunFolder))
@@ -1009,7 +1009,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 	if existingProgress == nil && !planChangeHandled {
 		// Initialize and save fresh progress file (first run scenario)
 		if err := hcpo.initializeFreshProgress(ctx, len(breakdownSteps)); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to initialize fresh progress: %w", err))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to initialize fresh progress: %v", err))
 			// Continue anyway with in-memory progress
 			existingProgress = &StepProgress{
 				CompletedStepIndices:     []int{},
@@ -1035,7 +1035,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 			existingProgress.DecisionEvaluationCounts = make(DecisionEvaluationCount)
 			// Save the reset progress
 			if err := hcpo.saveStepProgress(ctx, existingProgress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save reset progress: %w", err))
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save reset progress: %v", err))
 			}
 		}
 	} else if existingProgress == nil && planChangeHandled {
@@ -1059,7 +1059,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Multiple variable groups detected, using batch execution mode"))
 		batchResult, err := hcpo.runBatchExecution(ctx, breakdownSteps, 1, execCtx)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("batch execution failed: %w", err), nil)
+			return "", fmt.Errorf("batch execution failed: %w", err)
 		}
 		if !batchResult.Success {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Batch execution completed with %d failed groups", batchResult.FailedGroups))
@@ -1091,7 +1091,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(ctx context.C
 		}
 		err = hcpo.runExecutionPhase(ctx, breakdownSteps, 1, existingProgress, startFromStep, execCtx)
 		if err != nil {
-			return "", fmt.Errorf(fmt.Sprintf("execution phase failed: %w", err), nil)
+			return "", fmt.Errorf("execution phase failed: %w", err)
 		}
 	}
 

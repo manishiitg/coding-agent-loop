@@ -28,7 +28,7 @@ type MCPConfigResponse struct {
 // handleGetMCPConfig handles GET requests to retrieve current MCP config (base + user additions)
 func (api *StreamingAPI) handleGetMCPConfig(w http.ResponseWriter, r *http.Request) {
 	// Reload base config to get latest version
-	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath); err != nil {
+	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger); err != nil {
 		api.logger.Error(fmt.Sprintf("Failed to reload base MCP config: %w", err), err)
 		http.Error(w, fmt.Sprintf("Failed to reload base config: %w", err), http.StatusInternalServerError)
 		return
@@ -36,7 +36,7 @@ func (api *StreamingAPI) handleGetMCPConfig(w http.ResponseWriter, r *http.Reque
 
 	// Load user additions (if any)
 	userConfigPath := strings.Replace(api.mcpConfigPath, ".json", "_user.json", 1)
-	userConfig, err := mcpclient.LoadConfig(userConfigPath)
+	userConfig, err := mcpclient.LoadConfig(userConfigPath, api.logger)
 	if err != nil {
 		// User config doesn't exist yet, use empty config
 		userConfig = &mcpclient.MCPConfig{MCPServers: make(map[string]mcpclient.MCPServerConfig)}
@@ -138,7 +138,7 @@ func (api *StreamingAPI) handleSaveMCPConfig(w http.ResponseWriter, r *http.Requ
 	userAdditions := &mcpclient.MCPConfig{MCPServers: make(map[string]mcpclient.MCPServerConfig)}
 
 	// Reload base config to get current base servers
-	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath); err != nil {
+	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger); err != nil {
 		api.logger.Error(fmt.Sprintf("Failed to reload base config: %w", err), err)
 		http.Error(w, fmt.Sprintf("Failed to reload base config: %w", err), http.StatusInternalServerError)
 		return
@@ -262,7 +262,7 @@ func (api *StreamingAPI) validateMCPConfig(config *mcpclient.MCPConfig) error {
 // loadMergedConfig loads the merged configuration (base + user additions)
 func (api *StreamingAPI) loadMergedConfig() (*mcpclient.MCPConfig, error) {
 	// Reload base config to get latest version
-	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath); err != nil {
+	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger); err != nil {
 		return nil, fmt.Errorf("failed to reload base config: %w", err)
 	}
 
@@ -270,7 +270,7 @@ func (api *StreamingAPI) loadMergedConfig() (*mcpclient.MCPConfig, error) {
 	userConfigPath := strings.Replace(api.mcpConfigPath, ".json", "_user.json", 1)
 	api.logger.Debug(fmt.Sprintf("🔍 Attempting to load user config from: %s", userConfigPath))
 
-	userConfig, err := mcpclient.LoadConfig(userConfigPath)
+	userConfig, err := mcpclient.LoadConfig(userConfigPath, api.logger)
 	if err != nil {
 		// User config doesn't exist yet, use empty config
 		userConfig = &mcpclient.MCPConfig{MCPServers: make(map[string]mcpclient.MCPServerConfig)}
@@ -355,7 +355,7 @@ func (api *StreamingAPI) triggerMCPDiscovery() {
 // handleGetMCPConfigStatus handles GET requests to get config status
 func (api *StreamingAPI) handleGetMCPConfigStatus(w http.ResponseWriter, r *http.Request) {
 	// Reload base config to get latest version
-	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath); err != nil {
+	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger); err != nil {
 		api.logger.Error(fmt.Sprintf("Failed to reload base MCP config: %w", err), err)
 		http.Error(w, fmt.Sprintf("Failed to reload base config: %w", err), http.StatusInternalServerError)
 		return
@@ -363,7 +363,7 @@ func (api *StreamingAPI) handleGetMCPConfigStatus(w http.ResponseWriter, r *http
 
 	// Load user additions
 	userConfigPath := strings.Replace(api.mcpConfigPath, ".json", "_user.json", 1)
-	userConfig, err := mcpclient.LoadConfig(userConfigPath)
+	userConfig, err := mcpclient.LoadConfig(userConfigPath, api.logger)
 	if err != nil {
 		// User config doesn't exist yet
 		userConfig = &mcpclient.MCPConfig{MCPServers: make(map[string]mcpclient.MCPServerConfig)}

@@ -627,6 +627,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) unlockStepLearningsAndResetM
 		// Continue to reset metadata even if config unlock fails
 	}
 
+	// Reset validation failure count for UI (since step is being unlocked/reset)
+	if err := hcpo.ResetValidationFailureCount(ctx, stepPath); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to reset validation failure count for %s: %v", stepPath, err))
+	}
+
 	// Reset metadata counter
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	metadataPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier, ".learning_metadata.json")

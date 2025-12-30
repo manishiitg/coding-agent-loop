@@ -61,7 +61,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 	if err != nil {
 		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
 		// Fallback to base config only
-		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
+		api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger)
 		cfg = api.mcpConfig
 	}
 
@@ -185,7 +185,7 @@ func (api *StreamingAPI) handleGetTools(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
 		// Fallback to base config only
-		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
+		api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger)
 		cfg = api.mcpConfig
 	}
 
@@ -268,7 +268,7 @@ func (api *StreamingAPI) handleGetToolDetail(w http.ResponseWriter, r *http.Requ
 	cacheManager := mcpcache.GetCacheManager(api.logger)
 
 	// Get server config to generate proper cache key
-	api.mcpConfig.ReloadConfig(api.mcpConfigPath)
+	api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger)
 	cfg := api.mcpConfig
 	serverConfig, configErr := cfg.GetServer(serverName)
 	if configErr != nil {
@@ -375,7 +375,7 @@ func (api *StreamingAPI) initializeToolCache() {
 	if err != nil {
 		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
 		// Fallback to base config only
-		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
+		api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger)
 		cfg = api.mcpConfig
 	}
 
@@ -570,7 +570,7 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 	if err != nil {
 		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
 		// Fallback to base config only
-		api.mcpConfig.ReloadConfig(api.mcpConfigPath)
+		api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger)
 		cfg = api.mcpConfig
 	}
 

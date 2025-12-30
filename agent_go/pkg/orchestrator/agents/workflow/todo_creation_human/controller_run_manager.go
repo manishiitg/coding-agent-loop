@@ -175,7 +175,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolderWithOptions(
 			hcpo.getWorkflowID(),
 		)
 		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to get user selection for run folder: %w, defaulting to first option", err))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to get user selection for run folder: %v, defaulting to first option", err))
 			// Default to first option (highest iteration number)
 			return folderOptions[0], nil
 		}
@@ -184,7 +184,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolderWithOptions(
 		// Extract the index from the choice string
 		var selectedIndex int
 		if _, err := fmt.Sscanf(choice, "option%d", &selectedIndex); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse folder choice '%s': %w, defaulting to first option", choice, err))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse folder choice '%s': %v, defaulting to first option", choice, err))
 			return folderOptions[0], nil
 		}
 
@@ -216,7 +216,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) resolveRunFolderWithOptions(
 		}
 
 	default:
-		return "", fmt.Errorf(fmt.Sprintf("unknown run mode: %s", runMode), nil)
+		return "", fmt.Errorf("unknown run mode: %s", runMode)
 	}
 }
 
@@ -278,7 +278,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) listRunFolders(ctx context.C
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createRunFolderStructure(ctx context.Context, runPath string) error {
 	// Create run folder directory
 	if err := os.MkdirAll(runPath, 0755); err != nil {
-		return fmt.Errorf(fmt.Sprintf("failed to create run folder: %w", err), nil)
+		return fmt.Errorf("failed to create run folder: %w", err)
 	}
 
 	// Create knowledgebase folder at workspace root (shared across all runs)
@@ -331,7 +331,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) determineRunFolderForCleanup
 		return "", false, nil
 
 	default:
-		return "", false, fmt.Errorf(fmt.Sprintf("unknown run mode: %s", runMode), nil)
+		return "", false, fmt.Errorf("unknown run mode: %s", runMode)
 	}
 }
 
@@ -378,14 +378,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExecutionArtifactsFor
 		// Clean execution directory in run folder (this will recursively delete all step-* subdirectories)
 		executionDir := fmt.Sprintf("%s/execution", runFolderPath)
 		if err := hcpo.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup execution directory in run folder: %w", err))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup execution directory in run folder: %v", err))
 		} else {
 			hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned up execution directory in run folder: %s (including all step-* subdirectories)", executionDir))
 		}
 		// Also clean logs directory in run folder
 		logsDir := fmt.Sprintf("%s/logs", runFolderPath)
 		if err := hcpo.CleanupDirectory(ctx, logsDir, "logs"); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup logs directory in run folder: %w", err))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup logs directory in run folder: %v", err))
 		} else {
 			hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned up logs directory in run folder: %s", logsDir))
 		}
@@ -399,14 +399,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) cleanupExecutionArtifactsFor
 	// Clean old execution directory
 	oldExecutionDir := fmt.Sprintf("%s/execution", workspacePath)
 	if err := hcpo.CleanupDirectory(ctx, oldExecutionDir, "execution"); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup old execution directory: %w", err))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup old execution directory: %v", err))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned up old execution directory: %s", oldExecutionDir))
 	}
 	// Also clean old logs directory
 	oldLogsDir := fmt.Sprintf("%s/logs", workspacePath)
 	if err := hcpo.CleanupDirectory(ctx, oldLogsDir, "logs"); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup old logs directory: %w", err))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup old logs directory: %v", err))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned up old logs directory: %s", oldLogsDir))
 	}

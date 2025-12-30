@@ -757,6 +757,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgentInternal(
 	agentType := "learning agent"
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for %s - Read paths: %v, Write paths: %v", agentType, readPaths, writePaths))
 
+	// Ensure the learning folder exists before running the agent, as it expects to list files in it
+	if len(writePaths) > 0 {
+		if err := hcpo.ensureStepLearningsFolderExists(ctx, writePaths[0]); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure learning folder exists: %v", err))
+		}
+	}
+
 	// Use the provided step-specific code execution mode (already computed with step-level priority) to ensure consistency
 	wasCodeExecutionMode := isCodeExecutionMode
 	hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s using step-specific code execution mode: %v (matches execution agent)", agentType, wasCodeExecutionMode))
@@ -1137,6 +1144,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createOrchestrationLearningA
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	agentType := "orchestration learning agent"
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for %s - Read paths: %v, Write paths: %v", agentType, readPaths, writePaths))
+
+	// Ensure the learning folder exists before running the agent, as it expects to list files in it
+	if len(writePaths) > 0 {
+		if err := hcpo.ensureStepLearningsFolderExists(ctx, writePaths[0]); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure learning folder exists: %v", err))
+		}
+	}
 
 	// Determine settings
 	maxTurns := hcpo.getLearningMaxTurns(stepConfig)

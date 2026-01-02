@@ -16,8 +16,25 @@ The `step_config.json` file stores step-specific agent configurations (LLM model
 | Component | File Path | Key Functions |
 |-----------|-----------|---------------|
 | **Frontend Parser** | [`frontend/src/components/workflow/hooks/usePlanData.ts`](../frontend/src/components/workflow/hooks/usePlanData.ts) | `normalizeStepConfigFile()`, `saveStepConfig()` |
-| **Backend Parser** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go) | `ParseStepConfigContent()`, `StepConfigFile` |
+| **Backend Parser** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go) | `ParseStepConfigContent()`, `ReadStepConfigs()`, `WriteStepConfigs()` |
 | **Type Definitions** | [`frontend/src/utils/stepConfigMatching.ts`](../frontend/src/utils/stepConfigMatching.ts) | `StepConfig`, `AgentConfigs` |
+| **Backend Types** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go) | `AgentConfigs` struct definition |
+
+## 📂 File Locations
+
+The `step_config.json` file can exist in two locations (with priority):
+
+1. **Run-specific config** (highest priority): `{workspacePath}/runs/{runFolder}/planning/step_config.json`
+   - Used when a specific run folder is selected
+   - Allows different configs for different execution runs
+
+2. **Default config** (fallback): `{workspacePath}/planning/step_config.json`
+   - Used when no run folder is selected or run-specific config doesn't exist
+   - Shared across all runs
+
+**File**: [`step_config.go:40-76`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go#L40)
+
+The backend automatically checks run-specific config first, then falls back to default config.
 
 ---
 
@@ -36,18 +53,27 @@ Both frontend and backend **read and write** only the object format with `steps`
       "agent_configs": {
         "selected_servers": ["server1", "server2"],
         "selected_tools": ["server1:tool1", "server1:tool2", "server2:*"],
-        "enabled_custom_tools": ["workspace_tools:read_file", "workspace_tools:write_file"],
+        "enabled_custom_tools": ["workspace_tools:read_file", "workspace_tools:write_file", "workspace_tools:*"],
         "execution_llm": {
           "provider": "openai",
           "model_id": "gpt-4o"
         },
         "execution_max_turns": 25,
+        "validation_max_turns": 10,
+        "learning_max_turns": 5,
+        "conditional_llm": {
+          "provider": "openai",
+          "model_id": "gpt-4o-mini"
+        },
         "use_code_execution_mode": true,
         "disable_validation": false,
+        "skip_llm_validation_if_pre_validation_passes": true,
         "disable_learning": false,
         "lock_learnings": false,
-        "learning_detail_level": "general",
-        "enable_context_offloading": false,
+        "learning_after_loop_iteration": false,
+        "learning_detail_level": "exact",
+        "keep_learning_full": false,
+        "enable_context_offloading": true,
         "enable_prerequisite_detection": true,
         "prerequisite_rules": [
           {
@@ -132,23 +158,70 @@ content, err := json.MarshalIndent(file, "", "  ")
 
 ## ⚙️ Configuration Fields
 
+**File**: [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go) - `AgentConfigs` struct
+
+### LLM Configuration
+
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `selected_servers` | `string[]` | `[]` | MCP servers to use for this step |
-| `selected_tools` | `string[]` | `[]` | Specific tools (format: `"server:tool"` or `"server:*"`) |
-| `enabled_custom_tools` | `string[]` | `[]` | Custom tools to enable (e.g., `workspace_tools:read_file`) |
-| `execution_llm` | `object` | Preset default | LLM config for execution agent |
+| `execution_llm` | `object` | Preset default | LLM config for execution agent (`{ provider: string, model_id: string }`) |
 | `validation_llm` | `object` | Preset default | LLM config for validation agent |
 | `learning_llm` | `object` | Preset default | LLM config for learning agent |
-| `execution_max_turns` | `number` | Preset default | Maximum conversation turns for execution |
-| `use_code_execution_mode` | `boolean` | `false` | Enable code execution mode |
-| `disable_validation` | `boolean` | `false` | Disable validation for this step |
-| `disable_learning` | `boolean` | `false` | Disable learning capture for this step |
-| `lock_learnings` | `boolean` | `false` | Prevent learning updates for this step |
-| `learning_detail_level` | `"exact"\|"general"` | `"general"` | Level of detail in learnings |
-| `enable_context_offloading` | `boolean` | `false` | Enable context offloading virtual tools |
-| `enable_prerequisite_detection` | `boolean` | `false` | Enable prerequisite failure detection |
-| `prerequisite_rules` | `array` | `[]` | Rules for prerequisite failure handling |
+| `conditional_llm` | `object` | Preset default | Step-specific conditional LLM for conditional step evaluation |
+
+### Max Turns Configuration
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `execution_max_turns` | `number` | Preset default (typically 100) | Maximum conversation turns for execution agent |
+| `validation_max_turns` | `number` | Preset default (typically 100) | Maximum conversation turns for validation agent |
+| `learning_max_turns` | `number` | Preset default (typically 100) | Maximum conversation turns for learning agent |
+| `orchestration_max_iterations` | `number` | Orchestrator max turns (typically 100) | Maximum iterations for orchestration step loop |
+
+### Tool & Server Configuration
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `selected_servers` | `string[]` | `[]` | MCP servers to use for this step (subset of preset servers) |
+| `selected_tools` | `string[]` | `[]` | Specific tools (format: `"server:tool"` or `"server:*"` for all tools) |
+| `enabled_custom_tools` | `string[]` | `[]` | **Unified format**: Custom tools to enable (format: `"category:tool"` or `"category:*"`, e.g., `"workspace_tools:read_file"`, `"workspace_tools:*"`) |
+| `enabled_custom_tool_categories` | `string[]` | `[]` | **Legacy format**: Tool categories (e.g., `["workspace_tools", "human_tools"]`) - deprecated, use `enabled_custom_tools` instead |
+
+### Validation Configuration
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `disable_validation` | `boolean` | `false` (nil = enabled) | Skip validation entirely for this step |
+| `skip_llm_validation_if_pre_validation_passes` | `boolean` | `false` | If true, skip LLM validation when pre-validation passes (assume validation success) |
+
+### Learning Configuration
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `disable_learning` | `boolean` | `false` (nil = enabled) | Disable learning capture for this step |
+| `lock_learnings` | `boolean` | `false` (nil = unlocked) | Lock learnings - prevents learning agent from running but still uses existing learnings |
+| `learning_after_loop_iteration` | `boolean` | `false` | Run learning after each loop iteration (for loop steps) |
+| `learning_detail_level` | `"exact"\|"general"\|"none"` | `"exact"` | Level of detail in learnings (`"exact"` = full content, `"general"` = summary, `"none"` = disabled) |
+| `keep_learning_full` | `boolean` | `false` | Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (can be overridden by `KEEP_LEARNING_FULL` env var) |
+
+### Execution Mode Configuration
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `use_code_execution_mode` | `boolean` | Preset default (nil = use preset) | Step-level code execution mode override (nil = use preset default, true/false = override) |
+| `enable_context_offloading` | `boolean` | `true` (nil = enabled) | Enable/disable context offloading virtual tools |
+
+### Prerequisite Detection Configuration
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `enable_prerequisite_detection` | `boolean` | `false` | Enable prerequisite failure detection for this step |
+| `prerequisite_rules` | `array` | `[]` | Array of prerequisite rules, each with `depends_on_step` (string) and `description` (string) |
+
+### Temporary LLM Override Configuration
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
 | `disable_temp_llm` | `boolean` | `false` | If true, skip tempLLM override and use step's base LLM (step config > preset > orchestrator default) |
 
 ---
@@ -157,10 +230,12 @@ content, err := json.MarshalIndent(file, "", "  ")
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| `"steps" field not found` | File uses legacy array format | Use `normalizeStepConfigFile()` to handle both formats |
+| `"steps" field not found` | File uses legacy array format | Use `normalizeStepConfigFile()` to handle both formats (frontend) or ensure backend uses object format |
 | `Step ID mismatch` | Step ID doesn't match plan.json | Ensure step IDs are stable and match plan.json exactly |
 | `agent_configs is null` | Step has no configuration | This is valid - step will use preset defaults |
 | `Parse error` | Invalid JSON structure | Verify file uses object format: `{ "steps": [...] }` |
+| `Config not found` | Run-specific config missing | Backend automatically falls back to default config in `{workspacePath}/planning/step_config.json` |
+| `enabled_custom_tool_categories` ignored | Using legacy format | Migrate to unified `enabled_custom_tools` format: `"category:tool"` or `"category:*"` |
 
 ---
 
@@ -195,6 +270,13 @@ content, err := json.MarshalIndent(file, "", "  ")
 - **Read**: Always parse object format, extract `steps` array
 - **Write**: Always write object format: `JSON.stringify({ steps: stepConfigs }, null, 2)`
 - **Update**: Find step by `id`, update `agent_configs`, save entire file
+- **Config Priority**: Run-specific config (`runs/{runFolder}/planning/step_config.json`) takes precedence over default config (`planning/step_config.json`)
+
+**Field Notes:**
+- All boolean fields use `nil` (undefined) to mean "use default/preset value"
+- `enabled_custom_tools` uses unified format: `"category:tool"` or `"category:*"` (e.g., `"workspace_tools:*"` enables all workspace tools)
+- `learning_detail_level` accepts `"exact"`, `"general"`, or `"none"` (default: `"exact"`)
+- `orchestration_max_iterations` only applies to orchestration step types
 
 ---
 

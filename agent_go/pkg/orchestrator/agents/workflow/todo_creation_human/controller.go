@@ -69,14 +69,12 @@ type HumanControlledTodoPlannerOrchestrator struct {
 	stepConditionalAgentMutex sync.RWMutex
 
 	// Preset-level agent defaults (used when step config doesn't specify)
-	presetExecutionLLM          *AgentLLMConfig // Default for execution agents
-	presetValidationLLM         *AgentLLMConfig // Default for validation agents
-	presetLearningLLM           *AgentLLMConfig // Default for learning agents
-	presetLearningReadingLLM    *AgentLLMConfig // Default for learning reading agent
-	presetPlanningLLM           *AgentLLMConfig // Default for planning agent
-	presetVariableExtractionLLM *AgentLLMConfig // Default for variable extraction agent
-	presetAnonymizationLLM      *AgentLLMConfig // Default for anonymization agent
-	presetPlanImprovementLLM    *AgentLLMConfig // Default for plan improvement agent
+	presetExecutionLLM       *AgentLLMConfig // Default for execution agents
+	presetValidationLLM      *AgentLLMConfig // Default for validation agents
+	presetLearningLLM        *AgentLLMConfig // Default for learning agents
+	presetPhaseLLM           *AgentLLMConfig // Default for all phase agents (planning, anonymization, plan improvement, etc.)
+	presetAnonymizationLLM   *AgentLLMConfig // Default for anonymization agent
+	presetPlanImprovementLLM *AgentLLMConfig // Default for plan improvement agent
 
 	// Temporary LLM overrides (highest priority, from ExecutionOptions)
 	// Only applies to execution agents (not validation or learning agents) for all steps during this execution
@@ -91,6 +89,10 @@ type HumanControlledTodoPlannerOrchestrator struct {
 	// Save validation responses to workspace (from ExecutionOptions)
 	// If true, save validation responses to workspace validation folder
 	saveValidationResponses bool
+
+	// Tool access control (from ExecutionOptions)
+	disableShellExecAccess bool // If true, disable execute_shell_command tool access globally
+	disableReadImageAccess bool // If true, disable read_image tool access globally
 }
 
 // NewHumanControlledTodoPlannerOrchestrator creates a new human-controlled todo planner orchestrator
@@ -114,9 +116,7 @@ func NewHumanControlledTodoPlannerOrchestrator(
 	presetExecutionLLM *AgentLLMConfig, // Optional preset default for execution agents
 	presetValidationLLM *AgentLLMConfig, // Optional preset default for validation agents
 	presetLearningLLM *AgentLLMConfig, // Optional preset default for learning agents
-	presetLearningReadingLLM *AgentLLMConfig, // Optional preset default for learning reading agent
-	presetPlanningLLM *AgentLLMConfig, // Optional preset default for planning agent
-	presetVariableExtractionLLM *AgentLLMConfig, // Optional preset default for variable extraction agent
+	presetPhaseLLM *AgentLLMConfig, // Optional preset default for all phase agents
 	presetAnonymizationLLM *AgentLLMConfig, // Optional preset default for anonymization agent
 	presetPlanImprovementLLM *AgentLLMConfig, // Optional preset default for plan improvement agent
 ) (*HumanControlledTodoPlannerOrchestrator, error) {
@@ -203,20 +203,18 @@ func NewHumanControlledTodoPlannerOrchestrator(
 	}
 
 	hcpo := &HumanControlledTodoPlannerOrchestrator{
-		BaseOrchestrator:            baseOrchestrator,
-		sessionID:                   fmt.Sprintf("session_%d", time.Now().UnixNano()),
-		workflowID:                  fmt.Sprintf("workflow_%d", time.Now().UnixNano()),
-		conditionalAgent:            conditionalAgent,
-		stepConditionalAgentCache:   make(map[string]*HumanControlledTodoPlannerConditionalAgent),
-		presetExecutionLLM:          presetExecutionLLM,
-		presetValidationLLM:         presetValidationLLM,
-		presetLearningLLM:           presetLearningLLM,
-		presetLearningReadingLLM:    presetLearningReadingLLM,
-		presetPlanningLLM:           presetPlanningLLM,
-		presetVariableExtractionLLM: presetVariableExtractionLLM,
-		presetAnonymizationLLM:      presetAnonymizationLLM,
-		presetPlanImprovementLLM:    presetPlanImprovementLLM,
-		saveValidationResponses:     true, // Default to true (save validation responses by default)
+		BaseOrchestrator:          baseOrchestrator,
+		sessionID:                 fmt.Sprintf("session_%d", time.Now().UnixNano()),
+		workflowID:                fmt.Sprintf("workflow_%d", time.Now().UnixNano()),
+		conditionalAgent:          conditionalAgent,
+		stepConditionalAgentCache: make(map[string]*HumanControlledTodoPlannerConditionalAgent),
+		presetExecutionLLM:        presetExecutionLLM,
+		presetValidationLLM:       presetValidationLLM,
+		presetLearningLLM:         presetLearningLLM,
+		presetPhaseLLM:            presetPhaseLLM,
+		presetAnonymizationLLM:    presetAnonymizationLLM,
+		presetPlanImprovementLLM:  presetPlanImprovementLLM,
+		saveValidationResponses:   true, // Default to true (save validation responses by default)
 	}
 
 	// Create VariableManager for variable extraction operations (independent from controller)
@@ -1234,12 +1232,24 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) SetExecutionOptions(options 
 		} else {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Save validation responses enabled - validation responses will be saved to workspace"))
 		}
+
+		// Store tool access control flags
+		hcpo.disableShellExecAccess = options.DisableShellExecAccess
+		if hcpo.disableShellExecAccess {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Shell exec access disabled - execute_shell_command tool will be filtered out"))
+		}
+		hcpo.disableReadImageAccess = options.DisableReadImageAccess
+		if hcpo.disableReadImageAccess {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Read image access disabled - read_image tool will be filtered out"))
+		}
 	} else {
 		// Clear temporary overrides when options are cleared
 		hcpo.tempOverrideLLM = nil
 		hcpo.tempOverrideLLM2 = nil
 		hcpo.fallbackToOriginalLLMOnFailure = false
 		hcpo.saveValidationResponses = true // Default to true when no options provided
+		hcpo.disableShellExecAccess = false // Default to false when no options provided
+		hcpo.disableReadImageAccess = false // Default to false when no options provided
 	}
 }
 

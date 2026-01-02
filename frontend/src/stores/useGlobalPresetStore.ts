@@ -802,14 +802,19 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           set({ currentPresetTools: tools })
 
           // Keep MCP store in sync so UI reflects selection
-          try {
-            const { setSelectedServers } = useMCPStore.getState()
-            if (typeof setSelectedServers === 'function') {
-              setSelectedServers(servers)
+          // IMPORTANT: Only sync for workflow mode. For chat mode, preserve user's manual server selection.
+          // Chat mode tabs have their own server selection in tab config, not global MCP store.
+          if (modeCategory === 'workflow') {
+            try {
+              const { setSelectedServers } = useMCPStore.getState()
+              if (typeof setSelectedServers === 'function') {
+                setSelectedServers(servers)
+              }
+            } catch (error) {
+              console.warn('[GlobalPresetStore] Failed to sync MCP store:', error)
             }
-          } catch (error) {
-            console.warn('[GlobalPresetStore] Failed to sync MCP store:', error)
           }
+          // For chat mode, don't sync to global MCP store - let user's manual selection persist
           
           // Set folder selection
           const folderPath = preset.selectedFolder?.filepath || null
@@ -835,9 +840,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             // Clear any previously selected file in workspace
             useWorkspaceStore.getState().setSelectedFile(null)
             
-            // Clear existing file context to avoid duplicates
-            useAppStore.getState().clearFileContext()
-            
             // Select the preset folder in workspace
             useWorkspaceStore.getState().setSelectedFile({
               name: folderPath.split('/').pop() || folderPath,
@@ -851,17 +853,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             const { expandFoldersForFile } = useWorkspaceStore.getState()
             expandFoldersForFile(folderPath)
             
-            // Add the folder to chat context for AI processing
-            const folderName = folderPath.split('/').pop() || folderPath
-            useAppStore.getState().addFileToContext({
-              name: folderName,
-              path: folderPath,
-              type: 'folder'
-            })
+            // Note: File context is now preset-specific (stored in preset.selectedFolder)
+            // No need to manipulate global file context
           } else {
-            // Clear workspace selection and file context if no folder
+            // Clear workspace selection if no folder
             useWorkspaceStore.getState().setSelectedFile(null)
-            useAppStore.getState().clearFileContext()
           }
           
           // Set active preset ID

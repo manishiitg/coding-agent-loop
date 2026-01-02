@@ -22,17 +22,79 @@ const (
 	AgentModeWorkflow     = "workflow"
 )
 
+// ChatSessionConfig represents the configuration stored for a chat session
+type ChatSessionConfig struct {
+	SelectedServers            []string             `json:"selected_servers,omitempty"`
+	EnabledServers             []string             `json:"enabled_servers,omitempty"`
+	UseCodeExecutionMode       bool                 `json:"use_code_execution_mode,omitempty"`
+	EnableContextSummarization bool                 `json:"enable_context_summarization,omitempty"`
+	LLMConfig                  *LLMConfigForStorage `json:"llm_config,omitempty"`              // LLM config (without API keys)
+	FileContext                []FileContextItem    `json:"file_context,omitempty"`            // Workspace files/folders
+	EnableWorkspaceAccess      *bool                `json:"enable_workspace_access,omitempty"` // Workspace access setting
+}
+
+// LLMConfigForStorage stores LLM config without sensitive API keys
+type LLMConfigForStorage struct {
+	Provider       string                 `json:"provider,omitempty"`
+	ModelID        string                 `json:"model_id,omitempty"`
+	FallbackModels []string               `json:"fallback_models,omitempty"`
+	CrossProvider  *CrossProviderFallback `json:"cross_provider_fallback,omitempty"`
+}
+
+// CrossProviderFallback represents cross-provider fallback configuration
+type CrossProviderFallback struct {
+	Provider string   `json:"provider"`
+	Models   []string `json:"models"`
+}
+
+// FileContextItem represents a file or folder in workspace context
+type FileContextItem struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Type string `json:"type"` // "file" or "folder"
+}
+
+// ToJSON converts ChatSessionConfig to json.RawMessage for database storage
+func (c *ChatSessionConfig) ToJSON() (json.RawMessage, error) {
+	if c == nil {
+		return nil, nil
+	}
+	data, err := json.Marshal(c)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal config: %w", err)
+	}
+	return json.RawMessage(data), nil
+}
+
+// ChatSessionConfigFromJSON converts json.RawMessage to ChatSessionConfig
+func ChatSessionConfigFromJSON(data json.RawMessage) (*ChatSessionConfig, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	var config ChatSessionConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+	return &config, nil
+}
+
+// GetConfig returns the ChatSessionConfig from a ChatSession, or nil if not set
+func (s *ChatSession) GetConfig() (*ChatSessionConfig, error) {
+	return ChatSessionConfigFromJSON(s.Config)
+}
+
 // ChatSession represents a chat session in the database
 type ChatSession struct {
-	ID            string     `json:"id" db:"id"`
-	SessionID     string     `json:"session_id" db:"session_id"`
-	Title         string     `json:"title" db:"title"`
-	AgentMode     string     `json:"agent_mode" db:"agent_mode"`
-	PresetQueryID *string    `json:"preset_query_id" db:"preset_query_id"`
-	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
-	CompletedAt   *time.Time `json:"completed_at" db:"completed_at"`
-	Status        string     `json:"status" db:"status"`
-	LastActivity  *time.Time `json:"last_activity" db:"last_activity"`
+	ID            string          `json:"id" db:"id"`
+	SessionID     string          `json:"session_id" db:"session_id"`
+	Title         string          `json:"title" db:"title"`
+	AgentMode     string          `json:"agent_mode" db:"agent_mode"`
+	PresetQueryID *string         `json:"preset_query_id" db:"preset_query_id"`
+	Config        json.RawMessage `json:"config" db:"config"` // JSON configuration
+	CreatedAt     time.Time       `json:"created_at" db:"created_at"`
+	CompletedAt   *time.Time      `json:"completed_at" db:"completed_at"`
+	Status        string          `json:"status" db:"status"`
+	LastActivity  *time.Time      `json:"last_activity" db:"last_activity"`
 }
 
 // Event represents a stored event in the database
@@ -47,34 +109,37 @@ type Event struct {
 
 // ChatHistorySummary represents a summary view of chat history
 type ChatHistorySummary struct {
-	ChatSessionID string     `json:"chat_session_id" db:"chat_session_id"`
-	SessionID     string     `json:"session_id" db:"session_id"`
-	Title         string     `json:"title" db:"title"`
-	AgentMode     string     `json:"agent_mode" db:"agent_mode"`
-	PresetQueryID string     `json:"preset_query_id" db:"preset_query_id"`
-	Status        string     `json:"status" db:"status"`
-	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
-	CompletedAt   *time.Time `json:"completed_at" db:"completed_at"`
-	TotalEvents   int        `json:"total_events" db:"total_events"`
-	TotalTurns    int        `json:"total_turns" db:"total_turns"`
-	LastActivity  *time.Time `json:"last_activity" db:"last_activity"`
+	ChatSessionID string          `json:"chat_session_id" db:"chat_session_id"`
+	SessionID     string          `json:"session_id" db:"session_id"`
+	Title         string          `json:"title" db:"title"`
+	AgentMode     string          `json:"agent_mode" db:"agent_mode"`
+	PresetQueryID string          `json:"preset_query_id" db:"preset_query_id"`
+	Config        json.RawMessage `json:"config" db:"config"` // JSON configuration
+	Status        string          `json:"status" db:"status"`
+	CreatedAt     time.Time       `json:"created_at" db:"created_at"`
+	CompletedAt   *time.Time      `json:"completed_at" db:"completed_at"`
+	TotalEvents   int             `json:"total_events" db:"total_events"`
+	TotalTurns    int             `json:"total_turns" db:"total_turns"`
+	LastActivity  *time.Time      `json:"last_activity" db:"last_activity"`
 }
 
 // CreateChatSessionRequest represents a request to create a new chat session
 type CreateChatSessionRequest struct {
-	SessionID     string `json:"session_id"`
-	Title         string `json:"title,omitempty"`
-	AgentMode     string `json:"agent_mode,omitempty"`
-	PresetQueryID string `json:"preset_query_id,omitempty"`
+	SessionID     string          `json:"session_id"`
+	Title         string          `json:"title,omitempty"`
+	AgentMode     string          `json:"agent_mode,omitempty"`
+	PresetQueryID string          `json:"preset_query_id,omitempty"`
+	Config        json.RawMessage `json:"config,omitempty"` // JSON configuration
 }
 
 // UpdateChatSessionRequest represents a request to update a chat session
 type UpdateChatSessionRequest struct {
-	Title         string     `json:"title,omitempty"`
-	AgentMode     string     `json:"agent_mode,omitempty"`
-	PresetQueryID string     `json:"preset_query_id,omitempty"`
-	Status        string     `json:"status,omitempty"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	Title         string          `json:"title,omitempty"`
+	AgentMode     string          `json:"agent_mode,omitempty"`
+	PresetQueryID string          `json:"preset_query_id,omitempty"`
+	Config        json.RawMessage `json:"config,omitempty"` // JSON configuration
+	Status        string          `json:"status,omitempty"`
+	CompletedAt   *time.Time      `json:"completed_at,omitempty"`
 }
 
 // GetChatHistoryRequest represents a request to get chat history
@@ -112,16 +177,10 @@ type PresetLLMConfig struct {
 	ModelID  string `json:"model_id,omitempty"`
 
 	// New: Agent-specific default models (takes priority over legacy fields)
-	ExecutionLLM             *AgentLLMConfig `json:"execution_llm,omitempty"`              // Default for execution agents
-	ValidationLLM            *AgentLLMConfig `json:"validation_llm,omitempty"`             // Default for validation agents
-	LearningLLM              *AgentLLMConfig `json:"learning_llm,omitempty"`               // Default for learning agents
-	LearningReadingLLM       *AgentLLMConfig `json:"learning_reading_llm,omitempty"`       // Default for learning reading agent
-	PlanningLLM              *AgentLLMConfig `json:"planning_llm,omitempty"`               // Default for planning agent
-	VariableExtractionLLM    *AgentLLMConfig `json:"variable_extraction_llm,omitempty"`    // Default for variable extraction agent
-	AnonymizationLLM         *AgentLLMConfig `json:"anonymization_llm,omitempty"`          // Default for anonymization agent
-	PlanImprovementLLM       *AgentLLMConfig `json:"plan_improvement_llm,omitempty"`       // Default for plan improvement agent
-	PlanToolOptimizationLLM  *AgentLLMConfig `json:"plan_tool_optimization_llm,omitempty"` // Default for plan tool optimization agent
-	LearningConsolidationLLM *AgentLLMConfig `json:"learning_consolidation_llm,omitempty"` // Default for learning consolidation agent
+	ExecutionLLM  *AgentLLMConfig `json:"execution_llm,omitempty"`  // Default for execution agents
+	ValidationLLM *AgentLLMConfig `json:"validation_llm,omitempty"` // Default for validation agents
+	LearningLLM   *AgentLLMConfig `json:"learning_llm,omitempty"`   // Default for learning agents
+	PhaseLLM      *AgentLLMConfig `json:"phase_llm,omitempty"`      // Default for all phase agents (planning, anonymization, plan improvement, etc.)
 }
 
 // AgentLLMConfig represents LLM configuration for a specific agent type
@@ -229,12 +288,6 @@ func validatePresetLLMConfig(config *PresetLLMConfig) error {
 		{config.ExecutionLLM, "execution_llm"},
 		{config.ValidationLLM, "validation_llm"},
 		{config.LearningLLM, "learning_llm"},
-		{config.PlanningLLM, "planning_llm"},
-		{config.VariableExtractionLLM, "variable_extraction_llm"},
-		{config.AnonymizationLLM, "anonymization_llm"},
-		{config.PlanImprovementLLM, "plan_improvement_llm"},
-		{config.PlanToolOptimizationLLM, "plan_tool_optimization_llm"},
-		{config.LearningConsolidationLLM, "learning_consolidation_llm"},
 	}
 
 	// Validate each non-nil AgentLLMConfig

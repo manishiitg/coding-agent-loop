@@ -179,3 +179,90 @@ export function extractFolderPathsForFile(filepath: string): string[] {
   return folders
 }
 
+/**
+ * Normalize a path for comparison (lowercase, remove leading/trailing slashes)
+ * Alias for normalizePathForComparison for backward compatibility
+ */
+export const normalizePath = normalizePathForComparison
+
+/**
+ * Find a folder in the file tree by path (checks both filepath and originalFilepath)
+ */
+export function findFolderInTree(fileList: PlannerFile[], targetPath: string): PlannerFile | null {
+  for (const file of fileList) {
+    if (file.type === 'folder' && (file.filepath === targetPath || ('originalFilepath' in file && file.originalFilepath === targetPath))) {
+      return file
+    }
+    if (file.children && file.children.length > 0) {
+      const found = findFolderInTree(file.children, targetPath)
+      if (found) return found
+    }
+  }
+  return null
+}
+
+/**
+ * Recursively find all iteration folders in the tree
+ * Matches pattern: runs/iteration-* or iteration-* (with optional group subfolders)
+ */
+export function findIterationFolders(fileList: PlannerFile[]): string[] {
+  const iterationFolders: string[] = []
+  
+  for (const file of fileList) {
+    if (file.type === 'folder') {
+      // Check if this is an iteration folder (matches pattern: runs/iteration-* or iteration-*)
+      // Also handle group subfolders: runs/iteration-*/group-* or runs/iteration-*/display-name
+      // Accepts both "group-X" format and display names (any alphanumeric/dash folder name)
+      if (file.filepath.match(/^runs\/iteration-\d+(\/[a-zA-Z0-9_-]+)?$/) || file.filepath.match(/^iteration-\d+(\/[a-zA-Z0-9_-]+)?$/)) {
+        iterationFolders.push(file.filepath)
+      }
+      
+      // Recursively search children
+      if (file.children && file.children.length > 0) {
+        const childIterations = findIterationFolders(file.children)
+        iterationFolders.push(...childIterations)
+      }
+    }
+  }
+  
+  return iterationFolders
+}
+
+/**
+ * Check if a path matches an iteration folder pattern
+ */
+export function isIterationFolder(path: string): boolean {
+  return !!(
+    path.match(/^runs\/iteration-\d+(\/[a-zA-Z0-9_-]+)?$/) || 
+    path.match(/^iteration-\d+(\/[a-zA-Z0-9_-]+)?$/)
+  )
+}
+
+/**
+ * Adjust file paths recursively to show workflow folder as root
+ * Stores original path in originalFilepath for API calls
+ */
+export function adjustFilePathsRecursive(
+  fileList: PlannerFile[],
+  workflowFolderPath: string
+): PlannerFile[] {
+  return fileList.map(file => {
+    const adjustedFilepath = getAdjustedPath(file.filepath, workflowFolderPath)
+    const originalFilepath = file.filepath // Store original before adjustment
+    
+    if (file.type === 'folder') {
+      return {
+        ...file,
+        filepath: adjustedFilepath,
+        originalFilepath: originalFilepath,
+        children: file.children ? adjustFilePathsRecursive(file.children, workflowFolderPath) : []
+      }
+    }
+    
+    return {
+      ...file,
+      filepath: adjustedFilepath,
+      originalFilepath: originalFilepath
+    }
+  })
+}

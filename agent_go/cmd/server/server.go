@@ -246,12 +246,12 @@ type QueryRequest struct {
 	// Execution options from frontend (for workflow execution phase)
 	ExecutionOptions *ExecutionOptions `json:"execution_options,omitempty"`
 	// Context summarization configuration
-	EnableContextSummarization     bool    `json:"enable_context_summarization,omitempty"`       // Enable context summarization feature
-	SummarizeOnTokenThreshold      bool    `json:"summarize_on_token_threshold,omitempty"`       // Enable token-based summarization trigger (percentage-based)
+	EnableContextSummarization     bool    `json:"enable_context_summarization,omitempty"`       // Enable context summarization feature (default: true, matches orchestrator)
+	SummarizeOnTokenThreshold      bool    `json:"summarize_on_token_threshold,omitempty"`       // Enable token-based summarization trigger (percentage-based, default: true, matches orchestrator)
 	TokenThresholdPercent          float64 `json:"token_threshold_percent,omitempty"`            // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
-	SummarizeOnFixedTokenThreshold bool    `json:"summarize_on_fixed_token_threshold,omitempty"` // Enable fixed token-based summarization trigger
-	FixedTokenThreshold            int     `json:"fixed_token_threshold,omitempty"`              // Fixed token threshold to trigger summarization (e.g., 100000 = 100k tokens, default: 100k)
-	SummaryKeepLastMessages        int     `json:"summary_keep_last_messages,omitempty"`         // Number of recent messages to keep when summarizing (default: 4)
+	SummarizeOnFixedTokenThreshold bool    `json:"summarize_on_fixed_token_threshold,omitempty"` // Enable fixed token-based summarization trigger (default: true, matches orchestrator)
+	FixedTokenThreshold            int     `json:"fixed_token_threshold,omitempty"`              // Fixed token threshold to trigger summarization (default: 200000 = 200k tokens, matches orchestrator)
+	SummaryKeepLastMessages        int     `json:"summary_keep_last_messages,omitempty"`         // Number of recent messages to keep when summarizing (default: 4, matches orchestrator)
 	// Context editing configuration
 	EnableContextEditing        bool `json:"enable_context_editing,omitempty"`         // Enable context editing (dynamic context reduction)
 	ContextEditingThreshold     int  `json:"context_editing_threshold,omitempty"`      // Token threshold for context editing (0 = use default: 100)
@@ -591,11 +591,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/mcp/execute", executorHandlers.HandleMCPExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/custom/execute", executorHandlers.HandleCustomExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/virtual/execute", executorHandlers.HandleVirtualExecute).Methods("POST", "OPTIONS")
-
-	// MCP Registry API routes (from mcp_registry_routes.go)
-	apiRouter.HandleFunc("/mcp-registry/servers", api.handleGetMCPRegistryServers).Methods("GET")
-	apiRouter.HandleFunc("/mcp-registry/servers/{id}", api.handleGetMCPRegistryServerDetails).Methods("GET")
-	apiRouter.HandleFunc("/mcp-registry/servers/{id}/tools", api.handleGetMCPRegistryServerTools).Methods("POST")
 
 	// MCP Config API routes (from mcp_config_routes.go)
 	apiRouter.HandleFunc("/mcp-config", api.handleGetMCPConfig).Methods("GET")
@@ -952,27 +947,95 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Chat session doesn't exist, create a new one
 		log.Printf("[DATABASE DEBUG] Creating new chat session for sessionID: %s", sessionID)
-		// Truncate query for title
+		log.Printf("[TITLE DEBUG] req.Query value: '%s' (length: %d, empty: %v)", req.Query, len(req.Query), req.Query == "")
+		// Extract title from req.Query (user message)
+		// Remove file context suffix if present (format: "...\n\n📁 Files in context: ...")
 		title := req.Query
-		log.Printf("[TITLE DEBUG] Query received for title: '%s' (length: %d)", title, len(title))
+		if idx := strings.Index(title, "\n\n📁 Files in context:"); idx != -1 {
+			title = title[:idx]
+			log.Printf("[TITLE DEBUG] Found file context suffix, trimmed title to: '%s'", title)
+		}
+		title = strings.TrimSpace(title)
+		// Truncate to 50 characters
 		if len(title) > 50 {
 			title = title[:50] + "..."
+			log.Printf("[TITLE DEBUG] Title truncated to 50 chars: '%s'", title)
 		}
-		log.Printf("[TITLE DEBUG] Final title: '%s'", title)
+		log.Printf("[TITLE DEBUG] Final title before CreateChatSession: '%s' (length: %d)", title, len(title))
+
+		// Build typed config from request
+		var configJSON json.RawMessage
+		hasConfig := len(req.Servers) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.EnableContextSummarization || req.Provider != "" || req.ModelID != "" || req.LLMConfig != nil
+		if hasConfig {
+			config := &database.ChatSessionConfig{
+				SelectedServers:            req.Servers,
+				EnabledServers:             req.EnabledServers,
+				UseCodeExecutionMode:       req.UseCodeExecutionMode,
+				EnableContextSummarization: req.EnableContextSummarization,
+			}
+
+			// Extract LLM config (prefer LLMConfig field, fallback to Provider/ModelID)
+			if req.LLMConfig != nil {
+				config.LLMConfig = &database.LLMConfigForStorage{
+					Provider:       req.LLMConfig.Provider,
+					ModelID:        req.LLMConfig.ModelID,
+					FallbackModels: req.LLMConfig.FallbackModels,
+				}
+				if req.LLMConfig.CrossProviderFallback != nil {
+					config.LLMConfig.CrossProvider = &database.CrossProviderFallback{
+						Provider: req.LLMConfig.CrossProviderFallback.Provider,
+						Models:   req.LLMConfig.CrossProviderFallback.Models,
+					}
+				}
+			} else if req.Provider != "" || req.ModelID != "" {
+				config.LLMConfig = &database.LLMConfigForStorage{
+					Provider: req.Provider,
+					ModelID:  req.ModelID,
+				}
+			}
+
+			var err error
+			configJSON, err = config.ToJSON()
+			if err != nil {
+				log.Printf("[CONFIG DEBUG] Failed to marshal config: %v", err)
+				configJSON = nil
+			}
+		}
+
 		chatSession, err = api.chatDB.CreateChatSession(r.Context(), &database.CreateChatSessionRequest{
 			SessionID:     sessionID,
 			Title:         title,
 			AgentMode:     req.AgentMode,
 			PresetQueryID: req.PresetQueryID,
+			Config:        configJSON,
 		})
 		if err != nil {
 			log.Printf("[DATABASE DEBUG] Failed to create chat session: %w", err)
 			// Continue without chat session - events won't be stored but query can proceed
 		} else {
-			log.Printf("[DATABASE DEBUG] Successfully created chat session: %s", chatSession.ID)
+			log.Printf("[DATABASE DEBUG] Successfully created chat session: %s, Title returned: '%s' (length: %d)", chatSession.ID, chatSession.Title, len(chatSession.Title))
 		}
 	} else {
-		log.Printf("[DATABASE DEBUG] Found existing chat session: %s", chatSession.ID)
+		log.Printf("[DATABASE DEBUG] Found existing chat session: %s, Title: '%s' (length: %d)", chatSession.ID, chatSession.Title, len(chatSession.Title))
+
+		// Reactivate session if it was stopped/completed/error - update status to "active" for new query
+		if chatSession.Status == "stopped" || chatSession.Status == "completed" || chatSession.Status == "error" {
+			log.Printf("[DATABASE DEBUG] Reactivating session %s from status '%s' to 'active'", sessionID, chatSession.Status)
+			updateReq := &database.UpdateChatSessionRequest{
+				Status:      "active",
+				CompletedAt: nil, // Clear completion timestamp when reactivating
+			}
+			_, err := api.chatDB.UpdateChatSession(r.Context(), sessionID, updateReq)
+			if err != nil {
+				log.Printf("[DATABASE DEBUG] Failed to reactivate chat session %s: %v", sessionID, err)
+			} else {
+				log.Printf("[DATABASE DEBUG] Successfully reactivated chat session %s to 'active' status", sessionID)
+			}
+
+			// Initialize EventStore for reactivated session to ensure new events are stored correctly
+			api.eventStore.InitializeSession(sessionID)
+			log.Printf("[DATABASE DEBUG] Initialized EventStore for reactivated session %s", sessionID)
+		}
 	}
 
 	// Track active session for page refresh recovery (no observer needed)
@@ -1305,6 +1368,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					SkipLearningWhenTempLLM2:       req.ExecutionOptions.SkipLearningWhenTempLLM2,
 					EnabledGroupIDs:                req.ExecutionOptions.EnabledGroupIDs,
 					SaveValidationResponses:        req.ExecutionOptions.SaveValidationResponses,
+					DisableShellExecAccess:         req.ExecutionOptions.DisableShellExecAccess,
+					DisableReadImageAccess:         req.ExecutionOptions.DisableReadImageAccess,
 				}
 
 				// Convert TempOverrideLLM if present
@@ -1516,6 +1581,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Load selected tools and code execution mode from preset if available (for simple/ReAct agents)
 		var selectedTools []string
 		var useCodeExecutionMode bool
+		var presetSetCodeExecutionMode bool // Track if preset explicitly set the value
+
 		if req.PresetQueryID != "" {
 			ctx := context.Background()
 			preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
@@ -1533,8 +1600,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				// Load code execution mode from preset
 				useCodeExecutionMode = preset.UseCodeExecutionMode
+				presetSetCodeExecutionMode = true
 				if useCodeExecutionMode {
 					log.Printf("[CODE_EXECUTION] Code execution mode enabled from preset")
+				} else {
+					log.Printf("[CODE_EXECUTION] Code execution mode disabled from preset")
 				}
 			}
 		}
@@ -1551,52 +1621,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
 		}
 
-		// Use code execution mode from request if preset didn't provide any
-		if !useCodeExecutionMode && req.UseCodeExecutionMode {
-			useCodeExecutionMode = req.UseCodeExecutionMode
+		// CRITICAL: Always respect request value when explicitly set (frontend always sends explicit value)
+		// The frontend explicitly sends use_code_execution_mode (true or false), so we should use it
+		// This ensures that when user selects "simple" mode without preset, the request value is respected
+		useCodeExecutionMode = req.UseCodeExecutionMode
+		if useCodeExecutionMode {
 			log.Printf("[CODE_EXECUTION] Code execution mode enabled from request")
-		}
-
-		// Create LLM agent wrapper with trace using streamCtx
-		if req.PresetQueryID != "" {
-			ctx := context.Background()
-			preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
-			if err == nil {
-				if preset.SelectedTools != "" {
-					if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
-						log.Printf("[TOOLS] Failed to parse selected tools from preset: %w", err)
-					} else {
-						if len(selectedTools) > 0 {
-							log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
-						} else {
-							log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
-						}
-					}
-				}
-				// Load code execution mode from preset
-				useCodeExecutionMode = preset.UseCodeExecutionMode
-				if useCodeExecutionMode {
-					log.Printf("[CODE_EXECUTION] Code execution mode enabled from preset")
-				}
-			}
-		}
-
-		// Use selected tools from request if preset didn't provide any
-		if len(selectedTools) == 0 && len(req.SelectedTools) > 0 {
-			selectedTools = req.SelectedTools
-			if len(selectedTools) > 0 {
-				log.Printf("[TOOLS] Using %d specific tools from request", len(selectedTools))
+		} else {
+			if presetSetCodeExecutionMode {
+				log.Printf("[CODE_EXECUTION] Code execution mode disabled by request (overriding preset value)")
 			} else {
-				log.Printf("[TOOLS] Request has empty tool selection - will use ALL tools from selected servers")
+				log.Printf("[CODE_EXECUTION] Code execution mode disabled (default)")
 			}
-		} else if len(selectedTools) == 0 {
-			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
-		}
-
-		// Use code execution mode from request if preset didn't provide any
-		if !useCodeExecutionMode && req.UseCodeExecutionMode {
-			useCodeExecutionMode = req.UseCodeExecutionMode
-			log.Printf("[CODE_EXECUTION] Code execution mode enabled from request")
 		}
 
 		// Create new agent with streamCtx instead of r.Context()
@@ -1654,26 +1690,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}(),
 			// Context summarization configuration
-			// Priority: Request > Environment Variable > Default
+			// Priority: Request > Environment Variable > Default (matches orchestrator defaults)
 			EnableContextSummarization: func() bool {
 				if req.EnableContextSummarization {
 					return true
 				}
-				// Check environment variable
-				if envVal := os.Getenv("ENABLE_CONTEXT_SUMMARIZATION"); envVal == "true" {
-					return true
+				// Check environment variable - default to enabled (true), can be disabled via "false"
+				if envVal := os.Getenv("ENABLE_CONTEXT_SUMMARIZATION"); envVal == "false" {
+					return false
 				}
-				return false
+				return true // Default to enabled (matches orchestrator)
 			}(),
 			SummarizeOnTokenThreshold: func() bool {
 				if req.SummarizeOnTokenThreshold {
 					return true
 				}
-				// Check environment variable
-				if envVal := os.Getenv("SUMMARIZE_ON_TOKEN_THRESHOLD"); envVal == "true" {
-					return true
+				// Check environment variable - default to enabled (true), can be disabled via "false"
+				if envVal := os.Getenv("SUMMARIZE_ON_TOKEN_THRESHOLD"); envVal == "false" {
+					return false
 				}
-				return false
+				return true // Default to enabled (matches orchestrator)
 			}(),
 			TokenThresholdPercent: func() float64 {
 				// Request takes highest priority
@@ -1686,18 +1722,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						return threshold
 					}
 				}
-				// Default to 80% (0.8)
+				// Default to 80% (0.8) - matches orchestrator
 				return 0.8
 			}(),
 			SummarizeOnFixedTokenThreshold: func() bool {
 				if req.SummarizeOnFixedTokenThreshold {
 					return true
 				}
-				// Check environment variable
-				if envVal := os.Getenv("SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD"); envVal == "true" {
-					return true
+				// Check environment variable - default to enabled (true), can be disabled via "false"
+				if envVal := os.Getenv("SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD"); envVal == "false" {
+					return false
 				}
-				return false
+				return true // Default to enabled (matches orchestrator)
 			}(),
 			FixedTokenThreshold: func() int {
 				// Request takes highest priority
@@ -1710,7 +1746,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						return threshold
 					}
 				}
-				return 0 // 0 means disabled
+				return 200000 // Default to 200k tokens (matches orchestrator)
 			}(),
 			SummaryKeepLastMessages: func() int {
 				if req.SummaryKeepLastMessages > 0 {
@@ -1722,7 +1758,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						return keepLast
 					}
 				}
-				return 0 // 0 means use default (8 messages)
+				return 4 // Default to 4 messages (matches orchestrator)
 			}(),
 			// Context editing configuration
 			// Priority: Request > Environment Variable > Default
@@ -1955,10 +1991,78 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.conversationMux.RUnlock()
 
 		if exists && len(history) > 0 {
-			log.Printf("[CONVERSATION DEBUG] Loading %d messages from conversation history for session %s", len(history), sessionID)
+			log.Printf("[CONVERSATION DEBUG] Loading %d messages from in-memory conversation history for session %s", len(history), sessionID)
 			// Load the conversation history into the agent
 			for _, msg := range history {
 				llmAgent.AppendMessage(msg)
+			}
+		} else if api.chatDB != nil {
+			// Try to load conversation history from database
+			log.Printf("[CONVERSATION DEBUG] No in-memory history found for session %s, attempting to load from database", sessionID)
+
+			// Get events for this session, focusing on conversation_turn events
+			dbEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 1000, 0)
+			if err != nil {
+				log.Printf("[CONVERSATION DEBUG] Failed to load events from database for session %s: %v", sessionID, err)
+			} else {
+				// Find the last conversation_turn event which contains full conversation history
+				var lastTurnEvent *database.Event
+				for i := len(dbEvents) - 1; i >= 0; i-- {
+					if dbEvents[i].EventType == string(unifiedevents.ConversationTurn) {
+						lastTurnEvent = &dbEvents[i]
+						break
+					}
+				}
+
+				if lastTurnEvent != nil {
+					// Parse the event data using typed structures
+					// EventData contains the full AgentEvent JSON structure
+					// Use a helper struct to unmarshal Data as json.RawMessage first
+					type agentEventHelper struct {
+						Type unifiedevents.EventType `json:"type"`
+						Data json.RawMessage         `json:"data"`
+					}
+
+					var agentEvent agentEventHelper
+					if err := json.Unmarshal(lastTurnEvent.EventData, &agentEvent); err != nil {
+						log.Printf("[CONVERSATION DEBUG] Failed to parse AgentEvent for session %s: %v", sessionID, err)
+					} else if agentEvent.Type == unifiedevents.ConversationTurn {
+						// Unmarshal Data field to ConversationTurnEvent
+						var turnEvent unifiedevents.ConversationTurnEvent
+						if err := json.Unmarshal(agentEvent.Data, &turnEvent); err != nil {
+							log.Printf("[CONVERSATION DEBUG] Failed to parse ConversationTurnEvent data for session %s: %v", sessionID, err)
+						} else if len(turnEvent.Messages) > 0 {
+							// Deserialize messages from SerializedMessage format back to llmtypes.MessageContent
+							deserializedHistory := make([]llmtypes.MessageContent, 0, len(turnEvent.Messages))
+							for _, serializedMsg := range turnEvent.Messages {
+								msg := deserializeSerializedMessage(serializedMsg)
+								if msg != nil {
+									deserializedHistory = append(deserializedHistory, *msg)
+								}
+							}
+
+							if len(deserializedHistory) > 0 {
+								log.Printf("[CONVERSATION DEBUG] Loaded %d messages from database conversation history for session %s", len(deserializedHistory), sessionID)
+								// Load the conversation history into the agent
+								for _, msg := range deserializedHistory {
+									llmAgent.AppendMessage(msg)
+								}
+								// Cache in memory for future use
+								api.conversationMux.Lock()
+								api.conversationHistory[sessionID] = deserializedHistory
+								api.conversationMux.Unlock()
+							} else {
+								log.Printf("[CONVERSATION DEBUG] No valid messages found after deserialization for session %s", sessionID)
+							}
+						} else {
+							log.Printf("[CONVERSATION DEBUG] ConversationTurnEvent has no messages for session %s", sessionID)
+						}
+					} else {
+						log.Printf("[CONVERSATION DEBUG] Event type is %s, expected conversation_turn for session %s", agentEvent.Type, sessionID)
+					}
+				} else {
+					log.Printf("[CONVERSATION DEBUG] No conversation_turn event found in database for session %s", sessionID)
+				}
 			}
 		} else {
 			log.Printf("[CONVERSATION DEBUG] No conversation history found for session %s, starting fresh", sessionID)
@@ -2330,7 +2434,90 @@ func deleteChatSessionHandler(db database.Database) http.HandlerFunc {
 	}
 }
 
+// convertDBEventToPollingEvent converts a database.Event to events.Event format
+// This is the same conversion used by the polling API to ensure consistency
+func convertDBEventToPollingEvent(dbEvent database.Event, sessionID string) (*events.Event, error) {
+	// Unmarshal the full AgentEvent - use helper struct to handle EventData interface
+	type agentEventWithRawData struct {
+		Type           unifiedevents.EventType `json:"type"`
+		Timestamp      time.Time               `json:"timestamp"`
+		EventIndex     int                     `json:"event_index"`
+		TraceID        string                  `json:"trace_id,omitempty"`
+		SpanID         string                  `json:"span_id,omitempty"`
+		ParentID       string                  `json:"parent_id,omitempty"`
+		CorrelationID  string                  `json:"correlation_id,omitempty"`
+		HierarchyLevel int                     `json:"hierarchy_level"`
+		SessionID      string                  `json:"session_id,omitempty"`
+		Component      string                  `json:"component,omitempty"`
+		Data           json.RawMessage         `json:"data"`
+	}
+
+	var helper agentEventWithRawData
+	if err := json.Unmarshal(dbEvent.EventData, &helper); err != nil {
+		return nil, fmt.Errorf("failed to parse event: %w", err)
+	}
+
+	// Unmarshal Data field into a map to preserve structure
+	var dataMap map[string]interface{}
+	if err := json.Unmarshal(helper.Data, &dataMap); err != nil {
+		return nil, fmt.Errorf("failed to parse event data: %w", err)
+	}
+
+	// Extract event-specific fields, excluding BaseEventData fields
+	// BaseEventData fields are: timestamp, trace_id, span_id, event_id, parent_id,
+	// is_end_event, correlation_id, hierarchy_level, session_id, component, metadata
+	baseEventDataFields := map[string]bool{
+		"timestamp":       true,
+		"trace_id":        true,
+		"span_id":         true,
+		"event_id":        true,
+		"parent_id":       true,
+		"is_end_event":    true,
+		"correlation_id":  true,
+		"hierarchy_level": true,
+		"session_id":      true,
+		"component":       true,
+		"metadata":        true,
+	}
+
+	actualEventData := make(map[string]interface{})
+	for k, v := range dataMap {
+		// Skip BaseEventData fields - they're already in AgentEvent
+		if !baseEventDataFields[k] {
+			actualEventData[k] = v
+		}
+	}
+
+	// Create AgentEvent with flatEventData that serializes directly as event-specific fields
+	// This ensures event.data.data contains the actual event data (like {content: "..."})
+	agentEvent := unifiedevents.AgentEvent{
+		Type:           helper.Type,
+		Timestamp:      helper.Timestamp,
+		EventIndex:     helper.EventIndex,
+		TraceID:        helper.TraceID,
+		SpanID:         helper.SpanID,
+		ParentID:       helper.ParentID,
+		CorrelationID:  helper.CorrelationID,
+		HierarchyLevel: helper.HierarchyLevel,
+		SessionID:      helper.SessionID,
+		Component:      helper.Component,
+		Data: &flatEventData{
+			eventData: actualEventData,
+			eventType: helper.Type,
+		},
+	}
+
+	return &events.Event{
+		ID:        dbEvent.ID,
+		Type:      dbEvent.EventType,
+		Timestamp: dbEvent.Timestamp,
+		SessionID: sessionID,
+		Data:      &agentEvent,
+	}, nil
+}
+
 // getSessionEventsHandler gets events for a specific session
+// Returns events in the same format as polling API (events.Event[])
 func getSessionEventsHandler(db database.Database) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
@@ -2354,15 +2541,100 @@ func getSessionEventsHandler(db database.Database) http.HandlerFunc {
 			}
 		}
 
-		events, err := db.GetEventsBySession(r.Context(), sessionID, limit, offset)
+		dbEvents, err := db.GetEventsBySession(r.Context(), sessionID, limit, offset)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
+		log.Printf("[CHAT_HISTORY] Loading events for session %s: found %d events", sessionID, len(dbEvents))
+
+		// Convert database events to polling events format using shared helper
+		convertedEvents := make([]events.Event, 0, len(dbEvents))
+		parseErrors := 0
+		for i, dbEvent := range dbEvents {
+			convertedEvent, err := convertDBEventToPollingEvent(dbEvent, sessionID)
+			if err != nil {
+				parseErrors++
+				if i < 3 {
+					log.Printf("[CHAT_HISTORY ERROR] Failed to convert event %d for session %s: %v, event_type=%s", i, sessionID, err, dbEvent.EventType)
+				}
+				continue
+			}
+
+			// Debug: Log first event structure to verify JSON serialization
+			if i == 0 && convertedEvent.Data != nil {
+				// Marshal to JSON to see actual structure
+				if jsonBytes, err := json.Marshal(convertedEvent); err == nil {
+					jsonStr := string(jsonBytes)
+					maxLen := 500
+					if len(jsonStr) > maxLen {
+						jsonStr = jsonStr[:maxLen] + "..."
+					}
+					log.Printf("[CHAT_HISTORY DEBUG] First event JSON structure: %s", jsonStr)
+				}
+
+				// Check if GenericEventData is being used correctly
+				if genericData, ok := convertedEvent.Data.Data.(*unifiedevents.GenericEventData); ok {
+					if dataBytes, err := json.Marshal(genericData); err == nil {
+						dataStr := string(dataBytes)
+						maxLen := 300
+						if len(dataStr) > maxLen {
+							dataStr = dataStr[:maxLen] + "..."
+						}
+						log.Printf("[CHAT_HISTORY DEBUG] GenericEventData structure: %s", dataStr)
+					}
+					keys := make([]string, 0, len(genericData.Data))
+					for k := range genericData.Data {
+						keys = append(keys, k)
+					}
+					log.Printf("[CHAT_HISTORY DEBUG] GenericEventData.Data keys: %v", keys)
+				}
+			}
+
+			// Debug: Log user_message events specifically
+			if convertedEvent.Type == "user_message" && convertedEvent.Data != nil {
+				if genericData, ok := convertedEvent.Data.Data.(*unifiedevents.GenericEventData); ok {
+					if content, hasContent := genericData.Data["content"]; hasContent {
+						contentStr := fmt.Sprintf("%v", content)
+						if len(contentStr) > 100 {
+							contentStr = contentStr[:100] + "..."
+						}
+						log.Printf("[CHAT_HISTORY DEBUG] user_message event: hasContent=true, content=%s", contentStr)
+					} else {
+						keys := make([]string, 0, len(genericData.Data))
+						for k := range genericData.Data {
+							keys = append(keys, k)
+						}
+						log.Printf("[CHAT_HISTORY DEBUG] user_message event: hasContent=false, dataKeys=%v", keys)
+					}
+				}
+			}
+
+			convertedEvents = append(convertedEvents, *convertedEvent)
+		}
+
+		log.Printf("[CHAT_HISTORY] Converted %d events: total=%d, converted=%d, parse_errors=%d", len(dbEvents), len(dbEvents), len(convertedEvents), parseErrors)
+
+		// Get total count
+		totalCount, err := db.GetEventsBySession(r.Context(), sessionID, 0, 0)
+		total := len(dbEvents)
+		if err == nil && len(totalCount) > 0 {
+			if limit == 0 || len(dbEvents) == limit {
+				allEvents, err := db.GetEventsBySession(r.Context(), sessionID, 1000000, 0)
+				if err == nil {
+					total = len(allEvents)
+				}
+			} else {
+				if len(dbEvents) < limit {
+					total = offset + len(dbEvents)
+				}
+			}
+		}
+
 		response := map[string]interface{}{
-			"events": events,
-			"total":  len(events),
+			"events": convertedEvents,
+			"total":  total,
 			"limit":  limit,
 			"offset": offset,
 		}
@@ -2599,6 +2871,74 @@ func (api *StreamingAPI) storeWorkflowOrchestrator(sessionID string, orchestrato
 }
 
 // --- LLM GUIDANCE API HANDLERS ---
+
+// deserializeSerializedMessage converts a SerializedMessage (typed) back to llmtypes.MessageContent
+func deserializeSerializedMessage(serialized unifiedevents.SerializedMessage) *llmtypes.MessageContent {
+	var role llmtypes.ChatMessageType
+	switch serialized.Role {
+	case "human": // Standard value from llmtypes
+		role = llmtypes.ChatMessageTypeHuman
+	case "ai": // Standard value from llmtypes
+		role = llmtypes.ChatMessageTypeAI
+	case "tool": // Standard value from llmtypes
+		role = llmtypes.ChatMessageTypeTool
+	case "system": // Standard value from llmtypes
+		role = llmtypes.ChatMessageTypeSystem
+	case "user", "assistant": // Fallback for compatibility (shouldn't happen but handle gracefully)
+		if serialized.Role == "user" {
+			role = llmtypes.ChatMessageTypeHuman
+		} else {
+			role = llmtypes.ChatMessageTypeAI
+		}
+	default:
+		// Default to human if unknown role
+		log.Printf("[DESERIALIZE] Unknown role '%s', defaulting to human", serialized.Role)
+		role = llmtypes.ChatMessageTypeHuman
+	}
+
+	msg := &llmtypes.MessageContent{
+		Role:  role,
+		Parts: []llmtypes.ContentPart{},
+	}
+
+	for _, part := range serialized.Parts {
+		switch part.Type {
+		case "text":
+			if content, ok := part.Content.(string); ok {
+				msg.Parts = append(msg.Parts, llmtypes.TextContent{Text: content})
+			}
+		case "tool_call":
+			if contentMap, ok := part.Content.(map[string]interface{}); ok {
+				toolCall := llmtypes.ToolCall{
+					FunctionCall: &llmtypes.FunctionCall{}, // Initialize pointer
+				}
+				if id, ok := contentMap["id"].(string); ok {
+					toolCall.ID = id
+				}
+				if fnName, ok := contentMap["function_name"].(string); ok {
+					toolCall.FunctionCall.Name = fnName
+				}
+				if fnArgs, ok := contentMap["function_args"].(string); ok {
+					toolCall.FunctionCall.Arguments = fnArgs
+				}
+				msg.Parts = append(msg.Parts, toolCall)
+			}
+		case "tool_response":
+			if contentMap, ok := part.Content.(map[string]interface{}); ok {
+				toolResp := llmtypes.ToolCallResponse{}
+				if toolCallID, ok := contentMap["tool_call_id"].(string); ok {
+					toolResp.ToolCallID = toolCallID
+				}
+				if content, ok := contentMap["content"].(string); ok {
+					toolResp.Content = content
+				}
+				msg.Parts = append(msg.Parts, toolResp)
+			}
+		}
+	}
+
+	return msg
+}
 
 // handleSetLLMGuidance sets LLM guidance for a session
 func (api *StreamingAPI) handleSetLLMGuidance(w http.ResponseWriter, r *http.Request) {

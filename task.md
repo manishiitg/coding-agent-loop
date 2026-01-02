@@ -4,12 +4,6 @@
 
 13. review conversation.go why is it so big and the retry function
 
-23. check history management for agent.. does it have tool calls also.. like if we cancel inbetween and ask it something
-
-30. test stopping of LLM in between lie cursor and see if follows flows
-
-35. we need to have a background mode else we should kill   the agent
-
 44. we need a way to see logs for mcp installation and tool testing
 
 53. the diff tool in workspace, has some issues. test with json format
@@ -22,7 +16,6 @@ g) add references as extra agent
 
 
 4. chain builder?
-6. have a different knowledge tools and a different directly fully for knowledge/ which 
 
 will index data
 i) prompt tempaltes, need to check variables on compile time
@@ -56,13 +49,7 @@ planning/changelog
 
 31. high the discover page.. not required
 
-32. delete memory/
-
-33. check scripts/'
-
 34. generated/ is pushed to repo
-
-34. why is llm-providers/ at top level of repo?
 
 35. fix tests most not relevent anymore
 
@@ -74,15 +61,11 @@ planning/changelog
 
 39. check learning for validation failure in a loop
 
-40. completely decouple chat from workspace.. right now mcp tool/context comes from workspace.
+40. completely decouple chat from workspace.. right now mcp tool/context comes from workspace. - done
 
-41. the iteration/eecution settings etc should be workflow specific right now its shared
+41. the iteration/eecution settings etc should be workflow specific right now its shared - done
 
-42. when we update variables,, the entire plan canvas renders.. so its not smooth at all  -done
-
-43. with latest changes, auto highlight of worksace stoppped working
-
-44. before running,, create empty learning folder as agent always checks  -done
+43. with latest changes, auto highlight of worksace stoppped working - done
 
 1. High Complexity in Retry Loop
 File: agent/llm_generation.go:368
@@ -90,10 +73,12 @@ Issue: High cyclomatic complexity in GenerateContentWithRetry.
 Recommendation: Refactor retry logic into a separate strategy function.
 
 
-45. the plan step optimization should optimize, max turns, context editing, sumiization etc
-
-46. we need to some unlock learnings when plan updates and able to converge fast
-
-47. if we have failure learning, no point in doing detection ? because in the end we are going call success -done
+45. the plan step optimization should optimize, max turns, context editing, sumiization 
 
 48. in ui its not clear how many times validation has failed
+
+49. context eidting/ summarization need that configurable? do we capture costs for summary etc properly?
+
+50. we need to have evals for workflows
+
+51. summization in chat mode is not ux friendly

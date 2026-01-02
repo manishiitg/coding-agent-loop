@@ -663,36 +663,36 @@ func fixDoubleEscapedPattern(pattern string) string {
 	// List of common regex escape sequences that might be double-escaped
 	// Format: double-escaped -> single-escaped
 	replacements := map[string]string{
-		"\\\\d": "\\d", // digit class
-		"\\\\s": "\\s", // whitespace
-		"\\\\w": "\\w", // word character
-		"\\\\D": "\\D", // non-digit
-		"\\\\S": "\\S", // non-whitespace
-		"\\\\W": "\\W", // non-word
-		"\\\\n": "\\n", // newline
-		"\\\\t": "\\t", // tab
-		"\\\\r": "\\r", // carriage return
-		"\\\\f": "\\f", // form feed
-		"\\\\v": "\\v", // vertical tab
-		"\\\\b": "\\b", // word boundary
-		"\\\\B": "\\B", // non-word boundary
-		"\\\\A": "\\A", // start of string
-		"\\\\Z": "\\Z", // end of string
-		"\\\\z": "\\z", // end of string
-		"\\\\G": "\\G", // start of match
-		"\\\\.": "\\.", // escaped dot
-		"\\\\(": "\\(", // open paren
-		"\\\\)": "\\)", // close paren
-		"\\\\[": "\\[", // open bracket
-		"\\\\]": "\\]", // close bracket
-		"\\\\{": "\\{", // open brace
-		"\\\\}": "\\}", // close brace
-		"\\\\*": "\\*", // star
-		"\\\\+": "\\+", // plus
-		"\\\\?": "\\?", // question mark
-		"\\\\|": "\\|", // pipe
-		"\\\\^": "\\^", // caret
-		"\\\\$": "\\$", // dollar sign
+		"\\\\d":  "\\d",  // digit class
+		"\\\\s":  "\\s",  // whitespace
+		"\\\\w":  "\\w",  // word character
+		"\\\\D":  "\\D",  // non-digit
+		"\\\\S":  "\\S",  // non-whitespace
+		"\\\\W":  "\\W",  // non-word
+		"\\\\n":  "\\n",  // newline
+		"\\\\t":  "\\t",  // tab
+		"\\\\r":  "\\r",  // carriage return
+		"\\\\f":  "\\f",  // form feed
+		"\\\\v":  "\\v",  // vertical tab
+		"\\\\b":  "\\b",  // word boundary
+		"\\\\B":  "\\B",  // non-word boundary
+		"\\\\A":  "\\A",  // start of string
+		"\\\\Z":  "\\Z",  // end of string
+		"\\\\z":  "\\z",  // end of string
+		"\\\\G":  "\\G",  // start of match
+		"\\\\.":  "\\.",  // escaped dot
+		"\\\\(":  "\\(",  // open paren
+		"\\\\)":  "\\)",  // close paren
+		"\\\\[":  "\\[",  // open bracket
+		"\\\\]":  "\\]",  // close bracket
+		"\\\\{":  "\\{",  // open brace
+		"\\\\}":  "\\}",  // close brace
+		"\\\\*":  "\\*",  // star
+		"\\\\+":  "\\+",  // plus
+		"\\\\?":  "\\?",  // question mark
+		"\\\\|":  "\\|",  // pipe
+		"\\\\^":  "\\^",  // caret
+		"\\\\$":  "\\$",  // dollar sign
 		"\\\\\"": "\\\"", // double quote
 		"\\\\'":  "\\'",  // single quote
 		"\\\\/":  "/",    // forward slash

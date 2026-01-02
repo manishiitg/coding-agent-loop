@@ -70,10 +70,11 @@ func initTestingCommands() {
 
 	// Add subcommands explicitly to ensure they're registered
 	// Note: LLM provider tests (anthropic, bedrock, openai, vertex, etc.) are now in github.com/manishiitg/multi-llm-provider-go
-	// Use ./bin/llm-test for comprehensive provider testing
+	// Use the llm-test tool from multi-llm-provider-go for comprehensive provider testing
 	TestingCmd.AddCommand(sseCmd)
 	TestingCmd.AddCommand(maxTokensFlexibilityCmd)
 	TestingCmd.AddCommand(customToolsTestCmd)
 	TestingCmd.AddCommand(readImageTestCmd)
 	TestingCmd.AddCommand(readSecureAccessTestCmd)
+	TestingCmd.AddCommand(workspaceDiffJSONTestCmd)
 }

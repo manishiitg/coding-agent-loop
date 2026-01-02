@@ -2176,6 +2176,30 @@ function createPrerequisiteEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
         } else if (targetStepNodeId === stepNode.id) {
           // Skip self-reference
         } else {
+          // CRITICAL: Verify target node exists and is a StepNode before creating edge
+          // Only StepNode has prerequisite target handles (prereq-target-left, prereq-target-middle, prereq-target-right)
+          const targetNode = nodes.find(node => node.id === targetStepNodeId)
+          if (!targetNode) {
+            console.warn('[PrerequisiteEdges] Target node not found in nodes array:', {
+              targetStepNodeId,
+              depStepId,
+              stepId: step.id,
+              stepTitle: step.title
+            })
+            return
+          }
+          
+          if (!isStepTypeNode(targetNode)) {
+            console.warn('[PrerequisiteEdges] Target node is not a StepNode (missing prerequisite target handles):', {
+              targetStepNodeId,
+              targetNodeType: targetNode.type,
+              depStepId,
+              stepId: step.id,
+              stepTitle: step.title
+            })
+            return
+          }
+          
           // Use step or learning node as source (execution node)
           const sourceHandleIndex = (targetEdgeCounts.get(targetStepNodeId) || 0) % 3
           const handlePositions = ['left', 'middle', 'right']

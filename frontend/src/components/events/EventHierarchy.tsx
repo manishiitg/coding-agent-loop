@@ -40,7 +40,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
   // Get active tab for sessionId and eventMode
   const activeTab = useChatStore(state => state.getActiveTab())
   const sessionId = activeTab?.sessionId
-  const eventMode: 'basic' | 'advanced' = (activeTab?.eventMode || 'basic') as 'basic' | 'advanced'
+  const eventMode: 'basic' | 'advanced' | 'tiny' = (activeTab?.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny'
   
   // Merge loaded older events with current events (older events first, then current events)
   const displayEvents = React.useMemo(() => {

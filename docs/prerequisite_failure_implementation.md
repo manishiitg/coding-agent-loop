@@ -21,7 +21,7 @@ Prerequisite failure detection allows the execution agent to proactively detect 
 | Component | File | Key Functions/Types |
 |-----------|------|---------------------|
 | **Tool Creation** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `createPrerequisiteDetectionTool()`, `formatPrerequisiteRulesForExecutionAgent()`, `PrerequisiteFailureError` |
-| **Tool Registration** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) | `createExecutionOnlyAgent()` |
+| **Tool Registration** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) | `addPrerequisiteDetectionTool()`, `createExecutionOnlyAgent()` |
 | **Execution Loop** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `executeSingleStep()` - channel-based error handling |
 | **System Prompt** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go) | `executionOnlySystemPromptProcessor()` - includes prerequisite rules info |
 | **Data Model** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `PrerequisiteInfo`, `PrerequisiteRuleInfo`, `gatherPrerequisiteInfo()` |
@@ -58,13 +58,18 @@ User enables prerequisite detection and configures rules in the UI:
 During step execution, if prerequisite detection is enabled:
 
 1. **Gather Prerequisite Info**: `gatherPrerequisiteInfo()` collects prerequisite rules and dependency step information
+   - Checks if `enable_prerequisite_detection` is enabled in step config
+   - Validates prerequisite rules (skips rules with empty `depends_on_step`)
+   - Collects dependency step info (step ID, index, title, completion status, context output)
+   - Returns `PrerequisiteInfo` with validated rules
 2. **Create Cancellable Context**: Execution context is wrapped with `context.WithCancel()` to allow immediate cancellation
-3. **Create Error Channel**: Buffered channel (`chan *PrerequisiteFailureError`) is created to receive errors from tool
-4. **Register Tool**: `detect_prerequisite_failure` tool is registered with the execution agent:
+3. **Create Error Channel**: Buffered channel (`chan *PrerequisiteFailureError`, buffer size 1) is created to receive errors from tool
+4. **Create Agent**: `createExecutionOnlyAgent()` is called with prerequisite info and error channel
+5. **Register Tool**: `addPrerequisiteDetectionTool()` registers `detect_prerequisite_failure` tool **after** agent creation:
    - Tool executor validates `depends_on_step_id` against configured rules
    - Tool executor validates step index, navigation distance, and prerequisites
    - On success, tool sends error to channel and cancels execution context
-5. **Update System Prompt**: Prerequisite rules are formatted and added to execution agent's system prompt via `formatPrerequisiteRulesForExecutionAgent()`
+6. **Update System Prompt**: Prerequisite rules are formatted and added to execution agent's system prompt via `formatPrerequisiteRulesForExecutionAgent()`
 
 ### 3. Tool Execution Flow
 
@@ -123,10 +128,20 @@ default:
 ```
 
 If prerequisite error found:
-1. Validate target step (index, distance, branch constraints)
-2. Clean up progress from target step onward via `cleanupProgressFromStep()`
-3. Emit `PrerequisiteNavigationEvent`
-4. Return navigation error to restart from target step
+1. Find target step by ID in `allSteps` array (more reliable than using computed index)
+2. Validate target step:
+   - Step index exists and is valid
+   - Target step is before current step
+   - Navigation distance ≤ 10 steps
+   - Step index is within bounds
+3. Clean up progress from target step onward via `cleanupProgressFromStep()`
+4. Emit `PrerequisiteNavigationEvent` with from/to step indices and IDs
+5. Return navigation error to restart from target step
+
+**Navigation Logic**:
+- Uses step ID lookup first (more reliable than index)
+- Validates multiple constraints before navigation
+- Logs warnings for invalid navigation attempts (doesn't crash)
 
 ---
 
@@ -134,10 +149,24 @@ If prerequisite error found:
 
 ### Tool Registration
 
-**File**: [`controller_agent_factory.go:354-385`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go#L354)
+**File**: [`controller_agent_factory.go:362-409`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go#L362)
+
+Tool registration is done via `addPrerequisiteDetectionTool()` method, which is called after agent creation:
 
 ```go
-if prerequisiteInfo != nil && len(prerequisiteInfo.PrerequisiteRules) > 0 {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) addPrerequisiteDetectionTool(
+    prerequisiteInfo *PrerequisiteInfo,
+    allSteps []PlanStepInterface,  // Note: Uses PlanStepInterface, not TodoStep
+    currentStepIndex int,
+    cancelFunc context.CancelFunc,
+    prereqErrChan chan<- *PrerequisiteFailureError,
+    agentName string,
+    mcpAgent *mcpagent.Agent,
+) error {
+    if prerequisiteInfo == nil || len(prerequisiteInfo.PrerequisiteRules) == 0 {
+        return nil // No prerequisite detection needed
+    }
+
     toolExecutor := hcpo.createPrerequisiteDetectionTool(
         prerequisiteInfo, allSteps, currentStepIndex, 
         cancelFunc, prereqErrChan)
@@ -146,12 +175,12 @@ if prerequisiteInfo != nil && len(prerequisiteInfo.PrerequisiteRules) > 0 {
         "type": "object",
         "properties": map[string]interface{}{
             "depends_on_step_id": map[string]interface{}{
-                "type": "string",
-                "description": "Step ID from one of the prerequisite rules",
+                "type":        "string",
+                "description": "Step ID from one of the prerequisite rules to navigate back to (e.g., \"step-0\")",
             },
             "reason": map[string]interface{}{
-                "type": "string",
-                "description": "Brief explanation of why the prerequisite failure was detected",
+                "type":        "string",
+                "description": "Brief explanation of why the prerequisite failure was detected, matching the condition described in the prerequisite rule",
             },
         },
         "required": []string{"depends_on_step_id", "reason"},
@@ -159,28 +188,44 @@ if prerequisiteInfo != nil && len(prerequisiteInfo.PrerequisiteRules) > 0 {
     
     toolDescription := "Detect a prerequisite failure and navigate back to a prerequisite step. Call this tool when you detect that a prerequisite condition (as described in the prerequisite rules) is met during execution. Execution will stop and automatically navigate back to the specified prerequisite step."
     
-    mcpAgent.RegisterCustomTool(
+    // Use "structured_output" category so it's always available even in code execution mode
+    return mcpAgent.RegisterCustomTool(
         "detect_prerequisite_failure",
         toolDescription,
         toolParams,
         toolExecutor,
-        "structured_output", // Always available even in code execution mode
+        "structured_output",
     )
 }
 ```
 
+**Key Points**:
+- Called **after** agent creation (must be called AFTER the agent is created)
+- Uses `[]PlanStepInterface` type (not `[]TodoStep`)
+- Tool category is `"structured_output"` to ensure availability in code execution mode
+
 ### Tool Executor
 
-**File**: [`controller_execution.go:386-464`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L386)
+**File**: [`controller_execution.go:459-538`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L459)
 
 The tool executor:
-1. Validates `depends_on_step_id` is in configured prerequisite rules
-2. Validates step index exists and is before current step
-3. Validates navigation distance ≤ 10 steps
-4. Creates `PrerequisiteFailureError`
-5. Sends error to channel
-6. Cancels execution context
-7. Returns (execution already stopped)
+1. Extracts and validates parameters (`depends_on_step_id` and `reason` must be non-empty strings)
+2. Validates `depends_on_step_id` is in configured prerequisite rules (validates against `validPrerequisiteStepIDs` map)
+3. Validates step index exists in plan (looks up step ID in `stepIDToIndex` map)
+4. Validates dependency step is before current step (`stepIndex < currentStepIndex`)
+5. Validates navigation distance ≤ 10 steps (`navigationDistance = currentStepIndex - stepIndex`)
+6. Creates `PrerequisiteFailureError` with step ID, index, and reason
+7. Logs prerequisite failure detection
+8. Sends error to channel (non-blocking with `select` and `default`)
+9. Cancels execution context via `cancelFunc()`
+10. Returns empty string (execution already stopped by context cancellation)
+
+**Validation Details**:
+- Returns error if `depends_on_step_id` is empty or not in prerequisite rules
+- Returns error if step ID not found in plan steps
+- Returns error if target step is not before current step
+- Returns error if navigation distance exceeds 10 steps
+- Logs warning if channel is full or closed (but still cancels execution)
 
 ### System Prompt Integration
 
@@ -206,20 +251,60 @@ The formatted text includes:
 ```go
 func (hcpo *HumanControlledTodoPlannerOrchestrator) createPrerequisiteDetectionTool(
     prerequisiteInfo *PrerequisiteInfo, 
-    allSteps []TodoStep, 
+    allSteps []PlanStepInterface,  // Note: Uses PlanStepInterface
     currentStepIndex int, 
     cancelFunc context.CancelFunc, 
     prereqErrChan chan<- *PrerequisiteFailureError,
 ) func(ctx context.Context, args map[string]interface{}) (string, error) {
-    // ... validation maps setup ...
+    // Create map of step ID to step index for validation
+    stepIDToIndex := make(map[string]int)
+    for i, s := range allSteps {
+        if s.GetID() != "" {
+            stepIDToIndex[s.GetID()] = i
+        }
+    }
+
+    // Create map of valid prerequisite step IDs (from rules)
+    validPrerequisiteStepIDs := make(map[string]PrerequisiteRuleInfo)
+    for _, rule := range prerequisiteInfo.PrerequisiteRules {
+        validPrerequisiteStepIDs[rule.DependsOnStep] = rule
+    }
     
     return func(ctx context.Context, args map[string]interface{}) (string, error) {
         // Extract and validate parameters
-        dependsOnStepID := args["depends_on_step_id"].(string)
-        reason := args["reason"].(string)
+        dependsOnStepID, ok := args["depends_on_step_id"].(string)
+        if !ok || dependsOnStepID == "" {
+            return "", fmt.Errorf("depends_on_step_id parameter is required and must be a non-empty string")
+        }
+
+        reason, ok := args["reason"].(string)
+        if !ok || reason == "" {
+            return "", fmt.Errorf("reason parameter is required and must be a non-empty string")
+        }
         
-        // Validate against prerequisite rules
-        // ... validation logic ...
+        // Validate step ID is in prerequisite rules
+        _, isValid := validPrerequisiteStepIDs[dependsOnStepID]
+        if !isValid {
+            // Return error with valid IDs
+            return "", fmt.Errorf("invalid depends_on_step_id: %s. Valid prerequisite step IDs are: %v", dependsOnStepID, validIDs)
+        }
+        
+        // Get step index and validate
+        stepIndex, exists := stepIDToIndex[dependsOnStepID]
+        if !exists {
+            return "", fmt.Errorf("step ID %s not found in plan steps", dependsOnStepID)
+        }
+        
+        // Validate: dependency step must be before current step
+        if stepIndex >= currentStepIndex {
+            return "", fmt.Errorf("prerequisite step %s (index %d) must be before current step %d", dependsOnStepID, stepIndex, currentStepIndex)
+        }
+        
+        // Check max navigation distance (safety limit: 10 steps)
+        navigationDistance := currentStepIndex - stepIndex
+        if navigationDistance > 10 {
+            return "", fmt.Errorf("navigation distance %d exceeds maximum (10 steps)", navigationDistance)
+        }
         
         // Create error
         prereqErr := &PrerequisiteFailureError{
@@ -228,10 +313,14 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPrerequisiteDetectionT
             Reason:          reason,
         }
         
-        // Send to channel
+        hcpo.GetLogger().Info(fmt.Sprintf("🔄 Prerequisite failure detected via tool call: %s (navigate to step %s, index %d) - stopping execution immediately", reason, dependsOnStepID, stepIndex))
+        
+        // Send to channel (non-blocking)
         select {
         case prereqErrChan <- prereqErr:
         default:
+            // Channel full or closed - log warning but continue
+            hcpo.GetLogger().Warn("⚠️ Prerequisite error channel full or closed, but continuing with cancellation")
         }
         
         // Cancel execution immediately
@@ -246,6 +335,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createPrerequisiteDetectionT
 
 ### Execution Loop Integration
 
+**File**: [`controller_execution.go:1279-1376`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L1279)
+
 ```go
 // Create cancellable context
 executionCtx, cancelExecution := context.WithCancel(ctx)
@@ -255,11 +346,12 @@ defer cancelExecution()
 prereqErrChan := make(chan *PrerequisiteFailureError, 1)
 
 // Create agent with tool registration
+// Note: stepIDOverride parameter added for sub-agent support
 executionAgent, err := hcpo.createExecutionOnlyAgent(
     executionCtx, "execution_only", stepPath, executionAgentName, 
     step.AgentConfigs, isRetryAfterValidationFailure, retryAttempt, 
     prerequisiteInfoForExecution, allSteps, stepIndex, 
-    cancelExecution, prereqErrChan,
+    cancelExecution, prereqErrChan, step.GetID(), // stepIDOverride parameter
 )
 
 // Execute agent
@@ -267,17 +359,55 @@ executionResult, executionConversationHistory, err := executionAgent.Execute(
     executionCtx, templateVars, []llmtypes.MessageContent{},
 )
 
-// Check for prerequisite failure
+// Check for prerequisite failure (from tool call via channel)
 var prereqErr *PrerequisiteFailureError
 select {
 case prereqErr = <-prereqErrChan:
-    // Handle navigation
-    targetStepIndex := prereqErr.StepIndex
-    // ... navigation logic ...
+    // Prerequisite failure detected - tool called and context was cancelled
+    hcpo.GetLogger().Info(fmt.Sprintf("🔄 Prerequisite failure detected via tool call for step %d: %s (target step: %d)", stepIndex+1, prereqErr.Reason, prereqErr.StepIndex+1))
 default:
-    // No prerequisite failure
+    // No prerequisite failure - check for other errors
+    if err != nil {
+        // Check if this is a prerequisite failure error (legacy check - should not happen with new implementation)
+        var legacyPrereqErr *PrerequisiteFailureError
+        if errors.As(err, &legacyPrereqErr) {
+            prereqErr = legacyPrereqErr
+        }
+    }
+}
+
+if prereqErr != nil {
+    // Find target step by ID (more reliable than using computed index)
+    targetStepID := prereqErr.DependsOnStepID
+    targetStepIndex := -1
+    if targetStepID != "" && allSteps != nil {
+        for idx, s := range allSteps {
+            if s.GetID() == targetStepID {
+                targetStepIndex = idx
+                break
+            }
+        }
+    }
+    
+    // Validate target step (index, distance, branch constraints)
+    // ... validation logic ...
+    
+    // Clean up progress from target step onward
+    hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress)
+    
+    // Emit PrerequisiteNavigationEvent
+    // ... event emission ...
+    
+    // Return navigation error to restart from target step
+    return "", updatedContextFiles, fmt.Errorf("prerequisite failure: %w", prereqErr)
 }
 ```
+
+**Key Changes**:
+- `createExecutionOnlyAgent()` now includes `stepIDOverride` parameter
+- Error handling includes legacy check for prerequisite errors in `err` (backward compatibility)
+- Navigation logic finds step by ID first, then validates index
+- Target step validation includes multiple checks (index exists, is before current step, distance ≤ 10)
 
 ---
 

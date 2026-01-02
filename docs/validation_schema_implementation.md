@@ -14,23 +14,26 @@ The Structured Validation Schema enables code-based validation of step outputs, 
 - ✅ Validation schema structure (ValidationSchema, FileValidationRule, JSONValidationCheck, ConsistencyRule)
 - ✅ Integration with execution and orchestration controllers
 - ✅ Pre-validation blocks LLM validation when it fails
-- ✅ Validation schema is **MANDATORY** for all step types (regular, conditional, decision, orchestration)
+- ✅ Validation schema is **OPTIONAL** (pre-validation skips if schema is nil)
+- ✅ `skip_llm_validation_if_pre_validation_passes` feature - can skip LLM validation when pre-validation passes
 - ✅ LLM-only schema generation (no code-based auto-generation)
 - ✅ Success criteria guidance updated to focus on execution-based validation
 - ✅ Frontend TypeScript types updated
 
 **Key Implementation Details:**
 - Pre-validation runs before LLM validation and blocks it if structural checks fail
-- Validation schema must be provided by LLM when creating/updating steps
-- Success criteria now focuses on execution history verification, not file structure
+- Validation schema is optional - if nil, pre-validation is skipped (returns OverallPass: true)
+- When updating steps via `update_regular_step` tool, `validation_schema` is required
+- Success criteria focuses on execution history verification, not file structure
 - Pre-validation errors properly block LLM validation (OverallPass: false)
+- If `skip_llm_validation_if_pre_validation_passes: true` and pre-validation passes, LLM validation is skipped
 
 **Key Problem**: Current validation relies entirely on LLM to check files and keys, which is:
 - **Slow**: LLM must read files and analyze content
 - **Inconsistent**: LLM may miss checks or interpret criteria differently
 - **Inefficient**: LLM spends time on simple file/key checks instead of complex execution history analysis
 
-**Key Solution**: Add **mandatory** `validation_schema` field to plan.json that specifies structured validation rules. Implement a **two-layer validation approach**:
+**Key Solution**: Add **optional** `validation_schema` field to plan.json that specifies structured validation rules. Implement a **two-layer validation approach**:
 
 1. **Layer 1 (Code)**: Fast structural validation - "Does the output have the right shape?"
 2. **Layer 2 (LLM)**: Deep authenticity validation - "Does the execution history prove this is real?"
@@ -242,11 +245,12 @@ This requires:
 
 | Component | File | Key Functions/Types |
 |-----------|------|---------------------|
-| **Schema Definition** | `agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go` | `ValidationSchema`, `FileValidationRule`, `JSONValidationCheck`, `ConsistencyRule` |
-| **Pre-Validation** | `agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/pre_validation.go` | `RunPreValidation()`, `validateWithSchema()`, `WorkspaceVerificationResult`, `formatWorkspaceResults()` |
-| **Integration** | `agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go` | Pre-validation call before validation agent |
-| **Validation Agent** | `agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/validation_agent.go` | Updated to receive and use pre-validation results |
-| **Planning Agent** | `agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go` | Schema generation/parsing from success_criteria |
+| **Schema Definition** | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go) | `ValidationSchema`, `FileValidationRule`, `JSONValidationCheck`, `ConsistencyRule` |
+| **Pre-Validation** | [`pre_validation.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/pre_validation.go) | `RunPreValidation()`, `validateWithSchema()`, `WorkspaceVerificationResult`, `formatWorkspaceResults()` |
+| **Integration** | [`controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | Pre-validation call before validation agent (lines 1560-1624) |
+| **Orchestration Integration** | [`controller_orchestration.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_orchestration.go) | Pre-validation for orchestration steps |
+| **Validation Agent** | [`validation_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/validation_agent.go) | Updated to receive and use pre-validation results |
+| **Planning Agent** | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go) | Schema generation/parsing from success_criteria |
 | **JSONPath Library** | `github.com/PaesslerAG/jsonpath` | JSON path evaluation for validation checks |
 
 ---
@@ -255,7 +259,23 @@ This requires:
 
 ### 1. Plan Structure
 
-Plan.json includes optional `validation_schema` field:
+**File**: [`planning_agent.go:271`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go#L271)
+
+Plan.json includes optional `validation_schema` field in `CommonStepFields`:
+
+```go
+type CommonStepFields struct {
+    // ... other fields ...
+    ValidationSchema *ValidationSchema `json:"validation_schema,omitempty"` // Optional
+}
+```
+
+**Note**: 
+- `validation_schema` is **optional** - can be `nil` or omitted
+- When `nil`, pre-validation is skipped (returns `OverallPass: true`)
+- When updating steps via `update_regular_step` tool, `validation_schema` parameter is **required** (but can be empty `{"files": []}`)
+
+Plan.json example:
 
 ```json
 {
@@ -293,6 +313,8 @@ Plan.json includes optional `validation_schema` field:
 
 ### 2. Pre-Validation Flow
 
+**File**: [`controller_execution.go:1560-1624`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L1560)
+
 ```mermaid
 sequenceDiagram
     participant Controller as Execution Controller
@@ -300,25 +322,41 @@ sequenceDiagram
     participant Workspace as Workspace Tools
     participant ValAgent as Validation Agent (LLM)
     
-    Controller->>PreVal: RunPreValidation(step, workspacePath)
-    PreVal->>PreVal: Check if validation_schema exists
-    alt Schema exists
+    Controller->>PreVal: RunPreValidation(validationSchema, workspacePath)
+    PreVal->>PreVal: Check if validation_schema is nil
+    alt Schema is nil
+        PreVal->>Controller: WorkspaceVerificationResult (OverallPass: true, skipped)
+    else Schema exists
+        PreVal->>PreVal: Validate schema limits
         PreVal->>Workspace: Check file existence
         PreVal->>Workspace: Read JSON files
         PreVal->>PreVal: Validate JSON structure
         PreVal->>PreVal: Check consistency rules
         PreVal->>Controller: WorkspaceVerificationResult
-    else No schema (fallback)
-        PreVal->>PreVal: Parse success_criteria text
-        PreVal->>Workspace: Basic file/key checks
-        PreVal->>Controller: WorkspaceVerificationResult
     end
-    Controller->>ValAgent: ExecuteStructured(workspaceResults, executionHistory)
-    ValAgent->>ValAgent: Focus on execution history verification
-    ValAgent->>Controller: ValidationResponse
+    
+    alt Pre-validation failed
+        Controller->>Controller: Reject immediately (no LLM validation)
+    else Pre-validation passed
+        alt skip_llm_validation_if_pre_validation_passes == true
+            Controller->>Controller: Skip LLM validation (assume success)
+        else
+            Controller->>ValAgent: ExecuteStructured(workspaceResults, executionHistory)
+            ValAgent->>ValAgent: Focus on execution history verification
+            ValAgent->>Controller: ValidationResponse
+        end
+    end
 ```
 
+**Key Points**:
+- If `validation_schema` is `nil`, pre-validation is skipped (returns `OverallPass: true`)
+- If pre-validation fails (`OverallPass: false`), LLM validation is blocked
+- If pre-validation passes and `skip_llm_validation_if_pre_validation_passes: true`, LLM validation is skipped
+- Otherwise, LLM validation runs with pre-validation results
+
 ### 3. Validation Agent Integration
+
+**File**: [`controller_execution.go:1590-1624`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L1590)
 
 Validation agent receives pre-validation results:
 
@@ -328,7 +366,26 @@ validationTemplateVars := map[string]string{
     "StepSuccessCriteria": step.SuccessCriteria,
     "WorkspacePath": validationWorkspacePath,
     "ExecutionHistory": shared.FormatConversationHistory(executionConversationHistory),
-    "WorkspaceVerificationResults": formatWorkspaceResults(workspaceResults), // NEW
+    "WorkspaceVerificationResults": formatWorkspaceResults(workspaceResults), // Pre-validation results
+}
+```
+
+**Skip LLM Validation Feature**:
+
+If `skip_llm_validation_if_pre_validation_passes: true` in step config and pre-validation passes, LLM validation is skipped:
+
+```go
+skipLLMValidation := agentConfigs != nil && 
+    agentConfigs.SkipLLMValidationIfPreValidationPasses != nil && 
+    *agentConfigs.SkipLLMValidationIfPreValidationPasses
+
+if skipLLMValidation && workspaceResults.OverallPass {
+    // Skip LLM validation and assume success
+    validationResponse = &ValidationResponse{
+        IsSuccessCriteriaMet: true,
+        ExecutionStatus: "COMPLETED",
+        Reasoning: "Pre-validation passed - LLM validation skipped",
+    }
 }
 ```
 
@@ -336,6 +393,7 @@ Validation agent prompt updated to:
 1. Show pre-computed workspace verification results
 2. Focus on execution history analysis
 3. Cross-reference execution history with workspace results
+4. Handle skipped pre-validation case (when schema is nil)
 
 ---
 
@@ -484,22 +542,48 @@ Focus on:
 
 ### Phase 3: Integration
 
-Update `controller_execution.go`:
+**File**: [`controller_execution.go:1560-1624`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L1560)
 
 ```go
-// Before validation agent call
-workspaceResults, err := RunPreValidation(ctx, &step, validationWorkspacePath, hcpo.WorkspaceToolExecutors)
+// Get validation schema from step
+validationSchema := step.GetValidationSchema()
+
+// Run pre-validation (handles nil schema gracefully)
+workspaceResults, err := RunPreValidation(ctx, validationSchema, stepExecutionPath, hcpo.BaseOrchestrator)
 if err != nil {
-    hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation failed: %v", err))
-    // Continue with validation agent (it will do full check)
+    // Pre-validation error blocks LLM validation
+    workspaceResults = &WorkspaceVerificationResult{
+        OverallPass: false, // Block on errors
+        // ... error details ...
+    }
+} else if validationSchema == nil {
+    // Log when pre-validation is skipped
+    hcpo.GetLogger().Info("⏭️ Pre-validation skipped (no validation schema provided)")
 }
 
 // Format results with guidance for LLM
 validationTemplateVars["WorkspaceVerificationResults"] = formatWorkspaceResults(workspaceResults)
 
-// If pre-validation failed, validation agent should reject immediately
+// If pre-validation failed, reject immediately without LLM validation
 if !workspaceResults.OverallPass {
-    hcpo.GetLogger().Warn("⚠️ Pre-validation failed - validation agent will reject")
+    validationResponse = &ValidationResponse{
+        IsSuccessCriteriaMet: false,
+        ExecutionStatus: "FAILED",
+        Reasoning: formatWorkspaceResults(workspaceResults),
+    }
+} else {
+    // Check if we should skip LLM validation
+    skipLLMValidation := agentConfigs != nil && 
+        agentConfigs.SkipLLMValidationIfPreValidationPasses != nil && 
+        *agentConfigs.SkipLLMValidationIfPreValidationPasses
+    
+    if skipLLMValidation {
+        // Skip LLM validation and assume success
+        validationResponse = &ValidationResponse{...}
+    } else {
+        // Continue with LLM validation
+        // ...
+    }
 }
 ```
 
@@ -526,9 +610,10 @@ Update `validation_agent.go`:
 
 ### Backward Compatibility
 
-1. **Existing plans work**: If `validation_schema` is missing, fallback to LLM-based validation
-2. **Auto-generation**: Planning agent can generate schema from `success_criteria` text
-3. **Gradual adoption**: Steps can opt-in to structured validation
+1. ✅ **Existing plans work**: If `validation_schema` is `nil` or missing, pre-validation is skipped (returns `OverallPass: true`)
+2. ✅ **No breaking changes**: Plans without validation schema continue to work normally
+3. ✅ **Gradual adoption**: Steps can opt-in to structured validation by adding `validation_schema`
+4. ⚠️ **Update tool requirement**: When updating steps via `update_regular_step` tool, `validation_schema` is required (but can be empty `{"files": []}`)
 
 ### Auto-Generation
 
@@ -772,7 +857,7 @@ Execution → Pre-Validation (Code) → Validation Agent (LLM)
 **Requirement**: Plan.json must support optional `validation_schema` field with structured validation rules.
 
 **Acceptance Criteria**:
-- [ ] `validation_schema` field is optional (backward compatible)
+- [x] `validation_schema` field is optional (backward compatible) ✅
 - [ ] Schema supports file existence checks
 - [ ] Schema supports JSON path-based key checks
 - [ ] Schema supports value type validation
@@ -844,10 +929,10 @@ type WorkspaceVerificationResult struct {
 **Requirement**: System must work with existing plans that don't have validation schema.
 
 **Acceptance Criteria**:
-- [ ] Plans without `validation_schema` fallback to LLM-based validation
-- [ ] Existing plans continue to work without modification
-- [ ] No breaking changes to plan.json structure
-- [ ] Migration path available for existing plans
+- [x] Plans without `validation_schema` fallback to LLM-based validation ✅
+- [x] Existing plans continue to work without modification ✅
+- [x] No breaking changes to plan.json structure ✅
+- [x] Pre-validation skips gracefully when schema is nil ✅
 
 #### FR5: Anti-Gaming Protection
 
@@ -983,24 +1068,34 @@ type ConsistencyRule struct {
 
 #### RunPreValidation
 
+**File**: [`pre_validation.go:74`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/pre_validation.go#L74)
+
 ```go
 func RunPreValidation(
     ctx context.Context,
-    step PlanStepInterface,
+    validationSchema *ValidationSchema, // Can be nil (pre-validation skipped)
     workspacePath string,
-    workspaceTools WorkspaceToolExecutors,
+    baseOrchestrator *orchestrator.BaseOrchestrator,
 ) (*WorkspaceVerificationResult, error)
 ```
 
 **Parameters**:
 - `ctx`: Context for cancellation
-- `step`: Plan step with validation schema
-- `workspacePath`: Workspace root path
-- `workspaceTools`: Workspace tool executors
+- `validationSchema`: Validation schema (can be `nil` - pre-validation skipped)
+- `workspacePath`: Workspace root path (step execution folder)
+- `baseOrchestrator`: Base orchestrator for workspace file operations
 
 **Returns**:
 - `*WorkspaceVerificationResult`: Pre-validation results
-- `error`: Validation error if any
+  - If `validationSchema` is `nil`: Returns `OverallPass: true` (skipped)
+  - If schema is empty (`{"files": []}`): Returns `OverallPass: true` (skipped)
+  - Otherwise: Returns actual validation results
+- `error`: Validation error if schema limits exceeded or validation fails
+
+**Behavior**:
+- If `validationSchema == nil`: Returns skipped result (`OverallPass: true`, no checks)
+- If `len(validationSchema.Files) == 0`: Returns skipped result (`OverallPass: true`, no checks)
+- Otherwise: Validates schema limits, then performs validation
 
 ---
 
@@ -1060,9 +1155,9 @@ func RunPreValidation(
 - **Input**: Schema with `database_count` equals `databases.length`
 - **Expected**: Returns `AllValuesMatch: true` if counts match
 
-#### TC4: Missing Schema (Not Allowed)
-- **Input**: Step without `validation_schema`
-- **Expected**: Validation schema is mandatory - step creation/update will fail if schema is missing
+#### TC4: Missing Schema (Optional)
+- **Input**: Step without `validation_schema` (nil)
+- **Expected**: Pre-validation is skipped (returns `OverallPass: true`), LLM validation proceeds normally
 
 ---
 
@@ -1089,13 +1184,10 @@ func RunPreValidation(
    - Type-safe Go structs and TypeScript interfaces
 
 4. **Planning Agent Integration** ✅
-   - Validation schema is **MANDATORY** for all step types:
-     - Regular steps
-     - Conditional steps (if_true_steps, if_false_steps)
-     - Decision steps (decision_step)
-     - Orchestration steps (orchestration_step, sub_agent_step)
+   - Validation schema is **OPTIONAL** for all step types (can be `nil`)
+   - When updating steps via `update_regular_step` tool, `validation_schema` is **REQUIRED**
    - LLM-only schema generation (no code-based auto-generation)
-   - Tool schemas updated to require validation_schema
+   - Tool schemas validate regex patterns and JSONPath syntax before updating
 
 5. **Success Criteria Guidance** ✅
    - Updated to focus on execution-based validation

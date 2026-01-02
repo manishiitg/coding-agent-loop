@@ -51,14 +51,29 @@ var (
 
 // getEventEmitterFromContext extracts the event emitter from context
 // Tries multiple key types to handle different packages using their own contextKey types
+// Also checks generic tool execution keys injected by the agent
 func getEventEmitterFromContext(ctx context.Context) WorkspaceEventEmitter {
-	// Try with our typed key first
+	// Try with our typed key first (for orchestrator direct calls)
 	if emitter, ok := ctx.Value(workspaceEventEmitterKey).(WorkspaceEventEmitter); ok {
 		return emitter
 	}
 	// Try with string key (for backward compatibility and cross-package compatibility)
 	if emitter, ok := ctx.Value("workspace_event_emitter").(WorkspaceEventEmitter); ok {
 		return emitter
+	}
+	// Try generic tool execution agent key (injected by agent for all tool calls)
+	// The agent doesn't know about workspace - it just injects generic tool metadata
+	// Note: The agent from mcpagent package implements HandleEvent, but type assertion
+	// across modules might fail, so we use an interface check instead
+	if agentVal := ctx.Value("tool_execution_agent"); agentVal != nil {
+		// Check if agent implements HandleEvent with the correct signature
+		// Use interface{} type assertion to work across module boundaries
+		if agentWithHandleEvent, ok := agentVal.(interface {
+			HandleEvent(ctx context.Context, event *events.AgentEvent) error
+		}); ok {
+			// Wrap it to satisfy WorkspaceEventEmitter interface
+			return &agentEventEmitterWrapper{agent: agentWithHandleEvent}
+		}
 	}
 	// Try with any contextKey type that has the same string value
 	// This handles cases where other packages define their own contextKey types
@@ -70,15 +85,32 @@ func getEventEmitterFromContext(ctx context.Context) WorkspaceEventEmitter {
 	return nil
 }
 
+// agentEventEmitterWrapper wraps an agent that has HandleEvent but isn't recognized as WorkspaceEventEmitter
+// This bridges the gap when the agent is from a different module (mcpagent) and type assertions fail
+type agentEventEmitterWrapper struct {
+	agent interface {
+		HandleEvent(ctx context.Context, event *events.AgentEvent) error
+	}
+}
+
+func (w *agentEventEmitterWrapper) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
+	return w.agent.HandleEvent(ctx, event)
+}
+
 // getTurnFromContext extracts the turn number from context
 // Tries multiple key types to handle different packages using their own contextKey types
+// Also checks generic tool execution keys injected by the agent
 func getTurnFromContext(ctx context.Context) int {
-	// Try with our typed key first
+	// Try with our typed key first (for orchestrator direct calls)
 	if turn, ok := ctx.Value(turnKey).(int); ok {
 		return turn
 	}
 	// Try with string key (for backward compatibility and cross-package compatibility)
 	if turn, ok := ctx.Value("turn").(int); ok {
+		return turn
+	}
+	// Try generic tool execution turn key (injected by agent for all tool calls)
+	if turn, ok := ctx.Value("tool_execution_turn").(int); ok {
 		return turn
 	}
 	// Try with any contextKey type that has the same string value
@@ -92,13 +124,18 @@ func getTurnFromContext(ctx context.Context) int {
 
 // getServerNameFromContext extracts the server name from context
 // Tries multiple key types to handle different packages using their own contextKey types
+// Also checks generic tool execution keys injected by the agent
 func getServerNameFromContext(ctx context.Context) string {
-	// Try with our typed key first
+	// Try with our typed key first (for orchestrator direct calls)
 	if serverName, ok := ctx.Value(serverNameKey).(string); ok {
 		return serverName
 	}
 	// Try with string key (for backward compatibility and cross-package compatibility)
 	if serverName, ok := ctx.Value("server_name").(string); ok {
+		return serverName
+	}
+	// Try generic tool execution server key (injected by agent for all tool calls)
+	if serverName, ok := ctx.Value("tool_execution_server").(string); ok {
 		return serverName
 	}
 	// Try with any contextKey type that has the same string value
@@ -112,12 +149,21 @@ func getServerNameFromContext(ctx context.Context) string {
 
 // emitWorkspaceFileOperation emits a workspace file operation event
 func emitWorkspaceFileOperation(ctx context.Context, operation, filepath, folder string) {
+	// Debug: Check what's in context
+	if agentVal := ctx.Value("tool_execution_agent"); agentVal != nil {
+		fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Found agent in context, type: %T\n", agentVal)
+	} else {
+		fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: No agent found with key 'tool_execution_agent'\n")
+	}
+
 	emitter := getEventEmitterFromContext(ctx)
 	if emitter == nil {
 		// No emitter in context - this is expected for some orchestrator direct calls
 		fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: No emitter in context for operation=%s, filepath=%s, folder=%s\n", operation, filepath, folder)
 		return
 	}
+
+	fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Found emitter, type: %T\n", emitter)
 
 	turn := getTurnFromContext(ctx)
 	serverName := getServerNameFromContext(ctx)

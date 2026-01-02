@@ -25,8 +25,16 @@ export const EventModeProvider: React.FC<{ children: ReactNode }> = ({ children 
 
   React.useEffect(() => {
     // Expose global function for event mode cycling
+    // Cycle through: basic → advanced → tiny → basic
     (window as Window & { cycleEventMode?: () => void }).cycleEventMode = () => {
-      const newMode = mode === 'basic' ? 'advanced' : 'basic'
+      let newMode: EventMode;
+      if (mode === 'basic') {
+        newMode = 'advanced';
+      } else if (mode === 'advanced') {
+        newMode = 'tiny';
+      } else {
+        newMode = 'basic';
+      }
       setTabMode(newMode)
     };
     

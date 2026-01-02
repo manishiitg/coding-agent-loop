@@ -1,9 +1,10 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
-import type { WorkflowPhase, StepProgress, ExecutionOptions, AgentLLMConfig, VariablesManifest, VariableGroup } from '../services/api-types'
+import type { WorkflowPhase, StepProgress, ExecutionOptions, AgentLLMConfig, VariablesManifest } from '../services/api-types'
 import { ExecutionStrategy } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { useChatStore } from './useChatStore'
+import { resolveGroupFolderPath, extractGroupIdFromFolder } from '../utils/workflowUtils'
 
 // Execution mode options
 export type ExecutionModeType = 'human_approval' | 'fast_execution' | 'with_learning'
@@ -21,6 +22,8 @@ const FALLBACK_TO_ORIGINAL_LLM_KEY = 'workflow_fallback_to_original_llm_on_failu
 const SKIP_LEARNING_WHEN_TEMP_LLM1_KEY = 'workflow_skip_learning_when_temp_llm1'
 const SKIP_LEARNING_WHEN_TEMP_LLM2_KEY = 'workflow_skip_learning_when_temp_llm2'
 const SAVE_VALIDATION_RESPONSES_KEY = 'workflow_save_validation_responses'
+const DISABLE_SHELL_EXEC_ACCESS_KEY = 'workflow_disable_shell_exec_access'
+const DISABLE_READ_IMAGE_ACCESS_KEY = 'workflow_disable_read_image_access'
 
 export interface RunFolder {
   name: string
@@ -76,6 +79,8 @@ interface WorkflowStore {
       skipLearningWhenTempLLM1: boolean  // If true, skip learning phases when tempLLM1 is used
       skipLearningWhenTempLLM2: boolean  // If true, skip learning phases when tempLLM2 is used
       saveValidationResponses: boolean  // If true, save validation responses to workspace validation folder
+      disableShellExecAccess: boolean  // If true, disable all execute_shell_command tool access globally
+      disableReadImageAccess: boolean  // If true, disable all read_image tool access globally
 
   // Variables manifest (for batch execution with multiple groups)
   variablesManifest: VariablesManifest | null
@@ -127,6 +132,8 @@ interface WorkflowStore {
   setSkipLearningWhenTempLLM1: (enabled: boolean) => void
   setSkipLearningWhenTempLLM2: (enabled: boolean) => void
   setSaveValidationResponses: (enabled: boolean) => void
+  setDisableShellExecAccess: (enabled: boolean) => void
+  setDisableReadImageAccess: (enabled: boolean) => void
 
   // Variables manifest
   setVariablesManifest: (manifest: VariablesManifest | null) => void
@@ -293,6 +300,34 @@ export const useWorkflowStore = create<WorkflowStore>()(
           console.error('[WorkflowStore] Failed to load save validation responses from localStorage:', error)
         }
         return true  // Default to true (save validation responses by default)
+      })(),
+      // Disable shell exec access (persists across page refreshes via localStorage)
+      // Load from localStorage on initialization
+      disableShellExecAccess: (() => {
+        try {
+          const saved = localStorage.getItem(DISABLE_SHELL_EXEC_ACCESS_KEY)
+          if (saved !== null) {
+            const parsed = JSON.parse(saved) as boolean
+            return parsed
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load disable shell exec access from localStorage:', error)
+        }
+        return false  // Default to false (shell exec enabled by default)
+      })(),
+      // Disable read image access (persists across page refreshes via localStorage)
+      // Load from localStorage on initialization
+      disableReadImageAccess: (() => {
+        try {
+          const saved = localStorage.getItem(DISABLE_READ_IMAGE_ACCESS_KEY)
+          if (saved !== null) {
+            const parsed = JSON.parse(saved) as boolean
+            return parsed
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load disable read image access from localStorage:', error)
+        }
+        return false  // Default to false (read image enabled by default)
       })(),
 
       // Variables manifest
@@ -603,9 +638,18 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
         console.log('[RESUME_DEBUG] Selected execution strategy:', executionStrategy)
 
+        // Resolve the specific group folder path for phases that need context
+        // Uses utility function to consolidate logic
+        const resolvedRunFolder = resolveGroupFolderPath({
+          currentRunningGroupId: state.currentRunningGroupId,
+          selectedRunFolder: state.selectedRunFolder,
+          selectedGroupIds: state.selectedGroupIds,
+          manifest: state.variablesManifest
+        })
+        
         const options: ExecutionOptions = {
           run_mode: state.selectedRunFolder === 'new' ? 'create_new_runs_always' : 'use_same_run',
-          selected_run_folder: state.selectedRunFolder === 'new' ? undefined : state.selectedRunFolder,
+          selected_run_folder: resolvedRunFolder,
           execution_strategy: executionStrategy,
         }
 
@@ -708,6 +752,14 @@ export const useWorkflowStore = create<WorkflowStore>()(
         // Include save validation responses flag (always send to ensure backend knows user preference)
         options.save_validation_responses = state.saveValidationResponses
 
+        // Include tool access disable flags
+        if (state.disableShellExecAccess) {
+          options.disable_shell_exec_access = true
+        }
+        if (state.disableReadImageAccess) {
+          options.disable_read_image_access = true
+        }
+
         // Include enabled group IDs from variables manifest (for batch execution)
         // Priority: selectedGroupIds (from checkboxes) > folder path > all enabled groups
         if (state.variablesManifest) {
@@ -732,27 +784,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
               }
             } else {
               // No groups selected via checkboxes - check if folder path specifies a group
-              // Pattern: iteration-X/group-Y or iteration-X/display-name
-              let selectedGroupId: string | null = null
-              if (state.selectedRunFolder && state.selectedRunFolder !== 'new' && state.selectedRunFolder.includes('/')) {
-                // Extract group folder name from path like "iteration-1/group-5" or "iteration-1/production"
-                const parts = state.selectedRunFolder.split('/')
-                if (parts.length === 2) {
-                  const groupFolderName = parts[1] // e.g., "group-5" or "production"
-                  // If it starts with "group-", extract the group ID; otherwise it's a display name
-                  if (groupFolderName.startsWith('group-')) {
-                    selectedGroupId = groupFolderName // e.g., "group-5"
-                  } else {
-                    // Display name - need to find matching group from manifest
-                    const group = state.variablesManifest?.groups?.find((g: VariableGroup) => {
-                      // Check if display_name matches (sanitized) or if group_id matches
-                      const sanitizedDisplayName = groupFolderName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
-                      return g.display_name?.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim() === sanitizedDisplayName || g.group_id === groupFolderName
-                    })
-                    selectedGroupId = group?.group_id || null
-                  }
-                }
-              }
+              // Uses utility function to extract group ID from folder path
+              const selectedGroupId = extractGroupIdFromFolder(state.selectedRunFolder, state.variablesManifest)
 
               if (selectedGroupId) {
                 // Verify the group exists in manifest
@@ -900,6 +933,28 @@ export const useWorkflowStore = create<WorkflowStore>()(
           console.log(`[WorkflowStore] Save validation responses set: ${enabled}`)
         } catch (error) {
           console.error('[WorkflowStore] Failed to save save validation responses to localStorage:', error)
+        }
+      },
+      
+      setDisableShellExecAccess: (enabled: boolean) => {
+        set({ disableShellExecAccess: enabled })
+        try {
+          // Save to localStorage
+          localStorage.setItem(DISABLE_SHELL_EXEC_ACCESS_KEY, JSON.stringify(enabled))
+          console.log(`[WorkflowStore] Disable shell exec access set: ${enabled}`)
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save disable shell exec access to localStorage:', error)
+        }
+      },
+      
+      setDisableReadImageAccess: (enabled: boolean) => {
+        set({ disableReadImageAccess: enabled })
+        try {
+          // Save to localStorage
+          localStorage.setItem(DISABLE_READ_IMAGE_ACCESS_KEY, JSON.stringify(enabled))
+          console.log(`[WorkflowStore] Disable read image access set: ${enabled}`)
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save disable read image access to localStorage:', error)
         }
       },
 
@@ -1261,22 +1316,8 @@ export const useCompletedStepIndices = () => useWorkflowStore(state => state.ste
 // Computed selector for selected group ID
 export const useSelectedGroupId = () => {
   return useWorkflowStore(state => {
-    // Extract group ID from selectedRunFolder if it contains a group path
-    // Pattern: iteration-X/group-Y or iteration-X/display-name
-    if (state.selectedRunFolder && state.selectedRunFolder !== 'new' && state.selectedRunFolder.includes('/')) {
-      const parts = state.selectedRunFolder.split('/')
-      if (parts.length === 2) {
-        const groupFolderName = parts[1] // e.g., "group-5" or "production"
-        // If it starts with "group-", return it directly; otherwise it's a display name
-        if (groupFolderName.startsWith('group-')) {
-          return groupFolderName // e.g., "group-5"
-        }
-        // For display names, we'd need the manifest to resolve, but this function just returns the folder name
-        // The caller should handle display name resolution if needed
-        return groupFolderName
-      }
-    }
-    return null
+    // Uses utility function to extract group ID from folder path
+    return extractGroupIdFromFolder(state.selectedRunFolder, state.variablesManifest)
   })
 }
 

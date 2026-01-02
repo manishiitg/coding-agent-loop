@@ -60,8 +60,8 @@ type PlanImprovementManager struct {
 
 	// Plan improvement LLM config (optional preset)
 	presetPlanImprovementLLM *AgentLLMConfig
-	// Learning LLM config (fallback for plan improvement if presetPlanImprovementLLM not set)
-	presetLearningLLM *AgentLLMConfig
+	// Phase LLM config (fallback for plan improvement if presetPlanImprovementLLM not set)
+	presetPhaseLLM *AgentLLMConfig
 
 	// Session and workflow IDs for human feedback
 	sessionID  string
@@ -72,14 +72,14 @@ type PlanImprovementManager struct {
 func NewPlanImprovementManager(
 	baseOrchestrator *orchestrator.BaseOrchestrator,
 	presetPlanImprovementLLM *AgentLLMConfig,
-	presetLearningLLM *AgentLLMConfig,
+	presetPhaseLLM *AgentLLMConfig,
 	sessionID string,
 	workflowID string,
 ) *PlanImprovementManager {
 	return &PlanImprovementManager{
 		BaseOrchestrator:         baseOrchestrator,
 		presetPlanImprovementLLM: presetPlanImprovementLLM,
-		presetLearningLLM:        presetLearningLLM,
+		presetPhaseLLM:           presetPhaseLLM,
 		sessionID:                sessionID,
 		workflowID:               workflowID,
 	}
@@ -151,8 +151,8 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 			APIKeys:               apiKeys,               // Preserve API keys from orchestrator (or nil if orchestrator config is nil)
 		}
 		pim.GetLogger().Info(fmt.Sprintf("🔧 Using preset default plan improvement LLM: %s/%s", pim.presetPlanImprovementLLM.Provider, pim.presetPlanImprovementLLM.ModelID))
-	} else if pim.presetLearningLLM != nil && pim.presetLearningLLM.Provider != "" && pim.presetLearningLLM.ModelID != "" {
-		// Fallback to learning LLM if plan improvement LLM not set
+	} else if pim.presetPhaseLLM != nil && pim.presetPhaseLLM.Provider != "" && pim.presetPhaseLLM.ModelID != "" {
+		// Fallback to phase LLM if plan improvement LLM not set
 		var fallbackModels []string
 		var crossProviderFallback *agents.CrossProviderFallback
 		var apiKeys *orchestrator.APIKeys
@@ -165,13 +165,13 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 		}
 
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              pim.presetLearningLLM.Provider,
-			ModelID:               pim.presetLearningLLM.ModelID,
+			Provider:              pim.presetPhaseLLM.Provider,
+			ModelID:               pim.presetPhaseLLM.ModelID,
 			FallbackModels:        fallbackModels,
 			CrossProviderFallback: crossProviderFallback,
 			APIKeys:               apiKeys,
 		}
-		pim.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM as fallback for plan improvement: %s/%s", pim.presetLearningLLM.Provider, pim.presetLearningLLM.ModelID))
+		pim.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM as fallback for plan improvement: %s/%s", pim.presetPhaseLLM.Provider, pim.presetPhaseLLM.ModelID))
 	} else {
 		llmConfigToUse = orchestratorLLMConfig
 		pim.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default plan improvement LLM: %s/%s", pim.GetProvider(), pim.GetModel()))

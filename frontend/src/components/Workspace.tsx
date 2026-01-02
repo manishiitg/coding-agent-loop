@@ -11,17 +11,21 @@ import MoveFileDialog from './workspace/MoveFileDialog'
 import ConfirmationDialog from './ui/ConfirmationDialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
-import { useAppStore } from '../stores'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
+import { useChatStore } from '../stores/useChatStore'
+import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { 
   collectFolderPaths, 
   restoreExpandedFolders, 
-  getAdjustedPath,
   getOriginalPath,
-  isPathWithinFolder
+  isPathWithinFolder,
+  normalizePath,
+  adjustFilePathsRecursive,
+  findFileByPath
 } from '../utils/workspacePathUtils'
+import { useIterationExpansion } from './workspace/useIterationExpansion'
 
 interface WorkspaceProps {
   minimized: boolean
@@ -32,15 +36,45 @@ export default function Workspace({
   minimized,
   onToggleMinimize
 }: WorkspaceProps) {
-  // Store subscriptions
-  const {
-    chatFileContext,
-    addFileToContext
-  } = useAppStore()
+  // Get mode-specific file context and handlers
+  const { selectedModeCategory } = useModeStore()
+  const { getActiveTab, setTabConfig } = useChatStore()
+  const { getActivePreset } = usePresetApplication()
+  
+  // Get file context based on mode: chat mode uses tab config, workflow mode uses preset
+  const chatFileContext = useMemo(() => {
+    if (selectedModeCategory === 'chat') {
+      const activeTab = getActiveTab()
+      return activeTab?.config?.fileContext || []
+    } else if (selectedModeCategory === 'workflow') {
+      const activePreset = getActivePreset('workflow')
+      if (activePreset?.selectedFolder) {
+        return [{
+          name: activePreset.selectedFolder.filepath.split('/').pop() || '',
+          path: activePreset.selectedFolder.filepath,
+          type: (activePreset.selectedFolder.type || 'folder') as 'file' | 'folder'
+        }]
+      }
+    }
+    return []
+  }, [selectedModeCategory, getActiveTab, getActivePreset])
+  
+  // Add file to context handler - mode-specific
+  const addFileToContext = useCallback((file: { name: string; path: string; type: 'file' | 'folder' }) => {
+    if (selectedModeCategory === 'chat') {
+      const activeTab = getActiveTab()
+      if (activeTab) {
+        const currentContext = activeTab.config?.fileContext || []
+        setTabConfig(activeTab.tabId, { 
+          fileContext: [...currentContext, file] 
+        })
+      }
+    }
+    // Workflow mode doesn't support adding files to context (preset folder is fixed)
+  }, [selectedModeCategory, getActiveTab, setTabConfig])
 
   // Get active workflow preset to filter workspace to selected folder
   // Subscribe directly to store state to make it reactive
-  const { selectedModeCategory } = useModeStore()
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const customPresets = useGlobalPresetStore(state => state.customPresets)
   const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
@@ -154,7 +188,6 @@ export default function Workspace({
   // Optionally includes Downloads/ folder if includeDownloads is true
   const filterToWorkflowFolder = useCallback((files: PlannerFile[], parentFolderPath: string, includeDownloads: boolean = false): PlannerFile[] => {
     // Normalize paths for comparison (remove leading/trailing slashes, lowercase)
-    const normalizePath = (path: string) => path.toLowerCase().replace(/^\/+|\/+$/g, '')
     const targetPath = normalizePath(parentFolderPath)
     const downloadsPath = normalizePath('Downloads')
     
@@ -236,28 +269,7 @@ export default function Workspace({
       
       // Adjust filepaths to show workflow folder as root (remove the workflow folder path prefix)
       // Store original path in originalFilepath for API calls
-      const adjustFilePaths = (fileList: PlannerFile[]): PlannerFile[] => {
-        return fileList.map(file => {
-          const adjustedFilepath = getAdjustedPath(file.filepath, workflowFolderPath)
-          const originalFilepath = file.filepath // Store original before adjustment
-          
-          if (file.type === 'folder') {
-            return {
-              ...file,
-              filepath: adjustedFilepath,
-              originalFilepath: originalFilepath, // Store original for API calls
-              children: file.children ? adjustFilePaths(file.children) : []
-            }
-          }
-          return {
-            ...file,
-            filepath: adjustedFilepath,
-            originalFilepath: originalFilepath // Store original for API calls
-          }
-        })
-      }
-      
-      result = adjustFilePaths(result)
+      result = adjustFilePathsRecursive(result, workflowFolderPath)
     }
     
     return result
@@ -399,53 +411,7 @@ export default function Workspace({
       
       // Adjust filepaths to show workflow folder as root (remove the workflow folder path prefix)
       // Store original path in originalFilepath for API calls
-      const adjustFilePaths = (fileList: PlannerFile[]): PlannerFile[] => {
-        return fileList.map(file => {
-          let adjustedFilepath = file.filepath
-          const originalFilepath = file.filepath // Store original before adjustment
-          
-          // Normalize paths for comparison
-          const normalizePath = (path: string) => path.toLowerCase().replace(/^\/+|\/+$/g, '')
-          const filePathNormalized = normalizePath(file.filepath)
-          const workflowPathNormalized = normalizePath(workflowFolderPath)
-          
-          // Remove the workflow folder path prefix to show it as root
-          if (filePathNormalized === workflowPathNormalized || filePathNormalized.startsWith(workflowPathNormalized + '/')) {
-            // This file is within the workflow folder
-            if (filePathNormalized === workflowPathNormalized) {
-              // This is the workflow folder itself - show just the folder name
-              const folderParts = workflowFolderPath.split('/').filter(Boolean)
-              adjustedFilepath = folderParts.length > 0 ? folderParts[folderParts.length - 1] : file.filepath
-            } else {
-              // Remove the workflow folder path prefix
-              const remaining = file.filepath.slice(workflowFolderPath.length)
-              // Remove leading slash if present
-              adjustedFilepath = remaining.startsWith('/') ? remaining.slice(1) : remaining
-              // If empty after removal, use the folder name
-              if (!adjustedFilepath) {
-                const folderParts = workflowFolderPath.split('/').filter(Boolean)
-                adjustedFilepath = folderParts.length > 0 ? folderParts[folderParts.length - 1] : file.filepath
-              }
-            }
-          }
-          
-          if (file.type === 'folder') {
-            return {
-              ...file,
-              filepath: adjustedFilepath,
-              originalFilepath: originalFilepath, // Store original for API calls
-              children: file.children ? adjustFilePaths(file.children) : []
-            }
-          }
-          return {
-            ...file,
-            filepath: adjustedFilepath,
-            originalFilepath: originalFilepath // Store original for API calls
-          }
-        })
-      }
-      
-      result = adjustFilePaths(result)
+      result = adjustFilePathsRecursive(result, workflowFolderPath)
     }
     
     // Apply search filter
@@ -457,46 +423,21 @@ export default function Workspace({
   // Enhanced file highlighting with folder expansion and auto-scroll
   useEffect(() => {
     if (highlightedFile) {
-      console.log('[Workspace] highlightedFile changed, processing:', {
-        highlightedFile,
-        selectedModeCategory,
-        workflowFolderPath,
-        filteredFilesCount: filteredFiles.length
-      })
-      
       // In workflow mode, we need to convert the original path to the adjusted path for folder expansion
       // Find the file in filtered files that matches the highlightedFile (by originalFilepath or filepath)
       let pathToUse = highlightedFile
       if (selectedModeCategory === 'workflow' && workflowFolderPath) {
-        const findFileByPath = (fileList: PlannerFile[], targetPath: string): PlannerFile | null => {
-          for (const file of fileList) {
-            if (file.filepath === targetPath || file.originalFilepath === targetPath) {
-              return file
-            }
-            if (file.children && file.children.length > 0) {
-              const found = findFileByPath(file.children, targetPath)
-              if (found) return found
-            }
-          }
-          return null
-        }
         const foundFile = findFileByPath(filteredFiles, highlightedFile)
-        console.log('[Workspace] File search in workflow mode:', {
-          highlightedFile,
-          foundFile: foundFile ? { filepath: foundFile.filepath, originalFilepath: foundFile.originalFilepath } : null
-        })
         // Use the adjusted filepath if found, otherwise use the original path
         if (foundFile) {
           pathToUse = foundFile.filepath
         }
       }
       
-      console.log('[Workspace] Expanding folders for file:', pathToUse)
       expandFoldersForFile(pathToUse)
       
       // Auto-scroll to highlighted file after a short delay to allow folder expansion
       setTimeout(() => {
-        console.log('[Workspace] Scrolling to highlighted file:', highlightedFile)
         scrollToHighlightedFile(highlightedFile)
       }, 100)
     }
@@ -539,9 +480,10 @@ export default function Workspace({
           // Expand children up to 4 levels deep (levels 0, 1, 2, 3, 4 = 5 levels total)
           // We use maxLevel=4 to get 4 levels below the workflow folder
           // Pass the workflow folder path as an additional folder to ensure it's expanded
-          // Exclude "planning" and "variables" folders to keep them closed by default
+          // Exclude "planning", "variables", "learnings", and "logs" folders to keep them closed by default
+          // Note: "logs" exclusion applies to nested paths like "runs/iteration-x/group-x/logs"
           const additionalFolders = workflowFolder ? [workflowFolder.filepath] : undefined
-          const excludeFolders = ['planning', 'variables']
+          const excludeFolders = ['planning', 'variables', 'learnings', 'logs']
           expandFoldersToLevel(filesToExpand, 4, additionalFolders, excludeFolders)
           
           if (workflowFolder) {
@@ -572,148 +514,15 @@ export default function Workspace({
   // Get selected iteration from workflow store
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
   
-  useEffect(() => {
-    // Only run in workflow mode when we have filtered files and a selected iteration
-    if (selectedModeCategory !== 'workflow' || !workflowFolderPath || filteredFiles.length === 0 || !selectedRunFolder || selectedRunFolder === 'new') {
-      return
-    }
-    
-    // Helper to recursively find all iteration folders in the tree
-    // file.filepath is already the adjusted path (e.g., "runs/iteration-10")
-    const findIterationFolders = (fileList: PlannerFile[]): string[] => {
-      const iterationFolders: string[] = []
-      
-      for (const file of fileList) {
-        if (file.type === 'folder') {
-          // Check if this is an iteration folder (matches pattern: runs/iteration-* or iteration-*)
-          // Also handle group subfolders: runs/iteration-*/group-* or runs/iteration-*/display-name
-          // Accepts both "group-X" format and display names (any alphanumeric/dash folder name)
-          if (file.filepath.match(/^runs\/iteration-\d+(\/[a-zA-Z0-9_-]+)?$/) || file.filepath.match(/^iteration-\d+(\/[a-zA-Z0-9_-]+)?$/)) {
-            iterationFolders.push(file.filepath)
-          }
-          
-          // Recursively search children
-          if (file.children && file.children.length > 0) {
-            const childIterations = findIterationFolders(file.children)
-            iterationFolders.push(...childIterations)
-          }
-        }
-      }
-      
-      return iterationFolders
-    }
-    
-    // Find all iteration folders in the filtered tree
-    const allIterationFolders = findIterationFolders(filteredFiles)
-    
-    if (allIterationFolders.length === 0) {
-      return // No iteration folders found, nothing to do
-    }
-    
-    // Build the path for the selected iteration
-    // selectedRunFolder can be: "iteration-10" or "iteration-10/group-1"
-    // In filtered view, it appears as "runs/iteration-10" or "runs/iteration-10/group-1"
-    const selectedIterationPath = selectedRunFolder.startsWith('runs/') 
-      ? selectedRunFolder 
-      : `runs/${selectedRunFolder}`
-    
-    // Also check without "runs/" prefix in case paths are adjusted differently
-    const selectedIterationPathAlt = selectedRunFolder
-    
-    // Get current expanded folders
-    const currentExpanded = new Set(expandedFolders)
-    const newExpanded = new Set<string>()
-    
-    // Copy all non-iteration folders to keep them expanded
-    for (const folder of currentExpanded) {
-      // Check if this is NOT an iteration folder
-      // Match patterns: runs/iteration-*, iteration-*, or runs/iteration-*/group-* or runs/iteration-*/display-name
-      // Accepts both "group-X" format and display names (any alphanumeric/dash folder name)
-      const isIterationFolder = folder.match(/^runs\/iteration-\d+(\/[a-zA-Z0-9_-]+)?$/) || 
-                                 folder.match(/^iteration-\d+(\/[a-zA-Z0-9_-]+)?$/)
-      if (!isIterationFolder) {
-        newExpanded.add(folder)
-      }
-    }
-    
-    // Find the matching iteration folder path in the tree (may have different path format)
-    const matchingIterationPath = allIterationFolders.find(path => 
-      path === selectedIterationPath || 
-      path === selectedIterationPathAlt ||
-      path.endsWith(`/${selectedRunFolder}`) ||
-      path === selectedRunFolder
-    )
-    
-    // Collapse all iteration folders, then expand only the selected one
-    // Also expand parent folders needed to show the selected iteration
-    if (matchingIterationPath) {
-      newExpanded.add(matchingIterationPath)
-      
-      // Check if this is a group path (e.g., "iteration-10/group-1" or "iteration-10/production")
-      // If so, also expand the parent iteration folder to show all groups
-      // A group path is any nested folder under iteration
-      const isGroupPath = selectedRunFolder.includes('/') && selectedRunFolder.split('/').length === 2
-      if (isGroupPath) {
-        // Extract parent iteration folder (e.g., "iteration-10" from "iteration-10/group-1")
-        const parentIterationName = selectedRunFolder.split('/')[0]
-        const parentIterationPath = selectedIterationPath.startsWith('runs/')
-          ? `runs/${parentIterationName}`
-          : parentIterationName
-        
-        // Helper to find folder in file tree by path
-        const findFolderInTree = (fileList: PlannerFile[], targetPath: string): PlannerFile | null => {
-          for (const file of fileList) {
-            if (file.type === 'folder' && (file.filepath === targetPath || file.originalFilepath === targetPath)) {
-              return file
-            }
-            if (file.children && file.children.length > 0) {
-              const found = findFolderInTree(file.children, targetPath)
-              if (found) return found
-            }
-          }
-          return null
-        }
-        
-        // Find the parent iteration folder in the file tree (not just in allIterationFolders)
-        // This is needed because when groups exist, backend only returns group folders, not parent
-        const parentIterationFolder = findFolderInTree(filteredFiles, parentIterationPath) ||
-                                      findFolderInTree(filteredFiles, `runs/${parentIterationName}`) ||
-                                      findFolderInTree(filteredFiles, parentIterationName)
-        
-        if (parentIterationFolder) {
-          // Use the actual filepath from the tree (may have different format)
-          const parentPathToExpand = parentIterationFolder.filepath || parentIterationFolder.originalFilepath
-          if (parentPathToExpand) {
-            newExpanded.add(parentPathToExpand)
-            console.log('[Workspace] Expanding parent iteration to show all groups:', {
-              selectedGroup: matchingIterationPath,
-              parentIteration: parentPathToExpand
-            })
-          }
-        }
-      }
-      
-      // Also expand parent folders (e.g., "runs" if needed)
-      const pathParts = matchingIterationPath.split('/')
-      for (let i = 1; i < pathParts.length; i++) {
-        const parentPath = pathParts.slice(0, i).join('/')
-        newExpanded.add(parentPath)
-      }
-    }
-    
-    // Only update if something changed
-    if (newExpanded.size !== currentExpanded.size || 
-        Array.from(newExpanded).some(f => !currentExpanded.has(f)) ||
-        Array.from(currentExpanded).some(f => !newExpanded.has(f))) {
-      console.log('[Workspace] Auto-collapsing iterations:', {
-        selectedIteration: selectedIterationPath,
-        allIterations: allIterationFolders,
-        previousExpanded: Array.from(currentExpanded),
-        newExpanded: Array.from(newExpanded)
-      })
-      setExpandedFolders(newExpanded)
-    }
-  }, [selectedModeCategory, workflowFolderPath, filteredFiles, selectedRunFolder, expandedFolders, setExpandedFolders])
+  // Use custom hook to handle iteration expansion logic
+  useIterationExpansion({
+    selectedModeCategory,
+    workflowFolderPath,
+    filteredFiles,
+    selectedRunFolder,
+    expandedFolders,
+    setExpandedFolders
+  })
   
   // Close dropdown when clicking outside
   useEffect(() => {

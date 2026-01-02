@@ -1,7 +1,7 @@
 import React from 'react';
-import { Button } from '../ui/Button';
 import { useChatStore } from '../../stores/useChatStore';
-import { Eye, EyeOff } from 'lucide-react';
+import { Filter, Settings, Minus } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export const EventModeToggle: React.FC = () => {
   // Get active tab's event mode directly from store
@@ -10,37 +10,59 @@ export const EventModeToggle: React.FC = () => {
   const setTabEventMode = useChatStore(state => state.setTabEventMode);
 
   const cycleMode = () => {
-    // Simple toggle between basic and advanced
+    // Cycle through: basic → advanced → tiny → basic
     if (activeTab) {
-      const newMode = mode === 'basic' ? 'advanced' : 'basic';
+      let newMode: 'basic' | 'advanced' | 'tiny';
+      if (mode === 'basic') {
+        newMode = 'advanced';
+      } else if (mode === 'advanced') {
+        newMode = 'tiny';
+      } else {
+        newMode = 'basic';
+      }
       setTabEventMode(activeTab.tabId, newMode);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      cycleMode();
     }
   };
 
   const getModeDisplay = () => {
     switch (mode) {
       case 'basic':
-        return { icon: Eye, label: 'Basic' };
+        return { icon: Filter, label: 'Basic' };
       case 'advanced':
-        return { icon: EyeOff, label: 'Advanced' };
+        return { icon: Settings, label: 'Advanced' };
+      case 'tiny':
+        return { icon: Minus, label: 'Tiny' };
       default:
-        return { icon: Eye, label: 'Basic' };
+        return { icon: Filter, label: 'Basic' };
     }
   };
 
   const { icon: Icon, label } = getModeDisplay();
 
   return (
-    <Button
-      variant="outline"
-      size="sm"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={cycleMode}
-      className="flex items-center gap-1 text-xs h-6 px-1.5 border-gray-300 dark:border-gray-600"
+      onKeyDown={handleKeyDown}
+      className={cn(
+        "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors",
+        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        "border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground",
+        "cursor-pointer",
+        "flex items-center justify-center h-6 w-6 p-0 border-gray-300 dark:border-gray-600"
+      )}
       title={`Event Mode: ${label} (click to toggle)`}
       data-testid="event-mode-toggle"
     >
-      <Icon className="w-3 h-3" />
-      <span className="text-[10px]">{label}</span>
-    </Button>
+      <Icon className="w-3.5 h-3.5" />
+    </div>
   );
 }; 

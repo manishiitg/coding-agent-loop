@@ -9,13 +9,6 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
-	mcpagent "mcpagent/agent"
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/mcpclient"
-	"mcpagent/observability"
-
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // DetectionHistoryEntry represents a single learning detection result
@@ -45,8 +38,14 @@ type ConsolidationHistoryEntry struct {
 type LearningMetadata struct {
 	StepID                   string                      `json:"step_id"`
 	StepPath                 string                      `json:"step_path"`
+	StepHash                 string                      `json:"step_hash,omitempty"` // SHA256 of step definition
 	TotalIterations          int                         `json:"total_iterations"`
-	ConsecutiveNoNewLearning int                         `json:"consecutive_no_new_learning"`
+	ConsecutiveNoNewLearning int                         `json:"consecutive_no_new_learning"` // Legacy - keeping for backward compatibility
+	SuccessfulRunsSimple     int                         `json:"successful_runs_simple"`      // Successful runs for TurnCount < 15
+	SuccessfulRunsMedium     int                         `json:"successful_runs_medium"`      // Successful runs for TurnCount 15-30
+	SuccessfulRunsComplex    int                         `json:"successful_runs_complex"`     // Successful runs for TurnCount > 30
+	LastTurnCount            int                         `json:"last_turn_count"`             // Last recorded TurnCount
+	LastLearningLLM          string                      `json:"last_learning_llm,omitempty"` // The LLM used for the last learning cycle
 	LastLearningDetectedAt   string                      `json:"last_learning_detected_at,omitempty"`
 	LastDetectionReasoning   string                      `json:"last_detection_reasoning,omitempty"`
 	LastDetectionConfidence  float64                     `json:"last_detection_confidence,omitempty"`
@@ -55,143 +54,34 @@ type LearningMetadata struct {
 	LastConsolidationAt      string                      `json:"last_consolidation_at,omitempty"`
 	// Auto-lock information
 	AutoLockedAt      string `json:"auto_locked_at,omitempty"`      // Timestamp when auto-lock was triggered
-	AutoLockReason    string `json:"auto_lock_reason,omitempty"`    // Reason: "consecutive_no_new_learning" or "maximum_learnings"
+	AutoLockReason    string `json:"auto_lock_reason,omitempty"`    // Reason: "threshold_reached", "maximum_learnings", etc.
 	AutoLockIteration int    `json:"auto_lock_iteration,omitempty"` // Iteration number when auto-lock was triggered
 	// Auto-unlock information
 	AutoUnlockedAt      string `json:"auto_unlocked_at,omitempty"`      // Timestamp when auto-unlock was triggered
-	AutoUnlockReason    string `json:"auto_unlock_reason,omitempty"`    // Reason: "validation_failed" or "decision_step_false"
+	AutoUnlockReason    string `json:"auto_unlock_reason,omitempty"`    // Reason: "validation_failed", "decision_step_false", "plan_changed"
 	AutoUnlockIteration int    `json:"auto_unlock_iteration,omitempty"` // Iteration number when auto-unlock was triggered
 	// Note: LastConsolidationOutput removed - learning content is stored in files, not metadata
 }
 
-// detectNewLearningWithLLM runs the learning detection agent to compare old vs new learning files
-// previousLearningsContent: Combined content of all learning files BEFORE the learning phase ran (read directly from files)
-// step: Step information for task context (title, description, success criteria, etc.)
-// usedTempLLM: Which tempLLM was used during execution ("tempLLM1", "tempLLM2", or "" for original LLM)
-// validationPassed: Whether validation passed (success criteria met)
-// Returns: (hasNewLearning, reasoning, confidence, error)
-func (hcpo *HumanControlledTodoPlannerOrchestrator) detectNewLearningWithLLM(
+// GetLearningMetadata reads and returns the learning metadata for a given step
+func (hcpo *HumanControlledTodoPlannerOrchestrator) GetLearningMetadata(
 	ctx context.Context,
-	stepIndex int,
-	stepPath string,
 	learningPathIdentifier string,
-	stepConfig *AgentConfigs,
-	previousLearningsContent string,
-	step PlanStepInterface,
-	usedTempLLM string,
-	validationPassed bool,
-	isCodeExecutionMode bool, // Code execution mode (kept for future use, not used in detection)
-) (bool, string, float64, error) {
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Running learning detection for %s", learningPathIdentifier))
-
+) (*LearningMetadata, error) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
-	stepLearningsPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier)
+	metadataPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier, ".learning_metadata.json")
 
-	// Get current learnings (what exists now after extraction agent has consolidated)
-	currentLearningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
+	content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, metadataPath)
 	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read current learning files: %v (treating as no new learning)", err))
-		return false, "Failed to read current learning files", 0.5, nil
+		return nil, err // Return error if file doesn't exist or can't be read
 	}
 
-	// Combine current learning files into single content
-	currentLearningsContent, _ := hcpo.formatStepLearningFilesAsHistory(currentLearningFiles)
-
-	// If no current learning files, the extraction agent may not have written any files
-	if len(currentLearningFiles) == 0 {
-		hcpo.GetLogger().Info(fmt.Sprintf("📄 No current learning files found for %s - extraction agent may not have written files, treating as no new learning", learningPathIdentifier))
-		return false, "No current learning files found (extraction agent may not have written files)", 0.5, nil
+	var metadata LearningMetadata
+	if err := json.Unmarshal([]byte(content), &metadata); err != nil {
+		return nil, fmt.Errorf("failed to parse learning metadata: %w", err)
 	}
 
-	// Validate that currentLearningsContent is not empty after formatting
-	currentLearningsContentTrimmed := strings.TrimSpace(currentLearningsContent)
-	if currentLearningsContentTrimmed == "" {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Current learning files exist but formatted content is empty for %s - treating as no new learning", learningPathIdentifier))
-		return false, "Current learning files exist but formatted content is empty", 0.5, nil
-	}
-
-	// Validate previous learnings content
-	previousLearningsContentTrimmed := strings.TrimSpace(previousLearningsContent)
-
-	// If no previous learnings, this is the first iteration - treat as new learning
-	if previousLearningsContentTrimmed == "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("📄 No previous learnings found for %s - treating as new learning (first iteration)", learningPathIdentifier))
-		return true, "First iteration - no previous learnings", 1.0, nil
-	}
-
-	// Log content sizes for debugging
-	hcpo.GetLogger().Info(fmt.Sprintf("📊 Learning detection content sizes for %s - Previous: %d chars, Current: %d chars",
-		learningPathIdentifier, len(previousLearningsContentTrimmed), len(currentLearningsContentTrimmed)))
-
-	// Validate that both contents are non-empty before calling LLM
-	if previousLearningsContentTrimmed == "" && currentLearningsContentTrimmed == "" {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Both previous and current learning contents are empty for %s - cannot compare, treating as no new learning", learningPathIdentifier))
-		return false, "Both previous and current learning contents are empty - cannot compare", 0.5, nil
-	}
-
-	// Both previous and current learnings exist - use LLM to compare them
-	// Create detection agent
-	agentName := fmt.Sprintf("%s-learning-detection", learningPathIdentifier)
-	detectionAgent, err := hcpo.createLearningDetectionAgent(ctx, agentName, stepConfig)
-	if err != nil {
-		return false, "", 0.0, fmt.Errorf("failed to create learning detection agent: %w", err)
-	}
-
-	// Prepare template variables with step context
-	// Use trimmed versions to ensure we're not passing whitespace-only content
-	templateVars := map[string]string{
-		"PreviousLearningsContent": previousLearningsContentTrimmed,
-		"CurrentLearningsContent":  currentLearningsContentTrimmed,
-		"StepTitle":                step.GetTitle(),
-		"StepDescription":          step.GetDescription(),
-		"StepSuccessCriteria":      step.GetSuccessCriteria(),
-		"StepContextOutput":        step.GetContextOutput().String(),
-		"UsedTempLLM":              usedTempLLM,
-		"ValidationPassed":         fmt.Sprintf("%v", validationPassed),
-	}
-
-	// Consolidation is now handled by extraction agents - no consolidation parameters needed
-
-	// Add context dependencies as comma-separated string
-	if len(step.GetContextDependencies()) > 0 {
-		templateVars["StepContextDependencies"] = strings.Join(step.GetContextDependencies(), ", ")
-	} else {
-		templateVars["StepContextDependencies"] = ""
-	}
-
-	// Validate step context fields are not empty (critical for detection agent)
-	stepTitle := strings.TrimSpace(step.GetTitle())
-	stepDescription := strings.TrimSpace(step.GetDescription())
-	stepSuccessCriteria := strings.TrimSpace(step.GetSuccessCriteria())
-
-	if stepTitle == "" {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step title is empty for %s - detection may be inaccurate", learningPathIdentifier))
-	}
-	if stepDescription == "" {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step description is empty for %s - detection may be inaccurate", learningPathIdentifier))
-	}
-	if stepSuccessCriteria == "" {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step success criteria is empty for %s - detection may be inaccurate", learningPathIdentifier))
-	}
-
-	// Log template variable sizes for debugging (helps identify empty content issues)
-	hcpo.GetLogger().Info(fmt.Sprintf("📊 Learning detection template variable sizes for %s - PreviousLearnings: %d chars, CurrentLearnings: %d chars, Title: %d chars, Description: %d chars, SuccessCriteria: %d chars",
-		learningPathIdentifier,
-		len(templateVars["PreviousLearningsContent"]),
-		len(templateVars["CurrentLearningsContent"]),
-		len(templateVars["StepTitle"]),
-		len(templateVars["StepDescription"]),
-		len(templateVars["StepSuccessCriteria"])))
-
-	// Execute detection agent
-	detectionResponse, _, err := detectionAgent.ExecuteStructured(ctx, templateVars, []llmtypes.MessageContent{})
-	if err != nil {
-		return false, "", 0.0, fmt.Errorf("learning detection agent execution failed: %w", err)
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Learning detection result for %s: has_new_learning=%v, confidence=%.2f", learningPathIdentifier, detectionResponse.HasNewLearning, detectionResponse.Confidence))
-
-	return detectionResponse.HasNewLearning, detectionResponse.Reasoning, detectionResponse.Confidence, nil
+	return &metadata, nil
 }
 
 // updateLearningMetadata updates the learning metadata file with detection results
@@ -205,6 +95,26 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) updateLearningMetadata(
 	reasoning string,
 	confidence float64,
 ) (bool, error) {
+	// Re-route to the new complexity-based logic with a default turn count of 0 (unknown)
+	// and no plan step (will skip hash check). validationPassed is false (safe default).
+	return hcpo.updateLearningMetadataWithTurnCount(ctx, stepIndex, stepPath, learningPathIdentifier, hasNewLearning, reasoning, confidence, 0, nil, false, "")
+}
+
+// updateLearningMetadataWithTurnCount updates the learning metadata with TurnCount-based complexity tracking.
+// This is the implementation of the "TurnCount Tracker" described in learnings_architecture.md.
+func (hcpo *HumanControlledTodoPlannerOrchestrator) updateLearningMetadataWithTurnCount(
+	ctx context.Context,
+	stepIndex int,
+	stepPath string,
+	learningPathIdentifier string,
+	hasNewLearning bool,
+	reasoning string,
+	confidence float64,
+	turnCount int,
+	step PlanStepInterface,
+	validationPassed bool,
+	usedLLM string,
+) (bool, error) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	metadataPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier, ".learning_metadata.json")
 
@@ -214,51 +124,60 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) updateLearningMetadata(
 	if err != nil {
 		// Metadata doesn't exist - create new
 		metadata = LearningMetadata{
-			StepID:                   fmt.Sprintf("step-%d", stepIndex+1),
+			StepID:                   learningPathIdentifier,
 			StepPath:                 stepPath,
 			TotalIterations:          0,
 			ConsecutiveNoNewLearning: 0,
-			DetectionHistory:         []DetectionHistoryEntry{},
-			ConsolidationHistory:     []ConsolidationHistoryEntry{},
 		}
 	} else {
 		// Parse existing metadata
 		if err := json.Unmarshal([]byte(content), &metadata); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse learning metadata: %v (creating new)", err))
 			metadata = LearningMetadata{
-				StepID:                   fmt.Sprintf("step-%d", stepIndex+1),
+				StepID:                   learningPathIdentifier,
 				StepPath:                 stepPath,
 				TotalIterations:          0,
 				ConsecutiveNoNewLearning: 0,
-				DetectionHistory:         []DetectionHistoryEntry{},
-				ConsolidationHistory:     []ConsolidationHistoryEntry{},
 			}
 		}
 	}
 
-	// Initialize DetectionHistory if nil (for backward compatibility with old metadata)
+	// Initialize slices if nil
 	if metadata.DetectionHistory == nil {
 		metadata.DetectionHistory = []DetectionHistoryEntry{}
 	}
-
-	// Initialize ConsolidationHistory if nil (for backward compatibility with old metadata)
 	if metadata.ConsolidationHistory == nil {
 		metadata.ConsolidationHistory = []ConsolidationHistoryEntry{}
 	}
 
-	// Update metadata
+	// Update common fields
 	metadata.TotalIterations++
+	metadata.LastTurnCount = turnCount
+	metadata.LastLearningLLM = usedLLM
+	if step != nil {
+		metadata.StepHash = hcpo.CalculateStepHash(step)
+	}
+
 	if hasNewLearning {
-		// Reset counter when new learning is detected
 		metadata.ConsecutiveNoNewLearning = 0
 		metadata.LastLearningDetectedAt = time.Now().Format(time.RFC3339)
-		metadata.LastDetectionReasoning = reasoning
-		metadata.LastDetectionConfidence = confidence
 	} else {
-		// Increment counter when no new learning
 		metadata.ConsecutiveNoNewLearning++
-		metadata.LastDetectionReasoning = reasoning
-		metadata.LastDetectionConfidence = confidence
+	}
+	metadata.LastDetectionReasoning = reasoning
+	metadata.LastDetectionConfidence = confidence
+
+	// Increment complexity-based counters (ONLY on successful validation/new learning)
+	// Note: In Mode A (Unlocked), we increment counters if validation passed.
+	// Since this is called after success learning extraction, we increment here.
+	if validationPassed && turnCount > 0 {
+		if turnCount < 15 {
+			metadata.SuccessfulRunsSimple++
+		} else if turnCount <= 30 {
+			metadata.SuccessfulRunsMedium++
+		} else {
+			metadata.SuccessfulRunsComplex++
+		}
 	}
 
 	// Add detection result to history
@@ -271,36 +190,43 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) updateLearningMetadata(
 	}
 	metadata.DetectionHistory = append(metadata.DetectionHistory, detectionEntry)
 
-	// Limit history to last 50 entries to prevent unbounded growth
-	const maxHistoryEntries = 50
-	if len(metadata.DetectionHistory) > maxHistoryEntries {
-		// Keep only the last maxHistoryEntries entries
-		metadata.DetectionHistory = metadata.DetectionHistory[len(metadata.DetectionHistory)-maxHistoryEntries:]
+	// Limit history to last 50 entries
+	if len(metadata.DetectionHistory) > 50 {
+		metadata.DetectionHistory = metadata.DetectionHistory[len(metadata.DetectionHistory)-50:]
 	}
 
-	// Check if auto-lock should be triggered
-	// Condition 1: 3 consecutive iterations with no new learning (ConsecutiveNoNewLearning >= 2 means 2, 3, 4...)
-	// Condition 2: 10 maximum learnings (TotalIterations >= 10 means after 10 learning attempts, always lock)
-	shouldAutoLock := metadata.ConsecutiveNoNewLearning >= 2 || metadata.TotalIterations >= 10
+	// Check if auto-lock should be triggered based on TurnCount complexity
+	// Simple (< 15 turns): Lock after 3 successful runs.
+	// Medium (15-30 turns): Lock after 5 successful runs.
+	// Complex (> 30 turns): Lock after 10 successful runs.
+	shouldAutoLock := false
+	var autoLockReason string
+
+	if metadata.SuccessfulRunsSimple >= 3 {
+		shouldAutoLock = true
+		autoLockReason = "threshold_reached_simple"
+	} else if metadata.SuccessfulRunsMedium >= 5 {
+		shouldAutoLock = true
+		autoLockReason = "threshold_reached_medium"
+	} else if metadata.SuccessfulRunsComplex >= 10 {
+		shouldAutoLock = true
+		autoLockReason = "threshold_reached_complex"
+	}
+
+	// Fallback to max iterations (safety)
+	if !shouldAutoLock && metadata.TotalIterations >= 15 {
+		shouldAutoLock = true
+		autoLockReason = "maximum_learnings_reached"
+	}
 
 	if shouldAutoLock {
-		// Determine which condition triggered the auto-lock
-		var autoLockReason string
-		if metadata.TotalIterations >= 10 {
-			autoLockReason = "maximum_learnings"
-			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-lock threshold reached for %s: %d total iterations (maximum learnings reached)", learningPathIdentifier, metadata.TotalIterations))
-		} else {
-			autoLockReason = "consecutive_no_new_learning"
-			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-lock threshold reached for %s: %d consecutive iterations with no new learning", learningPathIdentifier, metadata.ConsecutiveNoNewLearning))
-		}
-
-		// Save auto-lock information to metadata
 		metadata.AutoLockedAt = time.Now().Format(time.RFC3339)
 		metadata.AutoLockReason = autoLockReason
 		metadata.AutoLockIteration = metadata.TotalIterations
+		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Auto-lock threshold reached for %s: %s", learningPathIdentifier, autoLockReason))
 	}
 
-	// Write updated metadata (with auto-lock info if triggered)
+	// Write updated metadata
 	metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		return false, fmt.Errorf("failed to marshal learning metadata: %w", err)
@@ -805,65 +731,4 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) emitStepConfigUpdatedEvent(
 
 	hcpo.GetLogger().Info(fmt.Sprintf("📤 [emitStepConfigUpdatedEvent] Successfully completed event emission for step %s (auto-lock learnings)", stepID))
 	return nil
-}
-
-// createLearningDetectionAgent creates a learning detection agent
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningDetectionAgent(
-	ctx context.Context,
-	agentName string,
-	stepConfig *AgentConfigs,
-) (*HumanControlledTodoPlannerLearningDetectionAgent, error) {
-	// Fixed to 25 (not configurable)
-	maxTurns := 25
-
-	// Use learning LLM config (same as learning agents) - Priority: step config > preset default > orchestrator default
-	// Since detection agent now also performs consolidation (which was previously done by learning consolidation agent),
-	// it should use the same LLM as other learning agents
-	llmConfig := hcpo.selectLearningLLM(stepConfig)
-
-	// Create agent config with custom LLM
-	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
-
-	// Detection agent uses NoServers (pure LLM analysis)
-	config.ServerNames = []string{mcpclient.NoServers}
-
-	// Disable code execution mode for detection agent
-	config.UseCodeExecutionMode = false
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Learning detection agent: Code execution mode explicitly disabled (config.UseCodeExecutionMode = false)"))
-
-	// Disable large output virtual tools (context offloading) for learning detection agent
-	// Detection agent should not offload its outputs to prevent issues with learning content comparison
-	disabled := false
-	config.EnableContextOffloading = &disabled
-	hcpo.GetLogger().Info("🔧 Disabling large output virtual tools (context offloading) for learning detection agent")
-
-	// Detection agent doesn't need tools (pure LLM analysis)
-	toolsToRegister := []llmtypes.Tool{}
-	executorsToUse := make(map[string]interface{})
-
-	// Use base factory! (This handles all setup automatically)
-	agentInterface, err := hcpo.CreateAndSetupStandardAgentWithConfig(
-		ctx,
-		config,
-		"learning_detection",
-		0, // step
-		0, // iteration
-		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewHumanControlledTodoPlannerLearningDetectionAgent(cfg, logger, tracer, eventBridge)
-		},
-		toolsToRegister, // Empty - detection agent doesn't use tools
-		executorsToUse,  // Empty - detection agent doesn't use tools
-		false,           // Don't overwrite system prompt - detection agent manages its own prompt
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create and setup learning detection agent: %w", err)
-	}
-
-	// Type assert to specific agent type
-	agent, ok := agentInterface.(*HumanControlledTodoPlannerLearningDetectionAgent)
-	if !ok {
-		return nil, fmt.Errorf("failed to type assert learning detection agent")
-	}
-
-	return agent, nil
 }

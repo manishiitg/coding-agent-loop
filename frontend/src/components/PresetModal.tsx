@@ -3,7 +3,7 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
 import { Card } from './ui/Card';
-import { Folder, Plus, X, Settings, Sparkles, Code2 } from 'lucide-react';
+import { Folder, Plus, X, Settings, Sparkles, Code2, Info } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
 import { ToolSelectionSection } from './ToolSelectionSection';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip';
@@ -48,6 +48,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [executionLLM, setExecutionLLM] = useState<AgentLLMConfig | null>(null);
   const [validationLLM, setValidationLLM] = useState<AgentLLMConfig | null>(null);
   const [learningLLM, setLearningLLM] = useState<AgentLLMConfig | null>(null);
+  const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(null);
 
   // Store subscriptions - using selectors for stable references
   const primaryConfig = useLLMStore(state => state.primaryConfig);
@@ -101,8 +102,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setExecutionLLM(presetLLM.execution_llm || null);
       setValidationLLM(presetLLM.validation_llm || null);
       setLearningLLM(presetLLM.learning_llm || null);
-      // Note: Other learning-related agent configs (planning, variable_extraction, etc.) 
-      // are not loaded here as they will fallback to learning_llm in the backend
+      setPhaseLLM(presetLLM.phase_llm || null);
     } else {
       setLabel('');
       setQuery('');
@@ -124,6 +124,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setExecutionLLM(null);
       setValidationLLM(null);
       setLearningLLM(null);
+      setPhaseLLM(null);
     }
   }, [editingPreset, fixedAgentMode, primaryConfig, selectedModeCategory, getAgentModeFromCategory]);
 
@@ -173,16 +174,16 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       });
       
       // Build LLM config with agent-specific defaults for workflow mode
-      // Only save execution_llm, validation_llm, and learning_llm
-      // All other learning-related agents will fallback to learning_llm in the backend
+      // Save execution_llm, validation_llm, learning_llm, and phase_llm
       let finalLLMConfig: PresetLLMConfig | undefined = llmConfig || undefined;
-      if (effectiveAgentMode === 'workflow' && (executionLLM || validationLLM || learningLLM)) {
-        // For workflow mode, include the 3 main agent configs
+      if (effectiveAgentMode === 'workflow' && (executionLLM || validationLLM || learningLLM || phaseLLM)) {
+        // For workflow mode, include the 4 main agent configs
         finalLLMConfig = {
           ...(llmConfig || {}),
           execution_llm: executionLLM || undefined,
           validation_llm: validationLLM || undefined,
           learning_llm: learningLLM || undefined,
+          phase_llm: phaseLLM || undefined,
         };
       }
       console.log('[code_execution] [PRESET_MODAL] Saving preset with code execution mode:', {
@@ -223,7 +224,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, useCodeExecutionMode, enableContextSummarization, onSave, onClose]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, enableContextSummarization, onSave, onClose]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -332,9 +333,24 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                         {/* Workflow mode: Show agent-specific LLM selections */}
                         <div>
                           <div className="flex items-center justify-between mb-2">
-                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                              Execution Agent Default Model
-                            </label>
+                            <div className="flex items-center gap-1.5">
+                              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                                Execution Agent Default Model
+                              </label>
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs">
+                                    <p className="text-xs">
+                                      <strong>Execution Agents</strong> execute plan steps by calling MCP tools and performing actions. 
+                                      They handle the actual work of your workflow (reading files, making API calls, running commands, etc.).
+                                    </p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
                             {/* Code Execution Mode Toggle - Only for Execution Agent */}
                             <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
                               <TooltipProvider>
@@ -394,13 +410,29 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             openDirection="down"
                           />
                           <div className="text-xs text-gray-500 mt-1">
-                            Default model for execution agents (used when step config doesn't specify)
+                            Default model for execution agents (used when step config doesn't specify). 
+                            Execution agents perform the actual work - calling tools, reading files, executing commands.
                           </div>
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                            Validation Agent Default Model
-                          </label>
+                          <div className="flex items-center gap-1.5 mb-2">
+                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                              Validation Agent Default Model
+                            </label>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-xs">
+                                    <strong>Validation Agents</strong> check if step execution succeeded by evaluating success criteria. 
+                                    They analyze execution results and determine if the step met its goals (Success/Partial/Failed).
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
                           <LLMSelectionDropdown
                             availableLLMs={availableLLMs}
                             selectedLLM={validationLLM ? availableLLMs.find(llm => 
@@ -416,13 +448,29 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             openDirection="down"
                           />
                           <div className="text-xs text-gray-500 mt-1">
-                            Default model for validation agents (used when step config doesn't specify)
+                            Default model for validation agents (used when step config doesn't specify). 
+                            Validation agents evaluate execution results and determine if success criteria were met.
                           </div>
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                            Learning Agent Default Model
-                          </label>
+                          <div className="flex items-center gap-1.5 mb-2">
+                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                              Learning Agent Default Model
+                            </label>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-xs">
+                                    <strong>Learning Agents</strong> extract patterns from successful executions and save them to learnings files. 
+                                    These patterns help future executions work better by capturing what worked and what didn't.
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
                           <LLMSelectionDropdown
                             availableLLMs={availableLLMs}
                             selectedLLM={learningLLM ? availableLLMs.find(llm => 
@@ -438,7 +486,49 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             openDirection="down"
                           />
                           <div className="text-xs text-gray-500 mt-1">
-                            Default model for all learning-related agents (planning, variable extraction, anonymization, plan debugger, plan tool optimization, plan learnings alignment, learning consolidation)
+                            Default model for learning agents (used when step config doesn't specify). 
+                            Learning agents analyze execution history and extract reusable patterns for future runs.
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1.5 mb-2">
+                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                              Phase Agent Default Model
+                            </label>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-xs">
+                                    <strong>Phase Agents</strong> handle workflow phases: Planning (creates execution plans), 
+                                    Variable Extraction (extracts dynamic values), Anonymization (replaces values with placeholders), 
+                                    Plan Improvement (analyzes execution for feedback), Plan Tool Optimization (optimizes tool selections), 
+                                    Learning Consolidation (consolidates learning files), and Plan Learnings Alignment (aligns plans with learnings).
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={phaseLLM ? availableLLMs.find(llm => 
+                              llm.provider === phaseLLM.provider && llm.model === phaseLLM.model_id
+                            ) || null : currentLLMOption}
+                            onLLMSelect={(llm) => setPhaseLLM({
+                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                              model_id: llm.model
+                            })}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Default model for all phase agents (used when step config doesn't specify). 
+                            Phase agents handle workflow phases: planning, variable extraction, anonymization, plan improvement, 
+                            plan tool optimization, learning consolidation, and plan learnings alignment.
                           </div>
                         </div>
                         <div className="text-xs text-gray-500 pt-2 border-t border-gray-200 dark:border-gray-700">

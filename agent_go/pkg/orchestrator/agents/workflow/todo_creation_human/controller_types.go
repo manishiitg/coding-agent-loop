@@ -85,6 +85,10 @@ type ExecutionOptions struct {
 	// Validation response persistence
 	SaveValidationResponses bool `json:"save_validation_responses,omitempty"` // If true, save validation responses to workspace validation folder (default: true)
 
+	// Tool access control (global configuration)
+	DisableShellExecAccess bool `json:"disable_shell_exec_access,omitempty"` // If true, disable execute_shell_command tool access globally
+	DisableReadImageAccess bool `json:"disable_read_image_access,omitempty"` // If true, disable read_image tool access globally
+
 	// Variable group execution options (for batch execution with multiple groups)
 	EnabledGroupIDs []string `json:"enabled_group_ids,omitempty"` // Group IDs to execute (if empty, uses groups' enabled flags)
 }

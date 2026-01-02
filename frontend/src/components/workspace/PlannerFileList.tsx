@@ -69,16 +69,6 @@ export default function PlannerFileList({
     // Check both filepath (adjusted for display) and originalFilepath (original path)
     // This ensures workspace tool events can highlight files even when paths are adjusted in workflow mode
     const isHighlighted = highlightedFile === file.filepath || highlightedFile === file.originalFilepath
-    
-    // Debug logging for highlighting
-    if (highlightedFile && (highlightedFile === file.filepath || highlightedFile === file.originalFilepath)) {
-      console.log('[PlannerFileList] File matches highlight:', {
-        highlightedFile,
-        fileFilepath: file.filepath,
-        fileOriginalFilepath: file.originalFilepath,
-        isHighlighted
-      })
-    }
     const isInContext = chatFileContext.some(ctx => ctx.path === file.filepath)
     
     // Check if this folder is the workflow folder

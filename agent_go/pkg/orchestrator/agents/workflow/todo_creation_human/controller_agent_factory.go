@@ -337,6 +337,42 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) applyStepConfigToAgentConfig
 	}
 }
 
+// applyGlobalToolAccessFilters applies global tool access control filters based on ExecutionOptions
+func (hcpo *HumanControlledTodoPlannerOrchestrator) applyGlobalToolAccessFilters(toolsToRegister []llmtypes.Tool, executorsToUse map[string]interface{}, agentType string) ([]llmtypes.Tool, map[string]interface{}) {
+	// Filter out disabled tools based on global configuration
+	var filteredTools []llmtypes.Tool
+	filteredExecutors := make(map[string]interface{})
+
+	for _, tool := range toolsToRegister {
+		toolName := tool.Function.Name
+
+		// Skip shell exec tool if disabled
+		if hcpo.disableShellExecAccess && toolName == "execute_shell_command" {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Excluding tool '%s' from %s (disabled by global configuration)", toolName, agentType))
+			continue
+		}
+
+		// Skip read image tool if disabled
+		if hcpo.disableReadImageAccess && toolName == "read_image" {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Excluding tool '%s' from %s (disabled by global configuration)", toolName, agentType))
+			continue
+		}
+
+		// Include tool
+		filteredTools = append(filteredTools, tool)
+		// Also include executor if it exists
+		if executor, exists := executorsToUse[toolName]; exists {
+			filteredExecutors[toolName] = executor
+		}
+	}
+
+	if len(filteredTools) != len(toolsToRegister) {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Applied global tool access filters for %s: %d tools remaining (removed %d disabled tools)", agentType, len(filteredTools), len(toolsToRegister)-len(filteredTools)))
+	}
+
+	return filteredTools, filteredExecutors
+}
+
 // prepareCustomTools filters and prepares custom tools based on step config
 func (hcpo *HumanControlledTodoPlannerOrchestrator) prepareCustomTools(stepConfig *AgentConfigs) ([]llmtypes.Tool, map[string]interface{}) {
 	var toolsToRegister []llmtypes.Tool
@@ -356,7 +392,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) prepareCustomTools(stepConfi
 		executorsToUse = hcpo.WorkspaceToolExecutors
 	}
 
-	return toolsToRegister, executorsToUse
+	// Apply global tool access control filters (from ExecutionOptions)
+	return hcpo.applyGlobalToolAccessFilters(toolsToRegister, executorsToUse, "execution agent")
 }
 
 // addPrerequisiteDetectionTool adds prerequisite detection tool if prerequisite detection is enabled
@@ -524,10 +561,51 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) getLearningMaxTurns(stepConf
 }
 
 // selectLearningLLM selects the LLM config for learning agents
-// Priority: step config > preset default > orchestrator default
-// Note: Temporary override only applies to execution agents, not learning agents
-func (hcpo *HumanControlledTodoPlannerOrchestrator) selectLearningLLM(stepConfig *AgentConfigs) *orchestrator.LLMConfig {
+// Priority: cost-optimization (tempLLM if >50% stable) > step config > preset default > orchestrator default
+// Note: Temporary override only applies to execution agents, but learning agents have their own cost-optimization logic
+func (hcpo *HumanControlledTodoPlannerOrchestrator) selectLearningLLM(ctx context.Context, stepConfig *AgentConfigs, stepID string, stepPath string) *orchestrator.LLMConfig {
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
+
+	// 1. COST OPTIMIZATION: Check if we should switch to cheaper tempLLM based on stability threshold
+	// If stable runs reach 50% of threshold, use tempLLM for learning
+	if stepID != "" {
+		metadata, err := hcpo.readStepLearningMetadata(ctx, stepID, stepPath)
+		if err == nil {
+			// Thresholds: Simple (3), Medium (5), Complex (10)
+			// 50% Thresholds: Simple (2), Medium (3), Complex (5)
+			shouldUseTempLLM := false
+			reason := ""
+
+			if metadata.LastTurnCount < 15 {
+				if metadata.SuccessfulRunsSimple >= 2 {
+					shouldUseTempLLM = true
+					reason = fmt.Sprintf("stability threshold reached 50%% (Simple: %d/3)", metadata.SuccessfulRunsSimple)
+				}
+			} else if metadata.LastTurnCount <= 30 {
+				if metadata.SuccessfulRunsMedium >= 3 {
+					shouldUseTempLLM = true
+					reason = fmt.Sprintf("stability threshold reached 50%% (Medium: %d/5)", metadata.SuccessfulRunsMedium)
+				}
+			} else {
+				if metadata.SuccessfulRunsComplex >= 5 {
+					shouldUseTempLLM = true
+					reason = fmt.Sprintf("stability threshold reached 50%% (Complex: %d/10)", metadata.SuccessfulRunsComplex)
+				}
+			}
+
+			if shouldUseTempLLM && hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != "" {
+				hcpo.GetLogger().Info(fmt.Sprintf("💰 [COST_OPTIMIZATION] Switching learning agent to cheaper tempLLM (%s/%s): %s", hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID, reason))
+				return &orchestrator.LLMConfig{
+					Provider:       hcpo.tempOverrideLLM.Provider,
+					ModelID:        hcpo.tempOverrideLLM.ModelID,
+					FallbackModels: []string{},                    // No fallbacks for tempLLM
+					APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+				}
+			}
+		}
+	}
+
+	// 2. Fallback to normal priority
 	if stepConfig != nil && stepConfig.LearningLLM != nil && stepConfig.LearningLLM.Provider != "" && stepConfig.LearningLLM.ModelID != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific learning LLM: %s/%s", stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID))
 		return &orchestrator.LLMConfig{
@@ -750,7 +828,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createValidationAgent(ctx co
 // createLearningAgentInternal is the unified internal function for creating learning agents (extraction or consolidation)
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgentInternal(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool) (agents.OrchestratorAgent, error) {
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgentInternal(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool, stepID string, stepPath string) (agents.OrchestratorAgent, error) {
 	// 1. Setup folder guard (extracted method)
 	readPaths, writePaths := hcpo.setupLearningFolderGuard(learningPathIdentifier)
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
@@ -770,8 +848,8 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgentInternal(
 
 	// 2. Determine settings (extracted methods)
 	maxTurns := hcpo.getLearningMaxTurns(stepConfig)
-	// Use learning LLM config - Priority: step config > preset default > orchestrator default
-	llmConfig := hcpo.selectLearningLLM(stepConfig)
+	// Use learning LLM config - Priority: cost-optimization > step config > preset default > orchestrator default
+	llmConfig := hcpo.selectLearningLLM(ctx, stepConfig, stepID, stepPath)
 
 	// 3. Create config
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
@@ -848,22 +926,22 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgentInternal(
 // The agent handles both success and failure patterns automatically based on validation results
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool) (agents.OrchestratorAgent, error) {
-	return hcpo.createLearningAgentInternal(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool, stepID string, stepPath string) (agents.OrchestratorAgent, error) {
+	return hcpo.createLearningAgentInternal(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode, stepID, stepPath)
 }
 
 // Note: Learning integration functions removed - execution agent now auto-discovers learning files and scripts
 
 // createSuccessLearningAgent is a backward compatibility wrapper for createLearningAgent
 // Deprecated: Use createLearningAgent instead. The unified learning agent handles both success and failure cases.
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool) (agents.OrchestratorAgent, error) {
-	return hcpo.createLearningAgent(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createSuccessLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool, stepID string, stepPath string) (agents.OrchestratorAgent, error) {
+	return hcpo.createLearningAgentInternal(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode, stepID, stepPath)
 }
 
 // createFailureLearningAgent is a backward compatibility wrapper for createLearningAgent
 // Deprecated: Use createLearningAgent instead. The unified learning agent handles both success and failure cases.
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool) (agents.OrchestratorAgent, error) {
-	return hcpo.createLearningAgent(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createFailureLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool, stepID string, stepPath string) (agents.OrchestratorAgent, error) {
+	return hcpo.createLearningAgentInternal(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode, stepID, stepPath)
 }
 
 // createConditionalAgent creates a conditional agent using the standard factory pattern
@@ -969,6 +1047,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createConditionalAgent(ctx c
 		executorsToUse = hcpo.WorkspaceToolExecutors
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using all workspace tools for conditional agent: %d tools", len(toolsToRegister)))
 	}
+
+	// Apply global tool access control filters (from ExecutionOptions)
+	toolsToRegister, executorsToUse = hcpo.applyGlobalToolAccessFilters(toolsToRegister, executorsToUse, "conditional agent")
 
 	// Use standard factory pattern - this handles initialization, event bridge connection, and tool registration
 	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
@@ -1080,6 +1161,9 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createOrchestrationOrchestra
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using all workspace tools for orchestration orchestrator agent: %d tools", len(toolsToRegister)))
 	}
 
+	// Apply global tool access control filters (from ExecutionOptions)
+	toolsToRegister, executorsToUse = hcpo.applyGlobalToolAccessFilters(toolsToRegister, executorsToUse, "orchestration orchestrator agent")
+
 	// Filter out human tools if "no human" execution mode is active
 	execOpts := hcpo.GetExecutionOptions()
 	if execOpts != nil && (execOpts.ExecutionStrategy == ExecutionStrategyStartFromBeginningNoHuman || execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStepNoHuman || execOpts.ExecutionStrategy == ExecutionStrategyFastExecuteAll) {
@@ -1136,16 +1220,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createOrchestrationOrchestra
 }
 
 // createOrchestrationLearningAgent creates an orchestration learning agent for analyzing orchestrator decisions
-// learningPathIdentifier: Learning folder identifier (e.g., "step-3" for orchestration step 3)
-// stepConfig: Step config for learning agent settings
-func (hcpo *HumanControlledTodoPlannerOrchestrator) createOrchestrationLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs) (agents.OrchestratorAgent, error) {
-	// Setup folder guard for learning agent (similar to regular learning agent)
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createOrchestrationLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, stepID string, stepPath string) (agents.OrchestratorAgent, error) {
+	// 1. Setup folder guard (extracted method)
 	readPaths, writePaths := hcpo.setupLearningFolderGuard(learningPathIdentifier)
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	agentType := "orchestration learning agent"
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for %s - Read paths: %v, Write paths: %v", agentType, readPaths, writePaths))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for orchestration learning agent - Read paths: %v, Write paths: %v", readPaths, writePaths))
 
-	// Ensure the learning folder exists before running the agent, as it expects to list files in it
+	// Ensure the learning folder exists before running the agent
 	if len(writePaths) > 0 {
 		if err := hcpo.ensureStepLearningsFolderExists(ctx, writePaths[0]); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure learning folder exists: %v", err))
@@ -1155,7 +1236,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createOrchestrationLearningA
 	// Determine settings
 	maxTurns := hcpo.getLearningMaxTurns(stepConfig)
 	// Use learning LLM config - Priority: step config > preset default > orchestrator default
-	llmConfig := hcpo.selectLearningLLM(stepConfig)
+	llmConfig := hcpo.selectLearningLLM(ctx, stepConfig, stepID, stepPath)
 
 	// Create config
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
@@ -1185,7 +1266,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) createOrchestrationLearningA
 		false, // overwriteSystemPrompt
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create and setup %s: %w", agentType, err)
+		return nil, fmt.Errorf("failed to create and setup orchestration learning agent: %w", err)
 	}
 
 	// Post-setup: folder guard paths

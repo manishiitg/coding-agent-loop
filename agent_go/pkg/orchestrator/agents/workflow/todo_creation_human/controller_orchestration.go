@@ -467,7 +467,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 				// LOCK LEARNINGS: Check if learnings are locked
 				// EXCEPTION: If learnings are locked but learnings don't exist, still run learning to create initial learnings
 				orchestrationStepID := orchestrationStepPlan.OrchestrationStep.GetID()
-				shouldSkipLearningDueToLock, _ := hcpo.ShouldSkipLearningDueToLock(ctx, orchestrationStepPlan.OrchestrationStep, orchestrationStepID, stepIndex, orchestrationStepPath)
+				shouldSkipLearningDueToLock, _ := hcpo.ShouldSkipLearningDueToLock(ctx, orchestrationStepConfig, orchestrationStepID, stepIndex, orchestrationStepPath)
 				// TEMP LLM OVERRIDE: Check if learning should be skipped based on which tempLLM was used
 				shouldSkipLearningDueToTempOverride := false
 				usedTempLLM := "" // Orchestration steps don't use temp LLM, but check for consistency
@@ -484,7 +484,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 					learningPathIdentifier := getLearningPathIdentifier(orchestrationStepPlan.OrchestrationStep.GetID(), orchestrationStepPath)
 					totalSteps := len(allSteps)
 					hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running success learning analysis for orchestration step %s", orchestrationStepPath))
-					err = hcpo.runSuccessLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, validationResponse, isCodeExecutionMode, "") // Orchestration steps don't use tempLLM
+					
+					// Calculate turn count for orchestration step
+					turnCount := len(conversationHistory)
+					err = hcpo.runSuccessLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, validationResponse, isCodeExecutionMode, "", turnCount) // Orchestration steps don't use tempLLM
 					if err != nil {
 						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for orchestration step %s: %v", orchestrationStepPath, err))
 					} else {
@@ -539,7 +542,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			// LOCK LEARNINGS: Check if learnings are locked
 			// EXCEPTION: If learnings are locked but learnings don't exist, still run learning to create initial learnings
 			orchestrationStepID := orchestrationStepPlan.OrchestrationStep.GetID()
-			shouldSkipLearningDueToLock, _ := hcpo.ShouldSkipLearningDueToLock(ctx, orchestrationStepPlan.OrchestrationStep, orchestrationStepID, stepIndex, orchestrationStepPath)
+			shouldSkipLearningDueToLock, _ := hcpo.ShouldSkipLearningDueToLock(ctx, orchestrationStepConfig, orchestrationStepID, stepIndex, orchestrationStepPath)
 			// TEMP LLM OVERRIDE: Check if learning should be skipped based on which tempLLM was used
 			shouldSkipLearningDueToTempOverride := false
 			usedTempLLM := "" // Orchestration steps don't use temp LLM, but check for consistency
@@ -556,7 +559,10 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 				learningPathIdentifier := getLearningPathIdentifier(orchestrationStepPlan.OrchestrationStep.GetID(), orchestrationStepPath)
 				totalSteps := len(allSteps)
 				hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running failure learning analysis for orchestration step %s (validation failed)", orchestrationStepPath))
-				_, _, err = hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, validationResponse, isCodeExecutionMode)
+				
+				// Calculate turn count for orchestration step
+				turnCount := len(conversationHistory)
+				_, _, err = hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, validationResponse, isCodeExecutionMode, turnCount)
 				if err != nil {
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for orchestration step %s: %v", orchestrationStepPath, err))
 				} else {
@@ -627,7 +633,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 
 			// Create orchestration learning agent
 			learningAgentName := fmt.Sprintf("orchestration-learning-step-%d", stepIndex+1)
-			learningAgent, err := hcpo.createOrchestrationLearningAgent(ctx, "orchestration_learning", learningPathIdentifier, learningAgentName, orchestrationStepConfig)
+			learningAgent, err := hcpo.createOrchestrationLearningAgent(ctx, "orchestration_learning", learningPathIdentifier, learningAgentName, orchestrationStepConfig, orchestrationStepID, orchestrationStepPath)
 			if err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to create orchestration learning agent: %v", err), nil)
 				return false, "", fmt.Errorf("failed to create orchestration learning agent: %w", err)
@@ -934,7 +940,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 	// LOCK LEARNINGS: Check if learnings are locked
 	// EXCEPTION: If learnings are locked but learnings don't exist, still run learning to create initial learnings
 	orchestrationStepID := orchestrationStepPlan.OrchestrationStep.GetID()
-	shouldSkipLearningDueToLock, _ := hcpo.ShouldSkipLearningDueToLock(ctx, orchestrationStepPlan.OrchestrationStep, orchestrationStepID, stepIndex, orchestrationStepPath)
+	shouldSkipLearningDueToLock, _ := hcpo.ShouldSkipLearningDueToLock(ctx, orchestrationStepConfig, orchestrationStepID, stepIndex, orchestrationStepPath)
 	// TEMP LLM OVERRIDE: Check if learning should be skipped based on which tempLLM was used
 	shouldSkipLearningDueToTempOverride := false
 	usedTempLLM := "" // Orchestration steps don't use temp LLM, but check for consistency
@@ -959,15 +965,17 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeOrchestrationStep(
 			Feedback:             []ValidationFeedback{},
 		}
 
-		hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running failure learning analysis for orchestration step %s (max iterations reached)", orchestrationStepPath))
-		_, _, err := hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, failureValidationResponse, isCodeExecutionMode)
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for orchestration step %s: %v", orchestrationStepPath, err))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Failure learning analysis completed for orchestration step %s", orchestrationStepPath))
-		}
-	} else {
-		if isFastExecuteStep {
+						hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running failure learning analysis for orchestration step %s (max iterations reached)", orchestrationStepPath))
+						
+						// Calculate turn count for orchestration step
+						turnCount := len(conversationHistory)
+						_, _, err := hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, failureValidationResponse, isCodeExecutionMode, turnCount)
+						if err != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for orchestration step %s: %v", orchestrationStepPath, err))
+						} else {
+							hcpo.GetLogger().Info(fmt.Sprintf("✅ Failure learning analysis completed for orchestration step %s", orchestrationStepPath))
+						}
+					} else {		if isFastExecuteStep {
 			hcpo.GetLogger().Info(fmt.Sprintf("⚡ Fast mode: Skipping learning agents for orchestration step %d", stepIndex+1))
 		} else if isLearningDisabled {
 			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled: Skipping learning agents for orchestration step %d", stepIndex+1))

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { agentApi } from '../../services/api'
-import type { ChatSession, ActiveSessionInfo } from '../../services/api-types'
+import type { ChatHistorySummary, ActiveSessionInfo } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
 import { useModeStore } from '../../stores/useModeStore'
+import { useChatStore } from '../../stores/useChatStore'
 
 interface ChatHistorySectionProps {
   onSessionSelect?: (sessionId: string, sessionTitle?: string, sessionType?: 'active' | 'completed', activeSessionInfo?: ActiveSessionInfo) => void
@@ -13,17 +14,25 @@ export default function ChatHistorySection({
   onSessionSelect, 
   minimized = false
 }: ChatHistorySectionProps) {
-  const [sessions, setSessions] = useState<ChatSession[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(true)
   const [presetCache, setPresetCache] = useState<Record<string, string>>({})
   
-  // Active session state
-  const [activeSessions, setActiveSessions] = useState<ActiveSessionInfo[]>([])
+  // Get chat history cache methods from store (persists across mount/unmount)
+  const getChatHistory = useChatStore((state) => state.getChatHistory)
+  const loadMoreChatHistory = useChatStore((state) => state.loadMoreChatHistory)
+  const getChatHistoryHasMore = useChatStore((state) => state.getChatHistoryHasMore)
+  
+  // Get active sessions from cache (shared across all components)
+  const activeSessions = useChatStore((state) => state.activeSessionsCache)
   
   // Mode store subscription
   const { selectedModeCategory } = useModeStore()
+  
+  // Local sessions state (filtered by mode)
+  const [sessions, setSessions] = useState<ChatHistorySummary[]>([])
 
   // Fetch preset query details
   const fetchPresetQuery = useCallback(async (presetQueryId: string) => {
@@ -41,17 +50,8 @@ export default function ChatHistorySection({
     }
   }, [presetCache])
 
-  // Load active sessions
-  const loadActiveSessions = useCallback(async () => {
-    try {
-      const response = await agentApi.getActiveSessions()
-      // Loaded active sessions
-      setActiveSessions(response.active_sessions)
-    } catch (err) {
-      console.error('Failed to load active sessions:', err)
-      setActiveSessions([])
-    }
-  }, [])
+  // Active sessions are now managed by the centralized cache in useChatStore
+  // No need for local polling - the store handles it
 
   // Check if a session is active
   const isSessionActive = useCallback((sessionId: string) => {
@@ -64,15 +64,18 @@ export default function ChatHistorySection({
   }, [activeSessions])
 
   // Filter sessions based on mode and active preset
-  const filterSessionsByMode = useCallback((sessions: ChatSession[]) => {
+  const filterSessionsByMode = useCallback((sessions: ChatHistorySummary[]) => {
     if (!selectedModeCategory) return sessions
 
     switch (selectedModeCategory) {
       case 'chat':
-        // Show all sessions where agentMode is 'simple'
-        return sessions.filter(session => 
-          session.agent_mode === 'simple'
-        )
+        // Show ALL chat sessions EXCEPT workflows
+        // This includes: simple, code exec, orchestrator, and any other non-workflow modes
+        return sessions.filter(session => {
+          const agentMode = (session.agent_mode || '').toLowerCase()
+          // Exclude only workflow sessions, show everything else (simple, code exec, orchestrator, etc.)
+          return agentMode !== 'workflow'
+        })
       
       case 'workflow':
         // Hide all previous chats in workflow mode
@@ -83,8 +86,8 @@ export default function ChatHistorySection({
     }
   }, [selectedModeCategory])
 
-  // Load chat sessions
-  const loadSessions = useCallback(async () => {
+  // Load chat sessions using store cache
+  const loadSessions = useCallback(async (forceRefresh: boolean = false) => {
     // Skip loading in workflow mode since we hide the entire section
     if (selectedModeCategory === 'workflow') {
       setSessions([])
@@ -94,11 +97,29 @@ export default function ChatHistorySection({
     setLoading(true)
     setError(null)
     try {
-      const response = await agentApi.getChatSessions(100, 0)
-      const allSessions = response.sessions || []
+      console.log('[ChatHistory] Loading chat sessions for mode:', selectedModeCategory, 'forceRefresh:', forceRefresh)
+      
+      // Get sessions from store cache (will fetch from API if needed)
+      // Use 'chat' as default if selectedModeCategory is null
+      const modeCategory = selectedModeCategory || 'chat'
+      const allSessions = await getChatHistory(modeCategory, forceRefresh)
+      console.log('[ChatHistory] Received sessions from store:', {
+        total: allSessions.length,
+        sessions: allSessions.map(s => ({
+          id: s.session_id,
+          title: s.title,
+          agent_mode: s.agent_mode,
+          status: s.status
+        }))
+      })
       
       // Filter sessions based on current mode
       const filteredSessions = filterSessionsByMode(allSessions)
+      console.log('[ChatHistory] Filtered sessions:', {
+        before: allSessions.length,
+        after: filteredSessions.length,
+        mode: selectedModeCategory
+      })
       setSessions(filteredSessions)
       
       // Fetch preset details for sessions that have preset_query_id
@@ -110,24 +131,23 @@ export default function ChatHistorySection({
         await Promise.all(presetPromises)
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load chat history')
-      console.error('Failed to load chat sessions:', err)
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load chat history'
+      setError(errorMessage)
+      console.error('[ChatHistory] Failed to load chat sessions:', {
+        error: err,
+        message: errorMessage,
+        mode: selectedModeCategory
+      })
     } finally {
       setLoading(false)
     }
-  }, [presetCache, fetchPresetQuery, filterSessionsByMode, selectedModeCategory])
+  }, [presetCache, fetchPresetQuery, filterSessionsByMode, selectedModeCategory, getChatHistory])
 
-  // Load sessions and active sessions on mount
+  // Load sessions on mount or when mode category changes
+  // The store cache handles preventing unnecessary API calls
   useEffect(() => {
-    loadSessions()
-    loadActiveSessions()
-  }, [loadSessions, loadActiveSessions, selectedModeCategory])
-
-  // Refresh active sessions periodically
-  useEffect(() => {
-    const interval = setInterval(loadActiveSessions, 5000) // Check every 5 seconds
-    return () => clearInterval(interval)
-  }, [loadActiveSessions])
+    loadSessions(false)
+  }, [loadSessions, selectedModeCategory])
 
   // Format date for display
   const formatDate = (dateString: string) => {
@@ -170,7 +190,7 @@ export default function ChatHistorySection({
   }
 
   // Handle session click
-  const handleSessionClick = async (session: ChatSession) => {
+  const handleSessionClick = async (session: ChatHistorySummary) => {
     if (onSessionSelect) {
       // Check if session is active
       if (isSessionActive(session.session_id)) {
@@ -188,7 +208,7 @@ export default function ChatHistorySection({
   }
 
   // Handle delete session
-  const handleDeleteSession = async (e: React.MouseEvent, session: ChatSession) => {
+  const handleDeleteSession = async (e: React.MouseEvent, session: ChatHistorySummary) => {
     e.stopPropagation()
     if (window.confirm('Are you sure you want to delete this chat session?')) {
       try {
@@ -244,7 +264,7 @@ export default function ChatHistorySection({
         </h3>
         <div className="flex items-center gap-1">
           <button
-            onClick={loadSessions}
+            onClick={() => loadSessions(true)}
             disabled={loading}
             className="p-1 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors disabled:opacity-50"
             title="Refresh"
@@ -358,6 +378,43 @@ export default function ChatHistorySection({
             </div>
             )
           })}
+
+          {/* Load More Button */}
+          {!loading && !error && getChatHistoryHasMore() && (
+            <div className="flex justify-center pt-2">
+              <button
+                onClick={async () => {
+                  setLoadingMore(true)
+                  setError(null)
+                  try {
+                    const modeCategory = selectedModeCategory || 'chat'
+                    const allSessions = await loadMoreChatHistory(modeCategory)
+                    const filteredSessions = filterSessionsByMode(allSessions)
+                    setSessions(filteredSessions)
+                    
+                    // Fetch preset details for newly loaded sessions
+                    const presetPromises = filteredSessions
+                      .filter(session => session.preset_query_id && !presetCache[session.preset_query_id])
+                      .map(session => fetchPresetQuery(session.preset_query_id!))
+                    
+                    if (presetPromises.length > 0) {
+                      await Promise.all(presetPromises)
+                    }
+                  } catch (err) {
+                    const errorMessage = err instanceof Error ? err.message : 'Failed to load more chats'
+                    setError(errorMessage)
+                    console.error('[ChatHistory] Failed to load more chat sessions:', err)
+                  } finally {
+                    setLoadingMore(false)
+                  }
+                }}
+                disabled={loadingMore}
+                className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 px-3 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loadingMore ? 'Loading...' : 'Load More'}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

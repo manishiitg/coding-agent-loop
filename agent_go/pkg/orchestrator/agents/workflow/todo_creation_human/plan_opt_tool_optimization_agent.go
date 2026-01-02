@@ -70,8 +70,8 @@ type PlanToolOptimizationManager struct {
 	sessionID  string
 	workflowID string
 
-	// Learning LLM config (primary LLM for plan tool optimization agent)
-	presetLearningLLM *AgentLLMConfig
+	// Phase LLM config (primary LLM for plan tool optimization agent)
+	presetPhaseLLM *AgentLLMConfig
 }
 
 // NewPlanToolOptimizationManager creates a new PlanToolOptimizationManager
@@ -79,13 +79,13 @@ func NewPlanToolOptimizationManager(
 	baseOrchestrator *orchestrator.BaseOrchestrator,
 	sessionID string,
 	workflowID string,
-	presetLearningLLM *AgentLLMConfig,
+	presetPhaseLLM *AgentLLMConfig,
 ) *PlanToolOptimizationManager {
 	return &PlanToolOptimizationManager{
-		BaseOrchestrator:  baseOrchestrator,
-		sessionID:         sessionID,
-		workflowID:        workflowID,
-		presetLearningLLM: presetLearningLLM,
+		BaseOrchestrator: baseOrchestrator,
+		sessionID:        sessionID,
+		workflowID:       workflowID,
+		presetPhaseLLM:   presetPhaseLLM,
 	}
 }
 
@@ -427,19 +427,19 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 	ptom.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	ptom.GetLogger().Info(fmt.Sprintf("🔧 Setting folder guard for plan tool optimization agent - Read paths: %v, Write paths: %v (read-only access to planning/, learnings/, and runs/ folders, write access to planning/step_config.json)", readPaths, writePaths))
 
-	// Use preset learning LLM if available, otherwise fall back to orchestrator default
+	// Use preset phase LLM if available, otherwise fall back to orchestrator default
 	orchestratorLLMConfig := ptom.GetLLMConfig()
 	var llmConfigToUse *orchestrator.LLMConfig
-	if ptom.presetLearningLLM != nil && ptom.presetLearningLLM.Provider != "" && ptom.presetLearningLLM.ModelID != "" {
-		// Use preset learning LLM
+	if ptom.presetPhaseLLM != nil && ptom.presetPhaseLLM.Provider != "" && ptom.presetPhaseLLM.ModelID != "" {
+		// Use preset phase LLM
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              ptom.presetLearningLLM.Provider,
-			ModelID:               ptom.presetLearningLLM.ModelID,
+			Provider:              ptom.presetPhaseLLM.Provider,
+			ModelID:               ptom.presetPhaseLLM.ModelID,
 			FallbackModels:        orchestratorLLMConfig.FallbackModels,
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
 			APIKeys:               orchestratorLLMConfig.APIKeys,
 		}
-		ptom.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM for plan tool optimization: %s/%s", ptom.presetLearningLLM.Provider, ptom.presetLearningLLM.ModelID))
+		ptom.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for plan tool optimization: %s/%s", ptom.presetPhaseLLM.Provider, ptom.presetPhaseLLM.ModelID))
 	} else {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig

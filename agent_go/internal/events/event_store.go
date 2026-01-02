@@ -10,6 +10,12 @@ import (
 
 // ADVANCED_MODE_EVENTS contains event types that are hidden in basic mode
 // These events are only shown in advanced mode
+// Note: workspace_file_operation is NOT in this list because it needs to be sent to frontend
+// for file highlighting functionality, but it will be filtered from display in basic/tiny mode
+// Note: Workflow execution events (step_execution_start, step_execution_end, step_execution_failed,
+// step_progress_updated) are NOT in this list because they are required for React Flow canvas
+// node highlighting and status updates. They must always be sent to frontend for workflow mode
+// to function correctly, even if filtered from display in basic/tiny mode.
 var ADVANCED_MODE_EVENTS = map[string]bool{
 	"llm_generation_start":      true,
 	"llm_generation_with_retry": true,
@@ -17,11 +23,16 @@ var ADVANCED_MODE_EVENTS = map[string]bool{
 	"conversation_turn":         true,
 	"cache_event":               true,
 	"comprehensive_cache_event": true,
-	"step_execution_start":      true,
-	"step_execution_end":        true,
-	"step_execution_failed":     true,
-	"step_progress_updated":     true,
-	"workspace_file_operation":  true,
+}
+
+// TINY_MODE_ADDITIONAL_EVENTS contains additional event types hidden in tiny mode (beyond basic mode)
+// Tiny mode hides everything basic mode hides PLUS user messages, system prompts, and agent lifecycle events
+var TINY_MODE_ADDITIONAL_EVENTS = map[string]bool{
+	"user_message":  true,
+	"system_prompt": true,
+	"agent_start":   true,
+	"agent_end":     true,
+	"agent_error":   true,
 }
 
 // MaxPollingLimit is the maximum number of events returned in a single polling request
@@ -32,13 +43,18 @@ const MaxPollingLimit = 1000 // Match frontend MAX_EVENTS limit
 // This is used when switching event modes - show latest events first, then allow loading older events
 const InitialEventsLimit = 50
 
-// shouldShowEventByMode checks if an event should be shown based on event mode
-func shouldShowEventByMode(eventType string, eventMode string) bool {
+// ShouldShowEventByMode checks if an event should be shown based on event mode
+func ShouldShowEventByMode(eventType string, eventMode string) bool {
 	if eventType == "" {
 		return false
 	}
 	if eventMode == "advanced" {
 		return true // Show all events in advanced mode
+	}
+	if eventMode == "tiny" {
+		// In tiny mode, hide everything basic mode hides PLUS user_message and system_prompt
+		// So hide if it's in ADVANCED_MODE_EVENTS OR in TINY_MODE_ADDITIONAL_EVENTS
+		return !ADVANCED_MODE_EVENTS[eventType] && !TINY_MODE_ADDITIONAL_EVENTS[eventType]
 	}
 	// In basic mode, show all events EXCEPT the ones in ADVANCED_MODE_EVENTS
 	return !ADVANCED_MODE_EVENTS[eventType]
@@ -207,7 +223,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 		if opts.EventMode != "" {
 			filteredEvents = make([]Event, 0, len(events))
 			for _, event := range events {
-				if shouldShowEventByMode(event.Type, opts.EventMode) {
+				if ShouldShowEventByMode(event.Type, opts.EventMode) {
 					filteredEvents = append(filteredEvents, event)
 				}
 			}
@@ -220,7 +236,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 		// The next position after that in the filtered array is where we start slicing
 		filteredCountUpToSinceIndex := 0
 		for i := 0; i <= opts.SinceIndex && i < len(events); i++ {
-			if opts.EventMode == "" || shouldShowEventByMode(events[i].Type, opts.EventMode) {
+			if opts.EventMode == "" || ShouldShowEventByMode(events[i].Type, opts.EventMode) {
 				filteredCountUpToSinceIndex++
 			}
 		}
@@ -260,7 +276,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 					filteredCount := 0
 					actualLastIndex := -1
 					for i := 0; i < len(events); i++ {
-						if opts.EventMode == "" || shouldShowEventByMode(events[i].Type, opts.EventMode) {
+						if opts.EventMode == "" || ShouldShowEventByMode(events[i].Type, opts.EventMode) {
 							filteredCount++
 							if filteredCount == nextFilteredPos+MaxPollingLimit {
 								actualLastIndex = i
@@ -294,7 +310,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 			// Filter first
 			eventsToPaginate = make([]Event, 0, len(events))
 			for _, event := range events {
-				if shouldShowEventByMode(event.Type, opts.EventMode) {
+				if ShouldShowEventByMode(event.Type, opts.EventMode) {
 					eventsToPaginate = append(eventsToPaginate, event)
 				}
 			}
@@ -327,7 +343,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 		if opts.EventMode != "" {
 			filtered := make([]Event, 0, len(events))
 			for _, event := range events {
-				if shouldShowEventByMode(event.Type, opts.EventMode) {
+				if ShouldShowEventByMode(event.Type, opts.EventMode) {
 					filtered = append(filtered, event)
 				}
 			}

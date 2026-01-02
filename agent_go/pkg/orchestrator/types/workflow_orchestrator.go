@@ -143,9 +143,7 @@ type WorkflowOrchestrator struct {
 	presetExecutionLLM            *todo_creation_human.AgentLLMConfig // Default for execution agents
 	presetValidationLLM           *todo_creation_human.AgentLLMConfig // Default for validation agents
 	presetLearningLLM             *todo_creation_human.AgentLLMConfig // Default for learning agents
-	presetLearningReadingLLM      *todo_creation_human.AgentLLMConfig // Default for learning reading agent
-	presetPlanningLLM             *todo_creation_human.AgentLLMConfig // Default for planning agent
-	presetVariableExtractionLLM   *todo_creation_human.AgentLLMConfig // Default for variable extraction agent
+	presetPhaseLLM                *todo_creation_human.AgentLLMConfig // Default for all phase agents (planning, anonymization, plan improvement, etc.)
 	presetPlanImprovementLLM      *todo_creation_human.AgentLLMConfig // Default for plan improvement agent
 	presetPlanToolOptimizationLLM *todo_creation_human.AgentLLMConfig // Default for plan tool optimization agent
 
@@ -248,7 +246,7 @@ func NewWorkflowOrchestrator(
 	}
 
 	// Extract agent-specific defaults from preset LLM config
-	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetLearningReadingLLM, presetPlanningLLM, presetVariableExtractionLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM *todo_creation_human.AgentLLMConfig
+	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetPhaseLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM *todo_creation_human.AgentLLMConfig
 	if presetLLMConfig != nil {
 		// Use agent-specific defaults if available, otherwise fall back to legacy single default
 		if presetLLMConfig.ExecutionLLM != nil && presetLLMConfig.ExecutionLLM.Provider != "" && presetLLMConfig.ExecutionLLM.ModelID != "" {
@@ -287,65 +285,18 @@ func NewWorkflowOrchestrator(
 				ModelID:  presetLLMConfig.ModelID,
 			}
 		}
-		// Initialize learning reading LLM from execution LLM (not configurable in UI)
-		if presetExecutionLLM != nil {
-			presetLearningReadingLLM = presetExecutionLLM
-		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-			// Fall back to legacy single default for learning reading
-			presetLearningReadingLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.Provider,
-				ModelID:  presetLLMConfig.ModelID,
+		// Extract phase LLM (used by all phase agents: planning, anonymization, plan improvement, etc.)
+		if presetLLMConfig.PhaseLLM != nil && presetLLMConfig.PhaseLLM.Provider != "" && presetLLMConfig.PhaseLLM.ModelID != "" {
+			presetPhaseLLM = &todo_creation_human.AgentLLMConfig{
+				Provider: presetLLMConfig.PhaseLLM.Provider,
+				ModelID:  presetLLMConfig.PhaseLLM.ModelID,
 			}
 		}
 		// Initialize all learning-related agents from learning LLM (not individually configurable in UI)
 		if presetLearningLLM != nil {
-			presetPlanningLLM = presetLearningLLM
-			presetVariableExtractionLLM = presetLearningLLM
 			presetPlanImprovementLLM = presetLearningLLM
 			presetPlanToolOptimizationLLM = presetLearningLLM
 			// Note: presetAnonymizationLLM and presetLearningConsolidationLLM are deprecated and removed
-		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-			// Fall back to legacy single default for planning
-			presetPlanningLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.Provider,
-				ModelID:  presetLLMConfig.ModelID,
-			}
-		}
-		if presetLLMConfig.VariableExtractionLLM != nil && presetLLMConfig.VariableExtractionLLM.Provider != "" && presetLLMConfig.VariableExtractionLLM.ModelID != "" {
-			presetVariableExtractionLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.VariableExtractionLLM.Provider,
-				ModelID:  presetLLMConfig.VariableExtractionLLM.ModelID,
-			}
-		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-			// Fall back to legacy single default for variable extraction
-			presetVariableExtractionLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.Provider,
-				ModelID:  presetLLMConfig.ModelID,
-			}
-		}
-		if presetLLMConfig.PlanImprovementLLM != nil && presetLLMConfig.PlanImprovementLLM.Provider != "" && presetLLMConfig.PlanImprovementLLM.ModelID != "" {
-			presetPlanImprovementLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.PlanImprovementLLM.Provider,
-				ModelID:  presetLLMConfig.PlanImprovementLLM.ModelID,
-			}
-		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-			// Fall back to legacy single default for plan improvement
-			presetPlanImprovementLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.Provider,
-				ModelID:  presetLLMConfig.ModelID,
-			}
-		}
-		if presetLLMConfig.PlanToolOptimizationLLM != nil && presetLLMConfig.PlanToolOptimizationLLM.Provider != "" && presetLLMConfig.PlanToolOptimizationLLM.ModelID != "" {
-			presetPlanToolOptimizationLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.PlanToolOptimizationLLM.Provider,
-				ModelID:  presetLLMConfig.PlanToolOptimizationLLM.ModelID,
-			}
-		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-			// Fall back to legacy single default for plan tool optimization
-			presetPlanToolOptimizationLLM = &todo_creation_human.AgentLLMConfig{
-				Provider: presetLLMConfig.Provider,
-				ModelID:  presetLLMConfig.ModelID,
-			}
 		}
 	}
 
@@ -355,9 +306,7 @@ func NewWorkflowOrchestrator(
 		presetExecutionLLM:            presetExecutionLLM,
 		presetValidationLLM:           presetValidationLLM,
 		presetLearningLLM:             presetLearningLLM,
-		presetLearningReadingLLM:      presetLearningReadingLLM,
-		presetPlanningLLM:             presetPlanningLLM,
-		presetVariableExtractionLLM:   presetVariableExtractionLLM,
+		presetPhaseLLM:                presetPhaseLLM,
 		presetPlanImprovementLLM:      presetPlanImprovementLLM,
 		presetPlanToolOptimizationLLM: presetPlanToolOptimizationLLM,
 	}
@@ -454,9 +403,7 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 		wo.presetExecutionLLM, // Pass preset defaults
 		wo.presetValidationLLM,
 		wo.presetLearningLLM,
-		wo.presetLearningReadingLLM,
-		wo.presetPlanningLLM,
-		wo.presetVariableExtractionLLM,
+		wo.presetPhaseLLM,
 		nil, // presetAnonymizationLLM (deprecated, no longer used)
 		wo.presetPlanImprovementLLM,
 	)
@@ -482,7 +429,7 @@ func (wo *WorkflowOrchestrator) runPlanImprovement(ctx context.Context, objectiv
 	planImprovementManager := todo_creation_human.NewPlanImprovementManager(
 		wo.BaseOrchestrator,
 		wo.presetPlanImprovementLLM,
-		wo.presetLearningLLM, // Pass learning LLM for fallback
+		wo.presetPhaseLLM, // Pass phase LLM for fallback
 		wo.getSessionID(),
 		wo.getWorkflowID(),
 	)
@@ -518,7 +465,7 @@ func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, obj
 		wo.BaseOrchestrator,
 		wo.getSessionID(),
 		wo.getWorkflowID(),
-		wo.presetLearningLLM, // Pass learning LLM (primary LLM for plan tool optimization)
+		wo.presetPhaseLLM, // Pass phase LLM (primary LLM for plan tool optimization)
 	)
 
 	// Run only tool optimization (with optional step ID for step-specific execution)
@@ -540,7 +487,7 @@ func (wo *WorkflowOrchestrator) runLearningAnonymization(ctx context.Context, ob
 		wo.BaseOrchestrator,
 		wo.getSessionID(),
 		wo.getWorkflowID(),
-		wo.presetLearningLLM, // Pass learning LLM (primary LLM for anonymization)
+		wo.presetPhaseLLM, // Pass phase LLM (primary LLM for anonymization)
 	)
 
 	// Run only anonymization
@@ -562,7 +509,7 @@ func (wo *WorkflowOrchestrator) runPlanLearningsAlignment(ctx context.Context, o
 		wo.BaseOrchestrator,
 		wo.getSessionID(),
 		wo.getWorkflowID(),
-		wo.presetLearningLLM, // Pass learning LLM (primary LLM for alignment)
+		wo.presetPhaseLLM, // Pass phase LLM (primary LLM for alignment)
 	)
 
 	// Run only alignment check
@@ -584,7 +531,7 @@ func (wo *WorkflowOrchestrator) runLearningConsolidation(ctx context.Context, ob
 		wo.BaseOrchestrator,
 		wo.getSessionID(),
 		wo.getWorkflowID(),
-		wo.presetLearningLLM, // Pass learning LLM (primary LLM for consolidation)
+		wo.presetPhaseLLM, // Pass phase LLM (primary LLM for consolidation)
 	)
 
 	// Run only consolidation
@@ -632,9 +579,7 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.presetExecutionLLM, // Pass preset defaults
 		wo.presetValidationLLM,
 		wo.presetLearningLLM,
-		wo.presetLearningReadingLLM,
-		wo.presetPlanningLLM,
-		wo.presetVariableExtractionLLM,
+		wo.presetPhaseLLM,
 		nil, // presetAnonymizationLLM (deprecated, no longer used)
 		wo.presetPlanImprovementLLM,
 	)

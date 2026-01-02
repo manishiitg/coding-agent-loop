@@ -54,8 +54,8 @@ type LearningConsolidationManager struct {
 	sessionID  string
 	workflowID string
 
-	// Learning LLM config (primary LLM for learning consolidation agent)
-	presetLearningLLM *AgentLLMConfig
+	// Phase LLM config (primary LLM for learning consolidation agent)
+	presetPhaseLLM *AgentLLMConfig
 }
 
 // NewLearningConsolidationManager creates a new LearningConsolidationManager
@@ -63,13 +63,13 @@ func NewLearningConsolidationManager(
 	baseOrchestrator *orchestrator.BaseOrchestrator,
 	sessionID string,
 	workflowID string,
-	presetLearningLLM *AgentLLMConfig,
+	presetPhaseLLM *AgentLLMConfig,
 ) *LearningConsolidationManager {
 	return &LearningConsolidationManager{
-		BaseOrchestrator:  baseOrchestrator,
-		sessionID:         sessionID,
-		workflowID:        workflowID,
-		presetLearningLLM: presetLearningLLM,
+		BaseOrchestrator: baseOrchestrator,
+		sessionID:        sessionID,
+		workflowID:       workflowID,
+		presetPhaseLLM:   presetPhaseLLM,
 	}
 }
 
@@ -92,19 +92,19 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 	lcm.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	lcm.GetLogger().Info(fmt.Sprintf("🔍 Setting folder guard for learning consolidation agent - Read paths: %v, Write paths: %v (read/write access to learnings/ folder only)", readPaths, writePaths))
 
-	// Use preset learning LLM if available, otherwise fall back to orchestrator default
+	// Use preset phase LLM if available, otherwise fall back to orchestrator default
 	orchestratorLLMConfig := lcm.GetLLMConfig()
 	var llmConfigToUse *orchestrator.LLMConfig
-	if lcm.presetLearningLLM != nil && lcm.presetLearningLLM.Provider != "" && lcm.presetLearningLLM.ModelID != "" {
-		// Use preset learning LLM
+	if lcm.presetPhaseLLM != nil && lcm.presetPhaseLLM.Provider != "" && lcm.presetPhaseLLM.ModelID != "" {
+		// Use preset phase LLM
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              lcm.presetLearningLLM.Provider,
-			ModelID:               lcm.presetLearningLLM.ModelID,
+			Provider:              lcm.presetPhaseLLM.Provider,
+			ModelID:               lcm.presetPhaseLLM.ModelID,
 			FallbackModels:        orchestratorLLMConfig.FallbackModels,
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
 			APIKeys:               orchestratorLLMConfig.APIKeys,
 		}
-		lcm.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM for learning consolidation: %s/%s", lcm.presetLearningLLM.Provider, lcm.presetLearningLLM.ModelID))
+		lcm.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for learning consolidation: %s/%s", lcm.presetPhaseLLM.Provider, lcm.presetPhaseLLM.ModelID))
 	} else {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig

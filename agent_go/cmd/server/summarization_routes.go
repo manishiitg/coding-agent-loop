@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/gorilla/mux"
@@ -21,7 +23,13 @@ import (
 
 // SummarizeConversationRequest represents a request to summarize conversation history
 type SummarizeConversationRequest struct {
-	KeepLastMessages int `json:"keep_last_messages,omitempty"` // Optional: number of recent messages to keep (default: 8)
+	KeepLastMessages int `json:"keep_last_messages,omitempty"` // Optional: number of recent messages to keep (default: 4, matches orchestrator)
+	// Context summarization configuration (optional - uses orchestrator defaults if not provided)
+	EnableContextSummarization     bool    `json:"enable_context_summarization,omitempty"`       // Enable context summarization feature (default: true, matches orchestrator)
+	SummarizeOnTokenThreshold      bool    `json:"summarize_on_token_threshold,omitempty"`       // Enable token-based summarization trigger (percentage-based, default: true, matches orchestrator)
+	TokenThresholdPercent          float64 `json:"token_threshold_percent,omitempty"`            // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
+	SummarizeOnFixedTokenThreshold bool    `json:"summarize_on_fixed_token_threshold,omitempty"` // Enable fixed token-based summarization trigger (default: true, matches orchestrator)
+	FixedTokenThreshold            int     `json:"fixed_token_threshold,omitempty"`              // Fixed token threshold to trigger summarization (default: 200000 = 200k tokens, matches orchestrator)
 }
 
 // SummarizeConversationResponse represents the response for summarization
@@ -115,22 +123,106 @@ func (api *StreamingAPI) handleSummarizeConversation(w http.ResponseWriter, r *h
 
 	// Create a minimal agent for summarization (no MCP servers needed)
 	ctx := context.Background()
+
+	// Load context summarization settings with orchestrator defaults
+	// Priority: Request > Environment Variable > Default (matches orchestrator defaults)
+	enableContextSummarization := req.EnableContextSummarization
+	if !enableContextSummarization {
+		// Check environment variable - default to enabled (true), can be disabled via "false"
+		if envVal := os.Getenv("ENABLE_CONTEXT_SUMMARIZATION"); envVal == "false" {
+			enableContextSummarization = false
+		} else {
+			enableContextSummarization = true // Default to enabled (matches orchestrator)
+		}
+	}
+
+	summarizeOnTokenThreshold := req.SummarizeOnTokenThreshold
+	if !summarizeOnTokenThreshold {
+		// Check environment variable - default to enabled (true), can be disabled via "false"
+		if envVal := os.Getenv("SUMMARIZE_ON_TOKEN_THRESHOLD"); envVal == "false" {
+			summarizeOnTokenThreshold = false
+		} else {
+			summarizeOnTokenThreshold = true // Default to enabled (matches orchestrator)
+		}
+	}
+
+	tokenThresholdPercent := req.TokenThresholdPercent
+	if tokenThresholdPercent <= 0 {
+		// Check environment variable
+		if envVal := os.Getenv("TOKEN_THRESHOLD_PERCENT"); envVal != "" {
+			if threshold, err := strconv.ParseFloat(envVal, 64); err == nil && threshold > 0 && threshold <= 1.0 {
+				tokenThresholdPercent = threshold
+			}
+		}
+		if tokenThresholdPercent <= 0 {
+			tokenThresholdPercent = 0.8 // Default to 80% (matches orchestrator)
+		}
+	}
+
+	summarizeOnFixedTokenThreshold := req.SummarizeOnFixedTokenThreshold
+	if !summarizeOnFixedTokenThreshold {
+		// Check environment variable - default to enabled (true), can be disabled via "false"
+		if envVal := os.Getenv("SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD"); envVal == "false" {
+			summarizeOnFixedTokenThreshold = false
+		} else {
+			summarizeOnFixedTokenThreshold = true // Default to enabled (matches orchestrator)
+		}
+	}
+
+	fixedTokenThreshold := req.FixedTokenThreshold
+	if fixedTokenThreshold <= 0 {
+		// Check environment variable
+		if envVal := os.Getenv("FIXED_TOKEN_THRESHOLD"); envVal != "" {
+			if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
+				fixedTokenThreshold = threshold
+			}
+		}
+		if fixedTokenThreshold <= 0 {
+			fixedTokenThreshold = 200000 // Default to 200k tokens (matches orchestrator)
+		}
+	}
+
 	keepLastMessages := req.KeepLastMessages
 	if keepLastMessages <= 0 {
-		keepLastMessages = 8 // Default: keep last 8 messages
+		// Check environment variable
+		if envVal := os.Getenv("SUMMARY_KEEP_LAST_MESSAGES"); envVal != "" {
+			if keepLast, err := strconv.Atoi(envVal); err == nil && keepLast > 0 {
+				keepLastMessages = keepLast
+			}
+		}
+		if keepLastMessages <= 0 {
+			keepLastMessages = 4 // Default to 4 messages (matches orchestrator)
+		}
 	}
 
 	// No observer ID needed - events are stored by sessionID
+
+	// Build agent options
+	agentOptions := []mcpagent.AgentOption{
+		mcpagent.WithServerName(mcpclient.NoServers), // No MCP servers needed for summarization
+		mcpagent.WithLogger(api.logger),
+	}
+
+	// Add context summarization configuration
+	if enableContextSummarization {
+		agentOptions = append(agentOptions, mcpagent.WithContextSummarization(true))
+		if summarizeOnTokenThreshold {
+			agentOptions = append(agentOptions, mcpagent.WithSummarizeOnTokenThreshold(true, tokenThresholdPercent))
+		}
+		if summarizeOnFixedTokenThreshold && fixedTokenThreshold > 0 {
+			agentOptions = append(agentOptions, mcpagent.WithSummarizeOnFixedTokenThreshold(true, fixedTokenThreshold))
+		}
+		if keepLastMessages > 0 {
+			agentOptions = append(agentOptions, mcpagent.WithSummaryKeepLastMessages(keepLastMessages))
+		}
+	}
 
 	// Create minimal agent with NO_SERVERS to avoid connecting to MCP servers
 	tempAgent, err := mcpagent.NewAgent(
 		ctx,
 		summarizationLLM,
 		api.mcpConfigPath,
-		mcpagent.WithServerName(mcpclient.NoServers), // No MCP servers needed for summarization
-		mcpagent.WithContextSummarization(true),
-		mcpagent.WithSummaryKeepLastMessages(keepLastMessages),
-		mcpagent.WithLogger(api.logger),
+		agentOptions...,
 	)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create agent for summarization: %v", err), http.StatusInternalServerError)

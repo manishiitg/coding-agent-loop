@@ -8,6 +8,7 @@ import type {
   MCPServerConfig,
   ChatSession,
   ListChatSessionsResponse,
+  GetSessionEventsResponse,
   CreateChatSessionRequest,
   UpdateChatSessionRequest,
   PresetQuery,
@@ -158,14 +159,14 @@ export const agentApi = {
 
   // Get events for a session
   // Supports both forward polling (sinceIndex) and backward pagination (limit/offset)
-  // eventMode: 'basic' | 'advanced' - filters events by mode (defaults to 'basic')
+  // eventMode: 'basic' | 'advanced' | 'tiny' - filters events by mode (defaults to 'basic')
   getSessionEvents: async (
     sessionId: string, 
     sinceIndex?: number,
     options?: {
       limit?: number
       offset?: number
-      eventMode?: 'basic' | 'advanced'
+      eventMode?: 'basic' | 'advanced' | 'tiny'
     }
   ): Promise<GetEventsResponse> => {
     const params: Record<string, string | number> = {}
@@ -598,7 +599,13 @@ export const agentApi = {
     return response.data
   },
 
-  // getSessionEvents for chat history (duplicate removed - using the one at line 153)
+  // Get events from database for a chat session (for completed sessions)
+  getChatSessionEvents: async (sessionId: string, limit: number = 1000, offset: number = 0): Promise<GetSessionEventsResponse> => {
+    const response = await api.get(`/api/chat-history/sessions/${sessionId}/events`, {
+      params: { limit, offset }
+    })
+    return response.data
+  },
 
   createChatSession: async (request: CreateChatSessionRequest): Promise<ChatSession> => {
     const response = await api.post('/api/chat-history/sessions', request)

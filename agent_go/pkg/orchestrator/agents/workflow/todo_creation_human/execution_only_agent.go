@@ -45,7 +45,7 @@ type HumanControlledTodoPlannerExecutionOnlyTemplate struct {
 }
 
 // HumanControlledTodoPlannerExecutionOnlyAgent executes steps using pre-discovered learning context
-// This agent does NOT discover learnings - it receives learning history from LearningReadingAgent
+// This agent does NOT discover learnings - it receives learning history from readLearningHistory() method
 type HumanControlledTodoPlannerExecutionOnlyAgent struct {
 	*agents.BaseOrchestratorAgent
 }
@@ -171,7 +171,8 @@ func (hctpeoa *HumanControlledTodoPlannerExecutionOnlyAgent) executionOnlySystem
 - **Patterns**: Use tool hints/error recovery patterns from learnings.
 - **Conflict**: If learning conflicts with step requirement, the step wins.
 {{if eq .KeepLearningFull "false"}}
-- **Deep Dive**: Full learning files are at 'learnings/step-{N}/*.md' or 'learnings/*.md'. Read them when preview is insufficient.
+- **Exploration Phase**: You are in an early learning phase. While learning files are available (see below), you are encouraged to **explore alternative or optimized approaches** to achieve the step goal.
+- **Access**: Full learning files are listed in the user message. Read them if you need guidance, but feel free to innovate if you see a better path.
 {{end}}
 {{end}}
 

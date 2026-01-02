@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     title TEXT, -- Auto-generated title
     agent_mode TEXT, -- simple, react, orchestrator
     preset_query_id TEXT, -- Optional link to preset query
+    config TEXT DEFAULT NULL, -- JSON configuration (MCP servers, code exec mode, workspace settings, etc.)
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     completed_at DATETIME,
     status TEXT DEFAULT 'active', -- active, completed, error
@@ -75,10 +76,26 @@ CREATE TABLE IF NOT EXISTS workflows (
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_session_id ON chat_sessions(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_created_at ON chat_sessions(created_at);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_preset_query_id ON chat_sessions(preset_query_id);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_status ON chat_sessions(status);
+
+-- Composite indexes for chat_sessions (optimize filtering + ordering)
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_preset_created ON chat_sessions(preset_query_id, created_at);
+
+-- Single column indexes for events
 CREATE INDEX IF NOT EXISTS idx_events_session_id ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_chat_session_id ON events(chat_session_id);
 CREATE INDEX IF NOT EXISTS idx_events_event_type ON events(event_type);
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
+
+-- Composite indexes for events (critical for performance)
+-- Optimizes: JOIN + GROUP BY + MAX(timestamp) + COUNT in ListChatSessions
+CREATE INDEX IF NOT EXISTS idx_events_chat_session_timestamp ON events(chat_session_id, timestamp);
+-- Optimizes: GetEventsBySession WHERE session_id ORDER BY timestamp
+CREATE INDEX IF NOT EXISTS idx_events_session_timestamp ON events(session_id, timestamp);
+-- Optimizes: GetEvents with event_type filter + ordering
+CREATE INDEX IF NOT EXISTS idx_events_type_timestamp ON events(event_type, timestamp);
+
+-- Preset queries indexes
 CREATE INDEX IF NOT EXISTS idx_preset_queries_label ON preset_queries(label);
 CREATE INDEX IF NOT EXISTS idx_preset_queries_created_at ON preset_queries(created_at);
 CREATE INDEX IF NOT EXISTS idx_preset_queries_is_predefined ON preset_queries(is_predefined);

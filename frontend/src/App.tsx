@@ -155,7 +155,6 @@ function App() {
   
   // App Store subscriptions for workspace and chat
   const {
-    clearFileContext,
     setChatSessionId,
     setChatSessionTitle,
     setSelectedPresetId,
@@ -453,6 +452,38 @@ function App() {
     createDefaultTab()
   }, [hasCompletedInitialSetup, selectedModeCategory])
 
+  // Ensure a chat tab is selected after restore (fix for page reload issue)
+  // This ensures that when tabs are restored from localStorage, we select the first chat tab
+  // if activeTabId is null or invalid
+  useEffect(() => {
+    if (!hasCompletedInitialSetup) return
+    
+    // Only run for chat mode
+    if (selectedModeCategory !== 'chat') {
+      return
+    }
+    
+    const chatStore = useChatStore.getState()
+    const activeTabId = chatStore.activeTabId
+    
+    // Check if activeTabId is null or points to a non-existent tab
+    const activeTab = activeTabId ? chatStore.getTab(activeTabId) : null
+    const hasValidActiveTab = activeTab && activeTab.metadata?.mode === 'chat'
+    
+    if (!hasValidActiveTab) {
+      // Find the first chat tab
+      const chatTabs = Object.values(chatStore.chatTabs).filter(tab => 
+        tab.metadata?.mode === 'chat'
+      ).sort((a, b) => a.createdAt - b.createdAt)
+      
+      if (chatTabs.length > 0) {
+        // Select the first chat tab
+        console.log(`[App] No valid active tab found, selecting first chat tab: ${chatTabs[0].tabId}`)
+        chatStore.switchTab(chatTabs[0].tabId)
+      }
+    }
+  }, [hasCompletedInitialSetup, selectedModeCategory])
+
   // Restore active presets after stores are initialized
   useEffect(() => {
     // Only restore presets if initial setup is completed and we have a mode category
@@ -465,12 +496,18 @@ function App() {
           if (!result.success) {
             console.error('[APP] Failed to restore preset:', result.error)
           }
+        } else if (selectedModeCategory === 'chat') {
+          // For chat mode, if there's no active preset, clear any stale preset server state
+          // This prevents old preset servers from persisting when no preset is selected
+          const { setCurrentPresetServers } = useGlobalPresetStore.getState()
+          setCurrentPresetServers([])
         }
       }, 500) // 500ms delay to ensure stores are ready
 
       return () => clearTimeout(timer)
     }
   }, [hasCompletedInitialSetup, selectedModeCategory, getActivePreset, applyPreset])
+
 
   // Auto-minimize sidebar when mode is selected or preset is selected
   useEffect(() => {
@@ -494,7 +531,7 @@ function App() {
     }
     
     // Clear App-level state
-    clearFileContext();
+    // Note: File context is now mode-specific (tab for chat, preset for workflow), no need to clear
     setChatSessionId(''); // Clear chat session ID to exit historical mode
     setChatSessionTitle('');
     
@@ -541,19 +578,32 @@ function App() {
         }, 100)
       }
     }
-  }, [clearFileContext, setChatSessionId, setChatSessionTitle, setSelectedPresetId, clearActivePreset, selectedModeCategory, applyPreset]);
+  }, [setChatSessionId, setChatSessionTitle, setSelectedPresetId, clearActivePreset, selectedModeCategory, applyPreset]);
 
   // Handle chat session selection
-  const handleChatSessionSelect = useCallback((sessionId: string, sessionTitle?: string, sessionType?: 'active' | 'completed', activeSessionInfo?: ActiveSessionInfo) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleChatSessionSelect = useCallback((sessionId: string, sessionTitle?: string, _sessionType?: 'active' | 'completed', _activeSessionInfo?: ActiveSessionInfo) => {
+    // Check if a tab with this session ID already exists
+    const chatStore = useChatStore.getState()
+    const existingTab = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === sessionId)
     
-    if (sessionType === 'active' && activeSessionInfo) {
-      // For active sessions, we'll let ChatArea handle the reconnection
-      // Just set the session ID without timestamp to allow reconnection
-      setChatSessionId(sessionId);
-    } else {
-      // For completed sessions, add timestamp to force reload
-      setChatSessionId(`${sessionId}_${Date.now()}`);
+    if (existingTab) {
+      // Tab already exists, just switch to it
+      console.log(`[App] Tab ${existingTab.tabId} already exists for session ${sessionId}, switching to it`)
+      chatStore.switchTab(existingTab.tabId)
+      // Still set chatSessionId for consistency (ChatArea uses it)
+      setChatSessionId(sessionId)
+      // Still update the title in case it changed
+      setChatSessionTitle(sessionTitle || '')
+      // Clear file content view
+      setShowFileContent(false)
+      return
     }
+    
+    // No existing tab, proceed with normal flow
+    // Use the session ID directly without timestamp to avoid unnecessary reloads
+    // ChatArea will check if events are already loaded and skip reloading if they exist
+    setChatSessionId(sessionId);
     
     setChatSessionTitle(sessionTitle || '');
     

@@ -3,13 +3,33 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"mcp-agent-builder-go/agent_go/internal/events"
+	"mcp-agent-builder-go/agent_go/pkg/database"
+	pkgevents "mcpagent/events"
 
 	"github.com/gorilla/mux"
 )
+
+// flatEventData is a custom EventData type that serializes event-specific fields directly
+// without BaseEventData fields or nested "data" field, matching what the frontend expects
+type flatEventData struct {
+	eventData map[string]interface{}
+	eventType pkgevents.EventType
+}
+
+func (f *flatEventData) GetEventType() pkgevents.EventType {
+	return f.eventType
+}
+
+// MarshalJSON serializes only the event-specific fields (no BaseEventData, no nested "data")
+func (f *flatEventData) MarshalJSON() ([]byte, error) {
+	return json.Marshal(f.eventData)
+}
 
 // --- POLLING API TYPES ---
 // Observer APIs removed - events are now stored by sessionID
@@ -49,8 +69,8 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	if eventMode == "" {
 		eventMode = "basic" // Default to basic mode
 	}
-	if eventMode != "basic" && eventMode != "advanced" {
-		http.Error(w, "event_mode must be 'basic' or 'advanced'", http.StatusBadRequest)
+	if eventMode != "basic" && eventMode != "advanced" && eventMode != "tiny" {
+		http.Error(w, "event_mode must be 'basic', 'advanced', or 'tiny'", http.StatusBadRequest)
 		return
 	}
 
@@ -107,19 +127,192 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 
 	// Get session status (from active sessions or database)
 	var sessionStatus string
+	var chatSession *database.ChatSession
 	activeSession, existsInActive := api.getActiveSession(sessionID)
 	if existsInActive {
 		sessionStatus = activeSession.Status
+		api.logger.Debug(fmt.Sprintf("[POLLING] Session %s found in active sessions (status: %s)", sessionID, sessionStatus))
 	} else {
 		// Check database for completed/error sessions
-		chatSession, err := api.chatDB.GetChatSession(r.Context(), sessionID)
+		var err error
+		chatSession, err = api.chatDB.GetChatSession(r.Context(), sessionID)
 		if err == nil && chatSession != nil {
 			sessionStatus = chatSession.Status
+			api.logger.Debug(fmt.Sprintf("[POLLING] Session %s found in database (status: %s)", sessionID, sessionStatus))
+		} else {
+			api.logger.Debug(fmt.Sprintf("[POLLING] Session %s not found in database: %v", sessionID, err))
 		}
 		// If not found, leave empty (session might not exist yet)
 	}
 
-	if !exists {
+	api.logger.Debug(fmt.Sprintf("[POLLING] Session %s: exists=%v, events_in_memory=%d, status=%s", sessionID, exists, len(sessionEvents), sessionStatus))
+	log.Printf("[POLLING DEBUG] Session %s: exists=%v, events_in_memory=%d, status=%s, chatSession=%v", sessionID, exists, len(sessionEvents), sessionStatus, chatSession != nil)
+
+	// Check if we need to fallback to database:
+	// 1. Session doesn't exist in memory (!exists), OR
+	// 2. Session exists in memory but has 0 events AND session is completed/stopped
+	shouldFallbackToDB := !exists || (exists && len(sessionEvents) == 0 && chatSession != nil && (chatSession.Status == "completed" || chatSession.Status == "error" || chatSession.Status == "stopped"))
+	log.Printf("[POLLING DEBUG] shouldFallbackToDB=%v for session %s", shouldFallbackToDB, sessionID)
+
+	if shouldFallbackToDB {
+		// Session doesn't exist in memory or has no events - check if it's a completed/stopped session in database
+		// For non-active sessions (completed, stopped, error), fetch events from database
+		log.Printf("[POLLING DEBUG] Checking fallback conditions: chatSession=%v, status=%s", chatSession != nil, sessionStatus)
+		if chatSession != nil && (chatSession.Status == "completed" || chatSession.Status == "error" || chatSession.Status == "stopped") {
+			// Fallback to database for non-active sessions
+			// Fetch events from database and convert to polling format
+			log.Printf("[POLLING] Session %s not in memory, falling back to database (status: %s)", sessionID, chatSession.Status)
+			api.logger.Debug(fmt.Sprintf("[POLLING] Session %s not in memory, falling back to database (status: %s)", sessionID, chatSession.Status))
+			dbEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 1000, 0)
+			if err != nil {
+				log.Printf("[POLLING ERROR] Failed to fetch events from database for session %s: %v", sessionID, err)
+				api.logger.Warn(fmt.Sprintf("[POLLING] Failed to fetch events from database for session %s: %v", sessionID, err))
+			} else {
+				log.Printf("[POLLING] Fetched %d events from database for session %s", len(dbEvents), sessionID)
+				api.logger.Debug(fmt.Sprintf("[POLLING] Fetched %d events from database for session %s", len(dbEvents), sessionID))
+			}
+			if err == nil && len(dbEvents) > 0 {
+				// Convert database events to polling events format
+				convertedEvents := make([]events.Event, 0, len(dbEvents))
+				parseErrors := 0
+				filteredOut := 0
+				for i, dbEvent := range dbEvents {
+					// Parse only the Type field from the stored AgentEvent JSON for filtering
+					// The full AgentEvent will be unmarshaled properly by the event store's MarshalJSON
+					type eventTypeOnly struct {
+						Type pkgevents.EventType `json:"type"`
+					}
+
+					var typeOnly eventTypeOnly
+					if err := json.Unmarshal(dbEvent.EventData, &typeOnly); err != nil {
+						parseErrors++
+						if i < 3 { // Log first 3 parse errors
+							log.Printf("[POLLING ERROR] Failed to parse event type %d for session %s: %v, event_type=%s", i, sessionID, err, dbEvent.EventType)
+						}
+						continue
+					}
+
+					// Apply event mode filtering
+					shouldShow := opts.EventMode == "" || events.ShouldShowEventByMode(string(typeOnly.Type), opts.EventMode)
+					if !shouldShow {
+						filteredOut++
+						if i < 3 { // Log first 3 filtered events
+							log.Printf("[POLLING DEBUG] Event %d filtered out by event_mode=%s: type=%s", i, opts.EventMode, typeOnly.Type)
+						}
+						continue
+					}
+
+					// Unmarshal the full AgentEvent - use helper struct to handle EventData interface
+					// Since EventData is an interface, we need to unmarshal Data as json.RawMessage first
+					type agentEventWithRawData struct {
+						Type           pkgevents.EventType `json:"type"`
+						Timestamp      time.Time           `json:"timestamp"`
+						EventIndex     int                 `json:"event_index"`
+						TraceID        string              `json:"trace_id,omitempty"`
+						SpanID         string              `json:"span_id,omitempty"`
+						ParentID       string              `json:"parent_id,omitempty"`
+						CorrelationID  string              `json:"correlation_id,omitempty"`
+						HierarchyLevel int                 `json:"hierarchy_level"`
+						SessionID      string              `json:"session_id,omitempty"`
+						Component      string              `json:"component,omitempty"`
+						Data           json.RawMessage     `json:"data"`
+					}
+
+					var helper agentEventWithRawData
+					if err := json.Unmarshal(dbEvent.EventData, &helper); err != nil {
+						parseErrors++
+						if i < 3 {
+							log.Printf("[POLLING ERROR] Failed to parse event %d for session %s: %v, event_type=%s", i, sessionID, err, dbEvent.EventType)
+						}
+						continue
+					}
+
+					// Unmarshal Data field into a map to preserve structure
+					var dataMap map[string]interface{}
+					if err := json.Unmarshal(helper.Data, &dataMap); err != nil {
+						parseErrors++
+						if i < 3 {
+							log.Printf("[POLLING ERROR] Failed to parse event data %d for session %s: %v", i, sessionID, err)
+						}
+						continue
+					}
+
+					// Extract event-specific fields, excluding BaseEventData fields
+					// BaseEventData fields are: timestamp, trace_id, span_id, event_id, parent_id,
+					// is_end_event, correlation_id, hierarchy_level, session_id, component, metadata
+					baseEventDataFields := map[string]bool{
+						"timestamp":       true,
+						"trace_id":        true,
+						"span_id":         true,
+						"event_id":        true,
+						"parent_id":       true,
+						"is_end_event":    true,
+						"correlation_id":  true,
+						"hierarchy_level": true,
+						"session_id":      true,
+						"component":       true,
+						"metadata":        true,
+					}
+
+					actualEventData := make(map[string]interface{})
+					for k, v := range dataMap {
+						// Skip BaseEventData fields - they're already in AgentEvent
+						if !baseEventDataFields[k] {
+							actualEventData[k] = v
+						}
+					}
+
+					// Use convertDBEventToPollingEvent helper for consistency
+					// But we need to call it from server.go, so we'll duplicate the logic here
+					// Create AgentEvent with flatEventData that serializes directly
+					agentEvent := pkgevents.AgentEvent{
+						Type:           helper.Type,
+						Timestamp:      helper.Timestamp,
+						EventIndex:     helper.EventIndex,
+						TraceID:        helper.TraceID,
+						SpanID:         helper.SpanID,
+						ParentID:       helper.ParentID,
+						CorrelationID:  helper.CorrelationID,
+						HierarchyLevel: helper.HierarchyLevel,
+						SessionID:      helper.SessionID,
+						Component:      helper.Component,
+						Data: &flatEventData{
+							eventData: actualEventData,
+							eventType: helper.Type,
+						},
+					}
+
+					convertedEvents = append(convertedEvents, events.Event{
+						ID:        dbEvent.ID,
+						Type:      dbEvent.EventType,
+						Timestamp: dbEvent.Timestamp,
+						SessionID: sessionID,
+						Data:      &agentEvent,
+					})
+				}
+				log.Printf("[POLLING] Converted %d events: total=%d, converted=%d, parse_errors=%d, filtered_out=%d", len(dbEvents), len(dbEvents), len(convertedEvents), parseErrors, filteredOut)
+
+				// Apply sinceIndex filtering if specified
+				if opts.SinceIndex >= 0 && opts.SinceIndex < len(convertedEvents) {
+					log.Printf("[POLLING DEBUG] Applying sinceIndex filter: sinceIndex=%d, before=%d, after=%d", opts.SinceIndex, len(convertedEvents), len(convertedEvents[opts.SinceIndex+1:]))
+					convertedEvents = convertedEvents[opts.SinceIndex+1:]
+				}
+
+				response := GetEventsResponse{
+					Events:        convertedEvents,
+					HasMore:       false, // Completed sessions don't have more events
+					SessionID:     sessionID,
+					SessionStatus: sessionStatus,
+				}
+
+				if err := json.NewEncoder(w).Encode(response); err != nil {
+					http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+					return
+				}
+				return
+			}
+		}
+
 		// Session doesn't exist yet (no events have been added)
 		// Return empty events array instead of 404 - this is expected when polling starts before events are generated
 		response := GetEventsResponse{

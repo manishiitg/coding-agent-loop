@@ -793,6 +793,13 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Downloads folder cleanup failed: %v (continuing with step execution)", err))
 	}
 
+	// STEP HASH GUARD: Detect plan changes and reset learnings if needed
+	// This ensures that if the user modifies a step's description, criteria, etc., 
+	// the learning stability counters are reset and learnings are unlocked.
+	if err := hcpo.CheckAndResetStepHash(ctx, step, step.GetID(), stepIndex, stepPath); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step hash guard check failed for %s: %v (continuing)", stepPath, err))
+	}
+
 	// Initialize variables for step execution
 	maxRetryAttempts := 5
 	var executionConversationHistory []llmtypes.MessageContent // Only used for learning agents after execution
@@ -1083,15 +1090,47 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 			var formattedLearningHistory string
 			var learningFilePaths string // File paths for user message when KeepLearningFull is false
 
-			// Determine KeepLearningFull flag early (before reading learning files)
-			// Priority: step config > environment variable > default (true)
+			// Determine KeepLearningFull flag
+			// Priority: step config > environment variable > dynamic logic (based on successful runs)
 			agentConfigs := getAgentConfigs(step)
-			keepLearningFull := true
+			var keepLearningFull bool
+			keepLearningFullSource := "default (dynamic)"
+
 			if agentConfigs != nil && agentConfigs.KeepLearningFull != nil {
 				keepLearningFull = *agentConfigs.KeepLearningFull
+				keepLearningFullSource = "step config"
 			} else if envVal := os.Getenv("KEEP_LEARNING_FULL"); envVal != "" {
 				keepLearningFull = envVal == "true" || envVal == "1"
+				keepLearningFullSource = "environment variable"
+			} else {
+				// Dynamic Logic: Switch based on successful runs
+				// Default to Exploration Mode (False - paths only) to encourage trying different ways
+				keepLearningFull = false
+				
+				// Read metadata to check successful runs
+				learningPathIdentifier := step.GetID() // Use ID as identifier
+				metadata, err := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
+				if err == nil && metadata != nil {
+					// Check thresholds: Simple >= 2, Medium >= 3, Complex >= 5
+					if metadata.SuccessfulRunsSimple >= 2 {
+						keepLearningFull = true
+						keepLearningFullSource = "dynamic (simple threshold met)"
+					} else if metadata.SuccessfulRunsMedium >= 3 {
+						keepLearningFull = true
+						keepLearningFullSource = "dynamic (medium threshold met)"
+					} else if metadata.SuccessfulRunsComplex >= 5 {
+						keepLearningFull = true
+						keepLearningFullSource = "dynamic (complex threshold met)"
+					} else {
+						keepLearningFullSource = "dynamic (exploration phase)"
+					}
+				} else {
+					// No metadata (first run) or error reading -> Stay in Exploration Mode
+					keepLearningFullSource = "dynamic (initial exploration)"
+				}
 			}
+
+			hcpo.GetLogger().Info(fmt.Sprintf("🧠 KeepLearningFull decision: %v (Source: %s)", keepLearningFull, keepLearningFullSource))
 
 			// Check if learning is disabled - if so, skip reading learnings entirely
 			isLearningDisabledStep := agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning
@@ -1296,6 +1335,11 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 
 				// Execute execution-only agent with learning history (reused from learning reading above)
 				executionResult, executionConversationHistory, err = executionAgent.Execute(executionCtx, templateVars, []llmtypes.MessageContent{})
+
+				// CAPTURE TURN COUNT: Calculate total LLM turns from conversation history
+				// Each turn consists of a user message and an assistant response (including tool calls)
+				turnCount := len(executionConversationHistory)
+				hcpo.GetLogger().Info(fmt.Sprintf("📊 Step %d execution completed in %d turns", stepIndex+1, turnCount))
 
 				// Check for prerequisite failure (from tool call via channel)
 				var prereqErr *PrerequisiteFailureError
@@ -1759,7 +1803,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 							if err := populateRuntimeFields(step, stepConfigs); err != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to populate runtime fields for learning: %v", err))
 							}
-							err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM)
+							err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount)
 							if err != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, err))
 							} else {
@@ -1950,7 +1994,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to populate runtime fields for learning: %v", err))
 								} else {
 									// For loop iterations, usedTempLLM is in scope but typically empty (loop iterations use original LLM)
-									err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM)
+									err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount)
 								}
 								if err != nil {
 									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Learning phase failed after loop iteration %d for %s: %v", loopIterationCount, stepPath, err))
@@ -2108,7 +2152,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to populate runtime fields for learning: %v", err))
 						} else {
 							// usedTempLLM is set in the retry loop above when validation passes
-							err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM)
+							err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount)
 						}
 						if err != nil {
 							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, err))
@@ -2135,7 +2179,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to populate runtime fields for learning: %v", err))
 								refinedTaskDescription = ""
 							} else {
-								refinedTaskDescription, _, err = hcpo.runFailureLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionConversationHistory, validationResponse, isCodeExecutionMode)
+								refinedTaskDescription, _, err = hcpo.runFailureLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionConversationHistory, validationResponse, isCodeExecutionMode, turnCount)
 							}
 							if err != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for %s: %v", stepPath, err))

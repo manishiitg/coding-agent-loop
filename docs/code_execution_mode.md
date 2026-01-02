@@ -100,18 +100,20 @@ filepath := "workspace/runs/run-1/execution/step-1"
 
 ## ⚙️ Path Handling
 
-### Base Path vs Relative Paths
+### WorkspacePath vs StepExecutionPath
 
-| Type | Source | Example | Usage |
-|------|--------|---------|-------|
-| **Base Path** | `os.Args[1]` | `Workflow/runs/iteration-11/execution` | Root execution workspace |
-| **Relative Path** | Context dependencies | `step-1/step_1_output.json` | NOT full paths |
+| Path Type | Source | Example | Usage |
+|-----------|--------|---------|-------|
+| **WorkspacePath** | `os.Args[1]` | `Workflow/runs/iteration-11/execution` | Base execution workspace (root) |
+| **StepExecutionPath** | Template variable | `execution/step-8` | Specific step folder (relative to workspace root) |
+| **Relative Path** | Context dependencies | `step-1/step_1_output.json` | File paths within workspace |
 | **Full Path** | `filepath.Join(basePath, relativePath)` | `Workflow/runs/iteration-11/execution/step-1/credentials.json` | All file operations |
 
 ### Example
 
 ```
-Base: os.Args[1] → "Workflow/runs/iteration-11/execution"
+WorkspacePath (os.Args[1]): "Workflow/runs/iteration-11/execution"
+StepExecutionPath: "execution/step-8"
 Relative: "step-1/credentials.json"
 Full: filepath.Join(basePath, "step-1/credentials.json") 
      → "Workflow/runs/iteration-11/execution/step-1/credentials.json"
@@ -136,6 +138,53 @@ Full: filepath.Join(basePath, "step-1/credentials.json")
 | **Packages** | Import generated tool packages | `aws_tools`, `workspace_tools`, `google_sheets_tools` |
 | **File Ops** | Always use `workspace_tools` | `workspace_tools.ReadWorkspaceFile()` |
 | **Paths** | Always use `os.Args[1]` + `filepath.Join()` | `filepath.Join(os.Args[1], "step-1/file.json")` |
+
+---
+
+## 📁 File System Access
+
+Path validation is enforced at runtime. Code can only access allowed folders.
+
+| Access Type | Folders | Purpose |
+|------------|---------|---------|
+| **READ** | `learnings/`, `execution/` (previous steps), `knowledgebase/` | Read context dependencies, learnings, shared data |
+| **WRITE** | `{{.StepExecutionPath}}/` (current step), `knowledgebase/` | Write step output, persistent shared files |
+
+**Rules:**
+- ✅ **Step folders** (`execution/step-N/`) are **VOLATILE** - deleted on re-execution/restart
+- ✅ **Knowledgebase** (`knowledgebase/`) is **PERSISTENT** - survives across runs
+- ❌ Cannot write to other steps' folders or outside allowed paths
+
+---
+
+## 💾 Knowledgebase Folder
+
+Persistent storage shared across all workflow runs and steps.
+
+**Location:** `{workspaceRoot}/knowledgebase/`
+
+**Usage:**
+- ✅ Templates, reference data, global configs
+- ✅ Files that must survive across execution attempts
+- ✅ Shared resources used by multiple steps
+- ❌ Step-specific output (use step folder instead)
+
+**Example:**
+```go
+// Store template in knowledgebase (persistent)
+templatePath := filepath.Join(basePath, "../knowledgebase/email_template.json")
+workspace_tools.WriteWorkspaceFile(workspace_tools.WriteWorkspaceFileParams{
+    Filepath: templatePath,
+    Content:  templateContent,
+})
+
+// Step output goes to step folder (volatile)
+outputPath := filepath.Join(basePath, "step-2/output.json")
+workspace_tools.WriteWorkspaceFile(workspace_tools.WriteWorkspaceFileParams{
+    Filepath: outputPath,
+    Content:  resultContent,
+})
+```
 
 ---
 
@@ -214,9 +263,11 @@ When learnings contain Go code with hardcoded paths:
 - ✅ **Allowed**: `os.Args[1]` for workspace path
 - ✅ **Allowed**: `filepath.Join(basePath, relativePath)` for file paths
 - ✅ **Allowed**: Generated tool packages (`workspace_tools`, `aws_tools`, etc.)
+- ✅ **Allowed**: Writing to `knowledgebase/` for persistent files
 - ❌ **Forbidden**: Hardcoded workspace paths
 - ❌ **Forbidden**: Full file paths as CLI arguments
 - ❌ **Forbidden**: Direct OS calls (use `workspace_tools`)
+- ❌ **Forbidden**: Writing to other steps' folders
 
 **Example Template:**
 ```go

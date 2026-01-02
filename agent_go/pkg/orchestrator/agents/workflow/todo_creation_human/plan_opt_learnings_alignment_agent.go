@@ -59,8 +59,8 @@ type PlanLearningsAlignmentManager struct {
 	sessionID  string
 	workflowID string
 
-	// Learning LLM config (primary LLM for plan learnings alignment agent)
-	presetLearningLLM *AgentLLMConfig
+	// Phase LLM config (primary LLM for plan learnings alignment agent)
+	presetPhaseLLM *AgentLLMConfig
 }
 
 // NewPlanLearningsAlignmentManager creates a new PlanLearningsAlignmentManager
@@ -68,13 +68,13 @@ func NewPlanLearningsAlignmentManager(
 	baseOrchestrator *orchestrator.BaseOrchestrator,
 	sessionID string,
 	workflowID string,
-	presetLearningLLM *AgentLLMConfig,
+	presetPhaseLLM *AgentLLMConfig,
 ) *PlanLearningsAlignmentManager {
 	return &PlanLearningsAlignmentManager{
-		BaseOrchestrator:  baseOrchestrator,
-		sessionID:         sessionID,
-		workflowID:        workflowID,
-		presetLearningLLM: presetLearningLLM,
+		BaseOrchestrator: baseOrchestrator,
+		sessionID:        sessionID,
+		workflowID:       workflowID,
+		presetPhaseLLM:   presetPhaseLLM,
 	}
 }
 
@@ -100,19 +100,19 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 	plam.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	plam.GetLogger().Info(fmt.Sprintf("🔍 Setting folder guard for plan learnings alignment agent - Read paths: %v, Write paths: %v (read-only access to planning/ and planning/changelog/, write access to %s folder only)", readPaths, writePaths, selectedFolder))
 
-	// Use preset learning LLM if available, otherwise fall back to orchestrator default
+	// Use preset phase LLM if available, otherwise fall back to orchestrator default
 	orchestratorLLMConfig := plam.GetLLMConfig()
 	var llmConfigToUse *orchestrator.LLMConfig
-	if plam.presetLearningLLM != nil && plam.presetLearningLLM.Provider != "" && plam.presetLearningLLM.ModelID != "" {
-		// Use preset learning LLM
+	if plam.presetPhaseLLM != nil && plam.presetPhaseLLM.Provider != "" && plam.presetPhaseLLM.ModelID != "" {
+		// Use preset phase LLM
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              plam.presetLearningLLM.Provider,
-			ModelID:               plam.presetLearningLLM.ModelID,
+			Provider:              plam.presetPhaseLLM.Provider,
+			ModelID:               plam.presetPhaseLLM.ModelID,
 			FallbackModels:        orchestratorLLMConfig.FallbackModels,
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
 			APIKeys:               orchestratorLLMConfig.APIKeys,
 		}
-		plam.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM for plan learnings alignment: %s/%s", plam.presetLearningLLM.Provider, plam.presetLearningLLM.ModelID))
+		plam.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for plan learnings alignment: %s/%s", plam.presetPhaseLLM.Provider, plam.presetPhaseLLM.ModelID))
 	} else {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig

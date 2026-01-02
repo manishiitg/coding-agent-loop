@@ -55,8 +55,8 @@ type AnonymizationManager struct {
 	sessionID  string
 	workflowID string
 
-	// Learning LLM config (primary LLM for anonymization agent)
-	presetLearningLLM *AgentLLMConfig
+	// Phase LLM config (primary LLM for anonymization agent)
+	presetPhaseLLM *AgentLLMConfig
 }
 
 // NewAnonymizationManager creates a new AnonymizationManager
@@ -64,13 +64,13 @@ func NewAnonymizationManager(
 	baseOrchestrator *orchestrator.BaseOrchestrator,
 	sessionID string,
 	workflowID string,
-	presetLearningLLM *AgentLLMConfig,
+	presetPhaseLLM *AgentLLMConfig,
 ) *AnonymizationManager {
 	return &AnonymizationManager{
-		BaseOrchestrator:  baseOrchestrator,
-		sessionID:         sessionID,
-		workflowID:        workflowID,
-		presetLearningLLM: presetLearningLLM,
+		BaseOrchestrator: baseOrchestrator,
+		sessionID:        sessionID,
+		workflowID:       workflowID,
+		presetPhaseLLM:   presetPhaseLLM,
 	}
 }
 
@@ -93,16 +93,16 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 	// Use preset learning LLM if available, otherwise fall back to orchestrator default
 	var llmConfigToUse *orchestrator.LLMConfig
 	orchestratorLLMConfig := am.GetLLMConfig()
-	if am.presetLearningLLM != nil && am.presetLearningLLM.Provider != "" && am.presetLearningLLM.ModelID != "" {
-		// Use preset learning LLM
+	if am.presetPhaseLLM != nil && am.presetPhaseLLM.Provider != "" && am.presetPhaseLLM.ModelID != "" {
+		// Use preset phase LLM
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              am.presetLearningLLM.Provider,
-			ModelID:               am.presetLearningLLM.ModelID,
+			Provider:              am.presetPhaseLLM.Provider,
+			ModelID:               am.presetPhaseLLM.ModelID,
 			FallbackModels:        orchestratorLLMConfig.FallbackModels,        // Preserve fallback models from orchestrator
 			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback, // Preserve cross-provider fallback
 			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
 		}
-		am.GetLogger().Info(fmt.Sprintf("🔧 Using preset learning LLM for anonymization: %s/%s", am.presetLearningLLM.Provider, am.presetLearningLLM.ModelID))
+		am.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for anonymization: %s/%s", am.presetPhaseLLM.Provider, am.presetPhaseLLM.ModelID))
 	} else {
 		llmConfigToUse = orchestratorLLMConfig
 		am.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default anonymization LLM: %s/%s", am.GetProvider(), am.GetModel()))

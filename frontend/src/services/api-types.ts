@@ -54,6 +54,8 @@ export interface AgentQueryRequest {
   enable_context_summarization?: boolean // Enable context summarization feature
   summarize_on_max_turns?: boolean // Automatically summarize when max turns is reached
   summary_keep_last_messages?: number // Number of recent messages to keep when summarizing (default: 8)
+  // Workspace access configuration
+  enable_workspace_access?: boolean // Enable/disable workspace file access tools (default: true)
 }
 
 export interface AgentQueryResponse {

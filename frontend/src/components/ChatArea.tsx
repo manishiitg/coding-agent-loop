@@ -158,6 +158,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     // Deprecated: totalEvents, setTotalEvents, setLastEventCount, events, setEvents removed
     getTabEvents,
     addTabEvents,
+    setTabEvents,
     getTabLastEventIndex,
     setTabLastEventIndex,
     setSessionId,
@@ -697,7 +698,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
 
   // Get polling management actions from store (before pollEvents callback)
-  const { startPolling, stopPolling } = useChatStore()
+  const { startPolling, stopPolling, getActiveSessions } = useChatStore()
 
   // Get active sessions from cache (shared across all components)
   const { startActiveSessionsPolling } = useChatStore()
@@ -976,12 +977,184 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // The polling will be managed globally and cleaned up when app unmounts
     }
   }, [startActiveSessionsPolling])
+
+  // Auto-restore active sessions on page load
+  // This ensures that if the user refreshes the page, active chats are automatically restored
+  const hasRestoredActiveSessionsRef = useRef(false)
+  useEffect(() => {
+    // Only restore once on mount
+    if (hasRestoredActiveSessionsRef.current) {
+      return
+    }
+    
+    const restoreActiveSessions = async () => {
+      try {
+        // Wait a bit for active sessions polling to start and fetch initial data
+        await new Promise(resolve => setTimeout(resolve, 500))
+        
+        const chatStore = useChatStore.getState()
+        const activeSessions = await getActiveSessions(true) // Force refresh to get latest
+        
+        if (activeSessions.length === 0) {
+          console.log('[AutoRestore] No active sessions found, skipping restore')
+          hasRestoredActiveSessionsRef.current = true
+          return
+        }
+        
+        console.log(`[AutoRestore] Found ${activeSessions.length} active session(s), checking if tabs need to be created`)
+        
+        // Filter to only running sessions (active ones)
+        const runningSessions = activeSessions.filter(s => s.status === 'running')
+        
+        if (runningSessions.length === 0) {
+          console.log('[AutoRestore] No running sessions found, skipping restore')
+          hasRestoredActiveSessionsRef.current = true
+          return
+        }
+        
+        // For each active session, create a tab if one doesn't exist
+        for (const activeSession of runningSessions) {
+          const sessionId = activeSession.session_id
+          
+          // Check if a tab already exists for this session
+          const existingTab = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === sessionId)
+          
+          if (existingTab) {
+            console.log(`[AutoRestore] Tab already exists for active session ${sessionId}, skipping`)
+            continue
+          }
+          
+          // Create a tab for this active session
+          const sessionTitle = activeSession.query || 'Active Chat'
+          
+          // Determine default event mode based on agent mode
+          const agentMode = activeSession.agent_mode?.toLowerCase() || ''
+          const defaultEventMode: 'basic' | 'advanced' | 'tiny' = 
+            agentMode === 'orchestrator' ? 'advanced' : 'basic'
+          
+          try {
+            console.log(`[AutoRestore] Creating tab for active session ${sessionId}: ${sessionTitle}`)
+            const newTabId = await createChatTab(sessionTitle, { mode: 'chat' }, sessionId, defaultEventMode)
+            const newTab = chatStore.getTab(newTabId)
+            
+            if (!newTab) {
+              console.error(`[AutoRestore] Tab ${newTabId} was created but not found in store`)
+              continue
+            }
+            
+            // Load session config and events
+            try {
+              // Get full chat session details including config
+              const chatSession = await agentApi.getChatSession(sessionId)
+              
+              // Restore config from stored session
+              if (chatSession.config) {
+                const config = chatSession.config
+                const configUpdate: Partial<ChatTabConfig> = {}
+                
+                // Restore selected servers (prefer enabled_servers over selected_servers)
+                if (config.enabled_servers && config.enabled_servers.length > 0) {
+                  configUpdate.selectedServers = config.enabled_servers
+                } else if (config.selected_servers && config.selected_servers.length > 0) {
+                  configUpdate.selectedServers = config.selected_servers
+                }
+                
+                // Restore code execution mode
+                if (config.use_code_execution_mode !== undefined) {
+                  configUpdate.useCodeExecutionMode = config.use_code_execution_mode
+                }
+                
+                // Restore context summarization
+                if (config.enable_context_summarization !== undefined) {
+                  configUpdate.enableContextSummarization = config.enable_context_summarization
+                }
+                
+                // Restore LLM config
+                if (config.llm_config) {
+                  const llmConfig: ExtendedLLMConfiguration = {
+                    provider: config.llm_config.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                    model_id: config.llm_config.model_id || '',
+                    fallback_models: config.llm_config.fallback_models || [],
+                  }
+                  if (config.llm_config.cross_provider_fallback) {
+                    llmConfig.cross_provider_fallback = {
+                      provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                      models: config.llm_config.cross_provider_fallback.models || [],
+                    }
+                  }
+                  configUpdate.llmConfig = llmConfig
+                }
+                
+                // Restore workspace file context
+                if (config.file_context && Array.isArray(config.file_context)) {
+                  configUpdate.fileContext = config.file_context.map((item: { name?: string; path: string; type?: 'file' | 'folder' }) => ({
+                    name: item.name || item.path || '',
+                    path: item.path || '',
+                    type: (item.type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
+                  }))
+                }
+                
+                // Restore workspace access setting
+                if (config.enable_workspace_access !== undefined) {
+                  configUpdate.enableWorkspaceAccess = config.enable_workspace_access
+                }
+                
+                // Update tab config
+                if (Object.keys(configUpdate).length > 0) {
+                  chatStore.setTabConfig(newTabId, configUpdate)
+                  console.log(`[AutoRestore] Restored config for active session ${sessionId}:`, configUpdate)
+                }
+              }
+              
+              // Load events for this session
+              const eventMode: 'basic' | 'advanced' | 'tiny' = (newTab.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny'
+              const response = await agentApi.getSessionEvents(sessionId, 0, { eventMode })
+              const pollingEvents: PollingEvent[] = response.events
+              
+              // CRITICAL: Use setTabEvents instead of addTabEvents to ensure correct chronological order
+              // When restoring historical events, we want to replace any existing events to maintain order
+              setTabEvents(sessionId, pollingEvents)
+              setTabLastEventIndex(sessionId, pollingEvents.length > 0 ? pollingEvents.length - 1 : -1)
+              console.log(`[AutoRestore] Loaded ${pollingEvents.length} events for active session ${sessionId}`)
+              
+              // Set streaming status if session is active
+              chatStore.setTabStreaming(newTabId, true)
+              chatStore.setTabCompleted(newTabId, false)
+              
+              // If this is the first active session, switch to it
+              if (runningSessions.indexOf(activeSession) === 0) {
+                switchTab(newTabId)
+                console.log(`[AutoRestore] Switched to first active session tab: ${newTabId}`)
+              }
+            } catch (error) {
+              console.error(`[AutoRestore] Failed to load events/config for session ${sessionId}:`, error)
+            }
+          } catch (error) {
+            console.error(`[AutoRestore] Failed to create tab for active session ${sessionId}:`, error)
+          }
+        }
+        
+        hasRestoredActiveSessionsRef.current = true
+        console.log(`[AutoRestore] Completed restoring ${runningSessions.length} active session(s)`)
+      } catch (error) {
+        console.error('[AutoRestore] Failed to restore active sessions:', error)
+        hasRestoredActiveSessionsRef.current = true // Mark as attempted to avoid retry loops
+      }
+    }
+    
+    // Only restore in chat mode, not workflow mode
+    if (selectedModeCategory === 'chat') {
+      restoreActiveSessions()
+    }
+  }, [getActiveSessions, createChatTab, switchTab, setTabEvents, setTabLastEventIndex, selectedModeCategory])
   
   // Only poll tabs that have their session ID in the backend's active sessions list
   // Backend determines activity based on event activity (10 min timeout)
-  // Don't filter by local isStreaming - backend is source of truth
+  // CRITICAL: Also include tabs that are streaming (user just submitted a query)
+  // This ensures restored sessions start polling immediately when replying
   const tabsWithActiveSessions = useMemo(() => {
     const activeIds = activeSessionIds // Capture in closure
+    const chatStore = useChatStore.getState() // Get fresh store state to check streaming status
     return tabsWithSessions.filter(tab => {
       // Must have session ID
       if (!tab.sessionId) return false
@@ -989,11 +1162,24 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // Skip completed sessions (definitely done)
       if (tab.isCompleted) return false
       
+      // CRITICAL: Check streaming status directly from store (not from tab object)
+      // This ensures we get the latest streaming status even if tabsWithSessions is stale
+      const currentTab = chatStore.getTab(tab.tabId)
+      const isStreaming = currentTab?.isStreaming ?? tab.isStreaming
+      
+      // CRITICAL: Include tabs that are streaming (user just submitted a query)
+      // This handles the case where a restored session is being replied to
+      // The backend might not have added it to active sessions yet, but we should poll it
+      if (isStreaming) {
+        console.log(`[ActiveSessions] Tab ${tab.tabId} session ${tab.sessionId} is streaming, including in polling`)
+        return true
+      }
+      
       // Must be in backend's active sessions list (or we haven't checked yet - allow polling)
       // If backend says it's active, poll it even if local isStreaming is false
       // This ensures we catch events that come after stop is pressed
       if (activeIds.size > 0 && !activeIds.has(tab.sessionId)) {
-        console.log(`[ActiveSessions] Tab ${tab.tabId} session ${tab.sessionId} not in backend active sessions, skipping`)
+        console.log(`[ActiveSessions] Tab ${tab.tabId} session ${tab.sessionId} not in backend active sessions (isStreaming=${isStreaming}, tabFromStore=${!!currentTab}, storeIsStreaming=${currentTab?.isStreaming}), skipping`)
         return false
       }
       
@@ -1002,7 +1188,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       
       return true
     })
-  }, [tabsWithSessions, activeSessionIds])
+  }, [tabsWithSessions, activeSessionIds, chatTabs])
   
   // Start/stop polling based on active sessions using store actions
   // Use tabsWithActiveSessions (backend-driven) instead of updatePollingState (isStreaming-based)
@@ -1126,9 +1312,23 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           const chatStore = useChatStore.getState()
           let tabWithSession = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === originalSessionId)
           
+          // Fetch full chat session details to restore config
+          let chatSession: Awaited<ReturnType<typeof agentApi.getChatSession>> | null = null
+          try {
+            chatSession = await agentApi.getChatSession(originalSessionId)
+            console.log(`[History] Retrieved chat session for active session ${originalSessionId}:`, { 
+              status: chatSession.status, 
+              title: chatSession.title,
+              hasConfig: !!chatSession.config 
+            })
+          } catch (error) {
+            console.error(`[History] Failed to fetch chat session for active session ${originalSessionId}:`, error)
+            // Continue without config restoration
+          }
+          
           if (!tabWithSession) {
             // Create a tab for this active session
-            const sessionTitle = chatSessionTitle || activeSession.query || 'Active Chat'
+            const sessionTitle = chatSessionTitle || chatSession?.title || activeSession.query || 'Active Chat'
             
             // Determine default event mode based on agent mode
             // orchestrator -> advanced (more complex, needs detailed view)
@@ -1147,6 +1347,66 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                 processingRef.current = null
                 return
               }
+              
+              // Restore config from stored session
+              if (chatSession?.config) {
+                const config = chatSession.config
+                const configUpdate: Partial<ChatTabConfig> = {}
+                
+                // Restore selected servers (prefer enabled_servers over selected_servers)
+                if (config.enabled_servers && config.enabled_servers.length > 0) {
+                  configUpdate.selectedServers = config.enabled_servers
+                } else if (config.selected_servers && config.selected_servers.length > 0) {
+                  configUpdate.selectedServers = config.selected_servers
+                }
+                
+                // Restore code execution mode
+                if (config.use_code_execution_mode !== undefined) {
+                  configUpdate.useCodeExecutionMode = config.use_code_execution_mode
+                }
+                
+                // Restore context summarization
+                if (config.enable_context_summarization !== undefined) {
+                  configUpdate.enableContextSummarization = config.enable_context_summarization
+                }
+                
+                // Restore LLM config
+                if (config.llm_config) {
+                  const llmConfig: ExtendedLLMConfiguration = {
+                    provider: config.llm_config.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                    model_id: config.llm_config.model_id || '',
+                    fallback_models: config.llm_config.fallback_models || [],
+                  }
+                  if (config.llm_config.cross_provider_fallback) {
+                    llmConfig.cross_provider_fallback = {
+                      provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                      models: config.llm_config.cross_provider_fallback.models || [],
+                    }
+                  }
+                  configUpdate.llmConfig = llmConfig
+                }
+                
+                // Restore workspace file context
+                if (config.file_context && Array.isArray(config.file_context)) {
+                  configUpdate.fileContext = config.file_context.map((item: { name?: string; path?: string; type?: string }) => ({
+                    name: item.name || item.path || '',
+                    path: item.path || '',
+                    type: (item.type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
+                  }))
+                }
+                
+                // Restore workspace access setting
+                if (config.enable_workspace_access !== undefined) {
+                  configUpdate.enableWorkspaceAccess = config.enable_workspace_access
+                }
+                
+                // Update tab config
+                if (Object.keys(configUpdate).length > 0) {
+                  chatStore.setTabConfig(newTabId, configUpdate)
+                  console.log(`[History] Restored config for active session ${originalSessionId}:`, configUpdate)
+                }
+              }
+              
               // Switch to the new tab to display events
               switchTab(newTabId)
               console.log(`[History] Created tab ${newTabId} for active session ${originalSessionId}`)
@@ -1157,7 +1417,66 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               return
             }
           } else {
-            // Tab exists, switch to it (events should already be loaded)
+            // Tab exists, restore config if not already restored
+            if (chatSession?.config) {
+              const config = chatSession.config
+              const configUpdate: Partial<ChatTabConfig> = {}
+              
+              // Restore selected servers (prefer enabled_servers over selected_servers)
+              if (config.enabled_servers && config.enabled_servers.length > 0) {
+                configUpdate.selectedServers = config.enabled_servers
+              } else if (config.selected_servers && config.selected_servers.length > 0) {
+                configUpdate.selectedServers = config.selected_servers
+              }
+              
+              // Restore code execution mode
+              if (config.use_code_execution_mode !== undefined) {
+                configUpdate.useCodeExecutionMode = config.use_code_execution_mode
+              }
+              
+              // Restore context summarization
+              if (config.enable_context_summarization !== undefined) {
+                configUpdate.enableContextSummarization = config.enable_context_summarization
+              }
+              
+              // Restore LLM config
+              if (config.llm_config) {
+                const llmConfig: ExtendedLLMConfiguration = {
+                  provider: config.llm_config.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                  model_id: config.llm_config.model_id || '',
+                  fallback_models: config.llm_config.fallback_models || [],
+                }
+                if (config.llm_config.cross_provider_fallback) {
+                  llmConfig.cross_provider_fallback = {
+                    provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                    models: config.llm_config.cross_provider_fallback.models || [],
+                  }
+                }
+                configUpdate.llmConfig = llmConfig
+              }
+              
+              // Restore workspace file context
+              if (config.file_context && Array.isArray(config.file_context)) {
+                configUpdate.fileContext = config.file_context.map((item: { name?: string; path?: string; type?: string }) => ({
+                  name: item.name || item.path || '',
+                  path: item.path || '',
+                  type: (item.type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
+                }))
+              }
+              
+              // Restore workspace access setting
+              if (config.enable_workspace_access !== undefined) {
+                configUpdate.enableWorkspaceAccess = config.enable_workspace_access
+              }
+              
+              // Update tab config
+              if (Object.keys(configUpdate).length > 0) {
+                chatStore.setTabConfig(tabWithSession.tabId, configUpdate)
+                console.log(`[History] Restored config for existing active session tab ${tabWithSession.tabId}:`, configUpdate)
+              }
+            }
+            
+            // Switch to it (events should already be loaded)
             switchTab(tabWithSession.tabId)
             console.log(`[History] Tab ${tabWithSession.tabId} already exists for active session ${originalSessionId}, switching to it`)
           }
@@ -1192,8 +1511,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               // response.events is already PollingEvent[] from GetEventsResponse
               const pollingEvents: PollingEvent[] = response.events
               
-              // Store in tabEvents using the session ID from the tab
-              addTabEvents(sessionIdForHistory, pollingEvents)
+              // CRITICAL: Use setTabEvents instead of addTabEvents to ensure correct chronological order
+              // When restoring historical events, we want to replace any existing events to maintain order
+              setTabEvents(sessionIdForHistory, pollingEvents)
               setTabLastEventIndex(sessionIdForHistory, pollingEvents.length > 0 ? pollingEvents.length - 1 : -1)
               console.log(`[History] Loaded ${pollingEvents.length} events for active session ${sessionIdForHistory}`)
               setIsLoadingHistory(false)
@@ -1354,23 +1674,59 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                 return
               }
             } else {
-              // Tab exists, restore config if not already restored
-              if (chatSession.config && !tabWithSession.config.selectedServers?.length) {
+              // Tab exists, restore config if available
+              if (chatSession.config) {
                 const config = chatSession.config
                 const configUpdate: Partial<ChatTabConfig> = {}
                 
+                // Restore selected servers (prefer enabled_servers over selected_servers)
                 if (config.enabled_servers && config.enabled_servers.length > 0) {
                   configUpdate.selectedServers = config.enabled_servers
                 } else if (config.selected_servers && config.selected_servers.length > 0) {
                   configUpdate.selectedServers = config.selected_servers
                 }
+                
+                // Restore code execution mode
                 if (config.use_code_execution_mode !== undefined) {
                   configUpdate.useCodeExecutionMode = config.use_code_execution_mode
                 }
+                
+                // Restore context summarization
                 if (config.enable_context_summarization !== undefined) {
                   configUpdate.enableContextSummarization = config.enable_context_summarization
                 }
                 
+                // Restore LLM config
+                if (config.llm_config) {
+                  const llmConfig: ExtendedLLMConfiguration = {
+                    provider: config.llm_config.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                    model_id: config.llm_config.model_id || '',
+                    fallback_models: config.llm_config.fallback_models || [],
+                  }
+                  if (config.llm_config.cross_provider_fallback) {
+                    llmConfig.cross_provider_fallback = {
+                      provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                      models: config.llm_config.cross_provider_fallback.models || [],
+                    }
+                  }
+                  configUpdate.llmConfig = llmConfig
+                }
+                
+                // Restore workspace file context
+                if (config.file_context && Array.isArray(config.file_context)) {
+                  configUpdate.fileContext = config.file_context.map((item: { name?: string; path?: string; type?: string }) => ({
+                    name: item.name || item.path || '',
+                    path: item.path || '',
+                    type: (item.type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
+                  }))
+                }
+                
+                // Restore workspace access setting
+                if (config.enable_workspace_access !== undefined) {
+                  configUpdate.enableWorkspaceAccess = config.enable_workspace_access
+                }
+                
+                // Update tab config
                 if (Object.keys(configUpdate).length > 0) {
                   chatStore.setTabConfig(tabWithSession.tabId, configUpdate)
                   console.log(`[History] Restored config for existing tab ${tabWithSession.tabId}:`, configUpdate)
@@ -1433,9 +1789,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                 return shouldShowEventByMode(event.type, eventMode)
               })
             
-            // Store in tabEvents using the session ID from the tab
-              addTabEvents(sessionIdForHistory, filteredEvents)
-              setTabLastEventIndex(sessionIdForHistory, filteredEvents.length > 0 ? filteredEvents.length - 1 : -1)
+            // CRITICAL: Use setTabEvents instead of addTabEvents to ensure correct chronological order
+            // When restoring historical events, we want to replace any existing events to maintain order
+            setTabEvents(sessionIdForHistory, filteredEvents)
+            setTabLastEventIndex(sessionIdForHistory, filteredEvents.length > 0 ? filteredEvents.length - 1 : -1)
               console.log(`[History] Loaded ${filteredEvents.length} events (${allPollingEvents.length} total) for completed session ${sessionIdForHistory}`)
               
               if (filteredEvents.length === 0 && allPollingEvents.length === 0) {
@@ -1815,6 +2172,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         enable_context_summarization: selectedModeCategory === 'chat' ? true : undefined,
         summarize_on_max_turns: selectedModeCategory === 'chat' ? true : undefined,
         summary_keep_last_messages: selectedModeCategory === 'chat' ? 8 : undefined,
+        // Workspace access: Send the setting from tab config (default: true)
+        enable_workspace_access: selectedModeCategory === 'chat' 
+          ? (currentTab?.config?.enableWorkspaceAccess ?? true) 
+          : undefined,
         // Note: Conversation history is loaded by backend from database using session ID
         // Backend will automatically load history from conversation_turn events if session exists
       }
@@ -1870,21 +2231,43 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           console.log(`[SUBMIT] Verified tab state - streaming: ${updatedTab.isStreaming}, sessionId: ${updatedTab.sessionId}, completed: ${updatedTab.isCompleted}`)
         }
         
-        // Start polling if not already running (read fresh from store to avoid stale closure)
-        const currentPollingInterval = chatStore.pollingInterval
-        if (!currentPollingInterval) {
-          console.log('[SUBMIT] Starting polling interval for events')
-          startPolling(pollEvents)
-        } else {
-          console.log('[SUBMIT] Polling already active, reusing existing interval')
-        }
-        
-        // Call pollEvents immediately after a short delay to ensure store updates are applied
-        // Use a slightly longer delay to ensure Zustand store updates have propagated
-        setTimeout(() => {
-          console.log('[SUBMIT] Calling pollEvents after store update delay')
-          pollEvents()
-        }, 150)
+        // CRITICAL: Force refresh active sessions cache immediately after submitting query
+        // This ensures the reactivated session appears in active sessions list right away
+        // Backend has already added it via trackActiveSession(), but frontend cache might be stale
+        // Wait for the refresh to complete before starting polling to avoid race conditions
+        getActiveSessions(true)
+          .then(() => {
+            console.log('[SUBMIT] Active sessions cache refreshed, starting polling')
+            
+            // Start polling if not already running (read fresh from store to avoid stale closure)
+            const currentPollingInterval = chatStore.pollingInterval
+            if (!currentPollingInterval) {
+              console.log('[SUBMIT] Starting polling interval for events')
+              startPolling(pollEvents)
+            } else {
+              console.log('[SUBMIT] Polling already active, reusing existing interval')
+            }
+            
+            // Call pollEvents immediately after a short delay to ensure store updates are applied
+            // Use a slightly longer delay to ensure Zustand store updates have propagated
+            setTimeout(() => {
+              console.log('[SUBMIT] Calling pollEvents after store update delay')
+              pollEvents()
+            }, 150)
+          })
+          .catch(error => {
+            console.error('[SUBMIT] Failed to refresh active sessions cache:', error)
+            // Even if refresh fails, start polling anyway (isStreaming check will handle it)
+            const currentPollingInterval = chatStore.pollingInterval
+            if (!currentPollingInterval) {
+              console.log('[SUBMIT] Starting polling interval despite cache refresh failure')
+              startPolling(pollEvents)
+            }
+            setTimeout(() => {
+              console.log('[SUBMIT] Calling pollEvents after store update delay (fallback)')
+              pollEvents()
+            }, 150)
+          })
       } else {
         console.error('[SUBMIT] Backend error:', response)
         setIsStreaming(false)
@@ -1906,7 +2289,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       }
     }
 
-  }, [correctAgentMode, selectedModeCategory, isRequiredFolderSelected, isStreaming, stopStreaming, finalResponse, startPolling, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setSessionId, llmConfig, openrouterConfig, openaiConfig, anthropicConfig, vertexConfig, bedrockConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, selectedWorkflowPreset, activeWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, agentMode, currentPresetServers, addTabEvents, getTabEvents, setAutoScroll, scrollToBottom, chatSessionId, sessionState])
+  }, [correctAgentMode, selectedModeCategory, isRequiredFolderSelected, isStreaming, stopStreaming, finalResponse, startPolling, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setSessionId, llmConfig, openrouterConfig, openaiConfig, anthropicConfig, vertexConfig, bedrockConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, selectedWorkflowPreset, activeWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, agentMode, currentPresetServers, addTabEvents, getTabEvents, setAutoScroll, scrollToBottom, chatSessionId, sessionState, getActiveSessions])
 
   // Auto-send queued messages one by one when chat completes
   const prevIsCompletedRef = useRef<boolean>(false)

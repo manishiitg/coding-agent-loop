@@ -21,11 +21,7 @@ will index data
 i) prompt tempaltes, need to check variables on compile time
 
 
-11. 📂 List Workspace Files • Turn: 1 • Server: custom
-11:01:01
-📁 Folder:
-planning/changelog
-📏 Max Depth:.. if there a single path only.. can we prefix auto?
+18. we need add folder guard in custom shell exec
 
 16. diff patch tool, corrupts json
 
@@ -47,10 +43,6 @@ planning/changelog
 
 30. refractor how llm are setup and llm fallback
 
-31. high the discover page.. not required
-
-34. generated/ is pushed to repo
-
 35. fix tests most not relevent anymore
 
 36. rename toto create human to a better name
@@ -65,14 +57,6 @@ planning/changelog
 
 41. the iteration/eecution settings etc should be workflow specific right now its shared - done
 
-43. with latest changes, auto highlight of worksace stoppped working - done
-
-1. High Complexity in Retry Loop
-File: agent/llm_generation.go:368
-Issue: High cyclomatic complexity in GenerateContentWithRetry.
-Recommendation: Refactor retry logic into a separate strategy function.
-
-
 45. the plan step optimization should optimize, max turns, context editing, sumiization 
 
 48. in ui its not clear how many times validation has failed
@@ -82,3 +66,5 @@ Recommendation: Refactor retry logic into a separate strategy function.
 50. we need to have evals for workflows
 
 51. summization in chat mode is not ux friendly
+
+52. check auto summization.. it trigges many times.. i think some bug is there in token calcuation

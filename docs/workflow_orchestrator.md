@@ -19,20 +19,20 @@ The Workflow Orchestrator (implemented as the **Human-Controlled Todo Creation O
 | Component | File | Key Types/Functions |
 |-----------|------|---------------------|
 | **Orchestrator Core** | [`workflow_orchestrator.go`](../agent_go/pkg/orchestrator/types/workflow_orchestrator.go) | `WorkflowOrchestrator`, `NewWorkflowOrchestrator()`, `Execute()`, `GetWorkflowConstants()` |
-| **Controller** | [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go) | `HumanControlledTodoPlannerOrchestrator`, `CreateTodoList()`, `executeSingleStep()` |
-| **Execution Manager** | [`execution_manager.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_manager.go) | `ExecutionManager`, `CleanupForFreshStart()`, `CleanupForSingleStep()`, `PrepareExecution()` |
-| **Execution Types** | [`execution_types.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_types.go) | `ExecutionMode`, `CleanupScope`, `ExecutionSetup` |
-| **Planning Agent** | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go) | `HumanControlledTodoPlannerPlanningAgent`, `PlanningResponse`, `PlanStep` |
-| **Execution Agent** | [`execution_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_agent.go) | `HumanControlledTodoPlannerExecutionAgent`, `Execute()` |
-| **Execution-Only Agent** | [`execution_only_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go) | `HumanControlledTodoPlannerExecutionOnlyAgent` |
-| **Validation Agent** | [`validation_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/validation_agent.go) | `HumanControlledTodoPlannerValidationAgent`, `ValidationResponse`, `ExecuteStructured()` |
-| **Learning Agent** | [`learning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/learning_agent.go) | `HumanControlledTodoPlannerLearningAgent`, `Execute()` |
-| **Code Execution Learning** | [`learning_agent_code_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/learning_agent_code_execution.go) | `HumanControlledTodoPlannerCodeExecutionLearningAgent` |
-| **Variable Management** | [`variable_management.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/variable_management.go) | `VariableManager`, `ExtractVariablesOnly()`, `VariablesManifest` |
-| **Anonymization** | [`anonymization_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/anonymization_agent.go) | `AnonymizationManager`, `AnonymizeLearningsOnly()` |
-| **Plan Improvement** | [`plan_improvement_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/plan_improvement_agent.go) | `PlanImprovementManager`, `PlanImprovementOnly()` |
-| **Conditional Agent** | [`conditional_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/conditional_agent.go) | `ConditionalLLM`, `ConditionalResponse` |
-| **Agent Factory** | [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) | `createExecutionOnlyAgent()`, `createConditionalAgent()` |
+| **Controller** | [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go) | `HumanControlledTodoPlannerOrchestrator`, `CreateTodoList()`, `executeSingleStep()` |
+| **Execution Manager** | [`execution_manager.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/execution_manager.go) | `ExecutionManager`, `CleanupForFreshStart()`, `CleanupForSingleStep()`, `PrepareExecution()` |
+| **Execution Types** | [`execution_types.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/execution_types.go) | `ExecutionMode`, `CleanupScope`, `ExecutionSetup` |
+| **Planning Agent** | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go) | `HumanControlledTodoPlannerPlanningAgent`, `PlanningResponse`, `PlanStep` |
+| **Execution Agent** | [`execution_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/execution_agent.go) | `HumanControlledTodoPlannerExecutionAgent`, `Execute()` |
+| **Execution-Only Agent** | [`execution_only_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/execution_only_agent.go) | `HumanControlledTodoPlannerExecutionOnlyAgent` |
+| **Validation Agent** | [`validation_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/validation_agent.go) | `HumanControlledTodoPlannerValidationAgent`, `ValidationResponse`, `ExecuteStructured()` |
+| **Learning Agent** | [`learning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/learning_agent.go) | `HumanControlledTodoPlannerLearningAgent`, `Execute()` |
+| **Code Execution Learning** | [`learning_agent_code_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/learning_agent_code_execution.go) | `HumanControlledTodoPlannerCodeExecutionLearningAgent` |
+| **Variable Management** | [`variable_management.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/variable_management.go) | `VariableManager`, `ExtractVariablesOnly()`, `VariablesManifest` |
+| **Anonymization** | [`anonymization_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/anonymization_agent.go) | `AnonymizationManager`, `AnonymizeLearningsOnly()` |
+| **Plan Improvement** | [`plan_improvement_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/plan_improvement_agent.go) | `PlanImprovementManager`, `PlanImprovementOnly()` |
+| **Conditional Agent** | [`conditional_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/conditional_agent.go) | `ConditionalLLM`, `ConditionalResponse` |
+| **Agent Factory** | [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go) | `createExecutionOnlyAgent()`, `createConditionalAgent()` |
 
 ---
 
@@ -47,20 +47,24 @@ The orchestrator operates through 7 distinct phases, each isolated and independe
 | **0. Variable Extraction** | `variable-extraction` | `runVariableExtraction()` | `variables.json` | Use/Extract new/Update |
 | **1. Planning** | `planning` | `runPlanningOnly()` | `plan.json` | Use/Create/Update (max 20 rev) |
 | **2. Execution** | `execution` | `runPlanning()` | Step results | Approve/Re-execute/Stop |
-| **3. Anonymize Learnings** | `anonymize-learnings` | `runAnonymization()` | Anonymized learnings | Confirm replacements |
-| **4. Plan Improvement** | `plan-improvement` | `runPlanImprovement()` | Feedback report | Review feedback |
-| **5. Plan-Learnings Alignment** | `plan-learnings-alignment` | `runPlanLearningsAlignment()` | Alignment report | - |
-| **6. Plan Tool Optimization** | `plan-tool-optimization` | `runPlanToolOptimization()` | Optimized `step_config.json` | - |
+| **3. Evaluation Designer** | `evaluation-planning` | `runEvaluationPlanningOnly()` | `evaluation_plan.json` | Review evaluation guide |
+| **4. Evaluation Execution** | `evaluation-execution` | `runEvaluationExecutionOnly()` | Scores & Reports | - |
+| **5. Anonymize Learnings** | `anonymize-learnings` | `runAnonymization()` | Anonymized learnings | Confirm replacements |
+| **6. Plan Improvement** | `plan-improvement` | `runPlanImprovement()` | Feedback report | Review feedback |
+| **7. Plan-Learnings Alignment** | `plan-learnings-alignment` | `runPlanLearningsAlignment()` | Alignment report | - |
+| **8. Plan Tool Optimization** | `plan-tool-optimization` | `runPlanToolOptimization()` | Optimized `step_config.json` | - |
 
 ### Execution Flow
 
 1. **Variable Extraction**: Extracts dynamic values from objective, creates `variables/variables.json` with templated placeholders
 2. **Planning**: Creates structured execution plan, saves to `planning/plan.json`, supports iterative refinement (max 20 revisions)
 3. **Execution**: Executes plan step-by-step (Execute → Validate → Learn → Human feedback per step)
-4. **Anonymize Learnings**: Scans `learnings/` folder, replaces actual values with `{{VARIABLE_NAME}}` placeholders
-5. **Plan Improvement**: Analyzes execution results and provides feedback for plan improvement
-6. **Plan-Learnings Alignment**: Checks alignment between `plan.json` and learnings folder
-7. **Plan Tool Optimization**: Optimizes tool selections in `step_config.json`
+4. **Evaluation Designer**: Creates structured evaluation guides to assess execution results against success criteria
+5. **Evaluation Execution**: Runs evaluation steps against execution outputs to generate scores (0-10) and detailed feedback
+6. **Anonymize Learnings**: Scans `learnings/` folder, replaces actual values with `{{VARIABLE_NAME}}` placeholders
+7. **Plan Improvement**: Analyzes execution results and provides feedback for plan improvement
+8. **Plan-Learnings Alignment**: Checks alignment between `plan.json` and learnings folder
+9. **Plan Tool Optimization**: Optimizes tool selections in `step_config.json`
 
 ### Step Execution Flow
 
@@ -134,6 +138,7 @@ graph TB
 | Phase | Manager | Status | Description |
 |-------|---------|--------|-------------|
 | **Variable Extraction** | `VariableManager` | ✅ Independent | Manages variable extraction independently |
+| **Evaluation Designer** | `EvaluationManager` | ✅ Independent | Manages evaluation planning independently |
 | **Anonymization** | `AnonymizationManager` | ✅ Independent | Manages learnings anonymization independently |
 | **Plan Improvement** | `PlanImprovementManager` | ✅ Independent | Manages plan improvement analysis independently |
 | **Execution Lifecycle** | `ExecutionManager` | ✅ Internal | Manages cleanup, progress init, folder operations |
@@ -147,7 +152,7 @@ graph TB
 
 ### ExecutionManager Pattern
 
-**File:** [`execution_manager.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_manager.go)
+**File:** [`execution_manager.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/execution_manager.go)
 
 ```go
 // Controller CREATES ExecutionManager on-demand
@@ -187,6 +192,7 @@ func (em *ExecutionManager) CleanupForFreshStart(...) error {
 |-------|---------|-------|--------|-------|------------|
 | **Variable Extraction** | Extracts variables from objective | Objective (raw text) | `variables.json`, templated objective | `update_variable`, `update_objective`, `human_feedback` | `phase_llm` |
 | **Planning** | Creates execution plan | Objective (templated), existing plan | `plan.json` with structured steps | `update_plan_steps`, `add_plan_steps`, `delete_plan_steps`, `human_feedback` | `phase_llm` |
+| **Evaluation Designer** | Creates evaluation plan | Objective, execution results (runs/) | `evaluation_plan.json` | `add_evaluation_step`, `update_evaluation_step`, `delete_evaluation_step`, `human_feedback` | `phase_llm` |
 | **Execution** | Executes plan steps | Step details, context, variables | Execution result, conversation history | Full MCP Tool Access | `execution_llm` |
 | **Execution-Only** | Executes with pre-discovered learnings | Step details + learning history | Execution result | Full MCP Tool Access | `execution_llm` |
 | **Validation** | Validates step execution | Step details, execution history | `ValidationResponse` (Success/Partial/Failed) | Structured Output | `validation_llm` |
@@ -205,7 +211,7 @@ func (em *ExecutionManager) CleanupForFreshStart(...) error {
 
 ### Execution Manager Usage
 
-**File:** [`execution_manager.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_manager.go)
+**File:** [`execution_manager.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/execution_manager.go)
 
 ```go
 // Get execution manager from controller
@@ -228,7 +234,7 @@ em.ApplyExecutionContext(setup)
 
 ### Orchestrator Entry Point
 
-**File:** [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go)
+**File:** [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go)
 
 ```go
 func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(
@@ -255,7 +261,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(
 
 ### Step Execution
 
-**File:** [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go)
+**File:** [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go)
 
 ```go
 func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
@@ -293,7 +299,7 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 
 ```
 workspace/
-├── todo_creation_human/
+├── step_based_workflow/
 │   ├── variables/
 │   │   └── variables.json          # Phase 0: Variable definitions
 │   ├── planning/
@@ -426,7 +432,7 @@ workspace/
 
 **Files:**
 - Frontend: [`useWorkflowStore.ts`](../frontend/src/stores/useWorkflowStore.ts) - `buildExecutionOptions()`
-- Backend: [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) - `createExecutionOnlyAgent()`
+- Backend: [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go) - `createExecutionOnlyAgent()`
 
 ### Learning Configuration
 
@@ -449,8 +455,8 @@ workspace/
 
 | Component | Limit | Location |
 |----------|-------|----------|
-| **Execution** | 5 retries | [`controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) |
-| **Planning** | 20 revisions | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go) |
+| **Execution** | 5 retries | [`controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go) |
+| **Planning** | 20 revisions | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go) |
 
 ---
 

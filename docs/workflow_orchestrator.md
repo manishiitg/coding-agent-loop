@@ -2,35 +2,15 @@
 
 ## 📋 Overview
 
-The Workflow Orchestrator (specifically implemented as the **Human-Controlled Todo Creation Orchestrator**) is a multi-phase execution system that transforms high-level objectives into executable plans with automated execution, validation, and learning capabilities. It manages complex workflows through distinct phases: variable extraction, planning, execution, validation, learning, and post-execution optimization.
-
-**Features**: 🎯 Human-in-loop • 🔄 Learning-based • 📊 Validation-driven • 🤖 Multi-agent • 📝 Markdown-based • 🔀 Conditional Logic • ⚡ Fast Execution • 🔄 Prerequisite Detection
+The Workflow Orchestrator (implemented as the **Human-Controlled Todo Creation Orchestrator**) is a multi-phase execution system that transforms high-level objectives into executable plans with automated execution, validation, and learning capabilities. It manages complex workflows through distinct phases: variable extraction, planning, execution, validation, learning, and post-execution optimization.
 
 **Key Benefits:**
-- **Phase isolation:** Each phase (variable extraction, planning, execution, etc.) runs independently and can be triggered separately
-- **Human-in-the-loop control:** Supports human feedback and approval at critical decision points
-- **Learning capture:** Automatically captures execution patterns and learnings for reusability
-- **Multi-agent orchestration:** Coordinates specialized agents (planning, execution, validation, learning) with independent LLM configurations
-- **Flexible execution modes:** Supports fast execution, skip human input, and resume from checkpoint
-- **Manager-Based Architecture:** Uses dedicated managers for independent workflow phases, enabling complete decoupling and reusability.
-
----
-
-## ⚡ Quick Reference
-
-| Phase | Agent | Output | Human Decision | Manager |
-|-------|-------|--------|---------------|---------|
-| **0** | Variable Extraction | `variables.json` | Use/Extract new/Update | `VariableManager` ✅ |
-| **1** | Planning | `plan.json` | Use/Create/Update (max 20 rev) | - |
-| **2** | Execute → Validate → Learn | Step results | Approve/Re-execute/Stop | - |
-| **2.5** | Anonymize Learnings | Anonymized learnings | Confirm replacements | `AnonymizationManager` ✅ |
-| **2.6** | Plan Improvement | Feedback report | Review feedback | `PlanImprovementManager` ✅ |
-
-**Retry Limits**: Execution (5), Plan (20)  
-**Progress**: Auto-saved in `runs/{run_folder}/steps_done.json`  
-**Loop Support**: Iterative execution until condition met (max iterations configurable)  
-**Conditional Support**: Branching logic (If/Else) based on runtime conditions  
-**Independence**: ✅ = Independent manager (no orchestrator dependency), ⚠️ = Uses full orchestrator
+- Phase isolation: Each phase runs independently and can be triggered separately
+- Human-in-the-loop control: Supports human feedback and approval at critical decision points
+- Learning capture: Automatically captures execution patterns for reusability
+- Multi-agent orchestration: Coordinates specialized agents with independent LLM configurations
+- Flexible execution modes: Supports fast execution, skip human input, and resume from checkpoint
+- Manager-based architecture: Dedicated managers for independent workflow phases enable decoupling and reusability
 
 ---
 
@@ -39,357 +19,55 @@ The Workflow Orchestrator (specifically implemented as the **Human-Controlled To
 | Component | File | Key Types/Functions |
 |-----------|------|---------------------|
 | **Orchestrator Core** | [`workflow_orchestrator.go`](../agent_go/pkg/orchestrator/types/workflow_orchestrator.go) | `WorkflowOrchestrator`, `NewWorkflowOrchestrator()`, `Execute()`, `GetWorkflowConstants()` |
-| **Controller** | [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go) | `HumanControlledTodoPlannerOrchestrator`, `CreateTodoList()`, `executeSingleStep()` |
-| **Execution Manager** | [`execution_manager.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_manager.go) | `ExecutionManager`, `CleanupForFreshStart()`, `CleanupForSingleStep()`, `PrepareExecution()` |
-| **Execution Types** | [`execution_types.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_types.go) | `ExecutionMode`, `CleanupScope`, `ExecutionSetup` |
-| **Planning Agent** | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go) | `HumanControlledTodoPlannerPlanningAgent`, `PlanningResponse`, `PlanStep` |
-| **Execution Agent** | [`execution_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_agent.go) | `HumanControlledTodoPlannerExecutionAgent`, `Execute()` |
-| **Execution-Only Agent** | [`execution_only_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go) | `HumanControlledTodoPlannerExecutionOnlyAgent` - Uses pre-discovered learning context |
-| **Validation Agent** | [`validation_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/validation_agent.go) | `HumanControlledTodoPlannerValidationAgent`, `ValidationResponse`, `ExecuteStructured()` |
-| **Learning Agent** | [`learning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/learning_agent.go) | `HumanControlledTodoPlannerLearningAgent`, `Execute()` |
-| **Code Execution Learning** | [`learning_agent_code_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/learning_agent_code_execution.go) | `HumanControlledTodoPlannerCodeExecutionLearningAgent` - Captures Go code patterns |
-| **Learning Reading Agent** | [`learning_reading_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/learning_reading_agent.go) | `HumanControlledTodoPlannerLearningReadingAgent` - Reads existing learning files |
-| **Variable Management** | [`variable_management.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/variable_management.go) | `VariableManager`, `ExtractVariablesOnly()`, `VariablesManifest` |
-| **Anonymization** | [`anonymization_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/anonymization_agent.go) | `AnonymizationManager`, `AnonymizeLearningsOnly()` |
-| **Plan Improvement** | [`plan_improvement_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/plan_improvement_agent.go) | `PlanImprovementManager`, `PlanImprovementOnly()` |
+| **Controller** | [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go) | `HumanControlledTodoPlannerOrchestrator`, `CreateTodoList()`, `executeSingleStep()` |
+| **Execution Manager** | [`execution_manager.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/execution_manager.go) | `ExecutionManager`, `CleanupForFreshStart()`, `CleanupForSingleStep()`, `PrepareExecution()` |
+| **Execution Types** | [`execution_types.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/execution_types.go) | `ExecutionMode`, `CleanupScope`, `ExecutionSetup` |
+| **Planning Agent** | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go) | `HumanControlledTodoPlannerPlanningAgent`, `PlanningResponse`, `PlanStep` |
+| **Execution Agent** | [`execution_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/execution_agent.go) | `HumanControlledTodoPlannerExecutionAgent`, `Execute()` |
+| **Execution-Only Agent** | [`execution_only_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/execution_only_agent.go) | `HumanControlledTodoPlannerExecutionOnlyAgent` |
+| **Validation Agent** | [`validation_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/validation_agent.go) | `HumanControlledTodoPlannerValidationAgent`, `ValidationResponse`, `ExecuteStructured()` |
+| **Learning Agent** | [`learning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/learning_agent.go) | `HumanControlledTodoPlannerLearningAgent`, `Execute()` |
+| **Code Execution Learning** | [`learning_agent_code_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/learning_agent_code_execution.go) | `HumanControlledTodoPlannerCodeExecutionLearningAgent` |
+| **Variable Management** | [`variable_management.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/variable_management.go) | `VariableManager`, `ExtractVariablesOnly()`, `VariablesManifest` |
+| **Anonymization** | [`anonymization_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/anonymization_agent.go) | `AnonymizationManager`, `AnonymizeLearningsOnly()` |
+| **Plan Improvement** | [`plan_improvement_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/plan_improvement_agent.go) | `PlanImprovementManager`, `PlanImprovementOnly()` |
+| **Conditional Agent** | [`conditional_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/conditional_agent.go) | `ConditionalLLM`, `ConditionalResponse` |
+| **Agent Factory** | [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go) | `createExecutionOnlyAgent()`, `createConditionalAgent()` |
 
 ---
 
-## 🏗️ Architecture
+## 🔄 How It Works
 
-### Manager-Based Architecture
+### Workflow Phases
 
-The orchestrator uses **dedicated managers** for independent workflow phases, enabling complete decoupling and reusability:
+The orchestrator operates through 7 distinct phases, each isolated and independently executable:
 
-| Phase | Manager | Status | Description |
-|-------|---------|--------|-------------|
-| **Variable Extraction** | `VariableManager` | ✅ Independent | Manages variable extraction and validation independently |
-| **Anonymization** | `AnonymizationManager` | ✅ Independent | Manages learnings anonymization independently |
-| **Plan Improvement** | `PlanImprovementManager` | ✅ Independent | Manages plan improvement analysis independently |
-| **Execution Lifecycle** | `ExecutionManager` | ✅ Internal | Manages cleanup, progress init, and folder operations |
-| **Planning** | - | ⚠️ Orchestrator | Uses full orchestrator (complex dependencies) |
-| **Execution** | - | ⚠️ Orchestrator | Main orchestrator method |
+| Phase | Status | Entry Point | Output | Human Decision |
+|-------|--------|-------------|--------|----------------|
+| **0. Variable Extraction** | `variable-extraction` | `runVariableExtraction()` | `variables.json` | Use/Extract new/Update |
+| **1. Planning** | `planning` | `runPlanningOnly()` | `plan.json` | Use/Create/Update (max 20 rev) |
+| **2. Execution** | `execution` | `runPlanning()` | Step results | Approve/Re-execute/Stop |
+| **3. Evaluation Designer** | `evaluation-planning` | `runEvaluationPlanningOnly()` | `evaluation_plan.json` | Review evaluation guide |
+| **4. Evaluation Execution** | `evaluation-execution` | `runEvaluationExecutionOnly()` | Scores & Reports | - |
+| **5. Anonymize Learnings** | `anonymize-learnings` | `runAnonymization()` | Anonymized learnings | Confirm replacements |
+| **6. Plan Improvement** | `plan-improvement` | `runPlanImprovement()` | Feedback report | Review feedback |
+| **7. Plan-Learnings Alignment** | `plan-learnings-alignment` | `runPlanLearningsAlignment()` | Alignment report | - |
+| **8. Plan Tool Optimization** | `plan-tool-optimization` | `runPlanToolOptimization()` | Optimized `step_config.json` | - |
 
-**Key Benefits**:
-- **Decoupling**: Managers operate independently without creating full orchestrator
-- **Reusability**: Managers can be used directly in `workflow_orchestrator.go`
-- **Consistency**: All managers follow the same pattern and use `CreateAndSetupStandardAgentWithConfig`
-- **LLM Config**: Proper preservation of `FallbackModels`, `CrossProviderFallback`, and `APIKeys`
-- **No Dependencies**: Independent phases don't depend on each other's code
+### Execution Flow
 
-### ExecutionManager Architecture
+1. **Variable Extraction**: Extracts dynamic values from objective, creates `variables/variables.json` with templated placeholders
+2. **Planning**: Creates structured execution plan, saves to `planning/plan.json`, supports iterative refinement (max 20 revisions)
+3. **Execution**: Executes plan step-by-step (Execute → Validate → Learn → Human feedback per step)
+4. **Evaluation Designer**: Creates structured evaluation guides to assess execution results against success criteria
+5. **Evaluation Execution**: Runs evaluation steps against execution outputs to generate scores (0-10) and detailed feedback
+6. **Anonymize Learnings**: Scans `learnings/` folder, replaces actual values with `{{VARIABLE_NAME}}` placeholders
+7. **Plan Improvement**: Analyzes execution results and provides feedback for plan improvement
+8. **Plan-Learnings Alignment**: Checks alignment between `plan.json` and learnings folder
+9. **Plan Tool Optimization**: Optimizes tool selections in `step_config.json`
 
-The `ExecutionManager` centralizes all execution lifecycle decisions (cleanup, progress initialization, folder management) that were previously scattered across the controller.
+### Step Execution Flow
 
-#### Controller ↔ ExecutionManager Relationship
-
-**Ownership Pattern:**
-```go
-// Controller CREATES ExecutionManager on-demand
-func (hcpo *HumanControlledTodoPlannerOrchestrator) GetExecutionManager() *ExecutionManager {
-    return NewExecutionManager(hcpo)
-}
-
-// ExecutionManager HOLDS reference to Controller
-type ExecutionManager struct {
-    orchestrator *HumanControlledTodoPlannerOrchestrator
-}
-
-// ExecutionManager CALLS Controller's low-level methods
-func (em *ExecutionManager) CleanupForFreshStart(...) error {
-    orch := em.orchestrator
-    orch.deleteStepProgress(ctx, runFolder)           // Low-level call
-    orch.CleanupDirectory(ctx, executionDir, "...")   // Low-level call
-    orch.initializeFreshProgress(ctx, totalSteps)     // Low-level call
-}
-```
-
-**Key Relationships:**
-1. **Controller → ExecutionManager**: Controller creates and uses ExecutionManager for cleanup decisions
-2. **ExecutionManager → Controller**: ExecutionManager calls back to Controller's low-level operations
-3. **No Circular Logic**: ExecutionManager only orchestrates WHAT to clean, Controller methods do the actual work
-
-**Usage Flow:**
-```
-Controller decides strategy (e.g., "start fresh")
-         │
-         ▼
-em := hcpo.GetExecutionManager()
-         │
-         ▼
-em.CleanupForFreshStart(ctx, runFolder, totalSteps)
-         │
-         ├──► hcpo.deleteStepProgress()
-         ├──► hcpo.CleanupDirectory()
-         └──► hcpo.initializeFreshProgress()
-```
-
-#### Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│           HumanControlledTodoPlannerOrchestrator               │
-│                      (controller.go)                            │
-│                                                                 │
-│   GetExecutionManager() ─────────────────────────────────────┐ │
-│                                                               │ │
-│   ┌─────────────────────────────────────────────────────────┐ │ │
-│   │                  ExecutionManager                        │◄┘ │
-│   │              (execution_manager.go)                      │   │
-│   │                                                          │   │
-│   │  High-Level API (Strategy-Based):                        │   │
-│   │  • CleanupForFreshStart()      - New execution           │   │
-│   │  • CleanupForSingleStep()      - Re-run one step         │   │
-│   │  • CleanupForResumeFromStep()  - Resume from step N      │   │
-│   │  • CleanupForFastExecute*()    - Fast re-execution       │   │
-│   │                                                          │   │
-│   │  Batch Execution:                                        │   │
-│   │  • PrepareExecution()          - Resolve execution setup │   │
-│   │  • PrepareForBatchGroup()      - Setup per group         │   │
-│   │  • ApplyCleanup()              - Apply cleanup scope     │   │
-│   │  • ApplyExecutionContext()     - Set controller state    │   │
-│   └──────────────────────┬───────────────────────────────────┘   │
-│                          │                                       │
-│                          │ Calls back to                         │
-│                          ▼                                       │
-│   ┌─────────────────────────────────────────────────────────┐   │
-│   │             Low-Level Operations                         │   │
-│   │   (controller_progress.go, controller_run_manager.go)    │   │
-│   │                                                          │   │
-│   │  • deleteStepProgress()         - Remove steps from JSON │   │
-│   │  • initializeFreshProgress()    - Create new JSON        │   │
-│   │  • deleteStepExecutionFolder()  - Delete step-N folder   │   │
-│   │  • CleanupDirectory()           - Delete any directory   │   │
-│   │  • cleanupExecutionArtifacts... - Fresh start cleanup    │   │
-│   └─────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-#### Why This Pattern?
-
-| Before (Scattered) | After (Centralized) |
-|--------------------|---------------------|
-| Cleanup logic duplicated across 10+ places | Single source of truth in `ExecutionManager` |
-| Inconsistent cleanup between batch/normal | Consistent behavior via shared methods |
-| Hard to understand what gets cleaned when | Clear strategy → cleanup mapping |
-| Controller 4000+ lines | Controller delegates to specialized manager |
-
-#### Responsibility Split
-
-| Component | Responsibility |
-|-----------|----------------|
-| **Controller** | Decision logic (which strategy?), flow control, state management |
-| **ExecutionManager** | Cleanup orchestration (what to clean, in what order) |
-| **Low-level methods** | Actual file/folder operations |
-
-#### Execution Modes & Cleanup Scopes
-
-The `ExecutionManager` maps execution strategies to specific cleanup operations:
-
-| Mode | Deletes Progress | Deletes Folders | Inits Progress |
-|------|------------------|-----------------|----------------|
-| `CleanupForFreshStart` | ✅ | All `execution/` | ✅ Fresh |
-| `CleanupForSingleStep` | Step N+ | `step-N/` only | Update |
-| `CleanupForResumeFromStep` | Step N+ | `step-N/` through end | Update |
-| `CleanupForFastExecuteProgressOnly` | ✅ | ❌ | ✅ Fresh |
-| `CleanupForFastExecuteRange` | Range | Range folders | Update |
-
-#### Key Types
-
-```go
-// ExecutionMode defines the type of execution
-type ExecutionMode string
-const (
-    ExecutionModeFresh          ExecutionMode = "fresh"
-    ExecutionModeResume         ExecutionMode = "resume"
-    ExecutionModeResumeFromStep ExecutionMode = "resume_from_step"
-    ExecutionModeSingleStep     ExecutionMode = "single_step"
-    ExecutionModeFastExecute    ExecutionMode = "fast_execute"
-)
-
-// CleanupScope defines WHAT should be cleaned
-type CleanupScope struct {
-    DeleteProgress    bool  // Delete steps_done.json
-    InitFreshProgress bool  // Create new steps_done.json
-    UpdateProgress    bool  // Update existing progress
-    CleanAllSteps     bool  // Delete entire execution/ folder
-    CleanFromStep     int   // Delete step-{N} through end
-    CleanSpecificStep int   // Delete only step-{N}
-    NewTotalSteps     int   // Total steps for fresh progress
-}
-
-// ExecutionSetup contains fully resolved execution configuration
-type ExecutionSetup struct {
-    Mode          ExecutionMode
-    Context       *ExecutionContext  // Immutable execution flags
-    Cleanup       CleanupScope       // What to clean
-    StartFromStep int                // 0-based start index
-    RunFolder     string             // Target run folder path
-    GroupID       string             // For batch: current group ID
-}
-```
-
-### Component Interaction
-
-```mermaid
-graph TB
-    API[API Request] --> WO[WorkflowOrchestrator]
-    WO --> Router{Route by Phase}
-    Router -->|variable-extraction| VM[VariableManager]
-    Router -->|planning| PA[Planning Agent]
-    Router -->|execution| HCTP[HumanControlledTodoPlannerOrchestrator]
-    Router -->|anonymize-learnings| AM[AnonymizationManager]
-    Router -->|plan-improvement| PIM[PlanImprovementManager]
-    Router -->|plan-tool-optimization| TOM[ToolOptimizationManager]
-    
-    HCTP --> SS[executeSingleStep]
-    SS --> EA[Execution Agent]
-    SS --> VA[Validation Agent]
-    SS --> LA[Learning Agent]
-    
-    VM --> VF[variables/variables.json]
-    PA --> PF[planning/plan.json]
-    LA --> LF[learnings/*.md]
-    
-    HCTP --> SP[runs/{folder}/steps_done.json]
-```
-
----
-
-## 🤖 Agents Overview
-
-### 1. Variable Extraction Agent
-**Purpose**: Extracts variables from objective and converts to templated format.
-- **Files**: `variable_extraction_agent.go`, `variable_management.go`
-- **Modes**: CREATE (Extract new), UPDATE (Update existing with feedback)
-- **Input**: Objective (raw text), Existing variables (UPDATE mode)
-- **Output**: `variables.json` with extracted variables, Templated objective with `{{VARIABLE}}` placeholders
-- **Tools**: `update_variable`, `update_objective`, `human_feedback`
-- **Manager**: `VariableManager` (✅ Independent)
-
-### 2. Planning Agent
-**Purpose**: Creates execution plan with steps, dependencies, and configurations.
-- **Files**: `planning_agent.go`, `planning_management.go`
-- **Modes**: CREATE (Generate new), UPDATE (Modify existing)
-- **Input**: Objective (templated), Existing plan, Variable names/values
-- **Output**: `plan.json` with structured steps (title, description, success criteria, dependencies, loop/conditional config)
-- **Tools**: `update_plan_steps`, `add_plan_steps`, `delete_plan_steps`, `human_feedback`
-- **Configuration**: Max 20 revisions, MCP Access for capability awareness
-
-### 3. Execution Agent
-**Purpose**: Executes individual plan steps using MCP tools.
-- **Files**: `execution_agent.go`
-- **Input**: Step details, Context dependencies, Variable values, Workspace path, Learnings path
-- **Output**: Execution result, Conversation history, Context output files
-- **Features**: Full MCP Tool Access, Loop Support, Retry Logic (Max 5), Code Execution Mode, Learning Discovery
-- **Code Execution Mode**: See [Code Execution Mode](code_execution_mode.md) for workspace path handling and CLI argument requirements
-
-**Specialized Variant: Execution-Only Agent**
-- **File**: `execution_only_agent.go`
-- **Purpose**: Used when learning files are **pre-discovered** by the Learning Reading Agent. Receives learning history as input rather than discovering it during execution. Optimizes performance.
-
-### 4. Validation Agent
-**Purpose**: Validates step execution against success criteria and loop conditions.
-- **Files**: `validation_agent.go`
-- **Input**: Step details, Execution history, Workspace path, Loop condition, Prerequisite information (when enabled)
-- **Output**: Structured `ValidationResponse` (Success/Partial/Failed, Reasoning, Feedback, Loop Condition status, Failure Type, Navigation target)
-- **Features**: Structured Output, Loop Validation, Feedback Generation, Workspace Inspection, **Prerequisite Failure Detection** (see below)
-
-### 5. Learning Agent (Unified)
-**Purpose**: Analyzes both successful and failed executions to capture patterns.
-- **Files**: `learning_agent.go`, `learning_agent_code_execution.go`
-- **Modes**: Success Learning (What worked), Failure Learning (Root cause + retry guidance)
-- **Output**: Learning analysis, Updates to `plan.json`, Learning files in `learnings/`
-- **Features**: Pattern Extraction, Plan Enhancement, Detail Levels (`exact`/`general`)
-- **Step-Specific Folders**: 
-  - Regular steps: `learnings/{step_id}/` (using step IDs from plan.json, at workspace root)
-  - Branch steps: `learnings/{step_id}/` (using step IDs from plan.json, where step_id is the branch step's own ID, at workspace root)
-  - Orchestration sub-agents: `learnings/{step_id}/` (using step IDs from plan.json, where step_id is the sub-agent's own ID, at workspace root)
-
-**Specialized Variant: Code Execution Learning Agent**
-- **File**: `learning_agent_code_execution.go`
-- **Purpose**: Specialized for **code execution mode**. Captures Go code patterns, imports, and error handling to improve future code generation.
-
-**Specialized Variant: Learning Reading Agent**
-- **File**: `learning_reading_agent.go`
-- **Purpose**: Pre-reads learning files and code patterns from the `learnings/` directory. Passes discovered learning history to Execution-Only Agent.
-
-### 6. Conditional Agent (ConditionalLLM)
-**Purpose**: Evaluates conditional branching decisions.
-- **Files**: `conditional_agent.go`, `controller_agent_factory.go`, `controller.go`
-- **Input**: Condition question, Last previous step execution output (in-memory), Learning history (separate)
-- **Output**: Structured `ConditionalResponse` (Boolean result, Reasoning) - JSON emitted in event `result` field
-- **Features**: Context-Aware Event Bridge, Tool-Based Verification, Factory Pattern, Step-Specific Config, Code Execution Mode Support
-- **Documentation**: See [Conditional Agent Implementation](conditional_agent_implementation.md) for detailed implementation details
-
-### 7. Anonymization Agent
-**Purpose**: Replaces actual values in learnings with variable placeholders.
-- **Files**: `anonymization_agent.go`
-- **Input**: Workspace path, Variables JSON, Variable names
-- **Output**: Anonymized learning files (`.md` and `.py`), Replacements report
-- **Features**: Fuzzy Matching, Human Confirmation, Multi-Format support
-- **Manager**: `AnonymizationManager` (✅ Independent)
-
-### 8. Plan Improvement Agent
-**Purpose**: Analyzes execution results and provides feedback for plan improvement.
-- **Files**: `plan_improvement_agent.go`
-- **Input**: Workspace path, Plan JSON, Execution results summary
-- **Output**: `plan_improvement_feedback.md`, Feedback report
-- **Features**: Execution Analysis, Plan Review, Human Feedback
-- **Manager**: `PlanImprovementManager` (✅ Independent)
-
----
-
-## 🔄 Workflow Phases & Lifecycle
-
-The workflow orchestrator operates through 7 distinct phases, each isolated and independently executable:
-
-### 1. Variable Extraction Phase
-**Status:** `variable-extraction`  
-**Entry Point:** `runVariableExtraction()`
-**Flow**: Extract → Verify → Use
-
-Extracts dynamic values from the objective and creates `variables/variables.json` with templated placeholders.
-**Decision Points**:
-1. **Use Existing**: Keep current `variables.json`
-2. **Extract New**: Delete old → Extract fresh
-3. **Update Existing**: Modify with feedback
-
-### 2. Planning Phase
-**Status:** `planning`  
-**Entry Point:** `runPlanningOnly()`
-**Flow**: Create plan → Human choice → Approve (max 20 revisions)
-
-Creates structured execution plan and saves to `planning/plan.json`. Supports iterative refinement through human conversation.
-**Decision Points**:
-1. **Use Existing**: Continue with current `plan.json`
-2. **Create New**: Delete old plan + artifacts → Create fresh
-3. **Update Existing**: Keep artifacts → Update plan with feedback
-
-### 3. Execution Phase
-**Status:** `execution`  
-**Entry Point:** `runPlanning()`
-**Flow**: Execute → Validate → Learn → Human feedback (per step)
-
-Executes the approved plan step-by-step. Requires both `variables.json` and `plan.json` to exist.
-
-**Execution Modes:**
-- **Normal:** Full execution with learning and human feedback
-- **Fast Execute:** Skips learning and human feedback
-- **Skip Human Input:** Runs learning but auto-approves steps
-
-**Batch Execution (Multiple Variable Groups):**
-When multiple variable groups are enabled, the workflow executes sequentially for each group:
-- **Folder Structure:** 
-  - Single group: `runs/iteration-X/` (flat structure)
-  - Multiple groups: `runs/iteration-X/group-Y/` (nested structure)
-- **Run Mode Behavior:**
-  - **User Selected Folder:** Uses selected folder, extracts base iteration if nested
-  - **Create New Run:** Always creates new iteration folder (`iteration-X`)
-  - **Use Same Run:** Uses latest existing iteration folder, creates group subfolders within it
-- **Progress Tracking:** Each group execution is tracked independently with `steps_done.json` in its respective folder
-
-**Step Execution Flow:**
 ```mermaid
 graph TD
     A[Load Step from Plan] --> B[Check Step Progress]
@@ -411,43 +89,217 @@ graph TD
     O --> P
 ```
 
-### 4. Anonymize Learnings Phase
-**Status:** `anonymize-learnings`  
-**Entry Point:** `runAnonymization()`
-**Flow**: Scan learnings → Identify values → Confirm → Replace
+### Execution Modes
 
-Scans `learnings/` folder to find actual values matching known variables and replaces them with `{{VARIABLE_NAME}}` placeholders for reusability.
+| Mode | Learning | Human Feedback | Use Case |
+|------|----------|----------------|----------|
+| **Normal** | ✅ | ✅ | Full execution with learning and human feedback |
+| **Fast Execute** | ❌ | ❌ | Rapid execution, skips learning and feedback |
+| **Skip Human Input** | ✅ | ❌ | Runs learning but auto-approves steps |
 
-### 5. Plan Improvement Phase
-**Status:** `plan-improvement`  
-**Entry Point:** `runPlanImprovement()`
-**Flow**: Analyze execution → Review plan → Ask questions → Generate feedback
+### Batch Execution
 
-Analyzes execution results, `plan.json`, learnings folder, and validation reports to provide feedback for improving the plan.
+When multiple variable groups are enabled, workflow executes sequentially for each group:
 
-### 6. Plan-Learnings Alignment Phase
-**Status:** `plan-learnings-alignment`  
-**Entry Point:** `runPlanLearningsAlignment()`
+| Structure | Single Group | Multiple Groups |
+|-----------|-------------|-----------------|
+| **Folder** | `runs/iteration-X/` | `runs/iteration-X/group-Y/` |
+| **Progress** | `steps_done.json` in iteration folder | `steps_done.json` per group folder |
 
-Checks alignment between `plan.json` and learnings folder. Identifies:
-- Orphaned learning files (for deleted steps)
-- Missing learnings (for new steps)
-- Mismatches between plan and learnings
+---
 
-### 7. Plan Tool Optimization Phase
-**Status:** `plan-tool-optimization`  
-**Entry Point:** `runPlanToolOptimization()`
+## 🏗️ Architecture
 
-Analyzes `plan.json` and learnings to optimize tool selections in `step_config.json`. Updates configuration to include only actually used tools.
+### Component Interaction
+
+```mermaid
+graph TB
+    API[API Request] --> WO[WorkflowOrchestrator]
+    WO --> Router{Route by Phase}
+    Router -->|variable-extraction| VM[VariableManager]
+    Router -->|planning| PA[Planning Agent]
+    Router -->|execution| HCTP[HumanControlledTodoPlannerOrchestrator]
+    Router -->|anonymize-learnings| AM[AnonymizationManager]
+    Router -->|plan-improvement| PIM[PlanImprovementManager]
+    
+    HCTP --> SS[executeSingleStep]
+    SS --> EA[Execution Agent]
+    SS --> VA[Validation Agent]
+    SS --> LA[Learning Agent]
+    
+    VM --> VF[variables/variables.json]
+    PA --> PF[planning/plan.json]
+    LA --> LF[learnings/*.md]
+    HCTP --> SP[runs/{folder}/steps_done.json]
+```
+
+### Manager-Based Architecture
+
+| Phase | Manager | Status | Description |
+|-------|---------|--------|-------------|
+| **Variable Extraction** | `VariableManager` | ✅ Independent | Manages variable extraction independently |
+| **Evaluation Designer** | `EvaluationManager` | ✅ Independent | Manages evaluation planning independently |
+| **Anonymization** | `AnonymizationManager` | ✅ Independent | Manages learnings anonymization independently |
+| **Plan Improvement** | `PlanImprovementManager` | ✅ Independent | Manages plan improvement analysis independently |
+| **Execution Lifecycle** | `ExecutionManager` | ✅ Internal | Manages cleanup, progress init, folder operations |
+| **Planning** | - | ⚠️ Orchestrator | Uses full orchestrator (complex dependencies) |
+| **Execution** | - | ⚠️ Orchestrator | Main orchestrator method |
+
+**Key Benefits:**
+- Decoupling: Managers operate independently without creating full orchestrator
+- Reusability: Managers can be used directly in `workflow_orchestrator.go`
+- Consistency: All managers follow same pattern using `CreateAndSetupStandardAgentWithConfig`
+
+### ExecutionManager Pattern
+
+**File:** [`execution_manager.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/execution_manager.go)
+
+```go
+// Controller CREATES ExecutionManager on-demand
+func (hcpo *HumanControlledTodoPlannerOrchestrator) GetExecutionManager() *ExecutionManager {
+    return NewExecutionManager(hcpo)
+}
+
+// ExecutionManager HOLDS reference to Controller
+type ExecutionManager struct {
+    orchestrator *HumanControlledTodoPlannerOrchestrator
+}
+
+// ExecutionManager CALLS Controller's low-level methods
+func (em *ExecutionManager) CleanupForFreshStart(...) error {
+    orch := em.orchestrator
+    orch.deleteStepProgress(ctx, runFolder)
+    orch.CleanupDirectory(ctx, executionDir, "...")
+    orch.initializeFreshProgress(ctx, totalSteps)
+}
+```
+
+### Execution Modes & Cleanup Scopes
+
+| Mode | Deletes Progress | Deletes Folders | Inits Progress |
+|------|------------------|-----------------|----------------|
+| `CleanupForFreshStart` | ✅ | All `execution/` | ✅ Fresh |
+| `CleanupForSingleStep` | Step N+ | `step-N/` only | Update |
+| `CleanupForResumeFromStep` | Step N+ | `step-N/` through end | Update |
+| `CleanupForFastExecuteProgressOnly` | ✅ | ❌ | ✅ Fresh |
+| `CleanupForFastExecuteRange` | Range | Range folders | Update |
+
+---
+
+## 🤖 Agents Overview
+
+| Agent | Purpose | Input | Output | Tools | LLM Config |
+|-------|---------|-------|--------|-------|------------|
+| **Variable Extraction** | Extracts variables from objective | Objective (raw text) | `variables.json`, templated objective | `update_variable`, `update_objective`, `human_feedback` | `phase_llm` |
+| **Planning** | Creates execution plan | Objective (templated), existing plan | `plan.json` with structured steps | `update_plan_steps`, `add_plan_steps`, `delete_plan_steps`, `human_feedback` | `phase_llm` |
+| **Evaluation Designer** | Creates evaluation plan | Objective, execution results (runs/) | `evaluation_plan.json` | `add_evaluation_step`, `update_evaluation_step`, `delete_evaluation_step`, `human_feedback` | `phase_llm` |
+| **Execution** | Executes plan steps | Step details, context, variables | Execution result, conversation history | Full MCP Tool Access | `execution_llm` |
+| **Execution-Only** | Executes with pre-discovered learnings | Step details + learning history | Execution result | Full MCP Tool Access | `execution_llm` |
+| **Validation** | Validates step execution | Step details, execution history | `ValidationResponse` (Success/Partial/Failed) | Structured Output | `validation_llm` |
+| **Learning** | Captures execution patterns | Execution history | Learning files in `learnings/` | Pattern Extraction | `learning_llm` |
+| **Code Execution Learning** | Captures Go code patterns | Execution history (code execution mode) | Go code patterns, imports | Code Pattern Extraction | `learning_llm` |
+| **Conditional** | Evaluates branching decisions | Condition question, step output | `ConditionalResponse` (Boolean, Reasoning) | Tool-Based Verification | `execution_llm` |
+| **Anonymization** | Replaces values with placeholders | Workspace path, variables JSON | Anonymized learning files | Fuzzy Matching | `phase_llm` |
+| **Plan Improvement** | Analyzes execution for plan feedback | Workspace path, plan JSON | `plan_improvement_feedback.md` | Execution Analysis | `phase_llm` |
+| **Plan Tool Optimization** | Optimizes tool selections | Workspace path, plan JSON | Optimized `step_config.json` | Tool Analysis | `phase_llm` |
+| **Learning Consolidation** | Consolidates learning files | Workspace path | Consolidated learnings | File Consolidation | `phase_llm` |
+| **Plan Learnings Alignment** | Aligns plan with learnings | Workspace path, plan JSON | Alignment report | Alignment Analysis | `phase_llm` |
+
+---
+
+## 🧩 Code Examples
+
+### Execution Manager Usage
+
+**File:** [`execution_manager.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/execution_manager.go)
+
+```go
+// Get execution manager from controller
+em := hcpo.GetExecutionManager()
+
+// Prepare execution setup
+setup, err := em.PrepareExecution(ctx, ExecutionModeFresh, runFolder, totalSteps)
+if err != nil {
+    return err
+}
+
+// Apply cleanup based on setup
+if err := em.ApplyCleanup(ctx, setup); err != nil {
+    return err
+}
+
+// Apply execution context
+em.ApplyExecutionContext(setup)
+```
+
+### Orchestrator Entry Point
+
+**File:** [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go)
+
+```go
+func (hcpo *HumanControlledTodoPlannerOrchestrator) CreateTodoList(
+    ctx context.Context,
+    objective string,
+    workspacePath string,
+    options *ExecutionOptions,
+) (*CreateTodoListResponse, error) {
+    // Load or create variables
+    variables, err := hcpo.loadOrCreateVariables(ctx, workspacePath, objective)
+    
+    // Load or create plan
+    plan, err := hcpo.loadOrCreatePlan(ctx, workspacePath, objective, variables)
+    
+    // Execute plan
+    result, err := hcpo.executePlan(ctx, workspacePath, plan, options)
+    
+    return &CreateTodoListResponse{
+        Plan: plan,
+        Result: result,
+    }, nil
+}
+```
+
+### Step Execution
+
+**File:** [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go)
+
+```go
+func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
+    ctx context.Context,
+    stepIndex int,
+    step PlanStep,
+    workspacePath string,
+    runFolder string,
+) error {
+    // Execute with execution agent
+    executionResult, err := hcpo.executionAgent.Execute(ctx, step, workspacePath)
+    
+    // Validate execution
+    validationResult, err := hcpo.validationAgent.ExecuteStructured(ctx, step, executionResult)
+    
+    // Learn from execution
+    if !options.DisableLearning {
+        err := hcpo.learningAgent.Execute(ctx, step, executionResult, validationResult)
+    }
+    
+    // Request human feedback if needed
+    if options.RequestHumanFeedback {
+        approved, err := hcpo.RequestHumanFeedback(ctx, step.ID, step.Title, "", sessionID, workflowID)
+    }
+    
+    return nil
+}
+```
 
 ---
 
 ## 📚 File Formats & Workspace Structure
 
 ### Workspace Structure
+
 ```
 workspace/
-├── todo_creation_human/
+├── step_based_workflow/
 │   ├── variables/
 │   │   └── variables.json          # Phase 0: Variable definitions
 │   ├── planning/
@@ -456,32 +308,23 @@ workspace/
 │   ├── learnings/                   # Learning patterns
 │   │   ├── success_patterns.md     # What worked (shared)
 │   │   ├── failure_analysis.md     # What failed (shared)
-│   │   ├── step-{X}/               # Regular step learnings (step-specific)
-│   │   │   ├── *_learning.md       # Step learning files
-│   │   │   ├── scripts/            # Python scripts (if code execution mode)
-│   │   │   └── code/               # Go code patterns (if code execution mode)
-│   │   └── step-{X}-{true/false}-{Y}/  # Branch step learnings (conditional branches)
-│   │       ├── *_learning.md       # Branch step learning files
-│   │       ├── scripts/            # Python scripts (if code execution mode)
-│   │       └── code/               # Go code patterns (if code execution mode)
+│   │   ├── {step_id}/              # Step-specific learnings
+│   │   │   ├── *_learning.md
+│   │   │   ├── scripts/            # Python scripts (code execution mode)
+│   │   │   └── code/               # Go code patterns (code execution mode)
+│   │   └── {step_id}-{true/false}-{Y}/  # Branch step learnings
 │   └── runs/                        # Execution runs
 │       ├── iteration-same/          # Default run folder
 │       │   ├── execution/           # Execution outputs
 │       │   ├── validation/          # Validation reports
 │       │   └── steps_done.json      # Progress tracking
-│       ├── iteration-N/             # Single group or numbered run folders
-│       │   ├── execution/
-│       │   └── steps_done.json
-│       └── iteration-N/             # Multi-group batch execution (nested)
-│           ├── group-1/             # First variable group
-│           │   ├── execution/
-│           │   └── steps_done.json
-│           └── group-2/             # Second variable group
-│               ├── execution/
-│               └── steps_done.json
+│       └── iteration-N/             # Numbered or nested run folders
+│           ├── execution/
+│           └── steps_done.json
 ```
 
 ### variables.json
+
 ```json
 {
   "objective": "Extract {{DATABASE_URL}} from {{CONFIG_PATH}}",
@@ -496,6 +339,7 @@ workspace/
 ```
 
 ### plan.json
+
 ```json
 {
   "steps": [
@@ -513,27 +357,13 @@ workspace/
         "learning_detail_level": "exact",
         "disable_validation": false
       }
-    },
-    {
-      "id": "step-2",
-      "title": "Wait for service",
-      "has_loop": true,
-      "loop_condition": "Health check returns 200 OK",
-      "max_iterations": 10
-    },
-    {
-      "id": "step-3",
-      "title": "Check build status",
-      "has_condition": true,
-      "condition_question": "Did the build succeed?",
-      "if_true_steps": [ ... ],
-      "if_false_steps": [ ... ]
     }
   ]
 }
 ```
 
 ### steps_done.json
+
 ```json
 {
   "completed_step_indices": [0, 1],
@@ -548,147 +378,192 @@ workspace/
 }
 ```
 
+### Step-Specific Folder Rules
+
+| Step Type | Learning Folder | Execution Folder |
+|-----------|----------------|------------------|
+| **Regular** | `learnings/{step_id}/` | `execution/step-{X}/` |
+| **Branch** | `learnings/{step_id}/` | `execution/step-{parentStep}-{true/false}-{branchIdx}/` |
+| **Sub-Agent** | `learnings/{step_id}/` | `execution/step-{X}-sub-agent-{index}/` |
+
+**Key Rules:**
+- Learning folders use step IDs (stable identifiers from plan.json)
+- Execution folders use step numbers (1-based) for backward compatibility
+- All folders located at workspace root, not inside `runs/`
+
 ---
 
 ## ⚙️ Configuration
 
 ### Agent LLM Configuration
-Each agent can be configured with custom LLM settings.
+
 **Priority**: Step config > Preset default > Orchestrator default
 
-**Preset Defaults** (orchestrator-level):
-- `presetExecutionLLM`, `presetValidationLLM`, `presetLearningLLM`, `presetPlanningLLM`, etc.
+| Level | Configuration | Example |
+|-------|---------------|---------|
+| **Orchestrator** | `presetExecutionLLM`, `presetValidationLLM`, `presetLearningLLM`, `presetPhaseLLM` | Default LLM for all steps |
+| **Step** | `step_config.json` → `execution_llm`, `validation_llm`, `learning_llm` | Per-step override |
 
-**Per-Step Overrides** (`step_config.json`):
-- `execution_llm`, `validation_llm`, `learning_llm`
+**Preset LLM Configurations:**
+- **`execution_llm`**: Default for execution agents
+- **`validation_llm`**: Default for validation agents
+- **`learning_llm`**: Default for learning agents
+- **`phase_llm`**: Default for all phase agents (planning, anonymization, plan improvement, plan tool optimization, learning consolidation, plan learnings alignment)
+  - Priority: `phase_llm` > orchestrator default
+  - All phase agents use this unified configuration instead of individual configs
 
 ### Temporary LLM Override (tempLLM)
-**Purpose**: Override execution agent LLM for specific runs without modifying plan config.
 
 **Flow**: `tempLLM1` (attempt 1) → if FAILED → `tempLLM2` (attempt 2) → if FAILED → original LLM (attempt 3+)
 
-**Behavior**:
-- **When used**: Only when step has learnings (`learnings/step-{N}/` or `learnings/step-{N}-{true/false}-{Y}/` has files)
-- **When skipped**: When step has no learnings (folder empty) → uses original LLM
-- **Scope**: Execution agents only (not validation/learning agents)
-- **Failure criteria**: Only `ExecutionStatus == "FAILED"` triggers next attempt. `COMPLETED`/`PARTIAL`/`INCOMPLETE` = success (no retry)
-- **Fallback**: `fallback_to_original_llm_on_failure` only blocks tempLLM1, NOT tempLLM2 (tempLLM2 is part of cascading fallback)
+| Setting | Behavior |
+|---------|----------|
+| **When used** | Only when step has learnings (`learnings/step-{N}/` has files) |
+| **When skipped** | Step has no learnings (folder empty) → uses original LLM |
+| **Scope** | Execution agents only (not validation/learning agents) |
+| **Failure criteria** | Only `ExecutionStatus == "FAILED"` triggers next attempt |
+| **Fallback** | `fallback_to_original_llm_on_failure` blocks tempLLM1, NOT tempLLM2 |
 
 **Configuration** (via frontend toolbar):
-- `temp_override_llm`: First override LLM (used on attempt 1)
-- `temp_override_llm2`: Second override LLM (used on attempt 2, even if fallback enabled)
-- `temp_override_llm_enabled`: Enable/disable toggle (preserves configs when disabled)
-- `fallback_to_original_llm_on_failure`: Skips tempLLM1 after failure, but tempLLM2 still used on attempt 2
+- `temp_override_llm`: First override LLM (attempt 1)
+- `temp_override_llm2`: Second override LLM (attempt 2)
+- `temp_override_llm_enabled`: Enable/disable toggle
+- `fallback_to_original_llm_on_failure`: Skips tempLLM1 after failure
 
-**Files**:
-- Frontend: `frontend/src/stores/useWorkflowStore.ts` - `buildExecutionOptions()`
-- Backend: `agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go` - `createExecutionOnlyAgent()`
-- Backend: `agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go` - retry loop and validation
-
-**Detailed Documentation**: See [`temp_llm_cascading_flow.md`](temp_llm_cascading_flow.md) for LLM-optimized technical details.
+**Files:**
+- Frontend: [`useWorkflowStore.ts`](../frontend/src/stores/useWorkflowStore.ts) - `buildExecutionOptions()`
+- Backend: [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go) - `createExecutionOnlyAgent()`
 
 ### Learning Configuration
-- **Detail Levels**: `exact` (actual values), `general` (anonymized), `none`
-- **Toggles**: `disable_learning`, `lock_learnings`, `learning_after_loop_iteration`
-- **lock_learnings**: Prevents learning agent from running but still uses existing learnings. Takes precedence over code execution mode.
-- **Code Execution Mode**: Forces learning enabled, uses specialized learning agent
+
+| Setting | Values | Description |
+|---------|--------|-------------|
+| **Detail Levels** | `exact`, `general`, `none` | `exact` = actual values, `general` = anonymized |
+| **Toggles** | `disable_learning`, `lock_learnings`, `learning_after_loop_iteration` | Control learning behavior |
+| **lock_learnings** | boolean | Prevents learning agent from running, still uses existing learnings |
+| **Code Execution Mode** | boolean | Forces learning enabled, uses specialized learning agent |
 
 ### Validation Configuration
-- **Toggles**: `disable_validation` (auto-approve)
-- **Loop Validation**: Checks both success criteria AND loop condition
-- **Prerequisite Failure Detection**: Per-step configuration to detect missing prerequisites and navigate back to prerequisite steps (see [Prerequisite Failure Detection](prerequisite_failure_implementation.md))
+
+| Setting | Description |
+|---------|-------------|
+| **disable_validation** | Auto-approve steps without validation |
+| **Loop Validation** | Checks both success criteria AND loop condition |
+| **Prerequisite Failure Detection** | Per-step config to detect missing prerequisites and navigate back |
+
+### Retry Limits
+
+| Component | Limit | Location |
+|----------|-------|----------|
+| **Execution** | 5 retries | [`controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go) |
+| **Planning** | 20 revisions | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go) |
 
 ---
 
-## 📂 Step-Specific Learning & Execution Folders
+## 🛠️ Common Issues & Solutions
 
-**Location**: All step-specific folders are at workspace root, not inside `runs/`.
-
-### Regular Steps
-- **Learning folder**: `learnings/{step_id}/` (using step IDs from plan.json, e.g., `learnings/deploy-application/`, `learnings/setup-credentials/`)
-- **Execution folder**: `execution/step-{X}/` (still uses step numbers, e.g., `execution/step-1/`, `execution/step-3/`)
-- **Step path format**: `step-{X}` where X is the 1-based step number (for execution paths)
-
-### Branch Steps (Conditional Steps)
-- **Learning folder**: `learnings/{step_id}/` (using step IDs from plan.json, where step_id is the branch step's own ID)
-  - Example: `learnings/verify-deployment-health/` (where `verify-deployment-health` is the branch step's own ID)
-  - Example: `learnings/rollback-deployment/` (where `rollback-deployment` is the branch step's own ID)
-- **Execution folder**: `execution/step-{parentStep}-{true/false}-{branchIdx}/` (still uses step numbers)
-  - Example: `execution/step-3-true-0/`
-- **Step path format**: `step-{parentStep}-if-{true/false}-{branchIdx}` (e.g., `step-3-if-true-0`)
-
-### Orchestration Sub-Agents
-- **Learning folder**: `learnings/{step_id}/` (using step IDs from plan.json, where step_id is the sub-agent's own ID)
-  - Example: `learnings/auth-error-handler/` (where `auth-error-handler` is the sub-agent step's own ID)
-- **Execution folder**: `execution/step-{X}-sub-agent-{index}/` (still uses step numbers)
-
-### Key Rules
-- **Learning folders**: Use step IDs (the 'id' field from plan.json) - stable identifiers that don't change when steps are reordered
-- **Execution/logs folders**: Still use step numbers (1-based) for backward compatibility
-- **Branch steps**: Use the branch step's own step ID (from the branch step's 'id' field)
-- **Orchestration sub-agents**: Use the sub-agent's own step ID (from sub_agent_step.id field)
-- **All folders**: Located at workspace root, not inside `runs/` directory
-- **Learning agents**: Automatically use correct folder based on step ID
-- **Execution agents**: Use `getExecutionFolderPath()` and `getLearningFolderPathByStepID()` helpers
-
-### Helper Functions
-- **`parseStepPath(stepPath string) StepPathInfo`**: Parses step paths into structured info
-- **`getExecutionFolderPath(executionWorkspacePath string, stepPath string) string`**: Returns execution folder path
-- **`getLearningFolderPath(baseWorkspacePath string, stepPath string) string`**: Returns learning folder path
-- **`getLearningPathIdentifier(stepPath string) string`**: Returns learning folder identifier (e.g., `step-3-true-0`)
-
----
-
-## 🔍 Troubleshooting
-
-| Issue | Check | Solution |
+| Issue | Cause | Solution |
 |-------|-------|----------|
-| Step fails | `runs/{run_folder}/validation/step_X_*.md` | Review validation feedback |
-| Missing context | `plan.json` dependencies | Update context dependencies |
-| Wrong tools | `learnings/*.md` | Learning agents enhance plan with patterns |
-| Progress lost | `runs/{run_folder}/steps_done.json` | Auto-saved after each step |
-| Loop never exits | `loop_condition` in plan.json | Ensure condition is specific and measurable |
-| Config not applied | `step_config.json` | Verify step ID matches plan.json |
+| Step fails | Validation failed | Check `runs/{run_folder}/validation/step_X_*.md` for feedback |
+| Missing context | Context dependencies not met | Update `context_dependencies` in `plan.json` |
+| Wrong tools used | Learning patterns not applied | Check `learnings/*.md` for patterns, learning agent enhances plan |
+| Progress lost | `steps_done.json` not saved | Progress auto-saved after each step, check file permissions |
+| Loop never exits | Loop condition not met | Ensure `loop_condition` in `plan.json` is specific and measurable |
+| Config not applied | Step ID mismatch | Verify step ID in `step_config.json` matches `plan.json` |
+| tempLLM not used | Step has no learnings | tempLLM only used when `learnings/step-{N}/` has files |
+| Execution mode not working | Cleanup scope incorrect | Check `ExecutionManager` cleanup methods match execution mode |
 
 ---
 
-## 📖 Usage & Common Workflows
+## 🔍 For LLMs: Quick Reference
 
-```bash
-./orchestrator workflow \
-  --objective "Build CI/CD pipeline" \
-  --workspace "./workspace"
+### Phase Quick Reference
+
+| Phase | Agent | Output | Human Decision | Manager |
+|-------|-------|--------|---------------|---------|
+| **0** | Variable Extraction | `variables.json` | Use/Extract new/Update | `VariableManager` ✅ |
+| **1** | Planning | `plan.json` | Use/Create/Update (max 20 rev) | - |
+| **2** | Execute → Validate → Learn | Step results | Approve/Re-execute/Stop | - |
+| **3** | Anonymize Learnings | Anonymized learnings | Confirm replacements | `AnonymizationManager` ✅ |
+| **4** | Plan Improvement | Feedback report | Review feedback | `PlanImprovementManager` ✅ |
+
+### Constraints
+
+✅ **Allowed:**
+- Independent phase execution (each phase can run separately)
+- Manager-based architecture for independent phases
+- Multiple execution modes (normal, fast execute, skip human input)
+- Per-step LLM configuration overrides
+- Temporary LLM overrides for execution agents
+- Loop and conditional logic in plan steps
+- Unified `phase_llm` configuration for all phase agents (planning, anonymization, plan improvement, plan tool optimization, learning consolidation, plan learnings alignment)
+
+❌ **Forbidden:**
+- Modifying `steps_done.json` manually (use orchestrator methods)
+- Bypassing validation without `disable_validation` flag
+- Running execution phase without `variables.json` and `plan.json`
+- Reusing same step ID in plan (must be unique)
+
+### Common Patterns
+
+**Variable Extraction → Planning → Execution:**
+```go
+// Phase 0: Extract variables
+variables, err := orchestrator.RunVariableExtraction(ctx, objective, workspacePath)
+
+// Phase 1: Create plan
+plan, err := orchestrator.RunPlanningOnly(ctx, objective, variables, workspacePath)
+
+// Phase 2: Execute plan
+result, err := orchestrator.RunPlanning(ctx, workspacePath, plan, options)
 ```
 
-### Common Workflows
+**Fast Execute Mode:**
+```go
+options := &ExecutionOptions{
+    FastExecute: true,  // Skips learning and human feedback
+}
+result, err := orchestrator.RunPlanning(ctx, workspacePath, plan, options)
+```
 
-1.  **Variable Extraction → Planning → Execution**: Run phases sequentially via API or CLI.
-2.  **Fast Execute Mode**: Skips learning and human feedback for rapid execution. Useful for testing or batch processing.
-3.  **Plan Optimization**: After execution, run `anonymize-learnings` and `plan-tool-optimization` to refine artifacts.
+**Resume from Step:**
+```go
+options := &ExecutionOptions{
+    ExecutionMode: ExecutionModeResumeFromStep,
+    ResumeFromStep: 3,  // Resume from step 4 (0-based index)
+}
+result, err := orchestrator.RunPlanning(ctx, workspacePath, plan, options)
+```
+
+### Key Types
+
+```go
+type ExecutionMode string
+const (
+    ExecutionModeFresh          ExecutionMode = "fresh"
+    ExecutionModeResume         ExecutionMode = "resume"
+    ExecutionModeResumeFromStep ExecutionMode = "resume_from_step"
+    ExecutionModeSingleStep     ExecutionMode = "single_step"
+    ExecutionModeFastExecute    ExecutionMode = "fast_execute"
+)
+
+type CleanupScope struct {
+    DeleteProgress    bool
+    InitFreshProgress bool
+    UpdateProgress    bool
+    CleanAllSteps     bool
+    CleanFromStep     int
+    CleanSpecificStep int
+    NewTotalSteps     int
+}
+```
 
 ---
 
-## 🧩 Appendix: Controller Refactoring Plan
+## 📖 Related Documentation
 
-*Current Status: Proposed Plan for `todo_creation_human` package.*
-
-### Goal
-Split the monolithic `controller.go` (4300+ lines) into smaller, focused files to improve maintainability.
-
-### Current File Structure
-All files belong to `package todo_creation_human`.
-
-| File | Purpose | Status |
-|------|---------|--------|
-| **`controller.go`** | Main orchestrator, entry points (`Execute`, `CreateTodoList`) | Core |
-| **`controller_types.go`** | Data structures (`StepProgress`, `TodoStep`, `BranchStepProgress`) | Core |
-| **`controller_run_manager.go`** | `runs/` folder management, cleanup, file operations | Core |
-| **`controller_progress.go`** | Loading, saving, tracking step progress in `steps_done.json` | Core |
-| **`controller_batch_execution.go`** | Batch execution for multiple variable groups | Core |
-| **`execution_manager.go`** | Centralized cleanup/progress orchestration | ✅ New |
-| **`execution_types.go`** | `ExecutionMode`, `CleanupScope`, `ExecutionSetup` types | ✅ New |
-
-### Implementation Strategy
-1.  Create new files in `agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/`.
-2.  Move code chunk by chunk.
-3.  Verify build and tests after each move.
+- [Human Feedback System](human_feedback_system.md) - Human-in-the-loop feedback mechanism
+- [Code Execution Mode](code_execution_mode.md) - Workspace path handling and CLI arguments
+- [Conditional Agent Implementation](conditional_agent_implementation.md) - Conditional branching logic
+- [Prerequisite Failure Implementation](prerequisite_failure_implementation.md) - Prerequisite detection and navigation
+- [Temp LLM Cascading Flow](temp_llm_cascading_flow.md) - Temporary LLM override flow details

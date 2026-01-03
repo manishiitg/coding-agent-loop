@@ -125,7 +125,7 @@ func NewBaseAgent(
 	provider string,
 	logger loggerv2.Logger,
 	cacheOnly bool,
-	enableLargeOutputVirtualTools *bool, // NEW parameter
+	enableContextOffloading *bool, // Context offloading configuration
 	enableContextSummarization bool, // Context summarization configuration
 	summarizeOnTokenThreshold bool, // Enable token-based summarization trigger
 	tokenThresholdPercent float64, // Percentage of context window to trigger summarization
@@ -172,13 +172,13 @@ func NewBaseAgent(
 		mcpagent.WithSmartRoutingThresholds(20, 4), // 20 tools, 4 servers threshold for all agents
 	)
 
-	// Add large output virtual tools option if specified
+	// Add context offloading option if specified
 	// Default to true if nil (backward compatible)
-	largeOutputEnabled := true
-	if enableLargeOutputVirtualTools != nil {
-		largeOutputEnabled = *enableLargeOutputVirtualTools
+	contextOffloadingEnabled := true
+	if enableContextOffloading != nil {
+		contextOffloadingEnabled = *enableContextOffloading
 	}
-	agentOptions = append(agentOptions, mcpagent.WithLargeOutputVirtualTools(largeOutputEnabled))
+	agentOptions = append(agentOptions, mcpagent.WithContextOffloading(contextOffloadingEnabled))
 
 	// Add context summarization configuration
 	if enableContextSummarization {

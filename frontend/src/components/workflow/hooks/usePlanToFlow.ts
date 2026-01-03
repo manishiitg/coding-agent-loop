@@ -32,6 +32,10 @@ export interface StepNodeData extends Record<string, unknown> {
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
   validation_schema?: ValidationSchema  // Validation schema from plan.json
+  // Sub-agent specific fields
+  parentOrchestratorTitle?: string  // Title of parent orchestrator node (for sub-agents)
+  routeName?: string  // Route name from orchestration_routes (for sub-agents)
+  routeCondition?: string  // Condition from orchestration_routes (for sub-agents)
 }
 
 export interface ConditionalNodeData extends Record<string, unknown> {
@@ -172,7 +176,7 @@ interface UsePlanToFlowOptions {
   onOpenSidebar?: OnOpenSidebarCallback  // Callback for opening sidebar when settings icon is clicked
   isExecuting?: boolean  // Whether execution is currently in progress
   completedStepIndices?: number[]  // 0-based indices of completed steps (from steps_done.json)
-  stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'>  // Step status from events
+  stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'> | Record<string, 'pending' | 'running' | 'completed' | 'failed'> | null  // Step status from events (Map or serialized object for stable comparison)
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
   variablesManifest?: VariablesManifest | null  // Variables manifest for Variables node
@@ -212,25 +216,25 @@ const NODE_DIMENSIONS = {
  */
 function estimateMarkdownOverhead(text: string): number {
   if (!text || typeof text !== 'string') return 0
-  
+
   let overhead = 0
-  
+
   // Count paragraphs (each has ~8px bottom margin)
   const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim().length > 0)
   overhead += paragraphs.length * 8
-  
+
   // Count list items (each has ~4px spacing)
   const listItems = (text.match(/^[\s]*[-*+]\s/gm) || []).length + (text.match(/^[\s]*\d+\.\s/gm) || []).length
   overhead += listItems * 4
-  
+
   // Count code blocks (each has ~16px padding)
   const codeBlocks = (text.match(/```[\s\S]*?```/g) || []).length
   overhead += codeBlocks * 16
-  
+
   // Count headings (each has ~12px margin)
   const headings = (text.match(/^#{1,6}\s/gm) || []).length
   overhead += headings * 12
-  
+
   return overhead
 }
 
@@ -242,22 +246,22 @@ function estimateMarkdownOverhead(text: string): number {
 function estimateNodeHeight(node: WorkflowNode): number {
   const baseDimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
   let estimatedHeight = baseDimensions.height
-  
+
   // Get node data (union of all possible node data types)
   const data = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | Record<string, unknown>
-  
+
   // Base height components (header, padding, footer)
   const headerHeight = 80 // Header with buttons
   const footerHeight = 60 // Config footer
   const padding = 24 // Top and bottom padding (py-3 = 12px each)
-  
+
   // Content height estimation
   let contentHeight = 0
-  
+
   // Line height increased from 20px to 24px to account for markdown spacing
   const LINE_HEIGHT = 24 // Increased for markdown rendering (paragraph margins, list spacing, etc.)
   const CHARS_PER_LINE = 60 // Approximate characters per line at 12px font
-  
+
   // Description text (estimate ~24px per line, ~60 chars per line at 12px font)
   if ('description' in data && typeof data.description === 'string' && data.description) {
     const descLines = Math.ceil(data.description.length / CHARS_PER_LINE)
@@ -265,7 +269,7 @@ function estimateNodeHeight(node: WorkflowNode): number {
     const markdownOverhead = estimateMarkdownOverhead(data.description)
     contentHeight += baseDescHeight + markdownOverhead + 12 // min 30px + markdown overhead + spacing
   }
-  
+
   // Success criteria (box with padding)
   if ('success_criteria' in data && typeof data.success_criteria === 'string' && data.success_criteria) {
     const criteriaLines = Math.ceil(data.success_criteria.length / CHARS_PER_LINE)
@@ -273,7 +277,7 @@ function estimateNodeHeight(node: WorkflowNode): number {
     const markdownOverhead = estimateMarkdownOverhead(data.success_criteria)
     contentHeight += baseCriteriaHeight + markdownOverhead + 12 // min 50px + markdown overhead + spacing
   }
-  
+
   // Validation schema
   if ('validation_schema' in data && data.validation_schema && typeof data.validation_schema === 'object') {
     const validationSchema = data.validation_schema as ValidationSchema
@@ -282,7 +286,7 @@ function estimateNodeHeight(node: WorkflowNode): number {
       contentHeight += 60 + (fileCount * 20) + 12 // Base + per file + spacing
     }
   }
-  
+
   // Prerequisite rules (from step.agent_configs)
   if ('step' in data && data.step && typeof data.step === 'object') {
     const step = data.step as PlanStep
@@ -290,24 +294,24 @@ function estimateNodeHeight(node: WorkflowNode): number {
       const ruleCount = step.agent_configs.prerequisite_rules.length
       contentHeight += (ruleCount * 60) + 12 // ~60px per rule + spacing
     }
-    
+
     // Context files (inputs and outputs)
     const contextInputs = Array.isArray(step.context_dependencies) ? step.context_dependencies : []
     const contextOutput = step.context_output
-    const contextOutputs = Array.isArray(contextOutput) 
-      ? contextOutput 
+    const contextOutputs = Array.isArray(contextOutput)
+      ? contextOutput
       : (contextOutput ? [contextOutput] : [])
     if (contextInputs.length > 0 || contextOutputs.length > 0) {
       const totalFiles = contextInputs.length + contextOutputs.length
       contentHeight += 30 + (totalFiles * 25) + 12 // Base + per file + spacing
     }
   }
-  
+
   // For orchestrator nodes, add extra height for sub-agents section
   if (node.type === 'orchestrator') {
     contentHeight += 40 // Extra space for orchestration info
   }
-  
+
   // For conditional nodes, add height for condition question
   if (node.type === 'conditional' && 'condition_question' in data && typeof data.condition_question === 'string' && data.condition_question) {
     const questionLines = Math.ceil(data.condition_question.length / 50)
@@ -315,7 +319,7 @@ function estimateNodeHeight(node: WorkflowNode): number {
     const markdownOverhead = estimateMarkdownOverhead(data.condition_question)
     contentHeight += baseQuestionHeight + markdownOverhead + 12
   }
-  
+
   // For loop nodes, add height for iteration info
   if (node.type === 'loop') {
     contentHeight += 40 // Loop iteration badge and info
@@ -327,16 +331,16 @@ function estimateNodeHeight(node: WorkflowNode): number {
       contentHeight += baseLoopHeight + markdownOverhead + 12
     }
   }
-  
+
   // Calculate total estimated height
   estimatedHeight = headerHeight + padding + contentHeight + footerHeight
-  
+
   // Add safety margin (40% extra) to account for text wrapping, badges, markdown rendering overhead, etc.
   estimatedHeight = Math.ceil(estimatedHeight * 1.4)
-  
+
   // Ensure minimum height
   estimatedHeight = Math.max(estimatedHeight, baseDimensions.height)
-  
+
   return estimatedHeight
 }
 
@@ -347,15 +351,15 @@ function estimateNodeHeight(node: WorkflowNode): number {
 function fixOverlappingBranches(nodes: WorkflowNode[]): WorkflowNode[] {
   // Find all conditional nodes and their branch nodes
   const conditionalNodes = nodes.filter(n => n.type === 'conditional')
-  const branchGroups: Array<{ 
+  const branchGroups: Array<{
     conditionalId: string
     conditionalNode: WorkflowNode
-    branchNodes: WorkflowNode[] 
+    branchNodes: WorkflowNode[]
   }> = []
 
   conditionalNodes.forEach(conditionalNode => {
-    const branchNodes = nodes.filter(n => 
-      n.id.startsWith(`${conditionalNode.id}-true-`) || 
+    const branchNodes = nodes.filter(n =>
+      n.id.startsWith(`${conditionalNode.id}-true-`) ||
       n.id.startsWith(`${conditionalNode.id}-false-`)
     )
     if (branchNodes.length > 0) {
@@ -365,7 +369,7 @@ function fixOverlappingBranches(nodes: WorkflowNode[]): WorkflowNode[] {
         branchNodes
       })
     }
-  })  
+  })
 
   // If we have multiple conditional branches, check for overlaps and adjust
   if (branchGroups.length < 2) {
@@ -415,7 +419,7 @@ function fixOverlappingBranches(nodes: WorkflowNode[]): WorkflowNode[] {
     if (currentBounds.top < maxBottom) {
       const minSeparation = 800 // Minimum vertical separation between branch groups (increased significantly)
       const separationNeeded = maxBottom - currentBounds.top + minSeparation
-      
+
       // Move all nodes in current branch group down
       currentGroup.branchNodes.forEach(branchNode => {
         const nodeIndex = adjustedNodes.findIndex(n => n.id === branchNode.id)
@@ -446,7 +450,7 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
   const MIN_SEPARATION = 100 // Minimum gap between nodes (increased from 80 for markdown rendering)
   const adjustedNodes = [...nodes]
   let collisionCount = 0
-  
+
   // Get bounding box for a node (using estimated height based on content)
   const getBounds = (node: WorkflowNode): { left: number; right: number; top: number; bottom: number } => {
     const baseDimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
@@ -458,7 +462,7 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
       bottom: node.position.y + estimatedHeight
     }
   }
-  
+
   // Check if two bounding boxes overlap (with minimum separation)
   const boxesOverlap = (
     a: { left: number; right: number; top: number; bottom: number },
@@ -467,23 +471,23 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
     // Calculate overlap area (positive if overlapping, negative if separated)
     const horizontalOverlap = Math.min(a.right, b.right) - Math.max(a.left, b.left)
     const verticalOverlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
-    
+
     // Overlap if both dimensions have positive overlap (boxes intersect)
     // Also check if they're too close (within MIN_SEPARATION)
     if (horizontalOverlap > 0 && verticalOverlap > 0) {
       return true // Full overlap
     }
-    
+
     // Check if boxes are too close (within MIN_SEPARATION) even if not overlapping
     const hDistance = horizontalOverlap < 0 ? -horizontalOverlap : 0
     const vDistance = verticalOverlap < 0 ? -verticalOverlap : 0
-    
+
     // If boxes are close horizontally and vertically, they need more separation
     return (hDistance < MIN_SEPARATION && vDistance < MIN_SEPARATION) ||
-           (horizontalOverlap > 0 && vDistance < MIN_SEPARATION) ||
-           (verticalOverlap > 0 && hDistance < MIN_SEPARATION)
+      (horizontalOverlap > 0 && vDistance < MIN_SEPARATION) ||
+      (verticalOverlap > 0 && hDistance < MIN_SEPARATION)
   }
-  
+
   // Calculate how much to shift node 'a' to resolve overlap with node 'b'
   const calculateShift = (
     a: { left: number; right: number; top: number; bottom: number },
@@ -492,28 +496,28 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
     // Calculate actual overlap amounts (positive = overlapping, negative = separated)
     const horizontalOverlap = Math.min(a.right, b.right) - Math.max(a.left, b.left)
     const verticalOverlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
-    
+
     // Calculate distances if separated
     const hDistance = horizontalOverlap < 0 ? -horizontalOverlap : 0
     const vDistance = verticalOverlap < 0 ? -verticalOverlap : 0
-    
+
     // Determine which dimension has the most overlap or needs the most separation
     const hOverlapAmount = horizontalOverlap > 0 ? horizontalOverlap : 0
     const vOverlapAmount = verticalOverlap > 0 ? verticalOverlap : 0
-    
+
     // If fully overlapping (both dimensions overlap), prefer vertical shift for LR layout
     if (hOverlapAmount > 0 && vOverlapAmount > 0) {
       // Full overlap - shift vertically (prefer moving down for nodes that come later)
-      const shiftY = a.top < b.top 
+      const shiftY = a.top < b.top
         ? (vOverlapAmount + MIN_SEPARATION)  // Move a down
         : -(vOverlapAmount + MIN_SEPARATION)  // Move a up
       return { dx: 0, dy: shiftY }
     }
-    
+
     // Partial overlap or too close - determine best direction
     if (vOverlapAmount > 0) {
       // Vertical overlap - shift vertically
-      const shiftY = a.top < b.top 
+      const shiftY = a.top < b.top
         ? (vOverlapAmount + MIN_SEPARATION)  // Move a down
         : -(vOverlapAmount + MIN_SEPARATION)  // Move a up
       return { dx: 0, dy: shiftY }
@@ -527,7 +531,7 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
       // Too close but not overlapping - shift in direction that needs more space
       if (vDistance < hDistance) {
         // Need more vertical separation
-        const shiftY = a.top < b.top 
+        const shiftY = a.top < b.top
           ? (MIN_SEPARATION - vDistance)  // Move a down
           : -(MIN_SEPARATION - vDistance)  // Move a up
         return { dx: 0, dy: shiftY }
@@ -539,10 +543,10 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
         return { dx: shiftX, dy: 0 }
       }
     }
-    
+
     return { dx: 0, dy: 0 }
   }
-  
+
   // Sort nodes by position (top to bottom, then left to right)
   const sortedNodes = [...adjustedNodes].sort((a, b) => {
     const aBounds = getBounds(a)
@@ -552,18 +556,18 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
     }
     return aBounds.left - bBounds.left
   })
-  
+
   // Track cumulative shifts for each node
   const shifts = new Map<string, { dx: number; dy: number }>()
   adjustedNodes.forEach(node => {
     shifts.set(node.id, { dx: 0, dy: 0 })
   })
-  
+
   // Check each node against all previous nodes
   for (let i = 0; i < sortedNodes.length; i++) {
     const currentNode = sortedNodes[i]
     const currentBounds = getBounds(currentNode)
-    
+
     // Apply any existing shifts to current bounds
     const currentShift = shifts.get(currentNode.id) || { dx: 0, dy: 0 }
     let adjustedCurrentBounds = {
@@ -572,12 +576,12 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
       top: currentBounds.top + currentShift.dy,
       bottom: currentBounds.bottom + currentShift.dy
     }
-    
+
     // Check against all previous nodes
     for (let j = 0; j < i; j++) {
       const otherNode = sortedNodes[j]
       const otherBounds = getBounds(otherNode)
-      
+
       // Apply any existing shifts to other bounds
       const otherShift = shifts.get(otherNode.id) || { dx: 0, dy: 0 }
       const adjustedOtherBounds = {
@@ -586,12 +590,12 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
         top: otherBounds.top + otherShift.dy,
         bottom: otherBounds.bottom + otherShift.dy
       }
-      
+
       // Check for overlap
       if (boxesOverlap(adjustedCurrentBounds, adjustedOtherBounds)) {
         collisionCount++
         const shift = calculateShift(adjustedCurrentBounds, adjustedOtherBounds)
-        
+
         if (shift.dx !== 0 || shift.dy !== 0) {
           // Log collision details for debugging
           if (collisionCount <= 5) { // Log first 5 collisions to avoid spam
@@ -601,14 +605,14 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
               shift: { dx: shift.dx, dy: shift.dy }
             })
           }
-          
+
           // Update shift for current node
           const currentShiftValue = shifts.get(currentNode.id) || { dx: 0, dy: 0 }
           shifts.set(currentNode.id, {
             dx: currentShiftValue.dx + shift.dx,
             dy: currentShiftValue.dy + shift.dy
           })
-          
+
           // Update adjusted bounds for next checks
           adjustedCurrentBounds = {
             left: adjustedCurrentBounds.left + shift.dx,
@@ -620,12 +624,12 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
       }
     }
   }
-  
+
   // Log collision detection results
   if (collisionCount > 0) {
     console.log(`[CollisionDetection] Detected ${collisionCount} collisions, applying shifts to ${Array.from(shifts.values()).filter(s => s.dx !== 0 || s.dy !== 0).length} nodes`)
   }
-  
+
   // Apply all shifts to nodes
   const shiftedNodes = adjustedNodes.map(node => {
     const shift = shifts.get(node.id)
@@ -640,7 +644,7 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
     }
     return node
   })
-  
+
   return shiftedNodes
 }
 
@@ -655,7 +659,7 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[]): { nodes:
   // Separate sub-agents from main nodes (sub-agents will be positioned manually)
   const subAgentIds = new Set(nodes.filter(n => n.id.includes('-sub-agent-')).map(n => n.id))
   const subAgentRelatedNodeIds = new Set<string>()
-  
+
   // Find all nodes related to sub-agents (validation, learning nodes)
   nodes.forEach(node => {
     if (subAgentIds.has(node.id) || node.id.includes('-sub-agent-')) {
@@ -693,15 +697,15 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[]): { nodes:
       // Keep sub-agents at their initial position (will be positioned manually later)
       return node
     }
-    
+
     const nodeWithPosition = g.node(node.id)
     if (!nodeWithPosition) {
       // Node wasn't in Dagre graph, keep original position
       return node
     }
-    
+
     const dimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-    
+
     return {
       ...node,
       position: {
@@ -732,9 +736,9 @@ function getChangeType(stepId: string, changes?: PlanChanges | null): ChangeType
  * Convert a PlanStep to a React Flow node
  */
 function stepToNode(
-  step: PlanStep, 
-  stepIndex: number, 
-  parentId?: string, 
+  step: PlanStep,
+  stepIndex: number,
+  parentId?: string,
   branchType?: 'true' | 'false',
   changes?: PlanChanges | null,
   stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'>,
@@ -742,7 +746,7 @@ function stepToNode(
   selectedRunFolder?: string,
   completedStepIds?: Set<string> // Set of completed step IDs (converted from indices for step_id-based matching)
 ): WorkflowNode {
-  const nodeId = parentId 
+  const nodeId = parentId
     ? `${parentId}-${branchType}-${stepIndex}`
     : step.id || `step-${stepIndex}`
 
@@ -752,7 +756,7 @@ function stepToNode(
   // Determine status: Use step_id as primary matching method (stepStatusMap > completedStepIds > pending)
   let status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
   const stepId = step.id || nodeId
-  
+
   // Primary: Check stepStatusMap (from events) - this is the most up-to-date and uses step_id
   if (stepStatusMap && stepStatusMap.has(stepId)) {
     status = stepStatusMap.get(stepId)!
@@ -900,19 +904,19 @@ function getLLMProviderAndModel(
 ): { provider?: string; model?: string } {
   const effectiveLLM = llmConfig || presetLLMConfig
   if (!effectiveLLM) return {}
-  
-  const llm = availableLLMs.find(l => 
-    l.provider === effectiveLLM.provider && 
+
+  const llm = availableLLMs.find(l =>
+    l.provider === effectiveLLM.provider &&
     l.model === effectiveLLM.model_id
   )
-  
+
   if (llm) {
     return {
       provider: llm.provider,
       model: llm.model
     }
   }
-  
+
   return {
     provider: effectiveLLM.provider,
     model: effectiveLLM.model_id
@@ -936,39 +940,39 @@ function createValidationLearningNodes(
 ): { nodes: WorkflowNode[], edges: WorkflowEdge[], exitNodeId: string } {
   const nodes: WorkflowNode[] = []
   const edges: WorkflowEdge[] = []
-  
+
   const agentConfigs = step.agent_configs as AgentConfigs | undefined
-  
+
   // Determine if code execution mode is enabled
   const stepCodeExecSetting = agentConfigs?.use_code_execution_mode
-  const useCodeExecutionMode = stepCodeExecSetting !== undefined 
-    ? stepCodeExecSetting 
+  const useCodeExecutionMode = stepCodeExecSetting !== undefined
+    ? stepCodeExecSetting
     : presetUseCodeExecutionMode  // Fall back to preset default
-  
+
   // In code exec mode: validation and learning are always enabled
   // Otherwise: check disable flags
-  const hasValidation = useCodeExecutionMode 
+  const hasValidation = useCodeExecutionMode
     ? true  // Always enabled in code exec mode
     : !agentConfigs?.disable_validation
-  
-  const hasLearning = useCodeExecutionMode 
+
+  const hasLearning = useCodeExecutionMode
     ? true  // Always enabled in code exec mode
     : !agentConfigs?.disable_learning
-  
+
   let currentNodeId = stepNodeId
-  
+
   // Get validation LLM provider and model
   const validationLLM = agentConfigs?.validation_llm || presetValidationLLM || presetLLMConfig
   const validationLLMInfo = getLLMProviderAndModel(validationLLM, presetLLMConfig, availableLLMs)
-  
+
   // Get learning LLM provider and model
   // Always use learning_llm config (not execution_llm), even in code exec mode
   // Priority: step learning_llm → preset learning_llm → preset default (provider/model_id)
-  const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id 
+  const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id
     ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : undefined
   const learningLLM = agentConfigs?.learning_llm || presetLearningLLM || presetDefaultLLM || presetLLMConfig
   const learningLLMInfo = getLLMProviderAndModel(learningLLM, presetLLMConfig, availableLLMs)
-  
+
   // Add validation node if enabled
   if (hasValidation) {
     const validationNodeId = `${stepNodeId}-validation`
@@ -986,7 +990,7 @@ function createValidationLearningNodes(
       } as ValidationNodeData
     }
     nodes.push(validationNode)
-    
+
     // Edge from step to validation
     edges.push({
       id: `${stepNodeId}-to-validation`,
@@ -996,7 +1000,7 @@ function createValidationLearningNodes(
       animated: false,
       style: { stroke: '#6366f1', strokeWidth: 2 }
     })
-    
+
     // Loop-back edge from validation to step (retry)
     // Only create retry edge if the target node type supports retry handles
     // Orchestrator nodes don't have retry handles, so skip for orchestrator type
@@ -1017,10 +1021,10 @@ function createValidationLearningNodes(
         animated: false
       })
     }
-    
+
     currentNodeId = validationNodeId
   }
-  
+
   // Add learning node if enabled
   if (hasLearning) {
     const learningNodeId = `${stepNodeId}-learning`
@@ -1038,7 +1042,7 @@ function createValidationLearningNodes(
       } as LearningNodeData
     }
     nodes.push(learningNode)
-    
+
     // Edge from previous node (step or validation) to learning
     edges.push({
       id: `${currentNodeId}-to-learning`,
@@ -1048,10 +1052,10 @@ function createValidationLearningNodes(
       animated: false,
       style: { stroke: '#f59e0b', strokeWidth: 2 }
     })
-    
+
     currentNodeId = learningNodeId
   }
-  
+
   return { nodes, edges, exitNodeId: currentNodeId }
 }
 
@@ -1077,7 +1081,7 @@ function processSteps(
 ): { nodes: WorkflowNode[], edges: WorkflowEdge[] } {
   const nodes: WorkflowNode[] = []
   const edges: WorkflowEdge[] = []
-  
+
   // Track the last "exit" node ID for edge connections
   // Can be a single node ID, array of branch exit nodes, or null
   let lastExitNodeId: string | string[] | null = null
@@ -1098,16 +1102,16 @@ function processSteps(
             // Check if this exit node is a conditional with empty branches
             const emptyInfo = conditionalEmptyBranches.get(exitNodeId)
             const isConditionalWithEmptyBranch = emptyInfo && (emptyInfo.trueEmpty || emptyInfo.falseEmpty)
-            
+
             edges.push({
               id: `${exitNodeId}-to-${node.id}-${i}`,
               source: exitNodeId,
               target: node.id,
               type: 'smoothstep',
               animated: false,
-              style: { 
-                stroke: isConditionalWithEmptyBranch ? (emptyInfo?.trueEmpty ? '#22c55e' : '#ef4444') : '#6b7280', 
-                strokeWidth: 2 
+              style: {
+                stroke: isConditionalWithEmptyBranch ? (emptyInfo?.trueEmpty ? '#22c55e' : '#ef4444') : '#6b7280',
+                strokeWidth: 2
               },
               label: isConditionalWithEmptyBranch ? (emptyInfo?.trueEmpty ? 'Yes' : 'No') : undefined,
               labelStyle: isConditionalWithEmptyBranch ? {
@@ -1129,16 +1133,16 @@ function processSteps(
         // Check if this exit node is a conditional with empty branches
         const emptyInfo = conditionalEmptyBranches.get(lastExitNodeId)
         const isConditionalWithEmptyBranch = emptyInfo && (emptyInfo.trueEmpty || emptyInfo.falseEmpty)
-        
+
         edges.push({
           id: `${lastExitNodeId}-to-${node.id}`,
           source: lastExitNodeId,
           target: node.id,
           type: 'smoothstep',
           animated: false,
-          style: { 
-            stroke: isConditionalWithEmptyBranch ? (emptyInfo?.trueEmpty ? '#22c55e' : '#ef4444') : '#6b7280', 
-            strokeWidth: 2 
+          style: {
+            stroke: isConditionalWithEmptyBranch ? (emptyInfo?.trueEmpty ? '#22c55e' : '#ef4444') : '#6b7280',
+            strokeWidth: 2
           },
           label: isConditionalWithEmptyBranch ? (emptyInfo?.trueEmpty ? 'Yes' : 'No') : undefined,
           labelStyle: isConditionalWithEmptyBranch ? {
@@ -1155,14 +1159,14 @@ function processSteps(
         })
       }
     }
-    
+
     // Add validation/learning nodes for non-conditional and non-human-input steps
     // Decision steps also have validation/learning for their inner step execution
     // Human input steps don't have validation/learning (they just ask questions)
     if (!isConditionalStep(step) && !isHumanInputStep(step)) {
       const vlResult = createValidationLearningNodes(
-        step, 
-        node.id, 
+        step,
+        node.id,
         presetUseCodeExecutionMode,
         presetLLMConfig,
         presetValidationLLM,
@@ -1173,13 +1177,13 @@ function processSteps(
       nodes.push(...vlResult.nodes)
       edges.push(...vlResult.edges)
       lastExitNodeId = vlResult.exitNodeId
-      
+
       // For decision steps, add an evaluation node after learning for LLM evaluation
       if (isDecisionStep(step) && lastExitNodeId) {
         const agentConfigs = step.agent_configs as AgentConfigs | undefined
         const conditionalLLM = agentConfigs?.conditional_llm || presetLLMConfig
         const evaluationLLMInfo = getLLMProviderAndModel(conditionalLLM, presetLLMConfig, availableLLMs)
-        
+
         const evaluationNodeId = `${node.id}-evaluation`
         const evaluationNode: WorkflowNode = {
           id: evaluationNodeId,
@@ -1196,7 +1200,7 @@ function processSteps(
           } as EvaluationNodeData
         }
         nodes.push(evaluationNode)
-        
+
         // Edge from learning (or step if no learning) to evaluation
         edges.push({
           id: `${lastExitNodeId}-to-evaluation`,
@@ -1206,7 +1210,7 @@ function processSteps(
           animated: false,
           style: { stroke: '#8b5cf6', strokeWidth: 2 }
         })
-        
+
         lastExitNodeId = evaluationNodeId
       }
     } else {
@@ -1217,15 +1221,15 @@ function processSteps(
     // Handle conditional branches
     if (isConditionalStep(step)) {
       const branchExitNodes: string[] = []
-      
+
       // Process if_true_steps
       let trueBranchExitNodeId: string | null = null
       if (step.if_true_steps && step.if_true_steps.length > 0) {
         const trueBranch = processSteps(
-          step.if_true_steps, 
-          node.id, 
-          'true', 
-          changes, 
+          step.if_true_steps,
+          node.id,
+          'true',
+          changes,
           presetUseCodeExecutionMode,
           presetLLMConfig,
           presetValidationLLM,
@@ -1256,7 +1260,7 @@ function processSteps(
             style: { stroke: '#22c55e', strokeWidth: 2 },
             animated: false
           })
-          
+
           // Find the last node in the true branch (exit node)
           // This could be a step, validation, or learning node
           const lastTrueNode = trueBranch.nodes[trueBranch.nodes.length - 1]
@@ -1280,10 +1284,10 @@ function processSteps(
       let falseBranchExitNodeId: string | null = null
       if (step.if_false_steps && step.if_false_steps.length > 0) {
         const falseBranch = processSteps(
-          step.if_false_steps, 
-          node.id, 
-          'false', 
-          changes, 
+          step.if_false_steps,
+          node.id,
+          'false',
+          changes,
           presetUseCodeExecutionMode,
           presetLLMConfig,
           presetValidationLLM,
@@ -1314,7 +1318,7 @@ function processSteps(
             style: { stroke: '#ef4444', strokeWidth: 2 },
             animated: false
           })
-          
+
           // Find the last node in the false branch (exit node)
           const lastFalseNode = falseBranch.nodes[falseBranch.nodes.length - 1]
           if (lastFalseNode) {
@@ -1333,11 +1337,11 @@ function processSteps(
         emptyInfo.falseEmpty = true
         conditionalEmptyBranches.set(node.id, emptyInfo)
       }
-      
+
       // Handle next_step_id connections
       // Check if_true_next_step_id and if_false_next_step_id to create explicit connections
       const nextStepEdges: WorkflowEdge[] = []
-      
+
       // Handle true branch next_step_id
       if (trueBranchExitNodeId) {
         if (step.if_true_next_step_id) {
@@ -1377,7 +1381,7 @@ function processSteps(
         }
         // If no explicit next_step_id and branch is empty, we'll use default sequential flow (handled below)
       }
-      
+
       // Handle false branch next_step_id
       if (falseBranchExitNodeId) {
         if (step.if_false_next_step_id) {
@@ -1417,10 +1421,10 @@ function processSteps(
         }
         // If no explicit next_step_id and branch is empty, we'll use default sequential flow (handled below)
       }
-      
+
       // Add next_step_id edges if any were created
       edges.push(...nextStepEdges)
-      
+
       // Set lastExitNodeId to array of branch exit nodes (or single node if only one branch)
       // Only use this for sequential flow if next_step_id is not provided
       // If next_step_id is provided, we've already created explicit edges above
@@ -1449,7 +1453,7 @@ function processSteps(
       // Use evaluation node as source if it exists, otherwise use decision node
       // lastExitNodeId can be string | string[] | null, so we need to handle it properly
       const sourceNodeId = (typeof lastExitNodeId === 'string' ? lastExitNodeId : node.id)
-      
+
       // Handle true branch routing (if_true_next_step_id is REQUIRED for decision steps)
       if (step.if_true_next_step_id) {
         const targetNodeId = stepIdToNodeIdMap?.get(step.if_true_next_step_id)
@@ -1483,7 +1487,7 @@ function processSteps(
           })
         }
       }
-      
+
       // Handle false branch routing (if_false_next_step_id is REQUIRED for decision steps)
       if (step.if_false_next_step_id) {
         const targetNodeId = stepIdToNodeIdMap?.get(step.if_false_next_step_id)
@@ -1517,9 +1521,9 @@ function processSteps(
           })
         }
       }
-      
+
       edges.push(...decisionEdges)
-      
+
       // Decision steps handle their own routing - don't connect to next sequential step
       lastExitNodeId = null
     }
@@ -1530,7 +1534,7 @@ function processSteps(
       const humanInputEdges: WorkflowEdge[] = []
       // Use the human input node itself as source (no validation/learning nodes for human input)
       const sourceNodeId = node.id
-      
+
       // Determine routing based on response_type
       if (step.response_type === 'yesno') {
         // Yes/No routing
@@ -1566,7 +1570,7 @@ function processSteps(
             })
           }
         }
-        
+
         if (step.if_no_next_step_id) {
           const targetNodeId = stepIdToNodeIdMap?.get(step.if_no_next_step_id)
           if (targetNodeId) {
@@ -1604,7 +1608,7 @@ function processSteps(
         Object.entries(step.option_routes).forEach(([optionKey, nextStepId]) => {
           const targetNodeId = stepIdToNodeIdMap?.get(nextStepId)
           const optionLabel = step.options?.[parseInt(optionKey)] || optionKey
-          
+
           if (targetNodeId) {
             humanInputEdges.push({
               id: `${sourceNodeId}-human-input-option-${optionKey}-to-${targetNodeId}`,
@@ -1660,9 +1664,9 @@ function processSteps(
           }
         }
       }
-      
+
       edges.push(...humanInputEdges)
-      
+
       // Human input steps handle their own routing - don't connect to next sequential step
       lastExitNodeId = null
     }
@@ -1674,16 +1678,16 @@ function processSteps(
     if (isOrchestrationStep(step)) {
       const orchestratorEdges: WorkflowEdge[] = []
       const orchestratorSubAgentNodes: WorkflowNode[] = []
-      
+
       // Use learning/evaluation node as source if it exists, otherwise use orchestrator node
       const sourceNodeId = (typeof lastExitNodeId === 'string' ? lastExitNodeId : node.id)
-      
+
       // Create nodes for sub-agents (private to orchestration step)
       // Handle "end" route separately - it doesn't execute a sub-agent, just terminates workflow
       if (step.orchestration_routes && step.orchestration_routes.length > 0) {
         step.orchestration_routes.forEach((route) => {
           const isEndRoute = route.route_id?.toLowerCase() === "end"
-          
+
           // Handle "end" route - create edge to end node but skip sub-agent node creation
           if (isEndRoute) {
             // Helper to truncate condition to 10 words
@@ -1693,11 +1697,11 @@ function processSteps(
               if (words.length <= maxWords) return text
               return words.slice(0, maxWords).join(' ') + '...'
             }
-            
-            const conditionLabel = route.condition 
+
+            const conditionLabel = route.condition
               ? truncateToWords(route.condition, 10)
               : route.route_name || route.route_id || "End"
-            
+
             // Create edge from orchestrator to "end" node
             orchestratorEdges.push({
               id: `${node.id}-route-${route.route_id}-to-end`,
@@ -1715,28 +1719,30 @@ function processSteps(
             })
             return // Skip sub-agent node creation for "end" route
           }
-          
+
           if (route.sub_agent_step) {
             // Use route_id if available, otherwise use step ID or index as fallback
             const routeId = route.route_id || route.sub_agent_step.id || String(step.orchestration_routes?.indexOf(route) ?? 0)
             const subAgentNodeId = `${node.id}-sub-agent-${routeId}`
-            
+
             // Get the stepIndex from the node data (parent routing step's index)
             const parentStepIndex = (node.data as OrchestratorNodeData).stepIndex
-            
+            const orchestratorNodeData = node.data as OrchestratorNodeData
+            const orchestratorTitle = orchestratorNodeData.title || step.title || `Orchestrator ${parentStepIndex + 1}`
+
             // Create sub-agent node directly (don't use stepToNode to avoid wrong ID generation)
             const subAgentStep = route.sub_agent_step
             const stepId = subAgentStep.id || subAgentNodeId
-            
+
             // Determine status
             let status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
             if (stepStatusMap && stepStatusMap.has(stepId)) {
               status = stepStatusMap.get(stepId)!
             }
-            
+
             // Determine change type
             const changeType = getChangeType(stepId, changes)
-            
+
             // Create the sub-agent node with correct ID from the start
             const subAgentNode: WorkflowNode = {
               id: subAgentNodeId,
@@ -1753,33 +1759,37 @@ function processSteps(
                 changeType,
                 validation_schema: subAgentStep.validation_schema, // Include validation schema for sub-agent
                 workspacePath,
-                selectedRunFolder
+                selectedRunFolder,
+                // Sub-agent specific info for display
+                parentOrchestratorTitle: orchestratorTitle,
+                routeName: route.route_name || undefined,
+                routeCondition: route.condition || undefined
               } as StepNodeData
             }
-            
+
             orchestratorSubAgentNodes.push(subAgentNode)
-            
+
             // Add learning node for sub-agent (sub-agents don't have validation, only learning)
             const agentConfigs = route.sub_agent_step.agent_configs as AgentConfigs | undefined
-            
+
             // Determine if code execution mode is enabled
             const stepCodeExecSetting = agentConfigs?.use_code_execution_mode
-            const useCodeExecutionMode = stepCodeExecSetting !== undefined 
-              ? stepCodeExecSetting 
+            const useCodeExecutionMode = stepCodeExecSetting !== undefined
+              ? stepCodeExecSetting
               : presetUseCodeExecutionMode
-            
+
             // Sub-agents always have learning enabled (unless explicitly disabled)
-            const hasLearning = useCodeExecutionMode 
+            const hasLearning = useCodeExecutionMode
               ? true  // Always enabled in code exec mode
               : !agentConfigs?.disable_learning
-            
+
             let subAgentExitNodeId = subAgentNodeId
-            
+
             if (hasLearning) {
               // Get learning LLM provider and model
               const learningLLM = agentConfigs?.learning_llm || presetLearningLLM
               const learningLLMInfo = getLLMProviderAndModel(learningLLM, presetLLMConfig, availableLLMs)
-              
+
               const learningNodeId = `${subAgentNodeId}-learning`
               const learningNode: WorkflowNode = {
                 id: learningNodeId,
@@ -1795,7 +1805,7 @@ function processSteps(
                 } as LearningNodeData
               }
               orchestratorSubAgentNodes.push(learningNode)
-              
+
               // Edge from sub-agent to learning
               orchestratorEdges.push({
                 id: `${subAgentNodeId}-to-learning`,
@@ -1805,10 +1815,10 @@ function processSteps(
                 animated: false,
                 style: { stroke: '#f59e0b', strokeWidth: 2 }
               })
-              
+
               subAgentExitNodeId = learningNodeId
             }
-            
+
             // Helper to truncate condition to 10 words
             const truncateToWords = (text: string, maxWords: number): string => {
               if (!text) return ''
@@ -1816,13 +1826,13 @@ function processSteps(
               if (words.length <= maxWords) return text
               return words.slice(0, maxWords).join(' ') + '...'
             }
-            
+
             // Connect orchestrator node to sub-agent (from orchestrator node's bottom handle to sub-agent's top)
             // Show condition on edge (truncated to 10 words)
-            const conditionLabel = route.condition 
+            const conditionLabel = route.condition
               ? truncateToWords(route.condition, 10)
               : route.route_name || route.route_id
-            
+
             orchestratorEdges.push({
               id: `${node.id}-route-${route.route_id}-to-sub-agent`,
               source: node.id,
@@ -1838,7 +1848,7 @@ function processSteps(
               style: { stroke: '#3b82f6', strokeWidth: 2, strokeDasharray: '5,5' }, // Dashed to show it's conditional
               animated: false
             })
-            
+
             // Connect sub-agent back to orchestrator node (sub-agents always return)
             orchestratorEdges.push({
               id: `${subAgentExitNodeId}-return-to-${node.id}`,
@@ -1856,10 +1866,10 @@ function processSteps(
           }
         })
       }
-      
+
       // Add sub-agent nodes to the nodes array
       nodes.push(...orchestratorSubAgentNodes)
-      
+
       // Orchestrator steps connect to next_step_id when success criteria is met (for normal completion)
       // Note: "end" route edges are created above when processing routes
       if (step.next_step_id) {
@@ -1891,9 +1901,9 @@ function processSteps(
           })
         }
       }
-      
+
       edges.push(...orchestratorEdges)
-      
+
       // Orchestrator steps handle their own routing - don't connect to next sequential step
       lastExitNodeId = null
     }
@@ -1914,17 +1924,17 @@ function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: Step
  */
 function createDependencyEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
   const edges: WorkflowEdge[] = []
-  
+
   // Filter to only step-type nodes (not validation/learning)
   const stepNodes = nodes.filter(isStepTypeNode)
-  
+
   // Create a map of context_output to node ID
   const outputToNodeMap = new Map<string, string>()
   stepNodes.forEach(node => {
     const step = node.data.step
     if (step.context_output) {
-      const outputs = Array.isArray(step.context_output) 
-        ? step.context_output 
+      const outputs = Array.isArray(step.context_output)
+        ? step.context_output
         : [step.context_output]
       outputs.forEach((output: string) => {
         outputToNodeMap.set(output, node.id)
@@ -2016,12 +2026,12 @@ function getPrerequisiteRules(step: PlanStep): PrerequisiteRule[] | undefined {
  */
 function createPrerequisiteEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
   const edges: WorkflowEdge[] = []
-  
+
   // Filter to validation nodes, learning nodes, and step-type nodes
   const validationNodes = nodes.filter(node => node.type === 'validation')
   const learningNodes = nodes.filter(node => node.type === 'learning')
   const stepNodes = nodes.filter(isStepTypeNode)
-  
+
   // Create a map of step ID to step node ID
   const stepIdToNodeMap = new Map<string, string>()
   stepNodes.forEach(node => {
@@ -2055,7 +2065,7 @@ function createPrerequisiteEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
 
   // Track edges per target step to assign different handles and prevent overlapping
   const targetEdgeCounts = new Map<string, number>()
-  
+
   // Helper function to create prerequisite edge
   const createPrerequisiteEdge = (
     sourceNodeId: string,
@@ -2068,13 +2078,13 @@ function createPrerequisiteEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
     // Get current count for this target to assign handle position
     const currentCount = targetEdgeCounts.get(targetStepNodeId) || 0
     targetEdgeCounts.set(targetStepNodeId, currentCount + 1)
-    
+
     // Assign handle positions to spread edges horizontally along bottom
     // Use modulo to cycle through handle positions if many edges
     const handlePositions = ['left', 'middle', 'right']
     const handleIndex = currentCount % handlePositions.length
     const finalTargetHandle = targetHandle || `prereq-target-${handlePositions[handleIndex]}`
-    
+
     // Use description as label (truncate if too long, but allow more characters)
     // Split long text into multiple lines for better readability
     let label = rule.description
@@ -2101,27 +2111,27 @@ function createPrerequisiteEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
         label = lines.join('\n')
       }
     }
-    
-            edges.push({
-              id: `prereq-${sourceNodeId}-to-${targetStepNodeId}-${depStepId}-${currentCount}`,
-              source: sourceNodeId,
-              target: targetStepNodeId,
-              sourceHandle: sourceHandle,
-              targetHandle: finalTargetHandle,
+
+    edges.push({
+      id: `prereq-${sourceNodeId}-to-${targetStepNodeId}-${depStepId}-${currentCount}`,
+      source: sourceNodeId,
+      target: targetStepNodeId,
+      sourceHandle: sourceHandle,
+      targetHandle: finalTargetHandle,
       type: 'smoothstep',
       style: { stroke: '#f59e0b', strokeDasharray: '5,5', strokeWidth: 2, opacity: 0.8 },
       animated: false,
       label: label,
-      labelStyle: { 
-        fill: '#f59e0b', 
-        fontSize: 8, 
+      labelStyle: {
+        fill: '#f59e0b',
+        fontSize: 8,
         fontWeight: 600,
         whiteSpace: 'pre-line',
         textAlign: 'center',
         maxWidth: '200px'
       },
-      labelBgStyle: { 
-        fill: '#fef3c7', 
+      labelBgStyle: {
+        fill: '#fef3c7',
         fillOpacity: 0.95,
         stroke: '#f59e0b',
         strokeWidth: 1
@@ -2131,27 +2141,27 @@ function createPrerequisiteEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
       labelShowBg: true
     })
   }
-  
+
   // Prerequisite detection happens during execution (via detect_prerequisite_failure tool call)
   // Create prerequisite edges from step/learning nodes (not from validation nodes)
   stepNodes.forEach(stepNode => {
     const step = stepNodeIdToStepMap.get(stepNode.id)
     if (!step) return
-    
+
     // Check for prerequisite rules in agent_configs first, then fall back to top level (for backward compatibility)
     const enablePrerequisiteDetection = getEnablePrerequisiteDetection(step)
     const prerequisiteRules = getPrerequisiteRules(step)
-    
+
     // Only process if prerequisite detection is enabled and rules exist
     if (!enablePrerequisiteDetection || !prerequisiteRules || prerequisiteRules.length === 0) {
       return
     }
-    
+
     // Find the appropriate source node: learning node if exists, otherwise step node
     // Prerequisite detection happens during execution, so edges come from execution/learning nodes
     const learningNodeId = parentStepIdToLearningNodeMap.get(stepNode.id)
     const sourceNodeId = learningNodeId || stepNode.id
-    
+
     prerequisiteRules.forEach((rule: { depends_on_step: string; description: string }) => {
       const depStepId = rule.depends_on_step
       if (depStepId) {
@@ -2166,6 +2176,31 @@ function createPrerequisiteEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
         } else if (targetStepNodeId === stepNode.id) {
           // Skip self-reference
         } else {
+          // CRITICAL: Verify target node exists and is a StepNode (type 'step') before creating edge
+          // Only StepNode (type 'step') has prerequisite target handles (prereq-target-left, prereq-target-middle, prereq-target-right)
+          // Other step-type nodes (conditional, decision, loop, orchestrator, human_input) don't have these handles
+          const targetNode = nodes.find(node => node.id === targetStepNodeId)
+          if (!targetNode) {
+            console.warn('[PrerequisiteEdges] Target node not found in nodes array:', {
+              targetStepNodeId,
+              depStepId,
+              stepId: step.id,
+              stepTitle: step.title
+            })
+            return
+          }
+          
+          if (targetNode.type !== 'step') {
+            console.warn('[PrerequisiteEdges] Target node is not a StepNode (type "step") - missing prerequisite target handles:', {
+              targetStepNodeId,
+              targetNodeType: targetNode.type,
+              depStepId,
+              stepId: step.id,
+              stepTitle: step.title
+            })
+            return
+          }
+          
           // Use step or learning node as source (execution node)
           const sourceHandleIndex = (targetEdgeCounts.get(targetStepNodeId) || 0) % 3
           const handlePositions = ['left', 'middle', 'right']
@@ -2185,28 +2220,28 @@ function createPrerequisiteEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
  * Hook to convert plan.json to React Flow nodes and edges
  */
 export function usePlanToFlow(
-  plan: PlanningResponse | null, 
+  plan: PlanningResponse | null,
   options: UsePlanToFlowOptions = {}
 ): UsePlanToFlowResult {
-  const { 
+  const {
     showDependencyEdges = false,
     showPrerequisiteEdges = true, // Always show prerequisite edges by default
-    changes = null, 
-    onRunFromStep, 
-    onOpenSidebar, 
-    isExecuting = false, 
-    completedStepIndices = [], 
+    changes = null,
+    onRunFromStep,
+    onOpenSidebar,
+    isExecuting = false,
+    completedStepIndices = [],
     stepStatusMap,
     variablesManifest = null,
     onOpenVariablesSidebar,
     isLoadingVariables = false
   } = options
-  
+
   // Get preset for code execution mode default
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const customPresets = useGlobalPresetStore(state => state.customPresets)
   const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
-  
+
   const activePreset = useMemo(() => {
     if (activePresetId) {
       const customPreset = customPresets.find(p => p.id === activePresetId)
@@ -2216,17 +2251,35 @@ export function usePlanToFlow(
     }
     return null
   }, [activePresetId, customPresets, predefinedPresets])
-  
+
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
-  
+
   // Get preset LLM configs
   const presetLLMConfig = activePreset?.llmConfig || undefined
   const presetValidationLLM = activePreset?.llmConfig?.validation_llm
   const presetLearningLLM = activePreset?.llmConfig?.learning_llm
-  
+
   // Get available LLMs for model name formatting
   const { availableLLMs } = useLLMStore()
-  
+
+  // Convert serialized stepStatusMap to Map if needed, and create stable reference for dependency comparison
+  const stepStatusMapSerialized = useMemo(() => {
+    if (!stepStatusMap) return null
+    // If it's already a Map, serialize it for stable comparison
+    if (stepStatusMap instanceof Map) {
+      return Object.fromEntries(stepStatusMap)
+    }
+    // If it's already an object, return as-is
+    return stepStatusMap
+  }, [stepStatusMap])
+
+  // Convert serialized stepStatusMap back to Map for use in processing
+  const stepStatusMapAsMap = useMemo(() => {
+    if (!stepStatusMapSerialized) return undefined
+    // Convert object back to Map
+    return new Map(Object.entries(stepStatusMapSerialized)) as Map<string, 'pending' | 'running' | 'completed' | 'failed'>
+  }, [stepStatusMapSerialized])
+
   return useMemo(() => {
     if (!plan || !plan.steps || plan.steps.length === 0) {
       return { nodes: [], edges: [] }
@@ -2252,7 +2305,7 @@ export function usePlanToFlow(
     const stepIdToNodeIdMap = new Map<string, string>()
     const buildStepIdMap = (steps: PlanStep[], parentId?: string, branchType?: 'true' | 'false') => {
       steps.forEach((step, index) => {
-        const nodeId = parentId 
+        const nodeId = parentId
           ? `${parentId}-${branchType}-${index}`
           : step.id || `step-${index}`
         if (step.id) {
@@ -2260,14 +2313,14 @@ export function usePlanToFlow(
         }
         // Recursively process branch steps
         if (isConditionalStep(step)) {
-        if (isConditionalStep(step)) {
-          if (step.if_true_steps) {
-            buildStepIdMap(step.if_true_steps, nodeId, 'true')
+          if (isConditionalStep(step)) {
+            if (step.if_true_steps) {
+              buildStepIdMap(step.if_true_steps, nodeId, 'true')
+            }
+            if (step.if_false_steps) {
+              buildStepIdMap(step.if_false_steps, nodeId, 'false')
+            }
           }
-          if (step.if_false_steps) {
-            buildStepIdMap(step.if_false_steps, nodeId, 'false')
-          }
-        }
         }
       })
     }
@@ -2275,17 +2328,17 @@ export function usePlanToFlow(
 
     // Process all steps to create nodes and sequential edges (with change highlighting)
     const { nodes: processedNodes, edges: sequentialEdges } = processSteps(
-      plan.steps, 
-      undefined, 
-      undefined, 
-      changes, 
+      plan.steps,
+      undefined,
+      undefined,
+      changes,
       presetUseCodeExecutionMode,
       presetLLMConfig,
       presetValidationLLM,
       presetLearningLLM,
       availableLLMs,
       completedStepIndices,
-      stepStatusMap,
+      stepStatusMapAsMap,
       options.workspacePath,
       options.selectedRunFolder,
       stepIdToNodeIdMap,
@@ -2345,7 +2398,7 @@ export function usePlanToFlow(
 
     // Create edges: Start -> Execution Settings -> Variables -> First step (or End if no steps)
     const edges: WorkflowEdge[] = []
-    
+
     // Start to Execution Settings
     edges.push({
       id: 'start-to-execution-settings',
@@ -2354,7 +2407,7 @@ export function usePlanToFlow(
       type: 'smoothstep',
       style: { stroke: '#6b7280', strokeWidth: 2 }
     })
-    
+
     // Execution Settings to Variables
     edges.push({
       id: 'execution-settings-to-variables',
@@ -2396,11 +2449,11 @@ export function usePlanToFlow(
     if (topLevelNodes.length > 0) {
       // Find the last node - could be learning, validation, or step
       const lastNode = topLevelNodes[topLevelNodes.length - 1]
-      
+
       // Check if it's a step-type node and if it has a condition
       const isStepType = isStepTypeNode(lastNode)
       const hasCondition = isStepType && isConditionalStep(lastNode.data.step)
-      
+
       if (!hasCondition) {
         // Regular step - connect to end
         edges.push({
@@ -2414,29 +2467,29 @@ export function usePlanToFlow(
         // Conditional step - check if branch exit nodes need to connect to end
         const conditionalStep = lastNode.data.step as PlanStep
         const stepId = conditionalStep.id || lastNode.id
-        
+
         // Check which edges already exist to "end" (from explicit next_step_id)
         const existingEndEdges = edges.filter(e => e.target === 'end' && (
-          e.id.includes(stepId) || 
+          e.id.includes(stepId) ||
           e.id.includes(lastNode.id) ||
           e.source === lastNode.id
         ))
-        
+
         // Find branch exit nodes that need connection to end
         // These are nodes that don't already have an edge to "end" or to another step
         const branchExitNodes: string[] = []
-        
+
         // Check true branch
         if (isConditionalStep(conditionalStep) && conditionalStep.if_true_steps && conditionalStep.if_true_steps.length > 0) {
           // Branch has steps - find the last node in the branch
-          const trueBranchNodes = processedNodes.filter(n => 
-            n.id.startsWith(`${lastNode.id}-true-`) && 
+          const trueBranchNodes = processedNodes.filter(n =>
+            n.id.startsWith(`${lastNode.id}-true-`) &&
             !n.id.includes('-false-')
           )
           if (trueBranchNodes.length > 0) {
             const lastTrueNode = trueBranchNodes[trueBranchNodes.length - 1]
             // Check if this node already has an edge to end or to another step
-            const hasConnection = edges.some(e => 
+            const hasConnection = edges.some(e =>
               e.source === lastTrueNode.id && (e.target === 'end' || !e.target.includes('-true-') && !e.target.includes('-false-'))
             )
             if (!hasConnection && (!isConditionalStep(conditionalStep) || !conditionalStep.if_true_next_step_id)) {
@@ -2445,25 +2498,25 @@ export function usePlanToFlow(
           }
         } else {
           // Empty true branch - conditional node itself is the exit
-          const hasConnection = existingEndEdges.some(e => 
+          const hasConnection = existingEndEdges.some(e =>
             e.id.includes('true') || (e.source === lastNode.id && e.id.includes('true'))
           )
           if (!hasConnection && (!isConditionalStep(conditionalStep) || !conditionalStep.if_true_next_step_id)) {
             branchExitNodes.push(lastNode.id)
           }
         }
-        
+
         // Check false branch
         if (isConditionalStep(conditionalStep) && conditionalStep.if_false_steps && conditionalStep.if_false_steps.length > 0) {
           // Branch has steps - find the last node in the branch
-          const falseBranchNodes = processedNodes.filter(n => 
-            n.id.startsWith(`${lastNode.id}-false-`) && 
+          const falseBranchNodes = processedNodes.filter(n =>
+            n.id.startsWith(`${lastNode.id}-false-`) &&
             !n.id.includes('-true-')
           )
           if (falseBranchNodes.length > 0) {
             const lastFalseNode = falseBranchNodes[falseBranchNodes.length - 1]
             // Check if this node already has an edge to end or to another step
-            const hasConnection = edges.some(e => 
+            const hasConnection = edges.some(e =>
               e.source === lastFalseNode.id && (e.target === 'end' || !e.target.includes('-true-') && !e.target.includes('-false-'))
             )
             if (!hasConnection && (!isConditionalStep(conditionalStep) || !conditionalStep.if_false_next_step_id)) {
@@ -2473,7 +2526,7 @@ export function usePlanToFlow(
         } else {
           // Empty false branch - conditional node itself is the exit (if not already added)
           if (!branchExitNodes.includes(lastNode.id)) {
-            const hasConnection = existingEndEdges.some(e => 
+            const hasConnection = existingEndEdges.some(e =>
               e.id.includes('false') || (e.source === lastNode.id && e.id.includes('false'))
             )
             if (!hasConnection && (!isConditionalStep(conditionalStep) || !conditionalStep.if_false_next_step_id)) {
@@ -2481,7 +2534,7 @@ export function usePlanToFlow(
             }
           }
         }
-        
+
         // Connect branch exit nodes to end
         branchExitNodes.forEach((exitNodeId, index) => {
           // Determine label based on which branch this is
@@ -2489,10 +2542,10 @@ export function usePlanToFlow(
             ? true
             : exitNodeId.includes('-true-') || (exitNodeId === lastNode.id && isConditionalStep(conditionalStep) && conditionalStep.if_true_steps && conditionalStep.if_true_steps.length === 0)
           const isFalseBranch = !isTrueBranch && (
-            exitNodeId.includes('-false-') || 
+            exitNodeId.includes('-false-') ||
             (exitNodeId === lastNode.id && isConditionalStep(conditionalStep) && conditionalStep.if_false_steps && conditionalStep.if_false_steps.length === 0)
           )
-          
+
           edges.push({
             id: `${exitNodeId}-to-end-conditional-${index}`,
             source: exitNodeId,
@@ -2510,9 +2563,9 @@ export function usePlanToFlow(
             } : undefined,
             labelBgPadding: isTrueBranch || isFalseBranch ? [4, 4] as [number, number] : undefined,
             labelBgBorderRadius: isTrueBranch || isFalseBranch ? 4 : undefined,
-            style: { 
-              stroke: isTrueBranch ? '#22c55e' : isFalseBranch ? '#ef4444' : '#6b7280', 
-              strokeWidth: 2 
+            style: {
+              stroke: isTrueBranch ? '#22c55e' : isFalseBranch ? '#ef4444' : '#6b7280',
+              strokeWidth: 2
             }
           })
         })
@@ -2521,10 +2574,10 @@ export function usePlanToFlow(
 
     // Apply dagre layout
     const layoutedResult = layoutWithDagre(nodes, edges)
-    
+
     // Position sub-agents vertically below their parent orchestrator nodes
     const orchestratorNodeMap = new Map<string, { nodeIndex: number; subAgentIndices: number[] }>()
-    
+
     // Find all orchestrator nodes and their sub-agents by index
     layoutedResult.nodes.forEach((node, index) => {
       if (node.type === 'orchestrator') {
@@ -2538,12 +2591,12 @@ export function usePlanToFlow(
         }
       }
     })
-    
+
     // Position sub-agents vertically below their parent orchestrator node
     orchestratorNodeMap.forEach(({ nodeIndex: orchestratorNodeIndex, subAgentIndices }) => {
       const orchestratorNode = layoutedResult.nodes[orchestratorNodeIndex]
       const orchestratorDimensions = NODE_DIMENSIONS.orchestrator || NODE_DIMENSIONS.step
-      
+
       // Find the bottom-most node related to the orchestrator node (including validation/learning nodes)
       let orchestratorBottom = orchestratorNode.position.y + orchestratorDimensions.height
       layoutedResult.nodes.forEach((n) => {
@@ -2555,20 +2608,20 @@ export function usePlanToFlow(
           }
         }
       })
-      
+
       const verticalSpacing = 1500 // Space between orchestrator node and sub-agents (increased from 1200)
       const horizontalSpacing = 120 // Space between sub-agents horizontally (increased from 100)
-      
+
       // All sub-agents should be at the same Y position (same horizontal line)
       const subAgentY = orchestratorBottom + verticalSpacing
-      
+
       // Calculate total width needed for all sub-agents and their learning nodes
       let totalSubAgentWidth = 0
       const subAgentWidths: number[] = []
       subAgentIndices.forEach((subAgentIndex) => {
         const subAgent = layoutedResult.nodes[subAgentIndex]
         const subAgentDimensions = NODE_DIMENSIONS[subAgent.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-        
+
         // Check if sub-agent has learning node to account for its width
         let subAgentTotalWidth = subAgentDimensions.width
         layoutedResult.nodes.forEach((n) => {
@@ -2577,23 +2630,23 @@ export function usePlanToFlow(
             subAgentTotalWidth += learningDimensions.width + 20 // Add learning node width + spacing
           }
         })
-        
+
         subAgentWidths.push(subAgentTotalWidth)
         totalSubAgentWidth += subAgentTotalWidth
         if (subAgentIndices.indexOf(subAgentIndex) < subAgentIndices.length - 1) {
           totalSubAgentWidth += horizontalSpacing // Add spacing between sub-agents
         }
       })
-      
+
       // Start X position to center all sub-agents relative to orchestrator node
       const startX = orchestratorNode.position.x + (orchestratorDimensions.width - totalSubAgentWidth) / 2
-      
+
       let currentX = startX
-      
+
       subAgentIndices.forEach((subAgentIndex, index) => {
         const subAgent = layoutedResult.nodes[subAgentIndex]
         const subAgentDimensions = NODE_DIMENSIONS[subAgent.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-        
+
         // Update the actual node in the array - all at same Y, different X
         layoutedResult.nodes[subAgentIndex] = {
           ...subAgent,
@@ -2602,7 +2655,7 @@ export function usePlanToFlow(
             y: subAgentY
           }
         }
-        
+
         // Also position validation/learning nodes for this sub-agent
         layoutedResult.nodes.forEach((n, nIndex) => {
           if (n.id.startsWith(subAgent.id + '-')) {
@@ -2616,12 +2669,12 @@ export function usePlanToFlow(
             }
           }
         })
-        
+
         // Move to next sub-agent position
         currentX += subAgentWidths[index] + horizontalSpacing
       })
     })
-    
+
     // After Dagre + orchestrator positioning, keep validation/learning/evaluation nodes
     // visually close to their parent step/decision nodes (but with overall higher spacing)
     const positionedNodes: WorkflowNode[] = layoutedResult.nodes.map(node => ({ ...node }))
@@ -2760,7 +2813,7 @@ export function usePlanToFlow(
 
     // Replace nodes with the adjusted positions
     layoutedResult.nodes = positionedNodes
-    
+
     // Apply global collision detection and resolution to fix any remaining overlaps
     // This handles overlaps from orchestrator sub-agents, conditional branches, loops, etc.
     const nodesBeforeCollision = layoutedResult.nodes.length
@@ -2769,13 +2822,13 @@ export function usePlanToFlow(
     if (nodesBeforeCollision !== nodesAfterCollision) {
       console.warn('[CollisionDetection] Node count changed during collision detection!', { before: nodesBeforeCollision, after: nodesAfterCollision })
     }
-    
+
     // Helper to determine if a step can run
     // All steps can run regardless of previous step completion
     const canStepRun = (): boolean => {
       return true
     }
-    
+
     // Inject onRunFromStep callback, onOpenSidebar callback, isExecuting state, canRun, workspacePath, and selectedRunFolder into step-type nodes
     // Also make validation, learning, and evaluation nodes non-draggable
     layoutedResult.nodes = layoutedResult.nodes.map(node => {
@@ -2797,21 +2850,14 @@ export function usePlanToFlow(
           }
         } as WorkflowNode
       }
-      
-      // Make validation, learning, and evaluation nodes non-draggable
-      // They should only move with their parent nodes
-      if (node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation') {
-        return {
-          ...node,
-          draggable: false
-        } as WorkflowNode
-      }
-      
+
+      // Validation, learning, and evaluation nodes are now draggable (can be manually positioned)
+      // They can be moved independently or will move with their parent nodes
       return node
     }) as WorkflowNode[]
-    
+
     return layoutedResult
-  }, [plan, showDependencyEdges, showPrerequisiteEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetValidationLLM, presetLearningLLM, availableLLMs, onRunFromStep, onOpenSidebar, isExecuting, completedStepIndices, stepStatusMap, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables])
+  }, [plan, showDependencyEdges, showPrerequisiteEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetValidationLLM, presetLearningLLM, availableLLMs, onRunFromStep, onOpenSidebar, isExecuting, completedStepIndices, stepStatusMapAsMap, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables])
 }
 
 export default usePlanToFlow

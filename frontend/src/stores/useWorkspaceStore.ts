@@ -2,13 +2,14 @@ import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import type { PlannerFile, PollingEvent } from '../services/api-types'
 import { agentApi } from '../services/api'
-import { findFileInTree, extractFolderPaths, processHierarchicalFiles } from '../utils/fileUtils'
+import { extractFolderPaths, processHierarchicalFiles } from '../utils/fileUtils'
 import { getTypedEventData } from '../generated/event-types'
 import type { WorkspaceFileOperationEvent } from '../generated/events-bridge'
 
 interface WorkspaceState {
   // File Management
   files: PlannerFile[]
+  fileIndex: Map<string, PlannerFile> // O(1) lookup index for files by filepath/originalFilepath
   setFiles: (files: PlannerFile[]) => void
   loading: boolean
   setLoading: (loading: boolean) => void
@@ -128,8 +129,41 @@ interface WorkspaceState {
   resetWorkspaceState: () => void
 }
 
+// Helper function to build file index for O(1) lookups
+const buildFileIndex = (files: PlannerFile[]): Map<string, PlannerFile> => {
+  const index = new Map<string, PlannerFile>()
+  
+  const indexFile = (file: PlannerFile) => {
+    // Index by filepath (adjusted path in workflow mode)
+    index.set(file.filepath, file)
+    
+    // Also index by originalFilepath if available (original path)
+    if ('originalFilepath' in file && file.originalFilepath) {
+      index.set(file.originalFilepath, file)
+    }
+    
+    // Index by filename for relative filename lookups
+    const filename = file.filepath.split('/').pop() || file.filepath
+    if (filename && filename !== file.filepath) {
+      // Only add if filename is different from full path (avoid duplicates)
+      if (!index.has(filename) || index.get(filename) === file) {
+        index.set(filename, file)
+      }
+    }
+    
+    // Index children recursively
+    if (file.children && file.children.length > 0) {
+      file.children.forEach(indexFile)
+    }
+  }
+  
+  files.forEach(indexFile)
+  return index
+}
+
 const initialState = {
   files: [],
+  fileIndex: new Map<string, PlannerFile>(),
   loading: true,
   error: null,
   searchQuery: '',
@@ -180,7 +214,10 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       ...initialState,
       
       // File Management
-      setFiles: (files) => set({ files }),
+      setFiles: (files) => {
+        const index = buildFileIndex(files)
+        set({ files, fileIndex: index })
+      },
       setLoading: (loading) => set({ loading }),
       setError: (error) => set({ error }),
       
@@ -342,9 +379,11 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       setShowActionsDropdown: (showActionsDropdown) => set({ showActionsDropdown }),
       
       // File Operations
-      addFile: (file) => set((state) => ({
-        files: [...state.files, file]
-      })),
+      addFile: (file) => set((state) => {
+        const updatedFiles = [...state.files, file]
+        const index = buildFileIndex(updatedFiles)
+        return { files: updatedFiles, fileIndex: index }
+      }),
       removeFile: (filepath) => set((state) => {
         // IMPORTANT: In workflow mode, state.files is already filtered to only contain files
         // within the workflow folder (this filtering happens in Workspace component).
@@ -415,8 +454,12 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           removeFromExpanded(filepath)
         }
         
+        // Rebuild index after removal
+        const index = buildFileIndex(updatedFiles)
+        
         return { 
           files: updatedFiles,
+          fileIndex: index,
           expandedFolders: updatedExpanded // Preserve other expanded folders
         }
       }),
@@ -435,7 +478,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             return file
           })
         }
-        return { files: updateItem(state.files) }
+        const updatedFiles = updateItem(state.files)
+        const index = buildFileIndex(updatedFiles)
+        return { files: updatedFiles, fileIndex: index }
       }),
       
       // File fetching
@@ -448,7 +493,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             
             // Process hierarchical structure from API
             const processedFiles = processHierarchicalFiles(allFiles)
-            set({ files: processedFiles })
+            const index = buildFileIndex(processedFiles)
+            set({ files: processedFiles, fileIndex: index })
             
             // NOTE: Expansion restoration is now handled by the Workspace component
             // which has the necessary context about workflow mode and filtered files
@@ -466,7 +512,6 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       
       // File highlighting
       highlightFile: async (filepath: string) => {
-        console.log('[WorkspaceStore] highlightFile called:', filepath)
         const state = get()
         
         // Clear existing timeout
@@ -475,35 +520,27 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         }
         
         try {
-          // Check if file exists in current file tree
-          const fileExists = findFileInTree(state.files, filepath)
-          console.log('[WorkspaceStore] highlightFile - file check:', {
-            filepath,
-            fileExists,
-            currentHighlightedFile: state.highlightedFile,
-            totalFiles: state.files.length
-          })
+          // Use index for O(1) lookup instead of O(n) tree search
+          const normalizedPath = filepath.trim()
+          const fileExists = state.fileIndex.has(normalizedPath) || 
+                            state.fileIndex.has(normalizedPath.split('/').pop() || '')
           
           // If file doesn't exist, refresh the tree
           // Note: In workflow mode, the component will handle filtering
           // so we only refresh if the file is truly missing from raw data
           if (!fileExists) {
-            console.log('[WorkspaceStore] File not found in tree, refreshing:', filepath)
             await get().fetchFiles()
             
             // Wait a bit for state to update after refresh
             setTimeout(() => {
-              console.log('[WorkspaceStore] Setting highlightedFile after refresh:', filepath)
               set({ highlightedFile: filepath })
             }, 100)
           } else {
-            console.log('[WorkspaceStore] Setting highlightedFile (file exists):', filepath)
             set({ highlightedFile: filepath })
           }
           
           // Auto-clear highlight after 5 seconds
           const timeout = setTimeout(() => {
-            console.log('[WorkspaceStore] Clearing highlight after timeout:', filepath)
             set({ highlightedFile: null, highlightTimeout: null })
           }, 5000)
           
@@ -536,7 +573,6 @@ export const useWorkspaceStore = create<WorkspaceState>()(
                 const dataObj = nestedData as Record<string, unknown>
                 if (dataObj.operation || dataObj.filepath) {
                   eventData = nestedData as WorkspaceFileOperationEvent
-                  console.log('[WorkspaceStore] Using fallback data extraction')
                 }
               }
             }
@@ -546,7 +582,6 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               const directData = event.data as Record<string, unknown>
               if (directData.operation || directData.filepath) {
                 eventData = directData as WorkspaceFileOperationEvent
-                console.log('[WorkspaceStore] Using direct data extraction')
               }
             }
             
@@ -564,18 +599,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             // Check should_highlight flag (defaults to true for backward compatibility)
             const shouldHighlight = eventData.should_highlight !== false
             
-            console.log('[WorkspaceStore] Processing workspace_file_operation event:', {
-              operation,
-              filepath,
-              folder: eventData.folder,
-              turn: eventData.turn,
-              server_name: eventData.server_name,
-              should_highlight: eventData.should_highlight,
-              willHighlight: shouldHighlight
-            })
-            
             if (!operation) {
-              console.warn('[WorkspaceStore] No operation in workspace_file_operation event')
               return true
             }
             
@@ -585,35 +609,26 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             
             if (operation === 'read' || operation === 'update' || operation === 'patch') {
               if (!filepath) {
-                console.warn('[WorkspaceStore] No filepath in event for operation:', operation)
                 return true
               }
               
               // Skip highlighting if should_highlight is false (e.g., for logs/ folder)
               if (!shouldHighlight) {
-                console.log('[WorkspaceStore] Skipping highlight for file (should_highlight=false):', filepath)
                 return true
               }
               
-              // Check if file exists in raw file tree, refresh if new, then highlight
+              // Use index for O(1) lookup instead of O(n) tree search
               const state = get()
-              const fileExists = findFileInTree(state.files, filepath)
-              console.log('[WorkspaceStore] File check for highlighting:', {
-                filepath,
-                fileExists,
-                operation,
-                totalFiles: state.files.length,
-                firstFewFiles: state.files.slice(0, 3).map(f => f.filepath)
-              })
+              const normalizedPath = filepath.trim()
+              const fileExists = state.fileIndex.has(normalizedPath) || 
+                                state.fileIndex.has(normalizedPath.split('/').pop() || '')
               
               // Always try to highlight - if file doesn't exist, refresh first
               if (!fileExists) {
                 // File not found - refresh tree to show it (especially for new files)
-                console.log('[WorkspaceStore] File not found, refreshing tree:', filepath)
                 get().fetchFiles().then(() => {
                   // Wait a bit longer for state to update after refresh
                   setTimeout(() => {
-                    console.log('[WorkspaceStore] Calling highlightFile after refresh:', filepath)
                     get().highlightFile(filepath)
                     // Expand folders to show the file (works with workflow folder filtering)
                     get().expandFoldersForFile(filepath)
@@ -628,7 +643,6 @@ export const useWorkspaceStore = create<WorkspaceState>()(
                 })
               } else {
                 // File exists - highlight and expand folders immediately
-                console.log('[WorkspaceStore] File exists, calling highlightFile:', filepath)
                 get().highlightFile(filepath)
                 get().expandFoldersForFile(filepath)
               }
@@ -650,12 +664,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               if (filepath) {
                 // Skip highlighting if should_highlight is false (e.g., for logs/ folder)
                 if (!shouldHighlight) {
-                  console.log('[WorkspaceStore] Skipping highlight for moved file (should_highlight=false):', filepath)
                   return true
                 }
                 
                 const state = get()
-                const fileExists = findFileInTree(state.files, filepath)
+                const normalizedPath = filepath.trim()
+                const fileExists = state.fileIndex.has(normalizedPath) || 
+                                  state.fileIndex.has(normalizedPath.split('/').pop() || '')
                 if (!fileExists) {
                   get().fetchFiles().then(() => {
                     setTimeout(() => {
@@ -691,9 +706,11 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       // Auto-scroll to file without highlighting
       scrollToFile: async (filepath: string) => {
         try {
-          // Check if file exists and refresh if needed
+          // Use index for O(1) lookup instead of O(n) tree search
           const state = get()
-          const fileExists = findFileInTree(state.files, filepath)
+          const normalizedPath = filepath.trim()
+          const fileExists = state.fileIndex.has(normalizedPath) || 
+                            state.fileIndex.has(normalizedPath.split('/').pop() || '')
           if (!fileExists) {
             // File not found, refresh the file list
             await get().fetchFiles()
@@ -757,6 +774,26 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           const lowerPath = folderPath.toLowerCase()
           return excludeFolders.some(excludeFolder => {
             const lowerExclude = excludeFolder.toLowerCase()
+            // For "logs", exclude if it's nested under iteration/group pattern
+            // Paths can be adjusted in workflow mode, so check for patterns like:
+            // - runs/iteration-x/group-x/logs (original)
+            // - iteration-x/group-x/logs (adjusted, if runs is workflow folder)
+            // - Any path ending with /logs that's under an iteration/group structure
+            if (lowerExclude === 'logs') {
+              // Check if path ends with /logs
+              const endsWithLogs = lowerPath.endsWith(`/${lowerExclude}`) || lowerPath === lowerExclude
+              if (!endsWithLogs) return false
+              
+              // Check if it's in an iteration/group structure
+              // Match patterns like: .../iteration-X/.../logs or .../group-X/.../logs
+              const hasIterationPattern = /iteration-\d+/.test(lowerPath)
+              // Also check for runs/ pattern (in case paths aren't adjusted)
+              const hasRunsPattern = lowerPath.includes('/runs/') || lowerPath.startsWith('runs/')
+              
+              // Exclude if it's in runs structure OR has iteration pattern
+              return hasIterationPattern || hasRunsPattern
+            }
+            // For other folders, check if path contains the folder name at any level
             return lowerPath.includes(`/${lowerExclude}`) || 
                    lowerPath.startsWith(lowerExclude) ||
                    lowerPath.endsWith(`/${lowerExclude}`)
@@ -768,7 +805,12 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             if (file.type === 'folder') {
               // Expand folders up to and including maxLevel (0-indexed, so maxLevel=4 means levels 0,1,2,3,4)
               // But skip excluded folders
-              if (currentLevel <= maxLevel && !shouldExcludeFolder(file.filepath)) {
+              // Check both filepath (adjusted) and originalFilepath (original) to catch logs folders
+              const filePathToCheck = file.filepath
+              const originalPathToCheck = ('originalFilepath' in file && file.originalFilepath) ? file.originalFilepath : null
+              const isExcluded = shouldExcludeFolder(filePathToCheck) || (originalPathToCheck && shouldExcludeFolder(originalPathToCheck))
+              
+              if (currentLevel <= maxLevel && !isExcluded) {
                 // Use filepath (which is adjusted in workflow mode) to match rendering
                 foldersToExpand.add(file.filepath)
               }
@@ -789,6 +831,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       // Reset all state
       resetWorkspaceState: () => set({
         ...initialState,
+        fileIndex: new Map<string, PlannerFile>(),
         expandedFolders: new Set<string>(),
         highlightTimeout: null
       })

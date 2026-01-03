@@ -59,6 +59,7 @@ export default function ServerSelectionDropdown({
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
+              type="button"
               variant="outline"
               size="sm"
               onClick={() => setIsOpen(!isOpen)}
@@ -93,6 +94,7 @@ export default function ServerSelectionDropdown({
                       Select Servers
                     </h3>
                     <Button
+                      type="button"
                       variant="ghost"
                       size="sm"
                       onClick={() => setIsOpen(false)}
@@ -105,6 +107,7 @@ export default function ServerSelectionDropdown({
                   {/* Quick Actions */}
                   <div className="flex gap-2">
                     <Button
+                      type="button"
                       variant="outline"
                       size="sm"
                       onClick={() => {
@@ -116,6 +119,7 @@ export default function ServerSelectionDropdown({
                       All
                     </Button>
                     <Button
+                      type="button"
                       variant="outline"
                       size="sm"
                       onClick={() => {
@@ -179,6 +183,7 @@ export default function ServerSelectionDropdown({
                   {/* Configure MCP Server Button */}
                   <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
                     <Button
+                      type="button"
                       variant="outline"
                       size="sm"
                       onClick={() => {

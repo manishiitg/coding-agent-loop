@@ -54,6 +54,8 @@ export interface AgentQueryRequest {
   enable_context_summarization?: boolean // Enable context summarization feature
   summarize_on_max_turns?: boolean // Automatically summarize when max turns is reached
   summary_keep_last_messages?: number // Number of recent messages to keep when summarizing (default: 8)
+  // Workspace access configuration
+  enable_workspace_access?: boolean // Enable/disable workspace file access tools (default: true)
 }
 
 export interface AgentQueryResponse {
@@ -466,6 +468,29 @@ export interface GitSyncResponse {
 }
 
 
+// Chat Session Configuration
+export interface ChatSessionConfig {
+  selected_servers?: string[];
+  enabled_servers?: string[];
+  use_code_execution_mode?: boolean;
+  enable_context_summarization?: boolean;
+  llm_config?: {
+    provider?: string;
+    model_id?: string;
+    fallback_models?: string[];
+    cross_provider_fallback?: {
+      provider: string;
+      models: string[];
+    };
+  };
+  file_context?: Array<{
+    name: string;
+    path: string;
+    type: 'file' | 'folder';
+  }>;
+  enable_workspace_access?: boolean;
+}
+
 // Chat History API types
 export interface ChatSession {
   id: string;
@@ -473,6 +498,7 @@ export interface ChatSession {
   title: string;
   agent_mode?: string;
   preset_query_id?: string;
+  config?: ChatSessionConfig; // Typed configuration
   created_at: string;
   completed_at?: string;
   status: string;
@@ -493,6 +519,8 @@ export interface ChatHistorySummary {
   session_id: string;
   title: string;
   agent_mode?: string;
+  preset_query_id?: string;
+  config?: ChatSessionConfig; // Typed configuration
   status: string;
   created_at: string;
   completed_at?: string;
@@ -502,14 +530,14 @@ export interface ChatHistorySummary {
 }
 
 export interface ListChatSessionsResponse {
-  sessions: ChatSession[];
+  sessions: ChatHistorySummary[]; // Backend returns ChatHistorySummary with total_events
   total: number;
   limit: number;
   offset: number;
 }
 
 export interface GetSessionEventsResponse {
-  events: ChatEvent[];
+  events: PollingEvent[]; // Same structure as polling API
   total: number;
   limit: number;
   offset: number;
@@ -544,13 +572,7 @@ export interface PresetLLMConfig {
   execution_llm?: AgentLLMConfig        // Default for execution agents
   validation_llm?: AgentLLMConfig       // Default for validation agents
   learning_llm?: AgentLLMConfig         // Default for learning agents
-  learning_reading_llm?: AgentLLMConfig // Default for learning reading agent
-  planning_llm?: AgentLLMConfig         // Default for planning agent
-  variable_extraction_llm?: AgentLLMConfig // Default for variable extraction agent
-  anonymization_llm?: AgentLLMConfig    // Default for anonymization agent
-  plan_improvement_llm?: AgentLLMConfig // Default for plan debugger agent
-  plan_tool_optimization_llm?: AgentLLMConfig // Default for plan tool optimization agent
-  learning_consolidation_llm?: AgentLLMConfig // Default for learning consolidation agent
+  phase_llm?: AgentLLMConfig            // Default for all phase agents (planning, anonymization, plan improvement, etc.)
 }
 
 // Preset Query API types
@@ -669,41 +691,6 @@ export interface WorkflowConstantsResponse {
   message: string;
 }
 
-// MCP Registry types
-export interface MCPRegistryServer {
-  id: string;
-  name: string;
-  description: string;
-  version: string;
-  author: string;
-  repository: string;
-  tags: string[];
-  category: string;
-  installation: {
-    command: string;
-    args: string[];
-    env?: Record<string, string>;
-    dependencies?: string[];
-  };
-  documentation: string;
-  examples: string[];
-}
-
-export interface MCPRegistrySearchParams {
-  query?: string;
-  category?: string;
-  tags?: string[];
-  limit?: number;
-  offset?: number;
-}
-
-export interface MCPRegistryResponse {
-  servers: MCPRegistryServer[];
-  total: number;
-  limit: number;
-  offset: number;
-} 
-
 // Workflow Run Folders API types
 export interface RunFolderInfo {
   name: string;
@@ -772,6 +759,10 @@ export interface ExecutionOptions {
   
   // Validation response persistence
   save_validation_responses?: boolean;  // If true, save validation responses to workspace validation folder (default: true)
+  
+  // Tool access control (global configuration)
+  disable_shell_exec_access?: boolean;  // If true, disable execute_shell_command tool access globally
+  disable_read_image_access?: boolean;  // If true, disable read_image tool access globally
   
   // Variable group execution options (for batch execution with multiple groups)
   enabled_group_ids?: string[];  // Group IDs to execute (if empty, uses groups' enabled flags)

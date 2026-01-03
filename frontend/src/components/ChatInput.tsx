@@ -1,7 +1,8 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect } from 'react'
-import { Send, Square, Code2, Sparkles } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Loader2, FolderOpen } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
+import { Checkbox } from './ui/checkbox'
 import FileContextDisplay from './FileContextDisplay'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import ServerSelectionDropdown from './ServerSelectionDropdown'
@@ -28,19 +29,23 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 }) => {
   // Store subscriptions
   const {
-    agentMode
+    agentMode,
+    setWorkspaceMinimized
   } = useAppStore()
   
-  const {
-    sessionId,
-    getActiveTab,
-    setTabConfig,
-    activeTabId
-  } = useChatStore()
+  // Use selectors to subscribe only to specific values, reducing re-renders
+  const activeTabId = useChatStore(state => state.activeTabId)
+  const setTabConfig = useChatStore(state => state.setTabConfig)
+  const sessionId = useChatStore(state => state.sessionId)
   
   // Get active tab and its config (ChatInput is only rendered in chat mode)
-  const activeTab = getActiveTab()
-  const tabConfig = activeTab?.config
+  // Use selector to get only the tab we need, preventing re-renders when other tabs change
+  const activeTab = useChatStore(state => 
+    activeTabId ? state.chatTabs[activeTabId] : undefined
+  )
+  
+  // Memoize tabConfig to prevent unnecessary re-renders
+  const tabConfig = useMemo(() => activeTab?.config, [activeTab?.config])
   
   // CRITICAL: Always use tab's status - never fall back to global to prevent mixing
   // If no active tab, this is an error condition (tabs should always exist)
@@ -53,82 +58,100 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }
   
   // Always use tab-specific config (ChatInput is only in chat mode)
-  const chatFileContext = tabConfig?.fileContext || []
-  const useCodeExecutionMode = tabConfig?.useCodeExecutionMode || false
+  // Memoize to prevent unnecessary re-renders when other config values change
+  const chatFileContext = useMemo(() => tabConfig?.fileContext || [], [tabConfig?.fileContext])
+  // Use ?? instead of || to preserve false values (user's selection)
+  // Only default to false if the value is undefined/null (not explicitly set)
+  const useCodeExecutionMode = useMemo(() => tabConfig?.useCodeExecutionMode ?? false, [tabConfig?.useCodeExecutionMode])
+  const enableWorkspaceAccess = useMemo(() => tabConfig?.enableWorkspaceAccess ?? true, [tabConfig?.enableWorkspaceAccess])
   
   // File context operations (always update tab config)
   const removeFileFromContext = useCallback((path: string) => {
-    if (activeTab) {
+    if (activeTabId && activeTab) {
       const newFileContext = chatFileContext.filter(f => f.path !== path)
-      setTabConfig(activeTab.tabId, { fileContext: newFileContext })
+      setTabConfig(activeTabId, { fileContext: newFileContext })
     }
-  }, [activeTab, chatFileContext, setTabConfig])
+  }, [activeTabId, activeTab, chatFileContext, setTabConfig])
   
   const clearFileContext = useCallback(() => {
-    if (activeTab) {
-      setTabConfig(activeTab.tabId, { fileContext: [] })
+    if (activeTabId) {
+      setTabConfig(activeTabId, { fileContext: [] })
     }
-  }, [activeTab, setTabConfig])
+  }, [activeTabId, setTabConfig])
   
   const addFileToContext = useCallback((file: { name: string; path: string; type: 'file' | 'folder' }) => {
-    if (activeTab) {
+    if (activeTabId && activeTab) {
       const newFileContext = [...chatFileContext, file]
-      setTabConfig(activeTab.tabId, { fileContext: newFileContext })
+      setTabConfig(activeTabId, { fileContext: newFileContext })
     }
-  }, [activeTab, chatFileContext, setTabConfig])
+  }, [activeTabId, activeTab, chatFileContext, setTabConfig])
   
   const setUseCodeExecutionMode = useCallback((enabled: boolean) => {
-    if (activeTab) {
-      setTabConfig(activeTab.tabId, { useCodeExecutionMode: enabled })
+    if (activeTabId) {
+      setTabConfig(activeTabId, { useCodeExecutionMode: enabled })
     }
-  }, [activeTab, setTabConfig])
+  }, [activeTabId, setTabConfig])
+
+  const setEnableWorkspaceAccess = useCallback((enabled: boolean) => {
+    if (activeTabId) {
+      setTabConfig(activeTabId, { enableWorkspaceAccess: enabled })
+      // Open workspace sidebar when workspace access is enabled
+      if (enabled) {
+        setWorkspaceMinimized(false)
+      }
+    }
+  }, [activeTabId, setTabConfig, setWorkspaceMinimized])
   
   // Get preset info for chat mode
   const { getActivePreset, activePresetIds, customPresets, predefinedPresets } = usePresetApplication()
   
-  // Local state for input to prevent global re-renders on every keystroke
-  // Sync with tab config
-  const [localQuery, setLocalQuery] = useState('')
+  // Get current input text directly from tab config (single source of truth)
+  const inputText = tabConfig?.inputText || ''
   
-  // Sync localQuery with tab config when tab changes
-  useEffect(() => {
-    if (tabConfig) {
-      setLocalQuery(tabConfig.inputText)
-    }
-  }, [activeTabId, tabConfig])
+  // Get queued messages from tab config
+  const queuedMessages = useMemo(() => tabConfig?.queuedMessages || [], [tabConfig?.queuedMessages])
   
   // State for summarization
   const [isSummarizing, setIsSummarizing] = useState(false)
   
   const {
-    enabledServers: availableServers
+    enabledServers: availableServers,
+    setSelectedServers: setGlobalSelectedServers
   } = useMCPStore()
   
-  // Use tab-specific servers
-  const manualSelectedServers = tabConfig?.selectedServers || []
+  // Use tab-specific servers - memoize to prevent re-renders
+  const manualSelectedServers = useMemo(() => tabConfig?.selectedServers || [], [tabConfig?.selectedServers])
   
-  // Server operations (always update tab config)
+  // Server operations (always update tab config AND sync to global MCP store for chat mode)
+  // This ensures new tabs inherit the user's manual server selection
   const onManualServerToggle = useCallback((server: string) => {
-    if (activeTab) {
+    if (activeTabId) {
       const newServers = manualSelectedServers.includes(server)
         ? manualSelectedServers.filter(s => s !== server)
         : [...manualSelectedServers, server]
-      setTabConfig(activeTab.tabId, { selectedServers: newServers })
+      setTabConfig(activeTabId, { selectedServers: newServers })
+      // Sync to global MCP store so new tabs inherit this selection
+      setGlobalSelectedServers(newServers)
     }
-  }, [activeTab, manualSelectedServers, setTabConfig])
+  }, [activeTabId, manualSelectedServers, setTabConfig, setGlobalSelectedServers])
   
   const onSelectAllServers = useCallback(() => {
-    if (activeTab) {
+    if (activeTabId) {
       // availableServers is already an array of server names (strings)
-      setTabConfig(activeTab.tabId, { selectedServers: [...availableServers] })
+      const allServers = [...availableServers]
+      setTabConfig(activeTabId, { selectedServers: allServers })
+      // Sync to global MCP store so new tabs inherit this selection
+      setGlobalSelectedServers(allServers)
     }
-  }, [activeTab, availableServers, setTabConfig])
+  }, [activeTabId, availableServers, setTabConfig, setGlobalSelectedServers])
   
   const onClearAllServers = useCallback(() => {
-    if (activeTab) {
-      setTabConfig(activeTab.tabId, { selectedServers: [] })
+    if (activeTabId) {
+      setTabConfig(activeTabId, { selectedServers: [] })
+      // Sync to global MCP store so new tabs inherit this selection
+      setGlobalSelectedServers([])
     }
-  }, [activeTab, setTabConfig])
+  }, [activeTabId, setTabConfig, setGlobalSelectedServers])
   
   const {
     availableLLMs,
@@ -140,7 +163,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // LLM selection (always update tab config)
   const onPrimaryLLMSelect = useCallback((llm: LLMOption) => {
-    if (activeTab) {
+    if (activeTabId) {
       // Get current config to preserve fallback models and cross-provider fallback
       const currentConfig = tabConfig?.llmConfig || {
         provider: 'openrouter',
@@ -155,9 +178,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         model_id: llm.model
       }
       
-      setTabConfig(activeTab.tabId, { llmConfig: newConfig })
+      setTabConfig(activeTabId, { llmConfig: newConfig })
     }
-  }, [activeTab, tabConfig?.llmConfig, setTabConfig])
+  }, [activeTabId, tabConfig?.llmConfig, setTabConfig])
 
   // Computed values - get LLM option from tab config
   const primaryLLM = useMemo(() => {
@@ -187,65 +210,103 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [commandSearchQuery, setCommandSearchQuery] = useState('')
   const [slashPosition, setSlashPosition] = useState(-1) // Position of / in text
 
+  // Auto-resize textarea based on content
+  const adjustTextareaHeight = useCallback(() => {
+    if (textareaRef.current) {
+      const textarea = textareaRef.current
+      // Reset height to auto to get correct scrollHeight
+      textarea.style.height = 'auto'
+      // Calculate new height (min 40px for 2 lines, max 100px)
+      // scrollHeight includes padding, so we get the exact content height
+      const newHeight = Math.min(Math.max(textarea.scrollHeight, 40), 100)
+      textarea.style.height = `${newHeight}px`
+    }
+  }, [])
+
   // Get active preset for chat mode (used for preset query sync and UI)
   const chatActivePreset = getActivePreset('chat')
   
-  // Sync localQuery with preset query when preset is selected
+  // Sync tab config inputText with preset query when preset is selected
   useEffect(() => {
     const activePresetId = activePresetIds['chat']
     
-    if (activePresetId) {
+    if (activePresetId && activeTabId) {
       // Find the preset
       const preset = customPresets.find(p => p.id === activePresetId) || 
                     predefinedPresets.find(p => p.id === activePresetId)
       
       if (preset && preset.query) {
-        // Sync localQuery with preset query
-        setLocalQuery(preset.query)
+        // Sync tab config with preset query
+        setTabConfig(activeTabId, { inputText: preset.query })
       }
-    } else {
-      // No preset active, clear localQuery
-      setLocalQuery('')
+    } else if (!activePresetId && activeTabId) {
+      // No preset active, clear input text
+      setTabConfig(activeTabId, { inputText: '' })
     }
-  }, [activePresetIds, customPresets, predefinedPresets])
+  }, [activePresetIds, customPresets, predefinedPresets, activeTabId, setTabConfig])
+
+  // Set initial height and auto-resize textarea when inputText changes
+  useEffect(() => {
+    if (textareaRef.current) {
+      // Set initial height to 2 lines (40px) if empty
+      if (!inputText || inputText.trim() === '') {
+        textareaRef.current.style.height = '40px'
+      } else {
+        adjustTextareaHeight()
+      }
+    }
+  }, [inputText, adjustTextareaHeight])
+  
+  // Set initial height on mount
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = '40px'
+    }
+  }, [])
+
+  // Open/close workspace sidebar based on workspace access setting
+  // Also close file dialog if workspace access is disabled
+  useEffect(() => {
+    if (enableWorkspaceAccess) {
+      setWorkspaceMinimized(false) // Open workspace sidebar
+    } else {
+      setWorkspaceMinimized(true) // Close workspace sidebar
+      // Close file dialog if workspace access is disabled
+      if (showFileDialog) {
+        setShowFileDialog(false)
+        setAtPosition(-1)
+        setFileSearchQuery('')
+      }
+    }
+  }, [enableWorkspaceAccess, setWorkspaceMinimized, showFileDialog])
 
   // Consolidated query selection logic
   const queryToSubmit = useMemo(() => {
-    return localQuery
-  }, [localQuery])
+    return inputText
+  }, [inputText])
 
   // Guard to prevent submission before session is ready
-  // Use active tab's status: allow submission if not streaming (completion is fine, user can continue conversation)
+  // Allow submission if not streaming, or allow queuing if streaming
   const canSubmit = useMemo(() => {
+    return queryToSubmit?.trim() && tabSessionId
+  }, [queryToSubmit, tabSessionId])
+  
+  // Can submit immediately (not streaming) or can queue (streaming)
+  const canSubmitImmediately = useMemo(() => {
     return queryToSubmit?.trim() && !isStreaming && tabSessionId
   }, [queryToSubmit, isStreaming, tabSessionId])
-  
-  // Debug logging for submission issues
-  React.useEffect(() => {
-    const hasValidQuery = Boolean(localQuery?.trim())
-    const canSubmitValue = queryToSubmit?.trim() && !isStreaming && tabSessionId
-    const submitButtonDisabledValue = !hasValidQuery || !tabSessionId
-    
-    console.log('[ChatInput] Session ID check:', {
-      activeTab: activeTab?.tabId,
-      tabSessionId: activeTab?.sessionId,
-      effectiveSessionId: tabSessionId,
-      canSubmit: canSubmitValue,
-      hasValidQuery,
-      submitButtonDisabled: submitButtonDisabledValue,
-      localQuery: localQuery?.substring(0, 50) // First 50 chars for debugging
-    })
-  }, [activeTab?.tabId, activeTab?.sessionId, tabSessionId, queryToSubmit, isStreaming, localQuery, canSubmit])
 
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value
-    setLocalQuery(newValue) // Update local state
     
-    // Also update tab config (debounced updates handled separately)
-    if (activeTab) {
-      setTabConfig(activeTab.tabId, { inputText: newValue })
+    // Update tab config directly - Zustand is optimized for frequent updates
+    if (activeTabId) {
+      setTabConfig(activeTabId, { inputText: newValue })
     }
+    
+    // Auto-resize textarea
+    adjustTextareaHeight()
 
     const cursorPosition = e.target.selectionStart || 0
     const textBeforeCursor = newValue.substring(0, cursorPosition)
@@ -289,8 +350,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         setCommandSearchQuery('')
       }
     }
-    // Check for @ symbol and update file dialog state (only if no / command active)
-    else if (lastAtIndex >= 0 && !showCommandDialog) {
+    // Check for @ symbol and update file dialog state (only if no / command active and workspace access is enabled)
+    else if (lastAtIndex >= 0 && !showCommandDialog && enableWorkspaceAccess) {
       const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1)
       const hasValidAt = textAfterAt === '' || textAfterAt.match(/^[a-zA-Z0-9/._\-\\]*$/)
 
@@ -343,7 +404,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     removedFiles.forEach(filePath => {
       removeFileFromContext(filePath)
     })
-  }, [chatFileContext, removeFileFromContext, showCommandDialog, activeTab, setTabConfig])
+  }, [chatFileContext, removeFileFromContext, showCommandDialog, activeTabId, setTabConfig, enableWorkspaceAccess, adjustTextareaHeight])
 
   // Handle manual summarization
   // If messageToSendAfter is provided, it will be sent as a user message after summarization completes
@@ -432,8 +493,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         isStreaming,
         activeTab: activeTab?.tabId,
         tabSessionId: activeTab?.sessionId,
-        localQuery: localQuery?.substring(0, 50),
-        localQueryLength: localQuery?.length
+        inputText: inputText?.substring(0, 50),
+        inputTextLength: inputText?.length
       }, null, 2))
       
       // Check for slash commands
@@ -450,7 +511,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           // If there's text before /summarize, send it after summarization
           // Otherwise, just summarize
           handleSummarize(textBeforeSummarize || undefined)
-          setLocalQuery('') // Clear input after command
+          if (activeTabId) {
+            setTabConfig(activeTabId, { inputText: '' }) // Clear input after command
+          }
         }
         return
       }
@@ -464,21 +527,33 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           // If there's text before /compact, send it after compaction
           // Otherwise, just compact
           handleCompact(textBeforeCompact || undefined)
-          setLocalQuery('') // Clear input after command
+          if (activeTabId) {
+            setTabConfig(activeTabId, { inputText: '' }) // Clear input after command
+          }
         }
         return
       }
       
-      if (canSubmit) {
-        console.log('[ChatInput] canSubmit is true, calling onSubmit:', queryToSubmit)
-        // Clear local state immediately for UI responsiveness (only for non-preset modes and when session is ready)
-        if (tabSessionId) {
-          setLocalQuery('')
+      if (canSubmitImmediately) {
+        console.log('[ChatInput] canSubmitImmediately is true, calling onSubmit:', queryToSubmit)
+        // Clear input text immediately
+        if (activeTabId) {
+          setTabConfig(activeTabId, { inputText: '' })
         }
-        // Call onSubmit with the query directly - no global state coordination needed!
+        // Call onSubmit with the query directly
         onSubmit(queryToSubmit)
+      } else if (canSubmit && isStreaming) {
+        // Queue message when streaming
+        console.log('[ChatInput] Chat is streaming, queuing message:', queryToSubmit)
+        if (activeTabId) {
+          const currentQueued = tabConfig?.queuedMessages || []
+          setTabConfig(activeTabId, { 
+            inputText: '', // Clear input text
+            queuedMessages: [...currentQueued, queryToSubmit.trim()] // Add to queue
+          })
+        }
       } else {
-        console.warn('[ChatInput] canSubmit is false, not submitting:', JSON.stringify({
+        console.warn('[ChatInput] Cannot submit:', JSON.stringify({
           hasQuery: Boolean(queryToSubmit?.trim()),
           queryLength: queryToSubmit?.length,
           isStreaming,
@@ -486,9 +561,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           sessionIdValue: tabSessionId,
           tabSessionId: activeTab?.sessionId,
           canSubmit,
+          canSubmitImmediately,
           activeTab: activeTab?.tabId,
-          localQuery: localQuery?.substring(0, 50),
-          localQueryLength: localQuery?.length
+          inputText: inputText?.substring(0, 50),
+          inputTextLength: inputText?.length
         }, null, 2))
       }
     }
@@ -499,16 +575,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const textarea = e.target as HTMLTextAreaElement
       const start = textarea.selectionStart
       const end = textarea.selectionEnd
-      const value = localQuery
+      const value = inputText
       const newValue = value.substring(0, start) + '\n' + value.substring(end)
-      setLocalQuery(newValue) // Only update local state
+      if (activeTabId) {
+        setTabConfig(activeTabId, { inputText: newValue })
+      }
       
       // Set cursor position after the newline
       setTimeout(() => {
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [localQuery, onSubmit, showFileDialog, showCommandDialog, tabSessionId, canSubmit, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTab?.tabId, activeTab?.sessionId, sessionId])
+  }, [inputText, onSubmit, showFileDialog, showCommandDialog, tabSessionId, canSubmit, canSubmitImmediately, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTabId, activeTab?.tabId, activeTab?.sessionId, sessionId, setTabConfig, adjustTextareaHeight, tabConfig?.queuedMessages])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -535,7 +613,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         // If there's text before /summarize, send it after summarization
         // Otherwise, just summarize
         handleSummarize(textBeforeSummarize || undefined)
-        setLocalQuery('') // Clear input after command
+        if (activeTabId) {
+          setTabConfig(activeTabId, { inputText: '' }) // Clear input after command
+        }
       }
       return
     }
@@ -549,39 +629,52 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         // If there's text before /compact, send it after compaction
         // Otherwise, just compact
         handleCompact(textBeforeCompact || undefined)
-        setLocalQuery('') // Clear input after command
+        if (activeTabId) {
+          setTabConfig(activeTabId, { inputText: '' }) // Clear input after command
+        }
       }
       return
     }
     
-    if (canSubmit) {
+    if (canSubmitImmediately) {
       console.log('[ChatInput] Calling onSubmit with query:', queryToSubmit)
-      // Clear local state immediately for UI responsiveness when observer is ready
-      if (tabSessionId) {
-        setLocalQuery('')
+      // Clear input text immediately
+      if (activeTabId) {
+        setTabConfig(activeTabId, { inputText: '' })
       }
-      // Call onSubmit with the query directly - no global state coordination needed!
+      // Call onSubmit with the query directly
       onSubmit(queryToSubmit)
+    } else if (canSubmit && isStreaming) {
+      // Queue message when streaming
+      console.log('[ChatInput] Chat is streaming, queuing message:', queryToSubmit)
+      if (activeTabId) {
+        const currentQueued = tabConfig?.queuedMessages || []
+        setTabConfig(activeTabId, { 
+          inputText: '', // Clear input text
+          queuedMessages: [...currentQueued, queryToSubmit.trim()] // Add to queue
+        })
+      }
     } else {
       console.warn('[ChatInput] Cannot submit:', {
         hasQuery: Boolean(queryToSubmit?.trim()),
         isStreaming,
-          hasSessionId: Boolean(tabSessionId),
-        canSubmit
+        hasSessionId: Boolean(tabSessionId),
+        canSubmit,
+        canSubmitImmediately
       })
     }
-  }, [canSubmit, tabSessionId, queryToSubmit, onSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, setLocalQuery, activeTab, sessionId])
+  }, [canSubmit, canSubmitImmediately, activeTabId, activeTab?.tabId, tabSessionId, queryToSubmit, onSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, setTabConfig, sessionId, tabConfig?.queuedMessages])
 
   // File selection handlers
   const handleCommandSelect = useCallback((command: string) => {
-    if (!textareaRef.current || slashPosition === -1) return
+    if (!textareaRef.current || slashPosition === -1 || !activeTabId) return
     
     // Replace / and search text with /command + space
-    const beforeSlash = localQuery.substring(0, slashPosition)
-    const afterSearch = localQuery.substring(slashPosition + 1 + commandSearchQuery.length)
+    const beforeSlash = inputText.substring(0, slashPosition)
+    const afterSearch = inputText.substring(slashPosition + 1 + commandSearchQuery.length)
     const newQuery = beforeSlash + '/' + command + ' ' + afterSearch
     
-    setLocalQuery(newQuery) // Only update local state
+    setTabConfig(activeTabId, { inputText: newQuery })
     setShowCommandDialog(false)
     setSlashPosition(-1)
     setCommandSearchQuery('')
@@ -595,17 +688,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textareaRef.current.setSelectionRange(cursorPosition, cursorPosition)
       }
     }, 0)
-  }, [localQuery, slashPosition, commandSearchQuery])
+  }, [inputText, slashPosition, commandSearchQuery, activeTabId, setTabConfig])
 
   const handleFileSelect = useCallback((file: PlannerFile) => {
-    if (!textareaRef.current || atPosition === -1) return
+    if (!textareaRef.current || atPosition === -1 || !activeTabId) return
     
     // Replace @ and search text with @filepath + space
-    const beforeAt = localQuery.substring(0, atPosition)
-    const afterSearch = localQuery.substring(atPosition + 1 + fileSearchQuery.length)
+    const beforeAt = inputText.substring(0, atPosition)
+    const afterSearch = inputText.substring(atPosition + 1 + fileSearchQuery.length)
     const newQuery = beforeAt + '@' + file.filepath + ' ' + afterSearch
     
-    setLocalQuery(newQuery) // Only update local state
+    setTabConfig(activeTabId, { inputText: newQuery })
     setShowFileDialog(false)
     setAtPosition(-1)
     setFileSearchQuery('')
@@ -635,7 +728,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textareaRef.current.setSelectionRange(cursorPosition, cursorPosition)
       }
     }, 0)
-  }, [localQuery, atPosition, fileSearchQuery, chatFileContext, addFileToContext, scrollToFile])
+  }, [inputText, atPosition, fileSearchQuery, chatFileContext, addFileToContext, scrollToFile, activeTabId, setTabConfig])
 
   const handleCommandDialogClose = useCallback(() => {
     setShowCommandDialog(false)
@@ -654,12 +747,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Removed editing preset query functionality - not needed for chat mode
 
   // Check if query is valid
-  const hasValidQuery = Boolean(localQuery?.trim())
+  const hasValidQuery = Boolean(inputText?.trim())
   const submitButtonDisabled = !hasValidQuery || !tabSessionId
   
   // Memoized placeholder
   const placeholder = useMemo(() => {
-    return "Ask me anything... I can use tools to help you! (Type /summarize to summarize, /compact to compact context, or 'text /command' to run command then send text)"
+    return "Ask me anything... I can use tools to help you! (Type /summarize to summarize)"
   }, [])
 
   return (
@@ -679,11 +772,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       )}
 
 
-      {/* Hint when no files in context */}
-      {chatFileContext.length === 0 && (
+      {/* Hint when no files in context - only show if workspace access is enabled */}
+      {chatFileContext.length === 0 && enableWorkspaceAccess && (
         <div className="px-4">
           <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-0.5 mb-0">
-            <span className="text-xs text-gray-500 dark:text-gray-400">
+            <span className="text-[10px] text-gray-500 dark:text-gray-400">
               💡 Click chat icon in workspace to add files, or type @ to search and add files
             </span>
           </div>
@@ -694,15 +787,43 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">
         <form onSubmit={handleSubmit} className="space-y-2">
           <div className="space-y-1">
+            {/* Queued messages indicator */}
+            {queuedMessages.length > 0 && (
+              <div className="space-y-1">
+                {queuedMessages.map((msg: string, index: number) => (
+                  <div key={index} className="flex items-start gap-2 px-2 py-1 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-xs text-blue-700 dark:text-blue-300">
+                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse mt-1.5 flex-shrink-0"></div>
+                    <span className="flex-1 break-words">
+                      <span className="font-medium">#{index + 1}:</span> "{msg}"
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (activeTabId) {
+                          const updated = queuedMessages.filter((_: string, i: number) => i !== index)
+                          setTabConfig(activeTabId, { queuedMessages: updated })
+                        }
+                      }}
+                      className="flex items-center justify-center w-5 h-5 rounded hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors flex-shrink-0 mt-0.5"
+                      title="Delete from queue"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             {/* Show text input */}
             <Textarea
               ref={textareaRef}
-              value={localQuery}
+              value={inputText}
               onChange={handleTextChange}
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
-              className="min-h-[60px] max-h-[100px] resize-none text-sm"
-              disabled={isStreaming || !tabSessionId}
+              className="!min-h-[40px] max-h-[100px] resize-none text-xs overflow-y-auto leading-[1.3] !py-1 !px-3 placeholder:text-xs"
+              disabled={isSummarizing || !tabSessionId}
               data-testid="chat-input-textarea"
             />
             <div className="flex justify-between items-center">
@@ -718,7 +839,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           <button
                             type="button"
                             onClick={() => setUseCodeExecutionMode(false)}
-                            disabled={isStreaming}
+                            disabled={isStreaming || isSummarizing}
                             data-testid="agent-mode-simple"
                             className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
                               !useCodeExecutionMode
@@ -739,7 +860,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           <button
                             type="button"
                             onClick={() => setUseCodeExecutionMode(true)}
-                            disabled={isStreaming}
+                            disabled={isStreaming || isSummarizing}
                             data-testid="agent-mode-code-exec"
                             className={`px-2 py-1 text-xs font-medium transition-colors ${
                               useCodeExecutionMode
@@ -768,16 +889,40 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       onServerToggle={onManualServerToggle}
                       onSelectAll={onSelectAllServers}
                       onClearAll={onClearAllServers}
-                      disabled={isStreaming}
+                      disabled={isStreaming || isSummarizing}
                     />
                     <LLMSelectionDropdown
                       availableLLMs={availableLLMs}
                       selectedLLM={primaryLLM}
                       onLLMSelect={onPrimaryLLMSelect}
                       onRefresh={onRefreshAvailableLLMs}
-                      disabled={isStreaming}
+                      disabled={isStreaming || isSummarizing}
                       openDirection="up"
                     />
+                    {/* Workspace Access Toggle */}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1.5 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md">
+                          <Checkbox
+                            id="workspace-access"
+                            checked={enableWorkspaceAccess}
+                            onCheckedChange={(checked) => setEnableWorkspaceAccess(checked === true)}
+                            disabled={isStreaming || isSummarizing}
+                            className="h-3.5 w-3.5"
+                          />
+                          <label
+                            htmlFor="workspace-access"
+                            className="text-xs font-medium cursor-pointer flex items-center gap-1 text-gray-700 dark:text-gray-300"
+                          >
+                            <FolderOpen className="w-3 h-3" />
+                            Workspace
+                          </label>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>{enableWorkspaceAccess ? 'Workspace file access enabled' : 'Workspace file access disabled'}</p>
+                      </TooltipContent>
+                    </Tooltip>
                   </div>
                 )}
                 
@@ -786,7 +931,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               {/* Show old buttons */}
               {(
                 <div className="flex items-center gap-2">
-                  {isStreaming ? (
+                  {isSummarizing ? (
+                    <div className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Summarizing...</span>
+                    </div>
+                  ) : isStreaming ? (
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button 
@@ -819,7 +969,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       </TooltipTrigger>
                       <TooltipContent>
                         <p>
-                          {!localQuery?.trim()
+                          {!inputText?.trim()
                             ? 'Type a message to send'
                             : !tabSessionId 
                               ? 'Session not ready yet' 

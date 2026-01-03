@@ -297,9 +297,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           }
         }
         
-        // Get all active sessions
-        const activeSessionsResponse = await agentApi.getActiveSessions()
-        const activeSessions = activeSessionsResponse.active_sessions || []
+        // Get all active sessions from cache
+        const { getActiveSessions } = useChatStore.getState()
+        const activeSessions = await getActiveSessions()
         
         if (activeSessions.length === 0) {
           return

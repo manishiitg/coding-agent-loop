@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"mcpagent/events"
@@ -13,9 +15,26 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// pendingEvent holds an event waiting to be batched
+type pendingEvent struct {
+	sessionID string
+	event     *events.AgentEvent
+	timestamp time.Time
+}
+
 // SQLiteDB implements the Database interface using SQLite
 type SQLiteDB struct {
 	db *sql.DB
+
+	// Batching infrastructure
+	batchMux         sync.Mutex
+	eventBuffer      map[string][]pendingEvent // sessionID -> []pendingEvent
+	chatSessionCache map[string]string         // sessionID -> chat_session_id (cached)
+	flushTicker      *time.Ticker
+	stopFlusher      chan struct{}
+	flushDone        chan struct{}
+	batchSizeLimit   int           // Maximum events per batch before flushing
+	flushInterval    time.Duration // Time interval for periodic flushing
 }
 
 // validateWhereClause ensures the WHERE clause only contains safe, parameterized conditions
@@ -77,7 +96,20 @@ func NewSQLiteDB(dbPath string) (*SQLiteDB, error) {
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	return &SQLiteDB{db: db}, nil
+	sqliteDB := &SQLiteDB{
+		db:               db,
+		eventBuffer:      make(map[string][]pendingEvent),
+		chatSessionCache: make(map[string]string),
+		batchSizeLimit:   50,                     // Flush when batch reaches 50 events
+		flushInterval:    500 * time.Millisecond, // Flush every 500ms
+		stopFlusher:      make(chan struct{}),
+		flushDone:        make(chan struct{}),
+	}
+
+	// Start background flusher
+	sqliteDB.startFlusher()
+
+	return sqliteDB, nil
 }
 
 // GetDB returns the underlying *sql.DB connection
@@ -89,10 +121,12 @@ func (s *SQLiteDB) GetDB() *sql.DB {
 // CreateChatSession creates a new chat session
 func (s *SQLiteDB) CreateChatSession(ctx context.Context, req *CreateChatSessionRequest) (*ChatSession, error) {
 	query := `
-		INSERT INTO chat_sessions (session_id, title, agent_mode, preset_query_id, status)
-		VALUES (?, ?, ?, ?, ?)
-		RETURNING id, session_id, title, agent_mode, preset_query_id, created_at, completed_at, status
+		INSERT INTO chat_sessions (session_id, title, agent_mode, preset_query_id, config, status)
+		VALUES (?, ?, ?, ?, ?, ?)
+		RETURNING id, session_id, title, agent_mode, preset_query_id, config, created_at, completed_at, status
 	`
+
+	log.Printf("[CREATE_CHAT_SESSION DEBUG] Creating session with SessionID: %s, Title: '%s' (length: %d), AgentMode: '%s'", req.SessionID, req.Title, len(req.Title), req.AgentMode)
 
 	// Handle empty preset_query_id by converting to NULL
 	var presetQueryID interface{}
@@ -102,13 +136,23 @@ func (s *SQLiteDB) CreateChatSession(ctx context.Context, req *CreateChatSession
 		presetQueryID = req.PresetQueryID
 	}
 
+	// Handle config - convert to JSON string or NULL
+	var configValue interface{}
+	if len(req.Config) == 0 {
+		configValue = nil
+	} else {
+		configValue = string(req.Config)
+	}
+
 	var session ChatSession
 	var agentModeStr *string
 	var presetQueryIDStr *string
-	err := s.db.QueryRowContext(ctx, query, req.SessionID, req.Title, req.AgentMode, presetQueryID, "active").Scan(
-		&session.ID, &session.SessionID, &session.Title, &agentModeStr, &presetQueryIDStr, &session.CreatedAt, &session.CompletedAt, &session.Status,
+	var configStr sql.NullString
+	err := s.db.QueryRowContext(ctx, query, req.SessionID, req.Title, req.AgentMode, presetQueryID, configValue, "active").Scan(
+		&session.ID, &session.SessionID, &session.Title, &agentModeStr, &presetQueryIDStr, &configStr, &session.CreatedAt, &session.CompletedAt, &session.Status,
 	)
 	if err != nil {
+		log.Printf("[CREATE_CHAT_SESSION ERROR] Failed to create chat session: %v", err)
 		return nil, fmt.Errorf("failed to create chat session: %w", err)
 	}
 
@@ -124,13 +168,22 @@ func (s *SQLiteDB) CreateChatSession(ctx context.Context, req *CreateChatSession
 		session.PresetQueryID = presetQueryIDStr
 	}
 
+	// Handle NULL config
+	if configStr.Valid {
+		session.Config = json.RawMessage(configStr.String)
+	} else {
+		session.Config = nil
+	}
+
+	log.Printf("[CREATE_CHAT_SESSION DEBUG] Successfully created session ID: %s, SessionID: %s, Title: '%s' (length: %d)", session.ID, session.SessionID, session.Title, len(session.Title))
+
 	return &session, nil
 }
 
 // GetChatSession retrieves a chat session by session ID
 func (s *SQLiteDB) GetChatSession(ctx context.Context, sessionID string) (*ChatSession, error) {
 	query := `
-		SELECT id, session_id, title, agent_mode, preset_query_id, created_at, completed_at, status
+		SELECT id, session_id, title, agent_mode, preset_query_id, config, created_at, completed_at, status
 		FROM chat_sessions
 		WHERE session_id = ?
 	`
@@ -138,8 +191,9 @@ func (s *SQLiteDB) GetChatSession(ctx context.Context, sessionID string) (*ChatS
 	var session ChatSession
 	var agentModeStr *string
 	var presetQueryIDStr *string
+	var configStr sql.NullString
 	err := s.db.QueryRowContext(ctx, query, sessionID).Scan(
-		&session.ID, &session.SessionID, &session.Title, &agentModeStr, &presetQueryIDStr, &session.CreatedAt, &session.CompletedAt, &session.Status,
+		&session.ID, &session.SessionID, &session.Title, &agentModeStr, &presetQueryIDStr, &configStr, &session.CreatedAt, &session.CompletedAt, &session.Status,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -160,6 +214,13 @@ func (s *SQLiteDB) GetChatSession(ctx context.Context, sessionID string) (*ChatS
 		session.PresetQueryID = presetQueryIDStr
 	}
 
+	// Handle NULL config
+	if configStr.Valid {
+		session.Config = json.RawMessage(configStr.String)
+	} else {
+		session.Config = nil
+	}
+
 	return &session, nil
 }
 
@@ -167,23 +228,43 @@ func (s *SQLiteDB) GetChatSession(ctx context.Context, sessionID string) (*ChatS
 func (s *SQLiteDB) UpdateChatSession(ctx context.Context, sessionID string, req *UpdateChatSessionRequest) (*ChatSession, error) {
 	query := `
 		UPDATE chat_sessions
-		SET title = COALESCE(?, title),
-		    agent_mode = COALESCE(?, agent_mode),
+		SET title = CASE 
+		        WHEN ? = '' THEN title 
+		        ELSE ? 
+		    END,
+		    agent_mode = COALESCE(NULLIF(?, ''), agent_mode),
 		    preset_query_id = CASE 
 		        WHEN ? = '' THEN NULL 
-		        ELSE COALESCE(?, preset_query_id) 
+		        ELSE COALESCE(NULLIF(?, ''), preset_query_id) 
 		    END,
-		    status = COALESCE(?, status),
+		    config = CASE
+		        WHEN ? IS NULL THEN config
+		        ELSE ?
+		    END,
+		    status = COALESCE(NULLIF(?, ''), status),
 		    completed_at = COALESCE(?, completed_at)
 		WHERE session_id = ?
-		RETURNING id, session_id, title, agent_mode, preset_query_id, created_at, completed_at, status
+		RETURNING id, session_id, title, agent_mode, preset_query_id, config, created_at, completed_at, status
 	`
 
 	var session ChatSession
 	var agentModeStr *string
 	var presetQueryIDStr *string
-	err := s.db.QueryRowContext(ctx, query, req.Title, req.AgentMode, req.PresetQueryID, req.PresetQueryID, req.Status, req.CompletedAt, sessionID).Scan(
-		&session.ID, &session.SessionID, &session.Title, &agentModeStr, &presetQueryIDStr, &session.CreatedAt, &session.CompletedAt, &session.Status,
+	var configStr sql.NullString
+
+	// Handle config - convert to string or NULL
+	var configValue interface{}
+	if len(req.Config) == 0 {
+		configValue = nil
+	} else {
+		configValue = string(req.Config)
+	}
+
+	// For title: pass it twice - first for the WHEN check, second for the ELSE value
+	// If empty string, the CASE will return the existing title
+	// For config: pass it twice - first for the WHEN check, second for the ELSE value
+	err := s.db.QueryRowContext(ctx, query, req.Title, req.Title, req.AgentMode, req.PresetQueryID, req.PresetQueryID, configValue, configValue, req.Status, req.CompletedAt, sessionID).Scan(
+		&session.ID, &session.SessionID, &session.Title, &agentModeStr, &presetQueryIDStr, &configStr, &session.CreatedAt, &session.CompletedAt, &session.Status,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -204,6 +285,18 @@ func (s *SQLiteDB) UpdateChatSession(ctx context.Context, sessionID string, req 
 		session.PresetQueryID = presetQueryIDStr
 	} else {
 		session.PresetQueryID = nil // Default to nil for NULL values
+	}
+
+	// Handle NULL config
+	if configStr.Valid {
+		session.Config = json.RawMessage(configStr.String)
+	} else {
+		session.Config = nil
+	}
+
+	// If session is being marked as completed, flush any pending events immediately
+	if req.Status == "completed" {
+		go s.FlushSessionEvents(sessionID)
 	}
 
 	return &session, nil
@@ -274,6 +367,9 @@ func (s *SQLiteDB) ListChatSessions(ctx context.Context, limit, offset int, pres
 	}
 
 	// Get sessions with summary data
+	// Optimized query: No event aggregation needed for sidebar list view
+	// Events are only loaded when user clicks on a specific chat session
+	// This makes the query much faster - just a simple SELECT with ORDER BY and LIMIT
 	//nolint:gosec // G202: whereClause is validated and uses parameterized queries (?)
 	query := `
 		SELECT 
@@ -285,20 +381,16 @@ func (s *SQLiteDB) ListChatSessions(ctx context.Context, limit, offset int, pres
 			cs.created_at,
 			cs.completed_at,
 			cs.preset_query_id,
-			COUNT(e.id) as total_events,
+			cs.config,
+			0 as total_events,
 			0 as total_turns,
-			CASE 
-				WHEN MAX(e.timestamp) IS NOT NULL THEN MAX(e.timestamp)
-				ELSE NULL
-			END as last_activity
-		FROM chat_sessions cs
-		LEFT JOIN events e ON cs.id = e.chat_session_id` + whereClause + `
-		GROUP BY cs.id, cs.session_id, cs.title, cs.agent_mode, cs.status, cs.created_at, cs.completed_at, cs.preset_query_id
+			NULL as last_activity
+		FROM chat_sessions cs` + whereClause + `
 		ORDER BY cs.created_at DESC
 		LIMIT ? OFFSET ?
 	`
 
-	// Add limit and offset to args
+	// Add limit and offset to args (only once, used in CTE)
 	args = append(args, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -313,9 +405,10 @@ func (s *SQLiteDB) ListChatSessions(ctx context.Context, limit, offset int, pres
 		var lastActivityStr *string
 		var agentModeStr *string
 		var presetQueryIDStr *string
+		var configStr sql.NullString
 		err := rows.Scan(
 			&session.ChatSessionID, &session.SessionID, &session.Title, &agentModeStr, &session.Status,
-			&session.CreatedAt, &session.CompletedAt, &presetQueryIDStr, &session.TotalEvents, &session.TotalTurns, &lastActivityStr,
+			&session.CreatedAt, &session.CompletedAt, &presetQueryIDStr, &configStr, &session.TotalEvents, &session.TotalTurns, &lastActivityStr,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan session: %w", err)
@@ -335,49 +428,208 @@ func (s *SQLiteDB) ListChatSessions(ctx context.Context, limit, offset int, pres
 			session.PresetQueryID = "" // Default to empty string for NULL values
 		}
 
-		// Parse lastActivity string to time.Time
+		// Handle NULL config
+		if configStr.Valid {
+			session.Config = json.RawMessage(configStr.String)
+		} else {
+			session.Config = nil
+		}
+
+		// Parse lastActivity string to time.Time (can be NULL since we don't load events for list view)
 		if lastActivityStr != nil {
 			if lastActivity, err := time.Parse("2006-01-02 15:04:05.999999999-07:00", *lastActivityStr); err == nil {
 				session.LastActivity = &lastActivity
 			} else {
-				// Fallback to CreatedAt if parsing fails
-				session.LastActivity = &session.CreatedAt
+				// If parsing fails, leave as nil (not needed for sidebar)
+				session.LastActivity = nil
 			}
 		} else {
-			// Use CreatedAt as fallback if no last activity
-			session.LastActivity = &session.CreatedAt
+			// No last activity (we don't load events for list view)
+			session.LastActivity = nil
 		}
+
 		sessions = append(sessions, session)
 	}
 
 	return sessions, total, nil
 }
 
-// StoreEvent stores an event in the database
+// StoreEvent stores an event in the database (batched)
 func (s *SQLiteDB) StoreEvent(ctx context.Context, sessionID string, event *events.AgentEvent) error {
-	// Get chat session ID
-	chatSession, err := s.GetChatSession(ctx, sessionID)
-	if err != nil {
-		return fmt.Errorf("failed to get chat session: %w", err)
+	s.batchMux.Lock()
+	defer s.batchMux.Unlock()
+
+	// Add event to buffer
+	if s.eventBuffer[sessionID] == nil {
+		s.eventBuffer[sessionID] = make([]pendingEvent, 0, s.batchSizeLimit)
 	}
 
-	// Convert event to JSON
-	eventData, err := json.Marshal(event)
-	if err != nil {
-		return fmt.Errorf("failed to marshal event data: %w", err)
-	}
+	s.eventBuffer[sessionID] = append(s.eventBuffer[sessionID], pendingEvent{
+		sessionID: sessionID,
+		event:     event,
+		timestamp: time.Now(),
+	})
 
-	query := `
-		INSERT INTO events (session_id, chat_session_id, event_type, timestamp, event_data)
-		VALUES (?, ?, ?, ?, ?)
-	`
-
-	_, err = s.db.ExecContext(ctx, query, sessionID, chatSession.ID, event.Type, event.Timestamp, string(eventData))
-	if err != nil {
-		return fmt.Errorf("failed to store event: %w", err)
+	// Check if we need to flush immediately due to batch size
+	if len(s.eventBuffer[sessionID]) >= s.batchSizeLimit {
+		// Flush this session's events asynchronously
+		go s.flushSessionEvents(sessionID)
 	}
 
 	return nil
+}
+
+// getChatSessionID gets the chat_session_id for a session, using cache if available
+func (s *SQLiteDB) getChatSessionID(ctx context.Context, sessionID string) (string, error) {
+	// Check cache first
+	s.batchMux.Lock()
+	if cachedID, ok := s.chatSessionCache[sessionID]; ok {
+		s.batchMux.Unlock()
+		return cachedID, nil
+	}
+	s.batchMux.Unlock()
+
+	// Cache miss - fetch from database
+	chatSession, err := s.GetChatSession(ctx, sessionID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get chat session: %w", err)
+	}
+
+	// Update cache
+	s.batchMux.Lock()
+	s.chatSessionCache[sessionID] = chatSession.ID
+	s.batchMux.Unlock()
+
+	return chatSession.ID, nil
+}
+
+// flushSessionEvents flushes all pending events for a specific session
+func (s *SQLiteDB) flushSessionEvents(sessionID string) {
+	s.batchMux.Lock()
+	events := s.eventBuffer[sessionID]
+	if len(events) == 0 {
+		s.batchMux.Unlock()
+		return
+	}
+	// Copy events to avoid holding lock during DB operations
+	// Don't delete from buffer yet - only delete after successful commit
+	eventsCopy := make([]pendingEvent, len(events))
+	copy(eventsCopy, events)
+	s.batchMux.Unlock()
+
+	// Flush events in a transaction
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		log.Printf("[BATCH ERROR] Failed to begin transaction for session %s: %v", sessionID, err)
+		return
+	}
+
+	// Get chat_session_id (with caching)
+	chatSessionID, err := s.getChatSessionID(ctx, sessionID)
+	if err != nil {
+		tx.Rollback()
+		log.Printf("[BATCH ERROR] Failed to get chat session ID for session %s: %v", sessionID, err)
+		return
+	}
+
+	// Prepare batch insert statement
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO events (session_id, chat_session_id, event_type, timestamp, event_data)
+		VALUES (?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		tx.Rollback()
+		log.Printf("[BATCH ERROR] Failed to prepare statement for session %s: %v", sessionID, err)
+		return
+	}
+	defer stmt.Close()
+
+	// Insert all events in the batch
+	for _, pending := range eventsCopy {
+		eventData, err := json.Marshal(pending.event)
+		if err != nil {
+			log.Printf("[BATCH ERROR] Failed to marshal event for session %s: %v", sessionID, err)
+			continue
+		}
+
+		_, err = stmt.ExecContext(ctx, pending.sessionID, chatSessionID, pending.event.Type, pending.event.Timestamp, string(eventData))
+		if err != nil {
+			log.Printf("[BATCH ERROR] Failed to insert event for session %s: %v", sessionID, err)
+			// Continue with other events even if one fails
+			continue
+		}
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		log.Printf("[BATCH ERROR] Failed to commit transaction for session %s: %v", sessionID, err)
+		// Events remain in buffer for retry on next flush cycle
+		return
+	}
+
+	// Only clear the buffer after successful commit
+	s.batchMux.Lock()
+	// Double-check that the events we flushed are still the same (in case new events were added)
+	// If new events were added, we only remove the ones we successfully flushed
+	if len(s.eventBuffer[sessionID]) >= len(eventsCopy) {
+		// Remove the flushed events from the front of the buffer
+		s.eventBuffer[sessionID] = s.eventBuffer[sessionID][len(eventsCopy):]
+		// If buffer is now empty, remove the session entry
+		if len(s.eventBuffer[sessionID]) == 0 {
+			delete(s.eventBuffer, sessionID)
+		}
+	} else {
+		// Buffer was modified - clear it entirely to be safe
+		delete(s.eventBuffer, sessionID)
+	}
+	s.batchMux.Unlock()
+
+	log.Printf("[BATCH] Flushed %d events for session %s", len(eventsCopy), sessionID)
+}
+
+// flushBatches flushes all pending event batches
+func (s *SQLiteDB) flushBatches() {
+	s.batchMux.Lock()
+	// Copy all sessions that need flushing
+	sessionsToFlush := make([]string, 0, len(s.eventBuffer))
+	for sessionID := range s.eventBuffer {
+		if len(s.eventBuffer[sessionID]) > 0 {
+			sessionsToFlush = append(sessionsToFlush, sessionID)
+		}
+	}
+	s.batchMux.Unlock()
+
+	// Flush each session's events
+	for _, sessionID := range sessionsToFlush {
+		s.flushSessionEvents(sessionID)
+	}
+}
+
+// FlushSessionEvents flushes all pending events for a specific session
+// This can be called when a session completes to ensure all events are persisted immediately
+func (s *SQLiteDB) FlushSessionEvents(sessionID string) {
+	s.flushSessionEvents(sessionID)
+}
+
+// startFlusher starts the background goroutine that periodically flushes batches
+func (s *SQLiteDB) startFlusher() {
+	s.flushTicker = time.NewTicker(s.flushInterval)
+	go func() {
+		for {
+			select {
+			case <-s.flushTicker.C:
+				s.flushBatches()
+			case <-s.stopFlusher:
+				// Final flush before stopping
+				s.flushBatches()
+				close(s.flushDone)
+				return
+			}
+		}
+	}()
 }
 
 // GetEvents retrieves events based on the request
@@ -1039,7 +1291,17 @@ func (s *SQLiteDB) DeleteWorkflow(ctx context.Context, presetQueryID string) err
 	return nil
 }
 
-// Close closes the database connection
+// Close closes the database connection and flushes all pending events
 func (s *SQLiteDB) Close() error {
+	// Stop the flusher and wait for it to finish
+	if s.flushTicker != nil {
+		s.flushTicker.Stop()
+		close(s.stopFlusher)
+		<-s.flushDone
+	}
+
+	// Flush any remaining events
+	s.flushBatches()
+
 	return s.db.Close()
 }

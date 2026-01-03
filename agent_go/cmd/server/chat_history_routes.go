@@ -1,12 +1,15 @@
 package server
 
 import (
+	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
 
+	"mcp-agent-builder-go/agent_go/internal/events"
 	"mcp-agent-builder-go/agent_go/pkg/database"
-	"mcpagent/events"
+	pkgevents "mcpagent/events"
 
 	"github.com/gin-gonic/gin"
 )
@@ -189,15 +192,119 @@ func getSessionEvents(db database.Database) gin.HandlerFunc {
 			return
 		}
 
-		events, err := db.GetEventsBySession(c.Request.Context(), sessionID, limit, offset)
+		dbEvents, err := db.GetEventsBySession(c.Request.Context(), sessionID, limit, offset)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
+		log.Printf("[CHAT_HISTORY] Loading events for session %s: found %d events", sessionID, len(dbEvents))
+
+		// Convert database events to polling events format (same structure as polling API)
+		convertedEvents := make([]events.Event, 0, len(dbEvents))
+		parseErrors := 0
+		for i, dbEvent := range dbEvents {
+			// Unmarshal the full AgentEvent - use helper struct to handle EventData interface
+			// Since EventData is an interface, we need to unmarshal Data as json.RawMessage first
+			type agentEventWithRawData struct {
+				Type           pkgevents.EventType `json:"type"`
+				Timestamp      time.Time           `json:"timestamp"`
+				EventIndex     int                 `json:"event_index"`
+				TraceID        string              `json:"trace_id,omitempty"`
+				SpanID         string              `json:"span_id,omitempty"`
+				ParentID       string              `json:"parent_id,omitempty"`
+				CorrelationID  string              `json:"correlation_id,omitempty"`
+				HierarchyLevel int                 `json:"hierarchy_level"`
+				SessionID      string              `json:"session_id,omitempty"`
+				Component      string              `json:"component,omitempty"`
+				Data           json.RawMessage     `json:"data"`
+			}
+
+			var helper agentEventWithRawData
+			if err := json.Unmarshal(dbEvent.EventData, &helper); err != nil {
+				parseErrors++
+				if i < 3 {
+					log.Printf("[CHAT_HISTORY ERROR] Failed to parse event %d for session %s: %v, event_type=%s", i, sessionID, err, dbEvent.EventType)
+				}
+				continue
+			}
+
+			// Unmarshal Data field into a map to preserve structure
+			var dataMap map[string]interface{}
+			if err := json.Unmarshal(helper.Data, &dataMap); err != nil {
+				parseErrors++
+				if i < 3 {
+					log.Printf("[CHAT_HISTORY ERROR] Failed to parse event data %d for session %s: %v, event_type=%s", i, sessionID, err, dbEvent.EventType)
+				}
+				continue
+			}
+
+			// Log first event structure for debugging
+			if i == 0 {
+				log.Printf("[CHAT_HISTORY DEBUG] First event structure: type=%s, hasData=%v, dataKeys=%v",
+					helper.Type, len(dataMap) > 0, func() []string {
+						keys := make([]string, 0, len(dataMap))
+						for k := range dataMap {
+							keys = append(keys, k)
+						}
+						return keys
+					}())
+			}
+
+			// Create AgentEvent with GenericEventData wrapper
+			agentEvent := pkgevents.AgentEvent{
+				Type:           helper.Type,
+				Timestamp:      helper.Timestamp,
+				EventIndex:     helper.EventIndex,
+				TraceID:        helper.TraceID,
+				SpanID:         helper.SpanID,
+				ParentID:       helper.ParentID,
+				CorrelationID:  helper.CorrelationID,
+				HierarchyLevel: helper.HierarchyLevel,
+				SessionID:      helper.SessionID,
+				Component:      helper.Component,
+				Data: &pkgevents.GenericEventData{
+					BaseEventData: pkgevents.BaseEventData{},
+					Data:          dataMap,
+				},
+			}
+
+			convertedEvents = append(convertedEvents, events.Event{
+				ID:        dbEvent.ID,
+				Type:      dbEvent.EventType,
+				Timestamp: dbEvent.Timestamp,
+				SessionID: sessionID,
+				Data:      &agentEvent,
+			})
+		}
+
+		log.Printf("[CHAT_HISTORY] Converted %d events: total=%d, converted=%d, parse_errors=%d", len(dbEvents), len(dbEvents), len(convertedEvents), parseErrors)
+
+		// Get total count of events for this session
+		totalCount, err := db.GetEventsBySession(c.Request.Context(), sessionID, 0, 0)
+		total := len(dbEvents)
+		if err == nil && len(totalCount) > 0 {
+			// If we got events, count them (this is a workaround since GetEventsBySession doesn't return total)
+			// For now, if limit is 0, we can use it to get all events and count them
+			// But this is inefficient - we should add a CountEventsBySession method
+			if limit == 0 || len(dbEvents) == limit {
+				// Try to get a count by fetching with a very high limit
+				allEvents, err := db.GetEventsBySession(c.Request.Context(), sessionID, 1000000, 0)
+				if err == nil {
+					total = len(allEvents)
+				}
+			} else {
+				// Estimate: if we got fewer events than limit, that's the total
+				// Otherwise, we don't know the exact total
+				if len(dbEvents) < limit {
+					total = offset + len(dbEvents)
+				}
+			}
+		}
+
 		c.JSON(http.StatusOK, gin.H{
-			"events": events,
-			"total":  len(events),
+			"events": convertedEvents,
+			"total":  total,
 			"limit":  limit,
 			"offset": offset,
 		})
@@ -215,7 +322,7 @@ func searchEvents(db database.Database) gin.HandlerFunc {
 		}
 
 		if eventType := c.Query("event_type"); eventType != "" {
-			filter.EventType = events.EventType(eventType)
+			filter.EventType = pkgevents.EventType(eventType)
 		}
 
 		if fromDateStr := c.Query("from_date"); fromDateStr != "" {

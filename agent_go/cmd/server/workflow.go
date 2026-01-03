@@ -15,7 +15,7 @@ import (
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/database"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
+	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 )
 
 // getWorkspaceAPIURL returns the workspace API base URL from environment or default
@@ -360,6 +360,10 @@ type ExecutionOptions struct {
 
 	// Logging options
 	SaveValidationResponses bool `json:"save_validation_responses,omitempty"` // If true, save validation responses and execution logs to workspace (default: true)
+
+	// Tool access control (global configuration)
+	DisableShellExecAccess bool `json:"disable_shell_exec_access,omitempty"` // If true, disable execute_shell_command tool access globally
+	DisableReadImageAccess bool `json:"disable_read_image_access,omitempty"` // If true, disable read_image tool access globally
 }
 
 // AgentLLMConfig represents LLM configuration for an agent (matches controller type)

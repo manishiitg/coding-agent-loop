@@ -93,30 +93,22 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	c.mu.RUnlock()
 
 	// Early return if no current phase
-	if currentPhase == "" {
-		c.logger.Debug("🔍 DEBUG: Skipping metadata addition - no currentPhase set")
-	} else {
+	if currentPhase != "" {
 		c.logger.Debug(fmt.Sprintf("🔍 ContextAwareBridge: Processing event %s with phase %s", event.Type, currentPhase))
 
 		// Add orchestrator context to metadata
 		// We need to check if the event data has a BaseEventData field
-		c.logger.Debug(fmt.Sprintf("🔍 DEBUG: About to check type assertion for event.Data of type %T", event.Data))
-
 		if eventData, ok := event.Data.(interface {
 			GetBaseEventData() *events.BaseEventData
 		}); ok {
-			c.logger.Debug(fmt.Sprintf("🔍 DEBUG: Type assertion succeeded for %T", eventData))
 			baseData := eventData.GetBaseEventData()
 
 			// Nil check before accessing Metadata
 			if baseData == nil {
 				c.logger.Warn(fmt.Sprintf("⚠️ ContextAwareBridge: GetBaseEventData returned nil for event %s", event.Type))
 			} else {
-				c.logger.Debug(fmt.Sprintf("🔍 DEBUG: Got BaseEventData, metadata present: %t", baseData.Metadata != nil))
-
 				if baseData.Metadata == nil {
 					baseData.Metadata = make(map[string]any)
-					c.logger.Debug("🔍 DEBUG: Created new metadata map")
 				}
 				baseData.Metadata["orchestrator_phase"] = currentPhase
 				baseData.Metadata["orchestrator_step"] = currentStep

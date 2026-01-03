@@ -144,9 +144,24 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     console.log('[WorkflowCanvas] Saving layout...', { layoutPath, workspacePath })
 
     // Only save parent node positions (children are calculated from offsets)
-    // Do NOT save positions for validation, learning, evaluation, or sub-agents
+    // Save positions for main parent nodes, sub-agents, and validation/learning/evaluation nodes
+    // (all of these are now independently draggable)
     const parentPositions: Record<string, { x: number; y: number }> = {}
     nodesRef.current.forEach(node => {
+      // Allow sub-agents to be saved as parent positions (they're independently draggable)
+      const isSubAgent = node.id.includes('-sub-agent-')
+      if (isSubAgent) {
+        parentPositions[node.id] = { x: node.position.x, y: node.position.y }
+        return
+      }
+      
+      // Allow validation, learning, and evaluation nodes to be saved as parent positions
+      // (they're independently draggable)
+      if (node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation') {
+        parentPositions[node.id] = { x: node.position.x, y: node.position.y }
+        return
+      }
+      
       // Skip if this is a child node (has a parent) - these should not be saved
       if (childToParentRef.current.has(node.id)) {
         return
@@ -165,10 +180,19 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       }
     })
 
-    // Also save offsets for child nodes (sub-agents, learning, validation) relative to their parents
+    // Also save offsets for child nodes relative to their parents
+    // Note: Sub-agents, validation, learning, and evaluation nodes are now saved as parent positions, not as offsets
     // This ensures we can restore the exact layout the user had
     const childOffsets: Record<string, { parentId: string; dx: number; dy: number }> = {}
     nodesRef.current.forEach(node => {
+      // Skip sub-agents, validation, learning, and evaluation nodes (they're saved as parent positions now)
+      if (node.id.includes('-sub-agent-') || 
+          node.type === 'validation' || 
+          node.type === 'learning' || 
+          node.type === 'evaluation') {
+        return
+      }
+      
       const parentId = childToParentRef.current.get(node.id)
       if (parentId) {
         const parentNode = nodesRef.current.find(n => n.id === parentId)
@@ -589,14 +613,24 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Custom onNodesChange handler that groups nodes together
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    // Filter out position changes for non-draggable nodes (validation, learning, evaluation)
-    // These nodes should only move with their parent nodes
+    // Allow all nodes to be draggable: sub-agents, validation, learning, evaluation, and parent nodes
+    // These nodes can be manually positioned independently
     const filteredChanges = changes.filter(change => {
       if (change.type === 'position') {
         const nodeId = change.id
+        // Allow sub-agents to be draggable (they're children but should be independently movable)
+        if (nodeId.includes('-sub-agent-')) {
+          return true // Allow sub-agents to be draggable
+        }
+        // Allow validation, learning, and evaluation nodes to be draggable
+        const node = nodesRef.current.find(n => n.id === nodeId)
+        if (node && (node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation')) {
+          return true // Allow validation, learning, and evaluation nodes to be draggable
+        }
         // Check if this is a child node (has a parent) - these should not be draggable
+        // But we've already handled sub-agents and validation/learning/evaluation above
         if (childToParentRef.current.has(nodeId)) {
-          return false // Ignore position changes for child nodes
+          return false // Ignore position changes for other child nodes
         }
       }
       return true
@@ -605,14 +639,18 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     // Apply filtered changes
     onNodesChangeBase(filteredChanges)
 
-    // Check if any parent node position changed
+    // Check if any parent node position changed (including sub-agents, validation, learning, evaluation)
     const parentPositionChanges = new Map<string, { x: number; y: number }>()
     
     filteredChanges.forEach(change => {
       if (change.type === 'position' && change.position) {
         const nodeId = change.id
-        // Check if this is a parent node (not a child)
-        if (nodeGroupsRef.current.has(nodeId) && !childToParentRef.current.has(nodeId)) {
+        const node = nodesRef.current.find(n => n.id === nodeId)
+        // Include sub-agents, validation, learning, and evaluation nodes as independently movable
+        const isSubAgent = nodeId.includes('-sub-agent-')
+        const isValidationLearningEval = node && (node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation')
+        // Check if this is a parent node (not a child) OR a sub-agent OR validation/learning/evaluation
+        if (isSubAgent || isValidationLearningEval || (nodeGroupsRef.current.has(nodeId) && !childToParentRef.current.has(nodeId))) {
           parentPositionChanges.set(nodeId, { x: change.position.x, y: change.position.y })
         }
       }
@@ -622,8 +660,18 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     if (parentPositionChanges.size > 0) {
       setNodes((nds) => {
         // First pass: update direct children
+        // Note: Sub-agents, validation, learning, and evaluation nodes are now independent
+        // They don't move when their parent moves (they can be manually positioned)
         let updatedNodes = nds.map(node => {
           const parentId = childToParentRef.current.get(node.id)
+          // Skip if this is a sub-agent, validation, learning, or evaluation node
+          // These are independent and can be manually positioned
+          const isSubAgent = node.id.includes('-sub-agent-')
+          const isValidationLearningEval = node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation'
+          if (isSubAgent || isValidationLearningEval) {
+            return node // These nodes are independent, don't update them here
+          }
+          
           if (parentId && parentPositionChanges.has(parentId)) {
             const newParentPos = parentPositionChanges.get(parentId)!
             const offset = childOffsetsRef.current.get(node.id)
@@ -651,7 +699,14 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         })
 
         // Update children of nodes that moved
+        // Skip validation, learning, and evaluation nodes (they're independent)
         updatedNodes = updatedNodes.map(node => {
+          // Skip validation, learning, and evaluation nodes - they're independent
+          const isValidationLearningEval = node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation'
+          if (isValidationLearningEval) {
+            return node
+          }
+          
           const parentId = childToParentRef.current.get(node.id)
           if (parentId && nodesThatMoved.has(parentId)) {
             // Find the updated parent node
@@ -805,6 +860,17 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [])
 
+  // Stabilize stepStatusMap by serializing it - Maps are compared by reference, so we need to serialize
+  // to detect actual content changes. This prevents unnecessary recalculations in usePlanToFlow.
+  const stableStepStatusMap = React.useMemo(() => {
+    if (!stepStatusMap || stepStatusMap.size === 0) {
+      return null // Return null instead of the Map to ensure stable reference
+    }
+    // Serialize Map to object for stable comparison
+    const serialized = Object.fromEntries(stepStatusMap)
+    return serialized
+  }, [stepStatusMap])
+
   // Convert plan to React Flow nodes and edges (with change highlights and run callback)
   const { nodes: initialNodes, edges: initialEdges } = usePlanToFlow(plan, { 
     // Prerequisite edges are always shown (default: true in usePlanToFlow)
@@ -813,7 +879,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     onOpenSidebar: handleOpenSidebarCallback,
     isExecuting,
     completedStepIndices,  // Pass completed steps for enabling/disabling run buttons
-    stepStatusMap: stepStatusMap,  // Pass step status map from events
+    stepStatusMap: stableStepStatusMap,  // Pass stabilized step status map
     workspacePath,  // Pass workspace path for file opening
     selectedRunFolder,  // Pass selected run folder for file opening
     variablesManifest,  // Pass variables manifest for Variables node
@@ -1104,13 +1170,23 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
               
               // If we have saved/current offsets, use them (version 1.1+)
               // Otherwise, fall back to calculating from original auto-layout
+              // Note: Sub-agents are now saved as parent positions, not offsets
               if (offsetsToUse.size > 0) {
                 // Apply offsets in multiple passes to handle cascading parent-child relationships
-                // Pass 1: Apply sub-agent offsets (relative to orchestrator)
-                // Pass 2: Apply learning/validation offsets (relative to sub-agents)
+                // Pass 1: Apply offsets for nodes whose parent is a top-level parent (orchestrator, step, etc.)
+                // Pass 2: Apply learning/validation offsets (relative to sub-agents or other parents)
                 
                 // First pass: Apply offsets for nodes whose parent is a top-level parent (orchestrator, step, etc.)
+                // Skip sub-agents, validation, learning, and evaluation nodes (they're loaded from parentPositions, not offsets)
                 updated = updated.map(node => {
+                  // Skip sub-agents, validation, learning, and evaluation nodes - they're loaded from parentPositions, not offsets
+                  if (node.id.includes('-sub-agent-') || 
+                      node.type === 'validation' || 
+                      node.type === 'learning' || 
+                      node.type === 'evaluation') {
+                    return node
+                  }
+                  
                   const savedOffset = offsetsToUse.get(node.id)
                   if (savedOffset) {
                     const parentNode = updated.find(n => n.id === savedOffset.parentId)

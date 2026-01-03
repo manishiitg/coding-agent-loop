@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"workspace/models"
@@ -229,6 +231,11 @@ func applyDiffPatch(currentContent, diffContent string) (string, error) {
 	currentContent = normalizeLineEndings(currentContent)
 	diffContent = normalizeLineEndings(diffContent)
 
+	// Ensure diff ends with a newline
+	if !strings.HasSuffix(diffContent, "\n") {
+		diffContent += "\n"
+	}
+
 	// Validate diff format before applying
 	if err := validateDiffFormat(diffContent); err != nil {
 		return "", fmt.Errorf("diff validation failed: %w", err)
@@ -262,7 +269,8 @@ func applyDiffPatch(currentContent, diffContent string) (string, error) {
 	patchFile.Close()
 
 	// Apply patch using the standard patch command
-	cmd := exec.Command("patch", "-u", tempFile.Name(), patchFile.Name())
+	// Use -F 3 to be more lenient with context matches (fuzz factor)
+	cmd := exec.Command("patch", "-u", "-F", "3", tempFile.Name(), patchFile.Name())
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Provide more specific error messages based on patch output
@@ -292,124 +300,130 @@ func correctAgentGeneratedDiff(diffContent, currentContent string) string {
 	corrected := make([]string, 0, len(lines))
 	currentLines := strings.Split(currentContent, "\n")
 
-	inHunk := false
-	hunkStartIndex := 0
-	contextLineCount := 0
+	type hunkInfo struct {
+		index    int
+		oldStart string
+		newStart string
+		oldCount int
+		newCount int
+	}
+
+	var currentHunk *hunkInfo
 
 	for i, line := range lines {
 		// Check if we're entering a hunk
 		if strings.HasPrefix(line, "@@") {
-			inHunk = true
-			hunkStartIndex = len(corrected)
-			contextLineCount = 0
+			// Finalize previous hunk if any
+			if currentHunk != nil {
+				corrected[currentHunk.index] = fmt.Sprintf("@@ -%s,%d +%s,%d @@",
+					currentHunk.oldStart, currentHunk.oldCount,
+					currentHunk.newStart, currentHunk.newCount)
+			}
 
-			// Fix malformed hunk headers (missing closing @@ or content appended)
-			if !strings.HasSuffix(line, "@@") {
-				// Extract the hunk header part (before any appended content)
-				// Look for the second @@ in the line
-				firstAt := strings.Index(line, "@@")
-				if firstAt != -1 {
-					secondAt := strings.Index(line[firstAt+2:], "@@")
-					if secondAt != -1 {
-						hunkHeader := line[:firstAt+2+secondAt+2] // Include both @@
-						corrected = append(corrected, hunkHeader)
-						fmt.Printf("🔧 Fixed malformed hunk header: '%s' -> '%s'\n", line, hunkHeader)
-					} else {
-						// No second @@ found, just use the line as-is
-						corrected = append(corrected, line)
-					}
-				} else {
-					corrected = append(corrected, line)
+			// Parse new hunk header
+			parts := strings.Fields(line)
+			if len(parts) >= 3 {
+				oldRange := strings.TrimPrefix(parts[1], "-")
+				newRange := strings.TrimPrefix(parts[2], "+")
+
+				oldStart := oldRange
+				if commaIdx := strings.Index(oldRange, ","); commaIdx != -1 {
+					oldStart = oldRange[:commaIdx]
 				}
+				newStart := newRange
+				if commaIdx := strings.Index(newRange, ","); commaIdx != -1 {
+					newStart = newRange[:commaIdx]
+				}
+
+				// Fix invalid line references like "last", "end", etc.
+				if oldStart == "last" || oldStart == "end" || oldStart == "start" {
+					oldStart = "1"
+				}
+				if newStart == "last" || newStart == "end" || newStart == "start" {
+					newStart = "1"
+				}
+
+				currentHunk = &hunkInfo{
+					index:    len(corrected),
+					oldStart: oldStart,
+					newStart: newStart,
+					oldCount: 0,
+					newCount: 0,
+				}
+				corrected = append(corrected, line) // Placeholder to be updated
 			} else {
-				// Check for invalid line references like "last", "end", etc.
-				if strings.Contains(line, "last") || strings.Contains(line, "end") || strings.Contains(line, "start") {
-					// Replace invalid references with reasonable defaults
-					fixedHeader := strings.ReplaceAll(line, "last", "1")
-					fixedHeader = strings.ReplaceAll(fixedHeader, "end", "1")
-					fixedHeader = strings.ReplaceAll(fixedHeader, "start", "1")
-					corrected = append(corrected, fixedHeader)
-					fmt.Printf("🔧 Fixed invalid line references: '%s' -> '%s'\n", line, fixedHeader)
-				} else {
-					corrected = append(corrected, line)
-				}
-			}
-			continue
-		}
-
-		// Check if we're exiting a hunk (empty line or new hunk)
-		if inHunk && (line == "" || strings.HasPrefix(line, "@@")) {
-			// Update the hunk header with the correct context line count
-			if contextLineCount > 0 {
-				hunkHeader := corrected[hunkStartIndex]
-				// Parse and update the hunk header
-				// Format: @@ -startLine,lineCount +startLine,lineCount @@
-				parts := strings.Fields(hunkHeader)
-				if len(parts) >= 3 {
-					oldRange := strings.TrimPrefix(parts[1], "-")
-					newRange := strings.TrimPrefix(parts[2], "+")
-
-					// Update the line count to match actual context lines
-					if commaIndex := strings.Index(oldRange, ","); commaIndex != -1 {
-						startLine := oldRange[:commaIndex]
-						oldRange = startLine + "," + fmt.Sprintf("%d", contextLineCount)
-					}
-					if commaIndex := strings.Index(newRange, ","); commaIndex != -1 {
-						startLine := newRange[:commaIndex]
-						newRange = startLine + "," + fmt.Sprintf("%d", contextLineCount+1) // +1 for the addition
-					}
-
-					corrected[hunkStartIndex] = fmt.Sprintf("@@ -%s +%s @@", oldRange, newRange)
-					fmt.Printf("🔧 Updated hunk header: %s\n", corrected[hunkStartIndex])
-				}
-			}
-
-			inHunk = false
-			if line != "" {
 				corrected = append(corrected, line)
+				currentHunk = nil
 			}
 			continue
 		}
 
-		// Within a hunk, try to correct common patterns
-		if inHunk {
-			// If line starts with '-' but exists in current content, it's likely a context line
-			if strings.HasPrefix(line, "-") && len(line) > 1 {
-				content := line[1:] // Remove the '-'
-
-				// Check if this content exists in the current file (indicating it's context, not removal)
-				foundInFile := false
-				for _, fileLine := range currentLines {
-					// Check if the content (without leading space) matches the file line (without leading minus)
-					contentTrimmed := strings.TrimSpace(content)
-					// Remove leading minus from file line if present
-					fileLineToCheck := fileLine
-					if strings.HasPrefix(fileLine, "-") {
-						fileLineToCheck = fileLine[1:]
+		if currentHunk != nil {
+			if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-") {
+				if strings.HasPrefix(line, " ") {
+					// Try to find matching line in file to fix whitespace/indentation
+					content := line[1:]
+					trimmedContent := strings.TrimSpace(content)
+					if len(trimmedContent) > 0 {
+						for _, fl := range currentLines {
+							if strings.TrimSpace(fl) == trimmedContent {
+								line = " " + fl // Use the actual line from the file
+								break
+							}
+						}
 					}
-					fileLineTrimmed := strings.TrimSpace(fileLineToCheck)
-					if contentTrimmed == fileLineTrimmed {
+					currentHunk.oldCount++
+					currentHunk.newCount++
+				} else if strings.HasPrefix(line, "-") {
+					currentHunk.oldCount++
+				} else if strings.HasPrefix(line, "+") {
+					currentHunk.newCount++
+				}
+				corrected = append(corrected, line)
+			} else if len(strings.TrimSpace(line)) > 0 && !strings.HasPrefix(line, "---") && !strings.HasPrefix(line, "+++") && !strings.HasPrefix(line, "@@") {
+				// Line without prefix - try to guess if it's context or addition
+				trimmedContent := strings.TrimSpace(line)
+				foundInFile := false
+				for _, fl := range currentLines {
+					if strings.TrimSpace(fl) == trimmedContent {
 						foundInFile = true
+						line = " " + fl // Treat as context
 						break
 					}
 				}
-
-				if foundInFile {
-					// This is likely a context line that agent marked as removal
-					corrected = append(corrected, " "+content)
-					contextLineCount++
-					fmt.Printf("🔧 Corrected line %d: '-%s' -> ' %s' (found in current file)\n", i+1, content, content)
-					continue
+				if !foundInFile {
+					if !strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, " ") {
+						line = "+ " + line // Treat as addition
+					}
+					currentHunk.newCount++
+				} else {
+					currentHunk.oldCount++
+					currentHunk.newCount++
 				}
+				corrected = append(corrected, line)
+			} else if line == "" && i < len(lines)-1 {
+				// Treat empty line as context if it's inside a hunk
+				currentHunk.oldCount++
+				currentHunk.newCount++
+				corrected = append(corrected, " ")
+			} else {
+				// Non-diff line ends the hunk
+				corrected[currentHunk.index] = fmt.Sprintf("@@ -%s,%d +%s,%d @@",
+					currentHunk.oldStart, currentHunk.oldCount,
+					currentHunk.newStart, currentHunk.newCount)
+				currentHunk = nil
+				corrected = append(corrected, line)
 			}
-
-			// Count context lines (lines starting with space)
-			if strings.HasPrefix(line, " ") {
-				contextLineCount++
-			}
+		} else {
+			corrected = append(corrected, line)
 		}
+	}
 
-		corrected = append(corrected, line)
+	// Finalize last hunk
+	if currentHunk != nil {
+		corrected[currentHunk.index] = fmt.Sprintf("@@ -%s,%d +%s,%d @@",
+			currentHunk.oldStart, currentHunk.oldCount,
+			currentHunk.newStart, currentHunk.newCount)
 	}
 
 	result := strings.Join(corrected, "\n")
@@ -424,102 +438,1099 @@ func correctAgentGeneratedDiff(diffContent, currentContent string) string {
 func applyDiffPatchFlexible(currentContent, diffContent string) (string, error) {
 	fmt.Printf("🔍 Attempting flexible diff patch approach\n")
 
+	var result string
+	var err error
+
 	// First, try to correct common agent-generated patterns
 	correctedDiff := correctAgentGeneratedDiff(diffContent, currentContent)
 	if correctedDiff != diffContent {
 		fmt.Printf("🔧 Applied automatic corrections to agent-generated diff\n")
 		fmt.Printf("🔍 Corrected diff:\n%s\n", correctedDiff)
 		// Try the corrected diff first
-		result, err := applyDiffPatch(currentContent, correctedDiff)
+		result, err = applyDiffPatch(currentContent, correctedDiff)
 		if err == nil {
 			fmt.Printf("✅ Corrected diff applied successfully\n")
-			return result, nil
+			return validateAndRepairJSON(result), nil
 		}
 		fmt.Printf("⚠️ Corrected diff failed, trying original: %v\n", err)
 	}
 
-	// If correction didn't help, try a fallback approach for agent-generated diffs
-	fmt.Printf("🔍 Trying fallback approach for agent-generated diffs\n")
-	fallbackResult, err := applyAgentGeneratedDiffFallback(currentContent, diffContent)
+	// Try the original diff
+	result, err = applyDiffPatch(currentContent, diffContent)
 	if err == nil {
-		fmt.Printf("✅ Fallback approach succeeded\n")
-		return fallbackResult, nil
+		fmt.Printf("✅ Original diff applied successfully\n")
+		return validateAndRepairJSON(result), nil
 	}
-	fmt.Printf("⚠️ Fallback approach failed: %v\n", err)
 
-	// If all else fails, try original
-	fmt.Printf("🔍 Trying original diff format\n")
-	return applyDiffPatch(currentContent, diffContent)
+	fmt.Printf("⚠️ Original diff failed, trying fallback: %v\n", err)
+
+	// Fallback approach
+	result, err = applyAgentGeneratedDiffFallback(currentContent, diffContent)
+	if err != nil {
+		return "", fmt.Errorf("fallback approach failed: %w", err)
+	}
+
+	fmt.Printf("✅ Fallback approach succeeded\n")
+	return validateAndRepairJSON(result), nil
+}
+
+// validateAndRepairJSON attempts to validate and repair JSON content
+func validateAndRepairJSON(content string) string {
+	// Clean markdown artifacts
+	cleaned := strings.TrimSpace(content)
+	if strings.HasPrefix(cleaned, "```") {
+		lines := strings.Split(cleaned, "\n")
+		if len(lines) > 2 {
+			// Remove first and last lines (the ``` markers)
+			cleaned = strings.Join(lines[1:len(lines)-1], "\n")
+			cleaned = strings.TrimSpace(cleaned)
+		}
+	}
+
+	if !couldBeJSON(cleaned) {
+		return content
+	}
+
+	var finalJs interface{}
+	if err := json.Unmarshal([]byte(cleaned), &finalJs); err == nil {
+		if indented, err := json.MarshalIndent(finalJs, "", "  "); err == nil {
+			fmt.Printf("✅ Result is valid JSON and has been re-formatted\n")
+			return string(indented) + "\n"
+		}
+	}
+
+	// Try to repair common JSON issues
+	reTrailingComma := regexp.MustCompile(`,\s*([}\]])`)
+	repaired := reTrailingComma.ReplaceAllString(cleaned, "$1")
+
+	// Try to add missing commas between lines that look like they should be separated by commas
+	// Broad version: match line ending in alphanumeric, quote, brace, or bracket 
+	// and next line starting with alphanumeric, quote, brace, or bracket
+	reMissingComma := regexp.MustCompile(`([a-zA-Z\d"\}\]])\s*\n\s*([a-zA-Z\d"\{\[])`)
+	repaired = reMissingComma.ReplaceAllString(repaired, "$1,\n$2")
+
+	// Fix double commas that might have been introduced
+	reDoubleComma := regexp.MustCompile(`,\s*,`)
+	repaired = reDoubleComma.ReplaceAllString(repaired, ",")
+
+	var repairErr error
+	if err := json.Unmarshal([]byte(repaired), &finalJs); err == nil {
+		if indented, err := json.MarshalIndent(finalJs, "", "  "); err == nil {
+			fmt.Printf("✅ Repaired and re-formatted result as valid JSON\n")
+			return string(indented) + "\n"
+		}
+		repairErr = err
+	} else {
+		repairErr = err
+	}
+
+	fmt.Printf("⚠️ Failed to repair JSON: %v\n", repairErr)
+	return cleaned
 }
 
 // applyAgentGeneratedDiffFallback handles agent-generated diffs by parsing the intent
+
 func applyAgentGeneratedDiffFallback(currentContent, diffContent string) (string, error) {
+
+	fmt.Printf("🔍 Trying fallback approach for agent-generated diffs\n")
+
+	
+
 	lines := strings.Split(diffContent, "\n")
 
-	// Find additions and removals in the diff
-	var additions []string
-	var removals []string
-	inHunk := false
+	resultLines := strings.Split(currentContent, "\n")
+
+	
+
+	type hunk struct {
+
+		lines []string
+
+	}
+
+	
+
+	var hunks []hunk
+
+	var currentHunk *hunk
+
+	
 
 	for _, line := range lines {
+
 		if strings.HasPrefix(line, "@@") {
-			inHunk = true
+
+			if currentHunk != nil {
+
+				hunks = append(hunks, *currentHunk)
+
+			}
+
+			currentHunk = &hunk{}
+
 			continue
+
 		}
 
-		if inHunk && strings.HasPrefix(line, "+") {
-			// This is an addition
-			content := line[1:] // Remove the '+'
-			additions = append(additions, content)
-		} else if inHunk && strings.HasPrefix(line, "-") {
-			// This is a removal
-			content := line[1:] // Remove the '-'
-			removals = append(removals, content)
-		} else if inHunk && line == "" {
-			inHunk = false
+		
+
+		if currentHunk != nil {
+
+			if strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-") || strings.HasPrefix(line, " ") {
+
+				currentHunk.lines = append(currentHunk.lines, line)
+
+			} else if line == "" && len(currentHunk.lines) > 0 {
+
+				// Empty line inside hunk is treated as context
+
+				currentHunk.lines = append(currentHunk.lines, " ")
+
+			}
+
 		}
+
 	}
 
-	if len(additions) == 0 && len(removals) == 0 {
-		return "", fmt.Errorf("no additions or removals found in diff")
+	if currentHunk != nil {
+
+		hunks = append(hunks, *currentHunk)
+
 	}
 
-	// Start with current content
-	result := currentContent
 
-	// Apply removals first
-	if len(removals) > 0 {
-		resultLines := strings.Split(result, "\n")
-		var filteredLines []string
 
-		for _, line := range resultLines {
-			shouldRemove := false
-			for _, removal := range removals {
-				if strings.TrimSpace(line) == strings.TrimSpace(removal) {
-					shouldRemove = true
-					break
+	if len(hunks) == 0 {
+
+		return "", fmt.Errorf("no hunks found in diff")
+
+	}
+
+
+
+	// Apply hunks one by one
+
+	for _, h := range hunks {
+
+		// For each hunk, try to find a match in the current resultLines
+
+		// A match is where all ' ' and '-' lines in the hunk match the lines in the file
+
+		
+
+		matchIndex := -1
+
+		
+
+		// Collect expected lines (context and removals)
+
+		var expectedLines []string
+
+		for _, hl := range h.lines {
+
+			if !strings.HasPrefix(hl, "+") {
+
+				expectedLines = append(expectedLines, hl[1:])
+
+			}
+
+		}
+
+		
+
+				if len(expectedLines) == 0 {
+
+		
+
+					// Pure addition hunk, apply to bottom
+
+		
+
+					var additions []string
+
+		
+
+					for _, hl := range h.lines {
+
+		
+
+						if strings.HasPrefix(hl, "+") {
+
+		
+
+							additions = append(additions, hl[1:])
+
+		
+
+						}
+
+		
+
+					}
+
+		
+
+					newResult, _ := applyAdditionsToBottom(strings.Join(resultLines, "\n"), additions)
+
+		
+
+					resultLines = strings.Split(newResult, "\n")
+
+		
+
+					continue
+
+		
+
 				}
+
+		
+
+		
+
+		
+
+						fmt.Printf("🔍 Attempting to match hunk with %d expected lines against %d file lines\n", len(expectedLines), len(resultLines))
+
+		
+
+		
+
+		
+
+				
+
+		
+
+		
+
+		
+
+						// Fuzzy match: find position with minimum mismatches
+
+		
+
+		
+
+		
+
+						bestMatchIndex := -1
+
+		
+
+		
+
+		
+
+						minMismatches := len(expectedLines) + 1
+
+		
+
+		
+
+		
+
+						
+
+		
+
+		
+
+		
+
+								maxAllowedMismatches := 0
+
+		
+
+		
+
+		
+
+						
+
+		
+
+		
+
+		
+
+								if len(expectedLines) >= 4 {
+
+		
+
+		
+
+		
+
+						
+
+		
+
+		
+
+		
+
+									// For larger hunks, allow ~15-20% mismatch
+
+		
+
+		
+
+		
+
+						
+
+		
+
+		
+
+		
+
+									maxAllowedMismatches = len(expectedLines) / 6
+
+		
+
+		
+
+		
+
+						
+
+		
+
+		
+
+		
+
+									if maxAllowedMismatches < 1 {
+
+		
+
+		
+
+		
+
+						
+
+		
+
+		
+
+		
+
+										maxAllowedMismatches = 1
+
+		
+
+		
+
+		
+
+						
+
+		
+
+		
+
+		
+
+									}
+
+		
+
+		
+
+		
+
+						
+
+		
+
+		
+
+		
+
+									if maxAllowedMismatches > 3 {
+
+		
+
+		
+
+		
+
+						
+
+		
+
+		
+
+		
+
+										maxAllowedMismatches = 3 // Cap at 3 mismatches max
+
+		
+
+		
+
+		
+
+						
+
+		
+
+		
+
+		
+
+									}
+
+		
+
+		
+
+		
+
+						
+
+		
+
+		
+
+		
+
+								}
+
+		
+
+		
+
+		
+
+						
+
+		
+
+		
+
+		
+
+						
+
+		
+
+		
+
+		
+
+				
+
+		
+
+		
+
+		
+
+						for i := 0; i <= len(resultLines)-len(expectedLines); i++ {
+
+		
+
+		
+
+		
+
+							mismatches := 0
+
+		
+
+		
+
+		
+
+							for j, el := range expectedLines {
+
+		
+
+		
+
+		
+
+								if strings.TrimSpace(resultLines[i+j]) != strings.TrimSpace(el) {
+
+		
+
+		
+
+		
+
+									mismatches++
+
+		
+
+		
+
+		
+
+									if mismatches > maxAllowedMismatches {
+
+		
+
+		
+
+		
+
+										break
+
+		
+
+		
+
+		
+
+									}
+
+		
+
+		
+
+		
+
+								}
+
+		
+
+		
+
+		
+
+							}
+
+		
+
+		
+
+		
+
+							if mismatches < minMismatches {
+
+		
+
+		
+
+		
+
+								minMismatches = mismatches
+
+		
+
+		
+
+		
+
+								bestMatchIndex = i
+
+		
+
+		
+
+		
+
+							}
+
+		
+
+		
+
+		
+
+							if mismatches == 0 {
+
+		
+
+		
+
+		
+
+								break // Perfect match!
+
+		
+
+		
+
+		
+
+							}
+
+		
+
+		
+
+		
+
+						}
+
+		
+
+		
+
+		
+
+						
+
+		
+
+		
+
+		
+
+						if minMismatches <= maxAllowedMismatches {
+
+		
+
+		
+
+		
+
+							matchIndex = bestMatchIndex
+
+		
+
+		
+
+		
+
+							fmt.Printf("✅ Found fuzzy match at line %d with %d mismatches\n", matchIndex+1, minMismatches)
+
+		
+
+		
+
+		
+
+						}
+
+		
+
+		
+
+		
+
+				
+
+		
+
+		
+
+		
+
+						if matchIndex != -1 {
+
+		
+
+		
+
+		
+
+				
+
+			// Found a match! Apply changes
+
+			var newResultLines []string
+
+			newResultLines = append(newResultLines, resultLines[:matchIndex]...)
+
+			
+
+			// Track which expected line we are on
+
+			expIdx := 0
+
+			for _, hl := range h.lines {
+
+				if strings.HasPrefix(hl, " ") {
+
+					// Context line, keep it
+
+					newResultLines = append(newResultLines, resultLines[matchIndex+expIdx])
+
+					expIdx++
+
+				} else if strings.HasPrefix(hl, "-") {
+
+					// Removal line, skip it
+
+					expIdx++;
+
+				} else if strings.HasPrefix(hl, "+") {
+
+					// Addition line, add it
+
+					newResultLines = append(newResultLines, hl[1:])
+
+				}
+
 			}
-			if !shouldRemove {
-				filteredLines = append(filteredLines, line)
+
+			
+
+			newResultLines = append(newResultLines, resultLines[matchIndex+expIdx:]...)
+
+			resultLines = newResultLines
+
+			fmt.Printf("✅ Applied hunk with %d lines via fallback match\n", len(h.lines))
+
+		} else {
+
+			// No match found for the whole hunk, try falling back to just additions
+
+			fmt.Printf("⚠️ Could not find match for hunk, falling back to simple additions\n")
+
+			var additions []string
+
+			for _, hl := range h.lines {
+
+				if strings.HasPrefix(hl, "+") {
+
+					additions = append(additions, hl[1:])
+
+				}
+
 			}
+
+			newResult, _ := applyAdditionsToBottom(strings.Join(resultLines, "\n"), additions)
+
+			resultLines = strings.Split(newResult, "\n")
+
 		}
 
-		result = strings.Join(filteredLines, "\n")
-		fmt.Printf("🔧 Removed %d lines via fallback approach\n", len(removals))
 	}
 
-	// Apply additions
-	if len(additions) > 0 {
+
+
+	result := strings.Join(resultLines, "\n")
+	return result, nil
+}
+
+	
+
+	
+
+	
+
+	// couldBeJSON is a helper to check if content might be JSON
+
+	
+
+	func couldBeJSON(content string) bool {
+
+	
+
+		trimmed := strings.TrimSpace(content)
+
+	
+
+		return strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
+
+	
+
+	}
+
+	
+
+	
+
+	
+
+	// isJSON is a helper to check if content is valid JSON
+
+	
+
+	func isJSON(content string) bool {
+
+	
+
+		var js interface{}
+
+	
+
+		return json.Unmarshal([]byte(content), &js) == nil
+
+	
+
+	}
+
+	
+
+	
+
+
+
+// applyAdditionsToBottom appends additions to the end of the content, 
+
+// but tries to be smart about JSON structure.
+
+func applyAdditionsToBottom(content string, additions []string) (string, error) {
+
+	if len(additions) == 0 {
+
+		return content, nil
+
+	}
+
+
+
+	result := content
+
+	
+
+	// Check if it's JSON
+
+	var js interface{}
+
+	isJSON := json.Unmarshal([]byte(result), &js) == nil
+
+
+
+	if isJSON {
+
+		trimmedResult := strings.TrimSpace(result)
+
+		if strings.HasSuffix(trimmedResult, "}") {
+
+			// Insert before the last closing brace
+
+			lastBraceIndex := strings.LastIndex(result, "}")
+
+			prefix := result[:lastBraceIndex]
+
+			suffix := result[lastBraceIndex:]
+
+
+
+			// Try to see if we need a comma
+
+			trimmedPrefix := strings.TrimSpace(prefix)
+
+			firstAddition := ""
+
+			if len(additions) > 0 {
+
+				firstAddition = strings.TrimSpace(additions[0])
+
+			}
+
+			if len(trimmedPrefix) > 0 && !strings.HasSuffix(trimmedPrefix, "{") && !strings.HasSuffix(trimmedPrefix, ",") && !strings.HasSuffix(trimmedPrefix, "[") && !strings.HasPrefix(firstAddition, ",") {
+
+				prefix += ","
+
+			}
+
+			if !strings.HasSuffix(prefix, "\n") {
+
+				prefix += "\n"
+
+			}
+
+
+
+			for i, addition := range additions {
+
+				prefix += addition
+
+				// Add comma between additions if needed
+
+				if i < len(additions)-1 {
+
+					trimmedAddition := strings.TrimSpace(addition)
+
+					if !strings.HasSuffix(trimmedAddition, ",") && !strings.HasSuffix(trimmedAddition, "{") && !strings.HasSuffix(trimmedAddition, "[") {
+
+						prefix += ","
+
+					}
+
+				}
+
+				prefix += "\n"
+
+			}
+
+
+
+			result = prefix + suffix
+
+			fmt.Printf("🔧 Inserted %d lines before last '}' for JSON fallback\n", len(additions))
+
+		} else if strings.HasSuffix(trimmedResult, "]") {
+
+			// Similar for array
+
+			lastBracketIndex := strings.LastIndex(result, "]")
+
+			prefix := result[:lastBracketIndex]
+
+			suffix := result[lastBracketIndex:]
+
+
+
+			// Try to see if we need a comma
+
+			trimmedPrefix := strings.TrimSpace(prefix)
+
+			firstAddition := ""
+
+			if len(additions) > 0 {
+
+				firstAddition = strings.TrimSpace(additions[0])
+
+			}
+
+			if len(trimmedPrefix) > 0 && !strings.HasSuffix(trimmedPrefix, "[") && !strings.HasSuffix(trimmedPrefix, ",") && !strings.HasSuffix(trimmedPrefix, "{") && !strings.HasPrefix(firstAddition, ",") {
+
+				prefix += ","
+
+			}
+
+			if !strings.HasSuffix(prefix, "\n") {
+
+				prefix += "\n"
+
+			}
+
+
+
+			for i, addition := range additions {
+
+				prefix += addition
+
+				// Add comma between additions if needed
+
+				if i < len(additions)-1 {
+
+					trimmedAddition := strings.TrimSpace(addition)
+
+					if !strings.HasSuffix(trimmedAddition, ",") && !strings.HasSuffix(trimmedAddition, "{") && !strings.HasSuffix(trimmedAddition, "[") {
+
+						prefix += ","
+
+					}
+
+				}
+
+				prefix += "\n"
+
+			}
+
+
+
+			result = prefix + suffix
+
+			fmt.Printf("🔧 Inserted %d lines before last ']' for JSON fallback\n", len(additions))
+
+		} else {
+
+			// Fallback to appending
+
+			if !strings.HasSuffix(result, "\n") {
+
+				result += "\n"
+
+			}
+
+			for _, addition := range additions {
+
+				result += addition + "\n"
+
+			}
+
+			fmt.Printf("🔧 Appended %d lines to non-object/array JSON via fallback approach\n", len(additions))
+
+		}
+
+
+
+				// Final attempt to validate and pretty-print if it's JSON
+
+
+
+				var finalJs interface{}
+
+
+
+				if err := json.Unmarshal([]byte(result), &finalJs); err == nil {
+
+
+
+					if indented, err := json.MarshalIndent(finalJs, "", "  "); err == nil {
+
+
+
+						result = string(indented) + "\n"
+
+
+
+						fmt.Printf("✅ Re-formatted fallback result as valid JSON\n")
+
+
+
+					}
+
+
+
+				} else {
+					// Try to repair common JSON issues
+					reTrailingComma := regexp.MustCompile(`,\s*([}\]])`)
+					repaired := reTrailingComma.ReplaceAllString(result, "$1")
+
+					// Try to add missing commas between lines that look like they should be separated by commas
+					// This matches a line ending in a value (not comma, brace, or bracket) 
+					// followed by a line starting with a new value or key (not closing brace or bracket)
+					reMissingComma := regexp.MustCompile(`([^,\[{\s])\n\s*([^}\]\s])`)
+					repaired = reMissingComma.ReplaceAllString(repaired, "$1,\n$2")
+
+					if err := json.Unmarshal([]byte(repaired), &finalJs); err == nil {
+						if indented, err := json.MarshalIndent(finalJs, "", "  "); err == nil {
+							result = string(indented) + "\n"
+							fmt.Printf("✅ Repaired and re-formatted fallback result as valid JSON\n")
+						}
+					} else {
+						fmt.Printf("⚠️ Failed to repair JSON: %v\n", err)
+					}
+				}
+
+
+
+		
+
+	} else {
+
+		// Not JSON, just append
+
 		if !strings.HasSuffix(result, "\n") {
+
 			result += "\n"
+
 		}
 
 		for _, addition := range additions {
+
 			result += addition + "\n"
+
 		}
+
 		fmt.Printf("🔧 Added %d lines via fallback approach\n", len(additions))
+
 	}
 
+	
+
 	return result, nil
+
+}
+
+
+
+// ApplyDiffPatchDirect is an exported function for testing that applies a diff patch directly
+// without going through the HTTP API. This allows tests to use the same diff patching logic.
+func ApplyDiffPatchDirect(currentContent, diffContent string) (string, error) {
+	return applyDiffPatchFlexible(currentContent, diffContent)
 }

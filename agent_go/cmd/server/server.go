@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -22,7 +23,7 @@ import (
 	agent "mcp-agent-builder-go/agent_go/pkg/agentwrapper"
 	"mcp-agent-builder-go/agent_go/pkg/database"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
+	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	orchtypes "mcp-agent-builder-go/agent_go/pkg/orchestrator/types"
 	unifiedevents "mcpagent/events"
 	"mcpagent/executor"
@@ -61,6 +62,32 @@ func extractWorkspacePathFromObjective(objective string) string {
 		return strings.TrimSpace(objective[start : start+end])
 	}
 	return ""
+}
+
+// extractRootCauseError returns the raw error message without any processing
+// It unwraps the error chain to find the deepest/most specific error
+func extractRootCauseError(err error) string {
+	if err == nil {
+		return "unknown error"
+	}
+
+	// Unwrap the error chain to find the deepest error (the actual root cause)
+	currentErr := err
+	deepestErr := err
+	maxDepth := 20 // Limit depth to prevent infinite loops
+
+	for i := 0; i < maxDepth; i++ {
+		// Try to unwrap using errors.Unwrap
+		unwrapped := errors.Unwrap(currentErr)
+		if unwrapped == nil {
+			break
+		}
+		deepestErr = unwrapped
+		currentErr = unwrapped
+	}
+
+	// Return the raw error message from the deepest error (no pattern matching, no filtering)
+	return deepestErr.Error()
 }
 
 // createCustomTools creates workspace and human tools for orchestrator/workflow agents
@@ -246,16 +273,18 @@ type QueryRequest struct {
 	// Execution options from frontend (for workflow execution phase)
 	ExecutionOptions *ExecutionOptions `json:"execution_options,omitempty"`
 	// Context summarization configuration
-	EnableContextSummarization     bool    `json:"enable_context_summarization,omitempty"`       // Enable context summarization feature
-	SummarizeOnTokenThreshold      bool    `json:"summarize_on_token_threshold,omitempty"`       // Enable token-based summarization trigger (percentage-based)
+	EnableContextSummarization     *bool   `json:"enable_context_summarization,omitempty"`       // Enable context summarization feature (nil = inherit default, true/false = explicit override)
+	SummarizeOnTokenThreshold      *bool   `json:"summarize_on_token_threshold,omitempty"`       // Enable token-based summarization trigger (nil = inherit default, true/false = explicit override)
 	TokenThresholdPercent          float64 `json:"token_threshold_percent,omitempty"`            // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
-	SummarizeOnFixedTokenThreshold bool    `json:"summarize_on_fixed_token_threshold,omitempty"` // Enable fixed token-based summarization trigger
-	FixedTokenThreshold            int     `json:"fixed_token_threshold,omitempty"`              // Fixed token threshold to trigger summarization (e.g., 100000 = 100k tokens, default: 100k)
-	SummaryKeepLastMessages        int     `json:"summary_keep_last_messages,omitempty"`         // Number of recent messages to keep when summarizing (default: 4)
+	SummarizeOnFixedTokenThreshold *bool   `json:"summarize_on_fixed_token_threshold,omitempty"` // Enable fixed token-based summarization trigger (nil = inherit default, true/false = explicit override)
+	FixedTokenThreshold            int     `json:"fixed_token_threshold,omitempty"`              // Fixed token threshold to trigger summarization (default: 200000 = 200k tokens, matches orchestrator)
+	SummaryKeepLastMessages        int     `json:"summary_keep_last_messages,omitempty"`         // Number of recent messages to keep when summarizing (default: 4, matches orchestrator)
 	// Context editing configuration
-	EnableContextEditing        bool `json:"enable_context_editing,omitempty"`         // Enable context editing (dynamic context reduction)
-	ContextEditingThreshold     int  `json:"context_editing_threshold,omitempty"`      // Token threshold for context editing (0 = use default: 100)
-	ContextEditingTurnThreshold int  `json:"context_editing_turn_threshold,omitempty"` // Turn age threshold for context editing (0 = use default: 5)
+	EnableContextEditing        *bool `json:"enable_context_editing,omitempty"`         // Enable context editing (nil = inherit default, true/false = explicit override)
+	ContextEditingThreshold     int   `json:"context_editing_threshold,omitempty"`      // Token threshold for context editing (0 = use default: 100)
+	ContextEditingTurnThreshold int   `json:"context_editing_turn_threshold,omitempty"` // Turn age threshold for context editing (0 = use default: 5)
+	// Workspace access configuration
+	EnableWorkspaceAccess *bool `json:"enable_workspace_access,omitempty"` // Enable/disable workspace file access tools (nil = inherit default, true/false = explicit override)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -456,7 +485,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Create streaming API server
 	configPath := config.MCPConfigPath
-	mcpConfig, err := mcpclient.LoadConfig(configPath)
+	mcpConfig, err := mcpclient.LoadConfig(configPath, nil) // Logger not yet available, will be created later
 	if err != nil {
 		log.Fatalf("Failed to load MCP config: %w", err)
 	}
@@ -591,11 +620,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/mcp/execute", executorHandlers.HandleMCPExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/custom/execute", executorHandlers.HandleCustomExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/virtual/execute", executorHandlers.HandleVirtualExecute).Methods("POST", "OPTIONS")
-
-	// MCP Registry API routes (from mcp_registry_routes.go)
-	apiRouter.HandleFunc("/mcp-registry/servers", api.handleGetMCPRegistryServers).Methods("GET")
-	apiRouter.HandleFunc("/mcp-registry/servers/{id}", api.handleGetMCPRegistryServerDetails).Methods("GET")
-	apiRouter.HandleFunc("/mcp-registry/servers/{id}/tools", api.handleGetMCPRegistryServerTools).Methods("POST")
 
 	// MCP Config API routes (from mcp_config_routes.go)
 	apiRouter.HandleFunc("/mcp-config", api.handleGetMCPConfig).Methods("GET")
@@ -868,37 +892,27 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Set agent execution LLM defaults: API request takes precedence, then environment variables, then server config, then fallback to Bedrock
 	agentProvider := req.Provider // API request takes highest priority
-	log.Printf("[PROVIDER DEBUG] req.Provider: '%s'", req.Provider)
 	if agentProvider == "" {
 		agentProvider = os.Getenv("AGENT_PROVIDER") // Environment variable as fallback
-		log.Printf("[PROVIDER DEBUG] AGENT_PROVIDER env var: '%s'", os.Getenv("AGENT_PROVIDER"))
 	}
 	if agentProvider == "" {
 		agentProvider = api.config.Provider // Server config as fallback
-		log.Printf("[PROVIDER DEBUG] api.config.Provider: '%s'", api.config.Provider)
 	}
 	if agentProvider == "" {
 		agentProvider = "bedrock" // Default fallback
-		log.Printf("[PROVIDER DEBUG] Using default fallback: 'bedrock'")
 	}
-	log.Printf("[PROVIDER DEBUG] Final agentProvider: '%s'", agentProvider)
 
 	// Set agent model: API request takes precedence, then environment variables, then server config
 	agentModel := req.ModelID // API request takes highest priority
-	log.Printf("[MODEL DEBUG] req.ModelID: '%s'", req.ModelID)
 	if agentModel == "" {
 		agentModel = os.Getenv("AGENT_MODEL") // Environment variable as fallback
-		log.Printf("[MODEL DEBUG] AGENT_MODEL env var: '%s'", os.Getenv("AGENT_MODEL"))
 	}
 	if agentModel == "" {
 		agentModel = api.config.ModelID // Server config as fallback
-		log.Printf("[MODEL DEBUG] api.config.ModelID: '%s'", api.config.ModelID)
 	}
 	if agentModel == "" && agentProvider == "bedrock" {
 		agentModel = os.Getenv("BEDROCK_PRIMARY_MODEL") // Use .env configuration
-		log.Printf("[MODEL DEBUG] BEDROCK_PRIMARY_MODEL env var: '%s'", os.Getenv("BEDROCK_PRIMARY_MODEL"))
 	}
-	log.Printf("[MODEL DEBUG] Final agentModel: '%s'", agentModel)
 	req.Provider = agentProvider
 	req.ModelID = agentModel
 
@@ -919,9 +933,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if len(selectedServers) == 1 && selectedServers[0] == mcpclient.NoServers {
 		// Keep NoServers constant as-is - this will be handled by integration code
 		serverList = mcpclient.NoServers
-		log.Printf("[SERVER DEBUG] Request enabled_servers: %v", req.EnabledServers)
-		log.Printf("[SERVER DEBUG] Selected servers: %v", selectedServers)
-		log.Printf("[SERVER DEBUG] Server list: %s (pure LLM mode)", serverList)
 	} else {
 		// Default to all servers if none specified
 		if len(selectedServers) == 0 {
@@ -930,12 +941,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Convert server array to comma-separated string for agent compatibility
 		serverList = strings.Join(selectedServers, ",")
-
-		// Debug logging for server selection
-		log.Printf("[SERVER DEBUG] Request enabled_servers: %v", req.EnabledServers)
-		log.Printf("[SERVER DEBUG] Request servers: %v", req.Servers)
-		log.Printf("[SERVER DEBUG] Selected servers: %v", selectedServers)
-		log.Printf("[SERVER DEBUG] Server list: %s", serverList)
 	}
 
 	// Extract sessionID from header/cookie or fallback to queryID
@@ -951,35 +956,93 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	chatSession, err := api.chatDB.GetChatSession(r.Context(), sessionID)
 	if err != nil {
 		// Chat session doesn't exist, create a new one
-		log.Printf("[DATABASE DEBUG] Creating new chat session for sessionID: %s", sessionID)
-		// Truncate query for title
+		// Extract title from req.Query (user message)
+		// Remove file context suffix if present (format: "...\n\n📁 Files in context: ...")
 		title := req.Query
-		log.Printf("[TITLE DEBUG] Query received for title: '%s' (length: %d)", title, len(title))
+		if idx := strings.Index(title, "\n\n📁 Files in context:"); idx != -1 {
+			title = title[:idx]
+		}
+		title = strings.TrimSpace(title)
+		// Truncate to 50 characters
 		if len(title) > 50 {
 			title = title[:50] + "..."
 		}
-		log.Printf("[TITLE DEBUG] Final title: '%s'", title)
+
+		// Build typed config from request
+		var configJSON json.RawMessage
+		hasConfig := len(req.Servers) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.EnableContextSummarization != nil || req.Provider != "" || req.ModelID != "" || req.LLMConfig != nil
+		if hasConfig {
+			config := &database.ChatSessionConfig{
+				SelectedServers:      req.Servers,
+				EnabledServers:       req.EnabledServers,
+				UseCodeExecutionMode: req.UseCodeExecutionMode,
+				EnableContextSummarization: func() *bool {
+					if req.EnableContextSummarization != nil {
+						val := *req.EnableContextSummarization
+						return &val
+					}
+					return nil
+				}(),
+			}
+
+			// Extract LLM config (prefer LLMConfig field, fallback to Provider/ModelID)
+			if req.LLMConfig != nil {
+				config.LLMConfig = &database.LLMConfigForStorage{
+					Provider:       req.LLMConfig.Provider,
+					ModelID:        req.LLMConfig.ModelID,
+					FallbackModels: req.LLMConfig.FallbackModels,
+				}
+				if req.LLMConfig.CrossProviderFallback != nil {
+					config.LLMConfig.CrossProvider = &database.CrossProviderFallback{
+						Provider: req.LLMConfig.CrossProviderFallback.Provider,
+						Models:   req.LLMConfig.CrossProviderFallback.Models,
+					}
+				}
+			} else if req.Provider != "" || req.ModelID != "" {
+				config.LLMConfig = &database.LLMConfigForStorage{
+					Provider: req.Provider,
+					ModelID:  req.ModelID,
+				}
+			}
+
+			var err error
+			configJSON, err = config.ToJSON()
+			if err != nil {
+				log.Printf("[CONFIG DEBUG] Failed to marshal config: %v", err)
+				configJSON = nil
+			}
+		}
+
 		chatSession, err = api.chatDB.CreateChatSession(r.Context(), &database.CreateChatSessionRequest{
 			SessionID:     sessionID,
 			Title:         title,
 			AgentMode:     req.AgentMode,
 			PresetQueryID: req.PresetQueryID,
+			Config:        configJSON,
 		})
 		if err != nil {
 			log.Printf("[DATABASE DEBUG] Failed to create chat session: %w", err)
 			// Continue without chat session - events won't be stored but query can proceed
-		} else {
-			log.Printf("[DATABASE DEBUG] Successfully created chat session: %s", chatSession.ID)
 		}
 	} else {
-		log.Printf("[DATABASE DEBUG] Found existing chat session: %s", chatSession.ID)
+		// Reactivate session if it was stopped/completed/error - update status to "active" for new query
+		if chatSession.Status == "stopped" || chatSession.Status == "completed" || chatSession.Status == "error" {
+			updateReq := &database.UpdateChatSessionRequest{
+				Status:      "active",
+				CompletedAt: nil, // Clear completion timestamp when reactivating
+			}
+			_, err := api.chatDB.UpdateChatSession(r.Context(), sessionID, updateReq)
+			if err != nil {
+				// Continue with existing session status
+			}
+
+			// Initialize EventStore for reactivated session to ensure new events are stored correctly
+			api.eventStore.InitializeSession(sessionID)
+		}
 	}
 
 	// Track active session for page refresh recovery (no observer needed)
 	api.trackActiveSession(sessionID, req.AgentMode, req.Query)
-
-	// Create a fresh agent for each request
-	log.Printf("[LLM CONFIG DEBUG] Creating fresh agent for each request")
 
 	// Create fresh agent for this request
 	// Use LLM configuration from request if provided, otherwise use request defaults
@@ -1001,18 +1064,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				Models:   req.LLMConfig.CrossProviderFallback.Models,
 			}
 		}
-		log.Printf("[LLM CONFIG DEBUG] Using detailed LLM config from request - Provider: %s, Model: %s, Fallbacks: %v, CrossProvider: %+v",
-			finalProvider, finalModelID, fallbackModels, crossProviderFallback)
 	} else {
 		// Fall back to request defaults
 		finalProvider = req.Provider
 		finalModelID = req.ModelID
-		log.Printf("[LLM CONFIG DEBUG] Using request defaults - Provider: %s, Model: %s", finalProvider, finalModelID)
 	}
 
 	// Handle workflow mode - use workflow orchestrator
 	if req.AgentMode == "workflow" {
-		log.Printf("[WORKFLOW DEBUG] Starting workflow for session %s", sessionID)
 
 		// Check if preset_id is provided and workflow is approved
 		if req.PresetQueryID != "" {
@@ -1036,10 +1095,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-
-		log.Printf("[WORKFLOW DEBUG] Workflow mode requested for query %s - using workflow orchestrator", queryID)
-		log.Printf("[WORKFLOW DEBUG] SessionID: '%s'", sessionID)
-		log.Printf("[WORKFLOW DEBUG] Selected servers for workflow: %v", selectedServers)
 
 		// Create workflow event bridge for event emission
 		// Note: ChatDB is set to nil - workflow events are stored in memory only (for polling API)
@@ -1142,18 +1197,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		log.Printf("[WORKFLOW DEBUG] Created workflow orchestrator with %d custom tools", len(allTools))
-
 		// Store workflow orchestrator for guidance injection
 		api.storeWorkflowOrchestrator(sessionID, workflowOrchestrator)
 
 		// Create a cancellable context for workflow execution using background context
 		// This prevents the workflow from being cancelled when the HTTP request ends
 		workflowCtx, workflowCancel := context.WithCancel(context.Background())
-
-		// Add debug logging for context creation
-		log.Printf("[WORKFLOW DEBUG] Created workflow context: %p, parent: %p", workflowCtx, context.Background())
-		log.Printf("[WORKFLOW DEBUG] Context error check: %v", workflowCtx.Err())
 
 		// Store the cancel function for potential cancellation
 		api.workflowOrchestratorContextMux.Lock()
@@ -1181,16 +1230,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				delete(api.workflowOrchestratorContexts, sessionID)
 				api.workflowOrchestratorContextMux.Unlock()
 
-				log.Printf("[WORKFLOW DEBUG] Workflow completed for session %s", sessionID)
 			}()
-
-			log.Printf("[WORKFLOW DEBUG] Starting asynchronous workflow execution for query %s", queryID)
-
-			// Add debug logging for context before execution
-			log.Printf("[WORKFLOW DEBUG] Context before execution: %p, error: %v", workflowCtx, workflowCtx.Err())
-			deadline, hasDeadline := workflowCtx.Deadline()
-			log.Printf("[WORKFLOW DEBUG] Context deadline: %v, hasDeadline: %v", deadline, hasDeadline)
-			log.Printf("[WORKFLOW DEBUG] Context done: %v", workflowCtx.Done())
 
 			// Check database for workflow approval status if preset_id is provided
 			workflowStatus := database.WorkflowStatusPreVerification // Default status
@@ -1278,14 +1318,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				workflowOptions["stepId"] = stepID // Pass step ID for step-specific phase execution
 			}
 
-			log.Printf("[WORKFLOW EXECUTION DEBUG] About to call workflowOrchestrator.Execute")
-			log.Printf("[WORKFLOW EXECUTION DEBUG] workflowOptions: %+v", workflowOptions)
-			log.Printf("[WORKFLOW EXECUTION DEBUG] selectedOptions type: %T", selectedOptions)
-			if selectedOptions != nil {
-				log.Printf("[WORKFLOW EXECUTION DEBUG] selectedOptions.PhaseID: %s", selectedOptions.PhaseID)
-				log.Printf("[WORKFLOW EXECUTION DEBUG] selectedOptions.Selections count: %d", len(selectedOptions.Selections))
-			}
-
 			// Pass execution options from frontend if provided
 			if req.ExecutionOptions != nil {
 				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s, resume_from_step=%d, enabled_group_ids=%v, skip_learning_temp_llm1=%v, skip_learning_temp_llm2=%v, save_validation_responses=%v",
@@ -1305,6 +1337,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					SkipLearningWhenTempLLM2:       req.ExecutionOptions.SkipLearningWhenTempLLM2,
 					EnabledGroupIDs:                req.ExecutionOptions.EnabledGroupIDs,
 					SaveValidationResponses:        req.ExecutionOptions.SaveValidationResponses,
+					DisableShellExecAccess:         req.ExecutionOptions.DisableShellExecAccess,
+					DisableReadImageAccess:         req.ExecutionOptions.DisableReadImageAccess,
 				}
 
 				// Convert TempOverrideLLM if present
@@ -1355,10 +1389,37 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			)
 			if err != nil {
 				log.Printf("[WORKFLOW ERROR] Workflow execution failed for query %s: %v", queryID, err)
-				// Send error event
+
+				// Extract root cause error from the error chain
+				rootCauseError := extractRootCauseError(err)
+				fullError := err.Error()
+
+				// Emit UnifiedCompletionEvent with root cause error (for UI display)
+				errorEventData := unifiedevents.NewUnifiedCompletionEventWithError(
+					"workflow",            // agentType
+					"workflow",            // agentMode
+					workflowObjective,     // question
+					rootCauseError,        // root cause error message
+					time.Since(startTime), // duration
+					0,                     // turns
+				)
+				agentEvent := unifiedevents.NewAgentEvent(errorEventData)
+				agentEvent.SessionID = sessionID
+				completionEvent := events.Event{
+					ID:        fmt.Sprintf("workflow_completion_error_%s_%d", queryID, time.Now().UnixNano()),
+					Type:      string(unifiedevents.EventTypeUnifiedCompletion),
+					Timestamp: time.Now(),
+					Data:      agentEvent,
+					SessionID: sessionID,
+				}
+				api.eventStore.AddEvent(sessionID, completionEvent)
+				log.Printf("[WORKFLOW ERROR] Emitted UnifiedCompletionEvent with root cause error for query %s: %s", queryID, rootCauseError)
+
+				// Also send workflow_error event with both root cause and full chain
 				errorData := map[string]interface{}{
-					"error":    err.Error(),
-					"query_id": queryID,
+					"error":       rootCauseError, // Root cause (most important)
+					"error_chain": fullError,      // Full error chain for debugging
+					"query_id":    queryID,
 				}
 				api.eventStore.AddEvent(sessionID, events.Event{
 					ID:        fmt.Sprintf("workflow_error_%s_%d", queryID, time.Now().UnixNano()),
@@ -1516,6 +1577,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Load selected tools and code execution mode from preset if available (for simple/ReAct agents)
 		var selectedTools []string
 		var useCodeExecutionMode bool
+		var presetSetCodeExecutionMode bool // Track if preset explicitly set the value
+
 		if req.PresetQueryID != "" {
 			ctx := context.Background()
 			preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
@@ -1533,8 +1596,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				// Load code execution mode from preset
 				useCodeExecutionMode = preset.UseCodeExecutionMode
+				presetSetCodeExecutionMode = true
 				if useCodeExecutionMode {
 					log.Printf("[CODE_EXECUTION] Code execution mode enabled from preset")
+				} else {
+					log.Printf("[CODE_EXECUTION] Code execution mode disabled from preset")
 				}
 			}
 		}
@@ -1551,52 +1617,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
 		}
 
-		// Use code execution mode from request if preset didn't provide any
-		if !useCodeExecutionMode && req.UseCodeExecutionMode {
-			useCodeExecutionMode = req.UseCodeExecutionMode
+		// CRITICAL: Always respect request value when explicitly set (frontend always sends explicit value)
+		// The frontend explicitly sends use_code_execution_mode (true or false), so we should use it
+		// This ensures that when user selects "simple" mode without preset, the request value is respected
+		useCodeExecutionMode = req.UseCodeExecutionMode
+		if useCodeExecutionMode {
 			log.Printf("[CODE_EXECUTION] Code execution mode enabled from request")
-		}
-
-		// Create LLM agent wrapper with trace using streamCtx
-		if req.PresetQueryID != "" {
-			ctx := context.Background()
-			preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
-			if err == nil {
-				if preset.SelectedTools != "" {
-					if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
-						log.Printf("[TOOLS] Failed to parse selected tools from preset: %w", err)
-					} else {
-						if len(selectedTools) > 0 {
-							log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
-						} else {
-							log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
-						}
-					}
-				}
-				// Load code execution mode from preset
-				useCodeExecutionMode = preset.UseCodeExecutionMode
-				if useCodeExecutionMode {
-					log.Printf("[CODE_EXECUTION] Code execution mode enabled from preset")
-				}
-			}
-		}
-
-		// Use selected tools from request if preset didn't provide any
-		if len(selectedTools) == 0 && len(req.SelectedTools) > 0 {
-			selectedTools = req.SelectedTools
-			if len(selectedTools) > 0 {
-				log.Printf("[TOOLS] Using %d specific tools from request", len(selectedTools))
+		} else {
+			if presetSetCodeExecutionMode {
+				log.Printf("[CODE_EXECUTION] Code execution mode disabled by request (overriding preset value)")
 			} else {
-				log.Printf("[TOOLS] Request has empty tool selection - will use ALL tools from selected servers")
+				log.Printf("[CODE_EXECUTION] Code execution mode disabled (default)")
 			}
-		} else if len(selectedTools) == 0 {
-			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
-		}
-
-		// Use code execution mode from request if preset didn't provide any
-		if !useCodeExecutionMode && req.UseCodeExecutionMode {
-			useCodeExecutionMode = req.UseCodeExecutionMode
-			log.Printf("[CODE_EXECUTION] Code execution mode enabled from request")
 		}
 
 		// Create new agent with streamCtx instead of r.Context()
@@ -1654,26 +1686,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}(),
 			// Context summarization configuration
-			// Priority: Request > Environment Variable > Default
+			// Priority: Request > Environment Variable > Default (matches orchestrator defaults)
 			EnableContextSummarization: func() bool {
-				if req.EnableContextSummarization {
-					return true
+				// If explicitly set in request, use that value
+				if req.EnableContextSummarization != nil {
+					return *req.EnableContextSummarization
 				}
-				// Check environment variable
-				if envVal := os.Getenv("ENABLE_CONTEXT_SUMMARIZATION"); envVal == "true" {
-					return true
+				// Check environment variable - default to enabled (true), can be disabled via "false"
+				if envVal := os.Getenv("ENABLE_CONTEXT_SUMMARIZATION"); envVal == "false" {
+					return false
 				}
-				return false
+				return true // Default to enabled (matches orchestrator)
 			}(),
 			SummarizeOnTokenThreshold: func() bool {
-				if req.SummarizeOnTokenThreshold {
-					return true
+				// If explicitly set in request, use that value
+				if req.SummarizeOnTokenThreshold != nil {
+					return *req.SummarizeOnTokenThreshold
 				}
-				// Check environment variable
-				if envVal := os.Getenv("SUMMARIZE_ON_TOKEN_THRESHOLD"); envVal == "true" {
-					return true
+				// Check environment variable - default to enabled (true), can be disabled via "false"
+				if envVal := os.Getenv("SUMMARIZE_ON_TOKEN_THRESHOLD"); envVal == "false" {
+					return false
 				}
-				return false
+				return true // Default to enabled (matches orchestrator)
 			}(),
 			TokenThresholdPercent: func() float64 {
 				// Request takes highest priority
@@ -1686,18 +1720,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						return threshold
 					}
 				}
-				// Default to 80% (0.8)
+				// Default to 80% (0.8) - matches orchestrator
 				return 0.8
 			}(),
 			SummarizeOnFixedTokenThreshold: func() bool {
-				if req.SummarizeOnFixedTokenThreshold {
-					return true
+				// If explicitly set in request, use that value
+				if req.SummarizeOnFixedTokenThreshold != nil {
+					return *req.SummarizeOnFixedTokenThreshold
 				}
-				// Check environment variable
-				if envVal := os.Getenv("SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD"); envVal == "true" {
-					return true
+				// Check environment variable - default to enabled (true), can be disabled via "false"
+				if envVal := os.Getenv("SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD"); envVal == "false" {
+					return false
 				}
-				return false
+				return true // Default to enabled (matches orchestrator)
 			}(),
 			FixedTokenThreshold: func() int {
 				// Request takes highest priority
@@ -1710,7 +1745,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						return threshold
 					}
 				}
-				return 0 // 0 means disabled
+				return 200000 // Default to 200k tokens (matches orchestrator)
 			}(),
 			SummaryKeepLastMessages: func() int {
 				if req.SummaryKeepLastMessages > 0 {
@@ -1722,13 +1757,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						return keepLast
 					}
 				}
-				return 0 // 0 means use default (8 messages)
+				return 4 // Default to 4 messages (matches orchestrator)
 			}(),
 			// Context editing configuration
 			// Priority: Request > Environment Variable > Default
 			EnableContextEditing: func() bool {
-				if req.EnableContextEditing {
-					return true
+				// If explicitly set in request, use that value
+				if req.EnableContextEditing != nil {
+					return *req.EnableContextEditing
 				}
 				// Check environment variable
 				if envVal := os.Getenv("ENABLE_CONTEXT_EDITING"); envVal == "true" {
@@ -1794,60 +1830,76 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Add workspace tools to simple agents (chat mode)
 		// This matches how workspace tools are registered in workflow/orchestrator agents
 		// This ensures custom tools are available and code generation is triggered
+		// Only register workspace tools if workspace access is enabled
+		// Note: Frontend always sends enable_workspace_access for chat mode (true/false)
+		// For workflow mode, the field is not sent (undefined), so we skip workspace tools here
+		// (they're handled differently in workflow orchestrator)
 		if req.AgentMode == "simple" && llmAgent.GetUnderlyingAgent() != nil {
-			workspaceTools := virtualtools.CreateWorkspaceTools()
-			workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
-			_, _, toolCategories := createCustomTools() // Get toolCategories map
+			// Check if workspace access is enabled
+			// Default to true for backward compatibility with legacy requests
+			// nil = inherit default (true), non-nil = explicit override
+			enableWorkspaceAccess := true // Default to enabled for backward compatibility
+			if req.EnableWorkspaceAccess != nil {
+				enableWorkspaceAccess = *req.EnableWorkspaceAccess
+			}
 
-			log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for simple agent", len(workspaceTools))
+			if enableWorkspaceAccess {
+				workspaceTools := virtualtools.CreateWorkspaceTools()
+				workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
+				_, _, toolCategories := createCustomTools() // Get toolCategories map
 
-			underlyingAgent := llmAgent.GetUnderlyingAgent()
-			for _, tool := range workspaceTools {
-				if tool.Function == nil {
-					log.Printf("[WORKSPACE TOOLS] Warning: Skipping tool with nil Function")
-					continue
-				}
-				toolName := tool.Function.Name
-				if executor, exists := workspaceExecutors[toolName]; exists {
-					// Convert Parameters to map[string]interface{} using JSON marshal/unmarshal
-					// This matches the workflow implementation for consistency
-					var params map[string]interface{}
-					if tool.Function.Parameters != nil {
-						paramsBytes, err := json.Marshal(tool.Function.Parameters)
-						if err == nil {
-							json.Unmarshal(paramsBytes, &params)
-						}
-					}
-					if params == nil {
-						log.Printf("[WORKSPACE TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
+				log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for simple agent (enable_workspace_access: %v)", len(workspaceTools), enableWorkspaceAccess)
+
+				underlyingAgent := llmAgent.GetUnderlyingAgent()
+				for _, tool := range workspaceTools {
+					if tool.Function == nil {
+						log.Printf("[WORKSPACE TOOLS] Warning: Skipping tool with nil Function")
 						continue
 					}
+					toolName := tool.Function.Name
+					if executor, exists := workspaceExecutors[toolName]; exists {
+						// Convert Parameters to map[string]interface{} using JSON marshal/unmarshal
+						// This matches the workflow implementation for consistency
+						var params map[string]interface{}
+						if tool.Function.Parameters != nil {
+							paramsBytes, err := json.Marshal(tool.Function.Parameters)
+							if err == nil {
+								json.Unmarshal(paramsBytes, &params)
+							}
+						}
+						if params == nil {
+							log.Printf("[WORKSPACE TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
+							continue
+						}
 
-					// Get tool category from the category map - REQUIRED
-					toolCategory := toolCategories[toolName]
-					if toolCategory == "" {
-						log.Printf("[WORKSPACE TOOLS ERROR] Tool %s not found in toolCategories map - category is REQUIRED!", toolName)
-						sendError(fmt.Sprintf("Failed to register workspace tool %s: category is REQUIRED", toolName), true)
-						return
-					}
+						// Get tool category from the category map - REQUIRED
+						toolCategory := toolCategories[toolName]
+						if toolCategory == "" {
+							log.Printf("[WORKSPACE TOOLS ERROR] Tool %s not found in toolCategories map - category is REQUIRED!", toolName)
+							sendError(fmt.Sprintf("Failed to register workspace tool %s: category is REQUIRED", toolName), true)
+							return
+						}
 
-					// Executor is already the correct type (func(ctx, args) (string, error))
-					// No type assertion needed unlike workflow where executors are map[string]interface{}
-					if err := underlyingAgent.RegisterCustomTool(
-						toolName,
-						tool.Function.Description,
-						params,
-						executor,
-						toolCategory,
-					); err != nil {
-						log.Printf("[WORKSPACE TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
-						sendError(fmt.Sprintf("Failed to register workspace tool %s: %v", toolName, err), true)
-						return
+						// Executor is already the correct type (func(ctx, args) (string, error))
+						// No type assertion needed unlike workflow where executors are map[string]interface{}
+						if err := underlyingAgent.RegisterCustomTool(
+							toolName,
+							tool.Function.Description,
+							params,
+							executor,
+							toolCategory,
+						); err != nil {
+							log.Printf("[WORKSPACE TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
+							sendError(fmt.Sprintf("Failed to register workspace tool %s: %v", toolName, err), true)
+							return
+						}
+						log.Printf("[WORKSPACE TOOLS] Registered workspace tool: %s (category: %s)", toolName, toolCategory)
 					}
-					log.Printf("[WORKSPACE TOOLS] Registered workspace tool: %s (category: %s)", toolName, toolCategory)
 				}
+				log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace tools for simple agent", len(workspaceTools))
+			} else {
+				log.Printf("[WORKSPACE TOOLS] Skipping workspace tools registration (enable_workspace_access: false)")
 			}
-			log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace tools for simple agent", len(workspaceTools))
 		}
 
 		// Add custom agent instructions based on agent mode
@@ -1955,10 +2007,78 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.conversationMux.RUnlock()
 
 		if exists && len(history) > 0 {
-			log.Printf("[CONVERSATION DEBUG] Loading %d messages from conversation history for session %s", len(history), sessionID)
+			log.Printf("[CONVERSATION DEBUG] Loading %d messages from in-memory conversation history for session %s", len(history), sessionID)
 			// Load the conversation history into the agent
 			for _, msg := range history {
 				llmAgent.AppendMessage(msg)
+			}
+		} else if api.chatDB != nil {
+			// Try to load conversation history from database
+			log.Printf("[CONVERSATION DEBUG] No in-memory history found for session %s, attempting to load from database", sessionID)
+
+			// Get events for this session, focusing on conversation_turn events
+			dbEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 1000, 0)
+			if err != nil {
+				log.Printf("[CONVERSATION DEBUG] Failed to load events from database for session %s: %v", sessionID, err)
+			} else {
+				// Find the last conversation_turn event which contains full conversation history
+				var lastTurnEvent *database.Event
+				for i := len(dbEvents) - 1; i >= 0; i-- {
+					if dbEvents[i].EventType == string(unifiedevents.ConversationTurn) {
+						lastTurnEvent = &dbEvents[i]
+						break
+					}
+				}
+
+				if lastTurnEvent != nil {
+					// Parse the event data using typed structures
+					// EventData contains the full AgentEvent JSON structure
+					// Use a helper struct to unmarshal Data as json.RawMessage first
+					type agentEventHelper struct {
+						Type unifiedevents.EventType `json:"type"`
+						Data json.RawMessage         `json:"data"`
+					}
+
+					var agentEvent agentEventHelper
+					if err := json.Unmarshal(lastTurnEvent.EventData, &agentEvent); err != nil {
+						log.Printf("[CONVERSATION DEBUG] Failed to parse AgentEvent for session %s: %v", sessionID, err)
+					} else if agentEvent.Type == unifiedevents.ConversationTurn {
+						// Unmarshal Data field to ConversationTurnEvent
+						var turnEvent unifiedevents.ConversationTurnEvent
+						if err := json.Unmarshal(agentEvent.Data, &turnEvent); err != nil {
+							log.Printf("[CONVERSATION DEBUG] Failed to parse ConversationTurnEvent data for session %s: %v", sessionID, err)
+						} else if len(turnEvent.Messages) > 0 {
+							// Deserialize messages from SerializedMessage format back to llmtypes.MessageContent
+							deserializedHistory := make([]llmtypes.MessageContent, 0, len(turnEvent.Messages))
+							for _, serializedMsg := range turnEvent.Messages {
+								msg := deserializeSerializedMessage(serializedMsg)
+								if msg != nil {
+									deserializedHistory = append(deserializedHistory, *msg)
+								}
+							}
+
+							if len(deserializedHistory) > 0 {
+								log.Printf("[CONVERSATION DEBUG] Loaded %d messages from database conversation history for session %s", len(deserializedHistory), sessionID)
+								// Load the conversation history into the agent
+								for _, msg := range deserializedHistory {
+									llmAgent.AppendMessage(msg)
+								}
+								// Cache in memory for future use
+								api.conversationMux.Lock()
+								api.conversationHistory[sessionID] = deserializedHistory
+								api.conversationMux.Unlock()
+							} else {
+								log.Printf("[CONVERSATION DEBUG] No valid messages found after deserialization for session %s", sessionID)
+							}
+						} else {
+							log.Printf("[CONVERSATION DEBUG] ConversationTurnEvent has no messages for session %s", sessionID)
+						}
+					} else {
+						log.Printf("[CONVERSATION DEBUG] Event type is %s, expected conversation_turn for session %s", agentEvent.Type, sessionID)
+					}
+				} else {
+					log.Printf("[CONVERSATION DEBUG] No conversation_turn event found in database for session %s", sessionID)
+				}
 			}
 		} else {
 			log.Printf("[CONVERSATION DEBUG] No conversation history found for session %s, starting fresh", sessionID)
@@ -2186,8 +2306,18 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 // State management functions removed - orchestrator is now stateless
 
 // createServerLogger creates a logger instance for the server
+// This logger writes to logs/server_debug.log (or the file specified via --log-file flag)
 func createServerLogger() loggerv2.Logger {
-	serverLogger, err := logger.CreateLogger("", "info", "text", true)
+	// Check for log file from flag or environment variable, default to server_debug.log
+	logFile := viper.GetString("log-file")
+	if logFile == "" {
+		logFile = os.Getenv("LOG_FILE")
+	}
+	if logFile == "" {
+		logFile = "logs/server_debug.log"
+	}
+
+	serverLogger, err := logger.CreateLogger(logFile, "info", "text", false)
 	if err != nil {
 		log.Fatalf("Failed to create server logger: %w", err)
 	}
@@ -2330,7 +2460,90 @@ func deleteChatSessionHandler(db database.Database) http.HandlerFunc {
 	}
 }
 
+// convertDBEventToPollingEvent converts a database.Event to events.Event format
+// This is the same conversion used by the polling API to ensure consistency
+func convertDBEventToPollingEvent(dbEvent database.Event, sessionID string) (*events.Event, error) {
+	// Unmarshal the full AgentEvent - use helper struct to handle EventData interface
+	type agentEventWithRawData struct {
+		Type           unifiedevents.EventType `json:"type"`
+		Timestamp      time.Time               `json:"timestamp"`
+		EventIndex     int                     `json:"event_index"`
+		TraceID        string                  `json:"trace_id,omitempty"`
+		SpanID         string                  `json:"span_id,omitempty"`
+		ParentID       string                  `json:"parent_id,omitempty"`
+		CorrelationID  string                  `json:"correlation_id,omitempty"`
+		HierarchyLevel int                     `json:"hierarchy_level"`
+		SessionID      string                  `json:"session_id,omitempty"`
+		Component      string                  `json:"component,omitempty"`
+		Data           json.RawMessage         `json:"data"`
+	}
+
+	var helper agentEventWithRawData
+	if err := json.Unmarshal(dbEvent.EventData, &helper); err != nil {
+		return nil, fmt.Errorf("failed to parse event: %w", err)
+	}
+
+	// Unmarshal Data field into a map to preserve structure
+	var dataMap map[string]interface{}
+	if err := json.Unmarshal(helper.Data, &dataMap); err != nil {
+		return nil, fmt.Errorf("failed to parse event data: %w", err)
+	}
+
+	// Extract event-specific fields, excluding BaseEventData fields
+	// BaseEventData fields are: timestamp, trace_id, span_id, event_id, parent_id,
+	// is_end_event, correlation_id, hierarchy_level, session_id, component, metadata
+	baseEventDataFields := map[string]bool{
+		"timestamp":       true,
+		"trace_id":        true,
+		"span_id":         true,
+		"event_id":        true,
+		"parent_id":       true,
+		"is_end_event":    true,
+		"correlation_id":  true,
+		"hierarchy_level": true,
+		"session_id":      true,
+		"component":       true,
+		"metadata":        true,
+	}
+
+	actualEventData := make(map[string]interface{})
+	for k, v := range dataMap {
+		// Skip BaseEventData fields - they're already in AgentEvent
+		if !baseEventDataFields[k] {
+			actualEventData[k] = v
+		}
+	}
+
+	// Create AgentEvent with flatEventData that serializes directly as event-specific fields
+	// This ensures event.data.data contains the actual event data (like {content: "..."})
+	agentEvent := unifiedevents.AgentEvent{
+		Type:           helper.Type,
+		Timestamp:      helper.Timestamp,
+		EventIndex:     helper.EventIndex,
+		TraceID:        helper.TraceID,
+		SpanID:         helper.SpanID,
+		ParentID:       helper.ParentID,
+		CorrelationID:  helper.CorrelationID,
+		HierarchyLevel: helper.HierarchyLevel,
+		SessionID:      helper.SessionID,
+		Component:      helper.Component,
+		Data: &flatEventData{
+			eventData: actualEventData,
+			eventType: helper.Type,
+		},
+	}
+
+	return &events.Event{
+		ID:        dbEvent.ID,
+		Type:      dbEvent.EventType,
+		Timestamp: dbEvent.Timestamp,
+		SessionID: sessionID,
+		Data:      &agentEvent,
+	}, nil
+}
+
 // getSessionEventsHandler gets events for a specific session
+// Returns events in the same format as polling API (events.Event[])
 func getSessionEventsHandler(db database.Database) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
@@ -2354,15 +2567,100 @@ func getSessionEventsHandler(db database.Database) http.HandlerFunc {
 			}
 		}
 
-		events, err := db.GetEventsBySession(r.Context(), sessionID, limit, offset)
+		dbEvents, err := db.GetEventsBySession(r.Context(), sessionID, limit, offset)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
+		log.Printf("[CHAT_HISTORY] Loading events for session %s: found %d events", sessionID, len(dbEvents))
+
+		// Convert database events to polling events format using shared helper
+		convertedEvents := make([]events.Event, 0, len(dbEvents))
+		parseErrors := 0
+		for i, dbEvent := range dbEvents {
+			convertedEvent, err := convertDBEventToPollingEvent(dbEvent, sessionID)
+			if err != nil {
+				parseErrors++
+				if i < 3 {
+					log.Printf("[CHAT_HISTORY ERROR] Failed to convert event %d for session %s: %v, event_type=%s", i, sessionID, err, dbEvent.EventType)
+				}
+				continue
+			}
+
+			// Debug: Log first event structure to verify JSON serialization
+			if i == 0 && convertedEvent.Data != nil {
+				// Marshal to JSON to see actual structure
+				if jsonBytes, err := json.Marshal(convertedEvent); err == nil {
+					jsonStr := string(jsonBytes)
+					maxLen := 500
+					if len(jsonStr) > maxLen {
+						jsonStr = jsonStr[:maxLen] + "..."
+					}
+					log.Printf("[CHAT_HISTORY DEBUG] First event JSON structure: %s", jsonStr)
+				}
+
+				// Check if GenericEventData is being used correctly
+				if genericData, ok := convertedEvent.Data.Data.(*unifiedevents.GenericEventData); ok {
+					if dataBytes, err := json.Marshal(genericData); err == nil {
+						dataStr := string(dataBytes)
+						maxLen := 300
+						if len(dataStr) > maxLen {
+							dataStr = dataStr[:maxLen] + "..."
+						}
+						log.Printf("[CHAT_HISTORY DEBUG] GenericEventData structure: %s", dataStr)
+					}
+					keys := make([]string, 0, len(genericData.Data))
+					for k := range genericData.Data {
+						keys = append(keys, k)
+					}
+					log.Printf("[CHAT_HISTORY DEBUG] GenericEventData.Data keys: %v", keys)
+				}
+			}
+
+			// Debug: Log user_message events specifically
+			if convertedEvent.Type == "user_message" && convertedEvent.Data != nil {
+				if genericData, ok := convertedEvent.Data.Data.(*unifiedevents.GenericEventData); ok {
+					if content, hasContent := genericData.Data["content"]; hasContent {
+						contentStr := fmt.Sprintf("%v", content)
+						if len(contentStr) > 100 {
+							contentStr = contentStr[:100] + "..."
+						}
+						log.Printf("[CHAT_HISTORY DEBUG] user_message event: hasContent=true, content=%s", contentStr)
+					} else {
+						keys := make([]string, 0, len(genericData.Data))
+						for k := range genericData.Data {
+							keys = append(keys, k)
+						}
+						log.Printf("[CHAT_HISTORY DEBUG] user_message event: hasContent=false, dataKeys=%v", keys)
+					}
+				}
+			}
+
+			convertedEvents = append(convertedEvents, *convertedEvent)
+		}
+
+		log.Printf("[CHAT_HISTORY] Converted %d events: total=%d, converted=%d, parse_errors=%d", len(dbEvents), len(dbEvents), len(convertedEvents), parseErrors)
+
+		// Get total count
+		totalCount, err := db.GetEventsBySession(r.Context(), sessionID, 0, 0)
+		total := len(dbEvents)
+		if err == nil && len(totalCount) > 0 {
+			if limit == 0 || len(dbEvents) == limit {
+				allEvents, err := db.GetEventsBySession(r.Context(), sessionID, 1000000, 0)
+				if err == nil {
+					total = len(allEvents)
+				}
+			} else {
+				if len(dbEvents) < limit {
+					total = offset + len(dbEvents)
+				}
+			}
+		}
+
 		response := map[string]interface{}{
-			"events": events,
-			"total":  len(events),
+			"events": convertedEvents,
+			"total":  total,
 			"limit":  limit,
 			"offset": offset,
 		}
@@ -2599,6 +2897,74 @@ func (api *StreamingAPI) storeWorkflowOrchestrator(sessionID string, orchestrato
 }
 
 // --- LLM GUIDANCE API HANDLERS ---
+
+// deserializeSerializedMessage converts a SerializedMessage (typed) back to llmtypes.MessageContent
+func deserializeSerializedMessage(serialized unifiedevents.SerializedMessage) *llmtypes.MessageContent {
+	var role llmtypes.ChatMessageType
+	switch serialized.Role {
+	case "human": // Standard value from llmtypes
+		role = llmtypes.ChatMessageTypeHuman
+	case "ai": // Standard value from llmtypes
+		role = llmtypes.ChatMessageTypeAI
+	case "tool": // Standard value from llmtypes
+		role = llmtypes.ChatMessageTypeTool
+	case "system": // Standard value from llmtypes
+		role = llmtypes.ChatMessageTypeSystem
+	case "user", "assistant": // Fallback for compatibility (shouldn't happen but handle gracefully)
+		if serialized.Role == "user" {
+			role = llmtypes.ChatMessageTypeHuman
+		} else {
+			role = llmtypes.ChatMessageTypeAI
+		}
+	default:
+		// Default to human if unknown role
+		log.Printf("[DESERIALIZE] Unknown role '%s', defaulting to human", serialized.Role)
+		role = llmtypes.ChatMessageTypeHuman
+	}
+
+	msg := &llmtypes.MessageContent{
+		Role:  role,
+		Parts: []llmtypes.ContentPart{},
+	}
+
+	for _, part := range serialized.Parts {
+		switch part.Type {
+		case "text":
+			if content, ok := part.Content.(string); ok {
+				msg.Parts = append(msg.Parts, llmtypes.TextContent{Text: content})
+			}
+		case "tool_call":
+			if contentMap, ok := part.Content.(map[string]interface{}); ok {
+				toolCall := llmtypes.ToolCall{
+					FunctionCall: &llmtypes.FunctionCall{}, // Initialize pointer
+				}
+				if id, ok := contentMap["id"].(string); ok {
+					toolCall.ID = id
+				}
+				if fnName, ok := contentMap["function_name"].(string); ok {
+					toolCall.FunctionCall.Name = fnName
+				}
+				if fnArgs, ok := contentMap["function_args"].(string); ok {
+					toolCall.FunctionCall.Arguments = fnArgs
+				}
+				msg.Parts = append(msg.Parts, toolCall)
+			}
+		case "tool_response":
+			if contentMap, ok := part.Content.(map[string]interface{}); ok {
+				toolResp := llmtypes.ToolCallResponse{}
+				if toolCallID, ok := contentMap["tool_call_id"].(string); ok {
+					toolResp.ToolCallID = toolCallID
+				}
+				if content, ok := contentMap["content"].(string); ok {
+					toolResp.Content = content
+				}
+				msg.Parts = append(msg.Parts, toolResp)
+			}
+		}
+	}
+
+	return msg
+}
 
 // handleSetLLMGuidance sets LLM guidance for a session
 func (api *StreamingAPI) handleSetLLMGuidance(w http.ResponseWriter, r *http.Request) {

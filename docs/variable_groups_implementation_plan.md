@@ -1,105 +1,239 @@
-# Variable Groups Implementation Plan
+# Variable Groups Implementation
 
-## Overview
+## 📋 Overview
 
-Add support for multiple variable groups in workflow execution. Each group contains the same variable names but different values. Users can enable/disable groups per run, and the workflow executes sequentially for each enabled group.
+Variable groups enable batch execution of workflows with multiple sets of variable values. Each group contains the same variable names but different values. Users can enable/disable groups per run, and the workflow executes sequentially for each enabled group. The system supports both single-group (backward compatible) and multi-group modes.
 
-## Requirements Summary
-
-| # | Requirement | Details |
-|---|-------------|---------|
-| 1 | Variables Node | New React Flow node after Start, shows variables + group count |
-| 2 | Sidebar Panel | Manage groups: view, edit, add, delete, enable/disable |
-| 3 | Execution | Sequential for enabled groups only |
-| 4 | Folder Structure | `iteration-X/group-Y/` for multi-group (nested), `iteration-X/` for single |
-| 5 | Progress Display | "Running: group-1 • Step 3/10" in toolbar |
-| 6 | Stop Behavior | Cancel all remaining groups |
-| 7 | Group IDs | Simple: group-1, group-2, group-3... |
+**Key Features:**
+- Multiple variable groups with shared variable definitions
+- Enable/disable groups for selective execution
+- Sequential batch execution for enabled groups
+- Nested folder structure for multi-group runs
+- Backward compatible with single-group format
+- Optional display names for groups
 
 ---
 
-## Data Structures
+## 📁 Key Files & Locations
+
+| Component | File Path | Key Functions/Exports |
+|-----------|-----------|---------------------|
+| **Variable Structures** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/variable_extraction_agent.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/variable_extraction_agent.go) | `VariableGroup`, `VariablesManifest`, `HasGroups()`, `GetEnabledGroups()` |
+| **Batch Execution** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_batch_execution.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_batch_execution.go) | `runBatchExecution()`, `getEnabledGroupsForExecution()` |
+| **API Handlers** | [`agent_go/cmd/server/workflow.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/workflow.go) | `handleGetVariableGroups()`, `handleUpdateVariableGroups()` |
+| **Variables Node** | [`frontend/src/components/workflow/nodes/VariablesNode.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/nodes/VariablesNode.tsx) | `VariablesNode` React Flow node component |
+| **Variables Sidebar** | [`frontend/src/components/workflow/canvas/VariablesSidebar.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/canvas/VariablesSidebar.tsx) | `VariablesSidebar` group management UI |
+| **API Types** | [`frontend/src/services/api-types.ts`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/services/api-types.ts) | `VariableGroup`, `VariablesManifest`, `BatchExecutionProgress` |
+| **API Service** | [`frontend/src/services/api.ts`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/services/api.ts) | `agentApi.getVariableGroups()`, `agentApi.updateVariableGroups()` |
+
+---
+
+## 🧩 Data Structures
 
 ### Backend (Go)
 
 ```go
-// VariableGroup represents a single set of variable values
+// Variable represents a single variable definition
+type Variable struct {
+    Name        string `json:"name"`        // e.g., "AWS_ACCOUNT_ID"
+    Value       string `json:"value"`       // Original value (used in single-group mode)
+    Description string `json:"description"` // e.g., "AWS account number for deployment"
+}
+
+// VariableGroup represents a single set of variable values for batch execution
 type VariableGroup struct {
-    GroupID  string            `json:"group_id"`  // e.g., "group-1"
-    Values   map[string]string `json:"values"`    // Variable name -> value
-    Enabled  bool              `json:"enabled"`   // Whether to include in execution
+    GroupID     string            `json:"group_id"`     // e.g., "group-1", "group-2"
+    DisplayName string            `json:"display_name"` // Optional user-friendly name (e.g., "Production", "Staging")
+    Values      map[string]string `json:"values"`       // Variable name -> value mapping
+    Enabled     bool              `json:"enabled"`     // Whether to include in execution
 }
 
-// VariableGroupsManifest contains all variable groups
-type VariableGroupsManifest struct {
-    // Variable definitions (names + descriptions) - shared across all groups
-    Variables []Variable `json:"variables"`
-    
-    // Template objective with {{VARIABLE}} placeholders
-    Objective string `json:"objective"`
-    
-    // Array of variable groups (each with different values)
-    Groups []VariableGroup `json:"groups"`
-    
-    // Extraction date
-    ExtractionDate string `json:"extraction_date"`
-}
-
-// BatchExecutionProgress tracks execution across multiple groups
-type BatchExecutionProgress struct {
-    TotalGroups      int                         `json:"total_groups"`
-    EnabledGroups    []string                    `json:"enabled_groups"`    // Group IDs to execute
-    CompletedGroups  []string                    `json:"completed_groups"`  // Group IDs finished
-    CurrentGroup     string                      `json:"current_group"`     // Currently executing
-    GroupProgress    map[string]*StepProgress    `json:"group_progress"`    // Per-group step progress
-    LastUpdated      time.Time                   `json:"last_updated"`
+// VariablesManifest contains all extracted variables
+// Supports both single-group (backward compatible) and multi-group modes
+type VariablesManifest struct {
+    Objective      string          `json:"objective"`        // Templated objective with {{VARS}}
+    Variables      []Variable      `json:"variables"`        // List of variable definitions
+    Groups         []VariableGroup `json:"groups,omitempty"` // Array of variable groups (multi-group mode)
+    ExtractionDate string          `json:"extraction_date"`
 }
 ```
+
+**Key Methods:**
+- `HasGroups() bool` - Returns true if manifest has multiple groups
+- `GetEnabledGroups() []VariableGroup` - Returns only enabled groups (creates virtual group for single-group mode)
+- `GetVariableValues(groupID string) map[string]string` - Gets values for specific group
+- `AddGroup() *VariableGroup` - Adds new group with empty values
+- `DeleteGroup(groupID string) bool` - Removes group by ID
+- `ToggleGroup(groupID string, enabled bool) bool` - Enables/disables group
+- `UpdateGroupValues(groupID string, values map[string]string) bool` - Updates group values
 
 ### Frontend (TypeScript)
 
 ```typescript
 // Variable definition (shared across groups)
-interface VariableDefinition {
+interface Variable {
   name: string;
+  value?: string;  // Used in single-group mode
   description: string;
 }
 
 // Single variable group
 interface VariableGroup {
-  group_id: string;           // "group-1", "group-2", etc.
-  values: Record<string, string>;  // { "APP_NAME": "my-app", "REGION": "us-east-1" }
+  group_id: string;  // e.g., "group-1", "group-2" (used as fallback for folder names)
+  display_name?: string;  // Optional user-friendly name (e.g., "Production", "Staging")
+  values: Record<string, string>;  // Variable name -> value mapping
   enabled: boolean;
 }
 
 // Full manifest
-interface VariableGroupsManifest {
-  variables: VariableDefinition[];
-  objective: string;
-  groups: VariableGroup[];
+interface VariablesManifest {
+  objective: string;  // Templated objective with {{VARS}}
+  variables: Variable[];  // Variable definitions
+  groups?: VariableGroup[];  // Array of variable groups (multi-group mode)
   extraction_date: string;
 }
 
-// Batch progress
+// Batch execution progress
 interface BatchExecutionProgress {
   total_groups: number;
-  enabled_groups: string[];
-  completed_groups: string[];
-  current_group: string;
-  group_progress: Record<string, StepProgress>;
+  enabled_groups: string[];  // Group IDs to execute
+  completed_groups: string[];  // Group IDs that finished
+  current_group: string;  // Currently executing group ID
+  group_progress: Record<string, StepProgress>;  // Per-group step progress
+  iteration_number: number;
 }
 ```
 
 ---
 
-## File Structure
+## 🔌 API Endpoints
+
+### Get Variable Groups
+
+```
+GET  /api/workflow/variable-groups?workspace_path={path}
+     Response: {
+       success: boolean
+       manifest?: VariablesManifest
+       error?: string
+     }
+```
+
+**Purpose:** Load variable groups from `variables/variables.json`.
+
+### Update Variable Groups
+
+```
+PUT  /api/workflow/variable-groups?workspace_path={path}
+     Body: VariablesManifest
+     Response: {
+       success: boolean
+       message: string
+     }
+```
+
+**Purpose:** Save updated variable groups to `variables/variables.json`. Used for all group operations (add, update, delete, toggle).
+
+**Note:** The frontend manages group operations locally and sends the complete manifest to update. There are no separate endpoints for individual group operations.
+
+---
+
+## 🔄 Execution Flow
+
+### Single Group (Backward Compatible)
+
+```
+1. Load variables.json
+2. Check if "groups" field exists and has length > 0
+3. If NO groups: use old format (single set of values from Variables[].Value)
+4. Create virtual group "group-1" with values from Variables
+5. Run workflow once
+6. Output: runs/iteration-1/ (top-level folder, not nested)
+```
+
+### Multiple Groups
+
+```
+1. Load variables.json
+2. Check if "groups" field exists and has length > 0
+3. If YES: filter to enabled groups only (or use ExecutionOptions.EnabledGroupIDs)
+4. Determine base iteration folder based on run_mode:
+   a. If user selected folder: use it (extract iteration-X from nested paths)
+   b. If create_new_runs_always: create new iteration folder
+   c. If use_same_run: use latest existing iteration folder
+5. For each enabled group:
+   a. Set hcpo.variableValues = group.Values
+   b. Set folder name = iteration-X/group-Y (nested structure)
+   c. Run full workflow
+   d. Mark group as completed
+   e. Emit group_execution_completed event
+6. Emit batch_execution_completed event
+7. Output: runs/iteration-1/group-1/, runs/iteration-1/group-3/
+```
+
+### Group Selection Priority
+
+The system uses the following priority for determining which groups to execute:
+
+1. **ExecutionOptions.EnabledGroupIDs** (if specified) - Uses explicitly requested group IDs
+2. **Manifest Enabled Groups** - Falls back to groups with `enabled: true` in manifest
+
+**Code:**
+```go
+// From controller_batch_execution.go
+func (hcpo *HumanControlledTodoPlannerOrchestrator) getEnabledGroupsForExecution() []VariableGroup {
+    // Check if ExecutionOptions specifies specific group IDs
+    if hcpo.executionOptions != nil && len(hcpo.executionOptions.EnabledGroupIDs) > 0 {
+        // Use specified group IDs from ExecutionOptions
+        return groups // Filtered by requested IDs
+    }
+    // Fall back to manifest's enabled groups
+    return hcpo.variablesManifest.GetEnabledGroups()
+}
+```
+
+### Folder Naming Logic
+
+```go
+// Single group: iteration-X (top-level folder)
+// Multiple groups: iteration-X/group-Y (nested folder structure)
+
+// Implementation determines folder name based on total enabled groups
+if totalGroups <= 1 {
+    return fmt.Sprintf("iteration-%d", iterationNum)
+}
+return fmt.Sprintf("iteration-%d/%s", iterationNum, groupID)
+```
+
+### Run Mode Behavior
+
+Batch execution respects the `run_mode` setting from `ExecutionOptions`:
+
+1. **User Selected Folder** (`selectedRunFolder` is set):
+   - Uses the selected folder directly
+   - If nested (e.g., `iteration-1/group-1`), extracts base iteration folder (`iteration-1`)
+   - Creates group subfolders within the selected iteration
+
+2. **Create New Run Mode** (`create_new_runs_always`):
+   - Always creates a new iteration folder
+   - Uses `getNextIterationNumber()` to find the next available iteration
+   - Creates nested group folders: `iteration-X/group-Y`
+
+3. **Use Same Run Mode** (`use_same_run`):
+   - Uses the latest existing iteration folder (finds highest iteration number)
+   - If no folders exist, creates `iteration-1`
+   - Creates group subfolders within the existing iteration: `iteration-X/group-Y`
+
+---
+
+## 📊 File Structure
 
 ### Workspace Layout
 
 ```
 workspace/
 ├── variables/
-│   └── variables.json          # Now includes groups array
+│   └── variables.json          # Contains groups array (if multi-group)
 ├── planning/
 │   └── plan.json
 └── runs/
@@ -116,7 +250,7 @@ workspace/
     └── batch_progress.json     # Batch execution tracking (optional)
 ```
 
-### Updated variables.json Format
+### variables.json Format
 
 **Single Group (backward compatible):**
 ```json
@@ -141,16 +275,19 @@ workspace/
   "groups": [
     {
       "group_id": "group-1",
+      "display_name": "Production",
       "values": { "APP_NAME": "my-app", "REGION": "us-east-1" },
       "enabled": true
     },
     {
-      "group_id": "group-2", 
+      "group_id": "group-2",
+      "display_name": "Staging",
       "values": { "APP_NAME": "my-app-2", "REGION": "us-west-2" },
       "enabled": true
     },
     {
       "group_id": "group-3",
+      "display_name": "Development",
       "values": { "APP_NAME": "my-app-dev", "REGION": "eu-west-1" },
       "enabled": false
     }
@@ -161,280 +298,213 @@ workspace/
 
 ---
 
-## API Endpoints
+## 🎨 Frontend Components
 
-### New Endpoints
+### VariablesNode
 
-```
-GET  /api/workflow/variable-groups?workspace_path={path}
-     Response: { manifest: VariableGroupsManifest }
+**File:** [`frontend/src/components/workflow/nodes/VariablesNode.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/nodes/VariablesNode.tsx)
 
-POST /api/workflow/variable-groups?workspace_path={path}
-     Body: { group: VariableGroup }
-     Response: { success: true, group_id: "group-3" }
+**Features:**
+- Displays variable count and group count
+- Shows enabled groups indicator (e.g., "2/3 Groups")
+- Lists variable names and values for each group
+- Shows group status (running, selected, enabled, disabled)
+- Supports display names for groups
+- Click to open VariablesSidebar
 
-PUT  /api/workflow/variable-groups/{group_id}?workspace_path={path}
-     Body: { values: {...}, enabled: true/false }
-     Response: { success: true }
+**Display Format:**
+- Header: "Variables (N)" with group count if multiple groups
+- Group list: Shows all groups with their values (first 3 variables visible)
+- Status indicators: Running (blue), Selected (purple), Enabled (green), Disabled (gray)
 
-DELETE /api/workflow/variable-groups/{group_id}?workspace_path={path}
-     Response: { success: true }
+### VariablesSidebar
 
-PUT /api/workflow/variable-groups/toggle?workspace_path={path}
-     Body: { group_ids: ["group-1", "group-3"], enabled: true }
-     Response: { success: true }
-```
+**File:** [`frontend/src/components/workflow/canvas/VariablesSidebar.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/canvas/VariablesSidebar.tsx)
 
----
+**Features:**
+- Table view of all groups
+- Edit values inline
+- Enable/disable toggles
+- Add new group button
+- Delete group button
+- Edit display names
+- Save changes to backend
 
-## Backend Changes
-
-### 1. Data Structure Updates
-
-**File: `variable_extraction_agent.go`**
-- Update `VariablesManifest` to support `Groups` field
-- Add `VariableGroup` struct
-- Update parsing logic to handle both old and new formats
-
-### 2. Variable Loading
-
-**File: `variable_management.go`**
-- `LoadVariableValues()` - Accept optional `groupID` parameter
-- `LoadVariableGroups()` - New function to load all groups
-- `SaveVariableGroups()` - Save updated groups
-- `GetEnabledGroups()` - Return only enabled groups
-
-### 3. Execution Loop Changes
-
-**File: `controller.go`**
-- `CreateTodoList()` - Wrap in outer loop for batch execution
-- `CreateTodoListForGroup()` - Execute workflow for single group
-- Track batch progress across groups
-- Handle folder naming: `iteration-X/group-Y` (nested structure for multi-group)
-- Respect `run_mode` and `selectedRunFolder` settings
-
-### 4. Progress Tracking
-
-**File: `controller_progress.go`**
-- `BatchExecutionProgress` struct
-- `loadBatchProgress()` / `saveBatchProgress()`
-- Emit `batch_progress_updated` events
-
-### 5. New Events
-
-**File: `events/types.go`**
-```go
-BatchExecutionStarted   EventType = "batch_execution_started"
-GroupExecutionStarted   EventType = "group_execution_started"
-GroupExecutionCompleted EventType = "group_execution_completed"
-BatchExecutionCompleted EventType = "batch_execution_completed"
-BatchProgressUpdated    EventType = "batch_progress_updated"
-```
+**Operations:**
+- **Add Group**: Creates new group with empty values for all variables
+- **Update Group**: Updates values or display name
+- **Toggle Enabled**: Enables/disables group
+- **Delete Group**: Removes group from manifest
+- **Save**: Sends complete manifest to backend via `PUT /api/workflow/variable-groups`
 
 ---
 
-## Frontend Changes
+## 🔄 Backend Implementation
 
-### 1. New Components
+### Batch Execution
 
-**VariablesNode (`frontend/src/components/workflow/nodes/VariablesNode.tsx`)**
-```tsx
-// Display: variable names + group count + enabled indicator
-// Shows: "Variables • 2/10 Groups"
-// Lists variable names
-// Shows enabled groups at bottom
-```
+**File:** [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_batch_execution.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_batch_execution.go)
 
-**VariablesSidebar (`frontend/src/components/workflow/canvas/VariablesSidebar.tsx`)**
-```tsx
-// Tabs or table view of all groups
-// Edit values inline
-// Enable/disable toggles
-// Add new group button
-// Delete group button
-```
+**Key Functions:**
+- `getEnabledGroupsForExecution()` - Determines which groups to execute (respects ExecutionOptions.EnabledGroupIDs)
+- `shouldUseBatchExecution()` - Checks if batch mode should be used (>1 enabled group)
+- `runBatchExecution()` - Executes workflow sequentially for each enabled group
 
-### 2. Updated Components
+**Execution Flow:**
+1. Get enabled groups (from ExecutionOptions or manifest)
+2. Validate groups exist
+3. For each group:
+   - Set variable values
+   - Create run folder (nested structure for multi-group)
+   - Execute workflow
+   - Track progress
+   - Emit events
+4. Return batch execution result
 
-**usePlanToFlow.ts**
-- Add Variables node after Start node
-- Connect Start → Variables → Step 1
+### Events
 
-**WorkflowToolbar.tsx**
-- Show batch progress: "Running: group-1 • Step 3/10"
-- Group selector in iteration dropdown (optional)
-
-**useWorkflowStore.ts**
-- Add `variableGroups` state
-- Add `loadVariableGroups()` action
-- Add `updateVariableGroup()` action
-- Add `toggleGroupEnabled()` action
-- Add `currentExecutingGroup` state
-
-### 3. New Types
-
-**api-types.ts**
-```typescript
-interface VariableGroup { ... }
-interface VariableGroupsManifest { ... }
-interface BatchExecutionProgress { ... }
-```
+**Batch Execution Events:**
+- `batch_execution_started` - Batch execution begins
+- `group_execution_started` - Individual group execution starts
+- `group_execution_completed` - Individual group execution completes
+- `batch_execution_completed` - All groups completed
+- `batch_progress_updated` - Progress update during batch execution
 
 ---
 
-## Execution Flow
-
-### Single Group (Backward Compatible)
-
-```
-1. Load variables.json
-2. Check if "groups" field exists
-3. If NO groups: use old format (single set of values)
-4. Run workflow once
-5. Output: runs/iteration-1/
-```
-
-### Multiple Groups
-
-```
-1. Load variables.json
-2. Check if "groups" field exists
-3. If YES: filter to enabled groups only
-4. Determine base iteration folder based on run_mode:
-   a. If user selected folder: use it (extract iteration-X from nested paths)
-   b. If create_new_runs_always: create new iteration folder
-   c. If use_same_run: use latest existing iteration folder
-5. For each enabled group:
-   a. Set hcpo.variableValues = group.Values
-   b. Set folder name = iteration-X/group-Y (nested structure)
-   c. Run full workflow
-   d. Mark group as completed
-   e. Emit group_execution_completed event
-6. Emit batch_execution_completed event
-7. Output: runs/iteration-1/group-1/, runs/iteration-1/group-3/
-```
-
-### Folder Naming Logic
-
-```go
-// createBatchRunFolderName creates the run folder name for batch execution
-// Format: iteration-X/group-Y (nested folder structure for multiple groups)
-// Format: iteration-X (when single group - use top-level folder)
-func createBatchRunFolderName(iterationNum int, groupID string, totalGroups int) string {
-    if totalGroups <= 1 {
-        // Single group or no groups - use top-level iteration folder (not nested)
-        return fmt.Sprintf("iteration-%d", iterationNum)
-    }
-    // Multiple groups - use nested folder structure
-    return fmt.Sprintf("iteration-%d/%s", iterationNum, groupID)
-}
-```
-
-### Run Mode Behavior
-
-Batch execution respects the `run_mode` setting from `ExecutionOptions`:
-
-1. **User Selected Folder** (`selectedRunFolder` is set):
-   - Uses the selected folder directly
-   - If nested (e.g., `iteration-1/group-1`), extracts base iteration folder (`iteration-1`)
-   - Creates group subfolders within the selected iteration
-
-2. **Create New Run Mode** (`create_new_runs_always`):
-   - Always creates a new iteration folder
-   - Uses `getNextIterationNumber()` to find the next available iteration
-   - Creates nested group folders: `iteration-X/group-Y`
-
-3. **Use Same Run Mode** (`use_same_run`):
-   - Uses the latest existing iteration folder (finds highest iteration number)
-   - If no folders exist, creates `iteration-1`
-   - Creates group subfolders within the existing iteration: `iteration-X/group-Y`
-
----
-
-## Migration & Backward Compatibility
+## 🔍 Migration & Backward Compatibility
 
 ### Old Format Detection
 
+The system automatically detects single-group format:
+
 ```go
-func (manifest *VariablesManifest) HasGroups() bool {
-    return len(manifest.Groups) > 0
+func (m *VariablesManifest) HasGroups() bool {
+    return len(m.Groups) > 0
 }
 
-func (manifest *VariablesManifest) GetVariableValues(groupID string) map[string]string {
-    if !manifest.HasGroups() {
-        // Old format: values are in Variables[].Value
+func (m *VariablesManifest) GetEnabledGroups() []VariableGroup {
+    if !m.HasGroups() {
+        // Single group mode: create a virtual group from Variables
         values := make(map[string]string)
-        for _, v := range manifest.Variables {
+        for _, v := range m.Variables {
             values[v.Name] = v.Value
         }
-        return values
+        return []VariableGroup{{
+            GroupID: "group-1",
+            Values:  values,
+            Enabled: true,
+        }}
     }
-    // New format: find group by ID
-    for _, g := range manifest.Groups {
-        if g.GroupID == groupID {
-            return g.Values
+    // Multi-group mode: return enabled groups
+    var enabled []VariableGroup
+    for _, g := range m.Groups {
+        if g.Enabled {
+            enabled = append(enabled, g)
         }
     }
-    return nil
+    return enabled
 }
 ```
 
-### Migration (Optional)
+### Backward Compatibility
 
-Users can optionally migrate old format to new:
-```json
-// Old format with values
-{ "variables": [{ "name": "X", "value": "1" }] }
+✅ **Single-group format** is fully supported:
+- Old format with `Variables[].Value` works without changes
+- System creates virtual group automatically
+- Folder structure remains `iteration-X/` (not nested)
 
-// Becomes new format
-{ 
-  "variables": [{ "name": "X", "description": "" }],
-  "groups": [{ "group_id": "group-1", "values": { "X": "1" }, "enabled": true }]
+✅ **Multi-group format**:
+- Requires `groups` array in `variables.json`
+- Variables array contains only definitions (no values)
+- Folder structure uses nested format: `iteration-X/group-Y/`
+
+---
+
+## 🛠️ Common Issues & Solutions
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Groups not executing | Groups disabled in manifest | Check `enabled: true` for groups |
+| Wrong groups executing | ExecutionOptions.EnabledGroupIDs not respected | Verify group IDs match manifest |
+| Folder structure wrong | Single group using nested format | Check `totalGroups <= 1` logic |
+| Variables not loading | variables.json missing or invalid | Verify file exists and JSON is valid |
+| Groups not saving | API call failing | Check workspace_path parameter |
+
+---
+
+## 🔍 For LLMs: Quick Reference
+
+### Key Types
+
+```typescript
+// Get variable groups
+const response = await agentApi.getVariableGroups(workspacePath)
+const manifest = response.manifest
+
+// Update variable groups (complete manifest)
+await agentApi.updateVariableGroups(workspacePath, manifest)
+
+// Check if multi-group mode
+const isMultiGroup = manifest?.groups && manifest.groups.length > 1
+
+// Get enabled groups
+const enabledGroups = manifest?.groups?.filter(g => g.enabled) || []
+```
+
+### Constraints
+
+✅ **Allowed:**
+- Multiple groups with same variable names
+- Optional `display_name` for groups
+- Enabling/disabling groups
+- ExecutionOptions.EnabledGroupIDs for selective execution
+- Nested folder structure for multi-group
+
+❌ **Forbidden:**
+- Different variable names across groups (all groups share same variables)
+- Empty groups array (use single-group format instead)
+- Missing `group_id` field
+
+### Common Patterns
+
+**Pattern 1: Add New Group**
+```typescript
+const newGroup: VariableGroup = {
+  group_id: `group-${manifest.groups.length + 1}`,
+  values: {}, // Initialize with empty values
+  enabled: true
+}
+manifest.groups.push(newGroup)
+await agentApi.updateVariableGroups(workspacePath, manifest)
+```
+
+**Pattern 2: Toggle Group Enabled**
+```typescript
+const group = manifest.groups.find(g => g.group_id === groupId)
+if (group) {
+  group.enabled = !group.enabled
+  await agentApi.updateVariableGroups(workspacePath, manifest)
+}
+```
+
+**Pattern 3: Execute Specific Groups**
+```typescript
+const executionOptions: ExecutionOptions = {
+  enabledGroupIDs: ['group-1', 'group-3'], // Only execute these groups
+  // ... other options
 }
 ```
 
 ---
 
-## Implementation Order
+## 📖 Related Documentation
 
-### Phase 1: Backend Foundation
-1. ✅ Add data structures
-2. ✅ Add API endpoints
-3. ✅ Update variable loading
-
-### Phase 2: Frontend Variables Node
-4. Create VariablesNode component
-5. Create VariablesSidebar component
-6. Update usePlanToFlow
-
-### Phase 3: Execution Integration
-7. Modify execution loop for batch
-8. Update folder naming
-9. Add batch progress events
-
-### Phase 4: Frontend Polish
-10. Update toolbar for batch progress
-11. Update store with group state
-12. Test end-to-end
+- [Workflow Orchestrator](workflow_orchestrator.md) - Workflow execution architecture
+- [Step Config Format](step_config_format_specification.md) - Step configuration details
 
 ---
 
-## Success Criteria
+## Summary
 
-| Criteria | Status |
-|----------|--------|
-| Variables node shows in React Flow after Start | 🔲 |
-| Click node opens sidebar with groups | 🔲 |
-| Can add new group (empty values) | 🔲 |
-| Can edit group values | 🔲 |
-| Can enable/disable groups | 🔲 |
-| Can delete groups | 🔲 |
-| Single group: no folder suffix (iteration-X) | 🔲 |
-| Multi-group: correct nested folder naming (iteration-X/group-Y) | 🔲 |
-| Run mode respected (use_same_run vs create_new_runs_always) | 🔲 |
-| Selected folder respected in batch execution | 🔲 |
-| Execution runs enabled groups only | 🔲 |
-| Progress shows current group | 🔲 |
-| Stop cancels all groups | 🔲 |
-| Backward compatible with old format | 🔲 |
-
+Variable groups enable batch execution with multiple sets of variable values. The system supports both single-group (backward compatible) and multi-group modes. Groups are managed via `VariablesManifest` stored in `variables/variables.json`. Execution can be controlled via `ExecutionOptions.EnabledGroupIDs` or manifest's `enabled` flags. Folder structure uses nested format (`iteration-X/group-Y`) for multi-group and top-level (`iteration-X`) for single-group.

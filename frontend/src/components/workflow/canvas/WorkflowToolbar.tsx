@@ -20,6 +20,7 @@ import {
   Circle,
   CheckSquare,
   Save,
+  RotateCcw,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useAppStore } from '../../../stores'
@@ -36,6 +37,7 @@ import BulkStepConfigModal from '../BulkStepConfigModal'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
+import { sanitizeDisplayNameForFolder } from '../../../utils/workflowUtils'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
@@ -251,26 +253,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // selectedGroupIds is already included in the batched selector above
   
-  // Helper function to get first 5 characters of first variable value for a group
-  const getFirstVariablePreview = useCallback((groupId: string | null): string | null => {
-    if (!groupId || !variablesManifest) return null
-    
-    // Find the group in manifest
-    const group = variablesManifest.groups?.find(g => g.group_id === groupId)
-    if (!group || !group.values) return null
-    
-    // Get first variable name from manifest
-    const firstVariable = variablesManifest.variables?.[0]
-    if (!firstVariable) return null
-    
-    // Get value from group
-    const value = group.values[firstVariable.name]
-    if (!value) return null
-    
-    // Return first 5 characters (or less if shorter)
-    return value.substring(0, 5)
-  }, [variablesManifest])
-  
   // Save settings when they change (including selectedGroupIds)
   // Use refs to track previous values and only save when they actually change
   const prevSettingsRef = useRef<string>('')
@@ -459,7 +441,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [selectedRunFolder, selectedGroupIds, variablesManifest])
 
   // Build merged list of iterations and groups
-  // Combines existing folders with groups from manifest
+  // Groups from variablesManifest are PRIMARY - runFolders only indicate if groups have run
   const iterationGroups = useMemo(() => {
     interface GroupItem {
       id: string  // Full path like "iteration-1/group-5" or just "iteration-1"
@@ -468,137 +450,112 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       iteration: string  // e.g., "iteration-1"
       groupId: string | null  // e.g., "group-5" or null if no group
       progress: StepProgress | null
-      exists: boolean  // Whether folder exists
-      enabled: boolean  // Whether group is enabled (null if not a group)
+      exists: boolean  // Whether folder exists (from runFolders)
+      enabled: boolean  // Whether group is enabled
     }
 
     const items: GroupItem[] = []
     const iterationMap = new Map<string, GroupItem[]>()
 
-    // Add existing folders
-    runFolders.forEach((folder) => {
-      const parts = folder.name.split('/')
-      if (parts.length === 2) {
-        // Group folder: iteration-X/group-Y or iteration-X/display-name
-        const iteration = parts[0]
-        const folderName = parts[1] // Could be "group-1" or "siddharth" (display name)
+    // Helper function to sanitize display names for matching (used for comparing folder names)
+    const sanitizeForMatch = (name: string) => name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
+    
+    // Use utility function for sanitizing display names for folder paths
+    const sanitizeDisplayName = sanitizeDisplayNameForFolder
+
+    // Helper function to find matching runFolder for a group
+    const findMatchingFolder = (iteration: string, group: { group_id: string; display_name?: string }): RunFolder | null => {
+      return runFolders.find(folder => {
+        const parts = folder.name.split('/')
+        if (parts.length !== 2 || parts[0] !== iteration) return false
         
-        // Try to find matching group - check if it's a group_id or a display name
-        let manifestGroup = variablesManifest?.groups?.find(g => g.group_id === folderName)
-        if (!manifestGroup && variablesManifest?.groups) {
-          // Not a group_id - try to match by sanitized display name
-          const sanitizeForMatch = (name: string) => name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
+        const folderName = parts[1]
+        
+        // Check if folder name matches group_id
+        if (folderName === group.group_id) return true
+        
+        // Check if folder name matches sanitized display_name
+        if (group.display_name) {
+          const sanitizedDisplayName = sanitizeForMatch(group.display_name)
           const folderNameSanitized = sanitizeForMatch(folderName)
-          manifestGroup = variablesManifest.groups.find(g => {
-            if (!g.display_name) return false
-            return sanitizeForMatch(g.display_name) === folderNameSanitized
-          })
+          if (sanitizedDisplayName === folderNameSanitized) return true
         }
         
-        const groupId = manifestGroup?.group_id || folderName
-        const item: GroupItem = {
-          id: folder.name, // Keep original folder name (could be display name or group_id)
-          name: groupId,
-          displayName: manifestGroup?.display_name,
-          iteration,
-          groupId,
-          progress: folder.progress || null,
-          exists: true,
-          enabled: manifestGroup?.enabled ?? true
-        }
-        items.push(item)
-        if (!iterationMap.has(iteration)) {
-          iterationMap.set(iteration, [])
-        }
-        iterationMap.get(iteration)!.push(item)
-      } else if (parts.length === 1 && parts[0].startsWith('iteration-')) {
-        // Top-level iteration folder (no groups or single group mode)
-        const iteration = parts[0]
-        const item: GroupItem = {
-          id: folder.name,
-          name: iteration,
-          iteration,
-          groupId: null,
-          progress: folder.progress || null,
-          exists: true,
-          enabled: true
-        }
-        items.push(item)
-        if (!iterationMap.has(iteration)) {
-          iterationMap.set(iteration, [])
-        }
-        iterationMap.get(iteration)!.push(item)
+        return false
+      }) || null
+    }
+
+    // Get all iterations from runFolders (or default to iteration-1)
+    const existingIterations = new Set<string>()
+    runFolders.forEach((folder) => {
+      const match = folder.name.match(/^(iteration-\d+)/)
+      if (match) {
+        existingIterations.add(match[1])
       }
     })
+    
+    // If no iterations exist, create iteration-1
+    if (existingIterations.size === 0) {
+      existingIterations.add('iteration-1')
+    }
 
-    // Add ALL groups from manifest to ALL iterations
-    // This ensures users can see and select all groups from any iteration
+    // PRIMARY: Start with groups from variablesManifest
     if (variablesManifest?.groups && variablesManifest.groups.length > 0) {
-      // Get all existing iterations (from folders)
-      const existingIterations = new Set<string>()
-      runFolders.forEach((folder) => {
-        const match = folder.name.match(/^(iteration-\d+)/)
-        if (match) {
-          existingIterations.add(match[1])
-        }
-      })
-      
-      // If no iterations exist, create iteration-1
-      if (existingIterations.size === 0) {
-        existingIterations.add('iteration-1')
-      }
-
-      // For each group in manifest, ensure it appears in all iterations
+      // For each group in manifest, add it to all iterations
       variablesManifest.groups.forEach((group) => {
-        // Update enabled status and display name for existing groups
-        items.forEach(item => {
-          if (item.groupId === group.group_id) {
-            item.enabled = group.enabled
-            item.displayName = group.display_name
-          }
-        })
-
-        // For each iteration, check if this group is already present
         existingIterations.forEach((iteration) => {
-          const groupExistsInIteration = items.some(
-            item => item.groupId === group.group_id && item.iteration === iteration
-          )
+          // Check if matching folder exists in runFolders
+          const matchingFolder = findMatchingFolder(iteration, group)
           
-          if (!groupExistsInIteration) {
-            // Group doesn't exist in this iteration - add it
-            // Use display name (sanitized) for folder path if available, otherwise use group_id
-            // This matches the backend folder creation logic
-            const sanitizeDisplayName = (displayName: string | undefined): string => {
-              if (!displayName) return ''
-              return displayName
-                .toLowerCase()
-                .replace(/[^a-z0-9-]/g, '-')
-                .replace(/-+/g, '-')
-                .trim()
-                .replace(/^-+|-+$/g, '')
-            }
-            const folderName = group.display_name && sanitizeDisplayName(group.display_name)
-              ? sanitizeDisplayName(group.display_name)
-              : group.group_id
-            const item: GroupItem = {
-              id: `${iteration}/${folderName}`,
-              name: group.group_id,
-              displayName: group.display_name,
-              iteration,
-              groupId: group.group_id,
-              progress: null,
-              exists: false, // No folder exists for this group in this iteration
-              enabled: group.enabled
-            }
-            items.push(item)
-            if (!iterationMap.has(iteration)) {
-              iterationMap.set(iteration, [])
-            }
-            iterationMap.get(iteration)!.push(item)
+          // Determine folder name for the path (use sanitized display_name if available, otherwise group_id)
+          const folderName = group.display_name && sanitizeDisplayName(group.display_name)
+            ? sanitizeDisplayName(group.display_name)
+            : group.group_id
+          
+          const item: GroupItem = {
+            id: `${iteration}/${folderName}`,
+            name: group.group_id,
+            displayName: group.display_name,
+            iteration,
+            groupId: group.group_id,
+            progress: matchingFolder?.progress || null,
+            exists: matchingFolder !== null, // Only true if matching folder found
+            enabled: group.enabled
           }
+          
+          items.push(item)
+          if (!iterationMap.has(iteration)) {
+            iterationMap.set(iteration, [])
+          }
+          iterationMap.get(iteration)!.push(item)
         })
       })
     }
+
+    // Also add top-level iteration folders (no groups - backward compatibility)
+    // Only add if they don't already exist as groups
+    runFolders.forEach((folder) => {
+      const parts = folder.name.split('/')
+      if (parts.length === 1 && parts[0].startsWith('iteration-')) {
+        const iteration = parts[0]
+        
+        // Only add if this iteration doesn't already have groups
+        // (i.e., single-group mode or no groups in manifest)
+        if (!iterationMap.has(iteration)) {
+          const item: GroupItem = {
+            id: folder.name,
+            name: iteration,
+            iteration,
+            groupId: null,
+            progress: folder.progress || null,
+            exists: true,
+            enabled: true
+          }
+          items.push(item)
+          iterationMap.set(iteration, [item])
+        }
+      }
+    })
 
     // Sort iterations by number (descending)
     const sortedIterations = Array.from(iterationMap.keys()).sort((a, b) => {
@@ -912,7 +869,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     
     if (!isPhaseRunning) {
       // For plan-improvement and other phases that need run folder, pass execution options
-      if (phaseId === 'plan-improvement' || phaseId === 'plan-tool-optimization' || phaseId === 'plan-learnings-alignment') {
+      if (phaseId === 'plan-improvement' || phaseId === 'plan-tool-optimization' || phaseId === 'plan-learnings-alignment' || phaseId === 'evaluation-execution') {
         // Build execution options to include selected_run_folder
         const executionOptions = buildExecutionOptions()
         console.log('[WorkflowToolbar] Starting', phaseId, 'with execution options:', executionOptions)
@@ -1450,6 +1407,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                                 e.stopPropagation()
                                                 const allGroupIds = enabledGroups.map(g => g.groupId!).filter(Boolean) as string[]
                                                 setSelectedGroupIds(allGroupIds)
+                                                // When selecting all groups, show the iteration folder in workspace
+                                                if (allGroupIds.length > 0) {
+                                                  setSelectedRunFolder(iteration)
+                                                }
                                               }}
                                               disabled={isRunning}
                                               className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1461,6 +1422,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                               onClick={(e) => {
                                                 e.stopPropagation()
                                                 clearSelectedGroupIds()
+                                                // When unselecting all groups, set to iteration folder
+                                                setSelectedRunFolder(iteration)
                                               }}
                                               disabled={isRunning}
                                               className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1486,7 +1449,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                       const isSelected = selectedRunFolder === group.id
                                       const isDisabled = group.enabled === false
                                       const isGroupChecked = group.groupId ? selectedGroupIds.includes(group.groupId) : false
-                                      const firstVariablePreview = getFirstVariablePreview(group.groupId)
                                       
                                       return (
                                         <div
@@ -1514,9 +1476,37 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                               onChange={(e) => {
                                                 e.stopPropagation()
                                                 if (group.groupId) {
+                                                  // Calculate what the new selection count will be after toggle
+                                                  const currentlySelected = selectedGroupIds.includes(group.groupId)
+                                                  const willBeSelected = !currentlySelected
+                                                  const currentCount = selectedGroupIds.length
+                                                  const newSelectedCount = willBeSelected ? currentCount + 1 : currentCount - 1
+                                                  
+                                                  // Toggle the selection
                                                   toggleGroupSelection(group.groupId)
-                                                  // Also set the selected run folder to update the dropdown header (without closing dropdown)
-                                                  setSelectedRunFolder(group.id)
+                                                  
+                                                  // If multiple groups will be selected, show parent iteration folder in workspace
+                                                  // Otherwise show the specific group folder
+                                                  if (newSelectedCount > 1) {
+                                                    // Multiple groups selected - set to iteration folder
+                                                    setSelectedRunFolder(group.iteration)
+                                                  } else if (newSelectedCount === 1) {
+                                                    // Single group will be selected - set to that group's folder
+                                                    const selectedGroupId = willBeSelected ? group.groupId : selectedGroupIds.find(id => id !== group.groupId)
+                                                    if (selectedGroupId) {
+                                                      const selectedGroup = iterationGroups.items.find(g => g.groupId === selectedGroupId && g.iteration === group.iteration)
+                                                      if (selectedGroup) {
+                                                        setSelectedRunFolder(selectedGroup.id)
+                                                      } else {
+                                                        setSelectedRunFolder(group.iteration)
+                                                      }
+                                                    } else {
+                                                      setSelectedRunFolder(group.iteration)
+                                                    }
+                                                  } else {
+                                                    // No groups selected - set to iteration folder
+                                                    setSelectedRunFolder(group.iteration)
+                                                  }
                                                 }
                                               }}
                                               onClick={(e) => e.stopPropagation()}
@@ -1527,7 +1517,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                           )}
                                           <button
                                             onClick={() => {
-                                              handleSelectRunFolder(group.id)
                                               // When clicking a specific group, move it to the front of selectedGroupIds
                                               // This makes it the first to execute, while keeping all other selected groups
                                               if (group.groupId) {
@@ -1535,7 +1524,21 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                                 // Remove the group if it's already selected
                                                 const otherIds = currentIds.filter(id => id !== group.groupId)
                                                 // Put the clicked group first, then all others
-                                                setSelectedGroupIds([group.groupId, ...otherIds])
+                                                const newSelectedIds = [group.groupId, ...otherIds]
+                                                setSelectedGroupIds(newSelectedIds)
+                                                
+                                                // If multiple groups selected, show parent iteration folder in workspace
+                                                // Otherwise show the specific group folder
+                                                if (newSelectedIds.length > 1) {
+                                                  // Multiple groups selected - set to iteration folder
+                                                  handleSelectRunFolder(group.iteration)
+                                                } else {
+                                                  // Single group selected - set to that group's folder
+                                                  handleSelectRunFolder(group.id)
+                                                }
+                                              } else {
+                                                // No group ID - just select the folder
+                                                handleSelectRunFolder(group.id)
                                               }
                                             }}
                                             className={`
@@ -1563,11 +1566,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                               <span className={group.displayName ? 'font-medium' : 'font-mono'}>
                                                 {group.displayName || group.groupId || group.name}
                                               </span>
-                                              {firstVariablePreview && (
-                                                <span className="text-[10px] text-gray-500 dark:text-gray-400 font-normal">
-                                                  ({firstVariablePreview})
-                                                </span>
-                                              )}
                                             </span>
                                             {hasProgress && (
                                               <span className="text-xs text-gray-500 dark:text-gray-400">
@@ -1973,90 +1971,92 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </button>
         )}
         
-        {/* Save Layout Button */}
-        {onSaveLayout && (
+        {/* Layout Controls Group - Save and Reset */}
+        {(onSaveLayout || onDeleteLayout) && (
           <>
             <div className="w-px h-5 bg-gray-200 dark:bg-gray-700 mx-0.5" />
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={async () => {
-                      console.log('[WorkflowToolbar] Save button clicked')
-                      if (onSaveLayout && !isSavingLayout) {
-                        try {
-                          await onSaveLayout()
-                        } catch (error) {
-                          console.error('[WorkflowToolbar] Error saving layout:', error)
-                        }
-                      }
-                    }}
-                    disabled={isSavingLayout}
-                    className={`p-1.5 rounded-md transition-colors ${
-                      isSavingLayout
-                        ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
-                        : hasUnsavedLayoutChanges
-                        ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 animate-pulse'
-                        : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400'
-                    }`}
-                    title={isSavingLayout ? 'Saving layout...' : (hasUnsavedLayoutChanges ? 'Save layout (unsaved changes)' : 'Save layout')}
-                  >
-                    {isSavingLayout ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Save className={`w-3.5 h-3.5 ${hasUnsavedLayoutChanges ? 'text-blue-600 dark:text-blue-400' : ''}`} />
-                    )}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {isSavingLayout ? 'Saving layout...' : (hasUnsavedLayoutChanges ? 'Save layout (unsaved changes)' : 'Save layout')}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </>
-        )}
-        
-        {/* Delete/Reset Layout Button */}
-        {onDeleteLayout && (
-          <>
-            <div className="w-px h-5 bg-gray-200 dark:bg-gray-700 mx-0.5" />
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={async () => {
-                      console.log('[WorkflowToolbar] Delete layout button clicked')
-                      if (onDeleteLayout && !isDeletingLayout) {
-                        // Confirm before deleting
-                        if (window.confirm('Are you sure you want to delete the saved layout and reset to default? This cannot be undone.')) {
+            <div className="flex items-center gap-1">
+              {/* Save Layout Button */}
+              {onSaveLayout && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                    <button
+                      onClick={async () => {
+                        console.log('[WorkflowToolbar] Save button clicked')
+                        if (onSaveLayout && !isSavingLayout) {
                           try {
-                            await onDeleteLayout()
+                            await onSaveLayout()
                           } catch (error) {
-                            console.error('[WorkflowToolbar] Error deleting layout:', error)
+                            console.error('[WorkflowToolbar] Error saving layout:', error)
                           }
                         }
-                      }
-                    }}
-                    disabled={isDeletingLayout}
-                    className={`p-1.5 rounded-md transition-colors ${
-                      isDeletingLayout
-                        ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
-                        : 'hover:bg-red-100 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300'
-                    }`}
-                    title={isDeletingLayout ? 'Resetting layout...' : 'Delete saved layout and reset to default'}
-                  >
-                    {isDeletingLayout ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Trash2 className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {isDeletingLayout ? 'Resetting layout...' : 'Delete saved layout and reset to default'}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+                      }}
+                      disabled={isSavingLayout}
+                      className={`p-1.5 rounded-md transition-colors ${
+                        isSavingLayout
+                          ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                          : hasUnsavedLayoutChanges
+                          ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 animate-pulse'
+                          : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400'
+                      }`}
+                      title={isSavingLayout ? 'Saving layout...' : (hasUnsavedLayoutChanges ? 'Save layout (unsaved changes)' : 'Save layout')}
+                    >
+                      {isSavingLayout ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Save className={`w-3.5 h-3.5 ${hasUnsavedLayoutChanges ? 'text-blue-600 dark:text-blue-400' : ''}`} />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {isSavingLayout ? 'Saving layout...' : (hasUnsavedLayoutChanges ? 'Save layout (unsaved changes)' : 'Save layout')}
+                  </TooltipContent>
+                </Tooltip>
+                </TooltipProvider>
+              )}
+              
+              {/* Delete/Reset Layout Button */}
+              {onDeleteLayout && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={async () => {
+                          console.log('[WorkflowToolbar] Delete layout button clicked')
+                          if (onDeleteLayout && !isDeletingLayout) {
+                            // Confirm before deleting
+                            if (window.confirm('Are you sure you want to delete the saved layout and reset to default? This cannot be undone.')) {
+                              try {
+                                await onDeleteLayout()
+                              } catch (error) {
+                                console.error('[WorkflowToolbar] Error deleting layout:', error)
+                              }
+                            }
+                          }
+                        }}
+                        disabled={isDeletingLayout}
+                        className={`p-1.5 rounded-md transition-colors ${
+                          isDeletingLayout
+                            ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                            : 'hover:bg-orange-100 dark:hover:bg-orange-900/30 text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300'
+                        }`}
+                        title={isDeletingLayout ? 'Resetting layout...' : 'Reset layout to default'}
+                      >
+                        {isDeletingLayout ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {isDeletingLayout ? 'Resetting layout...' : 'Reset layout to default'}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+            </div>
           </>
         )}
       </div>

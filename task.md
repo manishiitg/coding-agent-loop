@@ -4,12 +4,6 @@
 
 13. review conversation.go why is it so big and the retry function
 
-23. check history management for agent.. does it have tool calls also.. like if we cancel inbetween and ask it something
-
-30. test stopping of LLM in between lie cursor and see if follows flows
-
-35. we need to have a background mode else we should kill   the agent
-
 44. we need a way to see logs for mcp installation and tool testing
 
 53. the diff tool in workspace, has some issues. test with json format
@@ -22,28 +16,25 @@ g) add references as extra agent
 
 
 4. chain builder?
-6. have a different knowledge tools and a different directly fully for knowledge/ which 
 
 will index data
 i) prompt tempaltes, need to check variables on compile time
 
 
-11. 📂 List Workspace Files • Turn: 1 • Server: custom
-11:01:01
-📁 Folder:
-planning/changelog
-📏 Max Depth:.. if there a single path only.. can we prefix auto?
+18. we need add folder guard in custom shell exec
 
 16. diff patch tool, corrupts json
+ --- done
 
 21. see how we can integrate learning locking and make it more automatic
+-- done
 
 22. we should have a human notification tool also.
 
 
 28. need to simply tool filter.
 
-32. remove locking learnings in orchestrator, it should always learn.. or maybe we need thinkg of learnins for orchestrator differently?
+32. remove locking learnings in orchestrator, it should always learn.. or maybe we need thinkg of learnins for orchestrator differently? -- done
 26. learnings vs skills? 
 27. workspace, sheel exec is reading env variable which is an issue
 
@@ -54,4 +45,30 @@ planning/changelog
 
 30. refractor how llm are setup and llm fallback
 
-31. high the discover page.. not required
+35. fix tests most not relevent anymore
+
+36. rename toto create human to a better name
+
+37. auto choose models based on llm and generation?
+
+38. plan debugging, does do changelogs?
+
+39. check learning for validation failure in a loop
+
+40. completely decouple chat from workspace.. right now mcp tool/context comes from workspace. - done
+
+41. the iteration/eecution settings etc should be workflow specific right now its shared - done
+
+45. the plan step optimization should optimize, max turns, context editing, sumiization 
+
+48. in ui its not clear how many times validation has failed
+
+49. context eidting/ summarization need that configurable? do we capture costs for summary etc properly?
+
+50. we need to have evals for workflows
+
+51. summization in chat mode is not ux friendly
+
+52. check auto summization.. it trigges many times.. i think some bug is there in token calcuation
+
+53. add oauth support for mcp and make a better ui for adding mcp/managing mcp than simple json

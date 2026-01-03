@@ -104,8 +104,8 @@ export const NodeConfigFooter = memo(({
           </span>
         )}
         {hasLargeOutput && (
-          <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300" title="Large output virtual tools enabled">
-            Large Output
+          <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300" title="Context offloading enabled">
+            Context Offloading
           </span>
         )}
         {learningAfterLoopIteration && (

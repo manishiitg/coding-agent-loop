@@ -12,11 +12,13 @@
 
 | Feature | Conditional Step (`has_condition`) | Decision Step (`has_decision_step`) |
 |---------|-----------------------------------|-------------------------------------|
-| **Evaluation Source** | `condition_question` → ConditionalLLM | Execute step → Evaluate output |
+| **Evaluation Source** | `condition_question` → `ConditionalAgent.Decide()` | Execute step → `ConditionalAgent.EvaluateDecision()` |
 | **Execution** | No execution (evaluation only) | Executes single `decision_step` |
 | **Branch Execution** | `IfTrueSteps[]` / `IfFalseSteps[]` arrays | Single step execution only |
 | **Routing** | Optional `next_step_id` (defaults to sequential) | **Required** `if_true_next_step_id` / `if_false_next_step_id` |
 | **Use Case** | Decision point without execution | Execute something, then decide based on result |
+| **Evaluation Input** | `conditionContext` (previous step output) | `executionOutput` (inner step result) |
+| **Learning History** | Loaded for conditional step ID | Loaded for inner step ID (with fallback) |
 
 ### Example Use Case
 
@@ -66,31 +68,49 @@ Same structure as PlanStep, with `TodoStep` type for `DecisionStep` field.
 
 ```
 1. Execute DecisionStep (single step)
+   - Uses executeSingleStep() with isDecisionInnerStep=true
+   - Code execution mode inherited from parent if not set
    ↓
 2. Get execution output/result
    ↓
-3. Evaluate output using ConditionalLLM with DecisionEvaluationQuestion
+3. Load learning history for inner step (via LoadStepLearningHistory())
    ↓
-4. Route to IfTrueNextStepID or IfFalseNextStepID
+4. Evaluate output using ConditionalAgent.EvaluateDecision()
+   - Uses execution output directly (not conditionContext)
+   - Includes learning history, variables, code execution mode
+   ↓
+5. Auto-unlock learnings if result is false
+   ↓
+6. Route to IfTrueNextStepID or IfFalseNextStepID
 ```
 
 ### Core Implementation
 
-**File**: `../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_decision.go`
+**File**: [`controller_decision.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_decision.go)
 
 **Function**: `executeDecisionStep()`
 
 The implementation:
 1. Validates required fields (decision_step, evaluation_question, routing IDs)
-2. Executes the inner decision step using `executeSingleStep()`
-3. Evaluates the execution output using `ConditionalLLM.Decide()`
-4. Stores the decision result and reasoning
-5. Emits appropriate events (step_started, decision_evaluated, step_finished)
-6. Returns the decision result for routing by the main execution loop
+2. Executes the inner decision step using `executeSingleStep()` with `isDecisionInnerStep=true` flag
+3. Loads learning history for the inner step via `LoadStepLearningHistory()`
+4. Determines code execution mode (step config > orchestrator default)
+5. Evaluates the execution output using `ConditionalAgent.EvaluateDecision()` (not `Decide()`)
+6. Auto-unlocks learnings for inner step if decision result is false
+7. Stores the decision result and reasoning
+8. Emits appropriate events (step_started, decision_evaluated, step_finished)
+9. Returns the decision result for routing by the main execution loop
+
+**Key Details**:
+- Uses `ConditionalAgent.EvaluateDecision()` method (different from `Decide()` used by conditional steps)
+- `EvaluateDecision()` takes `executionOutput` directly (not `conditionContext`)
+- Learning history is loaded using inner step ID (falls back to parent step ID if inner step has no ID)
+- Code execution mode is inherited from parent decision step config if inner step doesn't have its own config
+- Variables (names and values) are passed to the evaluation agent
 
 ### Step Conversion
 
-**File**: `../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_management.go`
+**File**: [`planning_management.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_management.go)
 
 **Function**: `convertPlanStepsToTodoSteps()`
 
@@ -98,7 +118,7 @@ Converts `PlanStep.DecisionStep` to `TodoStep.DecisionStep` during plan-to-todo 
 
 ### Validation
 
-**File**: `../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_management.go`
+**File**: [`planning_management.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_management.go)
 
 **Function**: `validatePlan()`
 
@@ -109,11 +129,28 @@ Validates:
 - ✅ `if_false_next_step_id` is not empty
 - ✅ Decision step cannot contain another decision step (nested decision steps not allowed)
 
+## Evaluation Method: EvaluateDecision vs Decide
+
+**File**: [`conditional_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/conditional_agent.go)
+
+Decision steps use `EvaluateDecision()` method, which differs from `Decide()` used by conditional steps:
+
+| Method | Used By | Input | Output | Tool Submission |
+|--------|---------|-------|--------|-----------------|
+| `Decide()` | Conditional steps | `conditionContext` (previous step output), `question` | `ConditionalResponse` with `result` and `reason` | Direct JSON response |
+| `EvaluateDecision()` | Decision steps | `executionOutput` (inner step result), `question` | `DecisionResponse` with `result` and `reasoning` | Via `submit_decision_result` tool |
+
+**Key Differences**:
+- `EvaluateDecision()` uses `ExecuteStructuredWithInputProcessorViaTool()` with `submit_decision_result` tool
+- `Decide()` uses `ExecuteStructuredWithInputProcessor()` with direct JSON response
+- `EvaluateDecision()` takes execution output directly, not condition context
+- Both methods support code execution mode and learning history
+
 ## Planning Agent Integration
 
 ### Schema Updates
 
-**File**: `../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go`
+**File**: [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go)
 
 Decision step fields are included in:
 - `getUpdatePlanStepsSchema()` - For updating existing steps
@@ -184,14 +221,75 @@ Decision step execution is tracked with:
 ### Execution Logs
 
 When `saveValidationResponses` is enabled, the following logs are saved:
-- `execution/step-{X}-decision/decision-inner-step.json` - Inner step execution result
+- `execution/step-{X}-decision/decision-inner-step.json` - Inner step execution result (via `getExecutionFolderPathForLogs()`)
 - `validation/step-{X}/decision-evaluation.json` - Decision evaluation result with reasoning
+
+**File Paths**:
+- Inner step execution: Uses `getExecutionFolderPathForLogs()` helper
+- Decision evaluation: Uses `getValidationFolderPath()` helper
+
+## Learning History and Code Execution Mode
+
+### Learning History Loading
+
+**File**: [`controller_decision.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_decision.go)
+
+Learning history is loaded separately for decision evaluation:
+
+```go
+// Use inner decision step ID for learnings (consistent with orchestration pattern)
+innerStepID := innerStepPlan.GetID()
+if innerStepID == "" {
+    // Fallback to parent wrapper ID if inner step has no ID
+    innerStepID = step.GetID()
+}
+learningHistory, _ := hcpo.LoadStepLearningHistory(ctx, innerStepID, stepIndex, decisionStepPath, "decision")
+```
+
+**Key Rules**:
+- Uses inner step ID for learning folder identification
+- Falls back to parent step ID if inner step has no ID
+- Loaded via `LoadStepLearningHistory()` helper method
+- Passed separately to `EvaluateDecision()` (not included in execution output)
+
+### Code Execution Mode
+
+Code execution mode is determined with priority: step config > orchestrator default
+
+```go
+var isCodeExecutionMode bool
+parentStepConfigs := getAgentConfigs(step)
+if parentStepConfigs != nil && parentStepConfigs.UseCodeExecutionMode != nil {
+    isCodeExecutionMode = *parentStepConfigs.UseCodeExecutionMode
+} else {
+    isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
+}
+```
+
+**Inheritance**:
+- Inner step inherits code execution mode from parent decision step if not set
+- Code execution mode is passed to `EvaluateDecision()` for evaluation agent
+
+### Auto-Unlock Learnings
+
+**File**: [`controller_decision.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_decision.go)
+
+When decision result is `false`, learnings are automatically unlocked for the inner step:
+
+```go
+if !decisionResponse.Result {
+    // Auto-unlock learnings for inner step so it can learn from the failure
+    hcpo.unlockStepLearningsInConfig(ctx, innerStepID)
+}
+```
+
+**Rationale**: Allows the inner step to learn from failures when decision evaluation returns false.
 
 ## Event Emission
 
 ### Events
 
-**File**: `../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_decision.go`
+**File**: [`controller_decision.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_decision.go)
 
 Emits the following events:
 - `step_started` - When decision step starts
@@ -291,9 +389,15 @@ Decision step's `decision_step` is matched by ID in `step_config.json`:
 
 3. **No Nested Decision Steps**: Decision steps cannot contain other decision steps to avoid complexity.
 
-4. **Separate Evaluation**: Uses `ConditionalLLM` for evaluation rather than a full agent, keeping the evaluation lightweight.
+4. **Full Agent Evaluation**: Uses `ConditionalAgent.EvaluateDecision()` (full agent with workspace tools), not a lightweight LLM call.
 
 5. **Execution Logs**: Stores both inner step execution and evaluation results for debugging and analysis.
+
+6. **Auto-Unlock on Failure**: Automatically unlocks learnings for inner step when decision result is false, enabling learning from failures.
+
+7. **Code Execution Mode Support**: Supports code execution mode for both inner step execution and evaluation, with inheritance from parent step config.
+
+8. **Variable Support**: Passes variable names and values to evaluation agent for context-aware decisions.
 
 ## Summary
 

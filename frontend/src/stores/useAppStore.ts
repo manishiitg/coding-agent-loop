@@ -1,15 +1,12 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { devtools } from 'zustand/middleware'
-import type { FileContextItem, AgentMode } from './types'
+import type { AgentMode } from './types'
 import { useModeStore, type ModeCategory } from './useModeStore'
 
 interface AppState {
   // Agent configuration
   agentMode: AgentMode
-  
-  // File context for chat
-  chatFileContext: FileContextItem[]
   
   // Chat session state
   currentQuery: string
@@ -33,11 +30,6 @@ interface AppState {
   requiresNewChat: boolean
   clearRequiresNewChat: () => void
   
-  // File context actions
-  addFileToContext: (file: FileContextItem) => void
-  removeFileFromContext: (path: string) => void
-  clearFileContext: () => void
-  
   // Chat actions
   setCurrentQuery: (query: string) => void
   setChatSessionId: (id: string) => void
@@ -48,10 +40,6 @@ interface AppState {
   setSidebarMinimized: (minimized: boolean) => void
   setWorkspaceMinimized: (minimized: boolean) => void
   setUseCodeExecutionMode: (enabled: boolean) => void
-  
-  // Helper methods
-  isFileInContext: (path: string) => boolean
-  getContextFileCount: () => number
 }
 
 export const useAppStore = create<AppState>()(
@@ -65,7 +53,6 @@ export const useAppStore = create<AppState>()(
           // Initial state
           agentMode: 'simple',
           requiresNewChat: false,
-          chatFileContext: [],
           currentQuery: '',
           chatSessionId: '',
           chatSessionTitle: '',
@@ -118,28 +105,6 @@ export const useAppStore = create<AppState>()(
           set({ requiresNewChat: false })
         },
 
-        // File context actions
-        addFileToContext: (file) => {
-          set((state) => {
-            const exists = state.chatFileContext.some(f => f.path === file.path)
-            if (exists) return state
-            
-            return {
-              chatFileContext: [...state.chatFileContext, file]
-            }
-          })
-        },
-
-        removeFileFromContext: (path) => {
-          set((state) => ({
-            chatFileContext: state.chatFileContext.filter(f => f.path !== path)
-          }))
-        },
-
-        clearFileContext: () => {
-          set({ chatFileContext: [] })
-        },
-
         // Chat actions
         setCurrentQuery: (query) => {
           set({ currentQuery: query })
@@ -168,17 +133,6 @@ export const useAppStore = create<AppState>()(
 
         setUseCodeExecutionMode: (enabled) => {
           set({ useCodeExecutionMode: enabled })
-        },
-
-        // Helper methods
-        isFileInContext: (path) => {
-          const state = get()
-          return state.chatFileContext.some(f => f.path === path)
-        },
-
-        getContextFileCount: () => {
-          const state = get()
-          return state.chatFileContext.length
         }
         }
       },
@@ -189,10 +143,10 @@ export const useAppStore = create<AppState>()(
         agentMode: state.agentMode,
         sidebarMinimized: state.sidebarMinimized,
         workspaceMinimized: state.workspaceMinimized,
-        chatFileContext: state.chatFileContext,
         selectedPresetId: state.selectedPresetId,
         useCodeExecutionMode: state.useCodeExecutionMode
         // Note: requiresNewChat is not persisted as it's temporary state
+        // File context is now mode-specific: chat tabs have their own, workflow uses preset
         })
       }
     ),

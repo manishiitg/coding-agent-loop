@@ -583,6 +583,122 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     )
   }
 
+  // Workflow Error Event
+  if (event.type === 'workflow_error') {
+    const data = event.data as {
+      data?: {
+        error?: string
+        error_chain?: string
+        query_id?: string
+        [key: string]: unknown
+      }
+      error?: string
+      timestamp?: string
+      trace_id?: string
+      correlation_id?: string
+      [key: string]: unknown
+    }
+    
+    // Extract error from nested structure - handle both nested and flat structures
+    const nestedData = data?.data
+    const rootCauseError = 
+      (typeof nestedData === 'object' && nestedData !== null && 'error' in nestedData && typeof nestedData.error === 'string' && nestedData.error) ||
+      (typeof data?.error === 'string' && data.error) ||
+      'Unknown workflow error'
+    
+    const fullErrorChain = 
+      (typeof nestedData === 'object' && nestedData !== null && 'error_chain' in nestedData && typeof nestedData.error_chain === 'string' && nestedData.error_chain) ||
+      undefined
+    
+    const queryId = 
+      (typeof nestedData === 'object' && nestedData !== null && 'query_id' in nestedData && typeof nestedData.query_id === 'string' && nestedData.query_id) ||
+      undefined
+    
+    const hasFullChain = fullErrorChain && fullErrorChain !== rootCauseError
+    
+    return (
+      <CompactWrapper>
+        <div className={`bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg ${compact ? 'p-2' : 'p-3'}`}>
+          <div className="space-y-2">
+            {/* Header */}
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">❌</span>
+                <div className={`${compact ? 'text-xs' : 'text-sm'} font-medium text-red-700 dark:text-red-300`}>
+                  Workflow Error
+                </div>
+              </div>
+              {event.timestamp && (
+                <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-red-600 dark:text-red-400 flex-shrink-0`}>
+                  {new Date(event.timestamp).toLocaleTimeString()}
+                </div>
+              )}
+            </div>
+            
+            {/* Query ID */}
+            {queryId && (
+              <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-red-600 dark:text-red-400`}>
+                <span className="font-medium">Query ID:</span>{' '}
+                <code className="bg-red-100 dark:bg-red-800 px-1 rounded">{queryId}</code>
+              </div>
+            )}
+            
+            {/* Root Cause Error - highlighted prominently */}
+            <div className="bg-red-200 dark:bg-red-900 border-2 border-red-300 dark:border-red-700 rounded-md p-2">
+              <div className={`${compact ? 'text-[10px]' : 'text-xs'} font-bold text-red-900 dark:text-red-100 mb-1 flex items-center gap-1`}>
+                <span>🔍</span>
+                <span>Root Cause:</span>
+              </div>
+              <div className={`${compact ? 'text-xs' : 'text-sm'} text-red-950 dark:text-red-50 whitespace-pre-wrap break-words font-mono font-semibold`}>
+                {rootCauseError}
+              </div>
+            </div>
+            
+            {/* Full Error Chain - shown if different from root cause */}
+            {hasFullChain && (
+              <details className="bg-red-100 dark:bg-red-800 border border-red-200 dark:border-red-700 rounded-md p-2">
+                <summary className={`${compact ? 'text-[10px]' : 'text-xs'} font-medium text-red-800 dark:text-red-200 cursor-pointer`}>
+                  Full Error Chain (click to expand)
+                </summary>
+                <div className={`${compact ? 'text-xs' : 'text-sm'} text-red-900 dark:text-red-100 whitespace-pre-wrap break-words font-mono mt-2`}>
+                  {fullErrorChain}
+                </div>
+              </details>
+            )}
+            
+            {/* Additional metadata */}
+            {(data?.trace_id || data?.correlation_id) && (
+              <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-red-600 dark:text-red-400 space-y-1`}>
+                {data.trace_id && (
+                  <div>
+                    <span className="font-medium">Trace ID:</span>{' '}
+                    <code className="bg-red-100 dark:bg-red-800 px-1 rounded">{data.trace_id}</code>
+                  </div>
+                )}
+                {data.correlation_id && (
+                  <div>
+                    <span className="font-medium">Correlation ID:</span>{' '}
+                    <code className="bg-red-100 dark:bg-red-800 px-1 rounded">{data.correlation_id}</code>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {/* Show full data structure if available (for debugging) */}
+            {compact && Object.keys(data?.data || {}).length > 2 && (
+              <details className={`${compact ? 'text-[10px]' : 'text-xs'} text-red-600 dark:text-red-400`}>
+                <summary className="cursor-pointer font-medium">Show full error data</summary>
+                <pre className="mt-1 bg-red-100 dark:bg-red-800 border border-red-200 dark:border-red-700 rounded p-2 overflow-x-auto text-[10px]">
+                  {JSON.stringify(data, null, 2)}
+                </pre>
+              </details>
+            )}
+          </div>
+        </div>
+      </CompactWrapper>
+    )
+  }
+
   // Default case for unknown event types
   return (
     <div className={`bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>

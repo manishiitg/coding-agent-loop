@@ -8,7 +8,7 @@ The Conditional Agent (`HumanControlledTodoPlannerConditionalAgent`) evaluates t
 
 ### 1. Agent Creation and Factory Pattern
 
-**Location**: `controller_agent_factory.go` - `createConditionalAgent()`
+**Location**: [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) - `createConditionalAgent()`
 
 The conditional agent uses the same factory pattern as the validation agent for consistency:
 
@@ -37,15 +37,13 @@ agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
 
 ### 2. Context-Aware Event Bridge Connection
 
-**Location**: `controller.go` - Default agent creation, `controller_agent_factory.go` - Factory method
+**Location**: [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go) - Default agent creation, [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) - Factory method
 
 The conditional agent's event bridge is automatically connected via the factory pattern:
 
 - **Event Bridge**: Context-aware bridge (`ContextAwareEventBridge`) is set during agent creation
-- **Orchestrator Context**: Set before conditional evaluation in `executeConditionalStep()`:
-  ```go
-  cab.SetOrchestratorContext("conditional_evaluation", stepIndex, "conditional-step-evaluation")
-  ```
+- **Orchestrator Context**: Set during agent creation in `getConditionalAgentForStep()` → `createConditionalAgent()` (factory pattern)
+- **Context Phase**: Set to "conditional_evaluation" phase for conditional evaluation
 - **Context Restoration**: After evaluation, context is restored to "execution" phase for subsequent steps
 
 **Event Emission**:
@@ -55,24 +53,31 @@ The conditional agent's event bridge is automatically connected via the factory 
 
 ### 3. Condition Context (conditionContext)
 
-**Location**: `controller_execution.go` - `executeConditionalStep()`
+**Location**: [`controller_conditional.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_conditional.go) - `executeConditionalStep()`
 
 The `conditionContext` parameter contains **only** the output from the **last previous execution agent** (in-memory, not from files):
 
 ```go
-// Build conditionContext from LAST previous execution agent output ONLY
+// Build conditionContext - ONLY the last previous execution agent output (from in-memory results)
 contextBuilder := strings.Builder{}
+
+// Add context from the LAST previous execution agent output ONLY
 if len(previousExecutionResults) > 0 {
-    // Iterate backwards to find the last non-empty execution result
+    // Get the last (most recent) execution result
+    lastExecutionResult := ""
     for i := len(previousExecutionResults) - 1; i >= 0; i-- {
-        lastOutput := previousExecutionResults[i]
-        if lastOutput != "" {
-            contextBuilder.WriteString("Last Previous Step Execution Output:\n")
-            contextBuilder.WriteString(fmt.Sprintf("- Output:\n%s\n\n", lastOutput))
-            break // Found the last non-empty output, exit loop
+        if previousExecutionResults[i] != "" {
+            lastExecutionResult = previousExecutionResults[i]
+            break
         }
     }
+
+    if lastExecutionResult != "" {
+        contextBuilder.WriteString("Previous Step Execution Output:\n")
+        contextBuilder.WriteString(fmt.Sprintf("%s\n", lastExecutionResult))
+    }
 }
+
 conditionContext := contextBuilder.String()
 ```
 
@@ -84,28 +89,25 @@ conditionContext := contextBuilder.String()
 
 ### 4. Learning History (Separate Parameter)
 
-**Location**: `controller_execution.go` - `executeConditionalStep()`
+**Location**: [`controller_conditional.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_conditional.go) - `executeConditionalStep()`
 
-Learning history is passed as a **separate parameter** (`learningHistory`) to the conditional agent's system prompt:
+Learning history is passed as a **separate parameter** (`learningHistory`) via `LoadStepLearningHistory()`:
 
 ```go
-// Read learning files from step folder
-learningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
-if len(learningFiles) > 0 {
-    formattedLearnings := hcpo.formatStepLearningFilesAsHistory(learningFiles)
-    learningHistory = formattedLearnings
-}
+// Read learnings separately (passed as separate learningHistory variable, not in conditionContext)
+learningHistory, _ := hcpo.LoadStepLearningHistory(ctx, step.GetID(), stepIndex, conditionalStepPath, "conditional")
 ```
 
 **Key Rules**:
 - Separate from `conditionContext`
-- Included in system prompt under "LEARNING CONTEXT (Reference Only)"
+- Loaded via `LoadStepLearningHistory()` helper method
+- Included in system prompt under "📚 LEARNINGS (Historical)"
 - Used for guidance, not as current state
 - Agent must verify conditions using tools, not rely on learnings
 
 ### 5. Tool Access and Configuration
 
-**Location**: `controller_agent_factory.go` - `createConditionalAgent()`
+**Location**: [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) - `createConditionalAgent()`
 
 The conditional agent receives workspace tools and MCP tools based on step configuration:
 
@@ -138,7 +140,7 @@ if stepConfig != nil && (len(stepConfig.EnabledCustomToolCategories) > 0 || len(
 
 ### 6. Structured Response JSON in Events
 
-**Location**: `base_orchestrator_agent.go` - `ExecuteStructuredWithInputProcessorViaTool()`
+**Location**: [`base_orchestrator_agent.go`](../agent_go/pkg/orchestrator/agents/base_orchestrator_agent.go) - `ExecuteStructuredWithInputProcessorViaTool()`
 
 For structured responses (conditional and validation agents), the JSON is emitted in the `result` field:
 
@@ -163,7 +165,7 @@ if marshalErr == nil {
 
 ### 7. Prompt Engineering
 
-**Location**: `conditional_agent.go` - `Decide()` method
+**Location**: [`conditional_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/conditional_agent.go) - `Decide()` method
 
 The conditional agent's prompts emphasize **tool-based verification**:
 
@@ -194,7 +196,7 @@ The conditional agent's prompts emphasize **tool-based verification**:
 
 ### 8. Event Suppression
 
-**Location**: `base_orchestrator_agent.go` - `emitAgentEndEventWithStructuredResponse()`
+**Location**: [`base_orchestrator_agent.go`](../agent_go/pkg/orchestrator/agents/base_orchestrator_agent.go) - `emitAgentEndEventWithStructuredResponse()`
 
 The `OrchestratorAgentEnd` event is suppressed for conditional agents to avoid log spam:
 
@@ -210,7 +212,7 @@ if boa.agentType == ConditionalAgentType {
 
 ### 9. Agent Type and Identification
 
-**Location**: `base_agent.go` - Agent type constants
+**Location**: [`base_agent.go`](../agent_go/pkg/orchestrator/agents/base_agent.go) - Agent type constants
 
 ```go
 const ConditionalAgentType AgentType = "conditional"
@@ -224,7 +226,7 @@ const ConditionalAgentType AgentType = "conditional"
 
 ### 10. Code Execution Mode Support
 
-**Location**: `conditional_agent.go` - `Decide()` method
+**Location**: [`conditional_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/conditional_agent.go) - `Decide()` method
 
 The conditional agent supports code execution mode:
 
@@ -236,16 +238,17 @@ The conditional agent supports code execution mode:
 
 ## Usage Flow
 
-1. **Step Execution**: `executeConditionalStep()` is called for conditional steps
+1. **Step Execution**: `executeConditionalStep()` is called for conditional steps (in `controller_conditional.go`)
 2. **Context Building**: `conditionContext` is built from last previous execution output (in-memory)
-3. **Learning Loading**: Learning history is read from step learnings folder (separate parameter)
-4. **Agent Creation**: Conditional agent is created via factory pattern (step-specific or default)
-5. **Context Setup**: Orchestrator context is set to "conditional_evaluation" phase
-6. **Decision**: `conditionalAgent.Decide()` is called with context, question, and learnings
-7. **Tool Verification**: Agent uses MCP tools to verify current state
-8. **Structured Output**: Agent returns `ConditionalResponse` with `result` (bool) and `reason` (string)
-9. **Context Restoration**: Orchestrator context is restored to "execution" phase
+3. **Learning Loading**: Learning history is loaded via `LoadStepLearningHistory()` (separate parameter)
+4. **Code Execution Mode**: Determined from step config or orchestrator default
+5. **Agent Creation**: Conditional agent is created via `getConditionalAgentForStep()` (step-specific or default)
+6. **Context Setup**: Orchestrator context is set to "conditional_evaluation" phase (done in factory)
+7. **Decision**: `conditionalAgent.Decide()` is called with context, question, and learnings
+8. **Tool Verification**: Agent uses MCP tools (or code execution) to verify current state
+9. **Structured Output**: Agent returns `ConditionalResponse` with `result` (bool) and `reason` (string)
 10. **Branch Selection**: Based on `result`, either `if_true_steps` or `if_false_steps` are executed
+11. **Nested Support**: Branch steps can include nested conditional steps (max depth: 2)
 
 ## Key Design Principles
 
@@ -260,10 +263,11 @@ The conditional agent supports code execution mode:
 
 ## Related Files
 
-- `conditional_agent.go`: Conditional agent implementation
-- `controller_agent_factory.go`: Factory method for conditional agent creation
-- `controller.go`: Default conditional agent creation and step-specific agent retrieval
-- `controller_execution.go`: Conditional step execution logic
-- `base_orchestrator_agent.go`: Structured response event emission
-- `base_agent.go`: Agent type constants
+- [`conditional_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/conditional_agent.go): Conditional agent implementation (`Decide()` method)
+- [`controller_conditional.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_conditional.go): Conditional step execution logic (`executeConditionalStep()`)
+- [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go): Factory method for conditional agent creation (`createConditionalAgent()`)
+- [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go): Step-specific agent retrieval (`getConditionalAgentForStep()`)
+- [`controller_learning_helpers.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_learning_helpers.go): Learning history loading (`LoadStepLearningHistory()`)
+- [`base_orchestrator_agent.go`](../agent_go/pkg/orchestrator/agents/base_orchestrator_agent.go): Structured response event emission
+- [`base_agent.go`](../agent_go/pkg/orchestrator/agents/base_agent.go): Agent type constants
 

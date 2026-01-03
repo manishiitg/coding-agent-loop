@@ -860,6 +860,17 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [])
 
+  // Stabilize stepStatusMap by serializing it - Maps are compared by reference, so we need to serialize
+  // to detect actual content changes. This prevents unnecessary recalculations in usePlanToFlow.
+  const stableStepStatusMap = React.useMemo(() => {
+    if (!stepStatusMap || stepStatusMap.size === 0) {
+      return null // Return null instead of the Map to ensure stable reference
+    }
+    // Serialize Map to object for stable comparison
+    const serialized = Object.fromEntries(stepStatusMap)
+    return serialized
+  }, [stepStatusMap])
+
   // Convert plan to React Flow nodes and edges (with change highlights and run callback)
   const { nodes: initialNodes, edges: initialEdges } = usePlanToFlow(plan, { 
     // Prerequisite edges are always shown (default: true in usePlanToFlow)
@@ -868,7 +879,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     onOpenSidebar: handleOpenSidebarCallback,
     isExecuting,
     completedStepIndices,  // Pass completed steps for enabling/disabling run buttons
-    stepStatusMap: stepStatusMap,  // Pass step status map from events
+    stepStatusMap: stableStepStatusMap,  // Pass stabilized step status map
     workspacePath,  // Pass workspace path for file opening
     selectedRunFolder,  // Pass selected run folder for file opening
     variablesManifest,  // Pass variables manifest for Variables node

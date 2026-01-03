@@ -164,7 +164,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ensureStepExecutionFolderExists(ctx c
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step execution folder: %s: %v (continuing)", stepExecutionPath, err))
 		return fmt.Errorf("failed to create step execution folder: %w", err)
 	}
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created step execution folder: %s", stepExecutionPath))
 	return nil
 }
 
@@ -246,7 +245,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ensureStepLearningsFolderExists(ctx c
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step learnings folder: %s: %v (continuing)", stepLearningsPath, err))
 		return fmt.Errorf("failed to create step learnings folder: %w", err)
 	}
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created step learnings folder: %s", stepLearningsPath))
 	return nil
 }
 
@@ -794,7 +792,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	}
 
 	// STEP HASH GUARD: Detect plan changes and reset learnings if needed
-	// This ensures that if the user modifies a step's description, criteria, etc., 
+	// This ensures that if the user modifies a step's description, criteria, etc.,
 	// the learning stability counters are reset and learnings are unlocked.
 	if err := hcpo.CheckAndResetStepHash(ctx, step, step.GetID(), stepIndex, stepPath); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step hash guard check failed for %s: %v (continuing)", stepPath, err))
@@ -900,7 +898,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				decisionContext.DecisionExecutionResult,
 			)
 			templateVars["DecisionReasoning"] = decisionReasoning
-			hcpo.GetLogger().Info(fmt.Sprintf("📝 Added decision context to template variables for step %d (routed from decision step %d)", stepIndex+1, decisionContext.DecisionStepIndex+1))
 		} else {
 			templateVars["DecisionReasoning"] = ""
 		}
@@ -909,7 +906,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		previousStepsSummary := hcpo.buildPreviousStepsSummary(allSteps, stepIndex, previousContextFiles, previousExecutionResults)
 		templateVars["PreviousStepsSummary"] = previousStepsSummary
 		if previousStepsSummary != "" {
-			hcpo.GetLogger().Info(fmt.Sprintf("📝 Added previous steps summary to template variables for step %d (%d previous steps)", stepIndex+1, len(previousContextFiles)))
 		}
 
 		// Build other agents capabilities summary for sub-agents
@@ -932,7 +928,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				templateVars["ValidationSchema"] = ""
 			} else {
 				templateVars["ValidationSchema"] = string(validationSchemaJSON)
-				hcpo.GetLogger().Info(fmt.Sprintf("📋 Added validation schema to template variables for step %d", stepIndex+1))
 			}
 		} else {
 			templateVars["ValidationSchema"] = ""
@@ -1067,7 +1062,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						combinedOutput.WriteString(previousIterationValidationOutput)
 					}
 					templateVars["PreviousIterationOutput"] = combinedOutput.String()
-					hcpo.GetLogger().Info(fmt.Sprintf("📝 Added previous iteration outputs to template variables for step %d (loop iteration %d)", stepIndex+1, loopIterationCount))
 				} else {
 					templateVars["PreviousIterationOutput"] = ""
 				}
@@ -1106,7 +1100,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// Dynamic Logic: Switch based on successful runs
 				// Default to Exploration Mode (False - paths only) to encourage trying different ways
 				keepLearningFull = false
-				
+
 				// Read metadata to check successful runs
 				learningPathIdentifier := step.GetID() // Use ID as identifier
 				metadata, err := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
@@ -1154,7 +1148,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					stepPath,
 				)
 				if err != nil {
-					return "", updatedContextFiles, fmt.Errorf("failed to read learning history for step %d: %v", stepIndex+1, err)
+					return "", updatedContextFiles, fmt.Errorf("failed to read learning history for step %d: %w", stepIndex+1, err)
 				}
 
 				// Get learning file paths for user message (when KeepLearningFull is false)
@@ -1210,7 +1204,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						contextStr = "Validation Feedback"
 					}
 					templateVars["ValidationFeedback"] = hcpo.formatValidationResponseForTemplate(validationResponse, contextStr)
-					hcpo.GetLogger().Info(fmt.Sprintf("📝 Added validation feedback to template variables for step %d (retry: %d, loop iteration: %d)", stepIndex+1, retryAttempt, loopIterationCount))
 				} else {
 					templateVars["ValidationFeedback"] = "" // No validation feedback for first attempt/first iteration
 				}
@@ -1219,13 +1212,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// It persists across retry attempts until cleared or step succeeds
 
 				// Step 2: Create and execute Execution-Only Agent with learning history (reused from above)
-				hcpo.GetLogger().Info(fmt.Sprintf("🔍 [AGENT NAME] Generating agent name with stepPath: %s (isBranchStep=%v)", stepPath, isBranchStep))
 				executionAgentName := fmt.Sprintf("%s-execution-%s", stepPath, sanitizedTitle)
 				// Add loop iteration to agent name if in loop mode
 				if hasLoop(step) && loopIterationCount > 0 {
 					executionAgentName = fmt.Sprintf("%s-loop-%d", executionAgentName, loopIterationCount)
 				}
-				hcpo.GetLogger().Info(fmt.Sprintf("🔍 [AGENT NAME] Final executionAgentName: %s", executionAgentName))
 
 				// Add learning history to template vars for execution-only agent (reused for all retry attempts)
 				templateVars["LearningHistory"] = formattedLearningHistory
@@ -1268,13 +1259,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				if isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure {
 					hcpo.GetLogger().Info(fmt.Sprintf("🔄 Validation failed on previous attempt - will use original LLM instead of temp override (fallback enabled)"))
 				}
-				hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Retry check - retryAttempt=%d, previousValidationResponse!=nil=%v, previousIsSuccessCriteriaMet=%v, isRetryAfterValidationFailure=%v, fallbackToOriginalLLMOnFailure=%v",
-					retryAttempt, previousValidationResponse != nil, func() bool {
-						if previousValidationResponse != nil {
-							return previousValidationResponse.IsSuccessCriteriaMet
-						}
-						return false
-					}(), isRetryAfterValidationFailure, hcpo.fallbackToOriginalLLMOnFailure))
 				// Gather prerequisite info if enabled (needed for tool registration and prompt)
 				var prerequisiteInfoForExecution *PrerequisiteInfo
 
@@ -1322,7 +1306,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// allSteps is already []PlanStepInterface - no conversion needed
 				executionAgent, err = hcpo.createExecutionOnlyAgent(executionCtx, "execution_only", stepPath, executionAgentName, agentConfigs, isRetryAfterValidationFailure, retryAttempt, prerequisiteInfoForExecution, allSteps, stepIndex, cancelExecution, prereqErrChan, step.GetID())
 				if err != nil {
-					return "", updatedContextFiles, fmt.Errorf("failed to create execution-only agent for step %d: %v", stepIndex+1, err)
+					return "", updatedContextFiles, fmt.Errorf("failed to create execution-only agent for step %d: %w", stepIndex+1, err)
 				}
 
 				// Check for context cancellation before executing agent
@@ -1339,7 +1323,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// CAPTURE TURN COUNT: Calculate total LLM turns from conversation history
 				// Each turn consists of a user message and an assistant response (including tool calls)
 				turnCount := len(executionConversationHistory)
-				hcpo.GetLogger().Info(fmt.Sprintf("📊 Step %d execution completed in %d turns", stepIndex+1, turnCount))
 
 				// Check for prerequisite failure (from tool call via channel)
 				var prereqErr *PrerequisiteFailureError
@@ -1472,7 +1455,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						if err := hcpo.WriteWorkspaceFile(ctx, executionResultFilePath, string(executionJSON)); err != nil {
 							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write execution response to %s: %v", executionResultFilePath, err))
 						} else {
-							hcpo.GetLogger().Info(fmt.Sprintf("💾 Execution response saved to: %s", executionResultFilePath))
 						}
 					}
 
@@ -1495,7 +1477,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						if err := hcpo.WriteWorkspaceFile(ctx, conversationFilePath, string(conversationJSON)); err != nil {
 							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write conversation history to %s: %v", conversationFilePath, err))
 						} else {
-							hcpo.GetLogger().Info(fmt.Sprintf("💾 Conversation history saved to: %s", conversationFilePath))
 						}
 					}
 				}
@@ -1588,7 +1569,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							decisionContext.DecisionExecutionResult,
 						)
 						validationTemplateVars["DecisionReasoning"] = decisionReasoning
-						hcpo.GetLogger().Info(fmt.Sprintf("📝 Added decision context to validation template variables for step %d (routed from decision step %d)", stepIndex+1, decisionContext.DecisionStepIndex+1))
 					} else {
 						validationTemplateVars["DecisionReasoning"] = ""
 					}
@@ -1703,7 +1683,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					if validationResponse != nil && hcpo.saveValidationResponses {
 						// Increment validation counter for numbered files
 						validationCounter++
-						hcpo.GetLogger().Info(fmt.Sprintf("📊 Validation result: Success Criteria Met: %v, Status: %s", validationResponse.IsSuccessCriteriaMet, validationResponse.ExecutionStatus))
 						// Determine validation workspace path (same logic as validation agent)
 						var validationWorkspacePath string
 						if hcpo.selectedRunFolder != "" {
@@ -1731,7 +1710,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							if err := hcpo.WriteWorkspaceFile(ctx, validationFilePath, string(validationJSON)); err != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write validation response to %s: %v", validationFilePath, err))
 							} else {
-								hcpo.GetLogger().Info(fmt.Sprintf("💾 Validation response saved to: %s", validationFilePath))
 							}
 						}
 					}
@@ -1787,7 +1765,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								hcpo.GetLogger().Info(fmt.Sprintf("🔧 Temp LLM2 was used and SkipLearningWhenTempLLM2 flag is enabled - will skip learning for step %d", stepIndex+1))
 							}
 						}
-						hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: Step %d (loop) - fastExecuteMode=%v, fastExecuteEndStep=%d, isFastExecuteStep=%v, isLearningDisabled=%v (detailLevelNone=%v, stepDisabled=%v, codeExecutionMode=%v), usedTempLLM=%v, skipLearningWhenTempLLM1=%v, skipLearningWhenTempLLM2=%v, shouldSkipLearningDueToTempOverride=%v", stepIndex+1, execCtx.FastExecuteMode, execCtx.FastExecuteEndStep, isFastExecuteStep, isLearningDisabled, isLearningDetailLevelNone, isLearningDisabledStep, isCodeExecutionMode, usedTempLLM, hcpo.executionOptions != nil && hcpo.executionOptions.SkipLearningWhenTempLLM1, hcpo.executionOptions != nil && hcpo.executionOptions.SkipLearningWhenTempLLM2, shouldSkipLearningDueToTempOverride))
 						if !isFastExecuteStep && !isLearningDisabled && !shouldSkipLearningDueToTempOverride {
 							// Success Learning Agent - analyze what worked well and update plan.json
 							// Loop condition met means step completed successfully
@@ -1894,7 +1871,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								} else {
 									// User provided feedback - store it for next loop iteration
 									humanFeedback = feedback
-									hcpo.GetLogger().Info(fmt.Sprintf("📝 Human feedback received for step %d loop iteration %d: %s", stepIndex+1, loopIterationCount, humanFeedback))
 								}
 							} else {
 								if isSubAgent {
@@ -1910,7 +1886,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							// Store human feedback in template variables for next loop iteration
 							if humanFeedback != "" {
 								templateVars["HumanFeedback"] = humanFeedback
-								hcpo.GetLogger().Info(fmt.Sprintf("📝 Added human feedback to template variables for step %d loop iteration %d", stepIndex+1, loopIterationCount))
 							} else {
 								// Clear any previous human feedback if none provided
 								templateVars["HumanFeedback"] = ""
@@ -2076,7 +2051,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						hcpo.GetLogger().Info(fmt.Sprintf("🔧 Temp LLM2 was used and SkipLearningWhenTempLLM2 flag is enabled - will skip learning for step %d", stepIndex+1))
 					}
 				}
-				hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: Step %d - fastExecuteMode=%v, fastExecuteEndStep=%d, isFastExecuteStep=%v, isLearningDisabled=%v (detailLevelNone=%v, stepDisabled=%v, codeExecutionMode=%v), isLearningsLocked=%v, shouldSkipLearningDueToLock=%v, usedTempLLM=%v, skipLearningWhenTempLLM1=%v, skipLearningWhenTempLLM2=%v, shouldSkipLearningDueToTempOverride=%v", stepIndex+1, execCtx.FastExecuteMode, execCtx.FastExecuteEndStep, isFastExecuteStep, isLearningDisabled, isLearningDetailLevelNone, isLearningDisabledStep, isCodeExecutionMode, isLearningsLocked, shouldSkipLearningDueToLock, usedTempLLM, hcpo.executionOptions != nil && hcpo.executionOptions.SkipLearningWhenTempLLM1, hcpo.executionOptions != nil && hcpo.executionOptions.SkipLearningWhenTempLLM2, shouldSkipLearningDueToTempOverride))
 				if isFastExecuteStep || isLearningDisabled || shouldSkipLearningDueToLock || shouldSkipLearningDueToTempOverride {
 					if isFastExecuteStep {
 						hcpo.GetLogger().Info(fmt.Sprintf("⚡ Fast mode: Skipping learning agents for step %d", stepIndex+1))
@@ -2324,7 +2298,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								} else {
 									// User provided feedback - store it for next retry attempt
 									humanFeedback = feedback
-									hcpo.GetLogger().Info(fmt.Sprintf("📝 Human feedback received for step %d retry (attempt %d/%d): %s", stepIndex+1, retryAttempt+1, maxRetryAttempts, humanFeedback))
 								}
 							} else {
 								if isSubAgent {
@@ -2340,7 +2313,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							// Store human feedback in template variables for next retry attempt
 							if humanFeedback != "" {
 								templateVars["HumanFeedback"] = humanFeedback
-								hcpo.GetLogger().Info(fmt.Sprintf("📝 Added human feedback to template variables for step %d retry (attempt %d/%d)", stepIndex+1, retryAttempt+1, maxRetryAttempts))
 							} else {
 								// Clear any previous human feedback if none provided
 								templateVars["HumanFeedback"] = ""
@@ -2417,7 +2389,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		// NORMAL MODE & LOOP MODE: Always request human feedback before moving to next step
 		isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
 		isSkipHumanInput := execCtx.SkipHumanInput
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: Step %d human feedback check - execCtx: fastExecuteMode=%v, fastExecuteEndStep=%d, stepIndex=%d, isFastExecuteStep=%v, skipHumanInput=%v, isDecisionInnerStep=%v, isSubAgent=%v", stepIndex+1, execCtx.FastExecuteMode, execCtx.FastExecuteEndStep, stepIndex, isFastExecuteStep, isSkipHumanInput, isDecisionInnerStep, isSubAgent))
 
 		var approved bool
 		var feedback string
@@ -2459,12 +2430,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		}
 
 		// Store human feedback for future steps (even if approved, user might have provided guidance)
-		if feedback != "" {
-			feedbackEntry := fmt.Sprintf("Step %d/%d Feedback: %s", stepIndex+1, totalSteps, feedback)
-			// Note: humanFeedbackHistory is not available in this function scope, so we skip storing it
-			// It will be handled by the caller if needed
-			hcpo.GetLogger().Info(fmt.Sprintf("📝 Human feedback received for step %d: %s", stepIndex+1, feedbackEntry))
-		}
+		// Note: humanFeedbackHistory is not available in this function scope, so we skip storing it
+		// It will be handled by the caller if needed
 
 		if approved {
 			// User approved - mark step as completed and exit outer loop
@@ -2505,7 +2472,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	contextOutput := step.GetContextOutput().String()
 	if contextOutput != "" {
 		updatedContextFiles = append(updatedContextFiles, contextOutput)
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 Added step context output to context files: %s", contextOutput))
 	}
 
 	// Emit step_finished event
@@ -2615,17 +2581,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 	startFromStep int,
 	execCtx *ExecutionContext,
 ) error {
-	hcpo.GetLogger().Info(fmt.Sprintf("🔄 Starting step-by-step execution of %d steps (starting from step %d)", len(breakdownSteps), startFromStep+1))
-
-	// Learning detail level is now configured per-step via AgentConfigs
-	// Each step can specify its own learning detail level, defaults to "exact" if not set
-	hcpo.GetLogger().Info(fmt.Sprintf("📝 Using per-step learning detail level configuration"))
-
 	// Run folder should already be resolved early (after plan approval)
 	if hcpo.selectedRunFolder == "" {
 		return fmt.Errorf(fmt.Sprintf("run folder not resolved - this should have been set after plan approval"), nil)
 	}
-	hcpo.GetLogger().Info(fmt.Sprintf("📁 Using resolved run folder: %s", hcpo.selectedRunFolder))
 
 	// Track execution results in memory (instead of reading from files)
 	// This allows conditional steps to use execution results directly
@@ -2643,7 +2602,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 		}
 	}
 	if stepsToLoad > 0 {
-		hcpo.GetLogger().Info(fmt.Sprintf("📖 Loading execution results from logs for steps 1-%d (resuming from step %d or single step mode)", stepsToLoad, stepsToLoad+1))
 		previousExecutionResults = hcpo.loadExecutionResultsFromLogs(ctx, breakdownSteps, stepsToLoad)
 	}
 
@@ -2728,8 +2686,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			continue
 		}
 
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Executing step %d/%d: %s", i+1, len(breakdownSteps), step.GetTitle()))
-
 		// Build context files from previous steps
 		previousContextFiles := make([]string, 0)
 		for prevIdx := 0; prevIdx < i; prevIdx++ {
@@ -2739,13 +2695,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 					// Resolve variables in context output (consistent with conditional steps)
 					resolvedOutput := ResolveVariables(contextOutput, hcpo.variableValues)
 					previousContextFiles = append(previousContextFiles, resolvedOutput)
-					hcpo.GetLogger().Info(fmt.Sprintf("📝 Added context file from step %d (%s): %s", prevIdx+1, breakdownSteps[prevIdx].GetTitle(), resolvedOutput))
 				} else {
 					hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Step %d (%s) has no context_output - skipping", prevIdx+1, breakdownSteps[prevIdx].GetTitle()))
 				}
 			}
 		}
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Built previousContextFiles for step %d (%s): %v", i+1, step.GetTitle(), previousContextFiles))
 
 		// Route execution based on step type using helper functions
 		// Check if this is a conditional step
@@ -2766,7 +2720,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Conditional step %d execution failed: %v", i+1, err), nil)
 				// Emit error event using centralized method
 				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "conditional-step-execution", fmt.Sprintf("Execute conditional step: %s", step.GetTitle()), err.Error(), i, iteration)
-				return fmt.Errorf("conditional step %d execution failed: %v", i+1, err)
+				return fmt.Errorf("conditional step %d execution failed: %w", i+1, err)
 			}
 
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Conditional step %d completed successfully: %s", i+1, step.GetTitle()))
@@ -3372,7 +3326,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			}
 			hcpo.EmitStepFailedEvent(ctx, stepId, stepTitle, stepPath, err.Error(), i, false)
 			hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_failed event for step %d: %s", i+1, stepTitle))
-			return fmt.Errorf("step %d execution failed: %v", i+1, err)
+			return fmt.Errorf("step %d execution failed: %w", i+1, err)
 		}
 
 		// Log execution result (for debugging)

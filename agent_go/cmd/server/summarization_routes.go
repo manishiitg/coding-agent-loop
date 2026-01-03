@@ -25,10 +25,10 @@ import (
 type SummarizeConversationRequest struct {
 	KeepLastMessages int `json:"keep_last_messages,omitempty"` // Optional: number of recent messages to keep (default: 4, matches orchestrator)
 	// Context summarization configuration (optional - uses orchestrator defaults if not provided)
-	EnableContextSummarization     bool    `json:"enable_context_summarization,omitempty"`       // Enable context summarization feature (default: true, matches orchestrator)
-	SummarizeOnTokenThreshold      bool    `json:"summarize_on_token_threshold,omitempty"`       // Enable token-based summarization trigger (percentage-based, default: true, matches orchestrator)
+	EnableContextSummarization     *bool   `json:"enable_context_summarization,omitempty"`       // Enable context summarization feature (nil = inherit default, true/false = explicit override)
+	SummarizeOnTokenThreshold      *bool   `json:"summarize_on_token_threshold,omitempty"`       // Enable token-based summarization trigger (nil = inherit default, true/false = explicit override)
 	TokenThresholdPercent          float64 `json:"token_threshold_percent,omitempty"`            // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
-	SummarizeOnFixedTokenThreshold bool    `json:"summarize_on_fixed_token_threshold,omitempty"` // Enable fixed token-based summarization trigger (default: true, matches orchestrator)
+	SummarizeOnFixedTokenThreshold *bool   `json:"summarize_on_fixed_token_threshold,omitempty"` // Enable fixed token-based summarization trigger (nil = inherit default, true/false = explicit override)
 	FixedTokenThreshold            int     `json:"fixed_token_threshold,omitempty"`              // Fixed token threshold to trigger summarization (default: 200000 = 200k tokens, matches orchestrator)
 }
 
@@ -126,25 +126,29 @@ func (api *StreamingAPI) handleSummarizeConversation(w http.ResponseWriter, r *h
 
 	// Load context summarization settings with orchestrator defaults
 	// Priority: Request > Environment Variable > Default (matches orchestrator defaults)
-	enableContextSummarization := req.EnableContextSummarization
-	if !enableContextSummarization {
+	enableContextSummarization := func() bool {
+		// If explicitly set in request, use that value
+		if req.EnableContextSummarization != nil {
+			return *req.EnableContextSummarization
+		}
 		// Check environment variable - default to enabled (true), can be disabled via "false"
 		if envVal := os.Getenv("ENABLE_CONTEXT_SUMMARIZATION"); envVal == "false" {
-			enableContextSummarization = false
-		} else {
-			enableContextSummarization = true // Default to enabled (matches orchestrator)
+			return false
 		}
-	}
+		return true // Default to enabled (matches orchestrator)
+	}()
 
-	summarizeOnTokenThreshold := req.SummarizeOnTokenThreshold
-	if !summarizeOnTokenThreshold {
+	summarizeOnTokenThreshold := func() bool {
+		// If explicitly set in request, use that value
+		if req.SummarizeOnTokenThreshold != nil {
+			return *req.SummarizeOnTokenThreshold
+		}
 		// Check environment variable - default to enabled (true), can be disabled via "false"
 		if envVal := os.Getenv("SUMMARIZE_ON_TOKEN_THRESHOLD"); envVal == "false" {
-			summarizeOnTokenThreshold = false
-		} else {
-			summarizeOnTokenThreshold = true // Default to enabled (matches orchestrator)
+			return false
 		}
-	}
+		return true // Default to enabled (matches orchestrator)
+	}()
 
 	tokenThresholdPercent := req.TokenThresholdPercent
 	if tokenThresholdPercent <= 0 {
@@ -159,15 +163,17 @@ func (api *StreamingAPI) handleSummarizeConversation(w http.ResponseWriter, r *h
 		}
 	}
 
-	summarizeOnFixedTokenThreshold := req.SummarizeOnFixedTokenThreshold
-	if !summarizeOnFixedTokenThreshold {
+	summarizeOnFixedTokenThreshold := func() bool {
+		// If explicitly set in request, use that value
+		if req.SummarizeOnFixedTokenThreshold != nil {
+			return *req.SummarizeOnFixedTokenThreshold
+		}
 		// Check environment variable - default to enabled (true), can be disabled via "false"
 		if envVal := os.Getenv("SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD"); envVal == "false" {
-			summarizeOnFixedTokenThreshold = false
-		} else {
-			summarizeOnFixedTokenThreshold = true // Default to enabled (matches orchestrator)
+			return false
 		}
-	}
+		return true // Default to enabled (matches orchestrator)
+	}()
 
 	fixedTokenThreshold := req.FixedTokenThreshold
 	if fixedTokenThreshold <= 0 {

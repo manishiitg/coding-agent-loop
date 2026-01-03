@@ -1,9 +1,6 @@
 package logger
 
 import (
-	"fmt"
-	"time"
-
 	loggerv2 "mcpagent/logger/v2"
 )
 
@@ -23,12 +20,8 @@ func CreateLogger(logFile string, level string, format string, enableStdout bool
 	} else if logFile != "" {
 		cfg.Output = logFile
 	} else {
-		// Default to file logging when no log file is specified
-		// Create a default log file in logs/ directory
-		defaultLogFile := fmt.Sprintf("logs/mcp-agent-%s.log", time.Now().Format("2006-01-02"))
-		cfg.Output = defaultLogFile
-		cfg.EnableFile = true
-		cfg.FilePath = defaultLogFile
+		// Default to stdout when no log file is specified and stdout is disabled
+		cfg.Output = "stdout"
 	}
 
 	return loggerv2.New(cfg)

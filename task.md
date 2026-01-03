@@ -24,15 +24,17 @@ i) prompt tempaltes, need to check variables on compile time
 18. we need add folder guard in custom shell exec
 
 16. diff patch tool, corrupts json
+ --- done
 
 21. see how we can integrate learning locking and make it more automatic
+-- done
 
 22. we should have a human notification tool also.
 
 
 28. need to simply tool filter.
 
-32. remove locking learnings in orchestrator, it should always learn.. or maybe we need thinkg of learnins for orchestrator differently?
+32. remove locking learnings in orchestrator, it should always learn.. or maybe we need thinkg of learnins for orchestrator differently? -- done
 26. learnings vs skills? 
 27. workspace, sheel exec is reading env variable which is an issue
 
@@ -68,3 +70,5 @@ i) prompt tempaltes, need to check variables on compile time
 51. summization in chat mode is not ux friendly
 
 52. check auto summization.. it trigges many times.. i think some bug is there in token calcuation
+
+53. add oauth support for mcp and make a better ui for adding mcp/managing mcp than simple json

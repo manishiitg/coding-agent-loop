@@ -69,7 +69,7 @@ func NewWorkflowValidationAgent(config *agents.OrchestratorAgentConfig, logger l
 // Execute implements the OrchestratorAgent interface
 // NOTE: This method is NOT USED - use ExecuteStructured() instead
 func (hctpva *WorkflowValidationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	return "", nil, fmt.Errorf(fmt.Sprintf("Execute() is not used for validation agent - use ExecuteStructured() instead"), nil)
+	return "", nil, fmt.Errorf("Execute() is not used for validation agent - use ExecuteStructured() instead")
 }
 
 // ExecuteStructured executes the validation agent and returns structured output

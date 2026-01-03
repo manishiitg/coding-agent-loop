@@ -85,6 +85,11 @@ func NewBaseOrchestratorAgentWithEventBridge(
 
 // Initialize initializes the base orchestrator agent
 func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
+	agentName := string(boa.agentType)
+	if boa.config.AgentName != "" {
+		agentName = boa.config.AgentName
+	}
+
 	// Create LLM instance
 	llmInstance, err := boa.createLLM()
 	if err != nil {
@@ -98,10 +103,8 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		time.Now().UnixNano()))
 
 	// Determine agent name: use unique AgentName from config if available, otherwise fall back to agent type
-	agentName := string(boa.agentType)
 	if boa.config.AgentName != "" {
 		agentName = boa.config.AgentName
-	} else {
 	}
 
 	// Create base agent
@@ -144,8 +147,6 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 
 	// Append the agent-specific prompt to the existing system prompt
 	boa.baseAgent.agent.AppendSystemPrompt(boa.systemPrompt)
-
-	// Removed verbose logging
 	return nil
 }
 

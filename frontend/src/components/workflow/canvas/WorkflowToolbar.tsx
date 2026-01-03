@@ -869,7 +869,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     
     if (!isPhaseRunning) {
       // For plan-improvement and other phases that need run folder, pass execution options
-      if (phaseId === 'plan-improvement' || phaseId === 'plan-tool-optimization' || phaseId === 'plan-learnings-alignment') {
+      if (phaseId === 'plan-improvement' || phaseId === 'plan-tool-optimization' || phaseId === 'plan-learnings-alignment' || phaseId === 'evaluation-execution') {
         // Build execution options to include selected_run_folder
         const executionOptions = buildExecutionOptions()
         console.log('[WorkflowToolbar] Starting', phaseId, 'with execution options:', executionOptions)

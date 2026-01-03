@@ -146,29 +146,24 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	}
 
 	api.logger.Debug(fmt.Sprintf("[POLLING] Session %s: exists=%v, events_in_memory=%d, status=%s", sessionID, exists, len(sessionEvents), sessionStatus))
-	log.Printf("[POLLING DEBUG] Session %s: exists=%v, events_in_memory=%d, status=%s, chatSession=%v", sessionID, exists, len(sessionEvents), sessionStatus, chatSession != nil)
 
 	// Check if we need to fallback to database:
 	// 1. Session doesn't exist in memory (!exists), OR
 	// 2. Session exists in memory but has 0 events AND session is completed/stopped
 	shouldFallbackToDB := !exists || (exists && len(sessionEvents) == 0 && chatSession != nil && (chatSession.Status == "completed" || chatSession.Status == "error" || chatSession.Status == "stopped"))
-	log.Printf("[POLLING DEBUG] shouldFallbackToDB=%v for session %s", shouldFallbackToDB, sessionID)
 
 	if shouldFallbackToDB {
 		// Session doesn't exist in memory or has no events - check if it's a completed/stopped session in database
 		// For non-active sessions (completed, stopped, error), fetch events from database
-		log.Printf("[POLLING DEBUG] Checking fallback conditions: chatSession=%v, status=%s", chatSession != nil, sessionStatus)
 		if chatSession != nil && (chatSession.Status == "completed" || chatSession.Status == "error" || chatSession.Status == "stopped") {
 			// Fallback to database for non-active sessions
 			// Fetch events from database and convert to polling format
-			log.Printf("[POLLING] Session %s not in memory, falling back to database (status: %s)", sessionID, chatSession.Status)
 			api.logger.Debug(fmt.Sprintf("[POLLING] Session %s not in memory, falling back to database (status: %s)", sessionID, chatSession.Status))
 			dbEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 1000, 0)
 			if err != nil {
 				log.Printf("[POLLING ERROR] Failed to fetch events from database for session %s: %v", sessionID, err)
 				api.logger.Warn(fmt.Sprintf("[POLLING] Failed to fetch events from database for session %s: %v", sessionID, err))
 			} else {
-				log.Printf("[POLLING] Fetched %d events from database for session %s", len(dbEvents), sessionID)
 				api.logger.Debug(fmt.Sprintf("[POLLING] Fetched %d events from database for session %s", len(dbEvents), sessionID))
 			}
 			if err == nil && len(dbEvents) > 0 {
@@ -196,9 +191,6 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 					shouldShow := opts.EventMode == "" || events.ShouldShowEventByMode(string(typeOnly.Type), opts.EventMode)
 					if !shouldShow {
 						filteredOut++
-						if i < 3 { // Log first 3 filtered events
-							log.Printf("[POLLING DEBUG] Event %d filtered out by event_mode=%s: type=%s", i, opts.EventMode, typeOnly.Type)
-						}
 						continue
 					}
 
@@ -290,11 +282,9 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 						Data:      &agentEvent,
 					})
 				}
-				log.Printf("[POLLING] Converted %d events: total=%d, converted=%d, parse_errors=%d, filtered_out=%d", len(dbEvents), len(dbEvents), len(convertedEvents), parseErrors, filteredOut)
 
 				// Apply sinceIndex filtering if specified
 				if opts.SinceIndex >= 0 && opts.SinceIndex < len(convertedEvents) {
-					log.Printf("[POLLING DEBUG] Applying sinceIndex filter: sinceIndex=%d, before=%d, after=%d", opts.SinceIndex, len(convertedEvents), len(convertedEvents[opts.SinceIndex+1:]))
 					convertedEvents = convertedEvents[opts.SinceIndex+1:]
 				}
 

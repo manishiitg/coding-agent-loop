@@ -3,6 +3,31 @@
 # This makes it easier to debug event issues by capturing all output to a log file
 # AND displaying it in real-time on the console using tee
 
+# Check for test-connections mode
+TEST_CONNECTIONS=false
+if [[ "$1" == "--test-connections" || "$1" == "--test-mcp" || "$1" == "-t" ]]; then
+    TEST_CONNECTIONS=true
+    echo "🔌 Testing MCP Server Connections"
+    echo "========================================="
+    
+    # Source environment variables from .env file if it exists
+    if [ -f "../agent_go/.env" ]; then
+        echo "🔧 Loading environment variables from ../agent_go/.env..."
+        source ../agent_go/.env
+    elif [ -f ".env" ]; then
+        echo "🔧 Loading environment variables from .env..."
+        source .env
+    fi
+    
+    # Get config file path (default or from second argument)
+    MCP_CONFIG="${2:-configs/mcp_servers_clean.json}"
+    
+    # Run the test-all command
+    echo "🚀 Running MCP connection tests..."
+    go run main.go mcp test-all --config "$MCP_CONFIG" 2>&1 | tee -a "logs/server_debug.log"
+    exit $?
+fi
+
 # Check if background mode is requested
 BACKGROUND_MODE=false
 if [[ "$1" == "--background" || "$1" == "-b" ]]; then

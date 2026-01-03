@@ -27,10 +27,10 @@ type ChatSessionConfig struct {
 	SelectedServers            []string             `json:"selected_servers,omitempty"`
 	EnabledServers             []string             `json:"enabled_servers,omitempty"`
 	UseCodeExecutionMode       bool                 `json:"use_code_execution_mode,omitempty"`
-	EnableContextSummarization bool                 `json:"enable_context_summarization,omitempty"`
-	LLMConfig                  *LLMConfigForStorage `json:"llm_config,omitempty"`              // LLM config (without API keys)
-	FileContext                []FileContextItem    `json:"file_context,omitempty"`            // Workspace files/folders
-	EnableWorkspaceAccess      *bool                `json:"enable_workspace_access,omitempty"` // Workspace access setting
+	EnableContextSummarization *bool                `json:"enable_context_summarization,omitempty"` // nil = inherit default, true/false = explicit override
+	LLMConfig                  *LLMConfigForStorage `json:"llm_config,omitempty"`                   // LLM config (without API keys)
+	FileContext                []FileContextItem    `json:"file_context,omitempty"`                 // Workspace files/folders
+	EnableWorkspaceAccess      *bool                `json:"enable_workspace_access,omitempty"`      // Workspace access setting
 }
 
 // LLMConfigForStorage stores LLM config without sensitive API keys

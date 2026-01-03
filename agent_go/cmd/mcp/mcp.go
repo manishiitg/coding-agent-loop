@@ -13,4 +13,5 @@ var MCPCmd = &cobra.Command{
 
 func init() {
 	MCPCmd.AddCommand(connectCmd)
+	MCPCmd.AddCommand(testAllCmd)
 }

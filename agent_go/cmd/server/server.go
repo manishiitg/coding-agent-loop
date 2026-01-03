@@ -22,7 +22,7 @@ import (
 	agent "mcp-agent-builder-go/agent_go/pkg/agentwrapper"
 	"mcp-agent-builder-go/agent_go/pkg/database"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
+	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	orchtypes "mcp-agent-builder-go/agent_go/pkg/orchestrator/types"
 	unifiedevents "mcpagent/events"
 	"mcpagent/executor"
@@ -256,6 +256,8 @@ type QueryRequest struct {
 	EnableContextEditing        bool `json:"enable_context_editing,omitempty"`         // Enable context editing (dynamic context reduction)
 	ContextEditingThreshold     int  `json:"context_editing_threshold,omitempty"`      // Token threshold for context editing (0 = use default: 100)
 	ContextEditingTurnThreshold int  `json:"context_editing_turn_threshold,omitempty"` // Turn age threshold for context editing (0 = use default: 5)
+	// Workspace access configuration
+	EnableWorkspaceAccess bool `json:"enable_workspace_access,omitempty"` // Enable/disable workspace file access tools (default: true)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -1830,60 +1832,84 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Add workspace tools to simple agents (chat mode)
 		// This matches how workspace tools are registered in workflow/orchestrator agents
 		// This ensures custom tools are available and code generation is triggered
+		// Only register workspace tools if workspace access is enabled
+		// Note: Frontend always sends enable_workspace_access for chat mode (true/false)
+		// For workflow mode, the field is not sent (undefined), so we skip workspace tools here
+		// (they're handled differently in workflow orchestrator)
 		if req.AgentMode == "simple" && llmAgent.GetUnderlyingAgent() != nil {
-			workspaceTools := virtualtools.CreateWorkspaceTools()
-			workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
-			_, _, toolCategories := createCustomTools() // Get toolCategories map
+			// Check if workspace access is enabled
+			// Frontend always sends enable_workspace_access for chat mode
+			// Default to true for backward compatibility with legacy requests
+			// Since Go bool zero value is false, we can't distinguish "not set" from "explicitly false"
+			// We use a heuristic: if context summarization is set (new field), it's a new request
+			// and we respect the EnableWorkspaceAccess value. Otherwise, default to true.
+			enableWorkspaceAccess := true // Default to enabled for backward compatibility
+			if req.EnableContextSummarization {
+				// New request format - respect the explicit EnableWorkspaceAccess value
+				enableWorkspaceAccess = req.EnableWorkspaceAccess
+			} else if req.EnableWorkspaceAccess {
+				// Legacy request but EnableWorkspaceAccess is true - use it
+				enableWorkspaceAccess = true
+			}
+			// If EnableWorkspaceAccess is false and it's a legacy request, keep default true
 
-			log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for simple agent", len(workspaceTools))
+			if enableWorkspaceAccess {
+				workspaceTools := virtualtools.CreateWorkspaceTools()
+				workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
+				_, _, toolCategories := createCustomTools() // Get toolCategories map
 
-			underlyingAgent := llmAgent.GetUnderlyingAgent()
-			for _, tool := range workspaceTools {
-				if tool.Function == nil {
-					log.Printf("[WORKSPACE TOOLS] Warning: Skipping tool with nil Function")
-					continue
-				}
-				toolName := tool.Function.Name
-				if executor, exists := workspaceExecutors[toolName]; exists {
-					// Convert Parameters to map[string]interface{} using JSON marshal/unmarshal
-					// This matches the workflow implementation for consistency
-					var params map[string]interface{}
-					if tool.Function.Parameters != nil {
-						paramsBytes, err := json.Marshal(tool.Function.Parameters)
-						if err == nil {
-							json.Unmarshal(paramsBytes, &params)
-						}
-					}
-					if params == nil {
-						log.Printf("[WORKSPACE TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
+				log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for simple agent (enable_workspace_access: %v)", len(workspaceTools), enableWorkspaceAccess)
+
+				underlyingAgent := llmAgent.GetUnderlyingAgent()
+				for _, tool := range workspaceTools {
+					if tool.Function == nil {
+						log.Printf("[WORKSPACE TOOLS] Warning: Skipping tool with nil Function")
 						continue
 					}
+					toolName := tool.Function.Name
+					if executor, exists := workspaceExecutors[toolName]; exists {
+						// Convert Parameters to map[string]interface{} using JSON marshal/unmarshal
+						// This matches the workflow implementation for consistency
+						var params map[string]interface{}
+						if tool.Function.Parameters != nil {
+							paramsBytes, err := json.Marshal(tool.Function.Parameters)
+							if err == nil {
+								json.Unmarshal(paramsBytes, &params)
+							}
+						}
+						if params == nil {
+							log.Printf("[WORKSPACE TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
+							continue
+						}
 
-					// Get tool category from the category map - REQUIRED
-					toolCategory := toolCategories[toolName]
-					if toolCategory == "" {
-						log.Printf("[WORKSPACE TOOLS ERROR] Tool %s not found in toolCategories map - category is REQUIRED!", toolName)
-						sendError(fmt.Sprintf("Failed to register workspace tool %s: category is REQUIRED", toolName), true)
-						return
-					}
+						// Get tool category from the category map - REQUIRED
+						toolCategory := toolCategories[toolName]
+						if toolCategory == "" {
+							log.Printf("[WORKSPACE TOOLS ERROR] Tool %s not found in toolCategories map - category is REQUIRED!", toolName)
+							sendError(fmt.Sprintf("Failed to register workspace tool %s: category is REQUIRED", toolName), true)
+							return
+						}
 
-					// Executor is already the correct type (func(ctx, args) (string, error))
-					// No type assertion needed unlike workflow where executors are map[string]interface{}
-					if err := underlyingAgent.RegisterCustomTool(
-						toolName,
-						tool.Function.Description,
-						params,
-						executor,
-						toolCategory,
-					); err != nil {
-						log.Printf("[WORKSPACE TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
-						sendError(fmt.Sprintf("Failed to register workspace tool %s: %v", toolName, err), true)
-						return
+						// Executor is already the correct type (func(ctx, args) (string, error))
+						// No type assertion needed unlike workflow where executors are map[string]interface{}
+						if err := underlyingAgent.RegisterCustomTool(
+							toolName,
+							tool.Function.Description,
+							params,
+							executor,
+							toolCategory,
+						); err != nil {
+							log.Printf("[WORKSPACE TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
+							sendError(fmt.Sprintf("Failed to register workspace tool %s: %v", toolName, err), true)
+							return
+						}
+						log.Printf("[WORKSPACE TOOLS] Registered workspace tool: %s (category: %s)", toolName, toolCategory)
 					}
-					log.Printf("[WORKSPACE TOOLS] Registered workspace tool: %s (category: %s)", toolName, toolCategory)
 				}
+				log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace tools for simple agent", len(workspaceTools))
+			} else {
+				log.Printf("[WORKSPACE TOOLS] Skipping workspace tools registration (enable_workspace_access: false)")
 			}
-			log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace tools for simple agent", len(workspaceTools))
 		}
 
 		// Add custom agent instructions based on agent mode

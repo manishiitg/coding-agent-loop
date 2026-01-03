@@ -10,7 +10,7 @@ import (
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/database"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "mcpagent/agent"
 	baseevents "mcpagent/events"
@@ -64,6 +64,18 @@ func GetWorkflowConstants() WorkflowConstants {
 				Title:       "Execution",
 				Description: "Execute the approved plan using MCP tools. This phase runs after planning is complete.",
 				Options:     []WorkflowPhaseOption{}, // No options for execution phase
+			},
+			{
+				ID:          "evaluation-planning",
+				Title:       "Evaluation Designer",
+				Description: "Create evaluation guides to assess workflow execution results. Define what to check, how to pre-validate, and score-based success criteria (0-10).",
+				Options:     []WorkflowPhaseOption{},
+			},
+			{
+				ID:          "evaluation-execution",
+				Title:       "Evaluation Execution",
+				Description: "Execute the evaluation plan against workflow execution results to generate scores and feedback.",
+				Options:     []WorkflowPhaseOption{},
 			},
 			{
 				ID:          "plan-improvement",
@@ -140,20 +152,20 @@ type WorkflowOrchestrator struct {
 	*orchestrator.BaseOrchestrator
 
 	// Preset-level agent defaults (used when step config doesn't specify)
-	presetExecutionLLM            *todo_creation_human.AgentLLMConfig // Default for execution agents
-	presetValidationLLM           *todo_creation_human.AgentLLMConfig // Default for validation agents
-	presetLearningLLM             *todo_creation_human.AgentLLMConfig // Default for learning agents
-	presetPhaseLLM                *todo_creation_human.AgentLLMConfig // Default for all phase agents (planning, anonymization, plan improvement, etc.)
-	presetPlanImprovementLLM      *todo_creation_human.AgentLLMConfig // Default for plan improvement agent
-	presetPlanToolOptimizationLLM *todo_creation_human.AgentLLMConfig // Default for plan tool optimization agent
+	presetExecutionLLM            *step_based_workflow.AgentLLMConfig // Default for execution agents
+	presetValidationLLM           *step_based_workflow.AgentLLMConfig // Default for validation agents
+	presetLearningLLM             *step_based_workflow.AgentLLMConfig // Default for learning agents
+	presetPhaseLLM                *step_based_workflow.AgentLLMConfig // Default for all phase agents (planning, anonymization, plan improvement, etc.)
+	presetPlanImprovementLLM      *step_based_workflow.AgentLLMConfig // Default for plan improvement agent
+	presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig // Default for plan tool optimization agent
 
 	// Frontend-provided execution options (when provided, skips interactive prompts)
-	executionOptions *todo_creation_human.ExecutionOptions
+	executionOptions *step_based_workflow.ExecutionOptions
 }
 
 // SetExecutionOptions sets the execution options from frontend
 // When set, backend will use these options instead of asking interactively
-func (wo *WorkflowOrchestrator) SetExecutionOptions(options *todo_creation_human.ExecutionOptions) {
+func (wo *WorkflowOrchestrator) SetExecutionOptions(options *step_based_workflow.ExecutionOptions) {
 	wo.executionOptions = options
 	if options != nil {
 		wo.GetLogger().Info(fmt.Sprintf("📋 WorkflowOrchestrator: Execution options set from frontend: run_mode=%s, strategy=%s, run_folder=%s",
@@ -162,7 +174,7 @@ func (wo *WorkflowOrchestrator) SetExecutionOptions(options *todo_creation_human
 }
 
 // GetExecutionOptions returns the current execution options
-func (wo *WorkflowOrchestrator) GetExecutionOptions() *todo_creation_human.ExecutionOptions {
+func (wo *WorkflowOrchestrator) GetExecutionOptions() *step_based_workflow.ExecutionOptions {
 	return wo.executionOptions
 }
 
@@ -246,48 +258,48 @@ func NewWorkflowOrchestrator(
 	}
 
 	// Extract agent-specific defaults from preset LLM config
-	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetPhaseLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM *todo_creation_human.AgentLLMConfig
+	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetPhaseLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig
 	if presetLLMConfig != nil {
 		// Use agent-specific defaults if available, otherwise fall back to legacy single default
 		if presetLLMConfig.ExecutionLLM != nil && presetLLMConfig.ExecutionLLM.Provider != "" && presetLLMConfig.ExecutionLLM.ModelID != "" {
-			presetExecutionLLM = &todo_creation_human.AgentLLMConfig{
+			presetExecutionLLM = &step_based_workflow.AgentLLMConfig{
 				Provider: presetLLMConfig.ExecutionLLM.Provider,
 				ModelID:  presetLLMConfig.ExecutionLLM.ModelID,
 			}
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
 			// Fall back to legacy single default for execution
-			presetExecutionLLM = &todo_creation_human.AgentLLMConfig{
+			presetExecutionLLM = &step_based_workflow.AgentLLMConfig{
 				Provider: presetLLMConfig.Provider,
 				ModelID:  presetLLMConfig.ModelID,
 			}
 		}
 		if presetLLMConfig.ValidationLLM != nil && presetLLMConfig.ValidationLLM.Provider != "" && presetLLMConfig.ValidationLLM.ModelID != "" {
-			presetValidationLLM = &todo_creation_human.AgentLLMConfig{
+			presetValidationLLM = &step_based_workflow.AgentLLMConfig{
 				Provider: presetLLMConfig.ValidationLLM.Provider,
 				ModelID:  presetLLMConfig.ValidationLLM.ModelID,
 			}
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
 			// Fall back to legacy single default for validation
-			presetValidationLLM = &todo_creation_human.AgentLLMConfig{
+			presetValidationLLM = &step_based_workflow.AgentLLMConfig{
 				Provider: presetLLMConfig.Provider,
 				ModelID:  presetLLMConfig.ModelID,
 			}
 		}
 		if presetLLMConfig.LearningLLM != nil && presetLLMConfig.LearningLLM.Provider != "" && presetLLMConfig.LearningLLM.ModelID != "" {
-			presetLearningLLM = &todo_creation_human.AgentLLMConfig{
+			presetLearningLLM = &step_based_workflow.AgentLLMConfig{
 				Provider: presetLLMConfig.LearningLLM.Provider,
 				ModelID:  presetLLMConfig.LearningLLM.ModelID,
 			}
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
 			// Fall back to legacy single default for learning
-			presetLearningLLM = &todo_creation_human.AgentLLMConfig{
+			presetLearningLLM = &step_based_workflow.AgentLLMConfig{
 				Provider: presetLLMConfig.Provider,
 				ModelID:  presetLLMConfig.ModelID,
 			}
 		}
 		// Extract phase LLM (used by all phase agents: planning, anonymization, plan improvement, etc.)
 		if presetLLMConfig.PhaseLLM != nil && presetLLMConfig.PhaseLLM.Provider != "" && presetLLMConfig.PhaseLLM.ModelID != "" {
-			presetPhaseLLM = &todo_creation_human.AgentLLMConfig{
+			presetPhaseLLM = &step_based_workflow.AgentLLMConfig{
 				Provider: presetLLMConfig.PhaseLLM.Provider,
 				ModelID:  presetLLMConfig.PhaseLLM.ModelID,
 			}
@@ -341,6 +353,16 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return wo.runPlanningOnly(ctx, objective, selectedOptions)
 	}
 
+	if workflowStatus == "evaluation-planning" {
+		wo.GetLogger().Info(fmt.Sprintf("📋 Routing to evaluation planning phase (workflowStatus: %s)", workflowStatus))
+		return wo.runEvaluationPlanningOnly(ctx, objective, selectedOptions)
+	}
+
+	if workflowStatus == "evaluation-execution" {
+		wo.GetLogger().Info(fmt.Sprintf("🚀 Routing to evaluation execution phase (workflowStatus: %s)", workflowStatus))
+		return wo.runEvaluationExecutionOnly(ctx, objective, selectedOptions)
+	}
+
 	if workflowStatus == "plan-improvement" {
 		wo.GetLogger().Info(fmt.Sprintf("📊 Routing to plan improvement phase (workflowStatus: %s)", workflowStatus))
 		return wo.runPlanImprovement(ctx, objective, selectedOptions)
@@ -383,7 +405,7 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 
 	// Create human controlled planner orchestrator (needed for planning)
 	llmConfig := wo.GetLLMConfig()
-	todoPlannerAgent, err := todo_creation_human.NewHumanControlledTodoPlannerOrchestrator(
+	todoPlannerAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
 		wo.GetProvider(),
 		wo.GetModel(),
 		wo.GetTemperature(),
@@ -421,12 +443,96 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 	return result, nil
 }
 
+// runEvaluationPlanningOnly runs only the evaluation planning phase
+func (wo *WorkflowOrchestrator) runEvaluationPlanningOnly(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Info(fmt.Sprintf("📋 Starting Evaluation Planning Phase"))
+
+	// Create evaluation manager directly (independent from controller)
+	evaluationManager := step_based_workflow.NewEvaluationManager(
+		wo.BaseOrchestrator,
+		wo.presetPhaseLLM,
+		wo.getSessionID(),
+		wo.getWorkflowID(),
+	)
+
+	// Run evaluation planning
+	result, err := evaluationManager.CreateEvaluationPlanOnly(ctx, objective, wo.GetWorkspacePath())
+	if err != nil {
+		return "", fmt.Errorf("evaluation planning failed: %w", err)
+	}
+
+	wo.GetLogger().Info(fmt.Sprintf("✅ Evaluation planning completed successfully"))
+	return result, nil
+}
+
+// runEvaluationExecutionOnly runs only the evaluation execution phase
+func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Info(fmt.Sprintf("🚀 Starting Evaluation Execution Phase"))
+
+	// Fast-fail: Check if evaluation plan exists before setting up orchestrator
+	evalPlanPath := "evaluation/evaluation_plan.json"
+	_, err := wo.ReadWorkspaceFile(ctx, evalPlanPath)
+	if err != nil {
+		return "", fmt.Errorf("evaluation plan not found at %s. Please run Evaluation Designer first to create an evaluation plan", evalPlanPath)
+	}
+
+	// Create human controlled planner orchestrator
+	llmConfig := wo.GetLLMConfig()
+	todoPlannerAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
+		wo.GetProvider(),
+		wo.GetModel(),
+		wo.GetTemperature(),
+		wo.GetAgentMode(),
+		wo.GetSelectedServers(),
+		wo.GetSelectedTools(),
+		wo.GetUseCodeExecutionMode(),
+		wo.GetMCPConfigPath(),
+		llmConfig,
+		wo.GetMaxTurns(),
+		wo.GetLogger(),
+		wo.GetTracer(),
+		wo.GetContextAwareBridge(),
+		wo.WorkspaceTools,
+		wo.WorkspaceToolExecutors,
+		wo.ToolCategories,
+		wo.presetExecutionLLM,
+		wo.presetValidationLLM,
+		wo.presetLearningLLM,
+		wo.presetPhaseLLM,
+		nil,
+		wo.presetPlanImprovementLLM,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
+	}
+
+	// Pass execution options if set
+	var targetRunFolder string
+	if wo.executionOptions != nil {
+		todoPlannerAgent.SetExecutionOptions(wo.executionOptions)
+		targetRunFolder = wo.executionOptions.SelectedRunFolder
+	}
+
+	if targetRunFolder == "" {
+		return "", fmt.Errorf("evaluation execution requires a selected run folder (iteration or group)")
+	}
+
+	// Run evaluation execution
+	result, err := todoPlannerAgent.ExecuteEvaluationOnly(ctx, objective, wo.GetWorkspacePath(), targetRunFolder)
+	if err != nil {
+		return "", fmt.Errorf("evaluation execution failed: %w", err)
+	}
+
+	wo.GetLogger().Info(fmt.Sprintf("✅ Evaluation execution completed successfully"))
+	return result, nil
+}
+
 // runPlanImprovement runs only the plan improvement phase
 func (wo *WorkflowOrchestrator) runPlanImprovement(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
 	wo.GetLogger().Info(fmt.Sprintf("📊 Starting Plan Improvement Phase"))
 
 	// Create plan improvement manager directly (independent from controller)
-	planImprovementManager := todo_creation_human.NewPlanImprovementManager(
+	planImprovementManager := step_based_workflow.NewPlanImprovementManager(
 		wo.BaseOrchestrator,
 		wo.presetPlanImprovementLLM,
 		wo.presetPhaseLLM, // Pass phase LLM for fallback
@@ -461,7 +567,7 @@ func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, obj
 	}
 
 	// Create plan tool optimization manager directly (independent from controller)
-	toolOptimizationManager := todo_creation_human.NewPlanToolOptimizationManager(
+	toolOptimizationManager := step_based_workflow.NewPlanToolOptimizationManager(
 		wo.BaseOrchestrator,
 		wo.getSessionID(),
 		wo.getWorkflowID(),
@@ -483,7 +589,7 @@ func (wo *WorkflowOrchestrator) runLearningAnonymization(ctx context.Context, ob
 	wo.GetLogger().Info(fmt.Sprintf("🔒 Starting Learning Anonymization Phase"))
 
 	// Create anonymization manager directly (independent from controller)
-	anonymizationManager := todo_creation_human.NewAnonymizationManager(
+	anonymizationManager := step_based_workflow.NewAnonymizationManager(
 		wo.BaseOrchestrator,
 		wo.getSessionID(),
 		wo.getWorkflowID(),
@@ -505,7 +611,7 @@ func (wo *WorkflowOrchestrator) runPlanLearningsAlignment(ctx context.Context, o
 	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Plan-Learnings Alignment Phase"))
 
 	// Create plan learnings alignment manager directly (independent from controller)
-	alignmentManager := todo_creation_human.NewPlanLearningsAlignmentManager(
+	alignmentManager := step_based_workflow.NewPlanLearningsAlignmentManager(
 		wo.BaseOrchestrator,
 		wo.getSessionID(),
 		wo.getWorkflowID(),
@@ -527,7 +633,7 @@ func (wo *WorkflowOrchestrator) runLearningConsolidation(ctx context.Context, ob
 	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Learning Consolidation Phase"))
 
 	// Create learning consolidation manager directly (independent from controller)
-	consolidationManager := todo_creation_human.NewLearningConsolidationManager(
+	consolidationManager := step_based_workflow.NewLearningConsolidationManager(
 		wo.BaseOrchestrator,
 		wo.getSessionID(),
 		wo.getWorkflowID(),
@@ -559,7 +665,7 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 
 	// Create human controlled planner orchestrator directly
 	llmConfig := wo.GetLLMConfig()
-	todoPlannerAgent, err := todo_creation_human.NewHumanControlledTodoPlannerOrchestrator(
+	todoPlannerAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
 		wo.GetProvider(),
 		wo.GetModel(),
 		wo.GetTemperature(),
@@ -727,6 +833,8 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 				validStatuses := []string{
 					"planning",                             // Planning phase
 					database.WorkflowStatusPreVerification, // Execution phase
+					"evaluation-planning",                  // Evaluation planning phase
+					"evaluation-execution",                 // Evaluation execution phase
 					"plan-improvement",                     // Plan improvement phase
 					"plan-tool-optimization",               // Plan tool optimization phase
 					"learning-anonymization",               // Learning anonymization phase

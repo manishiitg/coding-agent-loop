@@ -345,57 +345,40 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	// IMPORTANT: Each phase is isolated and should NOT trigger other phases
 	// Note: Variable extraction is now handled by planning agent tools, no separate phase needed
 
-	wo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG executeFlow - Received workflowStatus: '%s' (length: %d)", workflowStatus, len(workflowStatus)))
-	wo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG executeFlow - Checking routing conditions..."))
-
 	if workflowStatus == "planning" {
-		wo.GetLogger().Info(fmt.Sprintf("📋 Routing to planning phase (workflowStatus: %s)", workflowStatus))
 		return wo.runPlanningOnly(ctx, objective, selectedOptions)
 	}
 
 	if workflowStatus == "evaluation-planning" {
-		wo.GetLogger().Info(fmt.Sprintf("📋 Routing to evaluation planning phase (workflowStatus: %s)", workflowStatus))
 		return wo.runEvaluationPlanningOnly(ctx, objective, selectedOptions)
 	}
 
 	if workflowStatus == "evaluation-execution" {
-		wo.GetLogger().Info(fmt.Sprintf("🚀 Routing to evaluation execution phase (workflowStatus: %s)", workflowStatus))
 		return wo.runEvaluationExecutionOnly(ctx, objective, selectedOptions)
 	}
 
 	if workflowStatus == "plan-improvement" {
-		wo.GetLogger().Info(fmt.Sprintf("📊 Routing to plan improvement phase (workflowStatus: %s)", workflowStatus))
 		return wo.runPlanImprovement(ctx, objective, selectedOptions)
 	}
 
 	if workflowStatus == "plan-tool-optimization" {
-		wo.GetLogger().Info(fmt.Sprintf("🔧 Routing to plan tool optimization phase (workflowStatus: %s)", workflowStatus))
-		if stepID != "" {
-			wo.GetLogger().Info(fmt.Sprintf("🔧 Step-specific execution for step: %s", stepID))
-		}
 		return wo.runPlanToolOptimization(ctx, objective, selectedOptions, stepID)
 	}
 
 	if workflowStatus == "learning-anonymization" {
-		wo.GetLogger().Info(fmt.Sprintf("🔒 Routing to learning anonymization phase (workflowStatus: %s)", workflowStatus))
 		return wo.runLearningAnonymization(ctx, objective, selectedOptions)
 	}
 
-	wo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG executeFlow - Checking if workflowStatus == 'plan-learnings-alignment': %v", workflowStatus == "plan-learnings-alignment"))
-	wo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG executeFlow - workflowStatus bytes: %v", []byte(workflowStatus)))
 	if workflowStatus == "plan-learnings-alignment" {
-		wo.GetLogger().Info(fmt.Sprintf("🔍 Routing to plan-learnings alignment phase (workflowStatus: %s)", workflowStatus))
 		return wo.runPlanLearningsAlignment(ctx, objective, selectedOptions)
 	}
 
 	if workflowStatus == "learning-consolidation" {
-		wo.GetLogger().Info(fmt.Sprintf("🔍 Routing to learning consolidation phase (workflowStatus: %s)", workflowStatus))
 		return wo.runLearningConsolidation(ctx, objective, selectedOptions)
 	}
 
 	// All other workflow statuses (execution) go through execution phase
 	// Execution requires both variables.json and plan.json to exist
-	wo.GetLogger().Info(fmt.Sprintf("🚀 Routing to execution phase (workflowStatus: %s)", workflowStatus))
 	return wo.runPlanning(ctx, objective, selectedOptions)
 }
 
@@ -406,6 +389,7 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 	// Create human controlled planner orchestrator (needed for planning)
 	llmConfig := wo.GetLLMConfig()
 	todoPlannerAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
+		ctx,
 		wo.GetProvider(),
 		wo.GetModel(),
 		wo.GetTemperature(),
@@ -467,18 +451,26 @@ func (wo *WorkflowOrchestrator) runEvaluationPlanningOnly(ctx context.Context, o
 
 // runEvaluationExecutionOnly runs only the evaluation execution phase
 func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("🚀 Starting Evaluation Execution Phase"))
+	wo.GetLogger().Info("🚀 Starting Evaluation Execution Phase")
+
+	// Check execution options state BEFORE creating orchestrator
+	// Note: We'll fail fast later if execution options are missing, but log early for debugging
+	if wo.executionOptions == nil {
+		wo.GetLogger().Warn("⚠️ Execution options is NIL - evaluation execution will fail without execution options")
+	}
 
 	// Fast-fail: Check if evaluation plan exists before setting up orchestrator
-	evalPlanPath := "evaluation/evaluation_plan.json"
+	evalPlanPath := "planning/evaluation_plan.json"
 	_, err := wo.ReadWorkspaceFile(ctx, evalPlanPath)
 	if err != nil {
+		wo.GetLogger().Error(fmt.Sprintf("❌ Evaluation plan not found: %v", err), nil)
 		return "", fmt.Errorf("evaluation plan not found at %s. Please run Evaluation Designer first to create an evaluation plan", evalPlanPath)
 	}
 
 	// Create human controlled planner orchestrator
 	llmConfig := wo.GetLLMConfig()
 	todoPlannerAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
+		ctx,
 		wo.GetProvider(),
 		wo.GetModel(),
 		wo.GetTemperature(),
@@ -503,27 +495,41 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		wo.presetPlanImprovementLLM,
 	)
 	if err != nil {
+		wo.GetLogger().Error(fmt.Sprintf("❌ Failed to create orchestrator: %v", err), nil)
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
 	}
 
 	// Pass execution options if set
-	var targetRunFolder string
-	if wo.executionOptions != nil {
-		todoPlannerAgent.SetExecutionOptions(wo.executionOptions)
-		targetRunFolder = wo.executionOptions.SelectedRunFolder
+	// CRITICAL: Execution options are required for evaluation execution
+	if wo.executionOptions == nil {
+		wo.GetLogger().Error("❌ Execution options is NIL - evaluation execution requires execution options", nil)
+		return "", fmt.Errorf("evaluation execution requires execution options to be set (including selected run folder)")
 	}
 
+	// Validate that todoPlannerAgent was created successfully
+	if todoPlannerAgent == nil {
+		wo.GetLogger().Error("❌ todoPlannerAgent is nil after creation", nil)
+		return "", fmt.Errorf("failed to create orchestrator: orchestrator is nil")
+	}
+
+	// Set execution options on the orchestrator
+	todoPlannerAgent.SetExecutionOptions(wo.executionOptions)
+
+	// Extract target run folder from execution options
+	targetRunFolder := wo.executionOptions.SelectedRunFolder
 	if targetRunFolder == "" {
-		return "", fmt.Errorf("evaluation execution requires a selected run folder (iteration or group)")
+		wo.GetLogger().Error("❌ targetRunFolder is empty in execution options - cannot proceed", nil)
+		return "", fmt.Errorf("evaluation execution requires a selected run folder (iteration or group) in execution options")
 	}
 
 	// Run evaluation execution
 	result, err := todoPlannerAgent.ExecuteEvaluationOnly(ctx, objective, wo.GetWorkspacePath(), targetRunFolder)
 	if err != nil {
+		wo.GetLogger().Error(fmt.Sprintf("❌ Evaluation execution failed: %v", err), nil)
 		return "", fmt.Errorf("evaluation execution failed: %w", err)
 	}
 
-	wo.GetLogger().Info(fmt.Sprintf("✅ Evaluation execution completed successfully"))
+	wo.GetLogger().Info("✅ Evaluation execution completed successfully")
 	return result, nil
 }
 
@@ -666,6 +672,7 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 	// Create human controlled planner orchestrator directly
 	llmConfig := wo.GetLLMConfig()
 	todoPlannerAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
+		ctx,
 		wo.GetProvider(),
 		wo.GetModel(),
 		wo.GetTemperature(),
@@ -812,18 +819,15 @@ func (wo *WorkflowOrchestrator) emitBlockingHumanFeedback(ctx context.Context, o
 
 // Execute implements the Orchestrator interface
 func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, workspacePath string, options map[string]interface{}) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION START - Execute method called"))
-	wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - objective: %s", objective))
-	wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - workspacePath: %s", workspacePath))
-	wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - options: %+v", options))
+	logger := wo.GetLogger()
+	if logger == nil {
+		return "", fmt.Errorf("logger is nil in Execute method")
+	}
 
 	// Validate options if provided
 	if options != nil {
-		wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - options is not nil, validating..."))
-
 		// Validate workflowStatus if provided
 		if workflowStatusVal, exists := options["workflowStatus"]; exists {
-			wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - workflowStatus found: %+v (type: %T)", workflowStatusVal, workflowStatusVal))
 			if workflowStatus, ok := workflowStatusVal.(string); !ok {
 				return "", fmt.Errorf("invalid workflowStatus: expected string, got %T", workflowStatusVal)
 			} else if workflowStatus == "" {
@@ -852,47 +856,31 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 					return "", fmt.Errorf("invalid workflowStatus: %s, valid statuses: %v", workflowStatus, validStatuses)
 				}
 			}
-		} else {
-			wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - workflowStatus not found in options"))
 		}
 
 		// Validate selectedOptions if provided
 		if selectedOptsVal, exists := options["selectedOptions"]; exists {
-			wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - selectedOptions found: %+v (type: %T)", selectedOptsVal, selectedOptsVal))
 			if selectedOptsVal != nil {
 				if _, ok := selectedOptsVal.(*database.WorkflowSelectedOptions); !ok {
 					return "", fmt.Errorf("invalid selectedOptions: expected *database.WorkflowSelectedOptions, got %T", selectedOptsVal)
 				}
 			}
-		} else {
-			wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - selectedOptions not found in options"))
 		}
-	} else {
-		wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - options is nil"))
 	}
 
 	// Extract options from the map with defaults
 	var workflowStatus string
 	if ws, ok := options["workflowStatus"].(string); ok && ws != "" {
 		workflowStatus = ws
-		wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - extracted workflowStatus: %s", workflowStatus))
 	} else {
 		workflowStatus = database.WorkflowStatusPreVerification // Default to planning phase
-		wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - using default workflowStatus: %s", workflowStatus))
 	}
 
 	var selectedOptions *database.WorkflowSelectedOptions
 	if opts, ok := options["selectedOptions"]; ok && opts != nil {
 		if so, ok := opts.(*database.WorkflowSelectedOptions); ok {
 			selectedOptions = so
-			wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - extracted selectedOptions: %+v", selectedOptions))
-			if selectedOptions != nil {
-				wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - selectedOptions.PhaseID: %s", selectedOptions.PhaseID))
-				wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - selectedOptions.Selections count: %d", len(selectedOptions.Selections)))
-			}
 		}
-	} else {
-		wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - no selectedOptions extracted"))
 	}
 
 	// Validate workspace path is provided
@@ -910,23 +898,15 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 	if stepIDVal, exists := options["stepId"]; exists {
 		if stepIDStr, ok := stepIDVal.(string); ok && stepIDStr != "" {
 			stepID = stepIDStr
-			wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - stepId found: %s", stepID))
 		}
-	}
-
-	wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - About to call executeFlow with workflowStatus: %s", workflowStatus))
-	wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - selectedOptions for executeFlow: %+v", selectedOptions))
-	if stepID != "" {
-		wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION DEBUG - Step-specific execution for step: %s", stepID))
 	}
 
 	// Call the existing executeFlow method with the extracted parameters
 	result, err := wo.executeFlow(ctx, objective, workspacePath, workflowStatus, selectedOptions, stepID)
 	if err != nil {
-		wo.GetLogger().Error(fmt.Sprintf("🚀 WORKFLOW EXECUTION ERROR - executeFlow failed: %w", err), err)
+		wo.GetLogger().Error(fmt.Sprintf("❌ Workflow execution failed: %v", err), err)
 		return "", err
 	}
 
-	wo.GetLogger().Info(fmt.Sprintf("🚀 WORKFLOW EXECUTION SUCCESS - executeFlow completed successfully"))
 	return result, nil
 }

@@ -289,7 +289,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 			hcpo.GetLogger().Info(fmt.Sprintf("🔀 Executing nested conditional step in branch: %s (depth %d)", branchStepPlan.GetTitle(), depth+1))
 			if err := hcpo.executeConditionalStep(ctx, branchStepPlan, stepIndex, depth+1, progress, branchExecutionResults, iteration, execCtx, allSteps); err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute nested conditional step '%s' at depth %d: %v", branchStepPlan.GetTitle(), depth+1, err), nil)
-				return fmt.Errorf("failed to execute nested conditional step '%s': %v", branchStepPlan.GetTitle(), err)
+				return fmt.Errorf("failed to execute nested conditional step '%s': %w", branchStepPlan.GetTitle(), err)
 			}
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Completed nested conditional step: %s", branchStepPlan.GetTitle()))
 		} else if isOrchestrationStep(branchStepPlan) {
@@ -323,7 +323,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 			successCriteriaMet, nextStepID, err := hcpo.executeOrchestrationStep(ctx, branchStepPlan, stepIndex, progress, combinedBranchContextFiles, previousExecutionResults, iteration, execCtx, allSteps, branchStepPath)
 			if err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute orchestration branch step '%s': %v", branchStepPlan.GetTitle(), err), nil)
-				return fmt.Errorf("failed to execute orchestration branch step '%s': %v", branchStepPlan.GetTitle(), err)
+				return fmt.Errorf("failed to execute orchestration branch step '%s': %w", branchStepPlan.GetTitle(), err)
 			}
 
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration branch step completed successfully: %s (SuccessCriteriaMet: %t, NextStepID: %s)", branchStepPlan.GetTitle(), successCriteriaMet, nextStepID))
@@ -470,7 +470,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 			)
 			if err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute branch step '%s': %v", branchStepPlan.GetTitle(), err), nil)
-				return fmt.Errorf("failed to execute branch step '%s': %v", branchStepPlan.GetTitle(), err)
+				return fmt.Errorf("failed to execute branch step '%s': %w", branchStepPlan.GetTitle(), err)
 			}
 
 			// Track branch step completion

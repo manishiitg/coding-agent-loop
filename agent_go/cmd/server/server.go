@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -61,6 +62,32 @@ func extractWorkspacePathFromObjective(objective string) string {
 		return strings.TrimSpace(objective[start : start+end])
 	}
 	return ""
+}
+
+// extractRootCauseError returns the raw error message without any processing
+// It unwraps the error chain to find the deepest/most specific error
+func extractRootCauseError(err error) string {
+	if err == nil {
+		return "unknown error"
+	}
+
+	// Unwrap the error chain to find the deepest error (the actual root cause)
+	currentErr := err
+	deepestErr := err
+	maxDepth := 20 // Limit depth to prevent infinite loops
+
+	for i := 0; i < maxDepth; i++ {
+		// Try to unwrap using errors.Unwrap
+		unwrapped := errors.Unwrap(currentErr)
+		if unwrapped == nil {
+			break
+		}
+		deepestErr = unwrapped
+		currentErr = unwrapped
+	}
+
+	// Return the raw error message from the deepest error (no pattern matching, no filtering)
+	return deepestErr.Error()
 }
 
 // createCustomTools creates workspace and human tools for orchestrator/workflow agents
@@ -246,18 +273,18 @@ type QueryRequest struct {
 	// Execution options from frontend (for workflow execution phase)
 	ExecutionOptions *ExecutionOptions `json:"execution_options,omitempty"`
 	// Context summarization configuration
-	EnableContextSummarization     bool    `json:"enable_context_summarization,omitempty"`       // Enable context summarization feature (default: true, matches orchestrator)
-	SummarizeOnTokenThreshold      bool    `json:"summarize_on_token_threshold,omitempty"`       // Enable token-based summarization trigger (percentage-based, default: true, matches orchestrator)
+	EnableContextSummarization     *bool   `json:"enable_context_summarization,omitempty"`       // Enable context summarization feature (nil = inherit default, true/false = explicit override)
+	SummarizeOnTokenThreshold      *bool   `json:"summarize_on_token_threshold,omitempty"`       // Enable token-based summarization trigger (nil = inherit default, true/false = explicit override)
 	TokenThresholdPercent          float64 `json:"token_threshold_percent,omitempty"`            // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
-	SummarizeOnFixedTokenThreshold bool    `json:"summarize_on_fixed_token_threshold,omitempty"` // Enable fixed token-based summarization trigger (default: true, matches orchestrator)
+	SummarizeOnFixedTokenThreshold *bool   `json:"summarize_on_fixed_token_threshold,omitempty"` // Enable fixed token-based summarization trigger (nil = inherit default, true/false = explicit override)
 	FixedTokenThreshold            int     `json:"fixed_token_threshold,omitempty"`              // Fixed token threshold to trigger summarization (default: 200000 = 200k tokens, matches orchestrator)
 	SummaryKeepLastMessages        int     `json:"summary_keep_last_messages,omitempty"`         // Number of recent messages to keep when summarizing (default: 4, matches orchestrator)
 	// Context editing configuration
-	EnableContextEditing        bool `json:"enable_context_editing,omitempty"`         // Enable context editing (dynamic context reduction)
-	ContextEditingThreshold     int  `json:"context_editing_threshold,omitempty"`      // Token threshold for context editing (0 = use default: 100)
-	ContextEditingTurnThreshold int  `json:"context_editing_turn_threshold,omitempty"` // Turn age threshold for context editing (0 = use default: 5)
+	EnableContextEditing        *bool `json:"enable_context_editing,omitempty"`         // Enable context editing (nil = inherit default, true/false = explicit override)
+	ContextEditingThreshold     int   `json:"context_editing_threshold,omitempty"`      // Token threshold for context editing (0 = use default: 100)
+	ContextEditingTurnThreshold int   `json:"context_editing_turn_threshold,omitempty"` // Turn age threshold for context editing (0 = use default: 5)
 	// Workspace access configuration
-	EnableWorkspaceAccess bool `json:"enable_workspace_access,omitempty"` // Enable/disable workspace file access tools (default: true)
+	EnableWorkspaceAccess *bool `json:"enable_workspace_access,omitempty"` // Enable/disable workspace file access tools (nil = inherit default, true/false = explicit override)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -865,37 +892,27 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Set agent execution LLM defaults: API request takes precedence, then environment variables, then server config, then fallback to Bedrock
 	agentProvider := req.Provider // API request takes highest priority
-	log.Printf("[PROVIDER DEBUG] req.Provider: '%s'", req.Provider)
 	if agentProvider == "" {
 		agentProvider = os.Getenv("AGENT_PROVIDER") // Environment variable as fallback
-		log.Printf("[PROVIDER DEBUG] AGENT_PROVIDER env var: '%s'", os.Getenv("AGENT_PROVIDER"))
 	}
 	if agentProvider == "" {
 		agentProvider = api.config.Provider // Server config as fallback
-		log.Printf("[PROVIDER DEBUG] api.config.Provider: '%s'", api.config.Provider)
 	}
 	if agentProvider == "" {
 		agentProvider = "bedrock" // Default fallback
-		log.Printf("[PROVIDER DEBUG] Using default fallback: 'bedrock'")
 	}
-	log.Printf("[PROVIDER DEBUG] Final agentProvider: '%s'", agentProvider)
 
 	// Set agent model: API request takes precedence, then environment variables, then server config
 	agentModel := req.ModelID // API request takes highest priority
-	log.Printf("[MODEL DEBUG] req.ModelID: '%s'", req.ModelID)
 	if agentModel == "" {
 		agentModel = os.Getenv("AGENT_MODEL") // Environment variable as fallback
-		log.Printf("[MODEL DEBUG] AGENT_MODEL env var: '%s'", os.Getenv("AGENT_MODEL"))
 	}
 	if agentModel == "" {
 		agentModel = api.config.ModelID // Server config as fallback
-		log.Printf("[MODEL DEBUG] api.config.ModelID: '%s'", api.config.ModelID)
 	}
 	if agentModel == "" && agentProvider == "bedrock" {
 		agentModel = os.Getenv("BEDROCK_PRIMARY_MODEL") // Use .env configuration
-		log.Printf("[MODEL DEBUG] BEDROCK_PRIMARY_MODEL env var: '%s'", os.Getenv("BEDROCK_PRIMARY_MODEL"))
 	}
-	log.Printf("[MODEL DEBUG] Final agentModel: '%s'", agentModel)
 	req.Provider = agentProvider
 	req.ModelID = agentModel
 
@@ -916,9 +933,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if len(selectedServers) == 1 && selectedServers[0] == mcpclient.NoServers {
 		// Keep NoServers constant as-is - this will be handled by integration code
 		serverList = mcpclient.NoServers
-		log.Printf("[SERVER DEBUG] Request enabled_servers: %v", req.EnabledServers)
-		log.Printf("[SERVER DEBUG] Selected servers: %v", selectedServers)
-		log.Printf("[SERVER DEBUG] Server list: %s (pure LLM mode)", serverList)
 	} else {
 		// Default to all servers if none specified
 		if len(selectedServers) == 0 {
@@ -927,12 +941,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Convert server array to comma-separated string for agent compatibility
 		serverList = strings.Join(selectedServers, ",")
-
-		// Debug logging for server selection
-		log.Printf("[SERVER DEBUG] Request enabled_servers: %v", req.EnabledServers)
-		log.Printf("[SERVER DEBUG] Request servers: %v", req.Servers)
-		log.Printf("[SERVER DEBUG] Selected servers: %v", selectedServers)
-		log.Printf("[SERVER DEBUG] Server list: %s", serverList)
 	}
 
 	// Extract sessionID from header/cookie or fallback to queryID
@@ -948,32 +956,33 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	chatSession, err := api.chatDB.GetChatSession(r.Context(), sessionID)
 	if err != nil {
 		// Chat session doesn't exist, create a new one
-		log.Printf("[DATABASE DEBUG] Creating new chat session for sessionID: %s", sessionID)
-		log.Printf("[TITLE DEBUG] req.Query value: '%s' (length: %d, empty: %v)", req.Query, len(req.Query), req.Query == "")
 		// Extract title from req.Query (user message)
 		// Remove file context suffix if present (format: "...\n\n📁 Files in context: ...")
 		title := req.Query
 		if idx := strings.Index(title, "\n\n📁 Files in context:"); idx != -1 {
 			title = title[:idx]
-			log.Printf("[TITLE DEBUG] Found file context suffix, trimmed title to: '%s'", title)
 		}
 		title = strings.TrimSpace(title)
 		// Truncate to 50 characters
 		if len(title) > 50 {
 			title = title[:50] + "..."
-			log.Printf("[TITLE DEBUG] Title truncated to 50 chars: '%s'", title)
 		}
-		log.Printf("[TITLE DEBUG] Final title before CreateChatSession: '%s' (length: %d)", title, len(title))
 
 		// Build typed config from request
 		var configJSON json.RawMessage
-		hasConfig := len(req.Servers) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.EnableContextSummarization || req.Provider != "" || req.ModelID != "" || req.LLMConfig != nil
+		hasConfig := len(req.Servers) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.EnableContextSummarization != nil || req.Provider != "" || req.ModelID != "" || req.LLMConfig != nil
 		if hasConfig {
 			config := &database.ChatSessionConfig{
-				SelectedServers:            req.Servers,
-				EnabledServers:             req.EnabledServers,
-				UseCodeExecutionMode:       req.UseCodeExecutionMode,
-				EnableContextSummarization: req.EnableContextSummarization,
+				SelectedServers:      req.Servers,
+				EnabledServers:       req.EnabledServers,
+				UseCodeExecutionMode: req.UseCodeExecutionMode,
+				EnableContextSummarization: func() *bool {
+					if req.EnableContextSummarization != nil {
+						val := *req.EnableContextSummarization
+						return &val
+					}
+					return nil
+				}(),
 			}
 
 			// Extract LLM config (prefer LLMConfig field, fallback to Provider/ModelID)
@@ -1014,37 +1023,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Printf("[DATABASE DEBUG] Failed to create chat session: %w", err)
 			// Continue without chat session - events won't be stored but query can proceed
-		} else {
-			log.Printf("[DATABASE DEBUG] Successfully created chat session: %s, Title returned: '%s' (length: %d)", chatSession.ID, chatSession.Title, len(chatSession.Title))
 		}
 	} else {
-		log.Printf("[DATABASE DEBUG] Found existing chat session: %s, Title: '%s' (length: %d)", chatSession.ID, chatSession.Title, len(chatSession.Title))
-
 		// Reactivate session if it was stopped/completed/error - update status to "active" for new query
 		if chatSession.Status == "stopped" || chatSession.Status == "completed" || chatSession.Status == "error" {
-			log.Printf("[DATABASE DEBUG] Reactivating session %s from status '%s' to 'active'", sessionID, chatSession.Status)
 			updateReq := &database.UpdateChatSessionRequest{
 				Status:      "active",
 				CompletedAt: nil, // Clear completion timestamp when reactivating
 			}
 			_, err := api.chatDB.UpdateChatSession(r.Context(), sessionID, updateReq)
 			if err != nil {
-				log.Printf("[DATABASE DEBUG] Failed to reactivate chat session %s: %v", sessionID, err)
-			} else {
-				log.Printf("[DATABASE DEBUG] Successfully reactivated chat session %s to 'active' status", sessionID)
+				// Continue with existing session status
 			}
 
 			// Initialize EventStore for reactivated session to ensure new events are stored correctly
 			api.eventStore.InitializeSession(sessionID)
-			log.Printf("[DATABASE DEBUG] Initialized EventStore for reactivated session %s", sessionID)
 		}
 	}
 
 	// Track active session for page refresh recovery (no observer needed)
 	api.trackActiveSession(sessionID, req.AgentMode, req.Query)
-
-	// Create a fresh agent for each request
-	log.Printf("[LLM CONFIG DEBUG] Creating fresh agent for each request")
 
 	// Create fresh agent for this request
 	// Use LLM configuration from request if provided, otherwise use request defaults
@@ -1066,18 +1064,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				Models:   req.LLMConfig.CrossProviderFallback.Models,
 			}
 		}
-		log.Printf("[LLM CONFIG DEBUG] Using detailed LLM config from request - Provider: %s, Model: %s, Fallbacks: %v, CrossProvider: %+v",
-			finalProvider, finalModelID, fallbackModels, crossProviderFallback)
 	} else {
 		// Fall back to request defaults
 		finalProvider = req.Provider
 		finalModelID = req.ModelID
-		log.Printf("[LLM CONFIG DEBUG] Using request defaults - Provider: %s, Model: %s", finalProvider, finalModelID)
 	}
 
 	// Handle workflow mode - use workflow orchestrator
 	if req.AgentMode == "workflow" {
-		log.Printf("[WORKFLOW DEBUG] Starting workflow for session %s", sessionID)
 
 		// Check if preset_id is provided and workflow is approved
 		if req.PresetQueryID != "" {
@@ -1101,10 +1095,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-
-		log.Printf("[WORKFLOW DEBUG] Workflow mode requested for query %s - using workflow orchestrator", queryID)
-		log.Printf("[WORKFLOW DEBUG] SessionID: '%s'", sessionID)
-		log.Printf("[WORKFLOW DEBUG] Selected servers for workflow: %v", selectedServers)
 
 		// Create workflow event bridge for event emission
 		// Note: ChatDB is set to nil - workflow events are stored in memory only (for polling API)
@@ -1207,18 +1197,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		log.Printf("[WORKFLOW DEBUG] Created workflow orchestrator with %d custom tools", len(allTools))
-
 		// Store workflow orchestrator for guidance injection
 		api.storeWorkflowOrchestrator(sessionID, workflowOrchestrator)
 
 		// Create a cancellable context for workflow execution using background context
 		// This prevents the workflow from being cancelled when the HTTP request ends
 		workflowCtx, workflowCancel := context.WithCancel(context.Background())
-
-		// Add debug logging for context creation
-		log.Printf("[WORKFLOW DEBUG] Created workflow context: %p, parent: %p", workflowCtx, context.Background())
-		log.Printf("[WORKFLOW DEBUG] Context error check: %v", workflowCtx.Err())
 
 		// Store the cancel function for potential cancellation
 		api.workflowOrchestratorContextMux.Lock()
@@ -1246,16 +1230,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				delete(api.workflowOrchestratorContexts, sessionID)
 				api.workflowOrchestratorContextMux.Unlock()
 
-				log.Printf("[WORKFLOW DEBUG] Workflow completed for session %s", sessionID)
 			}()
-
-			log.Printf("[WORKFLOW DEBUG] Starting asynchronous workflow execution for query %s", queryID)
-
-			// Add debug logging for context before execution
-			log.Printf("[WORKFLOW DEBUG] Context before execution: %p, error: %v", workflowCtx, workflowCtx.Err())
-			deadline, hasDeadline := workflowCtx.Deadline()
-			log.Printf("[WORKFLOW DEBUG] Context deadline: %v, hasDeadline: %v", deadline, hasDeadline)
-			log.Printf("[WORKFLOW DEBUG] Context done: %v", workflowCtx.Done())
 
 			// Check database for workflow approval status if preset_id is provided
 			workflowStatus := database.WorkflowStatusPreVerification // Default status
@@ -1343,14 +1318,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				workflowOptions["stepId"] = stepID // Pass step ID for step-specific phase execution
 			}
 
-			log.Printf("[WORKFLOW EXECUTION DEBUG] About to call workflowOrchestrator.Execute")
-			log.Printf("[WORKFLOW EXECUTION DEBUG] workflowOptions: %+v", workflowOptions)
-			log.Printf("[WORKFLOW EXECUTION DEBUG] selectedOptions type: %T", selectedOptions)
-			if selectedOptions != nil {
-				log.Printf("[WORKFLOW EXECUTION DEBUG] selectedOptions.PhaseID: %s", selectedOptions.PhaseID)
-				log.Printf("[WORKFLOW EXECUTION DEBUG] selectedOptions.Selections count: %d", len(selectedOptions.Selections))
-			}
-
 			// Pass execution options from frontend if provided
 			if req.ExecutionOptions != nil {
 				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s, resume_from_step=%d, enabled_group_ids=%v, skip_learning_temp_llm1=%v, skip_learning_temp_llm2=%v, save_validation_responses=%v",
@@ -1422,10 +1389,37 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			)
 			if err != nil {
 				log.Printf("[WORKFLOW ERROR] Workflow execution failed for query %s: %v", queryID, err)
-				// Send error event
+
+				// Extract root cause error from the error chain
+				rootCauseError := extractRootCauseError(err)
+				fullError := err.Error()
+
+				// Emit UnifiedCompletionEvent with root cause error (for UI display)
+				errorEventData := unifiedevents.NewUnifiedCompletionEventWithError(
+					"workflow",            // agentType
+					"workflow",            // agentMode
+					workflowObjective,     // question
+					rootCauseError,        // root cause error message
+					time.Since(startTime), // duration
+					0,                     // turns
+				)
+				agentEvent := unifiedevents.NewAgentEvent(errorEventData)
+				agentEvent.SessionID = sessionID
+				completionEvent := events.Event{
+					ID:        fmt.Sprintf("workflow_completion_error_%s_%d", queryID, time.Now().UnixNano()),
+					Type:      string(unifiedevents.EventTypeUnifiedCompletion),
+					Timestamp: time.Now(),
+					Data:      agentEvent,
+					SessionID: sessionID,
+				}
+				api.eventStore.AddEvent(sessionID, completionEvent)
+				log.Printf("[WORKFLOW ERROR] Emitted UnifiedCompletionEvent with root cause error for query %s: %s", queryID, rootCauseError)
+
+				// Also send workflow_error event with both root cause and full chain
 				errorData := map[string]interface{}{
-					"error":    err.Error(),
-					"query_id": queryID,
+					"error":       rootCauseError, // Root cause (most important)
+					"error_chain": fullError,      // Full error chain for debugging
+					"query_id":    queryID,
 				}
 				api.eventStore.AddEvent(sessionID, events.Event{
 					ID:        fmt.Sprintf("workflow_error_%s_%d", queryID, time.Now().UnixNano()),
@@ -1694,8 +1688,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Context summarization configuration
 			// Priority: Request > Environment Variable > Default (matches orchestrator defaults)
 			EnableContextSummarization: func() bool {
-				if req.EnableContextSummarization {
-					return true
+				// If explicitly set in request, use that value
+				if req.EnableContextSummarization != nil {
+					return *req.EnableContextSummarization
 				}
 				// Check environment variable - default to enabled (true), can be disabled via "false"
 				if envVal := os.Getenv("ENABLE_CONTEXT_SUMMARIZATION"); envVal == "false" {
@@ -1704,8 +1699,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				return true // Default to enabled (matches orchestrator)
 			}(),
 			SummarizeOnTokenThreshold: func() bool {
-				if req.SummarizeOnTokenThreshold {
-					return true
+				// If explicitly set in request, use that value
+				if req.SummarizeOnTokenThreshold != nil {
+					return *req.SummarizeOnTokenThreshold
 				}
 				// Check environment variable - default to enabled (true), can be disabled via "false"
 				if envVal := os.Getenv("SUMMARIZE_ON_TOKEN_THRESHOLD"); envVal == "false" {
@@ -1728,8 +1724,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				return 0.8
 			}(),
 			SummarizeOnFixedTokenThreshold: func() bool {
-				if req.SummarizeOnFixedTokenThreshold {
-					return true
+				// If explicitly set in request, use that value
+				if req.SummarizeOnFixedTokenThreshold != nil {
+					return *req.SummarizeOnFixedTokenThreshold
 				}
 				// Check environment variable - default to enabled (true), can be disabled via "false"
 				if envVal := os.Getenv("SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD"); envVal == "false" {
@@ -1765,8 +1762,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Context editing configuration
 			// Priority: Request > Environment Variable > Default
 			EnableContextEditing: func() bool {
-				if req.EnableContextEditing {
-					return true
+				// If explicitly set in request, use that value
+				if req.EnableContextEditing != nil {
+					return *req.EnableContextEditing
 				}
 				// Check environment variable
 				if envVal := os.Getenv("ENABLE_CONTEXT_EDITING"); envVal == "true" {
@@ -1838,20 +1836,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// (they're handled differently in workflow orchestrator)
 		if req.AgentMode == "simple" && llmAgent.GetUnderlyingAgent() != nil {
 			// Check if workspace access is enabled
-			// Frontend always sends enable_workspace_access for chat mode
 			// Default to true for backward compatibility with legacy requests
-			// Since Go bool zero value is false, we can't distinguish "not set" from "explicitly false"
-			// We use a heuristic: if context summarization is set (new field), it's a new request
-			// and we respect the EnableWorkspaceAccess value. Otherwise, default to true.
+			// nil = inherit default (true), non-nil = explicit override
 			enableWorkspaceAccess := true // Default to enabled for backward compatibility
-			if req.EnableContextSummarization {
-				// New request format - respect the explicit EnableWorkspaceAccess value
-				enableWorkspaceAccess = req.EnableWorkspaceAccess
-			} else if req.EnableWorkspaceAccess {
-				// Legacy request but EnableWorkspaceAccess is true - use it
-				enableWorkspaceAccess = true
+			if req.EnableWorkspaceAccess != nil {
+				enableWorkspaceAccess = *req.EnableWorkspaceAccess
 			}
-			// If EnableWorkspaceAccess is false and it's a legacy request, keep default true
 
 			if enableWorkspaceAccess {
 				workspaceTools := virtualtools.CreateWorkspaceTools()
@@ -2316,8 +2306,18 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 // State management functions removed - orchestrator is now stateless
 
 // createServerLogger creates a logger instance for the server
+// This logger writes to logs/server_debug.log (or the file specified via --log-file flag)
 func createServerLogger() loggerv2.Logger {
-	serverLogger, err := logger.CreateLogger("", "info", "text", true)
+	// Check for log file from flag or environment variable, default to server_debug.log
+	logFile := viper.GetString("log-file")
+	if logFile == "" {
+		logFile = os.Getenv("LOG_FILE")
+	}
+	if logFile == "" {
+		logFile = "logs/server_debug.log"
+	}
+
+	serverLogger, err := logger.CreateLogger(logFile, "info", "text", false)
 	if err != nil {
 		log.Fatalf("Failed to create server logger: %w", err)
 	}

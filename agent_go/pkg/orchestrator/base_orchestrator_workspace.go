@@ -16,8 +16,6 @@ import (
 
 // ReadWorkspaceFile reads a file from the workspace using MCP tools
 func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath string) (string, error) {
-	startTime := time.Now()
-
 	// Prepare tool call parameters (MCP tools expect map[string]interface{})
 	readArgs := map[string]interface{}{
 		"filepath": filePath,
@@ -26,15 +24,13 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 	// Get the tool executor
 	readExecutorInterface, exists := bo.WorkspaceToolExecutors["read_workspace_file"]
 	if !exists {
-		duration := time.Since(startTime)
-		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ReadWorkspaceFile(%s) failed: executor not found (took %v)", filePath, duration))
+		bo.GetLogger().Warn(fmt.Sprintf("ReadWorkspaceFile(%s) failed: executor not found", filePath))
 		return "", fmt.Errorf(fmt.Sprintf("read_workspace_file tool executor not found"), nil)
 	}
 
 	readExecutor, ok := readExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
-		duration := time.Since(startTime)
-		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ReadWorkspaceFile(%s) failed: executor wrong type (took %v)", filePath, duration))
+		bo.GetLogger().Warn(fmt.Sprintf("ReadWorkspaceFile(%s) failed: executor wrong type", filePath))
 		return "", fmt.Errorf(fmt.Sprintf("read_workspace_file tool executor has wrong type"), nil)
 	}
 
@@ -44,16 +40,14 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 	// Execute the tool call using existing workspace tool logic
 	readResult, err := readExecutor(ctx, readArgs)
 	if err != nil {
-		duration := time.Since(startTime)
-		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ReadWorkspaceFile(%s) failed: %v (took %v)", filePath, err, duration))
+		bo.GetLogger().Warn(fmt.Sprintf("ReadWorkspaceFile(%s) failed: %v", filePath, err))
 		return "", fmt.Errorf(fmt.Sprintf("failed to read file %s: %w", filePath, err), nil)
 	}
 
 	// Parse the response using proper type from virtualtools
 	var fileData virtualtools.WorkspaceFileContent
 	if err := json.Unmarshal([]byte(readResult), &fileData); err != nil {
-		duration := time.Since(startTime)
-		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ReadWorkspaceFile(%s) failed: parse error %v (took %v)", filePath, err, duration))
+		bo.GetLogger().Warn(fmt.Sprintf("ReadWorkspaceFile(%s) failed: parse error %v", filePath, err))
 		return "", fmt.Errorf(fmt.Sprintf("failed to parse workspace response: %w", err), nil)
 	}
 
@@ -61,13 +55,10 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 	fileContent := fileData.Content
 
 	if fileContent == "" {
-		duration := time.Since(startTime)
-		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ReadWorkspaceFile(%s) failed: no content found (took %v)", filePath, duration))
+		bo.GetLogger().Warn(fmt.Sprintf("ReadWorkspaceFile(%s) failed: no content found", filePath))
 		return "", fmt.Errorf(fmt.Sprintf("no content found in workspace response"), nil)
 	}
 
-	duration := time.Since(startTime)
-	bo.GetLogger().Debug(fmt.Sprintf("⏱️ [WORKSPACE] ReadWorkspaceFile(%s) completed successfully (took %v)", filePath, duration))
 	return fileContent, nil
 }
 
@@ -429,9 +420,7 @@ func (bo *BaseOrchestrator) ListWorkspaceDirectories(ctx context.Context, dirPat
 		"max_depth": 1, // Only list immediate children (directories)
 	}
 
-	bo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG ListWorkspaceDirectories: Calling list_workspace_files with folder=%s, max_depth=1", dirPath))
 	fileListJSON, err := listExecutor(ctx, listArgs)
-	bo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG ListWorkspaceDirectories: list_workspace_files returned, error=%v, response_length=%d", err, len(fileListJSON)))
 	if err != nil {
 		duration := time.Since(startTime)
 		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceDirectories(%s) failed: %v (took %v)", dirPath, err, duration))

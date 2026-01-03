@@ -40,20 +40,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) loadStepProgress(ctx context.Context)
 	// Backward compatibility: initialize BranchSteps if nil (old files won't have this field)
 	if progress.BranchSteps == nil {
 		progress.BranchSteps = make(map[int]BranchStepProgress)
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 Initialized BranchSteps for backward compatibility"))
 	}
 
 	// Backward compatibility: initialize ValidationFailures if nil
 	if progress.ValidationFailures == nil {
 		progress.ValidationFailures = make(map[string]int)
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 Initialized ValidationFailures for backward compatibility"))
 	}
 
 	// Always initialize DecisionEvaluationCounts fresh (in-memory only, not persisted)
 	// This ensures each new run starts with clean counts, preventing false infinite loop detection
 	if progress.DecisionEvaluationCounts == nil {
 		progress.DecisionEvaluationCounts = make(DecisionEvaluationCount)
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 Initialized DecisionEvaluationCounts (in-memory only, reset for each run)"))
 	}
 
 	return &progress, nil
@@ -76,8 +73,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveStepProgress(ctx context.Context,
 	if err := hcpo.WriteWorkspaceFile(ctx, progressPath, string(progressJSON)); err != nil {
 		return fmt.Errorf("failed to write steps_done.json: %w", err)
 	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Saved step progress to %s", progressPath))
 
 	// Emit step progress updated event for frontend dynamic updates
 	hcpo.emitStepProgressUpdatedEvent(ctx, progress)
@@ -362,7 +357,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitPreValidationCompletedEvent(ctx c
 // cleanupProgressFromStep removes completed step indices from targetStepIndex onward and cleans up branch steps
 func (hcpo *StepBasedWorkflowOrchestrator) cleanupProgressFromStep(ctx context.Context, targetStepIndex int, progress *StepProgress) error {
 	if progress == nil {
-		return fmt.Errorf(fmt.Sprintf("progress is nil"), nil)
+		return fmt.Errorf("progress is nil")
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🧹 Cleaning up progress from step %d onward", targetStepIndex+1))
@@ -492,7 +487,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) archiveLogsFolder(ctx context.Context
 
 	// Use MoveWorkspaceFile to rename the folder
 	if err := hcpo.MoveWorkspaceFile(ctx, logsFolderPath, archivedFolderPath); err != nil {
-		return fmt.Errorf("failed to archive logs folder %s: %v", folderName, err)
+		return fmt.Errorf("failed to archive logs folder %s: %w", folderName, err)
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully archived logs folder: %s -> %s", folderName, archivedFolderName))
@@ -567,8 +562,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) deleteStepExecutionFolder(ctx context
 	subAgentStepPrefix := fmt.Sprintf("step-%d-sub-agent-", stepNumber)
 	subAgentFoldersDeleted := 0
 	subAgentFoldersFound := []string{}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Searching for branch step folders with prefix '%s', decision step folder '%s', and sub-agent step folders with prefix '%s' in execution directory", branchStepPrefix, decisionStepFolder, subAgentStepPrefix))
 
 	// List all files/folders in the execution directory
 	files, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, executionWorkspacePath)

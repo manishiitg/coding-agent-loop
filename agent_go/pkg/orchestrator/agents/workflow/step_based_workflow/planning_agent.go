@@ -17,9 +17,9 @@ import (
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
 
+	"github.com/PaesslerAG/jsonpath"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/r3labs/diff/v3"
-	"github.com/PaesslerAG/jsonpath"
 )
 
 // WorkflowPlanningTemplate holds template variables for human-controlled planning prompts
@@ -4832,14 +4832,9 @@ func createUpdateOrchestrationStepExecutor(workspacePath string, logger loggerv2
 
 		// Log what we're updating for debugging
 		if partialUpdate.OrchestrationStep != nil {
-			orchestrationStepMap := partialUpdate.OrchestrationStep
-			if desc, ok := orchestrationStepMap["description"].(string); ok {
-				logger.Info(fmt.Sprintf("🔍 [DEBUG] Updating orchestration_step.description to: %s", desc))
-			}
 			// Get old description for comparison
 			if orchestrationStep, ok := existingStep.(*OrchestrationPlanStep); ok && orchestrationStep.OrchestrationStep != nil {
-				oldDesc := orchestrationStep.OrchestrationStep.GetDescription()
-				logger.Info(fmt.Sprintf("🔍 [DEBUG] Old orchestration_step.description: %s", oldDesc))
+				_ = orchestrationStep.OrchestrationStep.GetDescription()
 			}
 		}
 
@@ -4855,12 +4850,6 @@ func createUpdateOrchestrationStepExecutor(workspacePath string, logger loggerv2
 		updatedOrchestrationStep, ok := updatedStep.(*OrchestrationPlanStep)
 		if !ok {
 			return "", fmt.Errorf(fmt.Sprintf("updated step is not an orchestration step"), nil)
-		}
-
-		// Log the updated description for debugging
-		if updatedOrchestrationStep.OrchestrationStep != nil {
-			newDesc := updatedOrchestrationStep.OrchestrationStep.GetDescription()
-			logger.Info(fmt.Sprintf("🔍 [DEBUG] New orchestration_step.description after merge: %s", newDesc))
 		}
 
 		// Validate the updated step has all required fields for orchestration steps

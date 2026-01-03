@@ -511,8 +511,10 @@ func (s *SQLiteDB) flushSessionEvents(sessionID string) {
 		s.batchMux.Unlock()
 		return
 	}
-	// Clear the buffer for this session
-	delete(s.eventBuffer, sessionID)
+	// Copy events to avoid holding lock during DB operations
+	// Don't delete from buffer yet - only delete after successful commit
+	eventsCopy := make([]pendingEvent, len(events))
+	copy(eventsCopy, events)
 	s.batchMux.Unlock()
 
 	// Flush events in a transaction
@@ -546,9 +548,9 @@ func (s *SQLiteDB) flushSessionEvents(sessionID string) {
 	defer stmt.Close()
 
 	// Insert all events in the batch
-	for _, pending := range events {
+	for _, pending := range eventsCopy {
 		eventData, err := json.Marshal(pending.event)
-	if err != nil {
+		if err != nil {
 			log.Printf("[BATCH ERROR] Failed to marshal event for session %s: %v", sessionID, err)
 			continue
 		}
@@ -564,9 +566,28 @@ func (s *SQLiteDB) flushSessionEvents(sessionID string) {
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
 		log.Printf("[BATCH ERROR] Failed to commit transaction for session %s: %v", sessionID, err)
-	} else {
-		log.Printf("[BATCH] Flushed %d events for session %s", len(events), sessionID)
+		// Events remain in buffer for retry on next flush cycle
+		return
 	}
+
+	// Only clear the buffer after successful commit
+	s.batchMux.Lock()
+	// Double-check that the events we flushed are still the same (in case new events were added)
+	// If new events were added, we only remove the ones we successfully flushed
+	if len(s.eventBuffer[sessionID]) >= len(eventsCopy) {
+		// Remove the flushed events from the front of the buffer
+		s.eventBuffer[sessionID] = s.eventBuffer[sessionID][len(eventsCopy):]
+		// If buffer is now empty, remove the session entry
+		if len(s.eventBuffer[sessionID]) == 0 {
+			delete(s.eventBuffer, sessionID)
+		}
+	} else {
+		// Buffer was modified - clear it entirely to be safe
+		delete(s.eventBuffer, sessionID)
+	}
+	s.batchMux.Unlock()
+
+	log.Printf("[BATCH] Flushed %d events for session %s", len(eventsCopy), sessionID)
 }
 
 // flushBatches flushes all pending event batches

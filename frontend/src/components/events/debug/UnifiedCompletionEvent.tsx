@@ -78,16 +78,19 @@ export const UnifiedCompletionEventDisplay: React.FC<UnifiedCompletionEventDispl
     }
   }
 
+  // Determine if this is an error event
+  const isError = event.status === 'error' || event.error
+
   // Single-line layout following design guidelines
   return (
-    <div className="bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-800 rounded p-2">
+    <div className={`${isError ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' : 'bg-gray-50 dark:bg-gray-900/20 border-gray-200 dark:border-gray-800'} border rounded p-2`}>
       <div className="flex items-center justify-between gap-3">
         {/* Left side: Icon and main content */}
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              ✅ Unified Completion{' '}
-              <span className="text-xs font-normal text-gray-600 dark:text-gray-400">
+            <div className={`text-sm font-medium ${isError ? 'text-red-700 dark:text-red-300' : 'text-gray-700 dark:text-gray-300'}`}>
+              {isError ? '❌' : '✅'} Unified Completion{' '}
+              <span className={`text-xs font-normal ${isError ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-400'}`}>
                 {event.agent_mode && `• Mode: ${event.agent_mode}`}
                 {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
                 {event.turns && ` • Turn: ${event.turns}`}
@@ -99,14 +102,28 @@ export const UnifiedCompletionEventDisplay: React.FC<UnifiedCompletionEventDispl
 
         {/* Right side: Time */}
         {event.timestamp && (
-          <div className="text-xs text-gray-600 dark:text-gray-400 flex-shrink-0">
+          <div className={`text-xs flex-shrink-0 ${isError ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-400'}`}>
             {new Date(event.timestamp).toLocaleTimeString()}
           </div>
         )}
       </div>
 
-      {/* Result always visible below */}
-      {event.final_result && (
+      {/* Error message - always visible for error status */}
+      {isError && event.error && (
+        <div className="mt-2">
+          <div className={`${isError ? 'bg-red-100 dark:bg-red-800' : 'bg-gray-100 dark:bg-gray-700'} border ${isError ? 'border-red-200 dark:border-red-700' : 'border-gray-200 dark:border-gray-600'} rounded-md p-2`}>
+            <div className={`text-xs font-medium mb-1 ${isError ? 'text-red-800 dark:text-red-200' : 'text-gray-800 dark:text-gray-200'}`}>
+              Error:
+            </div>
+            <div className={`text-sm ${isError ? 'text-red-900 dark:text-red-100' : 'text-gray-900 dark:text-gray-100'} whitespace-pre-wrap break-words`}>
+              {event.error}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Result always visible below (for non-error cases) */}
+      {!isError && event.final_result && (
         <div className="mt-2">
           {renderFinalResult(event.final_result)}
         </div>

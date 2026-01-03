@@ -54,14 +54,12 @@ func (em *ExecutionManager) PrepareExecution(
 		if existingProgress != nil && len(existingProgress.CompletedStepIndices) > 0 {
 			setup.Mode = ExecutionModeResume
 			setup.StartFromStep = findNextIncompleteStep(existingProgress)
-			orch.GetLogger().Info(fmt.Sprintf("📋 No options provided, defaulting to resume from step %d", setup.StartFromStep+1))
 		} else {
 			setup.Mode = ExecutionModeFresh
 			setup.Cleanup = CleanupScope{
 				InitFreshProgress: true,
 				NewTotalSteps:     totalSteps,
 			}
-			orch.GetLogger().Info(fmt.Sprintf("📋 No options provided, defaulting to fresh start"))
 		}
 		return setup, nil
 	}
@@ -142,7 +140,6 @@ func (em *ExecutionManager) PrepareExecution(
 			// Normalize resume_from_step=0 to 1 (start from step 1)
 			if resumeStep == 0 {
 				resumeStep = 1
-				orch.GetLogger().Info("📝 Normalized resume_from_step=0 to 1 (start from step 1)")
 			}
 			if resumeStep < 0 {
 				// CRITICAL: resume_from_step < 0 is invalid!
@@ -253,7 +250,6 @@ func (em *ExecutionManager) PrepareExecution(
 			// Normalize resume_from_step=0 to 1 (start from step 1)
 			if resumeStep == 0 {
 				resumeStep = 1
-				orch.GetLogger().Info("📝 Normalized resume_from_step=0 to 1 (start from step 1)")
 			}
 			if resumeStep < 0 {
 				// CRITICAL: resume_from_step < 0 is invalid!
@@ -369,7 +365,6 @@ func (em *ExecutionManager) PrepareExecution(
 			// Normalize resume_from_step=0 to 1 (start from step 1)
 			if resumeStep == 0 {
 				resumeStep = 1
-				orch.GetLogger().Info("📝 Normalized resume_from_step=0 to 1 (start from step 1)")
 			}
 			if resumeStep < 0 {
 				// CRITICAL: resume_from_step < 0 is invalid!
@@ -559,18 +554,13 @@ func (em *ExecutionManager) PrepareForBatchGroup(
 			strategy == ExecutionStrategyFastResumeFromStep ||
 			strategy == ExecutionStrategyRunSingleStep
 
-		orch.GetLogger().Info(fmt.Sprintf("🔍 Batch group cleanup: group=%s, isFirstGroup=%v, strategy=%s, ResumeFromStep=%d, isResumeStrategy=%v, isStartFromBeginningStrategy=%v",
-			groupID, isFirstGroup, strategy, orch.executionOptions.ResumeFromStep, isResumeStrategy, isStartFromBeginningStrategy))
-
 		// Only use resume step for the first group
 		// All subsequent groups start from the beginning
 		if isFirstGroup && isResumeStrategy && orch.executionOptions.ResumeFromStep > 0 {
 			resumeStep = orch.executionOptions.ResumeFromStep
-			orch.GetLogger().Info(fmt.Sprintf("🔍 Batch group cleanup: first group - detected resume from step %d (strategy: %s)", resumeStep, strategy))
 		} else if !isFirstGroup {
 			// Subsequent groups always start from beginning
 			resumeStep = 0
-			orch.GetLogger().Info(fmt.Sprintf("🔍 Batch group cleanup: subsequent group '%s' - always starting from beginning (ignoring ResumeFromStep)", groupID))
 		} else if orch.executionOptions.ResumeFromStep > 0 {
 			orch.GetLogger().Warn(fmt.Sprintf("⚠️ Batch group cleanup: ResumeFromStep=%d but strategy=%s is not a resume strategy, ignoring ResumeFromStep",
 				orch.executionOptions.ResumeFromStep, strategy))
@@ -579,7 +569,6 @@ func (em *ExecutionManager) PrepareForBatchGroup(
 				strategy, orch.executionOptions.ResumeFromStep))
 		}
 	} else {
-		orch.GetLogger().Info(fmt.Sprintf("🔍 Batch group cleanup: executionOptions is nil, resumeStep=0"))
 	}
 
 	// Determine cleanup scope
@@ -624,9 +613,6 @@ func (em *ExecutionManager) PrepareForBatchGroup(
 		StartFromStep:  startFromStep, // Start from resume step if resuming, otherwise from beginning
 		Cleanup:        cleanup,
 	}
-
-	orch.GetLogger().Info(fmt.Sprintf("📋 Prepared batch group '%s': folder=%s, isNew=%v, cleanup=%s",
-		groupID, runFolder, isNewFolder, em.GetCleanupDescription(setup.Cleanup)))
 
 	return setup, nil
 }
@@ -677,8 +663,6 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 
 	// 2. Handle execution folder cleanup
 	// Log cleanup scope for debugging
-	orch.GetLogger().Info(fmt.Sprintf("🔍 ApplyCleanup: CleanAllSteps=%v, CleanFromStep=%d, CleanSpecificStep=%d, Mode=%s, StartFromStep=%d",
-		scope.CleanAllSteps, scope.CleanFromStep, scope.CleanSpecificStep, setup.Mode, setup.StartFromStep))
 
 	// Safety check: CleanAllSteps should never be true when resuming from a specific step
 	if scope.CleanAllSteps {
@@ -741,8 +725,6 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 		} else if progress != nil {
 			// Preserve TotalSteps from existing progress (don't overwrite with NewTotalSteps)
 			// Only update CompletedStepIndices to remove steps >= StartFromStep
-			orch.GetLogger().Info(fmt.Sprintf("🔍 Updating progress: StartFromStep=%d (0-based, step %d), existing completed steps: %v (total: %d)",
-				setup.StartFromStep, setup.StartFromStep+1, progress.CompletedStepIndices, len(progress.CompletedStepIndices)))
 			newCompleted := []int{}
 			for _, idx := range progress.CompletedStepIndices {
 				if idx < setup.StartFromStep {
@@ -757,14 +739,11 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 					setup.StartFromStep, progress.CompletedStepIndices))
 			}
 
-			orch.GetLogger().Info(fmt.Sprintf("🔍 Progress update: keeping steps %v (removing %d steps >= step %d)",
-				newCompleted, removedCount, setup.StartFromStep+1))
 			progress.CompletedStepIndices = newCompleted
 
 			// Handle branch progress cleanup
 			branchStepsRemoved := 0
 			if progress.BranchSteps != nil {
-				orch.GetLogger().Info(fmt.Sprintf("🔍 Starting branch progress cleanup (found %d branch progress entries)", len(progress.BranchSteps)))
 				// Special handling for resuming from branch step
 				if setup.Context != nil && setup.Context.ResumeBranchStep != nil {
 					orch.GetLogger().Info(fmt.Sprintf("🔀 Branch step resume mode: parent=%d, branch=%s, branch_step=%d",
@@ -776,8 +755,6 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 					resumeBranchStepIdx := setup.Context.ResumeBranchStep.BranchStepIndex
 
 					if branchProgress, exists := progress.BranchSteps[parentStepIdx]; exists {
-						orch.GetLogger().Info(fmt.Sprintf("📋 Found branch progress for step %d: branch_executed=%s, completed_steps=%d",
-							parentStepIdx+1, branchProgress.BranchExecuted, len(branchProgress.CompletedSteps)))
 						// Keep the branch progress but remove completed steps >= resume point
 						branchExecutedStr := map[string]string{"if_true": "if-true", "if_false": "if-false"}[branchType]
 						newCompletedSteps := []string{}
@@ -868,7 +845,6 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 			// Ensure TotalSteps is preserved (use existing value, or fallback to NewTotalSteps if 0)
 			if progress.TotalSteps == 0 && scope.NewTotalSteps > 0 {
 				progress.TotalSteps = scope.NewTotalSteps
-				orch.GetLogger().Info(fmt.Sprintf("📝 Progress had TotalSteps=0, setting to %d", scope.NewTotalSteps))
 			}
 
 			if err := orch.saveStepProgress(ctx, progress); err != nil {
@@ -888,7 +864,6 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 		if err := orch.initializeFreshProgress(ctx, scope.NewTotalSteps); err != nil {
 			return fmt.Errorf("failed to initialize progress: %w", err)
 		}
-		orch.GetLogger().Info(fmt.Sprintf("📝 Initialized fresh progress with %d steps", scope.NewTotalSteps))
 	}
 
 	// Restore previous run folder only if explicitly needed
@@ -1068,7 +1043,6 @@ func (em *ExecutionManager) CleanupForResumeFromStep(ctx context.Context, resume
 				newCompleted = append(newCompleted, idx)
 			}
 		}
-		removedCount := len(progress.CompletedStepIndices) - len(newCompleted)
 		progress.CompletedStepIndices = newCompleted
 
 		// Remove branch progress for steps >= startFromStep
@@ -1098,7 +1072,6 @@ func (em *ExecutionManager) CleanupForResumeFromStep(ctx context.Context, resume
 		if err := orch.saveStepProgress(ctx, progress); err != nil {
 			orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update progress: %v", err))
 		} else {
-			orch.GetLogger().Info(fmt.Sprintf("📝 Updated progress: removed %d completed steps and %d branch progress entries, preserved TotalSteps=%d", removedCount, branchStepsRemoved, progress.TotalSteps))
 		}
 	} else {
 		// Progress is nil (shouldn't happen if loadStepProgress succeeded, but handle it)

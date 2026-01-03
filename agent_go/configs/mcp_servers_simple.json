@@ -4,42 +4,6 @@
       "url": "https://mcp.context7.com/mcp",
       "protocol": "http"
     },
-    "citymall-github-mcp": {
-      "url": "http://host.docker.internal:7009/sse",
-      "protocol": "sse"
-    },
-    "citymall-aws-mcp": {
-      "url": "http://host.docker.internal:7001/sse",
-      "protocol": "sse"
-    },
-    "citymall-db-mcp": {
-      "url": "http://host.docker.internal:7002/sse",
-      "protocol": "sse"
-    },
-    "citymall-k8s-mcp": {
-      "url": "http://host.docker.internal:7003/sse",
-      "protocol": "sse"
-    },
-    "citymall-grafana-mcp": {
-      "url": "http://host.docker.internal:7004/sse",
-      "protocol": "sse"
-    },
-    "citymall-sentry-mcp": {
-      "url": "http://host.docker.internal:7005/sse",
-      "protocol": "sse"
-    },
-    "citymall-slack-mcp": {
-      "url": "http://host.docker.internal:7006/sse",
-      "protocol": "sse"
-    },
-    "citymall-profiler-mcp": {
-      "url": "http://host.docker.internal:7007/sse",
-      "protocol": "sse"
-    },
-    "citymall-scripts-mcp": {
-      "url": "http://host.docker.internal:7008/sse",
-      "protocol": "sse"
-    },
     "sequential-thinking": {
       "command": "npx",
       "args": ["--yes", "@modelcontextprotocol/server-sequential-thinking"]

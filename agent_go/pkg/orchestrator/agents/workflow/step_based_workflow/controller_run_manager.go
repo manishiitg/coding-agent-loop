@@ -48,9 +48,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveRunFolderWithOptions(ctx conte
 		}
 
 		// Check if runs directory exists
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: Checking runs directory at: %s", runsPath))
 		exists := hcpo.workspaceFileExists(ctx, runsPath)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: Runs directory exists: %v", exists))
 		if !exists {
 			// Create iteration-1 run folder (not iteration-same)
 			selectedFolder := "iteration-1"
@@ -61,9 +59,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveRunFolderWithOptions(ctx conte
 		}
 
 		// List existing run folders
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: About to list run folders in: %s", runsPath))
 		existingFolders, err := hcpo.listRunFolders(ctx, runsPath)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: listRunFolders returned: folders=%v, error=%v", existingFolders, err))
 		if err != nil || len(existingFolders) == 0 {
 			// Create iteration-1 folder if none exist (not iteration-same)
 			selectedFolder := "iteration-1"
@@ -85,8 +81,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveRunFolderWithOptions(ctx conte
 				iterationFolders = append(iterationFolders, folder)
 			}
 		}
-
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: iterationFolders count=%d: %v", len(iterationFolders), iterationFolders))
 
 		// Sort iteration folders by iteration number
 		// Supports formats: "iteration-N", "YYYY-MM-DD-iteration-N", or "YYYY-MM-DD-initial"
@@ -131,8 +125,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveRunFolderWithOptions(ctx conte
 		if len(folderOptions) > 10 {
 			folderOptions = folderOptions[:10]
 		}
-
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: folderOptions count=%d: %v", len(folderOptions), folderOptions))
 
 		// If only one folder exists, use it directly
 		if len(folderOptions) == 1 {

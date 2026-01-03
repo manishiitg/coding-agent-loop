@@ -66,7 +66,7 @@ Available Tools:
 - delete_evaluation_step: Delete steps.
 - human_feedback: Ask user for guidance and confirm strategy.
 
-Work ONLY in the 'evaluation/' directory. The evaluation plan is stored in 'evaluation/evaluation_plan.json'.
+Work ONLY in the 'planning/' directory. The evaluation plan is stored in 'planning/evaluation_plan.json'.
 
 ## 📊 CONTEXT
 **Execution Plan (Source of Truth)**:

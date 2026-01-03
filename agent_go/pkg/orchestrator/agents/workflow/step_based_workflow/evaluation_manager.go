@@ -64,7 +64,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) checkExistingEvaluationPlan(ctx conte
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) loadEvaluationPlan(ctx context.Context) (*EvaluationPlan, error) {
-	content, err := hcpo.ReadWorkspaceFile(ctx, "evaluation/evaluation_plan.json")
+	content, err := hcpo.ReadWorkspaceFile(ctx, "planning/evaluation_plan.json")
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveEvaluationPlan(ctx context.Contex
 	if err != nil {
 		return err
 	}
-	return hcpo.WriteWorkspaceFile(ctx, "evaluation/evaluation_plan.json", string(data))
+	return hcpo.WriteWorkspaceFile(ctx, "planning/evaluation_plan.json", string(data))
 }
 
 // Methods for EvaluationManager
@@ -94,7 +94,7 @@ func (em *EvaluationManager) CreateEvaluationPlanOnly(ctx context.Context, objec
 	em.SetWorkspacePath(workspacePath)
 
 	// Check if evaluation_plan.json already exists
-	evalPlanPath := "evaluation/evaluation_plan.json"
+	evalPlanPath := "planning/evaluation_plan.json"
 	planExists, existingPlan, err := em.checkExistingEvaluationPlan(ctx, evalPlanPath)
 	if err != nil {
 		em.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check for existing evaluation plan: %v", err))
@@ -167,7 +167,7 @@ func (em *EvaluationManager) checkExistingEvaluationPlan(ctx context.Context, pl
 }
 
 func (em *EvaluationManager) loadEvaluationPlan(ctx context.Context) (*EvaluationPlan, error) {
-	content, err := em.ReadWorkspaceFile(ctx, "evaluation/evaluation_plan.json")
+	content, err := em.ReadWorkspaceFile(ctx, "planning/evaluation_plan.json")
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +183,7 @@ func (em *EvaluationManager) saveEvaluationPlan(ctx context.Context, plan *Evalu
 	if err != nil {
 		return err
 	}
-	return em.WriteWorkspaceFile(ctx, "evaluation/evaluation_plan.json", string(data))
+	return em.WriteWorkspaceFile(ctx, "planning/evaluation_plan.json", string(data))
 }
 
 func (em *EvaluationManager) requestEvaluationPlanApproval(ctx context.Context, revisionAttempt int) (bool, string, error) {
@@ -221,7 +221,7 @@ func (em *EvaluationManager) runEvaluationPlanningPhase(ctx context.Context, ite
 	if humanFeedback != "" {
 		userMessage = humanFeedback
 	} else if existingPlan != nil {
-		userMessage = "Review the existing evaluation plan. Ensure it assesses if the execution plan's implied goal was met, not just if steps ran. Always use human_feedback first."
+		userMessage = "An existing evaluation plan has been loaded. Please use human_feedback tool to ask the user what improvements they would like to make to the existing plan."
 	} else {
 		userMessage = "Analyze the execution plan (plan.json), infer the overall goal, and propose a holistic evaluation plan. Focus on quality and correctness. Always use human_feedback tool first to confirm the strategy with me."
 	}
@@ -250,7 +250,7 @@ func (em *EvaluationManager) runEvaluationPlanningPhase(ctx context.Context, ite
 	}
 
 	// Read the plan back
-	_, plan, err := em.checkExistingEvaluationPlan(ctx, "evaluation/evaluation_plan.json")
+	_, plan, err := em.checkExistingEvaluationPlan(ctx, "planning/evaluation_plan.json")
 	if err != nil {
 		return nil, updatedHistory, err
 	}
@@ -260,11 +260,12 @@ func (em *EvaluationManager) runEvaluationPlanningPhase(ctx context.Context, ite
 
 func (em *EvaluationManager) createEvaluationAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	baseWorkspacePath := em.GetWorkspacePath()
-	evalPath := fmt.Sprintf("%s/evaluation", baseWorkspacePath)
-	runsPath := fmt.Sprintf("%s/runs", baseWorkspacePath)
+	planningPath := fmt.Sprintf("%s/planning", baseWorkspacePath)
 
-	// Evaluation agent needs to read runs/ to see execution results and write to evaluation/
-	em.SetWorkspacePathForFolderGuard([]string{runsPath}, []string{evalPath})
+	// Evaluation designer agent: read/write access to planning/ folder only
+	// Can read planning/plan.json and write planning/evaluation_plan.json
+	// NO access to runs/ or evaluation/ folders - evaluation designer only analyzes the plan
+	em.SetWorkspacePathForFolderGuard([]string{planningPath}, []string{planningPath})
 
 	var llmConfigToUse *orchestrator.LLMConfig
 	orchestratorLLMConfig := em.GetLLMConfig()
@@ -382,22 +383,55 @@ func (em *EvaluationManager) registerEvaluationTools(mcpAgent *mcpagent.Agent) {
 
 func (em *EvaluationManager) createAddEvaluationStepTool() func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		if args == nil {
+			return "", fmt.Errorf("arguments cannot be nil")
+		}
+
 		plan, err := em.loadEvaluationPlan(ctx)
 		if err != nil {
 			plan = &EvaluationPlan{Steps: []*EvaluationStep{}}
 		}
 
-		step := &EvaluationStep{
-			ID:              args["id"].(string),
-			Title:           args["title"].(string),
-			Description:     args["description"].(string),
-			SuccessCriteria: args["success_criteria"].(string),
+		id, ok := args["id"].(string)
+		if !ok || id == "" {
+			return "", fmt.Errorf("missing or invalid argument: id (string required)")
 		}
 
-		if pv, ok := args["pre_validation"].(map[string]interface{}); ok {
-			pvJSON, _ := json.Marshal(pv)
+		title, ok := args["title"].(string)
+		if !ok || title == "" {
+			return "", fmt.Errorf("missing or invalid argument: title (string required)")
+		}
+
+		description, ok := args["description"].(string)
+		if !ok || description == "" {
+			return "", fmt.Errorf("missing or invalid argument: description (string required)")
+		}
+
+		successCriteria, ok := args["success_criteria"].(string)
+		if !ok || successCriteria == "" {
+			return "", fmt.Errorf("missing or invalid argument: success_criteria (string required)")
+		}
+
+		step := &EvaluationStep{
+			ID:              id,
+			Title:           title,
+			Description:     description,
+			SuccessCriteria: successCriteria,
+		}
+
+		if val, ok := args["pre_validation"]; ok && val != nil {
+			pv, ok := val.(map[string]interface{})
+			if !ok {
+				return "", fmt.Errorf("invalid argument: pre_validation must be an object")
+			}
+			pvJSON, err := json.Marshal(pv)
+			if err != nil {
+				return "", fmt.Errorf("failed to marshal pre_validation: %w", err)
+			}
 			var schema ValidationSchema
-			json.Unmarshal(pvJSON, &schema)
+			if err := json.Unmarshal(pvJSON, &schema); err != nil {
+				return "", fmt.Errorf("failed to unmarshal pre_validation into ValidationSchema: %w", err)
+			}
 			step.PreValidation = &schema
 		}
 
@@ -411,29 +445,46 @@ func (em *EvaluationManager) createAddEvaluationStepTool() func(context.Context,
 
 func (em *EvaluationManager) createUpdateEvaluationStepTool() func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		if args == nil {
+			return "", fmt.Errorf("arguments cannot be nil")
+		}
+
 		plan, err := em.loadEvaluationPlan(ctx)
 		if err != nil {
 			return "", err
 		}
 
-		id := args["id"].(string)
+		id, ok := args["id"].(string)
+		if !ok || id == "" {
+			return "", fmt.Errorf("missing or invalid argument: id (string required)")
+		}
+
 		found := false
-		for _, s := range plan.Steps {
+		for i, s := range plan.Steps {
 			if s.ID == id {
 				if v, ok := args["title"].(string); ok {
-					s.Title = v
+					plan.Steps[i].Title = v
 				}
 				if v, ok := args["description"].(string); ok {
-					s.Description = v
+					plan.Steps[i].Description = v
 				}
 				if v, ok := args["success_criteria"].(string); ok {
-					s.SuccessCriteria = v
+					plan.Steps[i].SuccessCriteria = v
 				}
-				if pv, ok := args["pre_validation"].(map[string]interface{}); ok {
-					pvJSON, _ := json.Marshal(pv)
+				if val, ok := args["pre_validation"]; ok && val != nil {
+					pv, ok := val.(map[string]interface{})
+					if !ok {
+						return "", fmt.Errorf("invalid argument: pre_validation must be an object")
+					}
+					pvJSON, err := json.Marshal(pv)
+					if err != nil {
+						return "", fmt.Errorf("failed to marshal pre_validation: %w", err)
+					}
 					var schema ValidationSchema
-					json.Unmarshal(pvJSON, &schema)
-					s.PreValidation = &schema
+					if err := json.Unmarshal(pvJSON, &schema); err != nil {
+						return "", fmt.Errorf("failed to unmarshal pre_validation into ValidationSchema: %w", err)
+					}
+					plan.Steps[i].PreValidation = &schema
 				}
 				found = true
 				break
@@ -453,15 +504,27 @@ func (em *EvaluationManager) createUpdateEvaluationStepTool() func(context.Conte
 
 func (em *EvaluationManager) createDeleteEvaluationStepTool() func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		if args == nil {
+			return "", fmt.Errorf("arguments cannot be nil")
+		}
+
 		plan, err := em.loadEvaluationPlan(ctx)
 		if err != nil {
 			return "", err
 		}
 
-		idsRaw := args["ids"].([]interface{})
+		idsRaw, ok := args["ids"].([]interface{})
+		if !ok {
+			return "", fmt.Errorf("missing or invalid argument: ids (array of strings required)")
+		}
+
 		idsToDelete := make(map[string]bool)
-		for _, id := range idsRaw {
-			idsToDelete[id.(string)] = true
+		for _, idRaw := range idsRaw {
+			id, ok := idRaw.(string)
+			if !ok {
+				return "", fmt.Errorf("invalid argument in ids: element is not a string")
+			}
+			idsToDelete[id] = true
 		}
 
 		newSteps := []*EvaluationStep{}

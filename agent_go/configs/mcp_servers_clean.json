@@ -1,58 +1,5 @@
 {
   "mcpServers": {
-    "citymall-aws-mcp": {
-      "command": "",
-      "args": null,
-      "protocol": "sse",
-      "url": "http://localhost:7001/sse"
-    },
-    "citymall-db-mcp": {
-      "command": "",
-      "args": null,
-      "protocol": "sse",
-      "url": "http://localhost:7002/sse"
-    },
-    "citymall-grafana-mcp": {
-      "command": "",
-      "args": null,
-      "protocol": "sse",
-      "url": "http://localhost:7004/sse"
-    },
-    "citymall-github-mcp": {
-      "command": "",
-      "args": null,
-      "protocol": "sse",
-      "url": "http://localhost:7009/sse"
-    },
-    "citymall-k8s-mcp": {
-      "command": "",
-      "args": null,
-      "protocol": "sse",
-      "url": "http://localhost:7003/sse"
-    },
-    "citymall-profiler-mcp": {
-      "command": "",
-      "args": null,
-      "protocol": "sse",
-      "url": "http://localhost:7007/sse"
-    },
-    "citymall-scripts-mcp": {
-      "command": "",
-      "args": null,
-      "protocol": "sse",
-      "url": "http://localhost:7008/sse"
-    },
-    "citymall-sentry-mcp": {
-      "command": "",
-      "args": null,
-      "protocol": "sse",
-      "url": "http://localhost:7005/sse"
-    },
-    "citymall-slack-mcp": {
-      "command": "",
-      "args": null,
-      "protocol": "sse",
-      "url": "http://localhost:7006/sse"
-    }
+    
   }
 }

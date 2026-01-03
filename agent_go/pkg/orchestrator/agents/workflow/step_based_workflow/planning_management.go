@@ -147,7 +147,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runPlanningPhase(ctx context.Context,
 		hcpo.GetLogger().Info(fmt.Sprintf("📄 Using provided existing plan with %d steps (UPDATE mode)", len(existingPlan.Steps)))
 	} else {
 		planToUse = nil
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 No existing plan provided - creating new plan (CREATE mode)"))
 	}
 
 	// Serialize plan to JSON and pass in template (prevents agent from reading workspace)
@@ -249,13 +248,11 @@ Generate a comprehensive structured plan to achieve this objective.`
 			var copiedPlan PlanningResponse
 			if err := json.Unmarshal(planJSON, &copiedPlan); err == nil {
 				initialPlan = &copiedPlan
-				hcpo.GetLogger().Info(fmt.Sprintf("📝 Stored initial plan state (%d steps) for changelog comparison", len(initialPlan.Steps)))
 			}
 		}
 	} else {
 		// CREATE mode - initial plan is empty
 		initialPlan = &PlanningResponse{Steps: []PlanStep{}}
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 Stored initial empty plan state for changelog comparison"))
 	}
 
 	// If CREATE mode and no plan exists, create empty plan.json
@@ -336,7 +333,6 @@ Generate a comprehensive structured plan to achieve this objective.`
 	if isUpdateMode {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔄 UPDATE mode: Using update system prompt"))
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 CREATE mode: Using update system prompt (unified prompt)"))
 	}
 
 	// Create input processor that returns the user message
@@ -378,9 +374,7 @@ Generate a comprehensive structured plan to achieve this objective.`
 	if !planUpdateToolCalled {
 		// No tools called - conversational response
 		if isUpdateMode {
-			hcpo.GetLogger().Info(fmt.Sprintf("📝 Planning agent in UPDATE mode: Conversational response (no plan changes). Returning current plan."))
 		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("📝 Planning agent in CREATE mode: Conversational response (no plan changes). Returning current plan."))
 		}
 		return planResponse, updatedConversationHistory, nil
 	}
@@ -489,14 +483,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) createPlanningAgent(ctx context.Conte
 // checkExistingPlan checks if a plan.json file already exists in the workspace and returns the parsed plan if found
 // Uses the generic ReadWorkspaceFile function from base orchestrator
 func (hcpo *StepBasedWorkflowOrchestrator) checkExistingPlan(ctx context.Context, planPath string) (bool, *PlanningResponse, error) {
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Checking for existing plan at %s", planPath))
 
 	// Use the generic ReadWorkspaceFile function from base orchestrator
 	planContent, err := hcpo.ReadWorkspaceFile(ctx, planPath)
 	if err != nil {
 		// Check if it's a "file not found" error vs other errors
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
-			hcpo.GetLogger().Info(fmt.Sprintf("📋 No existing plan found: %v", err))
 			return false, nil, nil
 		}
 		// Other errors should be returned
@@ -550,7 +542,7 @@ func convertBranchSteps(planSteps []PlanStepInterface, stepConfigs []StepConfig)
 		// Use type switch to handle different step types
 		todoStep, err := populateStepRuntimeFields(step, stepConfigs)
 		if err != nil {
-			return nil, fmt.Errorf("failed to populate runtime fields for step %d: %v", i, err)
+			return nil, fmt.Errorf("failed to populate runtime fields for step %d: %w", i, err)
 		}
 		todoSteps[i] = todoStep
 	}
@@ -810,9 +802,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) populateStepsRuntimeFields(ctx contex
 				configIDs = append(configIDs, config.ID)
 			}
 		}
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Available config IDs in step_config.json: %v", configIDs))
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 No step configs available (step_config.json is empty or not found)"))
 	}
 
 	// Match configs by step index (0-based)
@@ -820,7 +810,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) populateStepsRuntimeFields(ctx contex
 	if err != nil {
 		return nil, fmt.Errorf("failed to match step configs: %w", err)
 	}
-	hcpo.GetLogger().Info(fmt.Sprintf("📋 Matched %d/%d step configs from step_config.json", len(matchedConfigs), len(planSteps)))
 
 	todoSteps := make([]PlanStepInterface, len(planSteps))
 	for i, step := range planSteps {
@@ -832,7 +821,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) populateStepsRuntimeFields(ctx contex
 			agentConfigs = config
 			// Log code execution mode for debugging
 			if agentConfigs.UseCodeExecutionMode != nil {
-				hcpo.GetLogger().Info(fmt.Sprintf("📋 Step '%s' (ID: %s) matched config - use_code_execution_mode: %v", step.GetTitle(), step.GetID(), *agentConfigs.UseCodeExecutionMode))
 			} else {
 				hcpo.GetLogger().Info(fmt.Sprintf("📋 Step '%s' (ID: %s) matched config - use_code_execution_mode: nil (will use preset default)", step.GetTitle(), step.GetID()))
 			}
@@ -843,7 +831,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) populateStepsRuntimeFields(ctx contex
 		// Populate runtime fields (this properly handles inner steps for decision/orchestration)
 		todoStep, err := populateStepRuntimeFields(step, stepConfigs)
 		if err != nil {
-			return nil, fmt.Errorf("failed to populate runtime fields for step %d (title: %q, ID: %s): %v", i, step.GetTitle(), step.GetID(), err)
+			return nil, fmt.Errorf("failed to populate runtime fields for step %d (title: %q, ID: %s): %w", i, step.GetTitle(), step.GetID(), err)
 		}
 
 		// Merge matched configs with existing configs (if any)
@@ -1232,8 +1220,6 @@ func CheckAndEmitPlanUpdateEvent(
 		return
 	}
 
-	bo.GetLogger().Info(fmt.Sprintf("🔍 [CheckAndEmitPlanUpdateEvent] Checking conversation history for plan modification tools (history length: %d)", len(conversationHistory)))
-
 	// Extract tool calls from conversation history
 	toolCalls := ExtractToolCallsFromMessages(conversationHistory)
 	bo.GetLogger().Info(fmt.Sprintf("🔍 [CheckAndEmitPlanUpdateEvent] Extracted %d tool calls: %v", len(toolCalls), toolCalls))
@@ -1243,28 +1229,16 @@ func CheckAndEmitPlanUpdateEvent(
 	for _, name := range toolCalls {
 		if IsPlanModificationTool(name) || IsStepConfigModificationTool(name) {
 			needsEvent = true
-			bo.GetLogger().Info(fmt.Sprintf("🔍 [CheckAndEmitPlanUpdateEvent] Found plan modification tool: %s", name))
 			break
 		}
 	}
 
 	if !needsEvent {
-		bo.GetLogger().Info(fmt.Sprintf("📋 [CheckAndEmitPlanUpdateEvent] No plan/step_config modification tools called, skipping event emission"))
 		return
 	}
 
-	bo.GetLogger().Info(fmt.Sprintf("📋 Plan/step_config modification detected, emitting update event..."))
-
 	// Extract changed step IDs from tool call arguments (granular event data)
 	changedStepIDs := ExtractChangedStepIDsFromMessages(conversationHistory)
-	bo.GetLogger().Info(fmt.Sprintf("🔍 [CheckAndEmitPlanUpdateEvent] Extracted changed step IDs: added=%d, updated=%d, deleted=%d",
-		len(changedStepIDs.Added), len(changedStepIDs.Updated), len(changedStepIDs.Deleted)))
-	if len(changedStepIDs.Added) > 0 {
-		bo.GetLogger().Info(fmt.Sprintf("   Added: %v", changedStepIDs.Added))
-	}
-	if len(changedStepIDs.Updated) > 0 {
-		bo.GetLogger().Info(fmt.Sprintf("   Updated: %v", changedStepIDs.Updated))
-	}
 	if len(changedStepIDs.Deleted) > 0 {
 		bo.GetLogger().Info(fmt.Sprintf("   Deleted: %v", changedStepIDs.Deleted))
 	}
@@ -1321,7 +1295,6 @@ func CheckAndEmitPlanUpdateEvent(
 // This is a separate workflow phase that can be run independently
 // Similar to ExtractVariablesOnly in variable_management.go
 func (hcpo *StepBasedWorkflowOrchestrator) CreatePlanOnly(ctx context.Context, objective, workspacePath string) (string, error) {
-	hcpo.GetLogger().Info(fmt.Sprintf("📋 Starting standalone planning for objective: %s", objective))
 
 	// Set objective and workspace path
 	hcpo.SetObjective(objective)
@@ -1344,7 +1317,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreatePlanOnly(ctx context.Context, o
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Using templated objective with {{VARIABLES}}: %s", templatedObjective))
 	} else {
 		// No variables.json - create it with empty variables and the original objective
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 No variables.json found - creating new variables.json with original objective"))
 
 		// Create new VariablesManifest with original objective and empty variables
 		newManifest := &VariablesManifest{
@@ -1365,7 +1337,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreatePlanOnly(ctx context.Context, o
 				hcpo.variablesManifest = nil
 			} else {
 				hcpo.variablesManifest = newManifest
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Created variables.json with original objective and empty variables"))
 			}
 		}
 	}
@@ -1395,7 +1366,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreatePlanOnly(ctx context.Context, o
 
 	// If plan exists, always update it (no user choice needed)
 	if planExists {
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Found existing plan.json with %d steps - proceeding to UPDATE mode", len(existingPlan.Steps)))
 
 		// Try to emit event immediately so UI can display the existing plan
 		// If conversion fails (invalid plan), log warning but continue - agent will fix it
@@ -1443,7 +1413,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreatePlanOnly(ctx context.Context, o
 			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ User approved without providing update feedback, will create updated plan without specific guidance"))
 			initialPlanningFeedback = ""
 		} else if updateFeedback != "" {
-			hcpo.GetLogger().Info(fmt.Sprintf("📝 Received update feedback: %s", updateFeedback))
 			initialPlanningFeedback = updateFeedback
 		} else {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Unexpected feedback state: approved=%v, feedback empty, proceeding without guidance", approved))

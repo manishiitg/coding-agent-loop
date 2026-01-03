@@ -97,6 +97,7 @@ type StepBasedWorkflowOrchestrator struct {
 
 // NewStepBasedWorkflowOrchestrator creates a new human-controlled todo planner orchestrator
 func NewStepBasedWorkflowOrchestrator(
+	ctx context.Context,
 	provider string,
 	model string,
 	temperature float64,
@@ -179,7 +180,7 @@ func NewStepBasedWorkflowOrchestrator(
 	// Pass all workspace tools for default agent (no step config filtering)
 	var conditionalAgent *WorkflowConditionalAgent
 	conditionalAgentInterface, err := baseOrchestrator.CreateAndSetupStandardAgentWithConfig(
-		context.Background(),
+		ctx,
 		conditionalAgentConfig,
 		"conditional_evaluation", // phase
 		0,                        // step (default agent, will be updated per-step)
@@ -199,8 +200,10 @@ func NewStepBasedWorkflowOrchestrator(
 	var ok bool
 	conditionalAgent, ok = conditionalAgentInterface.(*WorkflowConditionalAgent)
 	if !ok {
+		logger.Error("❌ [ORCHESTRATOR DEBUG] Factory returned wrong agent type for default conditional agent", nil)
 		return nil, fmt.Errorf("factory returned wrong agent type for default conditional agent")
 	}
+	logger.Info(fmt.Sprintf("✅ [ORCHESTRATOR DEBUG] Conditional agent type assertion successful"))
 
 	hcpo := &StepBasedWorkflowOrchestrator{
 		BaseOrchestrator:          baseOrchestrator,
@@ -446,11 +449,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalLLMForStep(step PlanSte
 // - NEW: Includes human approval loop with iterative plan refinement
 func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, objective, workspacePath string) (string, error) {
 	hcpo.GetLogger().Info(fmt.Sprintf("🚀 Starting human-controlled todo planning for objective: %s", objective))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] CreateTodoList: Starting - workspacePath=%s", workspacePath))
 
 	// Set objective and workspace path directly
 	// WorkspacePath is the base workspace path (no subdirectory)
 	hcpo.SetObjective(objective)
 	hcpo.SetWorkspacePath(workspacePath)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] CreateTodoList: Objective and workspace path set"))
 
 	// PHASE 0: Check both variables and plan at start (before any prompts)
 	// Check if variables.json exists - OPTIONAL (planning agent can create it)
@@ -472,7 +477,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	} else {
 		// No variables.json - planning agent can extract variables if needed
 		hcpo.variablesManifest = nil
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 No variables.json found - planning agent can extract variables if needed"))
 		// Use original objective (no templating)
 		templatedObjective = hcpo.GetObjective()
 	}
@@ -488,7 +492,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	}
 
 	// Plan exists - use it
-	hcpo.GetLogger().Info(fmt.Sprintf("📋 Found existing plan.json at %s with %d steps", planPath, len(existingPlan.Steps)))
 
 	// Safety check: Ensure plan has steps
 	if len(existingPlan.Steps) == 0 {
@@ -502,14 +505,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	if hcpo.executionOptions != nil && len(hcpo.executionOptions.EnabledGroupIDs) > 0 && hcpo.variablesManifest != nil {
 		// Specific group(s) selected - use the first group's values (for single group execution)
 		requestedGroupID := hcpo.executionOptions.EnabledGroupIDs[0]
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [VARIABLE LOADING] Requested group ID: %s", requestedGroupID))
 
 		// Log available groups for debugging
 		availableGroupIDs := make([]string, len(hcpo.variablesManifest.Groups))
 		for i, g := range hcpo.variablesManifest.Groups {
 			availableGroupIDs[i] = g.GroupID
 		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [VARIABLE LOADING] Available groups in manifest: %v", availableGroupIDs))
 
 		variableValues = hcpo.variablesManifest.GetVariableValues(requestedGroupID)
 		if variableValues == nil {
@@ -552,7 +553,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 		}
 	} else {
 		// No specific group selected - use default LoadVariableValues (backward compatibility)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [VARIABLE LOADING] No specific group selected, using default LoadVariableValues"))
 		var err error
 		variableValues, err = LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
 		if err != nil {
@@ -598,7 +598,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	if execOpts != nil {
 		// ===== FRONTEND-PROVIDED EXECUTION OPTIONS =====
 		// Use options from frontend, skip interactive prompts
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Using frontend-provided execution options"))
 
 		// Use run mode from options
 		selectedRunMode = execOpts.RunMode
@@ -672,8 +671,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 
 	// EARLY PROGRESS CHECK: Load progress from the selected run folder
 	// Note: We no longer check if all steps are completed - execution will proceed regardless
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Early progress check: Loading progress from folder: %s", selectedRunFolder))
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 DEBUG: breakdownSteps count before early progress check: %d", len(breakdownSteps)))
 
 	earlyProgress, err := hcpo.loadStepProgress(ctx)
 	planChangeHandled := false // Track if we already handled plan change to avoid duplicate prompts
@@ -909,7 +906,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 
 				// Handle execution strategy (fast execute, skip human input, etc.)
 				if execOpts.ExecutionStrategy != "" {
-					hcpo.GetLogger().Info(fmt.Sprintf("📋 Using execution strategy: %s", execOpts.ExecutionStrategy))
 					switch execOpts.ExecutionStrategy {
 					case ExecutionStrategyRunSingleStep:
 						hcpo.SetRunSingleStepMode(true, startFromStep)
@@ -1133,7 +1129,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) Execute(ctx context.Context, objectiv
 	}
 
 	// Call the existing CreateTodoList method
-	return hcpo.CreateTodoList(ctx, objective, workspacePath)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Execute: About to call CreateTodoList"))
+	result, err := hcpo.CreateTodoList(ctx, objective, workspacePath)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Execute: CreateTodoList returned - error=%v", err))
+	return result, err
 }
 
 // GetType returns the orchestrator type
@@ -1199,7 +1198,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) IsSkipHumanInput() bool {
 func (hcpo *StepBasedWorkflowOrchestrator) SetExecutionOptions(options *ExecutionOptions) {
 	hcpo.executionOptions = options
 	if options != nil {
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Execution options set from frontend: run_mode=%s, strategy=%s, run_folder=%s", options.RunMode, options.ExecutionStrategy, options.SelectedRunFolder))
 
 		// Apply temporary LLM overrides (highest priority for execution agents only)
 		// Cascading fallback: tempLLM1 → tempLLM2 → step LLM

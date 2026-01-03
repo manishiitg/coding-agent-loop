@@ -104,7 +104,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveStepID(stepPath, stepIDOverrid
 				// Check if it's a DecisionPlanStep and get the inner DecisionStep
 				if decisionStep, ok := decisionContainerStep.(*DecisionPlanStep); ok && decisionStep.DecisionStep != nil {
 					stepID = decisionStep.DecisionStep.GetID()
-					hcpo.GetLogger().Info(fmt.Sprintf("🔍 Using inner decision step ID for learnings folder: %s (stepPath: %s)", stepID, stepPath))
 				} else {
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ stepPath %s indicates decision inner step but DecisionStep ID not available; falling back to outer step ID: %s", stepPath, stepID))
 				}
@@ -171,8 +170,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	// - retryAttempt >= 3: Use step LLM (step config > preset > orchestrator)
 	hasTempLLM1 := hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != ""
 	hasTempLLM2 := hcpo.tempOverrideLLM2 != nil && hcpo.tempOverrideLLM2.Provider != "" && hcpo.tempOverrideLLM2.ModelID != ""
-
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] LLM selection - retryAttempt=%d, isRetryAfterValidationFailure=%v, fallbackToOriginalLLMOnFailure=%v, shouldSkipTempOverride=%v, hasTempLLM1=%v, hasTempLLM2=%v, learningsFolderEmpty=%v, disableTempLLM=%v", retryAttempt, isRetryAfterValidationFailure, hcpo.fallbackToOriginalLLMOnFailure, shouldSkipTempOverride, hasTempLLM1, hasTempLLM2, learningsFolderEmpty, disableTempLLM))
 
 	if shouldSkipTempOverride && (hasTempLLM1 || hasTempLLM2) {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Validation failed - skipping temp override LLM and falling back to original LLM (fallback_to_original_llm_on_failure enabled)"))
@@ -737,7 +734,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		false, // overwriteSystemPrompt
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create and setup execution-only agent: %v", err)
+		return nil, fmt.Errorf("failed to create and setup execution-only agent: %w", err)
 	}
 
 	// 7. Post-setup: prerequisite tool and folder guard (after base factory setup)
@@ -819,7 +816,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Con
 		false, // overwriteSystemPrompt
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create and setup validation agent: %v", err)
+		return nil, fmt.Errorf("failed to create and setup validation agent: %w", err)
 	}
 
 	// 6. Post-setup: folder guard paths (validation agents don't use code execution mode, so no registry update needed)

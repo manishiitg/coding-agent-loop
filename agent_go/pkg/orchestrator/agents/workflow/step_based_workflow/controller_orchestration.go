@@ -91,7 +91,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 	if orchestrationStepPath == "" {
 		orchestrationStepPath = fmt.Sprintf("step-%d", stepIndex+1)
 	}
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Using orchestration step path: %s", orchestrationStepPath))
 
 	// Check if this is a branch step (branch steps don't need next_step_id - routing is handled by conditional step)
 	isBranchStep := strings.Contains(orchestrationStepPath, "-if-true-") || strings.Contains(orchestrationStepPath, "-if-false-")
@@ -151,23 +150,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 			mainStepPath = fmt.Sprintf("%s-orchestration-%d", orchestrationStepPath, orchestrationIteration+1)
 		}
 
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Executing main orchestration step: %s (iteration %d)", orchestrationStepPlan.OrchestrationStep.GetTitle(), orchestrationIteration+1))
-
 		// Load the main step's own config by its ID
 		stepID := orchestrationStepPlan.GetID()
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 Loading step config for orchestration step (ID: %s)", stepID))
-
-		// Log available step config IDs for debugging
-		stepConfigs, err := hcpo.ReadStepConfigs(ctx)
-		if err == nil && len(stepConfigs) > 0 {
-			configIDs := make([]string, 0, len(stepConfigs))
-			for _, config := range stepConfigs {
-				if config.ID != "" {
-					configIDs = append(configIDs, config.ID)
-				}
-			}
-			hcpo.GetLogger().Info(fmt.Sprintf("📋 Available step config IDs in step_config.json: %v", configIDs))
-		}
 
 		// Load the main step's own config by its ID
 		if err := ApplyStepConfigFromFile(ctx, orchestrationStepPlan, hcpo); err != nil {
@@ -331,7 +315,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration step success criteria met after %d iterations", orchestrationIteration+1))
 
 			// Success criteria met - call validation to verify
-			hcpo.GetLogger().Info("🔍 Success criteria met, calling validation to verify")
 
 			// Prepare validation template variables
 			var validationWorkspacePath string
@@ -484,7 +467,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 					learningPathIdentifier := getLearningPathIdentifier(orchestrationStepPlan.OrchestrationStep.GetID(), orchestrationStepPath)
 					totalSteps := len(allSteps)
 					hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running success learning analysis for orchestration step %s", orchestrationStepPath))
-					
+
 					// Calculate turn count for orchestration step
 					turnCount := len(conversationHistory)
 					err = hcpo.runSuccessLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, validationResponse, isCodeExecutionMode, "", turnCount) // Orchestration steps don't use tempLLM
@@ -559,7 +542,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 				learningPathIdentifier := getLearningPathIdentifier(orchestrationStepPlan.OrchestrationStep.GetID(), orchestrationStepPath)
 				totalSteps := len(allSteps)
 				hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running failure learning analysis for orchestration step %s (validation failed)", orchestrationStepPath))
-				
+
 				// Calculate turn count for orchestration step
 				turnCount := len(conversationHistory)
 				_, _, err = hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, validationResponse, isCodeExecutionMode, turnCount)
@@ -757,7 +740,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 			// Log what config was loaded
 			subAgentConfigs = getAgentConfigs(subAgentStepPlan)
 			if subAgentConfigs != nil && subAgentConfigs.UseCodeExecutionMode != nil {
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Loaded step config for sub-agent '%s' (ID: %s) - use_code_execution_mode: %v", subAgentStepPlan.GetTitle(), subAgentStepPlan.GetID(), *subAgentConfigs.UseCodeExecutionMode))
 			} else {
 				hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Step config loaded for sub-agent '%s' (ID: %s) but UseCodeExecutionMode not set - will use preset default", subAgentStepPlan.GetTitle(), subAgentStepPlan.GetID()))
 			}
@@ -781,11 +763,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 				} else {
 					regularStep.Description = orchestrationResponse.InstructionsToSubAgent
 				}
-				hcpo.GetLogger().Info("📝 Appending orchestrator-provided instructions to sub-agent step description")
 			}
 			if orchestrationResponse.SuccessCriteriaForSubAgent != "" {
 				regularStep.SuccessCriteria = orchestrationResponse.SuccessCriteriaForSubAgent
-				hcpo.GetLogger().Info("📝 Using orchestrator-provided success criteria for sub-agent (replacing step success criteria)")
 			}
 			if orchestrationResponse.ContextDependenciesForSubAgent != "" {
 				// Parse comma-separated context dependencies into array
@@ -797,11 +777,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 						regularStep.ContextDependencies = append(regularStep.ContextDependencies, dep)
 					}
 				}
-				hcpo.GetLogger().Info(fmt.Sprintf("📝 Using orchestrator-provided context dependencies for sub-agent (replacing step context dependencies): %v", regularStep.ContextDependencies))
 			}
 			if orchestrationResponse.ContextOutputForSubAgent != "" {
 				regularStep.ContextOutput = FlexibleContextOutput(orchestrationResponse.ContextOutputForSubAgent)
-				hcpo.GetLogger().Info(fmt.Sprintf("📝 Using orchestrator-provided context output for sub-agent (replacing step context output): %s", orchestrationResponse.ContextOutputForSubAgent))
 			}
 		}
 
@@ -855,7 +833,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 			executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 			subAgentExecutionPath := getExecutionFolderPath(executionWorkspacePath, subAgentPath)
 
-			hcpo.GetLogger().Info(fmt.Sprintf("🔍 Running pre-validation on sub-agent output (path: %s)", subAgentExecutionPath))
 			workspaceResults, err := RunPreValidation(ctx, validationSchema, subAgentExecutionPath, hcpo.BaseOrchestrator)
 			if err != nil {
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation error for sub-agent '%s': %v", subAgentStepPlan.GetTitle(), err))
@@ -965,17 +942,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 			Feedback:             []ValidationFeedback{},
 		}
 
-						hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running failure learning analysis for orchestration step %s (max iterations reached)", orchestrationStepPath))
-						
-						// Calculate turn count for orchestration step
-						turnCount := len(conversationHistory)
-						_, _, err := hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, failureValidationResponse, isCodeExecutionMode, turnCount)
-						if err != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for orchestration step %s: %v", orchestrationStepPath, err))
-						} else {
-							hcpo.GetLogger().Info(fmt.Sprintf("✅ Failure learning analysis completed for orchestration step %s", orchestrationStepPath))
-						}
-					} else {		if isFastExecuteStep {
+		hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running failure learning analysis for orchestration step %s (max iterations reached)", orchestrationStepPath))
+
+		// Calculate turn count for orchestration step
+		turnCount := len(conversationHistory)
+		_, _, err := hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, failureValidationResponse, isCodeExecutionMode, turnCount)
+		if err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for orchestration step %s: %v", orchestrationStepPath, err))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Failure learning analysis completed for orchestration step %s", orchestrationStepPath))
+		}
+	} else {
+		if isFastExecuteStep {
 			hcpo.GetLogger().Info(fmt.Sprintf("⚡ Fast mode: Skipping learning agents for orchestration step %d", stepIndex+1))
 		} else if isLearningDisabled {
 			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled: Skipping learning agents for orchestration step %d", stepIndex+1))
@@ -1042,7 +1020,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationOrchestratorStep(
 	// Build previous steps summary using shared function (includes descriptions, output files, and execution results)
 	previousStepsSummary := hcpo.buildPreviousStepsSummary(allSteps, stepIndex, previousContextFiles, previousExecutionResults)
 	if previousStepsSummary != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 Added previous steps summary to template variables for orchestration step %d (%d previous steps)", stepIndex+1, len(previousContextFiles)))
 	}
 
 	// Read orchestrator learnings (like regular execution agents read learning history)
@@ -1178,13 +1155,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) getOrchestrationOrchestratorAgentForS
 	// Get step config - every step has its own config by its own ID
 	orchestrationStepConfig := getAgentConfigs(step)
 	stepID := step.GetID()
-	if orchestrationStepConfig != nil && orchestrationStepConfig.UseCodeExecutionMode != nil {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Step config found - UseCodeExecutionMode: %v (step ID: %s)", *orchestrationStepConfig.UseCodeExecutionMode, stepID))
-	} else if orchestrationStepConfig != nil {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Step config found but UseCodeExecutionMode is nil (step ID: %s)", stepID))
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Step config is nil (step ID: %s)", stepID))
-	}
 
 	// Get step ID for orchestration learnings (use step's own ID)
 	// For OrchestrationPlanStep, learnings are stored using the inner step's ID (for folder organization)

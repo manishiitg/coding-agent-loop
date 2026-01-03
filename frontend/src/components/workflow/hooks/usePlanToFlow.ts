@@ -176,7 +176,7 @@ interface UsePlanToFlowOptions {
   onOpenSidebar?: OnOpenSidebarCallback  // Callback for opening sidebar when settings icon is clicked
   isExecuting?: boolean  // Whether execution is currently in progress
   completedStepIndices?: number[]  // 0-based indices of completed steps (from steps_done.json)
-  stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'>  // Step status from events
+  stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'> | Record<string, 'pending' | 'running' | 'completed' | 'failed'> | null  // Step status from events (Map or serialized object for stable comparison)
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
   variablesManifest?: VariablesManifest | null  // Variables manifest for Variables node
@@ -2176,8 +2176,9 @@ function createPrerequisiteEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
         } else if (targetStepNodeId === stepNode.id) {
           // Skip self-reference
         } else {
-          // CRITICAL: Verify target node exists and is a StepNode before creating edge
-          // Only StepNode has prerequisite target handles (prereq-target-left, prereq-target-middle, prereq-target-right)
+          // CRITICAL: Verify target node exists and is a StepNode (type 'step') before creating edge
+          // Only StepNode (type 'step') has prerequisite target handles (prereq-target-left, prereq-target-middle, prereq-target-right)
+          // Other step-type nodes (conditional, decision, loop, orchestrator, human_input) don't have these handles
           const targetNode = nodes.find(node => node.id === targetStepNodeId)
           if (!targetNode) {
             console.warn('[PrerequisiteEdges] Target node not found in nodes array:', {
@@ -2189,8 +2190,8 @@ function createPrerequisiteEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
             return
           }
           
-          if (!isStepTypeNode(targetNode)) {
-            console.warn('[PrerequisiteEdges] Target node is not a StepNode (missing prerequisite target handles):', {
+          if (targetNode.type !== 'step') {
+            console.warn('[PrerequisiteEdges] Target node is not a StepNode (type "step") - missing prerequisite target handles:', {
               targetStepNodeId,
               targetNodeType: targetNode.type,
               depStepId,
@@ -2261,6 +2262,24 @@ export function usePlanToFlow(
   // Get available LLMs for model name formatting
   const { availableLLMs } = useLLMStore()
 
+  // Convert serialized stepStatusMap to Map if needed, and create stable reference for dependency comparison
+  const stepStatusMapSerialized = useMemo(() => {
+    if (!stepStatusMap) return null
+    // If it's already a Map, serialize it for stable comparison
+    if (stepStatusMap instanceof Map) {
+      return Object.fromEntries(stepStatusMap)
+    }
+    // If it's already an object, return as-is
+    return stepStatusMap
+  }, [stepStatusMap])
+
+  // Convert serialized stepStatusMap back to Map for use in processing
+  const stepStatusMapAsMap = useMemo(() => {
+    if (!stepStatusMapSerialized) return undefined
+    // Convert object back to Map
+    return new Map(Object.entries(stepStatusMapSerialized)) as Map<string, 'pending' | 'running' | 'completed' | 'failed'>
+  }, [stepStatusMapSerialized])
+
   return useMemo(() => {
     if (!plan || !plan.steps || plan.steps.length === 0) {
       return { nodes: [], edges: [] }
@@ -2319,7 +2338,7 @@ export function usePlanToFlow(
       presetLearningLLM,
       availableLLMs,
       completedStepIndices,
-      stepStatusMap,
+      stepStatusMapAsMap,
       options.workspacePath,
       options.selectedRunFolder,
       stepIdToNodeIdMap,
@@ -2838,7 +2857,7 @@ export function usePlanToFlow(
     }) as WorkflowNode[]
 
     return layoutedResult
-  }, [plan, showDependencyEdges, showPrerequisiteEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetValidationLLM, presetLearningLLM, availableLLMs, onRunFromStep, onOpenSidebar, isExecuting, completedStepIndices, stepStatusMap, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables])
+  }, [plan, showDependencyEdges, showPrerequisiteEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetValidationLLM, presetLearningLLM, availableLLMs, onRunFromStep, onOpenSidebar, isExecuting, completedStepIndices, stepStatusMapAsMap, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables])
 }
 
 export default usePlanToFlow

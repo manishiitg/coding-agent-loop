@@ -25,9 +25,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	learningDetailLevel := "exact" // default
 	if agentConfigs != nil && agentConfigs.LearningDetailLevel != "" {
 		learningDetailLevel = agentConfigs.LearningDetailLevel
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 Using step-specific learning detail level: '%s'", learningDetailLevel))
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 No step-specific learning detail level set, using default: 'exact'"))
 	}
 
 	// AUTO-UNLOCK LEARNINGS: If validation failed, automatically unlock learnings so the step can learn from the failure
@@ -63,13 +60,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, step.GetID(), stepIndex, stepPath)
 		if err != nil {
 			// If we can't check, assume empty and run learning
-			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked but cannot check if learnings exist - running learning to create initial learnings for %s/%d", learningPathIdentifier, totalSteps))
 		} else if learningsEmpty {
 			// Learnings are locked but folder is empty - run learning to create initial learnings
-			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked but folder is empty - running learning to create initial learnings for %s/%d", learningPathIdentifier, totalSteps))
 		} else {
 			// Learnings are locked and learnings exist - skip learning
-			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping success learning analysis for %s/%d (using existing learnings)", learningPathIdentifier, totalSteps))
 			return nil
 		}
 	}
@@ -79,11 +73,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	// Use the provided step-specific code execution mode (already computed with step-level priority)
 	shouldSkipLearning := (learningDetailLevel == "none" || (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning)) && !isCodeExecutionMode
 	if shouldSkipLearning {
-		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping success learning analysis for %s/%d (learning disabled)", learningPathIdentifier, totalSteps))
 		return nil
 	}
 	if isCodeExecutionMode && (learningDetailLevel == "none" || (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning)) {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing success learning for %s/%d (overriding step config)", learningPathIdentifier, totalSteps))
 		// Override learning detail level to "exact" if it was "none"
 		if learningDetailLevel == "none" {
 			learningDetailLevel = "exact"
@@ -135,18 +127,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	}
 
 	// Prepare template variables for success learning agent
-	regularStep := getRegularPlanStep(step)
+	// Use interface methods instead of direct field access to support all step types (RegularPlanStep, EvaluationStep, etc.)
+	stepContextOutput := step.GetContextOutput().String()
+	formattedHistory := shared.FormatConversationHistory(executionHistory)
+
 	successLearningTemplateVars := map[string]string{
 		"StepTitle":           step.GetTitle(),
-		"StepDescription":     regularStep.Description,
-		"StepSuccessCriteria": regularStep.SuccessCriteria,
-		"StepContextOutput":   step.GetContextOutput().String(),
+		"StepDescription":     step.GetDescription(),
+		"StepSuccessCriteria": step.GetSuccessCriteria(),
+		"StepContextOutput":   stepContextOutput,
 		"WorkspacePath":       hcpo.GetWorkspacePath(),
-		"ExecutionHistory":    shared.FormatConversationHistory(executionHistory),
+		"ExecutionHistory":    formattedHistory,
 		"ValidationResult":    string(validationResultJSON),
 		"CurrentObjective":    hcpo.GetObjective(),
 		"LearningDetailLevel": learningDetailLevel, // Pass learning detail preference
 	}
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ [DEBUG] runSuccessLearningPhase: Template variables map created"))
 
 	// Add step-specific paths (always enabled)
 	// Calculate run workspace path - learnings are at the same level as execution/, not inside it
@@ -158,8 +154,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	successLearningTemplateVars["StepNumber"] = learningPathIdentifier // Use learning path identifier instead of numeric step number
 
 	// Add context dependencies as a comma-separated string
-	if len(regularStep.ContextDependencies) > 0 {
-		successLearningTemplateVars["StepContextDependencies"] = strings.Join(regularStep.ContextDependencies, ", ")
+	contextDeps := step.GetContextDependencies()
+	if len(contextDeps) > 0 {
+		successLearningTemplateVars["StepContextDependencies"] = strings.Join(contextDeps, ", ")
 	} else {
 		successLearningTemplateVars["StepContextDependencies"] = ""
 	}
@@ -207,7 +204,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	// We no longer need to detect "new learning" with an LLM, as stability is determined by
 	// successful execution counts per complexity level.
 	hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping learning detection for %s - using TurnCount-based rule system", learningPathIdentifier))
-	
+
 	// Set default values for metadata update (legacy fields)
 	hasNewLearning := true // Assume true to reset legacy consecutive-no-learning counter
 	reasoning := "TurnCount-based locking active (detection skipped)"
@@ -241,7 +238,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	} else if metadataErr != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update learning metadata for %s: %v", learningPathIdentifier, metadataErr))
 	}
-
 	return nil
 }
 
@@ -264,9 +260,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	learningDetailLevel := "exact" // default
 	if agentConfigs != nil && agentConfigs.LearningDetailLevel != "" {
 		learningDetailLevel = agentConfigs.LearningDetailLevel
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 Using step-specific learning detail level: '%s'", learningDetailLevel))
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("📝 No step-specific learning detail level set, using default: 'exact'"))
 	}
 
 	// AUTO-UNLOCK LEARNINGS: If validation failed, automatically unlock learnings so the step can learn from the failure
@@ -368,11 +361,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	}
 
 	// Prepare template variables for failure learning agent
-	regularStep := getRegularPlanStep(step)
+	// Use interface methods instead of direct field access to support all step types (RegularPlanStep, EvaluationStep, etc.)
 	failureLearningTemplateVars := map[string]string{
 		"StepTitle":           step.GetTitle(),
-		"StepDescription":     regularStep.Description,
-		"StepSuccessCriteria": regularStep.SuccessCriteria,
+		"StepDescription":     step.GetDescription(),
+		"StepSuccessCriteria": step.GetSuccessCriteria(),
 		"StepContextOutput":   step.GetContextOutput().String(),
 		"WorkspacePath":       hcpo.GetWorkspacePath(),
 		"ExecutionHistory":    shared.FormatConversationHistory(executionHistory),
@@ -391,8 +384,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	failureLearningTemplateVars["StepNumber"] = learningPathIdentifier // Use learning path identifier instead of numeric step number
 
 	// Add context dependencies as a comma-separated string
-	if len(regularStep.ContextDependencies) > 0 {
-		failureLearningTemplateVars["StepContextDependencies"] = strings.Join(regularStep.ContextDependencies, ", ")
+	contextDeps := step.GetContextDependencies()
+	if len(contextDeps) > 0 {
+		failureLearningTemplateVars["StepContextDependencies"] = strings.Join(contextDeps, ", ")
 	} else {
 		failureLearningTemplateVars["StepContextDependencies"] = ""
 	}
@@ -490,7 +484,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) readStepLearningFiles(ctx context.Con
 	// List all files in the step folder
 	files, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, stepLearningsPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list files in %s: %v", stepLearningsPath, err)
+		return nil, fmt.Errorf("failed to list files in %s: %w", stepLearningsPath, err)
 	}
 
 	// Delete _learning_new.md if it exists (leftover temp file from previous runs)

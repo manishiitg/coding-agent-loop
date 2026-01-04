@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -296,14 +297,72 @@ func CheckForConflicts(docsDir string) error {
 	return nil
 }
 
+// removeStaleLockFile removes a stale git index lock file if it exists
+func removeStaleLockFile(docsDir string) error {
+	lockFile := filepath.Join(docsDir, ".git", "index.lock")
+	if _, err := os.Stat(lockFile); err == nil {
+		log.Printf("[GIT] WARNING: Found stale git index lock file, removing it...")
+		if err := os.Remove(lockFile); err != nil {
+			return fmt.Errorf("failed to remove stale lock file: %v", err)
+		}
+		log.Printf("[GIT] Successfully removed stale lock file")
+	}
+	return nil
+}
+
+// gitAddWithRetry performs git add with automatic retry on lock file errors
+func gitAddWithRetry(docsDir string) error {
+	// Remove any stale lock files before attempting add
+	if err := removeStaleLockFile(docsDir); err != nil {
+		return err
+	}
+
+	log.Printf("[GIT] Adding all files to staging...")
+	addCmd := exec.Command("git", "-C", docsDir, "add", ".")
+	addOutput, addErr := addCmd.CombinedOutput()
+	if addErr != nil {
+		errorMsg := strings.TrimSpace(string(addOutput))
+		log.Printf("[GIT] ERROR: Failed to add files: %v", addErr)
+		log.Printf("[GIT] Git add error output: %s", errorMsg)
+
+		// Check if it's a lock file error and retry once
+		if strings.Contains(errorMsg, "index.lock") || strings.Contains(errorMsg, "File exists") {
+			log.Printf("[GIT] Detected lock file error, attempting to remove and retry...")
+			if err := removeStaleLockFile(docsDir); err != nil {
+				return fmt.Errorf("failed to remove lock file: %v", err)
+			}
+
+			// Retry the add operation
+			log.Printf("[GIT] Retrying git add after removing lock file...")
+			retryCmd := exec.Command("git", "-C", docsDir, "add", ".")
+			retryOutput, retryErr := retryCmd.CombinedOutput()
+			if retryErr != nil {
+				retryErrorMsg := strings.TrimSpace(string(retryOutput))
+				if retryErrorMsg == "" {
+					retryErrorMsg = retryErr.Error()
+				}
+				return fmt.Errorf("failed to add files (after retry): %s", retryErrorMsg)
+			}
+			log.Printf("[GIT] Successfully added files to staging after retry")
+			return nil
+		}
+
+		if errorMsg == "" {
+			errorMsg = addErr.Error()
+		}
+		return fmt.Errorf("failed to add files: %s", errorMsg)
+	}
+	log.Printf("[GIT] Successfully added files to staging")
+	return nil
+}
+
 // SyncWithGitHub performs a complete sync: commit → pull → push
 func SyncWithGitHub(docsDir, githubBranch string, commitMessage string) error {
 	log.Printf("[GIT] Starting SyncWithGitHub for branch: %s", githubBranch)
 
 	// First, add and commit any local changes
-	log.Printf("[GIT] Adding all files to staging...")
-	if err := exec.Command("git", "-C", docsDir, "add", ".").Run(); err != nil {
-		return fmt.Errorf("failed to add files: %v", err)
+	if err := gitAddWithRetry(docsDir); err != nil {
+		return err
 	}
 
 	// Check if there are changes to commit
@@ -397,8 +456,8 @@ func SyncWithGitHub(docsDir, githubBranch string, commitMessage string) error {
 // ForcePushLocal overwrites GitHub with local changes (discards remote changes)
 func ForcePushLocal(docsDir, githubBranch string, commitMessage string) error {
 	// First, add and commit any local changes
-	if err := exec.Command("git", "-C", docsDir, "add", ".").Run(); err != nil {
-		return fmt.Errorf("failed to add files: %v", err)
+	if err := gitAddWithRetry(docsDir); err != nil {
+		return err
 	}
 
 	// Check if there are changes to commit

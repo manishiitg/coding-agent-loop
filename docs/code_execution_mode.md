@@ -286,6 +286,27 @@ func main() {
 
 ---
 
+## 🔒 Security
+
+### Environment Isolation
+
+Code execution mode uses environment variable sanitization to prevent secret leakage:
+
+- **Whitelist-only approach**: Only safe environment variables are included
+- **No secret inheritance**: DATABASE_URL, API_KEYS, tokens are NOT accessible
+- **Explicit additions**: MCP_API_URL and GOWORK added explicitly when needed
+
+**What code CAN access:**
+- `PATH`, `HOME`, `USER`, `SHELL` - Safe shell variables
+- `LANG`, `LC_ALL` - Locale settings  
+- `MCP_API_URL` - For MCP tool calls
+- `GOWORK` - For Go workspace (when using generated packages)
+
+**What code CANNOT access:**
+- `DATABASE_URL`, `API_KEY`, `SECRET`, `TOKEN`, `PASSWORD` - Any parent secrets
+
+---
+
 ## 📖 Related Documentation
 
 - [Workflow Orchestrator](workflow_orchestrator.md) - Overall execution system

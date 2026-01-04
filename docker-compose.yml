@@ -59,6 +59,12 @@ services:
     build:
       context: ./workspace
       dockerfile: Dockerfile
+    # Required capabilities for mount namespace isolation
+    cap_add:
+      - SYS_ADMIN  # Needed for unshare -m and mount operations
+
+    security_opt:
+      - apparmor:unconfined  # Allow mount operations in namespace
     ports:
       - "8081:8080"
     env_file:

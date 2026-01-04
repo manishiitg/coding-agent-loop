@@ -7,6 +7,16 @@ type ExecuteShellRequest struct {
 	WorkingDirectory string   `json:"working_directory,omitempty"`          // Relative working directory within docs-dir
 	Timeout          int      `json:"timeout,omitempty"`                    // Timeout in seconds (default: 60, max: 300)
 	UseShell         bool     `json:"use_shell,omitempty"`                  // Execute through shell (enables pipes, redirects, &&, ||, etc.)
+	
+	// Folder guard configuration
+	FolderGuard *FolderGuardConfig `json:"folder_guard,omitempty"`
+}
+
+type FolderGuardConfig struct {
+	Enabled         bool     `json:"enabled"`
+	ReadPaths       []string `json:"read_paths"`
+	WritePaths      []string `json:"write_paths"`
+	EnforcementMode string   `json:"enforcement_mode"` // "strict" | "warn" | "audit"
 }
 
 // ExecuteShellResponse represents the response from shell command execution

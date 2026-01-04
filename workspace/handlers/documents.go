@@ -487,6 +487,189 @@ func ListDocuments(c *gin.Context) {
 	})
 }
 
+// GlobDocuments handles GET /api/documents/glob
+// Discovers files matching a glob pattern (supports ** for recursive matching)
+func GlobDocuments(c *gin.Context) {
+	var req models.GlobDocumentsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+			Success: false,
+			Message: "Invalid query parameters",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	docsDir := viper.GetString("docs-dir")
+
+	// Normalize folder path
+	normalizedFolder := normalizeFolderPath(req.Folder)
+
+	// Build search path
+	var searchPath string
+	if normalizedFolder == "Downloads" || strings.HasPrefix(normalizedFolder, "Downloads/") {
+		if normalizedFolder == "Downloads" {
+			searchPath = filepath.Join(docsDir, "Downloads")
+		} else {
+			subfolder := strings.TrimPrefix(normalizedFolder, "Downloads/")
+			searchPath = filepath.Join(docsDir, "Downloads", subfolder)
+		}
+	} else if normalizedFolder != "" {
+		searchPath = filepath.Join(docsDir, normalizedFolder)
+	} else {
+		searchPath = docsDir
+	}
+
+	// Check if the folder exists
+	if _, err := os.Stat(searchPath); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, models.APIResponse[[]models.Document]{
+			Success: false,
+			Message: "Folder not found",
+			Error:   fmt.Sprintf("Folder does not exist: %s", normalizedFolder),
+			Data:    []models.Document{},
+		})
+		return
+	}
+
+	// Set max depth (default: unlimited if -1)
+	maxDepth := req.MaxDepth
+	if maxDepth < 0 {
+		maxDepth = -1 // Unlimited
+	}
+
+	// Get all documents recursively
+	allDocuments, err := getAllDocumentsRecursively(searchPath, docsDir, maxDepth)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to read documents directory",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	// Match files against glob pattern
+	matchedDocuments := matchGlobPattern(allDocuments, req.Pattern, req.IncludeDirs, docsDir)
+
+	c.JSON(http.StatusOK, models.APIResponse[[]models.Document]{
+		Success: true,
+		Message: fmt.Sprintf("Found %d files matching pattern '%s'", len(matchedDocuments), req.Pattern),
+		Data:    matchedDocuments,
+	})
+}
+
+// matchGlobPattern matches documents against a glob pattern
+// Supports standard glob patterns: *, ?, [chars], and ** for recursive matching
+func matchGlobPattern(documents []models.Document, pattern string, includeDirs bool, docsDir string) []models.Document {
+	var matched []models.Document
+
+	// Check if pattern contains ** (recursive matching)
+	hasDoubleStar := strings.Contains(pattern, "**")
+
+	for _, doc := range documents {
+		// Skip directories if not included
+		if doc.IsDirectory && !includeDirs {
+			continue
+		}
+
+		// Get relative path from docs directory for matching
+		relPath := doc.FilePath
+
+		// Handle recursive patterns with **
+		if hasDoubleStar {
+			if matchRecursiveGlob(relPath, pattern) {
+				matched = append(matched, doc)
+			}
+		} else {
+			// Use standard filepath.Match for non-recursive patterns
+			// For patterns like "*.go", match against filename only
+			// For patterns like "docs/*.md", match against full relative path
+			matchedPath := relPath
+			if !strings.Contains(pattern, "/") && !strings.Contains(pattern, string(filepath.Separator)) {
+				// Pattern doesn't contain path separators - match against filename only
+				matchedPath = filepath.Base(relPath)
+			}
+
+			if isMatched, err := filepath.Match(pattern, matchedPath); err == nil && isMatched {
+				matched = append(matched, doc)
+			}
+		}
+	}
+
+	return matched
+}
+
+// matchRecursiveGlob matches a path against a glob pattern with ** support
+// ** matches zero or more directories
+func matchRecursiveGlob(path, pattern string) bool {
+	// Convert path separators to forward slashes for consistent matching
+	normalizedPath := strings.ReplaceAll(path, string(filepath.Separator), "/")
+	normalizedPattern := strings.ReplaceAll(pattern, string(filepath.Separator), "/")
+
+	// If pattern doesn't contain **, use standard matching
+	if !strings.Contains(normalizedPattern, "**") {
+		matched, _ := filepath.Match(pattern, path)
+		return matched
+	}
+
+	// Split pattern by ** to handle recursive matching
+	// Example: "docs/**/*.md" -> ["docs/", "/*.md"]
+	// Example: "**/*.go" -> ["", "/*.go"]
+	patternParts := strings.Split(normalizedPattern, "**")
+	if len(patternParts) < 2 {
+		// Invalid pattern or no ** found
+		matched, _ := filepath.Match(pattern, path)
+		return matched
+	}
+
+	// Start pattern (before first **)
+	startPattern := patternParts[0]
+	// End pattern (after last **)
+	endPattern := patternParts[len(patternParts)-1]
+
+	// Check if path starts with start pattern
+	if startPattern != "" {
+		if !strings.HasPrefix(normalizedPath, startPattern) {
+			return false
+		}
+		normalizedPath = normalizedPath[len(startPattern):]
+	}
+
+	// Check if path ends with end pattern
+	if endPattern != "" {
+		// For end patterns like "/*.md" or "*.md", we need to match the suffix
+		if strings.HasPrefix(endPattern, "/") {
+			// Pattern like "/*.md" - match from any directory boundary
+			endPattern = endPattern[1:] // Remove leading /
+			// Try matching from each directory boundary
+			pathParts := strings.Split(normalizedPath, "/")
+			for i := 0; i < len(pathParts); i++ {
+				suffix := strings.Join(pathParts[i:], "/")
+				if matched, _ := filepath.Match(endPattern, suffix); matched {
+					return true
+				}
+			}
+			return false
+		} else {
+			// Pattern like "*.md" - match filename only
+			// Extract filename from path
+			lastSlash := strings.LastIndex(normalizedPath, "/")
+			if lastSlash >= 0 {
+				filename := normalizedPath[lastSlash+1:]
+				matched, _ := filepath.Match(endPattern, filename)
+				return matched
+			} else {
+				// No directory separator, match entire path
+				matched, _ := filepath.Match(endPattern, normalizedPath)
+				return matched
+			}
+		}
+	}
+
+	// If no end pattern, pattern matches if start pattern matched
+	return true
+}
+
 // GetDocument handles GET /api/documents/*filepath
 func GetDocument(c *gin.Context) {
 	filePathParam := c.Param("filepath")

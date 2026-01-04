@@ -91,12 +91,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   const activeTab = tabId ? getTab(tabId) : getActiveTab()
   
   // Determine which servers to use based on mode category
+  // CRITICAL: Workflow preset servers should ONLY be used in workflow mode, never leak into chat mode
   const effectiveServers = useMemo(() => {
     // For workflow mode, use preset servers
     if (selectedModeCategory === 'workflow') {
       return currentPresetServers.length > 0 ? currentPresetServers : selectedServers
     }
-    // For chat mode, use tab's selected servers from config (if available), otherwise fall back to global
+    // For chat mode, ALWAYS use tab's selected servers from config (if available), otherwise fall back to global
+    // NEVER use currentPresetServers in chat mode - workflow preset state is isolated to workflow mode only
     const tabSelectedServers = (selectedModeCategory === 'chat' && activeTab?.config) 
       ? activeTab.config.selectedServers 
       : selectedServers
@@ -109,7 +111,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
     // Return selected servers (including "NO_SERVERS" if explicitly selected)
     return tabSelectedServers
-  }, [selectedModeCategory, currentPresetServers, selectedServers, getAvailableServers, activeTab?.config])
+  }, [
+    selectedModeCategory, 
+    // Include currentPresetServers only for workflow mode reactivity
+    // In chat mode, this value is ignored but included to satisfy exhaustive-deps
+    // The logic above ensures chat mode never uses currentPresetServers
+    currentPresetServers,
+    selectedServers, 
+    getAvailableServers, 
+    activeTab?.config
+  ])
   
   // Filter tools to only include those from effective servers
   // If "NO_SERVERS" is selected, return empty tools (pure LLM mode)
@@ -2059,24 +2070,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     processedCompletionEventsRef.current.clear()
 
     try {
-      // Filter out "*" markers from currentPresetTools before sending to backend
-      // "*" markers indicate "all tools" mode, which is represented as an empty array
-      const filteredPresetTools = currentPresetTools?.filter(t => !t.endsWith(':*')) || []
-      
-      // Use the correctAgentMode calculated at component level (derived from selectedModeCategory)
-      console.log('[CHATAREA] Starting query with:', {
-        selectedModeCategory,
-        agentModeFromStore: agentMode,
-        correctAgentMode,
-        selectedWorkflowPreset,
-        currentPresetServers,
-        currentPresetTools,
-        filteredPresetTools,
-        effectiveServers,
-        enabledToolsCount: enabledTools.length,
-        'hasAllToolsMarkers': currentPresetTools?.some(t => t.endsWith(':*')) ? 'YES' : 'NO'
-      });
-      
       // Get code execution mode: 
       // - For chat mode: Use ChatInput selection if no preset, or preset value if preset exists
       // - For workflow mode: Use preset value if available
@@ -2084,6 +2077,28 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       const chatPreset = correctAgentMode === 'simple' ? getActivePreset('chat') : null
       const workflowPreset = correctAgentMode === 'workflow' ? (selectedWorkflowPreset ? getActivePreset('workflow') : null) : null
       const activePreset = workflowPreset || chatPreset
+      
+      // CRITICAL: Get tools from the active preset for the current mode ONLY
+      // Never use global currentPresetTools - it may contain tools from a different mode
+      // Filter out "*" markers from preset tools before sending to backend
+      // "*" markers indicate "all tools" mode, which is represented as an empty array
+      const presetTools = activePreset?.selectedTools || []
+      const filteredPresetTools = presetTools.filter(t => !t.endsWith(':*'))
+      
+      // Use the correctAgentMode calculated at component level (derived from selectedModeCategory)
+      console.log('[CHATAREA] Starting query with:', {
+        selectedModeCategory,
+        agentModeFromStore: agentMode,
+        correctAgentMode,
+        selectedWorkflowPreset,
+        activePreset: activePreset?.label,
+        activePresetMode: activePreset ? (workflowPreset ? 'workflow' : 'chat') : 'none',
+        presetTools,
+        filteredPresetTools,
+        effectiveServers,
+        enabledToolsCount: enabledTools.length,
+        'hasAllToolsMarkers': presetTools.some(t => t.endsWith(':*')) ? 'YES' : 'NO'
+      });
       const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode
       
       // Get preset IDs for the current mode only

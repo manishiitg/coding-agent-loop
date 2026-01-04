@@ -30,10 +30,6 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
   const setSkipLearningWhenTempLLM2 = useWorkflowStore(state => state.setSkipLearningWhenTempLLM2)
   const saveValidationResponses = useWorkflowStore(state => state.saveValidationResponses)
   const setSaveValidationResponses = useWorkflowStore(state => state.setSaveValidationResponses)
-  const disableShellExecAccess = useWorkflowStore(state => state.disableShellExecAccess)
-  const setDisableShellExecAccess = useWorkflowStore(state => state.setDisableShellExecAccess)
-  const disableReadImageAccess = useWorkflowStore(state => state.disableReadImageAccess)
-  const setDisableReadImageAccess = useWorkflowStore(state => state.setDisableReadImageAccess)
   
   // Convert tempOverrideLLM to LLMOption format for the dropdown
   const selectedLLM1: LLMOption | null = tempOverrideLLM
@@ -297,49 +293,6 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
                 </div>
                 <div className="text-xs text-muted-foreground mt-0.5">
                   When enabled, execution logs are saved to the workspace: validation responses (logs/step-X/validation.json), execution results, and conversation history (logs/step-X/execution/).
-                </div>
-              </div>
-            </label>
-          </div>
-
-          {/* Tool Access Control Section */}
-          <div className="space-y-3 pt-2 border-t border-border">
-            <div className="text-sm font-medium text-foreground">
-              Tool Access Control
-            </div>
-            
-            {/* Disable Shell Exec Access */}
-            <label className="flex items-start gap-2 cursor-pointer group">
-              <input
-                type="checkbox"
-                checked={disableShellExecAccess}
-                onChange={(e) => setDisableShellExecAccess(e.target.checked)}
-                className="mt-0.5 w-4 h-4 rounded border-border text-primary focus:ring-primary focus:ring-2 focus:ring-offset-0"
-              />
-              <div className="flex-1">
-                <div className="text-sm font-medium text-foreground">
-                  Disable Shell Exec Access
-                </div>
-                <div className="text-xs text-muted-foreground mt-0.5">
-                  When enabled, the <code className="text-xs bg-muted px-1 py-0.5 rounded">execute_shell_command</code> tool will be disabled globally for all workflow execution agents. This prevents agents from executing shell commands.
-                </div>
-              </div>
-            </label>
-
-            {/* Disable Read Image Access */}
-            <label className="flex items-start gap-2 cursor-pointer group">
-              <input
-                type="checkbox"
-                checked={disableReadImageAccess}
-                onChange={(e) => setDisableReadImageAccess(e.target.checked)}
-                className="mt-0.5 w-4 h-4 rounded border-border text-primary focus:ring-primary focus:ring-2 focus:ring-offset-0"
-              />
-              <div className="flex-1">
-                <div className="text-sm font-medium text-foreground">
-                  Disable Read Image Access
-                </div>
-                <div className="text-xs text-muted-foreground mt-0.5">
-                  When enabled, the <code className="text-xs bg-muted px-1 py-0.5 rounded">read_image</code> tool will be disabled globally for all workflow execution agents. This prevents agents from reading and analyzing image files.
                 </div>
               </div>
             </label>

@@ -177,6 +177,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		{
 			documents.POST("", handlers.CreateDocument)
 			documents.GET("", handlers.ListDocuments)
+			documents.GET("/glob", handlers.GlobDocuments)
 		}
 
 		// Search routes (separate paths to avoid conflicts)

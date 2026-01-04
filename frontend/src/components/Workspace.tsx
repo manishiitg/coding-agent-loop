@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef, useMemo, useState } from 'react'
-import { Plus, Upload, FolderPlus, ChevronDown, Filter } from 'lucide-react'
+import { Plus, Upload, FolderPlus, ChevronDown, Filter, CheckSquare, X, Trash2 } from 'lucide-react'
 import { agentApi, workspaceApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
@@ -108,6 +108,22 @@ export default function Workspace({
   const [importError, setImportError] = useState<string | null>(null)
   const [importSuccess, setImportSuccess] = useState<string | null>(null)
   const backupFileInputRef = useRef<HTMLInputElement>(null)
+
+  // Multi-select state
+  const [isSelectionMode, setIsSelectionMode] = useState(false)
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
+  const [bulkDeleteDialog, setBulkDeleteDialog] = useState<{
+    isOpen: boolean
+    isLoading: boolean
+    items: PlannerFile[]
+  }>({
+    isOpen: false,
+    isLoading: false,
+    items: []
+  })
+
+  // Search Sync Details state
+  const [showSearchSyncDetails, setShowSearchSyncDetails] = useState(false)
 
   const {
     files,
@@ -563,41 +579,54 @@ export default function Workspace({
         const response = await agentApi.getPlannerFileContent(fullFilePath)
         
         if (response.success && response.data) {
-          let processedContent = response.data.content
+          // Check if content exists and is a string
+          if (response.data.content === undefined || response.data.content === null) {
+            // Content is missing - this can happen for certain file types or error cases
+            setError('File content is not available. This may be a binary file or the file may be empty.')
+            setLoadingFileContent(false)
+            return
+          }
+          
+          let processedContent = typeof response.data.content === 'string' 
+            ? response.data.content 
+            : String(response.data.content)
           let isJsonFile = false
           let formattedJson = null
           
           // Check if this is an image file
-          if (response.data.is_image && processedContent.startsWith('data:image/')) {
+          if (response.data.is_image && processedContent && processedContent.startsWith('data:image/')) {
             // For images, the content is already base64 encoded data URL
             // No processing needed for images
           } else {
             // Process the content to convert escaped newlines to actual newlines
-            processedContent = processedContent
-              .replace(/\\n/g, '\n')  // Convert \n to actual newlines
-              .replace(/\\t/g, '\t')  // Convert \t to actual tabs
-              .replace(/\\r/g, '\r'); // Convert \r to actual carriage returns
-            
-            // Check if this is a JSON file (by extension OR content)
-            const extensionIsJson = file.filepath.toLowerCase().endsWith('.json')
-            const contentIsJson = isValidJSON(processedContent)
-            isJsonFile = extensionIsJson || contentIsJson
-            
-            // If it's a JSON file, try to parse and format it
-            if (isJsonFile) {
-              try {
-                const parsed = JSON.parse(processedContent)
-                formattedJson = JSON.stringify(parsed, null, 2)
-              } catch (parseError) {
-                // If JSON parsing fails, keep the original content
-                console.warn('Failed to parse JSON file:', parseError)
-                formattedJson = null
+            // Only process if content is a non-empty string
+            if (processedContent && typeof processedContent === 'string') {
+              processedContent = processedContent
+                .replace(/\\n/g, '\n')  // Convert \n to actual newlines
+                .replace(/\\t/g, '\t')  // Convert \t to actual tabs
+                .replace(/\\r/g, '\r'); // Convert \r to actual carriage returns
+              
+              // Check if this is a JSON file (by extension OR content)
+              const extensionIsJson = file.filepath.toLowerCase().endsWith('.json')
+              const contentIsJson = isValidJSON(processedContent)
+              isJsonFile = extensionIsJson || contentIsJson
+              
+              // If it's a JSON file, try to parse and format it
+              if (isJsonFile) {
+                try {
+                  const parsed = JSON.parse(processedContent)
+                  formattedJson = JSON.stringify(parsed, null, 2)
+                } catch (parseError) {
+                  // If JSON parsing fails, keep the original content
+                  console.warn('Failed to parse JSON file:', parseError)
+                  formattedJson = null
+                }
               }
             }
           }
           
           // Store both original content and formatted JSON (if applicable)
-          setFileContent(processedContent)
+          setFileContent(processedContent || '')
           if (formattedJson) {
             setFileContent(formattedJson)
           }
@@ -641,6 +670,158 @@ export default function Workspace({
   // Handle delete all contents in folder
   const handleDeleteAllFilesInFolder = (folder: PlannerFile) => {
     openDeleteAllFilesDialog(folder)
+  }
+
+  // Helper function to collect only top-level file paths (not recursive)
+  // API handles recursive deletion automatically, so we only need to select top-level items
+  const collectTopLevelFilePaths = useCallback((files: PlannerFile[]): string[] => {
+    return files.map(file => file.filepath)
+  }, [])
+
+  // Toggle selection mode
+  const toggleSelectionMode = useCallback(() => {
+    setIsSelectionMode(prev => {
+      if (!prev) {
+        // Entering selection mode - clear any previous selections
+        setSelectedFiles(new Set())
+      } else {
+        // Exiting selection mode - clear selections
+        setSelectedFiles(new Set())
+      }
+      return !prev
+    })
+  }, [])
+
+  // Toggle file selection - only select/unselect the item itself (not children)
+  // API handles recursive deletion automatically, so we don't need to select children
+  const toggleFileSelection = useCallback((file: PlannerFile) => {
+    setSelectedFiles(prev => {
+      const newSet = new Set(prev)
+      const filePath = file.filepath
+      
+      if (newSet.has(filePath)) {
+        // Unselect: remove this item only (not children)
+        newSet.delete(filePath)
+      } else {
+        // Select: add this item only (not children)
+        newSet.add(filePath)
+      }
+      return newSet
+    })
+  }, [])
+
+  // Select file and enter selection mode
+  const selectFileAndEnterSelectionMode = useCallback((file: PlannerFile) => {
+    setIsSelectionMode(true)
+    setSelectedFiles(new Set([file.filepath]))
+  }, [])
+
+  // Select/Deselect all visible files (top-level only, not recursive)
+  // API handles recursive deletion automatically, so we only need to select top-level items
+  const toggleSelectAll = useCallback(() => {
+    const allPaths = collectTopLevelFilePaths(filteredFiles)
+    setSelectedFiles(prev => {
+      const newSet = new Set(prev)
+      // Check if all top-level items are selected
+      const allSelected = allPaths.length > 0 && allPaths.every(path => newSet.has(path))
+      if (allSelected) {
+        // Deselect all top-level items
+        allPaths.forEach(path => newSet.delete(path))
+      } else {
+        // Select all top-level items
+        allPaths.forEach(path => newSet.add(path))
+      }
+      return newSet
+    })
+  }, [filteredFiles, collectTopLevelFilePaths])
+
+  // Check if all top-level files are selected
+  const areAllFilesSelected = useMemo(() => {
+    if (selectedFiles.size === 0) return false
+    const allPaths = collectTopLevelFilePaths(filteredFiles)
+    return allPaths.length > 0 && allPaths.every(path => selectedFiles.has(path))
+  }, [selectedFiles, filteredFiles, collectTopLevelFilePaths])
+
+  // Get selected files as PlannerFile objects
+  const getSelectedFilesAsObjects = useCallback((): PlannerFile[] => {
+    const findFileByPath = (files: PlannerFile[], path: string): PlannerFile | null => {
+      for (const file of files) {
+        if (file.filepath === path) return file
+        if (file.children) {
+          const found = findFileByPath(file.children, path)
+          if (found) return found
+        }
+      }
+      return null
+    }
+
+    const selected: PlannerFile[] = []
+    selectedFiles.forEach(path => {
+      const file = findFileByPath(filteredFiles, path)
+      if (file) selected.push(file)
+    })
+    return selected
+  }, [selectedFiles, filteredFiles])
+
+  // Handle bulk delete
+  const handleBulkDelete = useCallback(() => {
+    const selectedItems = getSelectedFilesAsObjects()
+    if (selectedItems.length === 0) return
+    setBulkDeleteDialog({
+      isOpen: true,
+      isLoading: false,
+      items: selectedItems
+    })
+  }, [getSelectedFilesAsObjects])
+
+  // Confirm bulk delete
+  const confirmBulkDelete = async () => {
+    if (bulkDeleteDialog.items.length === 0) return
+
+    setBulkDeleteDialog(prev => ({ ...prev, isLoading: true }))
+
+    try {
+      const errors: string[] = []
+      
+      // Delete each item sequentially
+      for (const item of bulkDeleteDialog.items) {
+        try {
+          const fullFilePath = getOriginalFilePath(item)
+          if (item.type === 'file') {
+            await agentApi.deletePlannerFile(fullFilePath)
+          } else {
+            await agentApi.deletePlannerFolder(fullFilePath)
+          }
+        } catch (err) {
+          const fileName = item.filepath.split('/').pop() || item.filepath
+          errors.push(`${fileName}: ${err instanceof Error ? err.message : 'Failed to delete'}`)
+        }
+      }
+
+      // Refresh the file list
+      await fetchFiles()
+
+      // Clear selection and exit selection mode
+      setSelectedFiles(new Set())
+      setIsSelectionMode(false)
+
+      // Close dialog
+      setBulkDeleteDialog({ isOpen: false, isLoading: false, items: [] })
+
+      // Show errors if any
+      if (errors.length > 0) {
+        setError(`Some files could not be deleted:\n${errors.join('\n')}`)
+      }
+    } catch (err) {
+      console.error('Failed to delete items:', err)
+      setError(err instanceof Error ? err.message : 'Failed to delete items')
+      setBulkDeleteDialog(prev => ({ ...prev, isLoading: false }))
+    }
+  }
+
+  // Cancel bulk delete
+  const cancelBulkDelete = () => {
+    setBulkDeleteDialog({ isOpen: false, isLoading: false, items: [] })
   }
 
   // Confirm delete
@@ -1261,50 +1442,116 @@ export default function Workspace({
           </div>
         ) : (
           <div className="flex items-center justify-between mb-3">
-            <div>
+            <div className="flex items-center gap-3">
               <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
                 Workspace
               </h2>
-              {/* Mode-specific workspace info */}
+              {/* Selection mode UI */}
+              {isSelectionMode && (
+                <div className="flex items-center gap-2">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <label className="flex items-center cursor-pointer relative">
+                        <input
+                          type="checkbox"
+                          checked={areAllFilesSelected}
+                          onChange={toggleSelectAll}
+                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                        />
+                        {selectedFiles.size > 0 && (
+                          <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
+                            {selectedFiles.size}
+                          </span>
+                        )}
+                      </label>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Select All</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-2">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={fetchFiles}
-                    disabled={loading}
-                    className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 disabled:opacity-50"
-                  >
-                    <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Refresh files</p>
-                </TooltipContent>
-              </Tooltip>
+              {/* Selection mode controls */}
+              {isSelectionMode && (
+                <>
+                  {selectedFiles.size > 0 && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={handleBulkDelete}
+                          disabled={loading || bulkDeleteDialog.isLoading}
+                          className="p-2 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 disabled:opacity-50 relative"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
+                            {selectedFiles.size}
+                          </span>
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Delete {selectedFiles.size} selected file{selectedFiles.size !== 1 ? 's' : ''}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={toggleSelectionMode}
+                        className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Exit selection mode</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </>
+              )}
               
-              {/* Combined Actions Dropdown */}
-              <div className="relative actions-dropdown">
+              {/* Refresh button - always visible when not in selection mode */}
+              {!isSelectionMode && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
-                      onClick={() => setShowActionsDropdown(!showActionsDropdown)}
+                      onClick={fetchFiles}
                       disabled={loading}
-                      className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 disabled:opacity-50 flex items-center gap-1"
+                      className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 disabled:opacity-50"
                     >
-                      <Plus className="w-4 h-4" />
-                      <ChevronDown className="w-3 h-3" />
+                      <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
                     </button>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>Add files or folders</p>
+                    <p>Refresh files</p>
                   </TooltipContent>
                 </Tooltip>
+              )}
+              
+              {/* Combined Actions Dropdown - Hidden in selection mode */}
+              {!isSelectionMode && (
+                <div className="relative actions-dropdown">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => setShowActionsDropdown(!showActionsDropdown)}
+                        disabled={loading}
+                        className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 disabled:opacity-50 flex items-center gap-1"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <ChevronDown className="w-3 h-3" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Add files or folders</p>
+                    </TooltipContent>
+                  </Tooltip>
 
-                {/* Dropdown Menu */}
-                {showActionsDropdown && (
+                  {/* Dropdown Menu */}
+                  {showActionsDropdown && (
                   <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50">
                     <div className="py-1">
                       <button
@@ -1327,38 +1574,76 @@ export default function Workspace({
                         <FolderPlus className="w-4 h-4" />
                         Create Folder
                       </button>
+                      <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+                      <button
+                        onClick={() => {
+                          toggleSelectionMode()
+                          setShowActionsDropdown(false)
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                      >
+                        <CheckSquare className="w-4 h-4" />
+                        Select Files
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowSearchSyncDetails(true)
+                          setShowActionsDropdown(false)
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        Search Sync Details
+                      </button>
                     </div>
                   </div>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
 
-              {/* Git Sync Status */}
-              <div className="relative">
-                <GitSyncStatus onSync={fetchFiles} isVisible={!minimized} />
-              </div>
+              {/* Git Sync Status - Hidden in selection mode */}
+              {!isSelectionMode && (
+                <div className="relative">
+                  <GitSyncStatus onSync={fetchFiles} isVisible={!minimized} />
+                </div>
+              )}
 
-              {/* Search Sync Status */}
-              <div className="relative">
-                <SemanticSearchSync onResync={fetchFiles} isVisible={!minimized} />
-              </div>
-              <div className="flex items-center gap-1">
-                <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘5</span>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={onToggleMinimize}
-                      className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors relative group"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>{minimized ? "Expand workspace" : "Minimize workspace"} (Ctrl+5)</p>
-                  </TooltipContent>
-                </Tooltip>
-              </div>
+              {/* Search Sync Status - Hidden button, controlled via dropdown - Hidden in selection mode */}
+              {!isSelectionMode && (
+                <div className="relative">
+                  <SemanticSearchSync 
+                    onResync={fetchFiles} 
+                    isVisible={!minimized} 
+                    hideButton={true}
+                    showDetailsExternal={showSearchSyncDetails}
+                    onDetailsClose={() => setShowSearchSyncDetails(false)}
+                  />
+                </div>
+              )}
+
+              {/* Minimize button - Hidden in selection mode */}
+              {!isSelectionMode && (
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘5</span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={onToggleMinimize}
+                        className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors relative group"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{minimized ? "Expand workspace" : "Minimize workspace"} (Ctrl+5)</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1464,6 +1749,10 @@ export default function Workspace({
                 workflowFolderPath={workflowFolderPath}
                 isExporting={isExporting}
                 isImporting={isImporting}
+                isSelectionMode={isSelectionMode}
+                selectedFiles={selectedFiles}
+                onToggleFileSelection={toggleFileSelection}
+                onSelectFileAndEnterSelectionMode={selectFileAndEnterSelectionMode}
               />
             </div>
           </div>
@@ -1556,6 +1845,22 @@ export default function Workspace({
         cancelText="Cancel"
         type="warning"
         isLoading={deleteAllFilesDialog.isLoading}
+      />
+
+      {/* Bulk Delete Confirmation Dialog */}
+      <ConfirmationDialog
+        isOpen={bulkDeleteDialog.isOpen}
+        onClose={cancelBulkDelete}
+        onConfirm={confirmBulkDelete}
+        title={`Delete ${bulkDeleteDialog.items.length} Item${bulkDeleteDialog.items.length !== 1 ? 's' : ''}`}
+        message={`Are you sure you want to delete ${bulkDeleteDialog.items.length} item${bulkDeleteDialog.items.length !== 1 ? 's' : ''}? This action cannot be undone.\n\n${bulkDeleteDialog.items.slice(0, 10).map(item => {
+          const fileName = item.filepath.split('/').pop() || item.filepath
+          return `• ${fileName}${item.type === 'folder' ? ' (folder)' : ''}`
+        }).join('\n')}${bulkDeleteDialog.items.length > 10 ? `\n... and ${bulkDeleteDialog.items.length - 10} more` : ''}`}
+        confirmText={`Delete ${bulkDeleteDialog.items.length} Item${bulkDeleteDialog.items.length !== 1 ? 's' : ''}`}
+        cancelText="Cancel"
+        type="danger"
+        isLoading={bulkDeleteDialog.isLoading}
       />
 
       {/* Upload Dialog */}

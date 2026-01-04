@@ -198,6 +198,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Preset folder selection
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   
+  // Track previous input value to distinguish user deletion from programmatic clearing
+  const prevInputTextRef = useRef<string>('')
+  
   // File selection dialog state
   const [showFileDialog, setShowFileDialog] = useState(false)
   const [fileDialogPosition, setFileDialogPosition] = useState({ top: 0, left: 0 })
@@ -244,6 +247,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       setTabConfig(activeTabId, { inputText: '' })
     }
   }, [activePresetIds, customPresets, predefinedPresets, activeTabId, setTabConfig])
+
+  // Sync ref with inputText when it changes externally (preset sync, programmatic clearing, etc.)
+  useEffect(() => {
+    prevInputTextRef.current = inputText || ''
+  }, [inputText])
 
   // Set initial height and auto-resize textarea when inputText changes
   useEffect(() => {
@@ -299,11 +307,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value
+    const previousValue = prevInputTextRef.current
     
     // Update tab config directly - Zustand is optimized for frequent updates
     if (activeTabId) {
       setTabConfig(activeTabId, { inputText: newValue })
     }
+    
+    // Update ref for next comparison
+    prevInputTextRef.current = newValue
     
     // Auto-resize textarea
     adjustTextareaHeight()
@@ -392,13 +404,25 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
 
     // Check if any @file references were removed and remove them from context
+    // Only remove if:
+    // 1. The file reference existed in the previous input
+    // 2. The file reference is missing in the new input
+    // 3. The new input is shorter than the previous (user deleted it, not cleared programmatically)
+    // This prevents removing files when input is cleared after submission
     const removedFiles: string[] = []
-    chatFileContext.forEach((file: { path: string }) => {
-      const fileReference = '@' + file.path
-      if (!newValue.includes(fileReference)) {
-        removedFiles.push(file.path)
-      }
-    })
+    if (previousValue.length > newValue.length) {
+      // Only check for removed files if the input got shorter (user deletion, not programmatic clearing)
+      chatFileContext.forEach((file: { path: string }) => {
+        const fileReference = '@' + file.path
+        const wasInPrevious = previousValue.includes(fileReference)
+        const isInNew = newValue.includes(fileReference)
+        
+        // Only remove if it was in previous but not in new (user explicitly deleted it)
+        if (wasInPrevious && !isInNew) {
+          removedFiles.push(file.path)
+        }
+      })
+    }
 
     // Remove files that are no longer referenced
     removedFiles.forEach(filePath => {

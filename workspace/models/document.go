@@ -144,3 +144,11 @@ type CopyFolderResponse struct {
 	FilesCopied     int    `json:"files_copied"`
 	DirsCreated     int    `json:"dirs_created"`
 }
+
+// GlobDocumentsRequest represents the request to discover files using glob patterns
+type GlobDocumentsRequest struct {
+	Pattern     string `form:"pattern" binding:"required"` // Glob pattern (e.g., "*.go", "**/*.md")
+	Folder      string `form:"folder"`                     // Base directory to search within (default: root)
+	MaxDepth    int    `form:"max_depth,default=-1"`       // Max directory depth (-1 = unlimited)
+	IncludeDirs bool   `form:"include_dirs,default=false"` // Include directories in results
+}

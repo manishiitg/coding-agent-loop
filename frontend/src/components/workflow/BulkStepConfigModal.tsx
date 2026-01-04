@@ -4,6 +4,7 @@ import { Button } from "../ui/Button";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "../ui/accordion";
 import { useLLMStore } from "../../stores";
 import { useGlobalPresetStore } from "../../stores/useGlobalPresetStore";
+import { useWorkflowStore } from "../../stores/useWorkflowStore";
 import type {
   AgentLLMConfig,
   AgentConfigs,
@@ -34,6 +35,12 @@ export default function BulkStepConfigModal({
   const { availableLLMs } = useLLMStore();
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  
+  // Tool Access Control from workflow store
+  const disableShellExecAccess = useWorkflowStore(state => state.disableShellExecAccess);
+  const setDisableShellExecAccess = useWorkflowStore(state => state.setDisableShellExecAccess);
+  const disableReadImageAccess = useWorkflowStore(state => state.disableReadImageAccess);
+  const setDisableReadImageAccess = useWorkflowStore(state => state.setDisableReadImageAccess);
 
   // Get preset for default LLMs
   const activePresetId = useGlobalPresetStore(
@@ -382,25 +389,29 @@ export default function BulkStepConfigModal({
       className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
       style={{ zIndex: 50 }}
     >
-      <div className="bg-background border border-border rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+      <div className="bg-background border border-border rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <Settings className="w-5 h-5 text-primary" />
-            <h2 className="text-lg font-semibold text-foreground">
-              Bulk Step Configuration
-            </h2>
-            {stepCount > 0 && (
-              <span className="text-sm text-muted-foreground">
-                ({stepCount} {stepCount === 1 ? "step" : "steps"})
-              </span>
-            )}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-gradient-to-r from-background to-muted/20 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-primary/10">
+              <Settings className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-foreground">
+                Bulk Step Configuration
+              </h2>
+              {stepCount > 0 && (
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {stepCount} {stepCount === 1 ? "step" : "steps"} will be updated
+                </p>
+              )}
+            </div>
           </div>
           <Button
             variant="ghost"
             size="sm"
             onClick={onClose}
-            className="h-8 w-8 p-0 hover:bg-secondary"
+            className="h-9 w-9 p-0 hover:bg-secondary rounded-lg"
             disabled={applyingAction !== null}
           >
             <X className="w-4 h-4" />
@@ -408,12 +419,12 @@ export default function BulkStepConfigModal({
         </div>
 
         {/* Description */}
-        <div className="px-4 py-3 border-b border-border bg-muted/30">
-          <div className="flex items-start gap-2 text-sm text-muted-foreground">
-            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+        <div className="px-6 py-3 border-b border-border bg-muted/40">
+          <div className="flex items-start gap-2.5 text-sm text-muted-foreground">
+            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-500" />
             <div>
-              <p>
-                Apply configuration changes to <strong>all steps</strong> in the
+              <p className="leading-relaxed">
+                Apply configuration changes to <strong className="text-foreground">all steps</strong> in the
                 workflow, including branch steps. Only fields you configure
                 below will be updated.
               </p>
@@ -422,55 +433,64 @@ export default function BulkStepConfigModal({
         </div>
 
         {/* Content */}
-        <div className="flex-1 p-6 space-y-4 min-h-[400px] overflow-y-auto">
-          <Accordion type="multiple" defaultValue={["llm", "validation", "learning"]} className="w-full space-y-2">
+        <div className="flex-1 p-6 space-y-3 min-h-[400px] overflow-y-auto">
+          <Accordion type="multiple" defaultValue={["llm", "validation", "learning", "agent-mode", "tools-advanced"]} className="w-full space-y-3">
             {/* LLM Configuration Section */}
-            <AccordionItem value="llm" className="border border-border rounded-lg px-4 bg-muted/20">
-              <AccordionTrigger className="hover:no-underline">
-                <div className="flex items-center gap-2">
-                  <Brain className="w-4 h-4 text-primary" />
-                  <span className="font-semibold">LLM Configuration</span>
+            <AccordionItem value="llm" className="border border-border rounded-xl bg-muted/10 hover:bg-muted/20 transition-colors shadow-sm">
+              <AccordionTrigger className="hover:no-underline px-5 py-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-1.5 rounded-md bg-purple-500/10">
+                    <Brain className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                  </div>
+                  <span className="font-semibold text-base">LLM Configuration</span>
                 </div>
               </AccordionTrigger>
-              <AccordionContent className="pt-4 pb-6">
-                <p className="text-xs text-muted-foreground mb-4">
+              <AccordionContent className="px-5 pt-2 pb-6">
+                <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
                   Configure which LLM models to use for execution, validation, and learning phases across all steps.
                 </p>
                 <div className="grid grid-cols-1 gap-3">
                   {/* Set Execution LLM from Preset */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() =>
                         handleImmediateAction("set_execution_llm", presetExecutionLLM)
                       }
                       disabled={applyingAction !== null || !presetExecutionLLM}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-primary/5 hover:border-primary/50 transition-all"
                       title={
                         presetExecutionLLM
                           ? `Set to preset default: ${presetExecutionLLM.label}`
                           : "No preset execution LLM configured"
                       }
                     >
-                      {applyingAction === "set_execution_llm" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <Brain className="w-4 h-4 mr-2" />
-                          Set Execution LLM{presetExecutionLLM ? ` (${presetExecutionLLM.label})` : ""}
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "set_execution_llm" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Brain className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                            <div className="flex-1 text-left">
+                              <div className="font-medium text-sm">Set Execution LLM</div>
+                              {presetExecutionLLM && (
+                                <div className="text-xs text-muted-foreground mt-0.5">{presetExecutionLLM.label}</div>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Sets the LLM used by execution agents to perform step tasks
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Sets the LLM model used by execution agents to perform step tasks. This is the primary model that will attempt to complete each step's objectives.
                     </p>
                   </div>
 
                   {/* Set Validation LLM from Preset */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() =>
@@ -480,59 +500,73 @@ export default function BulkStepConfigModal({
                         )
                       }
                       disabled={applyingAction !== null || !presetValidationLLM}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-primary/5 hover:border-primary/50 transition-all"
                       title={
                         presetValidationLLM
                           ? `Set to preset default: ${presetValidationLLM.label}`
                           : "No preset validation LLM configured"
                       }
                     >
-                      {applyingAction === "set_validation_llm" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <Shield className="w-4 h-4 mr-2" />
-                          Set Validation LLM{presetValidationLLM ? ` (${presetValidationLLM.label})` : ""}
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "set_validation_llm" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Shield className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                            <div className="flex-1 text-left">
+                              <div className="font-medium text-sm">Set Validation LLM</div>
+                              {presetValidationLLM && (
+                                <div className="text-xs text-muted-foreground mt-0.5">{presetValidationLLM.label}</div>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Sets the LLM used by validation agents to verify step outputs
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Sets the LLM model used by validation agents to verify step outputs meet success criteria. This model checks if the execution results are correct and complete.
                     </p>
                   </div>
 
                   {/* Set Learning LLM from Preset */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() =>
                         handleImmediateAction("set_learning_llm", presetLearningLLM)
                       }
                       disabled={applyingAction !== null || !presetLearningLLM}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-primary/5 hover:border-primary/50 transition-all"
                       title={
                         presetLearningLLM
                           ? `Set to preset default: ${presetLearningLLM.label}`
                           : "No preset learning LLM configured"
                       }
                     >
-                      {applyingAction === "set_learning_llm" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <BookOpen className="w-4 h-4 mr-2" />
-                          Set Learning LLM{presetLearningLLM ? ` (${presetLearningLLM.label})` : ""}
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "set_learning_llm" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <BookOpen className="w-4 h-4 text-green-600 dark:text-green-400" />
+                            <div className="flex-1 text-left">
+                              <div className="font-medium text-sm">Set Learning LLM</div>
+                              {presetLearningLLM && (
+                                <div className="text-xs text-muted-foreground mt-0.5">{presetLearningLLM.label}</div>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Sets the LLM used by learning agents to extract insights from step execution
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Sets the LLM model used by learning agents to extract insights and patterns from step execution. These insights help improve future step performance.
                     </p>
                   </div>
                 </div>
@@ -540,115 +574,125 @@ export default function BulkStepConfigModal({
             </AccordionItem>
 
             {/* Validation Settings Section */}
-            <AccordionItem value="validation" className="border border-border rounded-lg px-4 bg-muted/20">
-              <AccordionTrigger className="hover:no-underline">
-                <div className="flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-primary" />
-                  <span className="font-semibold">Validation Settings</span>
+            <AccordionItem value="validation" className="border border-border rounded-xl bg-muted/10 hover:bg-muted/20 transition-colors shadow-sm">
+              <AccordionTrigger className="hover:no-underline px-5 py-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-1.5 rounded-md bg-blue-500/10">
+                    <Shield className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  </div>
+                  <span className="font-semibold text-base">Validation Settings</span>
                 </div>
               </AccordionTrigger>
-              <AccordionContent className="pt-4 pb-6">
-                <p className="text-xs text-muted-foreground mb-4">
+              <AccordionContent className="px-5 pt-2 pb-6">
+                <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
                   Control validation behavior for all steps. Validation ensures step outputs meet quality standards.
                 </p>
-                <div className="grid grid-cols-1 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Disable Validation */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() => handleImmediateAction("disable_validation")}
                       disabled={applyingAction !== null}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800 transition-all"
                     >
-                      {applyingAction === "disable_validation" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <X className="w-4 h-4 mr-2 text-red-500" />
-                          Disable Validation
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "disable_validation" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <X className="w-4 h-4 text-red-500" />
+                            <span className="font-medium text-sm">Disable Validation</span>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Turns off validation phase entirely - steps will proceed without quality checks
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Turns off the validation phase entirely. Steps will proceed without quality checks, which is faster but may allow incorrect outputs.
                     </p>
                   </div>
 
                   {/* Enable Validation */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() => handleImmediateAction("enable_validation")}
                       disabled={applyingAction !== null}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-green-50 dark:hover:bg-green-950/20 hover:border-green-300 dark:hover:border-green-800 transition-all"
                     >
-                      {applyingAction === "enable_validation" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle2 className="w-4 h-4 mr-2 text-green-500" />
-                          Enable Validation
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "enable_validation" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-4 h-4 text-green-500" />
+                            <span className="font-medium text-sm">Enable Validation</span>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Enables validation phase to verify step outputs meet success criteria
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Enables the validation phase to verify step outputs meet success criteria. This ensures quality but adds execution time.
                     </p>
                   </div>
 
                   {/* Skip LLM Validation */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() => handleImmediateAction("skip_llm_validation")}
                       disabled={applyingAction !== null}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-orange-50 dark:hover:bg-orange-950/20 hover:border-orange-300 dark:hover:border-orange-800 transition-all"
                     >
-                      {applyingAction === "skip_llm_validation" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <Shield className="w-4 h-4 mr-2 text-orange-500" />
-                          Skip LLM Validation
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "skip_llm_validation" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Shield className="w-4 h-4 text-orange-500" />
+                            <span className="font-medium text-sm">Skip LLM Validation</span>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Skips LLM-based validation when pre-validation (schema/pattern checks) passes - faster execution
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Skips LLM-based validation when pre-validation (schema/pattern checks) passes. Faster execution while still checking basic requirements.
                     </p>
                   </div>
 
                   {/* Enable LLM Validation */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() => handleImmediateAction("enable_llm_validation")}
                       disabled={applyingAction !== null}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-800 transition-all"
                     >
-                      {applyingAction === "enable_llm_validation" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <Shield className="w-4 h-4 mr-2 text-blue-500" />
-                          Enable LLM Validation
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "enable_llm_validation" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Shield className="w-4 h-4 text-blue-500" />
+                            <span className="font-medium text-sm">Enable LLM Validation</span>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Ensures LLM validation always runs, even when pre-validation passes - more thorough checks
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Ensures LLM validation always runs, even when pre-validation passes. More thorough checks but slower execution.
                     </p>
                   </div>
                 </div>
@@ -656,165 +700,179 @@ export default function BulkStepConfigModal({
             </AccordionItem>
 
             {/* Learning Settings Section */}
-            <AccordionItem value="learning" className="border border-border rounded-lg px-4 bg-muted/20">
-              <AccordionTrigger className="hover:no-underline">
-                <div className="flex items-center gap-2">
-                  <BookOpen className="w-4 h-4 text-primary" />
-                  <span className="font-semibold">Learning Settings</span>
+            <AccordionItem value="learning" className="border border-border rounded-xl bg-muted/10 hover:bg-muted/20 transition-colors shadow-sm">
+              <AccordionTrigger className="hover:no-underline px-5 py-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-1.5 rounded-md bg-green-500/10">
+                    <BookOpen className="w-4 h-4 text-green-600 dark:text-green-400" />
+                  </div>
+                  <span className="font-semibold text-base">Learning Settings</span>
                 </div>
               </AccordionTrigger>
-              <AccordionContent className="pt-4 pb-6">
-                <p className="text-xs text-muted-foreground mb-4">
+              <AccordionContent className="px-5 pt-2 pb-6">
+                <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
                   Control learning behavior. Learning agents extract insights and patterns from step execution to improve future performance.
                 </p>
-                <div className="grid grid-cols-1 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Disable Learning */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() => handleImmediateAction("disable_learning")}
                       disabled={applyingAction !== null}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800 transition-all"
                     >
-                      {applyingAction === "disable_learning" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <X className="w-4 h-4 mr-2 text-red-500" />
-                          Disable Learning
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "disable_learning" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <X className="w-4 h-4 text-red-500" />
+                            <span className="font-medium text-sm">Disable Learning</span>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Turns off learning phase - no insights will be extracted from step execution
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Turns off the learning phase entirely. No insights will be extracted from step execution, which speeds up execution but prevents knowledge accumulation.
                     </p>
                   </div>
 
                   {/* Enable Learning */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() => handleImmediateAction("enable_learning")}
                       disabled={applyingAction !== null}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-green-50 dark:hover:bg-green-950/20 hover:border-green-300 dark:hover:border-green-800 transition-all"
                     >
-                      {applyingAction === "enable_learning" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle2 className="w-4 h-4 mr-2 text-green-500" />
-                          Enable Learning
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "enable_learning" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-4 h-4 text-green-500" />
+                            <span className="font-medium text-sm">Enable Learning</span>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Enables learning phase to extract insights and improve future step execution
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Enables the learning phase to extract insights and patterns from step execution. These insights help improve future step performance.
                     </p>
                   </div>
 
                   {/* Lock Learnings */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() => handleImmediateAction("lock_learnings")}
                       disabled={applyingAction !== null}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-yellow-50 dark:hover:bg-yellow-950/20 hover:border-yellow-300 dark:hover:border-yellow-800 transition-all"
                     >
-                      {applyingAction === "lock_learnings" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <Settings className="w-4 h-4 mr-2 text-yellow-500" />
-                          Lock Learnings
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "lock_learnings" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Settings className="w-4 h-4 text-yellow-500" />
+                            <span className="font-medium text-sm">Lock Learnings</span>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Prevents new learning from being generated but still uses existing learnings
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Prevents new learning from being generated but still uses existing learnings. Useful when you want to preserve current knowledge without modification.
                     </p>
                   </div>
 
                   {/* Unlock Learnings */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() => handleImmediateAction("unlock_learnings")}
                       disabled={applyingAction !== null}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-800 transition-all"
                     >
-                      {applyingAction === "unlock_learnings" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <Settings className="w-4 h-4 mr-2 text-blue-500" />
-                          Unlock Learnings
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "unlock_learnings" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Settings className="w-4 h-4 text-blue-500" />
+                            <span className="font-medium text-sm">Unlock Learnings</span>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Allows learning agents to generate new insights from step execution
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Allows learning agents to generate new insights from step execution. Enables continuous improvement of workflow knowledge.
                     </p>
                   </div>
 
                   {/* Set Learning Detail Level to Exact */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() => handleImmediateAction("set_learning_detail_level_exact")}
                       disabled={applyingAction !== null}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-primary/5 hover:border-primary/50 transition-all"
                     >
-                      {applyingAction === "set_learning_detail_level_exact" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <Info className="w-4 h-4 mr-2" />
-                          Set Learning Detail: Exact
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "set_learning_detail_level_exact" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Info className="w-4 h-4 text-primary" />
+                            <span className="font-medium text-sm">Set Detail: Exact</span>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Learning agents will extract precise, step-specific insights (more detailed, step-specific)
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Learning agents will extract precise, step-specific insights. More detailed and specific to each step, useful for complex workflows.
                     </p>
                   </div>
 
                   {/* Set Learning Detail Level to General */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() => handleImmediateAction("set_learning_detail_level_general")}
                       disabled={applyingAction !== null}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-primary/5 hover:border-primary/50 transition-all"
                     >
-                      {applyingAction === "set_learning_detail_level_general" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <Info className="w-4 h-4 mr-2" />
-                          Set Learning Detail: General
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "set_learning_detail_level_general" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Info className="w-4 h-4 text-primary" />
+                            <span className="font-medium text-sm">Set Detail: General</span>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Learning agents will extract high-level, reusable patterns (broader insights, less step-specific)
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Learning agents will extract high-level, reusable patterns. Broader insights that can be applied across multiple steps.
                     </p>
                   </div>
                 </div>
@@ -822,65 +880,71 @@ export default function BulkStepConfigModal({
             </AccordionItem>
 
             {/* Agent Mode Section */}
-            <AccordionItem value="agent-mode" className="border border-border rounded-lg px-4 bg-muted/20">
-              <AccordionTrigger className="hover:no-underline">
-                <div className="flex items-center gap-2">
-                  <Code2 className="w-4 h-4 text-primary" />
-                  <span className="font-semibold">Agent Mode</span>
+            <AccordionItem value="agent-mode" className="border border-border rounded-xl bg-muted/10 hover:bg-muted/20 transition-colors shadow-sm">
+              <AccordionTrigger className="hover:no-underline px-5 py-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-1.5 rounded-md bg-indigo-500/10">
+                    <Code2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  </div>
+                  <span className="font-semibold text-base">Agent Mode</span>
                 </div>
               </AccordionTrigger>
-              <AccordionContent className="pt-4 pb-6">
-                <p className="text-xs text-muted-foreground mb-4">
+              <AccordionContent className="px-5 pt-2 pb-6">
+                <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
                   Choose the execution mode for agents. Code execution mode enables code generation and execution capabilities.
                 </p>
-                <div className="grid grid-cols-1 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Set Agent Mode to Code Exec */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() => handleImmediateAction("set_code_execution_mode")}
                       disabled={applyingAction !== null}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-indigo-50 dark:hover:bg-indigo-950/20 hover:border-indigo-300 dark:hover:border-indigo-800 transition-all"
                     >
-                      {applyingAction === "set_code_execution_mode" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <Code2 className="w-4 h-4 mr-2" />
-                          Set Agent Mode: Code Execution
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "set_code_execution_mode" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Code2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                            <span className="font-medium text-sm">Code Execution Mode</span>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Enables code generation and execution - agents can write and run code to complete tasks (auto-enables learning & validation)
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Enables code generation and execution capabilities. Agents can write and run code to complete tasks. Automatically enables learning and validation.
                     </p>
                   </div>
 
                   {/* Set Agent Mode to Simple */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() => handleImmediateAction("set_simple_mode")}
                       disabled={applyingAction !== null}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-purple-50 dark:hover:bg-purple-950/20 hover:border-purple-300 dark:hover:border-purple-800 transition-all"
                     >
-                      {applyingAction === "set_simple_mode" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-4 h-4 mr-2" />
-                          Set Agent Mode: Simple
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "set_simple_mode" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                            <span className="font-medium text-sm">Simple Mode</span>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Disables code execution - agents use only tools and natural language (faster, simpler execution)
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Disables code execution. Agents use only tools and natural language. Faster and simpler execution, suitable for straightforward tasks.
                     </p>
                   </div>
                 </div>
@@ -888,106 +952,194 @@ export default function BulkStepConfigModal({
             </AccordionItem>
 
             {/* Tools & Advanced Section */}
-            <AccordionItem value="tools-advanced" className="border border-border rounded-lg px-4 bg-muted/20">
-              <AccordionTrigger className="hover:no-underline">
-                <div className="flex items-center gap-2">
-                  <Wrench className="w-4 h-4 text-primary" />
-                  <span className="font-semibold">Tools & Advanced</span>
+            <AccordionItem value="tools-advanced" className="border border-border rounded-xl bg-muted/10 hover:bg-muted/20 transition-colors shadow-sm">
+              <AccordionTrigger className="hover:no-underline px-5 py-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-1.5 rounded-md bg-amber-500/10">
+                    <Wrench className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <span className="font-semibold text-base">Tools & Advanced</span>
                 </div>
               </AccordionTrigger>
-              <AccordionContent className="pt-4 pb-6">
-                <p className="text-xs text-muted-foreground mb-4">
+              <AccordionContent className="px-5 pt-2 pb-6">
+                <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
                   Configure tool access and execution parameters for all steps.
                 </p>
-                <div className="space-y-4">
+                <div className="space-y-5">
                   {/* Disable Human Feedback Tools */}
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     <Button
                       variant="outline"
                       onClick={() => handleImmediateAction("disable_human_tools")}
                       disabled={applyingAction !== null}
-                      className="w-full justify-start"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800 transition-all"
                     >
-                      {applyingAction === "disable_human_tools" ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <X className="w-4 h-4 mr-2 text-red-500" />
-                          Disable Human Feedback Tools
-                        </>
-                      )}
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "disable_human_tools" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <X className="w-4 h-4 text-red-500" />
+                            <span className="font-medium text-sm">Disable Human Feedback Tools</span>
+                          </>
+                        )}
+                      </div>
                     </Button>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Removes human feedback tools from available tools - agents cannot request human input
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Removes human feedback tools from available tools. Agents cannot request human input during execution, enabling fully automated workflows.
                     </p>
                   </div>
 
+                  {/* Tool Access Control Section */}
+                  <div className="space-y-4 pt-4 border-t border-border">
+                    <div className="flex items-center gap-2.5 mb-3">
+                      <div className="p-1 rounded-md bg-blue-500/10">
+                        <Shield className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      </div>
+                      <div className="text-sm font-semibold text-foreground">
+                        Tool Access Control
+                      </div>
+                    </div>
+                    
+                    {/* Disable/Enable Shell Exec Access */}
+                    <div className="space-y-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => setDisableShellExecAccess(!disableShellExecAccess)}
+                        className={`w-full justify-start h-auto py-3 px-4 transition-all ${
+                          disableShellExecAccess
+                            ? "hover:bg-green-50 dark:hover:bg-green-950/20 hover:border-green-300 dark:hover:border-green-800"
+                            : "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 w-full">
+                          {disableShellExecAccess ? (
+                            <>
+                              <CheckCircle2 className="w-4 h-4 text-green-500" />
+                              <span className="font-medium text-sm">Enable Shell Exec Access</span>
+                            </>
+                          ) : (
+                            <>
+                              <X className="w-4 h-4 text-red-500" />
+                              <span className="font-medium text-sm">Disable Shell Exec Access</span>
+                            </>
+                          )}
+                        </div>
+                      </Button>
+                      <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                        {disableShellExecAccess ? (
+                          <>Currently disabled. Click to enable the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">execute_shell_command</code> tool globally for all workflow execution agents.</>
+                        ) : (
+                          <>Disables the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">execute_shell_command</code> tool globally for all workflow execution agents. This prevents agents from executing shell commands, providing an additional security layer for sensitive environments.</>
+                        )}
+                      </p>
+                    </div>
+
+                    {/* Disable/Enable Read Image Access */}
+                    <div className="space-y-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => setDisableReadImageAccess(!disableReadImageAccess)}
+                        className={`w-full justify-start h-auto py-3 px-4 transition-all ${
+                          disableReadImageAccess
+                            ? "hover:bg-green-50 dark:hover:bg-green-950/20 hover:border-green-300 dark:hover:border-green-800"
+                            : "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 w-full">
+                          {disableReadImageAccess ? (
+                            <>
+                              <CheckCircle2 className="w-4 h-4 text-green-500" />
+                              <span className="font-medium text-sm">Enable Read Image Access</span>
+                            </>
+                          ) : (
+                            <>
+                              <X className="w-4 h-4 text-red-500" />
+                              <span className="font-medium text-sm">Disable Read Image Access</span>
+                            </>
+                          )}
+                        </div>
+                      </Button>
+                      <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                        {disableReadImageAccess ? (
+                          <>Currently disabled. Click to enable the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">read_image</code> tool globally for all workflow execution agents.</>
+                        ) : (
+                          <>Disables the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">read_image</code> tool globally for all workflow execution agents. This prevents agents from reading and analyzing image files, useful for workflows that don't require image processing.</>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+
                   {/* Execution Max Turns Section */}
-                  <div className="space-y-3 pt-2 border-t border-border">
-                    <div className="flex items-center gap-2">
-                      <Settings className="w-4 h-4 text-muted-foreground" />
-                      <div className="text-sm font-medium text-foreground">
+                  <div className="space-y-3 pt-4 border-t border-border">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1 rounded-md bg-gray-500/10">
+                        <Settings className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+                      </div>
+                      <div className="text-sm font-semibold text-foreground">
                         Execution Max Turns
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <label className="text-sm text-muted-foreground whitespace-nowrap">
-                        Max Turns:
-                      </label>
-                      <select
-                        value={selectedMaxTurns}
-                        onChange={(e) => setSelectedMaxTurns(parseInt(e.target.value))}
-                        disabled={applyingAction !== null}
-                        className="flex-1 px-3 py-2 text-sm border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {[10, 25, 50, 75, 100].map((value) => (
-                          <option key={value} value={value}>
-                            {value} turns
-                          </option>
-                        ))}
-                      </select>
-                      <Button
-                        variant="outline"
-                        onClick={() =>
-                          handleImmediateAction("set_execution_max_turns", null, selectedMaxTurns)
-                        }
-                        disabled={applyingAction !== null}
-                        className="whitespace-nowrap"
-                      >
-                        {applyingAction === "set_execution_max_turns" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Applying...
-                          </>
-                        ) : (
-                          "Apply"
-                        )}
-                      </Button>
+                    <div className="bg-muted/30 rounded-lg p-4 border border-border/50">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <label className="text-sm font-medium text-foreground whitespace-nowrap">
+                          Max Turns:
+                        </label>
+                        <select
+                          value={selectedMaxTurns}
+                          onChange={(e) => setSelectedMaxTurns(parseInt(e.target.value))}
+                          disabled={applyingAction !== null}
+                          className="flex-1 min-w-[120px] px-3 py-2 text-sm border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {[10, 25, 50, 75, 100].map((value) => (
+                            <option key={value} value={value}>
+                              {value} turns
+                            </option>
+                          ))}
+                        </select>
+                        <Button
+                          variant="outline"
+                          onClick={() =>
+                            handleImmediateAction("set_execution_max_turns", null, selectedMaxTurns)
+                          }
+                          disabled={applyingAction !== null}
+                          className="whitespace-nowrap hover:bg-primary hover:text-primary-foreground transition-colors"
+                        >
+                          {applyingAction === "set_execution_max_turns" ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Applying...
+                            </>
+                          ) : (
+                            "Apply"
+                          )}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-3 leading-relaxed">
+                        Maximum number of conversation turns allowed for execution agents per step. Prevents infinite loops and controls execution time. Higher values allow more complex reasoning but may increase costs.
+                      </p>
                     </div>
-                    <p className="text-xs text-muted-foreground ml-6">
-                      Maximum number of conversation turns allowed for execution agents per step (prevents infinite loops)
-                    </p>
                   </div>
                 </div>
               </AccordionContent>
             </AccordionItem>
           </Accordion>
 
-          <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-md">
-            <div className="flex items-start gap-2 text-xs text-blue-700 dark:text-blue-300">
-              <Info className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <p>
-                <strong>Note:</strong> All actions are applied immediately to all steps in the workflow, including branch steps. Changes take effect right away - no need to click a separate "Apply" button.
+          <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+            <div className="flex items-start gap-3 text-sm text-blue-700 dark:text-blue-300">
+              <Info className="w-5 h-5 mt-0.5 flex-shrink-0" />
+              <p className="leading-relaxed">
+                <strong className="font-semibold">Note:</strong> All actions are applied immediately to all steps in the workflow, including branch steps. Changes take effect right away - no need to click a separate "Apply" button.
               </p>
             </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between p-4 border-t border-border bg-muted/30 flex-shrink-0">
+        <div className="flex items-center justify-between px-6 py-4 border-t border-border bg-muted/40 flex-shrink-0">
           <div className="flex items-center gap-2">
             {saveSuccess && (
               <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">

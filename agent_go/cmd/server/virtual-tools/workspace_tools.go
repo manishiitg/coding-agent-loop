@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -517,6 +518,38 @@ func CreateWorkspaceTools() []llmtypes.Tool {
 	}
 	workspaceTools = append(workspaceTools, semanticSearchTool)
 
+	// Add glob_discover_workspace_files tool
+	globDiscoverTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "glob_discover_workspace_files",
+			Description: "Discover files in the workspace using glob patterns. Supports standard glob syntax: * (matches any characters), ? (matches single character), [chars] (matches character set), and ** (matches zero or more directories recursively). Examples: '*.go' finds all Go files, '**/*.md' finds all Markdown files recursively, 'docs/**/*.txt' finds all text files in docs and subdirectories.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"pattern": map[string]interface{}{
+						"type":        "string",
+						"description": "Glob pattern to match files (e.g., '*.go', '**/*.md', 'docs/**/*.txt', 'test_*.py'). Supports * for any characters, ? for single character, [chars] for character set, and ** for recursive directory matching.",
+					},
+					"folder": map[string]interface{}{
+						"type":        "string",
+						"description": "Folder path to search within (e.g., 'docs', 'src', 'configs'). If not specified, searches from workspace root.",
+					},
+					"max_depth": map[string]interface{}{
+						"type":        "integer",
+						"description": "Maximum depth of directories to search recursively (default: unlimited, -1 for unlimited)",
+					},
+					"include_dirs": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Include directories in results (default: false, only files are returned)",
+					},
+				},
+				"required": []string{"pattern"},
+			}),
+		},
+	}
+	workspaceTools = append(workspaceTools, globDiscoverTool)
+
 	// Add sync_workspace_to_github tool
 	syncGitHubTool := llmtypes.Tool{
 		Type: "function",
@@ -696,6 +729,7 @@ func CreateWorkspaceToolExecutors() map[string]func(ctx context.Context, args ma
 	// executors["get_workspace_file_nested"] = handleGetWorkspaceFileNested // REMOVED - no longer needed
 	executors["regex_search_workspace_files"] = handleRegexSearchWorkspaceFiles
 	executors["semantic_search_workspace_files"] = handleSemanticSearchWorkspaceFiles
+	executors["glob_discover_workspace_files"] = handleGlobDiscoverWorkspaceFiles
 	executors["sync_workspace_to_github"] = handleSyncWorkspaceToGitHub
 	executors["get_workspace_github_status"] = handleGetWorkspaceGitHubStatus
 	executors["delete_workspace_file"] = handleDeleteWorkspaceFile
@@ -1317,6 +1351,171 @@ func handleSemanticSearchWorkspaceFiles(ctx context.Context, args map[string]int
 
 	// Format the semantic search results for the LLM
 	return formatSemanticSearchResults(apiResp.Data, query)
+}
+
+// handleGlobDiscoverWorkspaceFiles handles the glob_discover_workspace_files tool execution
+func handleGlobDiscoverWorkspaceFiles(ctx context.Context, args map[string]interface{}) (string, error) {
+	// Extract parameters
+	pattern, ok := args["pattern"].(string)
+	if !ok || pattern == "" {
+		return "", fmt.Errorf("pattern is required and must be a string")
+	}
+
+	folder := getStringValue(args, "folder")
+
+	maxDepth := getIntValue(args, "max_depth")
+	if maxDepth == 0 {
+		maxDepth = -1 // Default to unlimited
+	}
+
+	includeDirs := getBoolValue(args, "include_dirs")
+
+	// Build API URL with proper URL encoding
+	baseURL := getWorkspaceAPIURL() + "/api/documents/glob"
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse base URL: %w", err)
+	}
+
+	// Add query parameters with proper encoding
+	q := u.Query()
+	q.Set("pattern", pattern)
+	if folder != "" {
+		q.Set("folder", folder)
+	}
+	if maxDepth >= 0 {
+		q.Set("max_depth", fmt.Sprintf("%d", maxDepth))
+	}
+	if includeDirs {
+		q.Set("include_dirs", "true")
+	}
+	u.RawQuery = q.Encode()
+
+	apiURL := u.String()
+
+	// Create HTTP request with context
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set timeout
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Make the request
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check HTTP status
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse JSON response
+	var apiResp WorkspaceAPIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return "", fmt.Errorf("failed to parse API response: %w", err)
+	}
+
+	// Check API response success
+	if !apiResp.Success {
+		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
+	}
+
+	// Format the glob discovery results for the LLM
+	return formatGlobDiscoveryResults(apiResp.Data, pattern)
+}
+
+// formatGlobDiscoveryResults formats the glob discovery results for the LLM
+func formatGlobDiscoveryResults(data interface{}, pattern string) (string, error) {
+	// Convert data to array of documents
+	var documents []WorkspaceFolderItem
+	switch v := data.(type) {
+	case []interface{}:
+		// Convert []interface{} to []WorkspaceFolderItem
+		for _, item := range v {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				doc := WorkspaceFolderItem{
+					Filepath:    getStringValue(itemMap, "filepath"),
+					Folder:      getStringValue(itemMap, "folder"),
+					Name:        getStringValue(itemMap, "name"),
+					Size:        int64(getIntValue(itemMap, "size")),
+					Type:        getStringValue(itemMap, "type"),
+					IsDirectory: getBoolValue(itemMap, "is_directory"),
+				}
+				// Parse ModifiedAt if present
+				if modTimeStr := getStringValue(itemMap, "modified_at"); modTimeStr != "" {
+					if t, err := time.Parse(time.RFC3339, modTimeStr); err == nil {
+						doc.ModifiedAt = t
+					}
+				}
+				documents = append(documents, doc)
+			}
+		}
+	default:
+		return "", fmt.Errorf("unexpected response format from glob API - expected array, got %T", data)
+	}
+
+	// Format the response
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("🔍 **Glob Pattern Discovery: `%s`**\n", pattern))
+	result.WriteString(fmt.Sprintf("**Found %d matching files**:\n", len(documents)))
+
+	if len(documents) == 0 {
+		result.WriteString("No files found matching the glob pattern.\n")
+		result.WriteString("💡 **Tips**:\n")
+		result.WriteString("- Use `*` to match any characters (e.g., `*.go`)\n")
+		result.WriteString("- Use `**` to match directories recursively (e.g., `**/*.md`)\n")
+		result.WriteString("- Use `?` to match a single character (e.g., `test?.py`)\n")
+		result.WriteString("- Use `[chars]` to match character sets (e.g., `file[0-9].txt`)\n")
+		return result.String(), nil
+	}
+
+	// Sort documents: directories first (if included), then by filepath
+	sort.Slice(documents, func(i, j int) bool {
+		if documents[i].IsDirectory != documents[j].IsDirectory {
+			return documents[i].IsDirectory
+		}
+		return documents[i].Filepath < documents[j].Filepath
+	})
+
+	for i, doc := range documents {
+		icon := "📄"
+		if doc.IsDirectory {
+			icon = "📁"
+		}
+
+		result.WriteString(fmt.Sprintf("%d. %s **%s**", i+1, icon, doc.Filepath))
+
+		if doc.Folder != "" {
+			result.WriteString(fmt.Sprintf(" | 📂 `%s`", doc.Folder))
+		}
+
+		if !doc.IsDirectory && doc.Size > 0 {
+			result.WriteString(fmt.Sprintf(" | 📊 %d bytes", doc.Size))
+		}
+
+		if !doc.ModifiedAt.IsZero() {
+			result.WriteString(fmt.Sprintf(" | 🕒 %s", doc.ModifiedAt.Format("2006-01-02 15:04:05")))
+		}
+
+		result.WriteString("\n")
+	}
+
+	result.WriteString("💡 **Tip**: Use `read_workspace_file` to read the content of any file.")
+
+	return result.String(), nil
 }
 
 // handleDeleteWorkspaceFile handles the delete_workspace_file tool execution

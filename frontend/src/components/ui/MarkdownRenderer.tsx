@@ -55,13 +55,14 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       <ReactMarkdown 
         remarkPlugins={[remarkGfm]}
         components={{
-          p: ({ children }) => <p className="mb-2 last:mb-0 text-sm leading-relaxed break-words overflow-wrap-anywhere">{children}</p>,
-          h1: ({ children }) => <h1 className="text-lg font-bold mb-2 break-words overflow-wrap-anywhere">{children}</h1>,
-          h2: ({ children }) => <h2 className="text-base font-semibold mb-2 break-words overflow-wrap-anywhere">{children}</h2>,
-          h3: ({ children }) => <h3 className="text-sm font-semibold mb-1 break-words overflow-wrap-anywhere">{children}</h3>,
-          ul: ({ children }) => <ul className="list-disc mb-2 space-y-1 ml-4 pl-2 min-w-0">{children}</ul>,
-          ol: ({ children }) => <ol className="list-decimal mb-2 space-y-1 ml-4 pl-2 min-w-0">{children}</ol>,
-          li: ({ children }) => <li className="text-sm break-words overflow-wrap-anywhere leading-relaxed mb-1 last:mb-0">{children}</li>,
+          p: ({ children }) => <p className="mb-2 last:mb-0 text-sm leading-6 text-gray-700 dark:text-gray-300 break-words overflow-wrap-anywhere">{children}</p>,
+          h1: ({ children }) => <h1 className="text-2xl font-bold mb-2 mt-4 first:mt-0 text-gray-900 dark:text-gray-100 break-words overflow-wrap-anywhere border-b border-gray-200 dark:border-gray-700 pb-2">{children}</h1>,
+          h2: ({ children }) => <h2 className="text-xl font-semibold mb-2 mt-3 first:mt-0 text-gray-900 dark:text-gray-100 break-words overflow-wrap-anywhere">{children}</h2>,
+          h3: ({ children }) => <h3 className="text-lg font-semibold mb-1.5 mt-2 first:mt-0 text-gray-900 dark:text-gray-100 break-words overflow-wrap-anywhere">{children}</h3>,
+          h4: ({ children }) => <h4 className="text-base font-semibold mb-1.5 mt-2 first:mt-0 text-gray-900 dark:text-gray-100 break-words overflow-wrap-anywhere">{children}</h4>,
+          ul: ({ children }) => <ul className="list-disc mb-2 space-y-1 ml-6 pl-2 min-w-0">{children}</ul>,
+          ol: ({ children }) => <ol className="list-decimal mb-2 space-y-1 ml-6 pl-2 min-w-0">{children}</ol>,
+          li: ({ children }) => <li className="text-sm break-words overflow-wrap-anywhere leading-6 text-gray-700 dark:text-gray-300">{children}</li>,
           code: ({ className, children, inline, ...props }: React.HTMLAttributes<HTMLElement> & { inline?: boolean }) => {
             const match = /language-(\w+)/.exec(className || '')
             const isInline = typeof inline === 'boolean' ? inline : false
@@ -69,7 +70,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             // For inline code, use simple styling
             if (isInline || !match) {
               return (
-                <code className="bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded text-xs font-mono break-all overflow-wrap-anywhere" {...props}>
+                <code className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-xs font-mono break-all overflow-wrap-anywhere text-blue-600 dark:text-blue-400" {...props}>
                   {children}
                 </code>
               )
@@ -84,7 +85,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                           document.documentElement.classList.contains('dark-plus')
             
             return (
-              <div className="my-2 min-w-0 max-w-full overflow-x-auto">
+              <div className="my-4 min-w-0 max-w-full overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
                 <SyntaxHighlighter
                   // @ts-expect-error: theme type mismatch is safe for SyntaxHighlighter
                   style={isDark ? (oneDark as { [key: string]: React.CSSProperties }) : (prism as { [key: string]: React.CSSProperties })}
@@ -93,14 +94,15 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                   className="!m-0 !p-0"
                   customStyle={{
                     margin: 0,
-                    padding: '0.75rem',
-                    borderRadius: '0.375rem',
-                    fontSize: '0.75rem',
-                    lineHeight: '1.5',
+                    padding: '1rem',
+                    borderRadius: '0.5rem',
+                    fontSize: '0.875rem',
+                    lineHeight: '1.6',
                     overflowX: 'auto',
                     maxWidth: '100%',
                     width: '100%',
                     boxSizing: 'border-box',
+                    background: isDark ? '#1f2937' : '#f9fafb',
                   }}
                   codeTagProps={{
                     style: {
@@ -126,41 +128,59 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             )
           },
           blockquote: ({ children }) => (
-            <blockquote className="border-l-4 border-gray-300 pl-3 italic text-sm break-words overflow-wrap-anywhere">
+            <blockquote className="border-l-4 border-blue-500 dark:border-blue-400 pl-4 py-1.5 my-2 bg-blue-50 dark:bg-blue-900/20 rounded-r text-sm break-words overflow-wrap-anywhere text-gray-700 dark:text-gray-300 italic">
               {children}
             </blockquote>
           ),
-          strong: ({ children }) => <strong className="font-semibold break-words overflow-wrap-anywhere">{children}</strong>,
+          strong: ({ children }) => <strong className="font-semibold break-words overflow-wrap-anywhere text-gray-900 dark:text-gray-100">{children}</strong>,
           em: ({ children }) => <em className="italic break-words overflow-wrap-anywhere">{children}</em>,
+          a: ({ href, children }) => (
+            <a 
+              href={href} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline break-words overflow-wrap-anywhere"
+            >
+              {children}
+            </a>
+          ),
+          img: ({ src, alt }) => (
+            <img 
+              src={src} 
+              alt={alt} 
+              className="max-w-full h-auto rounded-lg shadow-md my-4 border border-gray-200 dark:border-gray-700"
+            />
+          ),
+          hr: () => <hr className="my-6 border-gray-300 dark:border-gray-600" />,
           table: ({ children }) => (
-            <div className="overflow-x-auto my-4 min-w-0">
-              <table className="min-w-full border-collapse border border-gray-300 dark:border-gray-600">
+            <div className="overflow-x-auto my-6 min-w-0 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
+              <table className="min-w-full border-collapse">
                 {children}
               </table>
             </div>
           ),
           thead: ({ children }) => (
-            <thead className="bg-gray-50 dark:bg-gray-700">
+            <thead className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
               {children}
             </thead>
           ),
           tbody: ({ children }) => (
-            <tbody className="bg-white dark:bg-gray-800">
+            <tbody className="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
               {children}  
             </tbody>
           ),
           tr: ({ children }) => (
-            <tr className="border-b border-gray-200 dark:border-gray-600">
+            <tr className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
               {children}
             </tr>
           ),
           th: ({ children }) => (
-            <th className="border border-gray-300 dark:border-gray-600 px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider break-words overflow-wrap-anywhere">
+            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider break-words overflow-wrap-anywhere">
               {children}
             </th>
           ),
           td: ({ children }) => (
-            <td className="border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 break-words overflow-wrap-anywhere">
+            <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100 break-words overflow-wrap-anywhere">
               {children}
             </td>
           ),

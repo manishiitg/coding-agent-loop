@@ -25,6 +25,7 @@ export const TINY_MODE_ADDITIONAL_EVENTS = new Set([
   'agent_start',
   'agent_end',
   'agent_error',
+  'llm_generation_end',
 ]);
 
 // Helper function to check if an event should be shown based on event mode

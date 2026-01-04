@@ -7,15 +7,37 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/
 interface SemanticSearchSyncProps {
   onResync?: () => void
   isVisible?: boolean // Whether the workspace is visible (not minimized)
+  showDetailsExternal?: boolean // External control to show details panel
+  onDetailsClose?: () => void // Callback when details panel is closed
+  hideButton?: boolean // Hide the button, only show details panel
 }
 
-export default function SemanticSearchSync({ onResync, isVisible = true }: SemanticSearchSyncProps) {
+export default function SemanticSearchSync({ 
+  onResync, 
+  isVisible = true, 
+  showDetailsExternal,
+  onDetailsClose,
+  hideButton = false
+}: SemanticSearchSyncProps) {
   const [status, setStatus] = useState<SemanticSearchStatus | null>(null)
   const [jobStatus, setJobStatus] = useState<SemanticJobStatus | null>(null)
   const [loading, setLoading] = useState<boolean>(true)
   const [syncing, setSyncing] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const [showDetails, setShowDetails] = useState<boolean>(false)
+  
+  // Sync external control with internal state
+  useEffect(() => {
+    if (showDetailsExternal !== undefined) {
+      setShowDetails(showDetailsExternal)
+    }
+  }, [showDetailsExternal])
+  
+  // Handle closing details panel
+  const handleCloseDetails = useCallback(() => {
+    setShowDetails(false)
+    onDetailsClose?.()
+  }, [onDetailsClose])
   const [dryRun, setDryRun] = useState<boolean>(false)
   const [force, setForce] = useState<boolean>(false)
   
@@ -268,7 +290,7 @@ export default function SemanticSearchSync({ onResync, isVisible = true }: Seman
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && showDetails) {
-        setShowDetails(false)
+        handleCloseDetails()
       }
     }
 
@@ -279,7 +301,7 @@ export default function SemanticSearchSync({ onResync, isVisible = true }: Seman
     return () => {
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [showDetails])
+  }, [showDetails, handleCloseDetails])
 
   const getStatusColor = () => {
     if (loading || syncing) return 'text-blue-500'
@@ -316,58 +338,60 @@ export default function SemanticSearchSync({ onResync, isVisible = true }: Seman
     <TooltipProvider>
       <div className="flex items-center gap-2">
         {/* Search Sync Status - Search Icon with Status Color */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => setShowDetails(!showDetails)}
-              className={`p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors ${getStatusColor()} relative border border-gray-300 dark:border-gray-600`}
-              title="Search Sync Status"
-            >
-              {loading || syncing ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <Search className="w-4 h-4" />
-              )}
-              {/* Polling indicator */}
-              {isVisible && pollingEnabled && !syncing && !loading && (
-                <div className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-              )}
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <div className="text-center">
-              <p className="font-medium">Search Sync Status</p>
-              {status && jobStatus && (
-                <div className="text-xs mt-1 space-y-1">
-                  <p>Status: {getOverallStatus()}</p>
-                  {getOverallStatus() === 'Disabled' ? (
-                    <p className="text-gray-500">Semantic search is disabled</p>
-                  ) : (
-                    <>
-                      <p>Qdrant: {status.services?.qdrant?.available ? 'Available' : 'Unavailable'}</p>
-                      <p>Embedding: {status.services?.embedding?.available ? 'Available' : 'Unavailable'}</p>
-                      {status.services?.embedding?.model && (
-                        <p>Model: {status.services.embedding.model.model}</p>
-                      )}
-                      <p>Jobs: {jobStatus.job_stats.completed} completed, {jobStatus.job_stats.pending} pending</p>
-                      {jobStatus.job_stats.processing > 0 && (
-                        <p>Processing: {jobStatus.job_stats.processing}</p>
-                      )}
-                    </>
-                  )}
-                  <div className="mt-2 pt-1 border-t border-gray-200 dark:border-gray-600">
-                    <p className="text-xs text-gray-500">
-                      Auto-refresh: {getPollingStatus()}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      Last checked: {getTimeSinceLastPoll()}
-                    </p>
+        {!hideButton && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowDetails(!showDetails)}
+                className={`p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors ${getStatusColor()} relative border border-gray-300 dark:border-gray-600`}
+                title="Search Sync Status"
+              >
+                {loading || syncing ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Search className="w-4 h-4" />
+                )}
+                {/* Polling indicator */}
+                {isVisible && pollingEnabled && !syncing && !loading && (
+                  <div className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="text-center">
+                <p className="font-medium">Search Sync Status</p>
+                {status && jobStatus && (
+                  <div className="text-xs mt-1 space-y-1">
+                    <p>Status: {getOverallStatus()}</p>
+                    {getOverallStatus() === 'Disabled' ? (
+                      <p className="text-gray-500">Semantic search is disabled</p>
+                    ) : (
+                      <>
+                        <p>Qdrant: {status.services?.qdrant?.available ? 'Available' : 'Unavailable'}</p>
+                        <p>Embedding: {status.services?.embedding?.available ? 'Available' : 'Unavailable'}</p>
+                        {status.services?.embedding?.model && (
+                          <p>Model: {status.services.embedding.model.model}</p>
+                        )}
+                        <p>Jobs: {jobStatus.job_stats.completed} completed, {jobStatus.job_stats.pending} pending</p>
+                        {jobStatus.job_stats.processing > 0 && (
+                          <p>Processing: {jobStatus.job_stats.processing}</p>
+                        )}
+                      </>
+                    )}
+                    <div className="mt-2 pt-1 border-t border-gray-200 dark:border-gray-600">
+                      <p className="text-xs text-gray-500">
+                        Auto-refresh: {getPollingStatus()}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Last checked: {getTimeSinceLastPoll()}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          </TooltipContent>
-        </Tooltip>
+                )}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        )}
 
         {/* Details Panel */}
         {showDetails && status && jobStatus && (
@@ -378,7 +402,7 @@ export default function SemanticSearchSync({ onResync, isVisible = true }: Seman
                   Search Sync Details
                 </h3>
                 <button
-                  onClick={() => setShowDetails(false)}
+                  onClick={handleCloseDetails}
                   className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
                 >
                   ×

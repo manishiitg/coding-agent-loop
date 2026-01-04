@@ -1,4 +1,4 @@
-import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move, Download, Archive } from 'lucide-react'
+import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move, Download, Archive, CheckSquare } from 'lucide-react'
 import type { PlannerFile } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/tooltip'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
@@ -29,6 +29,10 @@ interface PlannerFileListProps {
   workflowFolderPath?: string | null
   isExporting?: boolean
   isImporting?: boolean
+  isSelectionMode?: boolean
+  selectedFiles?: Set<string>
+  onToggleFileSelection?: (file: PlannerFile) => void
+  onSelectFileAndEnterSelectionMode?: (file: PlannerFile) => void
 }
 
 export default function PlannerFileList({
@@ -56,7 +60,11 @@ export default function PlannerFileList({
   onImportBackup,
   workflowFolderPath,
   isExporting = false,
-  isImporting = false
+  isImporting = false,
+  isSelectionMode = false,
+  selectedFiles = new Set(),
+  onToggleFileSelection,
+  onSelectFileAndEnterSelectionMode
 }: PlannerFileListProps) {
   const { scrollToFile } = useWorkspaceStore()
 
@@ -83,28 +91,47 @@ export default function PlannerFileList({
       (file.filepath && file.filepath === workflowFolderPath) ||
       (depth === 0 && workflowFolderPath) // Root folder in filtered workflow view
     )
+    
+    const isSelected = selectedFiles.has(file.filepath)
 
     return (
       <div key={file.filepath} className="select-none">
         <div
           className={`
-            flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors
-            ${isClickable ? 'hover:bg-gray-100 dark:hover:bg-gray-800' : 'cursor-default'}
+            flex items-center gap-2 p-2 rounded-md transition-colors
+            ${isSelectionMode ? 'cursor-default' : isClickable ? 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800' : 'cursor-default'}
             ${isHighlighted ? 'bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700' : ''}
             ${isInContext ? 'bg-green-50 dark:bg-green-900/20 border-l-2 border-green-500' : ''}
+            ${isSelected && isSelectionMode ? 'bg-blue-50 dark:bg-blue-900/20' : ''}
           `}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
           data-filepath={file.filepath}
           data-original-filepath={file.originalFilepath || undefined}
           data-highlighted={isHighlighted ? 'true' : 'false'}
           onClick={() => {
-            if (file.type === 'folder') {
-              onFolderClick(file)
-            } else if (file.type === 'file' || !file.type) {
-              onFileClick(file)
+            if (isSelectionMode && onToggleFileSelection) {
+              onToggleFileSelection(file)
+            } else {
+              if (file.type === 'folder') {
+                onFolderClick(file)
+              } else if (file.type === 'file' || !file.type) {
+                onFileClick(file)
+              }
             }
           }}
         >
+          {/* Checkbox for selection mode */}
+          {isSelectionMode && (
+            <div className="flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+              <input
+                type="checkbox"
+                checked={isSelected}
+                onChange={() => onToggleFileSelection?.(file)}
+                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 cursor-pointer"
+              />
+            </div>
+          )}
+          
           {/* File/Folder Icon with expansion indicator */}
           <div className="flex-shrink-0">
             {file.type === 'folder' ? (
@@ -257,6 +284,21 @@ export default function PlannerFileList({
                         </button>
                       </>
                     )}
+                    {onSelectFileAndEnterSelectionMode && (
+                      <>
+                        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onSelectFileAndEnterSelectionMode(file)
+                          }}
+                          className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                        >
+                          <CheckSquare className="w-3 h-3" />
+                          Select
+                        </button>
+                      </>
+                    )}
                     {onDeleteAllFilesInFolder && (
                       <button
                         onClick={(e) => {
@@ -330,6 +372,21 @@ export default function PlannerFileList({
                         <Move className="w-3 h-3" />
                         Move
                       </button>
+                    )}
+                    {onSelectFileAndEnterSelectionMode && (
+                      <>
+                        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onSelectFileAndEnterSelectionMode(file)
+                          }}
+                          className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                        >
+                          <CheckSquare className="w-3 h-3" />
+                          Select
+                        </button>
+                      </>
                     )}
                     <button
                       onClick={(e) => {

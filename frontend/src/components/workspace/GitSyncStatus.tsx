@@ -9,6 +9,13 @@ interface GitSyncStatusProps {
   isVisible?: boolean // Whether the workspace is visible (not minimized)
 }
 
+interface SyncAPIResponse {
+  success: boolean
+  message?: string
+  error?: string
+  data?: unknown
+}
+
 export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatusProps) {
   const [status, setStatus] = useState<GitSyncStatus | null>(null)
   const [loading, setLoading] = useState<boolean>(true)
@@ -67,26 +74,31 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
       setConflictError(null)
       setShowConflictResolution(false)
       
-      const response = await agentApi.syncWithGitHub(false, commitMessage || undefined)
+      const response = await agentApi.syncWithGitHub(false, commitMessage || undefined) as SyncAPIResponse
       if (response.success) {
         // Refresh status after sync
         await fetchStatus()
         onSync?.()
         setCommitMessage('') // Clear commit message after successful sync
       } else {
-        setError(response.message || 'Sync failed')
+        // Extract error message from response
+        const errorMsg = response.error || response.message || 'Sync failed'
+        setError(errorMsg)
       }
     } catch (err: unknown) {
       console.error('Sync failed:', err)
       
       // Check if it's a conflict error (409 status)
       if (err && typeof err === 'object' && 'response' in err) {
-        const axiosError = err as { response?: { status?: number; data?: { message?: string } } }
+        const axiosError = err as { response?: { status?: number; data?: { message?: string; error?: string } } }
         if (axiosError.response?.status === 409) {
-          setConflictError(axiosError.response.data?.message || 'Merge conflicts detected')
+          const conflictMsg = axiosError.response.data?.message || axiosError.response.data?.error || 'Merge conflicts detected'
+          setConflictError(conflictMsg)
           setShowConflictResolution(true)
         } else {
-          setError(err instanceof Error ? err.message : 'Sync failed')
+          // Extract detailed error message from API response
+          const errorMsg = axiosError.response?.data?.error || axiosError.response?.data?.message || (err instanceof Error ? err.message : 'Sync failed')
+          setError(errorMsg)
         }
       } else {
         setError(err instanceof Error ? err.message : 'Sync failed')
@@ -106,17 +118,24 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
       setConflictError(null)
       setShowConflictResolution(false)
       
-      const response = await agentApi.forcePushLocal(commitMessage || undefined)
+      const response = await agentApi.forcePushLocal(commitMessage || undefined) as SyncAPIResponse
       if (response.success) {
         await fetchStatus()
         onSync?.()
         setCommitMessage('')
       } else {
-        setError(response.message || 'Force push failed')
+        const errorMsg = response.error || response.message || 'Force push failed'
+        setError(errorMsg)
       }
     } catch (err) {
       console.error('Force push failed:', err)
-      setError(err instanceof Error ? err.message : 'Force push failed')
+      if (err && typeof err === 'object' && 'response' in err) {
+        const axiosError = err as { response?: { data?: { error?: string; message?: string } } }
+        const errorMsg = axiosError.response?.data?.error || axiosError.response?.data?.message || (err instanceof Error ? err.message : 'Force push failed')
+        setError(errorMsg)
+      } else {
+        setError(err instanceof Error ? err.message : 'Force push failed')
+      }
     } finally {
       setSyncing(false)
       setIsPolling(true)
@@ -132,17 +151,24 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
       setConflictError(null)
       setShowConflictResolution(false)
       
-      const response = await agentApi.forcePullRemote()
+      const response = await agentApi.forcePullRemote() as SyncAPIResponse
       if (response.success) {
         await fetchStatus()
         onSync?.()
         setCommitMessage('')
       } else {
-        setError(response.message || 'Force pull failed')
+        const errorMsg = response.error || response.message || 'Force pull failed'
+        setError(errorMsg)
       }
     } catch (err) {
       console.error('Force pull failed:', err)
-      setError(err instanceof Error ? err.message : 'Force pull failed')
+      if (err && typeof err === 'object' && 'response' in err) {
+        const axiosError = err as { response?: { data?: { error?: string; message?: string } } }
+        const errorMsg = axiosError.response?.data?.error || axiosError.response?.data?.message || (err instanceof Error ? err.message : 'Force pull failed')
+        setError(errorMsg)
+      } else {
+        setError(err instanceof Error ? err.message : 'Force pull failed')
+      }
     } finally {
       setSyncing(false)
       setIsPolling(true)
@@ -435,6 +461,30 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
                   )}
                 </div>
               </div>
+
+              {/* Error Display */}
+              {error && (
+                <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded">
+                  <div className="flex items-start gap-2">
+                    <div className="w-2 h-2 bg-red-500 rounded-full mt-1.5 flex-shrink-0"></div>
+                    <div className="flex-1">
+                      <h4 className="text-xs font-semibold text-red-800 dark:text-red-200 mb-1">
+                        Sync Error
+                      </h4>
+                      <p className="text-xs text-red-700 dark:text-red-300 whitespace-pre-wrap break-words">
+                        {error}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setError(null)}
+                      className="text-red-400 hover:text-red-600 dark:hover:text-red-300 text-xs"
+                      title="Dismiss error"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Commit Message Input */}
               <div className="pt-2 border-t border-gray-200 dark:border-gray-700">

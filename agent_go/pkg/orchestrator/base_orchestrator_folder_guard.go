@@ -305,6 +305,9 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 
 			// Inject event emitter into context before calling executor
 			ctx = context.WithValue(ctx, virtualtools.WorkspaceEventEmitterKey, bo.contextAwareBridge)
+			// Inject folder guard paths into context for shell execution
+			ctx = context.WithValue(ctx, virtualtools.FolderGuardReadPathsKey, bo.folderGuardReadPaths)
+			ctx = context.WithValue(ctx, virtualtools.FolderGuardWritePathsKey, bo.folderGuardWritePaths)
 
 			// All validations passed and paths normalized - call original executor
 			return originalExecutor(ctx, args)

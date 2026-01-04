@@ -30,7 +30,7 @@ type WorkspaceEventEmitter interface {
 	HandleEvent(ctx context.Context, event *events.AgentEvent) error
 }
 
-// Context keys for workspace event emission
+// Context keys for workspace event emission and folder guard paths
 type contextKey string
 
 const (
@@ -40,6 +40,10 @@ const (
 	TurnKey contextKey = "turn"
 	// ServerNameKey is the context key for the server name
 	ServerNameKey contextKey = "server_name"
+	// FolderGuardReadPathsKey is the context key for folder guard read paths
+	FolderGuardReadPathsKey contextKey = "folder_guard_read_paths"
+	// FolderGuardWritePathsKey is the context key for folder guard write paths
+	FolderGuardWritePathsKey contextKey = "folder_guard_write_paths"
 )
 
 // Legacy constants for backward compatibility (use exported versions)
@@ -1539,6 +1543,34 @@ func handleExecuteShellCommand(ctx context.Context, args map[string]interface{})
 	}
 	if useShell {
 		requestBody["use_shell"] = true
+	}
+
+	// NEW: Extract folder guard paths from context
+	var folderGuardReadPaths []string
+	var folderGuardWritePaths []string
+
+	if readPaths := ctx.Value(FolderGuardReadPathsKey); readPaths != nil {
+		if paths, ok := readPaths.([]string); ok {
+			folderGuardReadPaths = paths
+		}
+	}
+	if writePaths := ctx.Value(FolderGuardWritePathsKey); writePaths != nil {
+		if paths, ok := writePaths.([]string); ok {
+			folderGuardWritePaths = paths
+		}
+	}
+
+	// Add folder guard configuration to request if paths are set
+	if len(folderGuardReadPaths) > 0 || len(folderGuardWritePaths) > 0 {
+		requestBody["folder_guard"] = map[string]interface{}{
+			"enabled":          true,
+			"read_paths":       folderGuardReadPaths,
+			"write_paths":      folderGuardWritePaths,
+			"enforcement_mode": "strict",
+		}
+
+		fmt.Printf("[DEBUG] Folder guard enabled for shell execution - Read: %v, Write: %v\n",
+			folderGuardReadPaths, folderGuardWritePaths)
 	}
 
 	// Create HTTP request with context

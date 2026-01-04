@@ -5,6 +5,9 @@ import { Textarea } from './ui/Textarea'
 import { Checkbox } from './ui/checkbox'
 import FileContextDisplay from './FileContextDisplay'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
+import { CircularProgress } from './ui/CircularProgress'
+import { getEventData, isEventType } from '../generated/event-types'
+import type { TokenUsageEvent } from '../generated/events'
 import ServerSelectionDropdown from './ServerSelectionDropdown'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
@@ -56,6 +59,116 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   if (!activeTab) {
     console.warn(`[ChatInput] No active tab - this should not happen in tab mode`)
   }
+  
+  // Get events for the active tab's sessionId to extract context usage percentage
+  // Subscribe directly to tabEvents store to ensure reactivity when events change
+  const tabEventsStore = useChatStore(state => state.tabEvents)
+  const tabEvents = useMemo(() => {
+    if (!tabSessionId) return []
+    return tabEventsStore[tabSessionId] || []
+  }, [tabSessionId, tabEventsStore])
+  
+  // Find the latest token_usage event and extract context_usage_percent and token usage data
+  const { contextUsagePercent, latestTokenUsage } = useMemo(() => {
+    if (!tabEvents || tabEvents.length === 0) return { contextUsagePercent: null, latestTokenUsage: null }
+    
+    // First, try to find token_usage events (prioritize conversation_total events)
+    const tokenUsageEvents = tabEvents
+      .filter(event => event.type === 'token_usage')
+      .sort((a, b) => {
+        // Prioritize conversation_total events, then sort by timestamp
+        const aTokenUsage = a.data?.data?.token_usage
+        const bTokenUsage = b.data?.data?.token_usage
+        const aIsTotal = aTokenUsage?.context === 'conversation_total'
+        const bIsTotal = bTokenUsage?.context === 'conversation_total'
+        
+        if (aIsTotal && !bIsTotal) return -1 // a comes first
+        if (!aIsTotal && bIsTotal) return 1  // b comes first
+        
+        // Both same type, sort by timestamp
+        const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
+        const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
+        return bTime - aTime // Newest first
+      })
+    
+    if (tokenUsageEvents.length > 0) {
+      const latestEvent = tokenUsageEvents[0]
+      
+      // Use type-safe event data extraction
+      let tokenUsage: TokenUsageEvent | null = null
+      if (isEventType(latestEvent, 'token_usage')) {
+        tokenUsage = getEventData(latestEvent) as TokenUsageEvent
+      } else {
+        // Fallback: try direct access
+        tokenUsage = latestEvent.data?.data?.token_usage as TokenUsageEvent | undefined || null
+      }
+      
+      if (tokenUsage) {
+        const isTotalEvent = tokenUsage.context === 'conversation_total'
+        // For total events, check generation_info first, then fall back to direct property
+        // For non-total events, check direct property first, then generation_info
+        const contextPercent = isTotalEvent
+          ? (tokenUsage.generation_info?.context_usage_percent as number | undefined) ?? tokenUsage.context_usage_percent
+          : tokenUsage.context_usage_percent ?? (tokenUsage.generation_info?.context_usage_percent as number | undefined)
+        
+        // Debug: log to help diagnose
+        if (isTotalEvent) {
+          console.log('[ChatInput] Total token usage event found:', {
+            eventType: latestEvent.type,
+            contextPercent,
+            hasGenerationInfo: !!tokenUsage.generation_info,
+            generationInfoContextPercent: tokenUsage.generation_info?.context_usage_percent,
+            directContextPercent: tokenUsage.context_usage_percent,
+            tokenUsageKeys: Object.keys(tokenUsage),
+            fullTokenUsage: tokenUsage
+          })
+        }
+        
+        // Return token usage data - show indicator if contextPercent exists (even if 0)
+        // Only hide if contextPercent is null/undefined
+        return {
+          contextUsagePercent: contextPercent !== undefined && contextPercent !== null ? contextPercent : null,
+          latestTokenUsage: tokenUsage
+        }
+      } else {
+        console.warn('[ChatInput] token_usage event found but could not extract tokenUsage data:', {
+          eventType: latestEvent.type,
+          eventData: latestEvent.data,
+          eventDataData: latestEvent.data?.data
+        })
+      }
+    }
+    
+    // Fallback: Check LLM generation end events for context usage in metadata
+    const llmEndEvents = tabEvents
+      .filter(event => event.type === 'llm_generation_end')
+      .sort((a, b) => {
+        const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
+        const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
+        return bTime - aTime
+      })
+    
+    if (llmEndEvents.length > 0) {
+      const latestLLMEvent = llmEndEvents[0]
+      const llmData = latestLLMEvent.data?.data?.llm_generation_end
+      const contextPercent = llmData?.metadata?.context_usage_percent as number | undefined
+      
+      if (contextPercent && contextPercent > 0) {
+        // Create a minimal token usage object from LLM event metadata
+        const minimalTokenUsage = {
+          context_usage_percent: contextPercent,
+          model_context_window: llmData?.metadata?.model_context_window as number | undefined,
+          context_window_usage: llmData?.metadata?.current_context_window_usage as number | undefined,
+        }
+        return {
+          contextUsagePercent: contextPercent,
+          latestTokenUsage: minimalTokenUsage
+        }
+      }
+    }
+    
+    return { contextUsagePercent: null, latestTokenUsage: null }
+  }, [tabEvents])
   
   // Always use tab-specific config (ChatInput is only in chat mode)
   // Memoize to prevent unnecessary re-renders when other config values change
@@ -955,6 +1068,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               {/* Show old buttons */}
               {(
                 <div className="flex items-center gap-2">
+                  {/* Context completion indicator */}
+                  {contextUsagePercent !== null && (
+                    <CircularProgress 
+                      percentage={contextUsagePercent} 
+                      size={24}
+                      strokeWidth={2.5}
+                      tokenUsage={latestTokenUsage}
+                    />
+                  )}
                   {isSummarizing ? (
                     <div className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400">
                       <Loader2 className="w-4 h-4 animate-spin" />

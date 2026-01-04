@@ -51,6 +51,7 @@ type StepSidebarStartPhase = (phaseId: string, stepIdOrOptions?: string | Execut
 export interface WorkflowCanvasRef {
   refresh: (changedStepIDs?: string[], deletedStepIDs?: string[]) => Promise<PlanChanges | null>
   getStepCount: () => number
+  focusStep: (stepId: string) => void  // Alias for highlightStepNode
 }
 
 const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(({
@@ -892,8 +893,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     // Find the node by matching step.id in node data (works for both top-level and branch steps)
     // Branch steps have node IDs like "step-3-true-0" but step.id is the actual step ID
     const nodeToFocus = nodesRef.current.find(node => {
-      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
-        const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
+      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator') {
+        const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
         const nodeStepId = nodeData?.step?.id
         // Match by step.id (for branch steps) or by node ID (for top-level steps)
         return nodeStepId === stepId || (nodeStepId === undefined && node.id === stepId)
@@ -905,7 +906,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       // Focus viewport on the node without changing sidebar selection.
       // This keeps the sidebar closed for execution events (currentStepId)
       // and simply repositions the view when the sidebar is already open.
-      focusNode(nodeToFocus.id, { topPadding: 50, selectNode: false, delay: 100 })
+      focusNode(nodeToFocus.id, { topPadding: 150, selectNode: false, delay: 100 })
       console.log('[WorkflowCanvas] Highlighted step node:', stepId, '-> node ID:', nodeToFocus.id)
     } else {
       console.warn('[WorkflowCanvas] Could not find node for stepId:', stepId)
@@ -1017,8 +1018,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       // Count steps from plan data
       if (!plan?.steps) return 0
       return plan.steps.length
+    },
+    focusStep: (stepId: string) => {
+      // Use the existing highlightStepNode function
+      highlightStepNode(stepId)
     }
-  }), [loadPlanRefresh, plan, setChanges])
+  }), [loadPlanRefresh, plan, setChanges, highlightStepNode])
 
   // Store step ID to focus on when changes are detected (will focus after nodes update)
   React.useEffect(() => {

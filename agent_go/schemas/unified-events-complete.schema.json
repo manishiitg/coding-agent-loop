@@ -2910,6 +2910,12 @@
         "trace_id": {
           "type": "string"
         },
+        "validation_failures": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
         "workspace_path": {
           "type": "string"
         }
@@ -3599,6 +3605,12 @@
         "component": {
           "type": "string"
         },
+        "context_usage_percent": {
+          "type": "number"
+        },
+        "context_window_usage": {
+          "type": "integer"
+        },
         "correlation_id": {
           "type": "string"
         },
@@ -3616,6 +3628,9 @@
         },
         "metadata": {
           "type": "object"
+        },
+        "model_context_window": {
+          "type": "integer"
         },
         "parent_id": {
           "type": "string"

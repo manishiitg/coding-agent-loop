@@ -91,46 +91,48 @@ func extractRootCauseError(err error) string {
 }
 
 // createCustomTools creates workspace and human tools for orchestrator/workflow agents
+// includeHumanTools: if true, includes human tools (for workflow mode); if false, only workspace tools (for chat mode)
 // Returns: tools, executors, and a map of tool names to their categories
 // All tools from CreateWorkspaceTools() get category "workspace"
 // All tools from CreateHumanTools() get category "human"
-func createCustomTools() ([]llmtypes.Tool, map[string]interface{}, map[string]string) {
-	// Create workspace and human tools for orchestrator/workflow agents
-	// Get category names dynamically using GetToolCategory functions
+func createCustomTools(includeHumanTools bool) ([]llmtypes.Tool, map[string]interface{}, map[string]string) {
+	// Create workspace tools (always included)
 	workspaceCategory := virtualtools.GetWorkspaceToolCategory()
-	humanCategory := virtualtools.GetHumanToolCategory()
-
 	workspaceTools := virtualtools.CreateWorkspaceTools()
 	workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
-	humanTools := virtualtools.CreateHumanTools()
-	humanExecutors := virtualtools.CreateHumanToolExecutors()
 
-	// Combine workspace and human tools
-	allTools := append(workspaceTools, humanTools...)
+	// Initialize with workspace tools
+	allTools := workspaceTools
 	allExecutors := make(map[string]interface{})
 	for name, executor := range workspaceExecutors {
 		allExecutors[name] = executor
 	}
-	for name, executor := range humanExecutors {
-		allExecutors[name] = executor
-	}
 
-	// Build category map based on source function:
-	// All tools from CreateWorkspaceTools() -> "workspace"
-	// All tools from CreateHumanTools() -> "human"
+	// Build category map - start with workspace tools
 	toolCategories := make(map[string]string)
-
-	// Assign category to all tools from CreateWorkspaceTools()
 	for _, tool := range workspaceTools {
 		if tool.Function != nil {
 			toolCategories[tool.Function.Name] = workspaceCategory
 		}
 	}
 
-	// Assign category to all tools from CreateHumanTools()
-	for _, tool := range humanTools {
-		if tool.Function != nil {
-			toolCategories[tool.Function.Name] = humanCategory
+	// Conditionally include human tools (only for workflow mode)
+	if includeHumanTools {
+		humanCategory := virtualtools.GetHumanToolCategory()
+		humanTools := virtualtools.CreateHumanTools()
+		humanExecutors := virtualtools.CreateHumanToolExecutors()
+
+		// Combine workspace and human tools
+		allTools = append(allTools, humanTools...)
+		for name, executor := range humanExecutors {
+			allExecutors[name] = executor
+		}
+
+		// Assign category to all tools from CreateHumanTools()
+		for _, tool := range humanTools {
+			if tool.Function != nil {
+				toolCategories[tool.Function.Name] = humanCategory
+			}
 		}
 	}
 
@@ -1038,7 +1040,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Initialize EventStore for reactivated session to ensure new events are stored correctly
-			api.eventStore.InitializeSession(sessionID)
+			// Calculate existing event count to use as baseIndex for polling
+			var baseIndex int
+			existingEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 1000000, 0)
+			if err == nil {
+				baseIndex = len(existingEvents)
+				log.Printf("[SESSION REACTIVATION] Found %d existing events for session %s, setting baseIndex", baseIndex, sessionID)
+			} else {
+				log.Printf("[SESSION REACTIVATION] Failed to count existing events for session %s: %v", sessionID, err)
+			}
+			api.eventStore.InitializeSession(sessionID, baseIndex)
 		}
 	}
 
@@ -1115,7 +1126,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// TODO: Memory tools removed from workflow - only needed for individual React agents
 		// memoryTools := virtualtools.CreateMemoryTools()
 		// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
-		allTools, allExecutors, toolCategories := createCustomTools()
+		allTools, allExecutors, toolCategories := createCustomTools(true) // Include human tools for workflow mode
 
 		// Load selected tools, code execution mode, and preset LLM config from preset if available (for workflow agents)
 		var selectedTools []string
@@ -1847,7 +1858,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if enableWorkspaceAccess {
 				workspaceTools := virtualtools.CreateWorkspaceTools()
 				workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
-				_, _, toolCategories := createCustomTools() // Get toolCategories map
+				_, _, toolCategories := createCustomTools(false) // Get toolCategories map (no human tools for chat mode)
 
 				log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for simple agent (enable_workspace_access: %v)", len(workspaceTools), enableWorkspaceAccess)
 
@@ -1905,8 +1916,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Add custom agent instructions based on agent mode
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-			// Create custom tools for regular agents (same as orchestrator/workflow)
-			allTools, allExecutors, toolCategories := createCustomTools()
+			// Create custom tools for regular agents (workspace tools only, no human tools for chat mode)
+			allTools, allExecutors, toolCategories := createCustomTools(false) // No human tools for chat mode
 
 			// Register each custom tool with the agent
 			// This will trigger code generation and update the registry
@@ -1918,6 +1929,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 					// Skip workspace tools - already registered above
 					if toolCategories[toolName] == virtualtools.GetWorkspaceToolCategory() {
+						continue
+					}
+
+					// Skip human tools - not available in chat mode
+					if toolCategories[toolName] == virtualtools.GetHumanToolCategory() {
 						continue
 					}
 

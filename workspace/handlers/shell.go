@@ -15,8 +15,6 @@ import (
 	"workspace/security"
 	"workspace/utils"
 
-	mcpagent "mcpagent/agent"
-
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 )
@@ -151,7 +149,7 @@ func ExecuteShellCommand(c *gin.Context) {
 		cmd.Dir = workingDir
 
 		// CRITICAL: Always sanitize environment, even without folder guard
-		cmd.Env = mcpagent.BuildSafeEnvironment()
+		cmd.Env = security.BuildSafeEnvironment()
 	}
 
 	// Capture stdout and stderr separately

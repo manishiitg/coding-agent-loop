@@ -32,6 +32,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
 import { agentApi } from '../../services/api'
 import { type ExecutionOptions } from '../../services/api-types'
 import { getRawEventData } from '../../generated/event-types'
+import { usePlanData } from './hooks/usePlanData'
 
 interface WorkflowLayoutProps {
   className?: string
@@ -74,6 +75,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const lastProcessedEventIndexRef = useRef(-1)
   // Track the last processed step progress event index to avoid duplicate workspace refreshes
   const lastProcessedStepProgressIndexRef = useRef(-1)
+  // Track the last processed step execution start event index to avoid duplicate focus calls
+  const lastProcessedStepStartIndexRef = useRef(-1)
   // Store pending query to submit after ChatArea mounts
   const pendingQueryRef = useRef<{ query: string; executionOptions?: ExecutionOptions } | null>(null)
   
@@ -120,6 +123,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
     return null
   }, [activeWorkflowPreset])
+  
+  // Get plan data to map step indices to step IDs
+  const { plan } = usePlanData(workspacePath)
 
   // Listen for todo_steps_extracted events to auto-refresh the canvas (with granular data from backend)
   useEffect(() => {
@@ -195,6 +201,47 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [events])
 
+  // Listen for step_execution_start events to auto-focus on running steps
+  useEffect(() => {
+    if (events.length === 0 || !canvasRef.current) {
+      return
+    }
+    
+    // Find new step_execution_start events that we haven't processed yet
+    for (let i = lastProcessedStepStartIndexRef.current + 1; i < events.length; i++) {
+      const event = events[i]
+      
+      if (event.type === 'step_execution_start') {
+        // Use helper function to extract raw event data (handles nested structure)
+        const rawData = getRawEventData(event)
+        const eventData = rawData as {
+          step_id?: string
+          run_folder?: string
+          workspace_path?: string
+        } | undefined
+        
+        const stepId = eventData?.step_id
+        const runFolder = eventData?.run_folder
+        const workspacePathFromEvent = eventData?.workspace_path
+        
+        // Only focus if this event is for the current workspace and run folder
+        if (stepId && runFolder === selectedRunFolder && workspacePathFromEvent === workspacePath) {
+          console.log('[WorkflowLayout] Step started, focusing on step:', {
+            stepId,
+            runFolder,
+            workspacePath: workspacePathFromEvent,
+            eventIndex: i
+          })
+          
+          // Focus on the running step
+          canvasRef.current.focusStep(stepId)
+          
+          lastProcessedStepStartIndexRef.current = i
+        }
+      }
+    }
+  }, [events, workspacePath, selectedRunFolder])
+
   // Listen for step_progress_updated events to refresh workspace files for current iteration
   useEffect(() => {
     if (events.length === 0 || !workspacePath || !selectedRunFolder || selectedRunFolder === 'new') {
@@ -206,25 +253,33 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       const event = events[i]
       
       if (event.type === 'step_progress_updated') {
-        const eventData = event.data as {
+        // Use helper function to extract raw event data (handles nested structure)
+        const rawData = getRawEventData(event)
+        const eventData = rawData as {
           run_folder?: string
           workspace_path?: string
           completed_step_indices?: number[]
           total_steps?: number
+          last_completed_step?: number
           branch_steps?: {
             [k: string]: {
               branch_executed: string
               completed_steps: string[]
             }
           }
+        } | undefined
+        
+        if (!eventData) {
+          continue
         }
         
         // Only process if this event is for the currently selected iteration
-        if (eventData?.run_folder === selectedRunFolder && eventData?.workspace_path === workspacePath) {
+        if (eventData.run_folder === selectedRunFolder && eventData.workspace_path === workspacePath) {
           console.log('[WorkflowLayout] Step progress updated for current iteration:', {
             runFolder: eventData.run_folder,
             completedSteps: eventData.completed_step_indices?.length || 0,
             totalSteps: eventData.total_steps || 0,
+            lastCompletedStep: eventData.last_completed_step,
             eventIndex: i
           })
           
@@ -245,6 +300,22 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             })
           }
           
+          // Auto-focus on the last completed step if available
+          if (eventData.last_completed_step !== undefined && eventData.last_completed_step >= 0 && plan?.steps && canvasRef.current) {
+            const stepIndex = eventData.last_completed_step
+            if (stepIndex < plan.steps.length) {
+              const completedStep = plan.steps[stepIndex]
+              if (completedStep?.id) {
+                console.log('[WorkflowLayout] Focusing on completed step:', {
+                  stepIndex,
+                  stepId: completedStep.id,
+                  stepTitle: completedStep.title
+                })
+                canvasRef.current.focusStep(completedStep.id)
+              }
+            }
+          }
+          
           // Refresh workspace files to show new execution files
           fetchFiles().catch((err) => {
             console.error('[WorkflowLayout] Failed to refresh workspace files:', err)
@@ -254,7 +325,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         }
       }
     }
-  }, [events, workspacePath, selectedRunFolder, fetchFiles, updateStepProgressFromEvent])
+  }, [events, workspacePath, selectedRunFolder, fetchFiles, updateStepProgressFromEvent, plan])
 
   // Track if reconnection has already been attempted to prevent duplicates
   const hasReconnectedRef = useRef(false)

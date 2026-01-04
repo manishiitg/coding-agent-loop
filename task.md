@@ -4,10 +4,10 @@
 
 13. review conversation.go why is it so big and the retry function
 
-44. we need a way to see logs for mcp installation and tool testing
+44. we need a way to see logs for mcp installation and tool testing - done
 
 53. the diff tool in workspace, has some issues. test with json format
-also fails in writing python code due to indentation
+also fails in writing python code due to indentation - done
 
 new tasks
 
@@ -32,8 +32,6 @@ i) prompt tempaltes, need to check variables on compile time
 22. we should have a human notification tool also.
 
 
-28. need to simply tool filter.
-
 32. remove locking learnings in orchestrator, it should always learn.. or maybe we need thinkg of learnins for orchestrator differently? -- done
 26. learnings vs skills? 
 27. workspace, sheel exec is reading env variable which is an issue -- done
@@ -45,9 +43,9 @@ i) prompt tempaltes, need to check variables on compile time
 
 30. refractor how llm are setup and llm fallback
 
-35. fix tests most not relevent anymore
+35. fix tests most not relevent anymore - done
 
-36. rename toto create human to a better name
+36. rename toto create human to a better name - done
 
 37. auto choose models based on llm and generation?
 

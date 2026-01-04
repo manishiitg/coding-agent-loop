@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { File, Folder, Search, ChevronRight, ChevronDown } from 'lucide-react'
 import type { PlannerFile } from '../services/api-types'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
@@ -25,34 +25,8 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
   const dialogRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    if (!isOpen) return
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-      } else if (event.key === 'Enter') {
-        event.preventDefault()
-        if (filteredFiles.length > 0 && selectedIndex >= 0 && selectedIndex < filteredFiles.length) {
-          onSelectFile(filteredFiles[selectedIndex])
-        }
-      } else if (event.key === 'ArrowDown') {
-        event.preventDefault()
-        setSelectedIndex(prev => Math.min(prev + 1, filteredFiles.length - 1))
-      } else if (event.key === 'ArrowUp') {
-        event.preventDefault()
-        setSelectedIndex(prev => Math.max(prev - 1, 0))
-      }
-    }
-
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onClose, onSelectFile, filteredFiles, selectedIndex])
-
   // Calculate fuzzy match score (how close the characters are together)
-  const calculateFuzzyScore = (filepath: string, query: string): number => {
+  const calculateFuzzyScore = useCallback((filepath: string, query: string): number => {
     let score = 0
     let queryIndex = 0
     let lastMatchIndex = -1
@@ -78,10 +52,25 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
     }
     
     return score
-  }
+  }, [])
 
-  // Flatten hierarchical structure while respecting expanded folders
-  const flattenWithExpandedFolders = (files: PlannerFile[], expandedFolders: Set<string>): PlannerFile[] => {
+  // Memoize flattened files for search to avoid re-calculating on every search query change
+  const allFlattenedFiles = useMemo(() => {
+    const result: PlannerFile[] = []
+    const flatten = (fileList: PlannerFile[]) => {
+      for (const file of fileList) {
+        result.push(file)
+        if (file.children && file.children.length > 0) {
+          flatten(file.children)
+        }
+      }
+    }
+    flatten(files)
+    return result
+  }, [files])
+
+  // Flatten hierarchical structure while respecting expanded folders (for non-search view)
+  const flattenWithExpandedFolders = useCallback((files: PlannerFile[], expandedFolders: Set<string>): PlannerFile[] => {
     const result: PlannerFile[] = []
     
     const flatten = (fileList: PlannerFile[], depth = 0) => {
@@ -98,7 +87,7 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
     
     flatten(files)
     return result
-  }
+  }, [])
 
   // Filter files based on search query with VS Code-style fuzzy matching
   useEffect(() => {
@@ -111,33 +100,9 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
 
     const query = searchQuery.toLowerCase().trim()
     
-    // Flatten hierarchical files to get all files and folders for search
-    const flattenFiles = (files: PlannerFile[]): PlannerFile[] => {
-      const result: PlannerFile[] = []
-      
-      const flatten = (fileList: PlannerFile[]) => {
-        for (const file of fileList) {
-          // Include both files and folders in search results
-          result.push(file)
-          if (file.children && file.children.length > 0) {
-            flatten(file.children)
-          }
-        }
-      }
-      
-      flatten(files)
-      return result
-    }
-    
-    const allFiles = flattenFiles(files)
-    
-    const filtered = allFiles.filter(file => {
+    const filtered = allFlattenedFiles.filter(file => {
       // Filter by filepath with fuzzy matching (like VS Code) - includes both files and folders
       const filepath = file.filepath.toLowerCase()
-      
-      if (!query) {
-        return true // Show all files if no query
-      }
       
       // VS Code-style fuzzy search: find query characters in order within the filepath
       let queryIndex = 0
@@ -184,32 +149,41 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
       const bScore = bExact * 100 + bStartsWith * 50 + bFileNameMatch * 25 + bFuzzyScore * 10
       
       return bScore - aScore
-    }) // Show all search results
+    })
 
     setFilteredFiles(sorted)
     setSelectedIndex(0) // Reset selection when filtering
-  }, [files, searchQuery, expandedFolders])
+  }, [files, allFlattenedFiles, searchQuery, expandedFolders, flattenWithExpandedFolders, calculateFuzzyScore])
+
+  // Limit displayed results to improve performance
+  const displayLimit = 50
+  const displayedFiles = useMemo(() => {
+    return filteredFiles.slice(0, displayLimit)
+  }, [filteredFiles, displayLimit])
+  const remainingCount = Math.max(0, filteredFiles.length - displayLimit)
 
   // Handle keyboard navigation
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (!isOpen) return
 
+    const visibleCount = displayedFiles.length
+
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault()
         setSelectedIndex(prev => 
-          prev < filteredFiles.length - 1 ? prev + 1 : 0
+          prev < visibleCount - 1 ? prev + 1 : 0
         )
         break
       case 'ArrowUp':
         e.preventDefault()
         setSelectedIndex(prev => 
-          prev > 0 ? prev - 1 : filteredFiles.length - 1
+          prev > 0 ? prev - 1 : visibleCount - 1
         )
         break
       case 'ArrowRight': {
         e.preventDefault()
-        const selectedItem = filteredFiles[selectedIndex]
+        const selectedItem = displayedFiles[selectedIndex]
         if (selectedItem && selectedItem.type === 'folder') {
           // Toggle folder expansion
           setExpandedFolders(prev => {
@@ -226,8 +200,8 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
       }
       case 'Enter':
         e.preventDefault()
-        if (filteredFiles[selectedIndex]) {
-          onSelectFile(filteredFiles[selectedIndex])
+        if (displayedFiles[selectedIndex]) {
+          onSelectFile(displayedFiles[selectedIndex])
         }
         break
       case 'Escape':
@@ -235,7 +209,8 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
         onClose()
         break
     }
-  }, [isOpen, filteredFiles, selectedIndex, onSelectFile, onClose])
+  }, [isOpen, displayedFiles, selectedIndex, onSelectFile, onClose])
+
 
   // Add keyboard event listeners
   useEffect(() => {
@@ -346,37 +321,44 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
         ref={listRef}
         className="overflow-y-auto max-h-64"
       >
-        {filteredFiles.length === 0 ? (
+        {displayedFiles.length === 0 ? (
           <div className="px-3 py-4 text-center text-muted-foreground text-sm">
             {searchQuery ? 'No files found' : 'No files available'}
           </div>
         ) : (
-          filteredFiles.map((file, index) => (
-            <div
-              key={file.filepath}
-              className={`px-3 py-2 cursor-pointer flex items-center gap-2 text-sm transition-colors ${
-                index === selectedIndex
-                  ? 'bg-primary/10 text-primary border-l-2 border-primary'
-                  : 'hover:bg-secondary'
-              }`}
-              onClick={() => onSelectFile(file)}
-              style={{ paddingLeft: `${12 + (file.depth || 0) * 16}px` }}
-            >
-              {getFileIcon(file)}
-              <div className="flex-1 min-w-0">
-                <div className="truncate">
-                  {highlightMatch(file.filepath, searchQuery)}
+          <>
+            {displayedFiles.map((file, index) => (
+              <div
+                key={file.filepath}
+                className={`px-3 py-2 cursor-pointer flex items-center gap-2 text-sm transition-colors ${
+                  index === selectedIndex
+                    ? 'bg-primary/10 text-primary border-l-2 border-primary'
+                    : 'hover:bg-secondary'
+                }`}
+                onClick={() => onSelectFile(file)}
+                style={{ paddingLeft: `${12 + (file.depth || 0) * 16}px` }}
+              >
+                {getFileIcon(file)}
+                <div className="flex-1 min-w-0">
+                  <div className="truncate">
+                    {highlightMatch(file.filepath, searchQuery)}
+                  </div>
                 </div>
+                {file.type === 'folder' && (
+                  expandedFolders.has(file.filepath) ? (
+                    <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                  )
+                )}
               </div>
-              {file.type === 'folder' && (
-                expandedFolders.has(file.filepath) ? (
-                  <ChevronDown className="w-3 h-3 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="w-3 h-3 text-muted-foreground" />
-                )
-              )}
-            </div>
-          ))
+            ))}
+            {remainingCount > 0 && (
+              <div className="px-3 py-2 text-center text-xs text-muted-foreground bg-secondary/30 italic border-t border-border/50">
+                ...and {remainingCount} more results. Keep typing to narrow down.
+              </div>
+            )}
+          </>
         )}
       </div>
 

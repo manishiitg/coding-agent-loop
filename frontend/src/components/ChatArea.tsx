@@ -86,9 +86,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     getAvailableServers
   } = useMCPStore()
   
-  // Get active tab (works for both chat and workflow modes)
-  const { getActiveTab, getTab, chatTabs } = useChatStore()
-  const activeTab = tabId ? getTab(tabId) : getActiveTab()
+  // Get active tab reactively (works for both chat and workflow modes)
+  // Use selector to ensure reactivity when tab config changes
+  const activeTabIdFromStore = useChatStore(state => state.activeTabId)
+  const targetTabId = tabId || activeTabIdFromStore
+  const activeTab = useChatStore(state => 
+    targetTabId ? state.chatTabs[targetTabId] : undefined
+  )
+  
+  // Get all tabs reactively for polling and other operations
+  const chatTabs = useChatStore(state => state.chatTabs)
   
   // Determine which servers to use based on mode category
   // CRITICAL: Workflow preset servers should ONLY be used in workflow mode, never leak into chat mode
@@ -119,7 +126,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     currentPresetServers,
     selectedServers, 
     getAvailableServers, 
-    activeTab?.config
+    activeTab?.config  // ✅ Now reactive - will update when tab config changes
   ])
   
   // Filter tools to only include those from effective servers
@@ -1039,9 +1046,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           const sessionTitle = activeSession.query || 'Active Chat'
           
           // Determine default event mode based on agent mode
+          // orchestrator -> advanced (more complex, needs detailed view)
+          // simple -> tiny (minimal view for restored sessions)
+          // workflow -> tiny (minimal view for restored sessions)
           const agentMode = activeSession.agent_mode?.toLowerCase() || ''
           const defaultEventMode: 'basic' | 'advanced' | 'tiny' = 
-            agentMode === 'orchestrator' ? 'advanced' : 'basic'
+            agentMode === 'orchestrator' ? 'advanced' : 'tiny'
           
           try {
             console.log(`[AutoRestore] Creating tab for active session ${sessionId}: ${sessionTitle}`)
@@ -1182,7 +1192,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // This handles the case where a restored session is being replied to
       // The backend might not have added it to active sessions yet, but we should poll it
       if (isStreaming) {
-        console.log(`[ActiveSessions] Tab ${tab.tabId} session ${tab.sessionId} is streaming, including in polling`)
         return true
       }
       
@@ -1190,7 +1199,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // If backend says it's active, poll it even if local isStreaming is false
       // This ensures we catch events that come after stop is pressed
       if (activeIds.size > 0 && !activeIds.has(tab.sessionId)) {
-        console.log(`[ActiveSessions] Tab ${tab.tabId} session ${tab.sessionId} not in backend active sessions (isStreaming=${isStreaming}, tabFromStore=${!!currentTab}, storeIsStreaming=${currentTab?.isStreaming}), skipping`)
         return false
       }
       
@@ -1343,11 +1351,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             
             // Determine default event mode based on agent mode
             // orchestrator -> advanced (more complex, needs detailed view)
-            // simple -> basic (standard view)
-            // workflow -> basic (standard view)
+            // simple -> tiny (minimal view for restored sessions)
+            // workflow -> tiny (minimal view for restored sessions)
             const agentMode = activeSession.agent_mode?.toLowerCase() || ''
             const defaultEventMode: 'basic' | 'advanced' | 'tiny' = 
-              agentMode === 'orchestrator' ? 'advanced' : 'basic'
+              agentMode === 'orchestrator' ? 'advanced' : 'tiny'
             
             try {
               const newTabId = await createChatTab(sessionTitle, { mode: 'chat' }, originalSessionId, defaultEventMode)

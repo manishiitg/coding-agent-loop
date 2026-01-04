@@ -172,14 +172,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	// API routes
 	api := r.Group("/api")
 	{
-		// Document management routes
-		documents := api.Group("/documents")
-		{
-			documents.POST("", handlers.CreateDocument)
-			documents.GET("", handlers.ListDocuments)
-			documents.GET("/glob", handlers.GlobDocuments)
-		}
-
 		// Search routes (separate paths to avoid conflicts)
 		api.GET("/search", handlers.SearchDocuments)
 		api.GET("/search/semantic", handlers.SemanticSearch)
@@ -200,7 +192,14 @@ func runServer(cmd *cobra.Command, args []string) {
 		api.POST("/folders/copy", handlers.CopyFolder)
 		api.DELETE("/folders/*folderpath", handlers.DeleteFolder)
 
-		// Document operations with filepath (catch-all route handles all document operations)
+		// Document management routes - SPECIFIC routes BEFORE wildcard
+		api.POST("/documents", handlers.CreateDocument)
+		api.GET("/documents", handlers.ListDocuments)
+
+		// Glob search route (separate path to avoid wildcard conflict)
+		api.GET("/glob", handlers.GlobDocuments)
+
+		// Document operations with filepath (catch-all route - MUST BE LAST)
 		api.Any("/documents/*filepath", handlers.HandleDocumentRequest)
 
 		// GitHub sync routes

@@ -101,12 +101,13 @@ type ActivityCallback func(sessionID string)
 // EventStore manages in-memory event storage for sessions
 // Events are stored by sessionID, allowing multiple observers to view the same session
 type EventStore struct {
-	events           map[string][]Event // sessionID -> events
-	mu               sync.RWMutex
-	maxEvents        int // Maximum events per session
-	cleanupTicker    *time.Ticker
-	stopCh           chan struct{}
-	activityCallback ActivityCallback // Optional callback to update session activity
+	events              map[string][]Event // sessionID -> events
+	sessionStartIndices map[string]int     // sessionID -> startIndex (offset for events in memory)
+	mu                  sync.RWMutex
+	maxEvents           int // Maximum events per session
+	cleanupTicker       *time.Ticker
+	stopCh              chan struct{}
+	activityCallback    ActivityCallback // Optional callback to update session activity
 }
 
 // NewEventStore creates a new event store with configurable limits
@@ -117,11 +118,12 @@ func NewEventStore(maxEvents int) *EventStore {
 // NewEventStoreWithActivityCallback creates a new event store with an activity callback
 func NewEventStoreWithActivityCallback(maxEvents int, activityCallback ActivityCallback) *EventStore {
 	store := &EventStore{
-		events:           make(map[string][]Event),
-		maxEvents:        maxEvents,
-		cleanupTicker:    time.NewTicker(5 * time.Minute), // Cleanup every 5 minutes
-		stopCh:           make(chan struct{}),
-		activityCallback: activityCallback,
+		events:              make(map[string][]Event),
+		sessionStartIndices: make(map[string]int),
+		maxEvents:           maxEvents,
+		cleanupTicker:       time.NewTicker(5 * time.Minute), // Cleanup every 5 minutes
+		stopCh:              make(chan struct{}),
+		activityCallback:    activityCallback,
 	}
 
 	// Start background cleanup
@@ -144,6 +146,7 @@ func (es *EventStore) AddEvent(sessionID string, event Event) {
 	// Initialize session if not exists
 	if _, exists := es.events[sessionID]; !exists {
 		es.events[sessionID] = make([]Event, 0)
+		es.sessionStartIndices[sessionID] = 0
 	}
 
 	// Add event
@@ -151,7 +154,10 @@ func (es *EventStore) AddEvent(sessionID string, event Event) {
 
 	// Remove old events if over limit
 	if len(es.events[sessionID]) > es.maxEvents {
-		es.events[sessionID] = es.events[sessionID][len(es.events[sessionID])-es.maxEvents:]
+		droppedCount := len(es.events[sessionID]) - es.maxEvents
+		es.events[sessionID] = es.events[sessionID][droppedCount:]
+		// Update start index to reflect dropped events
+		es.sessionStartIndices[sessionID] += droppedCount
 	}
 
 	// Call activity callback if set (call outside of lock to avoid deadlock)
@@ -165,10 +171,11 @@ func (es *EventStore) AddEvent(sessionID string, event Event) {
 }
 
 // InitializeSession creates an empty event list for a session
-func (es *EventStore) InitializeSession(sessionID string) {
+func (es *EventStore) InitializeSession(sessionID string, baseIndex int) {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 
+	es.sessionStartIndices[sessionID] = baseIndex
 	// Initialize session if not exists
 	if _, exists := es.events[sessionID]; !exists {
 		es.events[sessionID] = make([]Event, 0)

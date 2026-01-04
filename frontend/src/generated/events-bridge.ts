@@ -470,6 +470,9 @@ export interface ToolCallEndEvent {
   result?: string;
   duration?: number;
   server_name?: string;
+  context_usage_percent?: number;
+  model_context_window?: number;
+  context_window_usage?: number;
 }
 export interface ToolCallErrorEvent {
   timestamp?: string;
@@ -1519,6 +1522,9 @@ export interface StepProgressUpdatedEvent {
   last_completed_step?: number;
   branch_steps?: {
     [k: string]: BranchStepProgress;
+  };
+  validation_failures?: {
+    [k: string]: number;
   };
 }
 /**

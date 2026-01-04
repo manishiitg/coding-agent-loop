@@ -2,16 +2,13 @@
 FROM golang:1.24-alpine AS builder
 
 # Install ripgrep, gcc, and musl-dev for CGO support
-RUN apk add --no-cache ripgrep gcc musl-dev
+RUN apk add --no-cache ripgrep gcc musl-dev git
 
 # Set working directory
 WORKDIR /app
 
-# Copy go mod files
+# Copy go mod files first
 COPY go.mod go.sum ./
-
-# Ensure go.sum is complete and up-to-date
-RUN go mod tidy
 
 # Download dependencies
 RUN go mod download
@@ -29,15 +26,10 @@ FROM alpine:latest
 # Install ripgrep, git, patch, python3 for GitHub integration, diff patching, script execution, and util-linux for filesystem isolation (unshare)
 RUN apk add --no-cache ripgrep git patch python3 py3-pip util-linux
 
-# Create app user
-RUN adduser -D -s /bin/sh appuser
-
 # Configure pip to allow system-wide packages (safe in containerized environment)
-# Create pip config directory for appuser
-RUN mkdir -p /home/appuser/.config/pip && \
-    echo "[global]" > /home/appuser/.config/pip/pip.conf && \
-    echo "break-system-packages = true" >> /home/appuser/.config/pip/pip.conf && \
-    chown -R appuser:appuser /home/appuser/.config
+RUN mkdir -p /root/.config/pip && \
+    echo "[global]" > /root/.config/pip/pip.conf && \
+    echo "break-system-packages = true" >> /root/.config/pip/pip.conf
 
 # Set working directory
 WORKDIR /app
@@ -46,10 +38,10 @@ WORKDIR /app
 COPY --from=builder /app/planner .
 
 # Create docs and data directories
-RUN mkdir -p /app/workspace-docs /app/data && chown -R appuser:appuser /app
+RUN mkdir -p /app/workspace-docs /app/data
 
-# Switch to non-root user
-USER appuser
+# NOTE: Running as root to allow unshare with mount namespaces (requires CAP_SYS_ADMIN)
+# The application itself uses BuildSafeEnvironment() to prevent secret leakage
 
 # Expose port
 EXPOSE 8080

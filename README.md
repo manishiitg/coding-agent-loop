@@ -15,7 +15,7 @@ A sophisticated **Go-based MCP (Model Context Protocol) Agent** featuring a comp
 
 MCP Agent is a production-ready AI orchestrator that connects to **12+ MCP servers** across multiple protocols (HTTP, SSE, stdio) to provide intelligent automation across AWS, GitHub, Kubernetes, databases, monitoring tools, and more. It features both **Simple** and **ReAct** agent modes with comprehensive observability and security scanning.
 
-**Note**: The core MCP agent library (`mcpagent`) is now a separate independent package. See [../mcpagent/README.md](../mcpagent/README.md) for library documentation. This repository contains the server application (`agent_go`) that uses the `mcpagent` library.
+**Note**: The core MCP agent library (`mcpagent`) is now a separate independent package. This repository contains the server application (`agent_go`) that uses the `mcpagent` library.
 
 ## 🏗️ **Workflow Orchestration**
 
@@ -27,21 +27,21 @@ MCP Agent provides sophisticated workflow orchestration capabilities for complex
 
 - **[Human Feedback Tool](docs/human_feedback_system.md)**: Interactive virtual tool that pauses LLM execution to request real-time user input via browser notifications and UI, enabling human-in-the-loop workflows for 2FA, confirmations, and critical decisions.
 
-**Core MCP Agent Library Features** (see [mcpagent documentation](../mcpagent/README.md)):
+**Core MCP Agent Library Features**:
 
-- **[Code Execution Agent](../mcpagent/docs/code_execution_agent.md)**: Specialized agent for executing Go code with security sandboxing and comprehensive error handling.
+- **[Code Execution Mode](docs/code_execution_mode.md)**: Specialized agent for executing Go code with security sandboxing and comprehensive error handling.
 
-- **[Standard Tool-Use Agent](../mcpagent/docs/tool_use_agent.md)**: The default agent mode where the LLM interacts with the system by invoking tools directly through the LLM provider's native tool calling capability.
+- **Standard Tool-Use Agent**: The default agent mode where the LLM interacts with the system by invoking tools directly through the LLM provider's native tool calling capability.
 
-- **[Smart Routing](../mcpagent/docs/smart_routing.md)**: Advanced optimization that dynamically filters tools based on conversation context to reduce token usage.
+- **Smart Routing**: Advanced optimization that dynamically filters tools based on conversation context to reduce token usage.
 
-- **[LLM Resilience](../mcpagent/docs/llm_resilience.md)**: Comprehensive system for handling API errors, rate limits, and context window exhaustion with multi-phase fallbacks.
+- **LLM Resilience**: Comprehensive system for handling API errors, rate limits, and context window exhaustion with multi-phase fallbacks.
 
-- **[Large Tool Output Handling](../mcpagent/docs/large_output_handling.md)**: Automatic system for handling tool outputs that exceed context window limits by saving to files and providing specialized query tools.
+- **Large Tool Output Handling**: Automatic system for handling tool outputs that exceed context window limits by saving to files and providing specialized query tools.
 
-- **[MCP Cache System](../mcpagent/docs/mcp_cache_system.md)**: Multi-layer caching system that reduces MCP server connection times by 60-85% through intelligent caching of tool definitions and server metadata.
+- **MCP Cache System**: Multi-layer caching system that reduces MCP server connection times by 60-85% through intelligent caching of tool definitions and server metadata.
 
-- **[Folder Guard System](../mcpagent/docs/folder_guard.md)**: Fine-grained access control mechanism that restricts agent file operations to specific directories with separate read/write permissions for both simple and code execution modes.
+- **[Folder Guard System](docs/folder_guard.md)**: Fine-grained access control mechanism that restricts agent file operations to specific directories with separate read/write permissions for both simple and code execution modes.
 
 
 See the [docs/](docs/) folder for detailed documentation on each workflow and agent.
@@ -263,6 +263,29 @@ mcp-agent-builder-go/
 ├── .github/workflows/        # GitHub Actions
 └── docker-compose.yml       # Docker services
 ```
+
+## 📚 **Architecture & Implementation Details**
+
+Key architectural documentation and implementation plans:
+
+### **Workflow Engine**
+- **[Learnings Architecture](docs/learnings_architecture.md)**: Details the "Explore vs. Exploit" learning system and turn-count based auto-locking.
+- **[Conditional Agent Logic](docs/conditional_agent_implementation.md)**: Explains how the conditional agent evaluates branching decisions.
+- **[Routing Step Implementation](docs/routing_step_implementation.md)**: Details on how the orchestrator handles path routing and decision branches.
+- **[Prerequisite Failure Handling](docs/prerequisite_failure_implementation.md)**: Architecture for detecting missing dependencies and navigating back to previous steps.
+- **[Step Config Specification](docs/step_config_format_specification.md)**: Detailed specification for the `step_config.json` format.
+- **[Variable Groups Plan](docs/variable_groups_implementation_plan.md)**: Plan for handling batch execution and variable group isolation.
+
+### **Frontend & API**
+- **[Frontend Chat Architecture](docs/multi_tab_chat_architecture.md)**: Overview of the multi-tab chat system and frontend data flow.
+- **[Workflow Canvas Implementation](docs/react_flow_workflow_canvas.md)**: Implementation details for the React Flow-based workflow visualization.
+- **[Frontend API & Data Model](docs/frontend_api_structure_data_model.md)**: The contract between the Go backend and React frontend.
+- **[Event System Structure](docs/event_type_discriminated_union.md)**: Technical detail on the event system's data structure for the frontend.
+
+### **Advanced Logic**
+- **[Temp LLM Cascading Flow](docs/temp_llm_cascading_flow.md)**: Detailed logic for the LLM fallback system (tempLLM1 → tempLLM2 → Base LLM).
+- **[Validation Schema Implementation](docs/validation_schema_implementation.md)**: How structured output and validation schemas are enforced.
+- **[Evaluation Phase Plan](docs/evaluation_phase_implementation_plan.md)**: Plan for the evaluation phase implementation.
 
 ## 🤝 **Contributing**
 

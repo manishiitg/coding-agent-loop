@@ -2,6 +2,8 @@ import React from 'react'
 import type { ToolCallEndEvent } from '../../../generated/events'
 import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer'
 import { WorkspaceToolCallEndDisplay, CodeExecutionToolCallEndDisplay } from './ToolCallSpecialRender'
+import { CircularProgress, type ContextOnlyTokenUsage } from '../../ui/CircularProgress'
+import { TooltipProvider } from '../../ui/tooltip'
 
 interface ToolCallEndEventProps {
   event: ToolCallEndEvent
@@ -111,6 +113,19 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
   // Parse the result content to extract text
   const resultInfo = event.result ? parseResultContent(event.result) : null
 
+  // Extract context usage information
+  const contextUsagePercent = event.context_usage_percent
+  const modelContextWindow = event.model_context_window
+  const contextWindowUsage = event.context_window_usage
+
+  // Create a minimal token usage object for the tooltip (only context info available)
+  const tokenUsageForTooltip: ContextOnlyTokenUsage | undefined = 
+    contextUsagePercent !== undefined && contextUsagePercent > 0 ? {
+      context_usage_percent: contextUsagePercent,
+      model_context_window: modelContextWindow,
+      context_window_usage: contextWindowUsage,
+    } : undefined
+
   // Single-line layout following design guidelines
   return (
     <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded p-2">
@@ -118,7 +133,7 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
         {/* Left side: Icon and main content */}
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-green-700 dark:text-green-300">
+            <div className="text-sm font-medium text-green-700 dark:text-green-300 flex items-center gap-2">
               Tool Call End{' '}
               <span className="text-xs font-normal text-green-600 dark:text-green-400">
                 {event.turn && `• Turn: ${event.turn}`}
@@ -126,6 +141,17 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
                 {event.server_name && ` • Server: ${event.server_name}`}
                 {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
               </span>
+              {/* Context completion indicator */}
+              {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
+                <TooltipProvider>
+                  <CircularProgress 
+                    percentage={contextUsagePercent} 
+                    size={18}
+                    strokeWidth={2}
+                    tokenUsage={tokenUsageForTooltip}
+                  />
+                </TooltipProvider>
+              )}
             </div>
           </div>
         </div>

@@ -1154,6 +1154,9 @@ export interface StepProgressUpdatedEvent {
   timestamp?: string;
   total_steps?: number;
   trace_id?: string;
+  validation_failures?: {
+    [k: string]: number;
+  };
   workspace_path?: string;
 }
 /**
@@ -1385,6 +1388,8 @@ export interface TokenUsageEvent {
 }
 export interface ToolCallEndEvent {
   component?: string;
+  context_usage_percent?: number;
+  context_window_usage?: number;
   correlation_id?: string;
   duration?: number;
   event_id?: string;
@@ -1393,6 +1398,7 @@ export interface ToolCallEndEvent {
   metadata?: {
     [k: string]: unknown;
   };
+  model_context_window?: number;
   parent_id?: string;
   result?: string;
   server_name?: string;

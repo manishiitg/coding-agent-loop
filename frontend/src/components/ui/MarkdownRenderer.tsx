@@ -50,6 +50,73 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             margin-top: 0.25rem;
             margin-bottom: 0.25rem;
           }
+          /* Override prose table styles for dark theme */
+          .markdown-content.prose table tbody tr {
+            background-color: transparent !important;
+          }
+          .dark .markdown-content.prose table tbody tr,
+          .dark-plus .markdown-content.prose table tbody tr {
+            background-color: transparent !important;
+          }
+          .markdown-content.prose table tbody tr:hover {
+            background-color: rgb(249 250 251) !important;
+          }
+          .dark .markdown-content.prose table tbody tr:hover,
+          .dark-plus .markdown-content.prose table tbody tr:hover {
+            background-color: rgb(31 41 55) !important;
+          }
+          .markdown-content.prose table tbody tr:focus,
+          .markdown-content.prose table tbody tr:active,
+          .markdown-content.prose table tbody tr.selected {
+            background-color: rgb(249 250 251) !important;
+          }
+          .dark .markdown-content.prose table tbody tr:focus,
+          .dark .markdown-content.prose table tbody tr:active,
+          .dark .markdown-content.prose table tbody tr.selected,
+          .dark-plus .markdown-content.prose table tbody tr:focus,
+          .dark-plus .markdown-content.prose table tbody tr:active,
+          .dark-plus .markdown-content.prose table tbody tr.selected {
+            background-color: rgb(31 41 55) !important;
+          }
+          /* Ensure text color is correct in dark mode for hover/selected rows */
+          .dark .markdown-content.prose table tbody tr:hover td,
+          .dark .markdown-content.prose table tbody tr:focus td,
+          .dark .markdown-content.prose table tbody tr:active td,
+          .dark .markdown-content.prose table tbody tr.selected td,
+          .dark-plus .markdown-content.prose table tbody tr:hover td,
+          .dark-plus .markdown-content.prose table tbody tr:focus td,
+          .dark-plus .markdown-content.prose table tbody tr:active td,
+          .dark-plus .markdown-content.prose table tbody tr.selected td {
+            color: rgb(243 244 246) !important;
+          }
+          /* Override any prose-invert styles that might be setting light backgrounds */
+          .dark .markdown-content.prose-invert table tbody tr:hover,
+          .dark-plus .markdown-content.prose-invert table tbody tr:hover {
+            background-color: rgb(31 41 55) !important;
+          }
+          .dark .markdown-content.prose-invert table tbody tr:focus,
+          .dark .markdown-content.prose-invert table tbody tr:active,
+          .dark .markdown-content.prose-invert table tbody tr.selected,
+          .dark-plus .markdown-content.prose-invert table tbody tr:focus,
+          .dark-plus .markdown-content.prose-invert table tbody tr:active,
+          .dark-plus .markdown-content.prose-invert table tbody tr.selected {
+            background-color: rgb(31 41 55) !important;
+          }
+          /* Prevent browser text selection from causing light background issues */
+          .dark .markdown-content.prose table tbody tr::selection,
+          .dark-plus .markdown-content.prose table tbody tr::selection {
+            background-color: rgb(59 130 246) !important;
+            color: rgb(255 255 255) !important;
+          }
+          /* Ensure table cells maintain proper colors */
+          .dark .markdown-content.prose table tbody td,
+          .dark-plus .markdown-content.prose table tbody td {
+            color: rgb(243 244 246) !important;
+          }
+          .dark .markdown-content.prose-invert table tbody td,
+          .dark-plus .markdown-content.prose-invert table tbody td {
+            color: rgb(243 244 246) !important;
+          }
         `
       }} />
       <ReactMarkdown 
@@ -170,7 +237,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             </tbody>
           ),
           tr: ({ children }) => (
-            <tr className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+            <tr className="transition-colors [&:hover]:bg-gray-50 dark:[&:hover]:bg-gray-800 [&:focus]:bg-gray-50 dark:[&:focus]:bg-gray-800 [&:active]:bg-gray-100 dark:[&:active]:bg-gray-700">
               {children}
             </tr>
           ),
@@ -180,7 +247,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             </th>
           ),
           td: ({ children }) => (
-            <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100 break-words overflow-wrap-anywhere">
+            <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100 break-words overflow-wrap-anywhere [tr:hover_&]:text-gray-900 [tr:hover_&]:dark:text-gray-100 [tr:focus_&]:text-gray-900 [tr:focus_&]:dark:text-gray-100 [tr:active_&]:text-gray-900 [tr:active_&]:dark:text-gray-100">
               {children}
             </td>
           ),

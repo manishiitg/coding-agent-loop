@@ -51,37 +51,6 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, { onNewChat: () => void }
   )
 })
 
-// Utility function to format file path for display
-// Shows directory with ellipsis if needed, always shows filename
-const formatFilePathForDisplay = (filepath: string, maxLength: number = 60): string => {
-  if (!filepath) return ''
-  
-  // Extract filename
-  const parts = filepath.split('/')
-  const filename = parts[parts.length - 1]
-  const directory = parts.slice(0, -1).join('/')
-  
-  // If the full path fits, show it
-  if (filepath.length <= maxLength) {
-    return filepath
-  }
-  
-  // If only filename fits, show just filename
-  if (filename.length >= maxLength - 3) {
-    return filename
-  }
-  
-  // Show directory with ellipsis + filename
-  const availableSpace = maxLength - filename.length - 3 // 3 for "..."
-  if (directory.length <= availableSpace) {
-    return `${directory}/${filename}`
-  }
-  
-  // Truncate directory from the start
-  const truncatedDir = '...' + directory.slice(-(availableSpace - 3))
-  return `${truncatedDir}/${filename}`
-}
-
 // Utility function to detect code files and get their language
 const getCodeFileLanguage = (filepath: string): string | null => {
   const ext = filepath.toLowerCase().split('.').pop() || ''
@@ -724,7 +693,7 @@ function App() {
             {showFileContent && (
               <div className="absolute inset-0 bg-white dark:bg-gray-900 z-10 flex flex-col">
               {/* Fixed Header */}
-              <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+              <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <button
                     onClick={() => {
@@ -745,14 +714,25 @@ function App() {
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate min-w-0 cursor-help">
-                          {selectedFile?.path ? formatFilePathForDisplay(selectedFile.path) : ''}
-                          {getHasUnsavedChanges() && (
-                            <span className="ml-2 text-xs text-orange-500">●</span>
+                        <div className="flex flex-col min-w-0 cursor-help gap-0.5">
+                          {selectedFile?.path && (
+                            <>
+                              <div className="flex items-center gap-2">
+                                <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
+                                  {selectedFile.path.split('/').pop() || selectedFile.path}
+                                </h2>
+                                {getHasUnsavedChanges() && (
+                                  <span className="text-[10px] text-orange-500">●</span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-gray-500 dark:text-gray-400 truncate">
+                                {selectedFile.path}
+                              </p>
+                            </>
                           )}
-                        </h2>
+                        </div>
                       </TooltipTrigger>
-                      {selectedFile?.path && formatFilePathForDisplay(selectedFile.path) !== selectedFile.path && (
+                      {selectedFile?.path && (
                         <TooltipContent>
                           <p className="max-w-md break-all">{selectedFile.path}</p>
                         </TooltipContent>
@@ -903,7 +883,7 @@ function App() {
                         />
                       </div>
                     ) : (
-                      <div className="p-4">
+                      <div className="p-6">
                         {(() => {
                           // Check for JSON files first
                           if (selectedFile?.path?.toLowerCase().endsWith('.json') || isValidJSON(fileContent)) {
@@ -962,12 +942,14 @@ function App() {
                           // Default: render as markdown
                           else {
                             return (
-                              <div className="text-xs prose prose-sm max-w-none dark:prose-invert [&_*]:text-xs">
-                                <MarkdownRenderer 
-                                  content={fileContent} 
-                                  className="max-w-none"
-                                  showScrollbar={true}
-                                />
+                              <div className="max-w-4xl mx-auto">
+                                <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-headings:text-gray-900 dark:prose-headings:text-gray-100 prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline prose-strong:text-gray-900 dark:prose-strong:text-gray-100 prose-code:text-blue-600 dark:prose-code:text-blue-400 prose-pre:bg-gray-50 dark:prose-pre:bg-gray-900 prose-blockquote:border-l-blue-500 prose-blockquote:text-gray-700 dark:prose-blockquote:text-gray-300">
+                                  <MarkdownRenderer 
+                                    content={fileContent} 
+                                    className="max-w-none"
+                                    showScrollbar={true}
+                                  />
+                                </div>
                               </div>
                             )
                           }

@@ -2,8 +2,8 @@ services:
   # MCP Agent Server
   mcp-agent:
     build:
-      context: ./agent_go
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./agent_go/Dockerfile
     ports:
       - "8000:8000"
     volumes:
@@ -52,9 +52,9 @@ services:
       - ORCHESTRATOR_STRUCTURED_OUTPUT_TEMPERATURE=0.06
       
       # External Service URLs (internal Docker network)
-      - WORKSPACE_API_URL=http://planner-api:8080
+      - WORKSPACE_API_URL=http://workspace-api:8080
       - DOCKER_CONTAINER=true
     depends_on:
-      planner-api:
+      workspace-api:
         condition: service_healthy
     restart: unless-stopped

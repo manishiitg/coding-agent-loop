@@ -196,21 +196,55 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	}
 
 	// Check if auto-lock should be triggered based on TurnCount complexity
+	// Use cumulative runs across all complexity levels, but check against threshold for current complexity
+	// This allows steps that improve over time (complex → medium → simple) to lock faster
 	// Simple (< 15 turns): Lock after 3 successful runs.
 	// Medium (15-30 turns): Lock after 5 successful runs.
 	// Complex (> 30 turns): Lock after 10 successful runs.
 	shouldAutoLock := false
 	var autoLockReason string
 
-	if metadata.SuccessfulRunsSimple >= 3 {
+	// Calculate cumulative successful runs across all complexity levels
+	totalSuccessfulRuns := metadata.SuccessfulRunsSimple + metadata.SuccessfulRunsMedium + metadata.SuccessfulRunsComplex
+
+	// Determine current complexity from last_turn_count
+	var currentComplexity string
+	var threshold int
+	if turnCount > 0 {
+		if turnCount < 15 {
+			currentComplexity = "simple"
+			threshold = 3
+		} else if turnCount <= 30 {
+			currentComplexity = "medium"
+			threshold = 5
+		} else {
+			currentComplexity = "complex"
+			threshold = 10
+		}
+	} else {
+		// Fallback: use last_turn_count from metadata if turnCount is 0
+		if metadata.LastTurnCount > 0 {
+			if metadata.LastTurnCount < 15 {
+				currentComplexity = "simple"
+				threshold = 3
+			} else if metadata.LastTurnCount <= 30 {
+				currentComplexity = "medium"
+				threshold = 5
+			} else {
+				currentComplexity = "complex"
+				threshold = 10
+			}
+		} else {
+			// No turn count available - use simple threshold as default
+			currentComplexity = "simple"
+			threshold = 3
+		}
+	}
+
+	// Check if cumulative runs meet the threshold for current complexity
+	if totalSuccessfulRuns >= threshold {
 		shouldAutoLock = true
-		autoLockReason = "threshold_reached_simple"
-	} else if metadata.SuccessfulRunsMedium >= 5 {
-		shouldAutoLock = true
-		autoLockReason = "threshold_reached_medium"
-	} else if metadata.SuccessfulRunsComplex >= 10 {
-		shouldAutoLock = true
-		autoLockReason = "threshold_reached_complex"
+		autoLockReason = fmt.Sprintf("threshold_reached_%s (cumulative: %d runs, threshold: %d)", currentComplexity, totalSuccessfulRuns, threshold)
 	}
 
 	// Fallback to max iterations (safety)

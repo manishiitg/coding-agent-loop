@@ -51,6 +51,38 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		}
 	}
 
+	// Helper function to update metadata with turnCount when learning is skipped
+	updateMetadataWhenSkipped := func(skipReason string) error {
+		// Determine which LLM would have been used (for metadata tracking)
+		learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
+		learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Provider, learningLLMConfig.ModelID)
+
+		// Update metadata with turnCount but don't increment counters (learning was skipped)
+		// We still want to record last_turn_count for complexity tracking
+		// Note: validationPassed is set to false here NOT because validation failed, but because
+		// we want to prevent counter increments when learning is skipped. The turnCount is still
+		// recorded for complexity determination purposes.
+		_, metadataErr := hcpo.updateLearningMetadataWithTurnCount(
+			ctx,
+			stepIndex,
+			stepPath,
+			learningPathIdentifier,
+			false, // hasNewLearning = false (learning was skipped)
+			fmt.Sprintf("Learning skipped: %s (turnCount recorded for complexity tracking)", skipReason),
+			0.0, // confidence = 0 (not applicable when skipped)
+			turnCount,
+			step,
+			false, // validationPassed = false (don't increment counters when learning is skipped, even though validation may have passed)
+			learningLLM,
+		)
+		if metadataErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update learning metadata (skipped) for %s: %v", learningPathIdentifier, metadataErr))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("📊 Recorded turnCount (%d) for %s (learning skipped: %s)", turnCount, learningPathIdentifier, skipReason))
+		}
+		return metadataErr
+	}
+
 	// LOCK LEARNINGS: Check if learnings are locked (prevents learning agent from running but still uses existing learnings)
 	// Note: Lock learnings takes precedence - even in code execution mode, if learnings are locked, skip learning agent
 	// EXCEPTION: If learnings are locked but learnings don't exist, still run learning to create initial learnings
@@ -63,7 +95,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		} else if learningsEmpty {
 			// Learnings are locked but folder is empty - run learning to create initial learnings
 		} else {
-			// Learnings are locked and learnings exist - skip learning
+			// Learnings are locked and learnings exist - skip learning but record turnCount
+			_ = updateMetadataWhenSkipped("learnings locked")
 			return nil
 		}
 	}
@@ -73,6 +106,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	// Use the provided step-specific code execution mode (already computed with step-level priority)
 	shouldSkipLearning := (learningDetailLevel == "none" || (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning)) && !isCodeExecutionMode
 	if shouldSkipLearning {
+		// Learning is disabled - skip learning but record turnCount
+		_ = updateMetadataWhenSkipped("learning disabled")
 		return nil
 	}
 	if isCodeExecutionMode && (learningDetailLevel == "none" || (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning)) {
@@ -286,6 +321,36 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 		}
 	}
 
+	// Helper function to update metadata with turnCount when learning is skipped
+	updateMetadataWhenSkippedFailure := func(skipReason string) error {
+		// Determine which LLM would have been used (for metadata tracking)
+		learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
+		learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Provider, learningLLMConfig.ModelID)
+
+		// Update metadata with turnCount but don't increment counters (learning was skipped)
+		// We still want to record last_turn_count for complexity tracking
+		// Note: validationPassed = false because this is failure learning (validation failed)
+		_, metadataErr := hcpo.updateLearningMetadataWithTurnCount(
+			ctx,
+			stepIndex,
+			stepPath,
+			learningPathIdentifier,
+			false, // hasNewLearning = false (learning was skipped)
+			fmt.Sprintf("Failure learning skipped: %s (turnCount recorded for complexity tracking)", skipReason),
+			0.0, // confidence = 0 (not applicable when skipped)
+			turnCount,
+			step,
+			false, // validationPassed = false (validation failed, and learning was skipped)
+			learningLLM,
+		)
+		if metadataErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update learning metadata (skipped) for %s: %v", learningPathIdentifier, metadataErr))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("📊 Recorded turnCount (%d) for %s (failure learning skipped: %s)", turnCount, learningPathIdentifier, skipReason))
+		}
+		return metadataErr
+	}
+
 	// LOCK LEARNINGS: Check if learnings are locked (prevents learning agent from running but still uses existing learnings)
 	// Note: Lock learnings takes precedence - even in code execution mode, if learnings are locked, skip learning agent
 	// EXCEPTION: If learnings are locked but learnings don't exist, still run learning to create initial learnings
@@ -300,8 +365,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 			// Learnings are locked but folder is empty - run learning to create initial learnings
 			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked but folder is empty - running learning to create initial learnings for %s/%d", learningPathIdentifier, totalSteps))
 		} else {
-			// Learnings are locked and learnings exist - skip learning
+			// Learnings are locked and learnings exist - skip learning but record turnCount
 			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping failure learning analysis for %s/%d (using existing learnings)", learningPathIdentifier, totalSteps))
+			_ = updateMetadataWhenSkippedFailure("learnings locked")
 			return "", "", nil
 		}
 	}
@@ -311,7 +377,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	// Use the provided step-specific code execution mode (already computed with step-level priority)
 	shouldSkipLearning := (learningDetailLevel == "none" || (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning)) && !isCodeExecutionMode
 	if shouldSkipLearning {
+		// Learning is disabled - skip learning but record turnCount
 		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping failure learning analysis for %s/%d (learning disabled)", learningPathIdentifier, totalSteps))
+		_ = updateMetadataWhenSkippedFailure("learning disabled")
 		return "", "", nil
 	}
 	if isCodeExecutionMode && (learningDetailLevel == "none" || (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning)) {

@@ -12,7 +12,10 @@ import (
 	"time"
 
 	"workspace/models"
+	"workspace/security"
 	"workspace/utils"
+
+	mcpagent "mcpagent/agent"
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
@@ -93,40 +96,63 @@ func ExecuteShellCommand(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
 
-	// Default to shell execution for better user experience and flexibility
-	// This handles commands with quotes, pipes, redirects, etc. naturally
-	// Since UseShell is a bool, we can't distinguish "not provided" from "explicitly false",
-	// so we always default to shell mode for simplicity and better UX
-	// If someone needs direct execution, they can request that as a feature
-	useShell := true
-
-	// Build command
+	// Build command with folder guard isolation
 	var cmd *exec.Cmd
 	var fullCommand string
+	var cleanup func()
 
-	if useShell {
-		// Execute through shell to support complex commands (pipes, redirects, &&, ||, etc.)
-		// Combine command and args into a single command string
+	// Check if folder guard is enabled
+	if req.FolderGuard != nil && req.FolderGuard.Enabled {
+		// Use isolated execution with filesystem restrictions
+		isolator := &security.Isolator{
+			ReadPaths:  req.FolderGuard.ReadPaths,
+			WritePaths: req.FolderGuard.WritePaths,
+			WorkDir:    workingDir,
+		}
+
 		if len(req.Args) > 0 {
 			fullCommand = req.Command + " " + strings.Join(req.Args, " ")
 		} else {
 			fullCommand = req.Command
 		}
-		// Use sh -c to execute the command string through shell
-		cmd = exec.CommandContext(ctx, "sh", "-c", fullCommand)
+
+		var err error
+		cmd, cleanup, err = isolator.ExecuteIsolated(ctx, "sh", []string{"-c", fullCommand})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+				Success: false,
+				Message: "Failed to setup isolated execution",
+				Error:   err.Error(),
+			})
+			return
+		}
+		if cleanup != nil {
+			defer cleanup() // Clean up script file after execution
+		}
+
 	} else {
-		// Direct execution (more secure, faster for simple commands)
+		// Non-isolated execution (backward compatibility)
+		// BUT STILL sanitize environment for security!
+		
+		// Respect UseShell if provided, but original logic hardcoded useShell=true.
+		// I will check if I should follow original logic or the snippet.
+		// Snippet for non-isolated:
+		// if len(req.Args) > 0 { fullCommand = ... } else { fullCommand = req.Command }
+		// cmd = exec.CommandContext(ctx, "sh", "-c", fullCommand)
+		// This forces shell execution, same as original.
+
 		if len(req.Args) > 0 {
-			cmd = exec.CommandContext(ctx, req.Command, req.Args...)
 			fullCommand = req.Command + " " + strings.Join(req.Args, " ")
 		} else {
-			cmd = exec.CommandContext(ctx, req.Command)
 			fullCommand = req.Command
 		}
-	}
 
-	// Set working directory
-	cmd.Dir = workingDir
+		cmd = exec.CommandContext(ctx, "sh", "-c", fullCommand)
+		cmd.Dir = workingDir
+
+		// CRITICAL: Always sanitize environment, even without folder guard
+		cmd.Env = mcpagent.BuildSafeEnvironment()
+	}
 
 	// Capture stdout and stderr separately
 	var stdoutBuf, stderrBuf bytes.Buffer

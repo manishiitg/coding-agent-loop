@@ -730,6 +730,14 @@ export const agentApi = {
     return response.data
   },
 
+  // Get learning metadata for all steps
+  getAllStepLearnings: async (workspacePath: string): Promise<{ success: boolean; learnings: Record<string, any> }> => {
+    const response = await api.get('/api/workflow/learnings/all', {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
   // Get variable groups from variables.json
   getVariableGroups: async (workspacePath: string): Promise<VariableGroupsResponse> => {
     const response = await api.get('/api/workflow/variable-groups', {

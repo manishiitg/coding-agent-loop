@@ -148,6 +148,26 @@ echo "✅ Server log file truncated: $LOG_FILE"
 > "logs/llm_debug.log"
 echo "✅ LLM log file truncated: logs/llm_debug.log"
 
+# Clean up tool_output_folder to start fresh
+echo "🧹 Cleaning tool_output_folder..."
+if [ -d "tool_output_folder" ]; then
+    rm -rf tool_output_folder/*
+    echo "✅ tool_output_folder cleaned (all files and subdirectories removed)"
+else
+    mkdir -p tool_output_folder
+    echo "✅ tool_output_folder created (was missing)"
+fi
+
+# Clean up generated/agents directory to start fresh
+echo "🧹 Cleaning generated/agents..."
+if [ -d "generated/agents" ]; then
+    rm -rf generated/agents/*
+    echo "✅ generated/agents cleaned (all files and subdirectories removed)"
+else
+    mkdir -p generated/agents
+    echo "✅ generated/agents created (was missing)"
+fi
+
 # Add timestamp header to log file
 echo "🚀 MCP Agent Server Session Started: $(date)" | tee "$LOG_FILE"
 echo "=========================================" | tee -a "$LOG_FILE"

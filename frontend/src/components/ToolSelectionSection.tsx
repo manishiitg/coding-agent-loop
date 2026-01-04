@@ -71,6 +71,45 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
     }
   }, [rawInstance, instanceId, selectedServers, selectedTools, storeActions]);
   
+  // Auto-load tools for servers in specific mode that haven't been loaded yet
+  useEffect(() => {
+    if (!rawInstance) return;
+    
+    selectedServers.forEach(serverName => {
+      // Calculate mode the same way as in render (check store mode first, then calculated)
+      const hasAllToolsMarker = selectedTools.includes(`${serverName}:*`);
+      const serverSpecificTools = selectedTools.filter(t => 
+        t.startsWith(`${serverName}:`) && !t.endsWith(':*')
+      );
+      const calculatedMode = hasAllToolsMarker ? 'all' : (serverSpecificTools.length > 0 ? 'specific' : 'all');
+      // Access serverToolMode from rawInstance to avoid dependency on instance object
+      const toolMode = rawInstance.serverToolMode[serverName] || calculatedMode;
+      
+      // If in specific mode and tools haven't been loaded, load them
+      if (toolMode === 'specific') {
+        const toolsFromStore = storeActions.getServerTools(serverName);
+        const hasLoadedTools = toolsFromStore !== undefined;
+        const isLoading = storeActions.isServerLoading(instanceId, serverName);
+        
+        if (!hasLoadedTools && !isLoading) {
+          console.log('[ToolSelection] Auto-loading tools for server in specific mode:', serverName);
+          // Trigger load
+          const setLoadingServer = useToolSelectionStore.getState().setLoadingServer;
+          setLoadingServer(instanceId, serverName, true);
+          storeActions.loadServerTools(serverName)
+            .then(() => {
+              console.log('[ToolSelection] Tools loaded successfully for:', serverName);
+              setLoadingServer(instanceId, serverName, false);
+            })
+            .catch(err => {
+              console.error('[ToolSelection] Failed to load tools:', serverName, err);
+              setLoadingServer(instanceId, serverName, false);
+            });
+        }
+      }
+    });
+  }, [rawInstance, instanceId, selectedServers, selectedTools, storeActions]);
+  
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -248,7 +287,10 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
           const isExpanded = instance.expandedServers.has(serverName);
           const isLoading = storeActions.isServerLoading(instanceId, serverName);
           const isServerSelected = selectedServers.includes(serverName);
-          const serverTools = storeActions.getServerTools(serverName) || [];
+          // Check if tools have been loaded (undefined = not loaded yet, array = loaded)
+          const toolsFromStore = storeActions.getServerTools(serverName);
+          const hasLoadedTools = toolsFromStore !== undefined;
+          const serverTools = hasLoadedTools ? toolsFromStore : [];
           const allToolsSelected = areAllServerToolsSelected(serverName);
           
           // Calculate mode from selectedTools if not in serverToolMode (fallback for initial render)
@@ -353,12 +395,12 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
                   {/* Tool List (only when specific mode is selected) */}
                   {toolMode === 'specific' && (
                     <div className="space-y-2">
-                      {isLoading ? (
+                      {isLoading || !hasLoadedTools ? (
                         <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 py-2">
                           <Loader2 className="w-4 h-4 animate-spin" />
                           Loading tools...
                         </div>
-                      ) : isServerToolsArray && serverTools.length > 0 ? (
+                      ) : serverTools.length > 0 ? (
                         <>
                           {/* Select All Tools Button */}
                           <button
@@ -408,7 +450,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
                         </>
                       ) : (
                         <div className="text-sm text-gray-500 dark:text-gray-400 py-2">
-                          {isServerToolsArray ? 'No tools available for this server' : 'Error loading tools for this server'}
+                          No tools available for this server
                         </div>
                       )}
                     </div>

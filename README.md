@@ -25,9 +25,7 @@ MCP Agent provides sophisticated workflow orchestration capabilities for complex
 
 - **[Workflow Orchestrator](docs/workflow_orchestrator.md)**: Comprehensive multi-phase orchestration system with 7 isolated phases (variable extraction, planning, execution, anonymization, plan improvement, alignment, tool optimization) and 10 specialized agents. Features human-in-the-loop control, conditional branching, loop execution, learning capture, and preset LLM configuration.
 
-- **[Workflow Orchestrator](docs/workflow_orchestrator.md)**: Comprehensive multi-phase orchestration system with 7 isolated phases (variable extraction, planning, execution, anonymization, plan improvement, alignment, tool optimization) and 10 specialized agents. Features human-in-the-loop control, conditional branching, loop execution, learning capture, and preset LLM configuration.
-
-- **[Human Feedback Tool](docs/human_feedback_tool.md)**: Interactive virtual tool that pauses LLM execution to request real-time user input via browser notifications and UI, enabling human-in-the-loop workflows for 2FA, confirmations, and critical decisions.
+- **[Human Feedback Tool](docs/human_feedback_system.md)**: Interactive virtual tool that pauses LLM execution to request real-time user input via browser notifications and UI, enabling human-in-the-loop workflows for 2FA, confirmations, and critical decisions.
 
 **Core MCP Agent Library Features** (see [mcpagent documentation](../mcpagent/README.md)):
 

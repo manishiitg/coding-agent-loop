@@ -80,6 +80,16 @@ func SyncWithGitHub(c *gin.Context) {
 
 	docsDir := viper.GetString("docs-dir")
 
+	// Validate branch name
+	if githubBranch == "" {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+			Success: false,
+			Message: "GitHub branch not configured",
+			Error:   "github-branch configuration is required",
+		})
+		return
+	}
+
 	// Initialize git repository if it doesn't exist
 	if err := initGitRepo(docsDir, githubRepo, githubToken); err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
@@ -90,19 +100,116 @@ func SyncWithGitHub(c *gin.Context) {
 		return
 	}
 
-	// Ensure we're on the correct branch
-	if err := exec.Command("git", "-C", docsDir, "checkout", "-B", githubBranch).Run(); err != nil {
-		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
-			Success: false,
-			Message: "Failed to switch to branch",
-			Error:   err.Error(),
-		})
-		return
+	// Check what branch we're currently on
+	log.Printf("[SYNC] Checking current branch...")
+	currentBranchCmd := exec.Command("git", "-C", docsDir, "rev-parse", "--abbrev-ref", "HEAD")
+	currentBranchOutput, currentBranchErr := currentBranchCmd.Output()
+	currentBranch := ""
+	if currentBranchErr == nil {
+		currentBranch = strings.TrimSpace(string(currentBranchOutput))
+		log.Printf("[SYNC] Current branch: %s", currentBranch)
+	} else {
+		log.Printf("[SYNC] WARNING: Failed to get current branch: %v", currentBranchErr)
 	}
 
 	// Check initial status
 	log.Printf("[SYNC] Checking git status in directory: %s", docsDir)
 	status, err := utils.GetGitStatus(docsDir)
+	if err != nil {
+		log.Printf("[SYNC] ERROR: Failed to check git status: %v", err)
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to check git status",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	// Only checkout if we're not already on the target branch
+	needsCheckout := currentBranch != githubBranch
+	hasUncommittedChanges := status.HasChanges
+	stashedChanges := false
+
+	if needsCheckout {
+		log.Printf("[SYNC] Need to switch from branch '%s' to '%s'", currentBranch, githubBranch)
+
+		// Handle uncommitted changes before checkout (only if switching branches)
+		if hasUncommittedChanges {
+			log.Printf("[SYNC] Uncommitted changes detected, stashing before branch switch...")
+			stashCmd := exec.Command("git", "-C", docsDir, "stash", "push", "-m", "Auto-stash before branch checkout")
+			stashOutput, stashErr := stashCmd.CombinedOutput()
+			if stashErr != nil {
+				log.Printf("[SYNC] ERROR: Failed to stash changes: %v", stashErr)
+				log.Printf("[SYNC] Stash error output: %s", string(stashOutput))
+				// Check if stash failed because there's nothing to stash (empty working directory)
+				if strings.Contains(strings.ToLower(string(stashOutput)), "no local changes") {
+					log.Printf("[SYNC] No local changes to stash, proceeding with checkout")
+					stashedChanges = false
+				} else {
+					c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+						Success: false,
+						Message: "Failed to stash uncommitted changes",
+						Error:   fmt.Sprintf("Cannot switch branches with uncommitted changes. Stash failed: %s", strings.TrimSpace(string(stashOutput))),
+					})
+					return
+				}
+			} else {
+				log.Printf("[SYNC] Successfully stashed uncommitted changes")
+				stashedChanges = true
+			}
+		}
+
+		// Checkout the target branch
+		log.Printf("[SYNC] Checking out branch: %s", githubBranch)
+		checkoutCmd := exec.Command("git", "-C", docsDir, "checkout", "-B", githubBranch)
+		checkoutOutput, checkoutErr := checkoutCmd.CombinedOutput()
+		if checkoutErr != nil {
+			// Restore stashed changes if checkout failed
+			if stashedChanges {
+				log.Printf("[SYNC] Checkout failed, attempting to restore stashed changes...")
+				restoreCmd := exec.Command("git", "-C", docsDir, "stash", "pop")
+				restoreCmd.Run() // Best effort to restore, log but don't fail on restore error
+			}
+
+			log.Printf("[SYNC] ERROR: Failed to checkout branch: %v", checkoutErr)
+			log.Printf("[SYNC] Checkout error output: %s", string(checkoutOutput))
+
+			errorMsg := string(checkoutOutput)
+			if errorMsg == "" {
+				errorMsg = checkoutErr.Error()
+			}
+
+			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+				Success: false,
+				Message: "Failed to switch to branch",
+				Error:   fmt.Sprintf("Failed to checkout branch '%s': %s", githubBranch, strings.TrimSpace(errorMsg)),
+			})
+			return
+		}
+		log.Printf("[SYNC] Successfully checked out branch: %s", githubBranch)
+		log.Printf("[SYNC] Checkout output: %s", string(checkoutOutput))
+
+		// Restore stashed changes if we stashed them
+		if stashedChanges {
+			log.Printf("[SYNC] Restoring stashed changes...")
+			restoreCmd := exec.Command("git", "-C", docsDir, "stash", "pop")
+			restoreOutput, restoreErr := restoreCmd.CombinedOutput()
+			if restoreErr != nil {
+				log.Printf("[SYNC] WARNING: Failed to restore stashed changes: %v", restoreErr)
+				log.Printf("[SYNC] Restore error output: %s", string(restoreOutput))
+				// Don't fail the sync operation if stash restore fails, but log it
+			} else {
+				log.Printf("[SYNC] Successfully restored stashed changes")
+				// Re-check status after restoring stash
+				status, err = utils.GetGitStatus(docsDir)
+				if err != nil {
+					log.Printf("[SYNC] WARNING: Failed to re-check git status after stash restore: %v", err)
+				}
+			}
+		}
+	} else {
+		log.Printf("[SYNC] Already on target branch '%s', skipping checkout", githubBranch)
+	}
 	if err != nil {
 		log.Printf("[SYNC] ERROR: Failed to check git status: %v", err)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{

@@ -35,11 +35,11 @@ func getMapKeys(m map[string]interface{}) []string {
 	return keys
 }
 
-// readProgressForFolder reads steps_done.json for a given folder and returns the progress
-// Returns nil if the file doesn't exist or can't be read (non-fatal)
-func readProgressForFolder(ctx context.Context, stepsFilePath string) (*StepProgress, error) {
+// readFileFromWorkspace reads a file from the workspace API and returns its content as a string
+// Returns (content, true, nil) if file exists, (empty, false, nil) if file doesn't exist (404), or (empty, false, error) on error
+func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, error) {
 	// URL-encode the filepath segments
-	pathSegments := strings.Split(stepsFilePath, "/")
+	pathSegments := strings.Split(filePath, "/")
 	encodedSegments := make([]string, len(pathSegments))
 	for i, segment := range pathSegments {
 		encodedSegments[i] = url.PathEscape(segment)
@@ -50,60 +50,75 @@ func readProgressForFolder(ctx context.Context, stepsFilePath string) (*StepProg
 	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath
 	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return "", false, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second} // Shorter timeout for batch reads
+	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call workspace API: %w", err)
+		return "", false, fmt.Errorf("failed to call workspace API: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return "", false, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Check if file doesn't exist (404) - this is not an error, just no progress yet
+	// Check if file doesn't exist (404) - this is not an error
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil // Return nil, nil to indicate file doesn't exist (not an error)
+		return "", false, nil // File doesn't exist, but not an error
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+		return "", false, fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse workspace API response
 	var apiResp virtualtools.WorkspaceAPIResponse
 	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to parse API response: %w", err)
+		return "", false, fmt.Errorf("failed to parse API response: %w", err)
 	}
 
 	if !apiResp.Success {
-		return nil, fmt.Errorf("workspace API error: %s", apiResp.Error)
+		return "", false, fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
 
-	// Extract content from response - workspace API returns file content in data.content
-	var progress StepProgress
+	// Extract content from response
+	var content string
 	if fileContent, ok := apiResp.Data.(virtualtools.WorkspaceFileContent); ok {
-		// Parse the JSON content from typed struct
-		if err := json.Unmarshal([]byte(fileContent.Content), &progress); err != nil {
-			return nil, fmt.Errorf("failed to parse steps_done.json content: %w", err)
-		}
-		return &progress, nil
+		content = fileContent.Content
 	} else if dataMap, ok := apiResp.Data.(map[string]interface{}); ok {
-		// Fallback: parse from map[string]interface{} (backward compatibility)
-		if content, ok := dataMap["content"].(string); ok {
-			// Parse the JSON content
-			if err := json.Unmarshal([]byte(content), &progress); err != nil {
-				return nil, fmt.Errorf("failed to parse steps_done.json content: %w", err)
-			}
-			return &progress, nil
+		if c, ok := dataMap["content"].(string); ok {
+			content = c
 		}
 	}
 
-	return nil, fmt.Errorf("unexpected response format from workspace API")
+	if content == "" {
+		return "", false, fmt.Errorf("failed to extract content from API response")
+	}
+
+	return content, true, nil
+}
+
+// readProgressForFolder reads steps_done.json for a given folder and returns the progress
+// Returns nil if the file doesn't exist or can't be read (non-fatal)
+func readProgressForFolder(ctx context.Context, stepsFilePath string) (*StepProgress, error) {
+	// Use the generic file reading helper
+	content, exists, err := readFileFromWorkspace(ctx, stepsFilePath)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, nil // File doesn't exist, not an error
+	}
+
+	// Parse the JSON content
+	var progress StepProgress
+	if err := json.Unmarshal([]byte(content), &progress); err != nil {
+		return nil, fmt.Errorf("failed to parse steps_done.json content: %w", err)
+	}
+	return &progress, nil
 }
 
 // extractIterationFoldersFromTypedChildren extracts iteration folder names from typed WorkspaceFolderItem array
@@ -1584,6 +1599,133 @@ func (api *StreamingAPI) handleDeleteStepLearnings(w http.ResponseWriter, r *htt
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// collectAllStepIDs recursively collects all step IDs from a plan, including branch steps
+func collectAllStepIDs(steps []todo_creation_human.PlanStepInterface) []string {
+	var stepIDs []string
+
+	for _, step := range steps {
+		if stepID := step.GetID(); stepID != "" {
+			stepIDs = append(stepIDs, stepID)
+		}
+
+		// Handle conditional steps - collect branch step IDs
+		if conditionalStep, ok := step.(*todo_creation_human.ConditionalPlanStep); ok {
+			if len(conditionalStep.IfTrueSteps) > 0 {
+				stepIDs = append(stepIDs, collectAllStepIDs(conditionalStep.IfTrueSteps)...)
+			}
+			if len(conditionalStep.IfFalseSteps) > 0 {
+				stepIDs = append(stepIDs, collectAllStepIDs(conditionalStep.IfFalseSteps)...)
+			}
+		}
+
+		// Handle decision steps - collect decision step ID
+		if decisionStep, ok := step.(*todo_creation_human.DecisionPlanStep); ok {
+			if decisionStep.DecisionStep != nil {
+				if decisionStepID := decisionStep.DecisionStep.GetID(); decisionStepID != "" {
+					stepIDs = append(stepIDs, decisionStepID)
+				}
+			}
+		}
+
+		// Handle orchestration steps - collect orchestration step ID and sub-agent IDs
+		if orchestrationStep, ok := step.(*todo_creation_human.OrchestrationPlanStep); ok {
+			if orchestrationStep.OrchestrationStep != nil {
+				if orchestrationStepID := orchestrationStep.OrchestrationStep.GetID(); orchestrationStepID != "" {
+					stepIDs = append(stepIDs, orchestrationStepID)
+				}
+			}
+			// Collect sub-agent step IDs from routes
+			for _, route := range orchestrationStep.OrchestrationRoutes {
+				if route.SubAgentStep != nil {
+					if subAgentStepID := route.SubAgentStep.GetID(); subAgentStepID != "" {
+						stepIDs = append(stepIDs, subAgentStepID)
+					}
+				}
+			}
+		}
+	}
+
+	return stepIDs
+}
+
+// readLearningMetadataForStep reads learning metadata for a specific step ID
+func readLearningMetadataForStep(ctx context.Context, workspacePath, stepID string) (map[string]interface{}, error) {
+	metadataPath := workspacePath + "/learnings/" + stepID + "/.learning_metadata.json"
+
+	// Use the generic file reading helper
+	content, exists, err := readFileFromWorkspace(ctx, metadataPath)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, nil // File doesn't exist, not an error
+	}
+
+	// Parse metadata JSON into map
+	var metadata map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &metadata); err != nil {
+		return nil, fmt.Errorf("failed to parse learning metadata: %w", err)
+	}
+
+	return metadata, nil
+}
+
+// handleGetAllStepLearnings handles getting learning metadata for all steps in a plan
+func (api *StreamingAPI) handleGetAllStepLearnings(w http.ResponseWriter, r *http.Request) {
+	// Enable CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workspacePath := r.URL.Query().Get("workspace_path")
+	if workspacePath == "" {
+		http.Error(w, "workspace_path parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Read plan to get all step IDs
+	plan, err := readPlanFromWorkspace(r.Context(), workspacePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read plan: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Collect all step IDs recursively
+	stepIDs := collectAllStepIDs(plan.Steps)
+
+	// Read learning metadata for each step ID
+	learningsMap := make(map[string]interface{})
+	for _, stepID := range stepIDs {
+		metadata, err := readLearningMetadataForStep(r.Context(), workspacePath, stepID)
+		if err != nil {
+			// Log error but continue with other steps
+			fmt.Printf("Warning: Failed to read learning metadata for step %s: %v\n", stepID, err)
+			learningsMap[stepID] = nil
+		} else {
+			learningsMap[stepID] = metadata
+		}
+	}
+
+	// Return response
+	response := map[string]interface{}{
+		"success":   true,
+		"learnings": learningsMap,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 

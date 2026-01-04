@@ -11,7 +11,6 @@ import {
   FolderOpen,
   RefreshCw,
   BookOpen,
-  FolderTree,
   Trash2,
   Settings,
   X,
@@ -23,7 +22,6 @@ import {
   RotateCcw,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
-import { useAppStore } from '../../../stores'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
 import { useChatStore } from '../../../stores/useChatStore'
 import type { PlannerFile, WorkflowPhase, StepProgress } from '../../../services/api-types'
@@ -34,6 +32,7 @@ import { agentApi } from '../../../services/api'
 import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import LLMOverrideModal from '../LLMOverrideModal'
 import BulkStepConfigModal from '../BulkStepConfigModal'
+import LearningsPopup from '../LearningsPopup'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
@@ -104,9 +103,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   className = ''
 }) => {
   // Workspace store for opening folders
-  const { setShowFileContent, highlightFile, fetchFiles } = useWorkspaceStore()
-  // App store for toggling workspace visibility
-  const { setWorkspaceMinimized } = useAppStore()
+  const { fetchFiles } = useWorkspaceStore()
   
   // Workflow store - use individual selectors (Zustand optimizes these automatically)
   // Only select what we need to minimize re-renders
@@ -150,6 +147,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   
   // Bulk Step Config modal state
   const [showBulkStepConfigModal, setShowBulkStepConfigModal] = useState(false)
+  
+  // Learnings popup state
+  const [showLearningsPopup, setShowLearningsPopup] = useState(false)
   
   // Helper function to find a folder in the file tree
   const findFolderInTree = (fileList: PlannerFile[], targetPath: string): PlannerFile | null => {
@@ -1871,77 +1871,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </button>
         )}
         
-        {/* Show Learnings - opens workspace and navigates to learnings folder */}
+        {/* Show Learnings - opens popup with learning metadata */}
         {workspacePath && (
           <button
-            onClick={async () => {
-              // Expand workspace if minimized
-              setWorkspaceMinimized(false)
-              // Small delay to ensure workspace is expanded before navigating
-              setTimeout(async () => {
-                const learningsPath = `${workspacePath}/learnings`
-                console.log('[WorkflowToolbar] Opening learnings folder:', learningsPath)
-                // Refresh files to ensure workspace has latest data
-                await fetchFiles()
-                // Get updated files after refresh (need to access store state directly)
-                const storeState = useWorkspaceStore.getState()
-                const updatedFiles = storeState.files
-                // Find the folder in the tree
-                const folder = findFolderInTree(updatedFiles, learningsPath)
-                if (folder) {
-                  console.log('[WorkflowToolbar] Found learnings folder:', folder.filepath, 'original:', folder.originalFilepath)
-                  // Use the exact path from the file tree (prefer originalFilepath for highlighting)
-                  const pathToHighlight = folder.originalFilepath || folder.filepath
-                  highlightFile(pathToHighlight)
-                } else {
-                  console.log('[WorkflowToolbar] Folder not found, trying direct path:', learningsPath)
-                  // Fallback to direct path
-                  highlightFile(learningsPath)
-                }
-                setShowFileContent(false)
-              }, 200)
-            }}
+            onClick={() => setShowLearningsPopup(true)}
             className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-            title="Show learnings folder"
+            title="Show step learnings"
           >
             <BookOpen className="w-3.5 h-3.5" />
-          </button>
-        )}
-
-        {/* Show Execution - opens workspace and navigates to execution folder */}
-        {workspacePath && selectedRunFolder && selectedRunFolder !== 'new' && (
-          <button
-            onClick={async () => {
-              // Expand workspace if minimized
-              setWorkspaceMinimized(false)
-              // Small delay to ensure workspace is expanded before navigating
-              setTimeout(async () => {
-                const executionPath = `${workspacePath}/runs/${selectedRunFolder}/execution`
-                console.log('[WorkflowToolbar] Opening execution folder:', executionPath)
-                // Refresh files to ensure workspace has latest data
-                await fetchFiles()
-                // Get updated files after refresh (need to access store state directly)
-                const storeState = useWorkspaceStore.getState()
-                const updatedFiles = storeState.files
-                // Find the folder in the tree
-                const folder = findFolderInTree(updatedFiles, executionPath)
-                if (folder) {
-                  console.log('[WorkflowToolbar] Found execution folder:', folder.filepath, 'original:', folder.originalFilepath)
-                  // Use the exact path from the file tree (prefer originalFilepath for highlighting)
-                  const pathToHighlight = folder.originalFilepath || folder.filepath
-                  highlightFile(pathToHighlight)
-                } else {
-                  console.log('[WorkflowToolbar] Folder not found, trying direct path:', executionPath)
-                  // Fallback to direct path
-                  highlightFile(executionPath)
-                }
-                setShowFileContent(false)
-              }, 200)
-            }}
-            className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-            title="Show execution folder"
-          >
-            <FolderTree className="w-3.5 h-3.5" />
           </button>
         )}
         
@@ -2089,6 +2026,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         onBulkUpdate={onBulkUpdateSteps}
       />
     )}
+
+    {/* Learnings Popup */}
+    <LearningsPopup
+      isOpen={showLearningsPopup}
+      onClose={() => setShowLearningsPopup(false)}
+      workspacePath={workspacePath || null}
+      plan={plan || null}
+    />
     </>
   )
 }

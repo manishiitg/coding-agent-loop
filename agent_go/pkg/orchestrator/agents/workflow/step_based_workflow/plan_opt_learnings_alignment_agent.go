@@ -110,14 +110,16 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 				Provider: plam.presetPhaseLLM.Provider,
 				ModelID:  plam.presetPhaseLLM.ModelID,
 			},
-			Fallbacks: orchestratorLLMConfig.Fallbacks,
-			APIKeys:   orchestratorLLMConfig.APIKeys,
+			Fallbacks: plam.GetFallbacks(), // Safe: returns nil if orchestratorLLMConfig is nil
+			APIKeys:   plam.GetAPIKeys(),   // Safe: returns nil if orchestratorLLMConfig is nil
 		}
 		plam.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for plan learnings alignment: %s/%s", plam.presetPhaseLLM.Provider, plam.presetPhaseLLM.ModelID))
-	} else {
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig
-		plam.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default alignment LLM: %s/%s", plam.GetProvider(), plam.GetModel()))
+		plam.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default alignment LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for plan learnings alignment agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)

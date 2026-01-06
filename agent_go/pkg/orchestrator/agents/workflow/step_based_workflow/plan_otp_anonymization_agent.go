@@ -100,13 +100,15 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 				Provider: am.presetPhaseLLM.Provider,
 				ModelID:  am.presetPhaseLLM.ModelID,
 			},
-			Fallbacks: orchestratorLLMConfig.Fallbacks, // Preserve fallbacks from orchestrator
-			APIKeys:   orchestratorLLMConfig.APIKeys,   // Preserve API keys from orchestrator
+			Fallbacks: am.GetFallbacks(), // Safe: returns nil if orchestratorLLMConfig is nil
+			APIKeys:   am.GetAPIKeys(),   // Safe: returns nil if orchestratorLLMConfig is nil
 		}
 		am.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for anonymization: %s/%s", am.presetPhaseLLM.Provider, am.presetPhaseLLM.ModelID))
-	} else {
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 		llmConfigToUse = orchestratorLLMConfig
-		am.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default anonymization LLM: %s/%s", am.GetProvider(), am.GetModel()))
+		am.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default anonymization LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for anonymization agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)

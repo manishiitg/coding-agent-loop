@@ -13,26 +13,8 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// HumanControlledEvaluationAgent is a conversational agent for evaluation planning
-type HumanControlledEvaluationAgent struct {
-	*agents.BaseOrchestratorAgent
-}
-
-// NewHumanControlledEvaluationAgent creates a new evaluation agent
-func NewHumanControlledEvaluationAgent(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-	return &HumanControlledEvaluationAgent{
-		BaseOrchestratorAgent: agents.NewBaseOrchestratorAgentWithEventBridge(cfg, logger, tracer, agents.AgentType("evaluation-planning"), eventBridge),
-	}
-}
-
-// Execute implements agents.OrchestratorAgent
-func (a *HumanControlledEvaluationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	systemPrompt := a.evaluationSystemPromptProcessor(templateVars)
-	return a.BaseOrchestratorAgent.ExecuteWithTemplateValidation(ctx, templateVars, nil, conversationHistory, nil, systemPrompt, true)
-}
-
-func (a *HumanControlledEvaluationAgent) evaluationSystemPromptProcessor(templateVars map[string]string) string {
-	templateStr := `You are an Evaluation Planning Agent. Your goal is to design a high-level assessment to verify if the workflow execution successfully achieved its goal.
+// evaluationSystemPromptTemplate is parsed at package init - panics on startup if invalid
+var evaluationSystemPromptTemplate = template.Must(template.New("evaluationSystemPrompt").Parse(`You are an Evaluation Planning Agent. Your goal is to design a high-level assessment to verify if the workflow execution successfully achieved its goal.
 
 ## ⚠️ INPUT SOURCE
 **Derive the goal and success criteria SOLELY from the Execution Plan provided below.**
@@ -46,8 +28,8 @@ func (a *HumanControlledEvaluationAgent) evaluationSystemPromptProcessor(templat
 4. **Holistic Assessment**: Don't just check individual steps. Check the final outcome.
 5. **Concrete Evidence**: Success criteria must be specific (e.g., "The code compiles and passes all unit tests" vs "The code looks good").
 6. **Fully Automated**: Evaluation steps MUST be fully automated. Do NOT create steps that require human input, manual verification, or feedback during the evaluation execution phase.
-7. **File Paths**: When checking files produced by the workflow, you MUST use the variable '{{TARGET_RUN_PATH}}'.
-   - Example: 'Read file {{TARGET_RUN_PATH}}/output.json'
+7. **File Paths**: When checking files produced by the workflow, you MUST use the variable '{{"{{TARGET_RUN_PATH}}"}}'.
+   - Example: 'Read file {{"{{TARGET_RUN_PATH}}"}}/output.json'
    - Do NOT assume files are in the current directory.
 
 ## 📋 Evaluation Step Structure
@@ -73,14 +55,30 @@ Work ONLY in the 'planning/' directory. The evaluation plan is stored in 'planni
 {{.ExecutionPlanJSON}}
 
 {{if .ExistingEvaluationPlanJSON}}Existing Evaluation Plan:
-{{.ExistingEvaluationPlanJSON}}{{end}}`
+{{.ExistingEvaluationPlanJSON}}{{end}}`))
 
-	tmpl, err := template.New("evaluationSystemPrompt").Parse(templateStr)
-	if err != nil {
-		return "Error parsing evaluation system prompt template: " + err.Error()
+// HumanControlledEvaluationAgent is a conversational agent for evaluation planning
+type HumanControlledEvaluationAgent struct {
+	*agents.BaseOrchestratorAgent
+}
+
+// NewHumanControlledEvaluationAgent creates a new evaluation agent
+func NewHumanControlledEvaluationAgent(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+	return &HumanControlledEvaluationAgent{
+		BaseOrchestratorAgent: agents.NewBaseOrchestratorAgentWithEventBridge(cfg, logger, tracer, agents.AgentType("evaluation-planning"), eventBridge),
 	}
+}
+
+// Execute implements agents.OrchestratorAgent
+func (a *HumanControlledEvaluationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+	systemPrompt := a.evaluationSystemPromptProcessor(templateVars)
+	return a.BaseOrchestratorAgent.ExecuteWithTemplateValidation(ctx, templateVars, nil, conversationHistory, nil, systemPrompt, true)
+}
+
+func (a *HumanControlledEvaluationAgent) evaluationSystemPromptProcessor(templateVars map[string]string) string {
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateVars); err != nil {
+	if err := evaluationSystemPromptTemplate.Execute(&result, templateVars); err != nil {
+		// This should rarely happen since parsing is validated at startup
 		return "Error executing evaluation system prompt template: " + err.Error()
 	}
 	return result.String()

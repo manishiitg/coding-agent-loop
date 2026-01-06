@@ -1420,64 +1420,62 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d execution completed successfully (attempt %d)", stepIndex+1, retryAttempt))
 
 				// Store execution response to workspace (if enabled)
-				if hcpo.saveValidationResponses {
-					// Determine validation workspace path (same logic as validation agent)
-					var validationWorkspacePath string
-					if hcpo.selectedRunFolder != "" {
-						validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+				// Determine validation workspace path (same logic as validation agent)
+				var validationWorkspacePath string
+				if hcpo.selectedRunFolder != "" {
+					validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+				} else {
+					validationWorkspacePath = hcpo.GetWorkspacePath()
+				}
+
+				// Get execution logs folder path based on stepPath
+				executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepPath)
+
+				// Create unique filename base based on retry attempt and loop iteration
+				// Format: execution-attempt-{retryAttempt}-iteration-{loopIterationCount}
+				filenameBase := fmt.Sprintf("execution-attempt-%d-iteration-%d", retryAttempt, loopIterationCount)
+
+				// Save execution result to separate file
+				executionResultFilePath := fmt.Sprintf("%s/%s.json", executionLogsFolderPath, filenameBase)
+				executionResponse := map[string]interface{}{
+					"step_index":       stepIndex + 1,
+					"step_path":        stepPath,
+					"retry_attempt":    retryAttempt,
+					"loop_iteration":   loopIterationCount,
+					"execution_result": executionResult,
+					"timestamp":        time.Now().Format(time.RFC3339),
+				}
+
+				// Marshal and save execution result
+				executionJSON, err := json.MarshalIndent(executionResponse, "", "  ")
+				if err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal execution response to JSON: %v", err))
+				} else {
+					if err := hcpo.WriteWorkspaceFile(ctx, executionResultFilePath, string(executionJSON)); err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write execution response to %s: %v", executionResultFilePath, err))
 					} else {
-						validationWorkspacePath = hcpo.GetWorkspacePath()
 					}
+				}
 
-					// Get execution logs folder path based on stepPath
-					executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepPath)
+				// Save conversation history to separate file
+				conversationFilePath := fmt.Sprintf("%s/%s-conversation.json", executionLogsFolderPath, filenameBase)
+				conversationResponse := map[string]interface{}{
+					"step_index":           stepIndex + 1,
+					"step_path":            stepPath,
+					"retry_attempt":        retryAttempt,
+					"loop_iteration":       loopIterationCount,
+					"conversation_history": executionConversationHistory, // Store original JSON structure
+					"timestamp":            time.Now().Format(time.RFC3339),
+				}
 
-					// Create unique filename base based on retry attempt and loop iteration
-					// Format: execution-attempt-{retryAttempt}-iteration-{loopIterationCount}
-					filenameBase := fmt.Sprintf("execution-attempt-%d-iteration-%d", retryAttempt, loopIterationCount)
-
-					// Save execution result to separate file
-					executionResultFilePath := fmt.Sprintf("%s/%s.json", executionLogsFolderPath, filenameBase)
-					executionResponse := map[string]interface{}{
-						"step_index":       stepIndex + 1,
-						"step_path":        stepPath,
-						"retry_attempt":    retryAttempt,
-						"loop_iteration":   loopIterationCount,
-						"execution_result": executionResult,
-						"timestamp":        time.Now().Format(time.RFC3339),
-					}
-
-					// Marshal and save execution result
-					executionJSON, err := json.MarshalIndent(executionResponse, "", "  ")
-					if err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal execution response to JSON: %v", err))
+				// Marshal and save conversation history
+				conversationJSON, err := json.MarshalIndent(conversationResponse, "", "  ")
+				if err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal conversation history to JSON: %v", err))
+				} else {
+					if err := hcpo.WriteWorkspaceFile(ctx, conversationFilePath, string(conversationJSON)); err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write conversation history to %s: %v", conversationFilePath, err))
 					} else {
-						if err := hcpo.WriteWorkspaceFile(ctx, executionResultFilePath, string(executionJSON)); err != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write execution response to %s: %v", executionResultFilePath, err))
-						} else {
-						}
-					}
-
-					// Save conversation history to separate file
-					conversationFilePath := fmt.Sprintf("%s/%s-conversation.json", executionLogsFolderPath, filenameBase)
-					conversationResponse := map[string]interface{}{
-						"step_index":           stepIndex + 1,
-						"step_path":            stepPath,
-						"retry_attempt":        retryAttempt,
-						"loop_iteration":       loopIterationCount,
-						"conversation_history": executionConversationHistory, // Store original JSON structure
-						"timestamp":            time.Now().Format(time.RFC3339),
-					}
-
-					// Marshal and save conversation history
-					conversationJSON, err := json.MarshalIndent(conversationResponse, "", "  ")
-					if err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal conversation history to JSON: %v", err))
-					} else {
-						if err := hcpo.WriteWorkspaceFile(ctx, conversationFilePath, string(conversationJSON)); err != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write conversation history to %s: %v", conversationFilePath, err))
-						} else {
-						}
 					}
 				}
 

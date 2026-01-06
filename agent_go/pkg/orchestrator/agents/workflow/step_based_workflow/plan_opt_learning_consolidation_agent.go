@@ -102,14 +102,16 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 				Provider: lcm.presetPhaseLLM.Provider,
 				ModelID:  lcm.presetPhaseLLM.ModelID,
 			},
-			Fallbacks: orchestratorLLMConfig.Fallbacks,
-			APIKeys:   orchestratorLLMConfig.APIKeys,
+			Fallbacks: lcm.GetFallbacks(), // Safe: returns nil if orchestratorLLMConfig is nil
+			APIKeys:   lcm.GetAPIKeys(),   // Safe: returns nil if orchestratorLLMConfig is nil
 		}
 		lcm.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for learning consolidation: %s/%s", lcm.presetPhaseLLM.Provider, lcm.presetPhaseLLM.ModelID))
-	} else {
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig
-		lcm.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default consolidation LLM: %s/%s", lcm.GetProvider(), lcm.GetModel()))
+		lcm.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default consolidation LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for learning consolidation agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)

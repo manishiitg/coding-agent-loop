@@ -62,21 +62,37 @@ export default function MCPToolApiTester({
     try {
       const parsedArgs = JSON.parse(args)
 
+      const requestBody = {
+        server: serverName,
+        tool: toolName,
+        args: parsedArgs
+      }
+
+      console.log('[MCPToolApiTester] Executing tool:', requestBody)
+
       const res = await fetch('http://localhost:8000/api/mcp/execute', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          server: serverName,
-          tool: toolName,
-          args: parsedArgs
-        })
+        body: JSON.stringify(requestBody)
       })
 
+      console.log('[MCPToolApiTester] Response status:', res.status, res.statusText)
+
+      // Check if response is ok (2xx status codes)
+      if (!res.ok) {
+        const errorText = await res.text()
+        console.error('[MCPToolApiTester] HTTP Error:', res.status, errorText)
+        setError(`HTTP ${res.status}: ${errorText || res.statusText}`)
+        return
+      }
+
       const data = await res.json()
+      console.log('[MCPToolApiTester] Response data:', data)
       setResponse(data)
     } catch (err: any) {
+      console.error('[MCPToolApiTester] Error:', err)
       setError(err.message)
     } finally {
       setLoading(false)

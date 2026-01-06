@@ -1,7 +1,8 @@
 import { Server, Loader2, AlertCircle, Settings } from 'lucide-react'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
-import MCPConfigEditor from '../MCPConfigEditor'
+import MCPConfigPopup from '../MCPConfigPopup'
 import MCPToolApiTester from '../MCPToolApiTester'
+import { OAuthStatusBadge } from '../OAuthStatusBadge'
 import { useMCPStore } from '../../stores'
 
 // Tool detail type for cached data
@@ -14,6 +15,22 @@ type ToolDetail = {
     type?: string;
   }>;
   required?: string[];
+};
+
+// Sanitize tool descriptions by escaping XML-like tags that aren't standard HTML
+// This prevents ReactMarkdown from breaking on custom tags like <example>, <preserve>, etc.
+const sanitizeDescription = (description: string | undefined): string => {
+  if (!description) return '';
+  // Escape custom XML-like tags by converting < to &lt; for non-standard HTML tags
+  // Keep standard markdown-compatible HTML tags
+  const standardTags = ['a', 'b', 'i', 'u', 'strong', 'em', 'code', 'pre', 'br', 'hr', 'p', 'div', 'span', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'img', 'sup', 'sub'];
+  return description.replace(/<\/?([a-zA-Z][a-zA-Z0-9_-]*)[^>]*>/g, (match, tagName) => {
+    if (standardTags.includes(tagName.toLowerCase())) {
+      return match;
+    }
+    // Escape the tag
+    return match.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  });
 };
 
 export default function MCPServersSection() {
@@ -38,7 +55,8 @@ export default function MCPServersSection() {
     showApiTester,
     setShowApiTester,
     getServerGroups,
-    loadToolDetails
+    loadToolDetails,
+    refreshTools
   } = useMCPStore()
 
   return (
@@ -131,6 +149,17 @@ export default function MCPServersSection() {
                     <span className={`w-2 h-2 rounded-full ${
                       tools[0].status === 'ok' ? 'bg-green-500' : 'bg-red-500'
                     }`}></span>
+                    {/* OAuth Status Badge - auto-detects if server requires OAuth */}
+                    <OAuthStatusBadge
+                      serverName={serverName}
+                      requiresOAuth={tools[0].requires_oauth}
+                      onAuthChange={(valid) => {
+                        if (valid) {
+                          // Refresh tools after successful OAuth authentication
+                          refreshTools();
+                        }
+                      }}
+                    />
                   </div>
                   
                   <div className="flex items-center gap-2">
@@ -222,13 +251,10 @@ export default function MCPServersSection() {
                                     <div className="w-3 h-3 border border-gray-300 border-t-blue-500 rounded-full animate-spin"></div>
                                     Loading details...
                                   </span>
-                                ) : toolDetail ? (
-                                  <div className="text-xs text-gray-500 dark:text-gray-400">
-                                    <MarkdownRenderer 
-                                      content={toolDetail.description?.substring(0, 50) + '...'} 
-                                      className="text-xs"
-                                    />
-                                  </div>
+                                ) : toolDetail?.description ? (
+                                  <span className="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[200px]">
+                                    {toolDetail.description.replace(/<[^>]*>/g, '').substring(0, 50)}...
+                                  </span>
                                 ) : null}
                               </div>
                               <div className="flex items-center gap-2">
@@ -263,9 +289,9 @@ export default function MCPServersSection() {
                                       {toolDetail.server}
                                     </span>
                                   </div>
-                                  <div className="text-sm text-blue-800 dark:text-blue-200">
-                                    <MarkdownRenderer 
-                                      content={toolDetail.description} 
+                                  <div className="text-sm text-blue-800 dark:text-blue-200 max-h-[300px] overflow-y-auto">
+                                    <MarkdownRenderer
+                                      content={sanitizeDescription(toolDetail.description)}
                                       className="text-sm"
                                     />
                                   </div>
@@ -290,8 +316,8 @@ export default function MCPServersSection() {
                                             </div>
                                             {paramInfo.description && (
                                               <div className="text-xs text-blue-700 dark:text-blue-300">
-                                                <MarkdownRenderer 
-                                                  content={paramInfo.description} 
+                                                <MarkdownRenderer
+                                                  content={sanitizeDescription(paramInfo.description)}
                                                   className="text-xs"
                                                 />
                                               </div>
@@ -319,19 +345,15 @@ export default function MCPServersSection() {
         </div>
       )}
 
-      {/* MCP Config Editor Modal */}
+      {/* MCP Config Popup Modal */}
       {showConfigEditor && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 shadow-xl w-full max-w-6xl h-[90vh] overflow-y-auto">
-            <MCPConfigEditor
-              onConfigChange={() => {
-                // Close the modal after successful config change
-                setShowConfigEditor(false);
-              }}
-              onClose={() => setShowConfigEditor(false)}
-            />
-          </div>
-        </div>
+        <MCPConfigPopup
+          onConfigChange={() => {
+            // Refresh tools after config change
+            refreshTools();
+          }}
+          onClose={() => setShowConfigEditor(false)}
+        />
       )}
 
       {/* MCP Tool API Tester Modal */}

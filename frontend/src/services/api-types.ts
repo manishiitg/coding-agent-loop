@@ -267,6 +267,17 @@ export type MCPServerConfig = {
   args: string[];
   env?: Record<string, string>;
   description?: string;
+  oauth?: {
+    auto_discover?: boolean;
+    client_id?: string;
+    client_secret?: string;
+    auth_url?: string;
+    token_url?: string;
+    redirect_url?: string;
+    scopes?: string[];
+    use_pkce?: boolean;
+    token_file?: string;
+  };
 };
 
 export type ToolDetail = {
@@ -289,6 +300,12 @@ export type ToolDefinition = {
   toolsEnabled?: number;
   function_names?: string[];
   tools?: ToolDetail[];
+  // OAuth auto-detection
+  requires_oauth?: boolean;
+  oauth_endpoints?: {
+    auth_url: string;
+    token_url: string;
+  };
 };
 
 // Planner API types

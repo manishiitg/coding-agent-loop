@@ -36,6 +36,10 @@ import type {
   SlackConfigResponse,
   SlackTestResponse,
   SlackTestReplyResponse,
+  ExecutionLogsResponse,
+  StepExecutionLogs,
+  ValidationLog,
+  ExecutionAttemptLog,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -66,6 +70,10 @@ export type {
   RunFoldersResponse,
   CreateRunFolderResponse,
   ProgressResponse,
+  ExecutionLogsResponse,
+  StepExecutionLogs,
+  ValidationLog,
+  ExecutionAttemptLog,
 } from './api-types'
 
 const API_BASE_URL = 'http://localhost:8000'
@@ -750,6 +758,22 @@ export const agentApi = {
   updateVariableGroups: async (workspacePath: string, manifest: VariablesManifest): Promise<{ success: boolean; message: string }> => {
     const response = await api.put('/api/workflow/variable-groups', manifest, {
       params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
+  // Get execution logs for a workflow run
+  getExecutionLogs: async (workspacePath: string, runFolder: string): Promise<ExecutionLogsResponse> => {
+    const response = await api.get('/api/workflow/logs', {
+      params: { workspace_path: workspacePath, run_folder: runFolder }
+    })
+    return response.data
+  },
+
+  // Get content of a specific log file
+  getLogFile: async (filePath: string): Promise<any> => {
+    const response = await api.get('/api/workflow/logs/file', {
+      params: { file_path: filePath }
     })
     return response.data
   },

@@ -20,6 +20,7 @@ import {
   CheckSquare,
   Save,
   RotateCcw,
+  FileText,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
@@ -33,6 +34,7 @@ import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import LLMOverrideModal from '../LLMOverrideModal'
 import BulkStepConfigModal from '../BulkStepConfigModal'
 import LearningsPopup from '../LearningsPopup'
+import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
@@ -150,6 +152,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   
   // Learnings popup state
   const [showLearningsPopup, setShowLearningsPopup] = useState(false)
+  
+  // Execution logs popup state
+  const [showExecutionLogsPopup, setShowExecutionLogsPopup] = useState(false)
   
   // Helper function to find a folder in the file tree
   const findFolderInTree = (fileList: PlannerFile[], targetPath: string): PlannerFile | null => {
@@ -1871,6 +1876,17 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </button>
         )}
         
+        {/* Show Execution Logs - opens popup with detailed execution logs */}
+        {workspacePath && (
+          <button
+            onClick={() => setShowExecutionLogsPopup(true)}
+            className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            title="Show execution logs"
+          >
+            <FileText className="w-3.5 h-3.5" />
+          </button>
+        )}
+        
         {/* Show Learnings - opens popup with learning metadata */}
         {workspacePath && (
           <button
@@ -2033,6 +2049,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       onClose={() => setShowLearningsPopup(false)}
       workspacePath={workspacePath || null}
       plan={plan || null}
+    />
+
+    {/* Execution Logs Popup */}
+    <ExecutionLogsPopup
+      isOpen={showExecutionLogsPopup}
+      onClose={() => setShowExecutionLogsPopup(false)}
+      workspacePath={workspacePath || null}
+      runFolder={selectedRunFolder === 'new' ? null : selectedRunFolder}
     />
     </>
   )

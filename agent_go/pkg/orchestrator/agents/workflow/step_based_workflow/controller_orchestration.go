@@ -740,6 +740,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 			// Log what config was loaded
 			subAgentConfigs = getAgentConfigs(subAgentStepPlan)
 			if subAgentConfigs != nil && subAgentConfigs.UseCodeExecutionMode != nil {
+				// Code execution mode is set
 			} else {
 				hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Step config loaded for sub-agent '%s' (ID: %s) but UseCodeExecutionMode not set - will use preset default", subAgentStepPlan.GetTitle(), subAgentStepPlan.GetID()))
 			}
@@ -785,8 +786,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 
 		// Execute sub-agent (without previous steps history - sub-agents don't need it)
 		// Use format: step-{N}-sub-agent-{index} (e.g., "step-2-sub-agent-1")
-		// Index is derived from the route's position in the orchestration routes array (1-based)
-		subAgentPath := fmt.Sprintf("step-%d-sub-agent-%d", stepIndex+1, subAgentIndex)
+		// Use orchestrationStepPath as base to support branch steps (e.g., "step-1-if-true-0-sub-agent-1")
+		subAgentPath := fmt.Sprintf("%s-sub-agent-%d", orchestrationStepPath, subAgentIndex)
 		// Pass empty previousContextFiles to skip building previous steps summary for sub-agents
 		// Convert orchestration routes to OrchestrationRoute format for sub-agent context
 		orchestrationRoutesForSubAgent := make([]OrchestrationRoute, len(orchestrationStepPlan.OrchestrationRoutes))

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/shared"
 
@@ -121,6 +122,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	// Only the learning reading agent (which reads existing learnings) should check folder existence
 	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Starting success learning analysis for %s/%d: %s", learningPathIdentifier, totalSteps, step.GetTitle()))
 
+	// Log learning start
+	_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+		"type":             "learning_start",
+		"step_path":        stepPath,
+		"learning_type":    "success",
+		"learning_path_id": learningPathIdentifier,
+		"timestamp":        shared.GetTimestamp(),
+	})
+
 	// Read previous learnings BEFORE learning phase runs (for comparison after learning phase completes)
 	// This captures the state before the learning agent potentially modifies the files
 	baseWorkspacePath := hcpo.GetWorkspacePath()
@@ -224,13 +234,46 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		hcpo.GetLogger().Info(fmt.Sprintf("📄 No existing learning file path found for %s", learningPathIdentifier))
 	}
 
-	// Execute extraction agent (output not needed - agent writes directly to final file)
-	_, _, err = successLearningAgent.Execute(ctx, successLearningTemplateVars, []llmtypes.MessageContent{})
+	// Execute extraction agent
+	learningResult, learningConv, err := successLearningAgent.Execute(ctx, successLearningTemplateVars, []llmtypes.MessageContent{})
 	if err != nil {
+		// Log learning failure
+		_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+			"type":             "learning_failed",
+			"step_path":        stepPath,
+			"learning_type":    "success",
+			"error":            err.Error(),
+			"timestamp":        time.Now().Format(time.RFC3339),
+		})
 		return fmt.Errorf("success learning extraction failed: %w", err)
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning extraction completed for %s (detail level: %s)", learningPathIdentifier, learningDetailLevel))
+
+	// Determine log file path for conversation
+	var validationWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	} else {
+		validationWorkspacePath = hcpo.GetWorkspacePath()
+	}
+	validationFolderPath := getValidationFolderPath(validationWorkspacePath, stepPath)
+	convPath := fmt.Sprintf("%s/learning-conversation.json", validationFolderPath)
+	
+	// Save conversation
+	convJSON, _ := json.MarshalIndent(learningConv, "", "  ")
+	_ = hcpo.WriteWorkspaceFile(ctx, convPath, string(convJSON))
+
+	// Log learning completion
+	_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+		"type":              "learning_completed",
+		"step_path":         stepPath,
+		"learning_type":     "success",
+		"detail_level":      learningDetailLevel,
+		"result":            learningResult,
+		"conversation_path": convPath,
+		"timestamp":         time.Now().Format(time.RFC3339),
+	})
 
 	// Extraction agent consolidates and writes directly to final file via LLM instructions
 	// No temp file handling needed - detection agent will read the final consolidated file
@@ -394,6 +437,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	// Only the learning reading agent (which reads existing learnings) should check folder existence
 	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Starting failure learning analysis for %s/%d: %s", learningPathIdentifier, totalSteps, step.GetTitle()))
 
+	// Log learning start
+	_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+		"type":             "learning_start",
+		"step_path":        stepPath,
+		"learning_type":    "failure",
+		"learning_path_id": learningPathIdentifier,
+		"timestamp":        shared.GetTimestamp(),
+	})
+
 	// Read previous learnings BEFORE learning phase runs (for comparison after learning phase completes)
 	// This captures the state before the learning agent potentially modifies the files
 	baseWorkspacePath = hcpo.GetWorkspacePath()
@@ -487,13 +539,46 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 		hcpo.GetLogger().Info(fmt.Sprintf("📄 No existing learning file path found for %s", learningPathIdentifier))
 	}
 
-	// Execute extraction agent (output not needed - agent writes directly to final file)
-	_, _, err = failureLearningAgent.Execute(ctx, failureLearningTemplateVars, []llmtypes.MessageContent{})
+	// Execute extraction agent
+	learningResult, learningConv, err := failureLearningAgent.Execute(ctx, failureLearningTemplateVars, []llmtypes.MessageContent{})
 	if err != nil {
+		// Log learning failure
+		_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+			"type":             "learning_failed",
+			"step_path":        stepPath,
+			"learning_type":    "failure",
+			"error":            err.Error(),
+			"timestamp":        time.Now().Format(time.RFC3339),
+		})
 		return "", "", fmt.Errorf("failure learning extraction failed: %w", err)
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Failure learning extraction completed for %s (detail level: %s)", learningPathIdentifier, learningDetailLevel))
+
+	// Determine log file path for conversation
+	var validationWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	} else {
+		validationWorkspacePath = hcpo.GetWorkspacePath()
+	}
+	validationFolderPath := getValidationFolderPath(validationWorkspacePath, stepPath)
+	convPath := fmt.Sprintf("%s/learning-failure-conversation.json", validationFolderPath)
+	
+	// Save conversation
+	convJSON, _ := json.MarshalIndent(learningConv, "", "  ")
+	_ = hcpo.WriteWorkspaceFile(ctx, convPath, string(convJSON))
+
+	// Log learning completion
+	_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+		"type":              "learning_completed",
+		"step_path":         stepPath,
+		"learning_type":     "failure",
+		"detail_level":      learningDetailLevel,
+		"result":            learningResult,
+		"conversation_path": convPath,
+		"timestamp":         time.Now().Format(time.RFC3339),
+	})
 
 	// Extraction agent consolidates and writes directly to final file via LLM instructions
 	// No temp file handling needed - detection agent will read the final consolidated file
@@ -700,4 +785,32 @@ func (hcpo *StepBasedWorkflowOrchestrator) getExistingLearningFilePath(ctx conte
 
 	// File doesn't exist, return empty string
 	return ""
+}
+
+// logLearningExecution appends a learning execution entry to the learning log file (JSONL format)
+func (hcpo *StepBasedWorkflowOrchestrator) logLearningExecution(ctx context.Context, stepPath string, entry map[string]interface{}) error {
+	// Determine log file path
+	var validationWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	} else {
+		validationWorkspacePath = hcpo.GetWorkspacePath()
+	}
+
+	// Get validation folder path using stepPath
+	// For regular steps: "logs/step-{X}/"
+	// For branch steps: "logs/step-{parentStep}-{true/false}-{branchIdx}/"
+	validationFolderPath := getValidationFolderPath(validationWorkspacePath, stepPath)
+	
+	// Create logs folder if it doesn't exist (using BaseOrchestrator.WriteWorkspaceFile which handles dirs, or manual check)
+	// We'll rely on appendOrchestrationLogEntry logic which handles file writing
+	
+	learningLogFilePath := fmt.Sprintf("%s/learning-execution.json", validationFolderPath)
+	
+	// Use existing appendOrchestrationLogEntry helper which handles JSONL appending
+	if err := hcpo.appendOrchestrationLogEntry(ctx, learningLogFilePath, entry); err != nil {
+		return fmt.Errorf("failed to append learning log entry: %w", err)
+	}
+	
+	return nil
 }

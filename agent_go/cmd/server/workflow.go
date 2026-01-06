@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -3183,4 +3184,643 @@ func (api *StreamingAPI) handleAddStep(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// handleGetExecutionLogs handles getting execution logs for a workflow run
+func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.Request) {
+	// Enable CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workspacePath := r.URL.Query().Get("workspace_path")
+	if workspacePath == "" {
+		http.Error(w, "workspace_path parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate workspace path to prevent path traversal attacks
+	cleanedWorkspacePath := filepath.Clean(workspacePath)
+	if strings.Contains(cleanedWorkspacePath, "..") {
+		http.Error(w, "Invalid workspace path", http.StatusBadRequest)
+		return
+	}
+
+	runFolder := r.URL.Query().Get("run_folder")
+
+	// Validate run folder to prevent path traversal
+	if runFolder != "" && runFolder != "new" {
+		cleanedRunFolder := filepath.Clean(runFolder)
+		if strings.Contains(cleanedRunFolder, "..") {
+			http.Error(w, "Invalid run folder", http.StatusBadRequest)
+			return
+		}
+		runFolder = cleanedRunFolder
+	}
+
+	var logsBasePath string
+	if runFolder != "" && runFolder != "new" {
+		logsBasePath = fmt.Sprintf("%s/runs/%s/logs", cleanedWorkspacePath, runFolder)
+	} else {
+		logsBasePath = fmt.Sprintf("%s/logs", cleanedWorkspacePath)
+	}
+
+	// Fetch workflow definition to get step titles and descriptions
+	// We try to read planning/plan.json to map step IDs to human-readable titles
+	// This uses generic parsing to handle different step types (regular, decision, etc.)
+	planJsonPath := cleanedWorkspacePath + "/planning/plan.json"
+	planContent, exists, _ := readFileFromWorkspace(r.Context(), planJsonPath)
+	
+	stepMetadata := make(map[string]map[string]string)
+	if exists {
+		var planDef struct {
+			Steps []map[string]interface{} `json:"steps"`
+		}
+		if err := json.Unmarshal([]byte(planContent), &planDef); err == nil {
+			populateStepMetadata(planDef.Steps, "", stepMetadata)
+		}
+	}
+
+	// List files in logs folder recursively (max_depth=3 to get step/validation.json and step/execution/exec.json)
+	apiURL := getWorkspaceAPIURL() + "/api/documents"
+	req, err := http.NewRequestWithContext(r.Context(), "GET", apiURL, nil)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create request: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	q := req.URL.Query()
+	q.Add("folder", logsBasePath)
+	q.Add("max_depth", "3")
+	req.URL.RawQuery = q.Encode()
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to call workspace API: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read response: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		http.Error(w, "Logs folder not found", http.StatusNotFound)
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, fmt.Sprintf("Workspace API returned status %d: %s", resp.StatusCode, string(body)), http.StatusInternalServerError)
+		return
+	}
+
+	// Typed response structure for folder listing
+	type FolderListingResponse struct {
+		Success bool                                `json:"success"`
+		Message string                              `json:"message"`
+		Error   string                              `json:"error"`
+		Data    virtualtools.WorkspaceFolderListing `json:"data"`
+	}
+
+	var apiResp FolderListingResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to parse API response: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if !apiResp.Success {
+		response := map[string]interface{}{
+			"success": true,
+			"steps":   map[string]interface{}{},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	stepsLogs := make(map[string]map[string]interface{})
+	processedPaths := make(map[string]bool)
+
+	getStepEntry := func(stepId string) map[string]interface{} {
+		if _, exists := stepsLogs[stepId]; !exists {
+			meta := stepMetadata[stepId]
+			title := stepId
+			desc := ""
+			originalId := ""
+			stepType := "regular"
+			if meta != nil {
+				if t := meta["title"]; t != "" {
+					title = t
+				}
+				desc = meta["description"]
+				originalId = meta["original_id"]
+				if t := meta["type"]; t != "" {
+					stepType = t
+				}
+			}
+
+			stepsLogs[stepId] = map[string]interface{}{
+				"step_id":       stepId,
+				"original_id":   originalId,
+				"type":          stepType,
+				"title":         title,
+				"description":   desc,
+				"validations":   []map[string]interface{}{},
+				"executions":    []map[string]interface{}{},
+				"decisions":     []map[string]interface{}{},
+				"orchestration": []map[string]interface{}{},
+				"conditionals":  []map[string]interface{}{},
+				"learnings":     []map[string]interface{}{},
+				"archived_logs": []map[string]interface{}{}, // Archived logs from previous runs
+			}
+		}
+		return stepsLogs[stepId]
+	}
+
+	var processFolder func(items []virtualtools.WorkspaceFolderItem)
+	processFolder = func(items []virtualtools.WorkspaceFolderItem) {
+		for _, item := range items {
+			// Extract name from filepath as Document struct doesn't have Name field
+			name := filepath.Base(item.FilePath)
+			isDir := item.IsDirectory || item.Type == "folder"
+
+			if isDir && strings.HasPrefix(name, "step-") {
+				stepId := name
+				
+				if len(item.Children) > 0 {
+					for _, child := range item.Children {
+						childName := filepath.Base(child.FilePath)
+						childIsDir := child.IsDirectory || child.Type == "folder"
+
+						if !childIsDir && strings.HasPrefix(childName, "validation") && strings.HasSuffix(childName, ".json") {
+							logPath := child.FilePath
+							if processedPaths[logPath] {
+								continue
+							}
+							processedPaths[logPath] = true
+
+							entry := getStepEntry(stepId)
+							validations, _ := entry["validations"].([]map[string]interface{})
+							
+							attempt := 1
+							if childName != "validation.json" {
+								fmt.Sscanf(childName, "validation-%d.json", &attempt)
+							}
+
+							// Fetch validation content
+							content, exists, _ := readFileFromWorkspace(r.Context(), logPath)
+							var validationData interface{} = nil
+							if exists {
+								if err := json.Unmarshal([]byte(content), &validationData); err != nil {
+									fmt.Printf("Error unmarshalling validation data for %s: %v\n", logPath, err)
+								}
+							}
+
+							validations = append(validations, map[string]interface{}{
+								"attempt":   attempt,
+								"file_path": logPath,
+								"content":   validationData,
+							})
+							
+							sort.Slice(validations, func(i, j int) bool {
+								v1, ok1 := validations[i]["attempt"].(int)
+								v2, ok2 := validations[j]["attempt"].(int)
+								if !ok1 || !ok2 {
+									return false
+								}
+								return v1 < v2
+							})
+							
+							entry["validations"] = validations
+						}
+
+						// Learning Logs (JSONL)
+						if !childIsDir && childName == "learning-execution.json" {
+							logPath := child.FilePath
+							if processedPaths[logPath] { continue }
+							processedPaths[logPath] = true
+
+							entry := getStepEntry(stepId)
+							learningLogs, _ := entry["learnings"].([]map[string]interface{})
+							
+							content, exists, _ := readFileFromWorkspace(r.Context(), logPath)
+							if exists {
+								lines := strings.Split(content, "\n")
+								for _, line := range lines {
+									if strings.TrimSpace(line) == "" { continue }
+									var logEntry map[string]interface{}
+									if err := json.Unmarshal([]byte(line), &logEntry); err == nil {
+										learningLogs = append(learningLogs, logEntry)
+									}
+								}
+							}
+							entry["learnings"] = learningLogs
+						}
+
+						// Conditional Logs
+						if !childIsDir && childName == "conditional-evaluation.json" {
+							logPath := child.FilePath
+							if processedPaths[logPath] { continue }
+							processedPaths[logPath] = true
+
+							entry := getStepEntry(stepId)
+							conditionals, _ := entry["conditionals"].([]map[string]interface{})
+							
+							content, exists, _ := readFileFromWorkspace(r.Context(), logPath)
+							var condData map[string]interface{}
+							if exists {
+								if err := json.Unmarshal([]byte(content), &condData); err != nil {
+									fmt.Printf("Error unmarshalling conditional data for %s: %v\n", logPath, err)
+								}
+							}
+							
+							conditionals = append(conditionals, condData)
+							entry["conditionals"] = conditionals
+						}
+
+						// Decision Logs
+						if !childIsDir && childName == "decision-evaluation.json" {
+							logPath := child.FilePath
+							if processedPaths[logPath] { continue }
+							processedPaths[logPath] = true
+
+							entry := getStepEntry(stepId)
+							decisions, _ := entry["decisions"].([]map[string]interface{})
+							
+							content, exists, _ := readFileFromWorkspace(r.Context(), logPath)
+							var decisionData map[string]interface{}
+							if exists {
+								if err := json.Unmarshal([]byte(content), &decisionData); err != nil {
+									fmt.Printf("Error unmarshalling decision data for %s: %v\n", logPath, err)
+								}
+							}
+							
+							decisions = append(decisions, decisionData)
+							entry["decisions"] = decisions
+						}
+
+						// Orchestration Logs (JSONL)
+						if !childIsDir && childName == "orchestration-execution.json" {
+							logPath := child.FilePath
+							if processedPaths[logPath] { continue }
+							processedPaths[logPath] = true
+
+							entry := getStepEntry(stepId)
+							orchLogs, _ := entry["orchestration"].([]map[string]interface{})
+							
+							content, exists, _ := readFileFromWorkspace(r.Context(), logPath)
+							if exists {
+								lines := strings.Split(content, "\n")
+								for _, line := range lines {
+									if strings.TrimSpace(line) == "" { continue }
+									var logEntry map[string]interface{}
+									if err := json.Unmarshal([]byte(line), &logEntry); err == nil {
+										orchLogs = append(orchLogs, logEntry)
+									}
+								}
+							}
+							entry["orchestration"] = orchLogs
+						}
+
+						if childIsDir && childName == "execution" {
+							if len(child.Children) > 0 {
+								for _, execChild := range child.Children {
+									execName := filepath.Base(execChild.FilePath)
+									if strings.HasPrefix(execName, "execution-attempt-") && strings.HasSuffix(execName, ".json") && !strings.Contains(execName, "-conversation") {
+										execPath := execChild.FilePath
+										if processedPaths[execPath] {
+											continue
+										}
+										processedPaths[execPath] = true
+
+										entry := getStepEntry(stepId)
+										executions, _ := entry["executions"].([]map[string]interface{})
+
+										var attempt, iteration int
+										fmt.Sscanf(execName, "execution-attempt-%d-iteration-%d.json", &attempt, &iteration)
+
+										// Fetch execution result content
+										content, exists, _ := readFileFromWorkspace(r.Context(), execPath)
+										var execData interface{} = nil
+										if exists {
+											if err := json.Unmarshal([]byte(content), &execData); err != nil {
+												fmt.Printf("Error unmarshalling execution data for %s: %v\n", execPath, err)
+											}
+										}
+
+										executions = append(executions, map[string]interface{}{
+											"attempt":           attempt,
+											"iteration":         iteration,
+											"file_path":         execPath,
+											"conversation_path": strings.Replace(execPath, ".json", "-conversation.json", 1),
+											"content":           execData,
+										})
+
+										sort.Slice(executions, func(i, j int) bool {
+											a1, ok1 := executions[i]["attempt"].(int)
+											a2, ok2 := executions[j]["attempt"].(int)
+											iter1, ok3 := executions[i]["iteration"].(int)
+											iter2, ok4 := executions[j]["iteration"].(int)
+
+											if !ok1 || !ok2 || !ok3 || !ok4 {
+												return false
+											}
+
+											if a1 != a2 {
+												return a1 < a2
+											}
+											return iter1 < iter2
+										})
+
+										entry["executions"] = executions
+									}
+								}
+							}
+						}
+
+						// Process archived logs folder
+						if childIsDir && childName == "archived" {
+							entry := getStepEntry(stepId)
+							archivedLogs, _ := entry["archived_logs"].([]map[string]interface{})
+
+							// Each child of "archived" is a timestamp folder
+							for _, timestampFolder := range child.Children {
+								timestampName := filepath.Base(timestampFolder.FilePath)
+								timestampIsDir := timestampFolder.IsDirectory || timestampFolder.Type == "folder"
+
+								if !timestampIsDir {
+									continue
+								}
+
+								archiveEntry := map[string]interface{}{
+									"timestamp":   timestampName,
+									"validations": []map[string]interface{}{},
+									"executions":  []map[string]interface{}{},
+									"learnings":   []map[string]interface{}{},
+								}
+
+								// Process files within the timestamp folder
+								for _, archivedFile := range timestampFolder.Children {
+									archivedFileName := filepath.Base(archivedFile.FilePath)
+									archivedFilePath := archivedFile.FilePath
+
+									if strings.HasPrefix(archivedFileName, "validation") && strings.HasSuffix(archivedFileName, ".json") {
+										validations, _ := archiveEntry["validations"].([]map[string]interface{})
+										content, exists, _ := readFileFromWorkspace(r.Context(), archivedFilePath)
+										var validationData interface{} = nil
+										if exists {
+											json.Unmarshal([]byte(content), &validationData)
+										}
+										validations = append(validations, map[string]interface{}{
+											"file_name": archivedFileName,
+											"file_path": archivedFilePath,
+											"content":   validationData,
+										})
+										archiveEntry["validations"] = validations
+									} else if strings.HasPrefix(archivedFileName, "execution-attempt") && strings.HasSuffix(archivedFileName, ".json") {
+										executions, _ := archiveEntry["executions"].([]map[string]interface{})
+										content, exists, _ := readFileFromWorkspace(r.Context(), archivedFilePath)
+										var execData interface{} = nil
+										if exists {
+											json.Unmarshal([]byte(content), &execData)
+										}
+										executions = append(executions, map[string]interface{}{
+											"file_name": archivedFileName,
+											"file_path": archivedFilePath,
+											"content":   execData,
+										})
+										archiveEntry["executions"] = executions
+									} else if strings.HasPrefix(archivedFileName, "learning") && strings.HasSuffix(archivedFileName, ".json") {
+										learnings, _ := archiveEntry["learnings"].([]map[string]interface{})
+										content, exists, _ := readFileFromWorkspace(r.Context(), archivedFilePath)
+										var learningData interface{} = nil
+										if exists {
+											json.Unmarshal([]byte(content), &learningData)
+										}
+										learnings = append(learnings, map[string]interface{}{
+											"file_name": archivedFileName,
+											"file_path": archivedFilePath,
+											"content":   learningData,
+										})
+										archiveEntry["learnings"] = learnings
+									}
+								}
+
+								archivedLogs = append(archivedLogs, archiveEntry)
+							}
+
+							// Sort archived logs by timestamp (newest first)
+							sort.Slice(archivedLogs, func(i, j int) bool {
+								t1, _ := archivedLogs[i]["timestamp"].(string)
+								t2, _ := archivedLogs[j]["timestamp"].(string)
+								return t1 > t2 // Descending order
+							})
+
+							entry["archived_logs"] = archivedLogs
+						}
+					}
+				}
+			} else if isDir {
+				if len(item.Children) > 0 {
+					processFolder(item.Children)
+				}
+			}
+		}
+	}
+
+	processFolder(apiResp.Data)
+
+	response := map[string]interface{}{
+		"success": true,
+		"steps":   stepsLogs,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleGetLogFile returns the content of a specific log file
+func (api *StreamingAPI) handleGetLogFile(w http.ResponseWriter, r *http.Request) {
+	// Enable CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	filePath := r.URL.Query().Get("file_path")
+	if filePath == "" {
+		http.Error(w, "file_path parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate file path to prevent path traversal attacks
+	cleanedPath := filepath.Clean(filePath)
+	if strings.Contains(cleanedPath, "..") {
+		http.Error(w, "Invalid file path", http.StatusBadRequest)
+		return
+	}
+
+	// Restrict to log files only (must be .json files in logs or runs directories)
+	if !strings.HasSuffix(cleanedPath, ".json") {
+		http.Error(w, "Only JSON log files can be accessed", http.StatusBadRequest)
+		return
+	}
+	if !strings.Contains(cleanedPath, "/logs/") && !strings.Contains(cleanedPath, "/runs/") {
+		http.Error(w, "File must be in logs or runs directory", http.StatusBadRequest)
+		return
+	}
+
+	// Use existing readFileFromWorkspace utility which handles workspace API communication
+	content, exists, err := readFileFromWorkspace(r.Context(), cleanedPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read file: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+
+	// Determine content type based on file extension
+	contentType := "text/plain"
+	if strings.HasSuffix(cleanedPath, ".json") {
+		contentType = "application/json"
+	}
+	w.Header().Set("Content-Type", contentType)
+	
+	w.Write([]byte(content))
+}
+
+// populateStepMetadata recursively traverses the plan to build a mapping from step IDs/paths to human-readable metadata
+func populateStepMetadata(steps []map[string]interface{}, prefix string, metadata map[string]map[string]string) {
+	for i, step := range steps {
+		id, _ := step["id"].(string)
+		stepType, _ := step["type"].(string)
+		title, _ := step["title"].(string)
+		desc, _ := step["description"].(string)
+
+		// Handle inner steps for complex types if description is missing at top level
+		if desc == "" {
+			if inner, ok := step["decision_step"].(map[string]interface{}); ok {
+				if innerDesc, ok := inner["description"].(string); ok {
+					desc = innerDesc
+				}
+			} else if inner, ok := step["orchestration_step"].(map[string]interface{}); ok {
+				if innerDesc, ok := inner["description"].(string); ok {
+					desc = innerDesc
+				}
+			}
+		}
+
+		// Calculate step key (folder name pattern)
+		var stepKey string
+		resolvedType := stepType
+		if prefix == "" {
+			stepKey = fmt.Sprintf("step-%d", i+1)
+		} else {
+			// Prefix is like "step-1-true-" or "step-1-false-"
+			stepKey = fmt.Sprintf("%s%d", prefix, i)
+			if strings.Contains(prefix, "-true-") || strings.Contains(prefix, "-false-") {
+				resolvedType = "branch"
+			}
+		}
+
+		meta := map[string]string{
+			"title":       title,
+			"description": desc,
+			"original_id": id,
+			"type":        resolvedType,
+		}
+
+		// Store metadata by multiple keys to ensure it's found
+		metadata[stepKey] = meta
+		if id != "" {
+			metadata[id] = meta
+		}
+
+		// Handle decision inner step
+		if decisionStep, ok := step["decision_step"].(map[string]interface{}); ok {
+			decisionKey := stepKey + "-decision"
+			dTitle, _ := decisionStep["title"].(string)
+			dDesc, _ := decisionStep["description"].(string)
+			dId, _ := decisionStep["id"].(string)
+			
+			dMeta := map[string]string{
+				"title":       dTitle,
+				"description": dDesc,
+				"original_id": dId,
+				"type":        "decision-inner",
+			}
+			metadata[decisionKey] = dMeta
+			if dId != "" {
+				metadata[dId] = dMeta
+			}
+		}
+
+		// Recurse into conditional/branch steps
+		if trueSteps, ok := step["if_true_steps"].([]interface{}); ok {
+			populateStepMetadata(convertToMapList(trueSteps), stepKey+"-true-", metadata)
+			populateStepMetadata(convertToMapList(trueSteps), stepKey+"-if-true-", metadata)
+		}
+		if falseSteps, ok := step["if_false_steps"].([]interface{}); ok {
+			populateStepMetadata(convertToMapList(falseSteps), stepKey+"-false-", metadata)
+			populateStepMetadata(convertToMapList(falseSteps), stepKey+"-if-false-", metadata)
+		}
+
+		// Recurse into orchestration routes
+		if routes, ok := step["orchestration_routes"].([]interface{}); ok {
+			for j, r := range routes {
+				if route, ok := r.(map[string]interface{}); ok {
+					if subStep, ok := route["sub_agent_step"].(map[string]interface{}); ok {
+						subAgentKey := fmt.Sprintf("%s-sub-agent-%d", stepKey, j+1)
+						subId, _ := subStep["id"].(string)
+						subMeta := map[string]string{
+							"title":       subStep["title"].(string),
+							"description": subStep["description"].(string),
+							"original_id": subId,
+							"type":        "sub-agent",
+						}
+						metadata[subAgentKey] = subMeta
+						if subId != "" {
+							metadata[subId] = subMeta
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// convertToMapList converts a list of interfaces to a list of maps
+func convertToMapList(items []interface{}) []map[string]interface{} {
+	res := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		if m, ok := item.(map[string]interface{}); ok {
+			res = append(res, m)
+		}
+	}
+	return res
 }

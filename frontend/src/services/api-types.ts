@@ -850,6 +850,88 @@ export interface VariableGroupsResponse {
   error?: string;
 }
 
+// Execution Logs API types
+export interface ValidationLog {
+  attempt: number;
+  file_path: string;
+  content: any; // Full JSON content of validation log
+}
+
+export interface ExecutionAttemptLog {
+  attempt: number;
+  iteration: number;
+  file_path: string;
+  conversation_path: string;
+  content?: any; // Full JSON content of execution result
+}
+
+export interface DecisionLog {
+  decision_result: boolean;
+  decision_reasoning: string;
+  timestamp: string;
+  execution_result?: string;
+}
+
+export interface OrchestrationLog {
+  type: string;
+  timestamp: string;
+  orchestration_response?: any;
+  selected_route_id?: string;
+  success_criteria_met?: boolean;
+}
+
+export interface ConditionalLog {
+  condition_result: boolean;
+  condition_reason: string;
+  condition_question: string;
+  timestamp: string;
+  branch_executed: string;
+}
+
+export interface LearningLog {
+  type: string;
+  step_path: string;
+  learning_type: string;
+  learning_path_id?: string;
+  detail_level?: string;
+  result?: string;
+  conversation_path?: string;
+  error?: string;
+  timestamp: string;
+}
+
+// Archived logs from previous runs (when resuming from a step)
+export interface ArchivedLogEntry {
+  timestamp: string;  // Archive timestamp (e.g., "20260106-115300")
+  validations: ValidationLog[];
+  executions: ExecutionAttemptLog[];
+  decisions?: DecisionLog[];
+  orchestration?: OrchestrationLog[];
+  conditionals?: ConditionalLog[];
+  learnings?: LearningLog[];
+}
+
+export interface StepExecutionLogs {
+  step_id: string;
+  original_id?: string;
+  type: string;
+  title: string;
+  description: string;
+  validations: ValidationLog[];
+  executions: ExecutionAttemptLog[];
+  decisions?: DecisionLog[];
+  orchestration?: OrchestrationLog[];
+  conditionals?: ConditionalLog[];
+  learnings?: LearningLog[];
+  archived_logs?: ArchivedLogEntry[];  // Logs from previous runs
+}
+
+export interface ExecutionLogsResponse {
+  success: boolean;
+  steps: Record<string, StepExecutionLogs>; // key is step ID or name (e.g. "step-1")
+}
+
+
 // Batch execution progress for multiple variable groups
 export interface BatchExecutionProgress {
   total_groups: number;

@@ -297,6 +297,8 @@ go run main.go test shell-security
 
 | Issue | Cause | Solution |
 | :--- | :--- | :--- |
+| `mount: bad usage` (shell execution) | Paths with spaces not quoted | Fixed: All paths in `isolator.go` are now double-quoted (e.g., `Workflow/PR REVIEW/`). |
+| `mount point does not exist` (shell execution) | Read/write path doesn't exist in original workspace | Fixed: Read paths skip if source doesn't exist; write paths auto-create with fallback. |
 | `path is outside boundaries` | Path not in configured lists | Add path to `readPaths` or `writePaths` in orchestrator. |
 | `path rejected` (Code Exec) | Paths set AFTER registry update | Call `SetFolderGuardPaths()` BEFORE `UpdateCodeExecutionRegistry()`. |
 | Shell command sees no secrets | Expected behavior (security feature) | Use specific tools or pass data via arguments if needed. |

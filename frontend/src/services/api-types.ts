@@ -928,12 +928,20 @@ export interface ArchivedLogEntry {
   learnings?: LearningLog[];
 }
 
+export interface StepOutputContent {
+  file_path: string;
+  content: unknown;
+  is_json: boolean;
+}
+
 export interface StepExecutionLogs {
   step_id: string;
   original_id?: string;
   type: string;
   title: string;
   description: string;
+  context_output?: string;  // Expected output filename
+  output_content?: StepOutputContent;  // Actual output file content
   validations: ValidationLog[];
   executions: ExecutionAttemptLog[];
   decisions?: DecisionLog[];
@@ -943,9 +951,44 @@ export interface StepExecutionLogs {
   archived_logs?: ArchivedLogEntry[];  // Logs from previous runs
 }
 
+export interface ModelTokenUsage {
+  provider: string;
+  input_tokens: number;
+  output_tokens: number;
+  input_tokens_m: string;
+  output_tokens_m: string;
+  cache_tokens: number;
+  cache_tokens_m: string;
+  cache_read_tokens?: number;
+  cache_read_tokens_m?: string;
+  cache_write_tokens?: number;
+  cache_write_tokens_m?: string;
+  reasoning_tokens: number;
+  reasoning_tokens_m: string;
+  llm_call_count: number;
+  input_cost_usd?: number;
+  output_cost_usd?: number;
+  reasoning_cost_usd?: number;
+  cache_cost_usd?: number;
+  cache_read_cost_usd?: number;
+  cache_write_cost_usd?: number;
+  total_cost_usd?: number;
+  context_window_usage?: number;
+  model_context_window?: number;
+  context_usage_percent?: number;
+}
+
+export interface TokenUsageFile {
+  created_at: string;
+  updated_at: string;
+  by_model: Record<string, ModelTokenUsage>;
+  by_step_and_model?: Record<string, Record<string, ModelTokenUsage>>;
+}
+
 export interface ExecutionLogsResponse {
   success: boolean;
   steps: Record<string, StepExecutionLogs>; // key is step ID or name (e.g. "step-1")
+  token_usage?: TokenUsageFile;
 }
 
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useMemo } from 'react'
 import {
   X,
   Loader2,
@@ -17,10 +17,14 @@ import {
   User,
   Split,
   BookOpen,
-  History
+  History,
+  DollarSign,
+  Coins,
+  Cpu,
+  List
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
-import type { ExecutionLogsResponse, StepExecutionLogs, ValidationLog, ArchivedLogEntry } from '../../services/api-types'
+import type { ExecutionLogsResponse, StepExecutionLogs, ValidationLog, ArchivedLogEntry, ModelTokenUsage } from '../../services/api-types'
 
 interface ExecutionLogsPopupProps {
   isOpen: boolean
@@ -47,6 +51,29 @@ const getStepIcon = (type: string) => {
     default:
       return <Terminal className="w-4 h-4 text-muted-foreground" />
   }
+}
+
+// Format cost in USD
+const formatUSD = (amount?: number) => {
+  if (amount === undefined || amount === null) return '$0.00'
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 4
+  }).format(amount)
+}
+
+// Format token count (e.g., 1,234,567 -> 1.23M)
+const formatTokens = (count?: number) => {
+  if (!count) return '0'
+  if (count >= 1000000) {
+    return (count / 1000000).toFixed(2) + 'M'
+  }
+  if (count >= 1000) {
+    return (count / 1000).toFixed(1) + 'K'
+  }
+  return count.toString()
 }
 
 // Parse step ID into sortable segments
@@ -170,6 +197,8 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   const [expandedValidations, setExpandedValidations] = useState<Set<string>>(new Set())
   const [expandedExecutions, setExpandedExecutions] = useState<Set<string>>(new Set())
   const [expandedArchived, setExpandedArchived] = useState<Set<string>>(new Set())
+  const [showCostBreakdown, setShowCostBreakdown] = useState(false)
+  const [expandedCostModels, setExpandedCostModels] = useState<Set<string>>(new Set())
   
   // State for viewing full file content (conversation logs)
   const [viewingFile, setViewingFile] = useState<{path: string, title: string, content: string} | null>(null)
@@ -182,6 +211,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
       setLogs(null)
       setError(null)
       setViewingFile(null)
+      setExpandedCostModels(new Set())
     }
   }, [isOpen, workspacePath, runFolder])
 
@@ -213,6 +243,71 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
     }
   }
 
+  // Calculate total costs and tokens
+  const costSummary = useMemo(() => {
+    if (!logs?.token_usage?.by_model) return null
+
+    let totalCost = 0
+    let totalInputTokens = 0
+    let totalOutputTokens = 0
+    let totalLLMCalls = 0
+    let totalCacheReadTokens = 0
+    let totalCacheWriteTokens = 0
+    let totalReasoningTokens = 0
+    
+    // Stage costs
+    const stageCosts = {
+      execution: 0,
+      validation: 0,
+      learning: 0,
+      other: 0
+    }
+
+    // Calculate totals from by_model
+    if (logs.token_usage.by_model) {
+      Object.values(logs.token_usage.by_model).forEach(usage => {
+        totalCost += usage.total_cost_usd || 0
+        totalInputTokens += usage.input_tokens || 0
+        totalOutputTokens += usage.output_tokens || 0
+        totalLLMCalls += usage.llm_call_count || 0
+        totalCacheReadTokens += usage.cache_read_tokens || usage.cache_tokens || 0
+        totalCacheWriteTokens += usage.cache_write_tokens || 0
+        totalReasoningTokens += usage.reasoning_tokens || 0
+      })
+    }
+
+    // Calculate stage costs from by_step_and_model
+    if (logs.token_usage.by_step_and_model) {
+      Object.entries(logs.token_usage.by_step_and_model).forEach(([key, modelMap]) => {
+        const phase = key.split(':')[0]
+        let cost = 0
+        Object.values(modelMap).forEach(u => cost += u.total_cost_usd || 0)
+
+        if (phase === 'execution_only') {
+          stageCosts.execution += cost
+        } else if (phase === 'validation') {
+          stageCosts.validation += cost
+        } else if (phase === 'success_learning' || phase === 'failure_learning') {
+          stageCosts.learning += cost
+        } else {
+          stageCosts.other += cost
+        }
+      })
+    }
+
+    return {
+      totalCost,
+      totalInputTokens,
+      totalOutputTokens,
+      totalTokens: totalInputTokens + totalOutputTokens,
+      totalLLMCalls,
+      totalCacheReadTokens,
+      totalCacheWriteTokens,
+      totalReasoningTokens,
+      stageCosts
+    }
+  }, [logs?.token_usage])
+
   const toggleStep = (stepId: string) => {
     setExpandedSteps(prev => {
       const next = new Set(prev)
@@ -225,36 +320,25 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
     })
   }
 
+  const toggleCostModel = (modelId: string) => {
+    setExpandedCostModels(prev => {
+      const next = new Set(prev)
+      if (next.has(modelId)) {
+        next.delete(modelId)
+      } else {
+        next.add(modelId)
+      }
+      return next
+    })
+  }
+
   const toggleValidation = (id: string) => {
     setExpandedValidations(prev => {
       const next = new Set(prev)
       if (next.has(id)) {
         next.delete(id)
-      } else {
-        next.add(id)
       }
-      return next
-    })
-  }
-
-  const toggleExecution = (id: string) => {
-    setExpandedExecutions(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) {
-        next.delete(id)
-      } else {
-        next.add(id)
-      }
-      return next
-    })
-  }
-
-  const toggleArchived = (id: string) => {
-    setExpandedArchived(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) {
-        next.delete(id)
-      } else {
+      else {
         next.add(id)
       }
       return next
@@ -295,18 +379,38 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
       <div className="bg-background rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] flex flex-col border border-border relative">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-          <div>
+          <div className="flex-1 min-w-0">
             <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
               <Terminal className="w-5 h-5 text-primary" />
               Execution Logs
             </h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              Run: <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded text-foreground">{runFolder || 'Default'}</span>
-            </p>
+            <div className="flex items-center gap-4 mt-1">
+              <p className="text-sm text-muted-foreground whitespace-nowrap">
+                Run: <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded text-foreground">{runFolder || 'Default'}</span>
+              </p>
+              {costSummary && (
+                <div className="flex items-center gap-3 text-xs border-l border-border pl-4">
+                  <div className="flex items-center gap-1.5 text-green-600 dark:text-green-400 font-medium">
+                    <DollarSign className="w-3.5 h-3.5" />
+                    {formatUSD(costSummary.totalCost)}
+                  </div>
+                  <div className="flex items-center gap-1.5 text-muted-foreground">
+                    <Coins className="w-3.5 h-3.5" />
+                    {formatTokens(costSummary.totalTokens)} tokens
+                  </div>
+                  <button 
+                    onClick={() => setShowCostBreakdown(!showCostBreakdown)}
+                    className="text-primary hover:underline ml-1"
+                  >
+                    {showCostBreakdown ? 'Hide Details' : 'View Details'}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
           <button 
             onClick={onClose}
-            className="p-2 rounded-full hover:bg-accent hover:text-accent-foreground transition-colors"
+            className="p-2 rounded-full hover:bg-accent hover:text-accent-foreground transition-colors ml-4"
           >
             <X className="w-5 h-5 text-muted-foreground" />
           </button>
@@ -337,6 +441,290 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
             </div>
           ) : (
             <div className="space-y-4">
+              {/* Cost Breakdown Section */}
+              {showCostBreakdown && logs?.token_usage && (
+                <div className="space-y-4 mb-6 animate-in fade-in slide-in-from-top-2 duration-300">
+                  
+                  {/* Stage Summary Cards */}
+                  {costSummary?.stageCosts && (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
+                        <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Execution</div>
+                        <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.execution)}</div>
+                        <div className="text-[10px] text-muted-foreground">Core Agent Logic</div>
+                      </div>
+                      <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
+                        <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Validation</div>
+                        <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.validation)}</div>
+                        <div className="text-[10px] text-muted-foreground">Quality Checks</div>
+                      </div>
+                      <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
+                        <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Learning</div>
+                        <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.learning)}</div>
+                        <div className="text-[10px] text-muted-foreground">Self-Improvement</div>
+                      </div>
+                      <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
+                        <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Other</div>
+                        <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.other)}</div>
+                        <div className="text-[10px] text-muted-foreground">Orchestration/System</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Model Breakdown Table */}
+                  {logs.token_usage.by_model && (
+                    <div className="bg-card border border-border rounded-lg overflow-hidden shadow-sm">
+                      <div className="px-4 py-3 bg-muted/30 border-b border-border flex items-center justify-between">
+                        <h3 className="text-sm font-semibold flex items-center gap-2">
+                          <DollarSign className="w-4 h-4 text-green-500" />
+                          Cost Breakdown by Model
+                        </h3>
+                      </div>
+                      <div className="p-4 overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-muted-foreground border-b border-border pb-2">
+                              <th className="w-8"></th>
+                              <th className="text-left font-medium pb-2">Model</th>
+                              <th className="text-right font-medium pb-2">Calls</th>
+                              <th className="text-right font-medium pb-2">Input</th>
+                              <th className="text-right font-medium pb-2">Cached In</th>
+                              <th className="text-right font-medium pb-2">Cache Write</th>
+                              <th className="text-right font-medium pb-2">Reasoning</th>
+                              <th className="text-right font-medium pb-2">Output</th>
+                              <th className="text-right font-medium pb-2">Cost (USD)</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {Object.entries(logs.token_usage.by_model).map(([modelId, usage]) => {
+                              const cacheRead = usage.cache_read_tokens || usage.cache_tokens || 0
+                              const cacheWrite = usage.cache_write_tokens || 0
+                              const reasoning = usage.reasoning_tokens || 0
+                              const cachePercent = usage.input_tokens > 0 ? (cacheRead / usage.input_tokens) * 100 : 0
+                              
+                              // Calculate step-wise breakdown for this model
+                              const modelSteps = logs.token_usage.by_step_and_model
+                                ? Object.entries(logs.token_usage.by_step_and_model)
+                                    .map(([stepKey, modelMap]) => {
+                                      const stepUsage = modelMap[modelId]
+                                      if (!stepUsage) return null
+
+                                      const parts = stepKey.split(':')
+                                      const phase = parts[0]
+                                      const index = parseInt(parts[1] || '0', 10)
+                                      const stepNum = index + 1
+
+                                      // Look up step title from logs.steps
+                                      const stepId = `step-${stepNum}`
+                                      const stepData = logs.steps[stepId]
+                                      const stepTitle = stepData?.title || ''
+
+                                      let phaseLabel = ''
+                                      let type = 'other'
+
+                                      if (phase === 'execution_only') { phaseLabel = 'Execution'; type = 'execution' }
+                                      else if (phase === 'validation') { phaseLabel = 'Validation'; type = 'validation' }
+                                      else if (phase.includes('learning')) { phaseLabel = 'Learning'; type = 'learning' }
+                                      else if (phase === 'workflow') { phaseLabel = 'Workflow'; type = 'workflow' }
+                                      else { phaseLabel = phase }
+
+                                      // Create label with step number, title, and phase
+                                      const label = stepTitle
+                                        ? `Step ${stepNum}: ${stepTitle} (${phaseLabel})`
+                                        : `Step ${stepNum} (${phaseLabel})`
+
+                                      return { key: stepKey, label, type, index, stepNum, stepTitle, usage: stepUsage }
+                                    })
+                                    .filter((s): s is NonNullable<typeof s> => s !== null)
+                                    .sort((a, b) => {
+                                       if (a.index !== b.index) return a.index - b.index
+                                       // If same index, order by phase
+                                       const order: Record<string, number> = { execution: 1, validation: 2, learning: 3, other: 4 }
+                                       return (order[a.type] || 4) - (order[b.type] || 4)
+                                    })
+                                : []
+
+                              return (
+                                <React.Fragment key={modelId}>
+                                  <tr className="hover:bg-accent/50 transition-colors cursor-pointer" onClick={() => toggleCostModel(modelId)}>
+                                    <td className="py-2 pl-2">
+                                      {expandedCostModels.has(modelId) ? (
+                                        <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                                      ) : (
+                                        <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                                      )}
+                                    </td>
+                                    <td className="py-2">
+                                      <div className="font-mono text-foreground font-medium">{modelId}</div>
+                                      <div className="text-[10px] text-muted-foreground uppercase">{usage.provider}</div>
+                                    </td>
+                                    <td className="py-2 text-right text-foreground">{usage.llm_call_count}</td>
+                                    <td className="py-2 text-right text-muted-foreground">{usage.input_tokens.toLocaleString()}</td>
+                                    <td className="py-2 text-right">
+                                      <div className="text-foreground">{cacheRead.toLocaleString()}</div>
+                                      {cachePercent > 0 && (
+                                        <div className="text-[10px] text-green-600 dark:text-green-400">({cachePercent.toFixed(0)}%)</div>
+                                      )}
+                                    </td>
+                                    <td className="py-2 text-right text-muted-foreground">{cacheWrite > 0 ? cacheWrite.toLocaleString() : '-'}</td>
+                                    <td className="py-2 text-right text-muted-foreground">{reasoning > 0 ? reasoning.toLocaleString() : '-'}</td>
+                                    <td className="py-2 text-right text-muted-foreground">{usage.output_tokens.toLocaleString()}</td>
+                                    <td className="py-2 text-right text-green-600 dark:text-green-400 font-semibold">{formatUSD(usage.total_cost_usd)}</td>
+                                  </tr>
+                                  {expandedCostModels.has(modelId) && (
+                                    <tr className="bg-muted/20">
+                                      <td colSpan={9} className="p-0">
+                                        <div className="p-4 space-y-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                                          {/* Aggregate Cards */}
+                                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                                            {/* Token Breakdown */}
+                                            <div className="space-y-2 border border-border bg-background/50 rounded-md p-3">
+                                              <h4 className="font-semibold text-muted-foreground uppercase tracking-wider text-[10px] flex items-center gap-1.5">
+                                                <Cpu className="w-3 h-3" /> Token Breakdown
+                                              </h4>
+                                              <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
+                                                <span className="text-muted-foreground">Input:</span>
+                                                <span className="text-foreground text-right">{usage.input_tokens.toLocaleString()} <span className="text-muted-foreground opacity-70">({formatUSD(usage.input_cost_usd)})</span></span>
+                                                
+                                                <span className="text-muted-foreground">Output:</span>
+                                                <span className="text-foreground text-right">{usage.output_tokens.toLocaleString()} <span className="text-muted-foreground opacity-70">({formatUSD(usage.output_cost_usd)})</span></span>
+                                                
+                                                {usage.reasoning_tokens > 0 && (
+                                                  <>
+                                                    <span className="text-muted-foreground">Reasoning:</span>
+                                                    <span className="text-foreground text-right">{usage.reasoning_tokens.toLocaleString()} <span className="text-muted-foreground opacity-70">({formatUSD(usage.reasoning_cost_usd)})</span></span>
+                                                  </>
+                                                )}
+                                              </div>
+                                            </div>
+
+                                            {/* Cache Details */}
+                                            <div className="space-y-2 border border-border bg-background/50 rounded-md p-3">
+                                              <h4 className="font-semibold text-muted-foreground uppercase tracking-wider text-[10px] flex items-center gap-1.5">
+                                                <History className="w-3 h-3" /> Cache Performance
+                                              </h4>
+                                              <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
+                                                <span className="text-muted-foreground">Total Cache:</span>
+                                                <span className="text-foreground text-right">{usage.cache_tokens.toLocaleString()}</span>
+                                                
+                                                <span className="text-muted-foreground">Read (Hit):</span>
+                                                <span className="text-foreground text-right">{usage.cache_read_tokens?.toLocaleString() || '0'} <span className="text-green-600/70 dark:text-green-400/70">({formatUSD(usage.cache_read_cost_usd)})</span></span>
+                                                
+                                                <span className="text-muted-foreground">Write (Miss):</span>
+                                                <span className="text-foreground text-right">{usage.cache_write_tokens?.toLocaleString() || '0'} <span className="text-yellow-600/70 dark:text-yellow-400/70">({formatUSD(usage.cache_write_cost_usd)})</span></span>
+                                              </div>
+                                            </div>
+
+                                            {/* Context Window */}
+                                            <div className="space-y-2 border border-border bg-background/50 rounded-md p-3">
+                                              <h4 className="font-semibold text-muted-foreground uppercase tracking-wider text-[10px] flex items-center gap-1.5">
+                                                <FileText className="w-3 h-3" /> Context Window
+                                              </h4>
+                                              <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
+                                                <span className="text-muted-foreground">Peak Usage:</span>
+                                                <span className="text-foreground text-right">{usage.context_window_usage?.toLocaleString() || '-'}</span>
+                                                
+                                                <span className="text-muted-foreground">Limit:</span>
+                                                <span className="text-foreground text-right">{usage.model_context_window?.toLocaleString() || '-'}</span>
+                                                
+                                                <span className="text-muted-foreground">Utilization:</span>
+                                                <span className="text-foreground text-right font-medium">
+                                                  {usage.context_usage_percent ? (
+                                                    <span className={usage.context_usage_percent > 80 ? 'text-red-500' : usage.context_usage_percent > 50 ? 'text-yellow-500' : 'text-green-500'}>
+                                                      {usage.context_usage_percent.toFixed(1)}%
+                                                    </span>
+                                                  ) : '-'}
+                                                </span>
+                                              </div>
+                                            </div>
+                                          </div>
+                                          
+                                          {/* Usage by Step Table */}
+                                          {modelSteps.length > 0 && (
+                                            <div className="border border-border rounded-md overflow-hidden bg-background">
+                                              <div className="bg-muted/50 px-4 py-2 border-b border-border flex justify-between items-center">
+                                                <h4 className="font-semibold text-xs text-foreground flex items-center gap-2">
+                                                  <List className="w-3.5 h-3.5" /> Usage by Step
+                                                </h4>
+                                                <span className="text-[10px] text-muted-foreground bg-background px-1.5 py-0.5 rounded border border-border">
+                                                  {modelSteps.length} steps
+                                                </span>
+                                              </div>
+                                              <div className="overflow-x-auto">
+                                                <table className="w-full text-xs">
+                                                  <thead>
+                                                    <tr className="text-muted-foreground border-b border-border bg-muted/30">
+                                                      <th className="px-4 py-2 text-left font-medium">Step</th>
+                                                      <th className="px-4 py-2 text-right font-medium">Input</th>
+                                                      <th className="px-4 py-2 text-right font-medium">Cached In</th>
+                                                      <th className="px-4 py-2 text-right font-medium">Reasoning</th>
+                                                      <th className="px-4 py-2 text-right font-medium">Output</th>
+                                                      <th className="px-4 py-2 text-right font-medium">Cost</th>
+                                                    </tr>
+                                                  </thead>
+                                                  <tbody className="divide-y divide-border">
+                                                    {modelSteps.map((step) => (
+                                                      <tr key={step.key} className="hover:bg-muted/30 transition-colors">
+                                                        <td className="px-4 py-2">
+                                                          <div className="flex items-center gap-2">
+                                                            {step.type === 'execution' && <Terminal className="w-3.5 h-3.5 text-blue-500" />}
+                                                            {step.type === 'validation' && <CheckCircle className="w-3.5 h-3.5 text-purple-500" />}
+                                                            {step.type === 'learning' && <BookOpen className="w-3.5 h-3.5 text-amber-500" />}
+                                                            {step.type === 'workflow' && <Network className="w-3.5 h-3.5 text-foreground" />}
+                                                            <span className="font-medium text-foreground">{step.label}</span>
+                                                          </div>
+                                                        </td>
+                                                        <td className="px-4 py-2 text-right text-muted-foreground">{step.usage.input_tokens.toLocaleString()}</td>
+                                                        <td className="px-4 py-2 text-right text-muted-foreground">
+                                                          {(step.usage.cache_read_tokens || step.usage.cache_tokens || 0).toLocaleString()}
+                                                        </td>
+                                                        <td className="px-4 py-2 text-right text-muted-foreground">
+                                                          {(step.usage.reasoning_tokens || 0).toLocaleString()}
+                                                        </td>
+                                                        <td className="px-4 py-2 text-right text-muted-foreground">{step.usage.output_tokens.toLocaleString()}</td>
+                                                        <td className="px-4 py-2 text-right text-green-600 dark:text-green-400 font-medium">{formatUSD(step.usage.total_cost_usd)}</td>
+                                                      </tr>
+                                                    ))}
+                                                  </tbody>
+                                                </table>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </React.Fragment>
+                              )
+                            })}
+                          </tbody>
+                          <tfoot>
+                            <tr className="border-t-2 border-border font-bold">
+                              <td></td>
+                              <td className="py-3 text-foreground">Total Summary</td>
+                              <td className="py-3 text-right text-foreground">{costSummary?.totalLLMCalls}</td>
+                              <td className="py-3 text-right text-muted-foreground">{costSummary?.totalInputTokens.toLocaleString()}</td>
+                              <td className="py-3 text-right text-muted-foreground">
+                                {costSummary?.totalCacheReadTokens.toLocaleString()}
+                                {costSummary?.totalInputTokens > 0 && (
+                                  <span className="text-[10px] text-muted-foreground ml-1">
+                                    ({((costSummary.totalCacheReadTokens / costSummary.totalInputTokens) * 100).toFixed(0)}%)
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3 text-right text-muted-foreground">{costSummary?.totalCacheWriteTokens.toLocaleString()}</td>
+                              <td className="py-3 text-right text-muted-foreground">{costSummary?.totalReasoningTokens.toLocaleString()}</td>
+                              <td className="py-3 text-right text-muted-foreground">{costSummary?.totalOutputTokens.toLocaleString()}</td>
+                              <td className="py-3 text-right text-green-600 dark:text-green-400">{formatUSD(costSummary?.totalCost)}</td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {Object.entries(logs.steps)
                 .sort((a, b) => sortStepIds(a[0], b[0]))
                 .map(([stepId, stepLogs]) => {
@@ -474,6 +862,32 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                     </div>
                                   )
                                 })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Step Output Section */}
+                          {stepLogs.output_content && (
+                            <div className="p-4 bg-blue-50/50 dark:bg-blue-950/20">
+                              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+                                <FileText className="w-3.5 h-3.5" />
+                                Step Output
+                                <span className="text-[10px] font-normal text-muted-foreground bg-background px-1.5 py-0.5 rounded border border-border">
+                                  {stepLogs.context_output}
+                                </span>
+                              </h4>
+                              <div className="bg-background rounded border border-border overflow-hidden">
+                                <div className="p-3 max-h-64 overflow-auto">
+                                  {stepLogs.output_content.is_json ? (
+                                    <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words">
+                                      {JSON.stringify(stepLogs.output_content.content, null, 2)}
+                                    </pre>
+                                  ) : (
+                                    <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words">
+                                      {String(stepLogs.output_content.content)}
+                                    </pre>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           )}

@@ -890,6 +890,9 @@ func (em *ExecutionManager) ApplyExecutionContext(setup *ExecutionSetup) {
 	// Set run folder
 	if setup.RunFolder != "" {
 		orch.selectedRunFolder = setup.RunFolder
+		// Also update iteration folder for token persistence
+		// This ensures token_usage.json is written to the correct group folder during batch execution
+		orch.SetIterationFolder(setup.RunFolder)
 	}
 
 	// Set variable values for batch execution

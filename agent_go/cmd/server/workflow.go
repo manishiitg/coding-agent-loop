@@ -102,6 +102,188 @@ func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, 
 	return content, true, nil
 }
 
+// aggregateGroupTokenUsage scans a parent iteration folder for group subfolders
+// and aggregates their token_usage.json files into a combined view
+// Returns nil if no group token usage files are found
+func aggregateGroupTokenUsage(ctx context.Context, runFolderPath string) map[string]interface{} {
+	// List contents of the run folder to find group subfolders
+	apiURL := getWorkspaceAPIURL() + "/api/documents"
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return nil
+	}
+
+	q := req.URL.Query()
+	q.Add("folder", runFolderPath)
+	q.Add("max_depth", "1")
+	req.URL.RawQuery = q.Encode()
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+
+	// Parse folder listing response
+	type FolderListingResponse struct {
+		Success bool                                `json:"success"`
+		Data    virtualtools.WorkspaceFolderListing `json:"data"`
+	}
+
+	var apiResp FolderListingResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil
+	}
+
+	if !apiResp.Success || len(apiResp.Data) == 0 {
+		return nil
+	}
+
+	// Reserved folder names that are not group folders
+	reservedFolders := map[string]bool{
+		"logs":      true,
+		"execution": true,
+		"planning":  true,
+		"learnings": true,
+	}
+
+	// Aggregate token usage from group subfolders
+	aggregatedByModel := make(map[string]map[string]interface{})
+	aggregatedByStepAndModel := make(map[string]map[string]map[string]interface{})
+	groupsFound := []string{}
+
+	for _, item := range apiResp.Data {
+		isDir := item.Type == "folder" || item.IsDirectory
+		if !isDir {
+			continue
+		}
+
+		// Extract folder name from filepath
+		folderName := filepath.Base(item.FilePath)
+		if reservedFolders[folderName] {
+			continue
+		}
+
+		// Try to read token_usage.json from this group folder
+		groupTokenPath := fmt.Sprintf("%s/%s/token_usage.json", runFolderPath, folderName)
+		content, exists, _ := readFileFromWorkspace(ctx, groupTokenPath)
+		if !exists {
+			continue
+		}
+
+		var groupTokenUsage map[string]interface{}
+		if err := json.Unmarshal([]byte(content), &groupTokenUsage); err != nil {
+			continue
+		}
+
+		groupsFound = append(groupsFound, folderName)
+
+		// Aggregate by_model data
+		if byModel, ok := groupTokenUsage["by_model"].(map[string]interface{}); ok {
+			for modelID, modelData := range byModel {
+				if aggregatedByModel[modelID] == nil {
+					aggregatedByModel[modelID] = make(map[string]interface{})
+					// Copy initial values
+					if modelMap, ok := modelData.(map[string]interface{}); ok {
+						for k, v := range modelMap {
+							aggregatedByModel[modelID][k] = v
+						}
+					}
+				} else {
+					// Aggregate numeric values
+					if modelMap, ok := modelData.(map[string]interface{}); ok {
+						aggregateTokenFields(aggregatedByModel[modelID], modelMap)
+					}
+				}
+			}
+		}
+
+		// Aggregate by_step_and_model data with group prefix
+		if byStepAndModel, ok := groupTokenUsage["by_step_and_model"].(map[string]interface{}); ok {
+			for stepKey, stepData := range byStepAndModel {
+				// Prefix step key with group name for clarity
+				groupStepKey := fmt.Sprintf("%s/%s", folderName, stepKey)
+				if aggregatedByStepAndModel[groupStepKey] == nil {
+					aggregatedByStepAndModel[groupStepKey] = make(map[string]map[string]interface{})
+				}
+				if stepModels, ok := stepData.(map[string]interface{}); ok {
+					for modelID, modelData := range stepModels {
+						if aggregatedByStepAndModel[groupStepKey][modelID] == nil {
+							aggregatedByStepAndModel[groupStepKey][modelID] = make(map[string]interface{})
+							if modelMap, ok := modelData.(map[string]interface{}); ok {
+								for k, v := range modelMap {
+									aggregatedByStepAndModel[groupStepKey][modelID][k] = v
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if len(groupsFound) == 0 {
+		return nil
+	}
+
+	// Build aggregated response
+	result := map[string]interface{}{
+		"by_model":          aggregatedByModel,
+		"by_step_and_model": aggregatedByStepAndModel,
+		"groups":            groupsFound,
+		"aggregated":        true,
+	}
+
+	return result
+}
+
+// aggregateTokenFields aggregates numeric token fields from src into dst
+func aggregateTokenFields(dst, src map[string]interface{}) {
+	numericFields := []string{
+		"input_tokens", "output_tokens", "cache_tokens", "cache_read_tokens", "cache_write_tokens",
+		"reasoning_tokens", "llm_call_count", "context_window_usage",
+		"input_cost", "output_cost", "reasoning_cost", "cache_cost", "cache_read_cost", "cache_write_cost", "total_cost",
+	}
+
+	for _, field := range numericFields {
+		if srcVal, ok := src[field]; ok {
+			switch v := srcVal.(type) {
+			case float64:
+				if dstVal, ok := dst[field].(float64); ok {
+					dst[field] = dstVal + v
+				} else {
+					dst[field] = v
+				}
+			case int:
+				if dstVal, ok := dst[field].(float64); ok {
+					dst[field] = dstVal + float64(v)
+				} else if dstVal, ok := dst[field].(int); ok {
+					dst[field] = dstVal + v
+				} else {
+					dst[field] = v
+				}
+			}
+		}
+	}
+
+	// Keep non-numeric fields from the first source (provider, model_context_window, etc.)
+	for k, v := range src {
+		if _, exists := dst[k]; !exists {
+			dst[k] = v
+		}
+	}
+}
+
 // readProgressForFolder reads steps_done.json for a given folder and returns the progress
 // Returns nil if the file doesn't exist or can't be read (non-fatal)
 func readProgressForFolder(ctx context.Context, stepsFilePath string) (*StepProgress, error) {
@@ -3322,6 +3504,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 			desc := ""
 			originalId := ""
 			stepType := "regular"
+			contextOutput := ""
 			if meta != nil {
 				if t := meta["title"]; t != "" {
 					title = t
@@ -3331,21 +3514,24 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 				if t := meta["type"]; t != "" {
 					stepType = t
 				}
+				contextOutput = meta["context_output"]
 			}
 
 			stepsLogs[stepId] = map[string]interface{}{
-				"step_id":       stepId,
-				"original_id":   originalId,
-				"type":          stepType,
-				"title":         title,
-				"description":   desc,
-				"validations":   []map[string]interface{}{},
-				"executions":    []map[string]interface{}{},
-				"decisions":     []map[string]interface{}{},
-				"orchestration": []map[string]interface{}{},
-				"conditionals":  []map[string]interface{}{},
-				"learnings":     []map[string]interface{}{},
-				"archived_logs": []map[string]interface{}{}, // Archived logs from previous runs
+				"step_id":        stepId,
+				"original_id":    originalId,
+				"type":           stepType,
+				"title":          title,
+				"description":    desc,
+				"context_output": contextOutput,
+				"output_content": nil, // Will be populated if output file exists
+				"validations":    []map[string]interface{}{},
+				"executions":     []map[string]interface{}{},
+				"decisions":      []map[string]interface{}{},
+				"orchestration":  []map[string]interface{}{},
+				"conditionals":   []map[string]interface{}{},
+				"learnings":      []map[string]interface{}{},
+				"archived_logs":  []map[string]interface{}{}, // Archived logs from previous runs
 			}
 		}
 		return stepsLogs[stepId]
@@ -3552,6 +3738,37 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 							}
 						}
 
+						// Check for context_output file (step output)
+						// This checks if the current file matches the expected context_output filename for this step
+						entry := getStepEntry(stepId)
+						expectedOutput, _ := entry["context_output"].(string)
+						if !childIsDir && expectedOutput != "" && childName == expectedOutput {
+							outputPath := child.FilePath
+							if !processedPaths[outputPath] {
+								processedPaths[outputPath] = true
+
+								// Read the output file content
+								content, exists, _ := readFileFromWorkspace(r.Context(), outputPath)
+								if exists {
+									var outputData interface{}
+									if err := json.Unmarshal([]byte(content), &outputData); err != nil {
+										// Not valid JSON, store as string
+										entry["output_content"] = map[string]interface{}{
+											"file_path": outputPath,
+											"content":   content,
+											"is_json":   false,
+										}
+									} else {
+										entry["output_content"] = map[string]interface{}{
+											"file_path": outputPath,
+											"content":   outputData,
+											"is_json":   true,
+										}
+									}
+								}
+							}
+						}
+
 						// Process archived logs folder
 						if childIsDir && childName == "archived" {
 							entry := getStepEntry(stepId)
@@ -3644,9 +3861,40 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 
 	processFolder(apiResp.Data)
 
+	// Try to read token_usage.json for the run
+	// With group folders, token_usage.json may be in:
+	// 1. Direct path: runs/{runFolder}/token_usage.json (for single group or group-specific folder)
+	// 2. Group subfolders: runs/{runFolder}/{groupName}/token_usage.json (for parent iteration folder)
+	var tokenUsage interface{} = nil
+	tokenUsagePath := ""
+	if runFolder != "" && runFolder != "new" {
+		tokenUsagePath = fmt.Sprintf("%s/runs/%s/token_usage.json", cleanedWorkspacePath, runFolder)
+	} else {
+		// Try root workspace if no run folder
+		tokenUsagePath = fmt.Sprintf("%s/token_usage.json", cleanedWorkspacePath)
+	}
+
+	if tokenUsagePath != "" {
+		content, exists, _ := readFileFromWorkspace(r.Context(), tokenUsagePath)
+		if exists {
+			if err := json.Unmarshal([]byte(content), &tokenUsage); err != nil {
+				fmt.Printf("Error unmarshalling token usage from %s: %v\n", tokenUsagePath, err)
+			}
+		} else if runFolder != "" && runFolder != "new" && !strings.Contains(runFolder, "/") {
+			// Token usage not found at direct path and runFolder is a parent iteration folder (no "/")
+			// Try to find and aggregate token_usage.json from group subfolders
+			runFolderPath := fmt.Sprintf("%s/runs/%s", cleanedWorkspacePath, runFolder)
+			aggregatedTokenUsage := aggregateGroupTokenUsage(r.Context(), runFolderPath)
+			if aggregatedTokenUsage != nil {
+				tokenUsage = aggregatedTokenUsage
+			}
+		}
+	}
+
 	response := map[string]interface{}{
-		"success": true,
-		"steps":   stepsLogs,
+		"success":     true,
+		"steps":       stepsLogs,
+		"token_usage": tokenUsage,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -3748,11 +3996,23 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 			}
 		}
 
+		// Get context_output for the step (the output file name)
+		contextOutput, _ := step["context_output"].(string)
+		// Also check decision_step for inner step context_output
+		if contextOutput == "" {
+			if inner, ok := step["decision_step"].(map[string]interface{}); ok {
+				if innerOutput, ok := inner["context_output"].(string); ok {
+					contextOutput = innerOutput
+				}
+			}
+		}
+
 		meta := map[string]string{
-			"title":       title,
-			"description": desc,
-			"original_id": id,
-			"type":        resolvedType,
+			"title":          title,
+			"description":    desc,
+			"original_id":    id,
+			"type":           resolvedType,
+			"context_output": contextOutput,
 		}
 
 		// Store metadata by multiple keys to ensure it's found

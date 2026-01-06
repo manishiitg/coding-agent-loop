@@ -88,6 +88,10 @@ export TOOL_EXECUTION_TIMEOUT="5m"
 # Set MCP cache TTL to 7 days (10080 minutes)
 export MCP_CACHE_TTL_MINUTES="10080"
 
+# Set MCP cache directory to ensure consistent path across restarts
+export MCP_CACHE_DIR="${SCRIPT_DIR}/cache"
+echo "🔧 Set MCP_CACHE_DIR to: $MCP_CACHE_DIR"
+
 # Context summarization configuration
 export ENABLE_CONTEXT_SUMMARIZATION="true"
 export SUMMARIZE_ON_TOKEN_THRESHOLD="true"

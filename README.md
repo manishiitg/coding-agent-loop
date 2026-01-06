@@ -268,6 +268,9 @@ mcp-agent-builder-go/
 
 Key architectural documentation and implementation plans:
 
+### **Authentication & Security**
+- **[OAuth Authentication](docs/oauth.md)**: OAuth 2.0 authentication system with auto-discovery, PKCE, and automatic cache invalidation
+
 ### **Workflow Engine**
 - **[Learnings Architecture](docs/learnings_architecture.md)**: Details the "Explore vs. Exploit" learning system and turn-count based auto-locking.
 - **[Conditional Agent Logic](docs/conditional_agent_implementation.md)**: Explains how the conditional agent evaluates branching decisions.

@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Server, ChevronDown, Check, Settings } from 'lucide-react';
+import { Server, ChevronDown, Check, Settings, Info } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Checkbox } from './ui/checkbox';
 import { Card } from './ui/Card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import MCPConfigEditor from './MCPConfigEditor';
+import { OAuthStatusBadge } from './OAuthStatusBadge';
 import { useMCPStore } from '../stores';
 
 interface ServerSelectionDropdownProps {
@@ -25,7 +26,7 @@ export default function ServerSelectionDropdown({
   disabled = false
 }: ServerSelectionDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const { showConfigEditor, setShowConfigEditor } = useMCPStore();
+  const { showConfigEditor, setShowConfigEditor, refreshTools } = useMCPStore();
 
   const handleServerToggle = (server: string) => {
     onServerToggle(server);
@@ -136,7 +137,7 @@ export default function ServerSelectionDropdown({
                   <div className="max-h-48 overflow-y-auto space-y-2 border rounded-md p-2">
                     {availableServers.length > 0 ? (
                       availableServers.map((server) => (
-                        <div key={server} className="flex items-center space-x-2">
+                        <div key={server} className="flex items-center space-x-2 group">
                           <Checkbox
                             id={`manual-server-${server}`}
                             checked={actualSelectedServers.includes(server)}
@@ -149,6 +150,15 @@ export default function ServerSelectionDropdown({
                           >
                             {server}
                           </label>
+                          {/* OAuth Status Badge */}
+                          <OAuthStatusBadge
+                            serverName={server}
+                            onAuthChange={(valid) => {
+                              if (valid) {
+                                refreshTools();
+                              }
+                            }}
+                          />
                           {actualSelectedServers.includes(server) && (
                             <Check className="w-3 h-3 text-green-600" />
                           )}

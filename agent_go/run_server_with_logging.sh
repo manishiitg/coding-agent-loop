@@ -90,6 +90,9 @@ export MCP_CACHE_TTL_MINUTES="10080"
 
 # Workspace semantic search configuration (disabled by default - requires Qdrant)
 export WORKSPACE_ENABLE_SEMANTIC_SEARCH="${WORKSPACE_ENABLE_SEMANTIC_SEARCH:-false}"
+# Set MCP cache directory to ensure consistent path across restarts
+export MCP_CACHE_DIR="${SCRIPT_DIR}/cache"
+echo "🔧 Set MCP_CACHE_DIR to: $MCP_CACHE_DIR"
 
 # Context summarization configuration
 export ENABLE_CONTEXT_SUMMARIZATION="true"

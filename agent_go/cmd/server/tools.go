@@ -13,6 +13,7 @@ import (
 
 	"mcpagent/mcpcache"
 	"mcpagent/mcpclient"
+	"mcpagent/oauth"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -29,6 +30,15 @@ type ToolStatus struct {
 	ToolsEnabled  int                    `json:"toolsEnabled"`
 	FunctionNames []string               `json:"function_names"`
 	Tools         []mcpclient.ToolDetail `json:"tools,omitempty"` // Only populated for detailed requests
+	// OAuth detection
+	RequiresOAuth bool                   `json:"requires_oauth,omitempty"` // Auto-detected from 401 response
+	OAuthEndpoints *OAuthEndpoints       `json:"oauth_endpoints,omitempty"` // Discovered endpoints if OAuth detected
+}
+
+// OAuthEndpoints represents discovered OAuth endpoints
+type OAuthEndpoints struct {
+	AuthURL  string `json:"auth_url"`
+	TokenURL string `json:"token_url"`
 }
 
 // SetEnabledToolsRequest represents a request to set enabled tools
@@ -94,14 +104,28 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 		false, // disableCache - use cache by default for server operations
 	)
 	if err != nil {
-		return &ToolStatus{
+		// Check if this is an OAuth error - try to auto-discover OAuth endpoints
+		toolStatus := &ToolStatus{
 			Name:         serverName,
 			Server:       serverName,
 			Status:       "error",
 			Error:        err.Error(),
 			Description:  srvCfg.Description,
 			ToolsEnabled: 0,
-		}, nil
+		}
+
+		// Try OAuth auto-discovery if server has URL (HTTP/SSE protocol)
+		if srvCfg.URL != "" {
+			if endpoints := api.tryOAuthDiscovery(ctx, srvCfg.URL); endpoints != nil {
+				toolStatus.RequiresOAuth = true
+				toolStatus.OAuthEndpoints = endpoints
+				toolStatus.Error = "OAuth authentication required"
+				api.logger.Info(fmt.Sprintf("✅ Auto-detected OAuth for %s: auth=%s, token=%s",
+					serverName, endpoints.AuthURL, endpoints.TokenURL))
+			}
+		}
+
+		return toolStatus, nil
 	}
 
 	// Extract tools for this specific server
@@ -365,6 +389,11 @@ func (api *StreamingAPI) initializeToolCache() {
 	// Get the existing cache manager
 	cacheManager := mcpcache.GetCacheManager(api.logger)
 
+	// Log cache statistics
+	stats := cacheManager.GetStats()
+	api.logger.Info(fmt.Sprintf("📊 Cache stats: total_entries=%v, valid_entries=%v, cache_dir=%v",
+		stats["total_entries"], stats["valid_entries"], stats["cache_directory"]))
+
 	// Enable code generation so that missing code is regenerated when loading from cache
 	// This ensures MCP server code is available even if generated/ folder was cleared
 	cacheManager.SetCodeGenerationEnabled(true)
@@ -379,7 +408,10 @@ func (api *StreamingAPI) initializeToolCache() {
 		cfg = api.mcpConfig
 	}
 
+	api.logger.Info(fmt.Sprintf("📋 Loaded %d servers from config", len(cfg.MCPServers)))
+
 	cachedServers := 0
+	missedServers := 0
 	for serverName := range cfg.MCPServers {
 		// Get server configuration for cache key generation
 		serverConfig, exists := cfg.MCPServers[serverName]
@@ -391,13 +423,25 @@ func (api *StreamingAPI) initializeToolCache() {
 		cacheKey := mcpcache.GenerateUnifiedCacheKey(serverName, serverConfig)
 		if entry, exists := cacheManager.Get(cacheKey); exists {
 			cachedServers++
+			api.logger.Debug(fmt.Sprintf("✅ Cache HIT for server %s (tools=%d)", serverName, len(entry.Tools)))
 			// Convert cached entry to ToolStatus
 			toolStatus := api.convertCacheEntryToToolStatus(entry)
 			api.toolStatusMux.Lock()
 			api.toolStatus[serverName] = toolStatus
 			api.toolStatusMux.Unlock()
+		} else {
+			missedServers++
+			// Truncate cache key for logging
+			truncatedKey := cacheKey
+			if len(cacheKey) > 50 {
+				truncatedKey = cacheKey[:50] + "..."
+			}
+			api.logger.Debug(fmt.Sprintf("❌ Cache MISS for server %s (key=%s)", serverName, truncatedKey))
 		}
 	}
+
+	api.logger.Info(fmt.Sprintf("📊 Cache lookup results: %d hits, %d misses out of %d total servers",
+		cachedServers, missedServers, len(cfg.MCPServers)))
 
 	if cachedServers > 0 {
 		api.logger.Info(fmt.Sprintf("✅ Loaded %d servers from existing mcpcache", cachedServers))
@@ -479,6 +523,10 @@ func (api *StreamingAPI) convertCacheEntryToToolStatus(entry *mcpcache.CacheEntr
 
 // convertToolStatusToCacheEntry converts a ToolStatus to mcpcache.CacheEntry
 func (api *StreamingAPI) convertToolStatusToCacheEntry(toolStatus *ToolStatus, serverName string) *mcpcache.CacheEntry {
+	// Get cache manager to use configured TTL
+	cacheManager := mcpcache.GetCacheManager(api.logger)
+	ttlMinutes := cacheManager.GetTTL()
+
 	// Convert ToolDetail to llmtypes.Tool format using the centralized conversion function
 	llmTools, err := mcpclient.ToolDetailsAsLLM(toolStatus.Tools)
 	if err != nil {
@@ -492,7 +540,7 @@ func (api *StreamingAPI) convertToolStatusToCacheEntry(toolStatus *ToolStatus, s
 			SystemPrompt: "",
 			CreatedAt:    time.Now(),
 			LastAccessed: time.Now(),
-			TTLMinutes:   30,
+			TTLMinutes:   ttlMinutes,
 			Protocol:     "unknown",
 			ServerInfo:   make(map[string]interface{}),
 			IsValid:      false,
@@ -514,8 +562,8 @@ func (api *StreamingAPI) convertToolStatusToCacheEntry(toolStatus *ToolStatus, s
 		SystemPrompt: "",               // Empty for now
 		CreatedAt:    time.Now(),
 		LastAccessed: time.Now(),
-		TTLMinutes:   30,        // 30 minutes TTL
-		Protocol:     "unknown", // Will be updated by actual discovery
+		TTLMinutes:   ttlMinutes, // Use configured TTL from cache manager
+		Protocol:     "unknown",  // Will be updated by actual discovery
 		ServerInfo:   make(map[string]interface{}),
 		IsValid:      status == "ok",
 		ErrorMessage: toolStatus.Error,
@@ -656,6 +704,49 @@ func (api *StreamingAPI) stopPeriodicRefresh() {
 		api.discoveryTicker.Stop()
 		api.discoveryTicker = nil
 		api.logger.Info("⏹️ Stopped periodic tool discovery refresh")
+	}
+}
+
+// tryOAuthDiscovery attempts to discover OAuth endpoints from a 401 response
+func (api *StreamingAPI) tryOAuthDiscovery(ctx context.Context, serverURL string) *OAuthEndpoints {
+	// Try RFC 8414 well-known discovery first (more reliable)
+	if endpoints, err := oauth.DiscoverFromWellKnown(serverURL); err == nil {
+		api.logger.Debug(fmt.Sprintf("Discovered OAuth via RFC 8414 well-known: auth=%s, token=%s",
+			endpoints.AuthURL, endpoints.TokenURL))
+		return &OAuthEndpoints{
+			AuthURL:  endpoints.AuthURL,
+			TokenURL: endpoints.TokenURL,
+		}
+	}
+
+	// Fallback: Try 401 response header discovery
+	resp, err := http.Get(serverURL)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	// Only proceed if we got 401 Unauthorized
+	if resp.StatusCode != http.StatusUnauthorized {
+		return nil
+	}
+
+	// Try to extract OAuth endpoints from response headers
+	authHeader := resp.Header.Get("WWW-Authenticate")
+	if authHeader == "" {
+		return nil
+	}
+
+	// Use the oauth package's discovery logic
+	endpoints, err := oauth.DiscoverFromResponse(resp)
+	if err != nil {
+		api.logger.Debug(fmt.Sprintf("Failed to discover OAuth endpoints: %v", err))
+		return nil
+	}
+
+	return &OAuthEndpoints{
+		AuthURL:  endpoints.AuthURL,
+		TokenURL: endpoints.TokenURL,
 	}
 }
 

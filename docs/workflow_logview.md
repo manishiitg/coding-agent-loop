@@ -54,6 +54,7 @@ The log viewer automatically detects and renders the following types of informat
     - Recursively scans the workspace `logs/` folder.
     - Uses `populateStepMetadata` to recursively map folder names (e.g., `step-1`, `step-3-true-0`) to logical step IDs (`original_id`) and titles from `plan.json`.
     - Reads `learning-execution.json` to populate the new `learnings` array.
+    - Reads `token_usage.json` from the iteration folder root to provide cost insights.
     - Proxies file reading via the Workspace API to handle large conversation logs on demand.
 
 ### Frontend (React + TypeScript)
@@ -65,6 +66,49 @@ The log viewer automatically detects and renders the following types of informat
     - **Logical IDs:** Displays the logical step ID (e.g., `fetch-pr-data`) alongside the title for better context.
     - **Semantic Theming:** Uses `bg-background`, `text-foreground`, and `border-border` for Light/Dark mode support.
     - **Lazy Loading:** Conversation logs (Execution & Learning) are fetched only when requested.
+
+# Cost Viewer
+
+The Cost Viewer provides transparency into the financial impact of workflow executions by aggregating token usage and costs from the LLM providers.
+
+## Overview
+Integrated directly into the Execution Logs header, it shows a summary of the total USD cost and total tokens consumed for the selected run iteration.
+
+## Data Sources
+- **Token Usage:** Reads from `runs/{iteration}/token_usage.json`.
+- **Metrics tracked:**
+    - **Input/Output Tokens:** Raw counts and formatted "millions".
+    - **Cache Tokens:** Breakdown of cached tokens (reads/writes) for models supporting prompt caching.
+    - **Reasoning Tokens:** Tokens spent on internal reasoning (for models like o1).
+    - **USD Costs:** Calculated based on model-specific pricing metadata.
+
+## Features
+- **Header Summary:** Immediate visibility into total run cost and token count.
+- **Stage-Based Breakdown:** "Cost Summary by Stage" grid shows costs grouped by workflow phase (Execution, Validation, Learning, Other).
+- **Expandable Model Details:** The "Cost Breakdown by Model" table supports row expansion to reveal deep insights:
+    - **Token Breakdown:** Input, Output, and Reasoning tokens with individual costs.
+    - **Cache Performance:** Cache hit/miss rates and associated costs (discounted vs premium).
+    - **Context Window:** Peak usage, model limits, and percentage utilization.
+    - **Usage by Step:** A chronological table listing every step where the model was used, showing specific token counts and costs for granular analysis.
+
+# Learnings Popup
+
+The Learnings Popup provides a consolidated view of the accumulated knowledge (learnings) for every step in the workflow, persistent across multiple execution runs. Unlike the per-run "Learning Logs" in the Execution Logs view, this view shows the *current state* of the learning memory.
+
+## Overview
+Accessed via the "Show Learnings" button in the workflow toolbar, this popup displays the learning metadata and content for all steps that have learning enabled.
+
+## Data Sources
+- **Metadata:** Fetched from `learnings/{stepID}/.learning_metadata.json`. This includes:
+    - **Complexity:** The estimated complexity of the step (Simple, Medium, Complex).
+    - **Successful Runs:** The count of successful executions contributing to this learning.
+    - **Last Updated:** Timestamp of the last update.
+- **Content:** The actual learning content is read from the markdown file in `learnings/{stepID}/` (e.g., `learning.md`).
+
+## Features
+- **Complexity Tracking:** Visualizes the step's complexity level, which influences how many successful runs are required before the system stops active learning ("exploitation phase").
+- **Lock/Unlock:** Users can manually lock learnings for a step to prevent further updates (forcing the agent to strictly use existing knowledge) or unlock them to resume learning.
+- **Content Inspection:** Expandable sections allow users to read the raw markdown content of the extracted learnings.
 
 ## How to Access
 1. Open the **Workflow Canvas**.

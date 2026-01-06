@@ -69,6 +69,10 @@ i) prompt tempaltes, need to check variables on compile time
 
 52. check auto summization.. it trigges many times.. i think some bug is there in token calcuation
 
-53. add oauth support for mcp and make a better ui for adding mcp/managing mcp than simple json
+53. add oauth support for mcp and make a better ui for adding mcp/managing mcp than simple json ---- done
 
-54. in multi llm package, keep only latest models. and focus on good data for those
+54. in multi llm package, keep only latest models. and focus on good data for those ---- done
+
+55. langfuse tracing
+
+56. supabase migration

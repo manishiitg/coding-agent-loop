@@ -111,21 +111,60 @@ export const useMCPStore = create<MCPState>()(
 
         refreshTools: async () => {
           set({ isLoadingTools: true, toolsError: null })
-          
+
           try {
             const toolList = await agentApi.getTools() as ToolDefinition[]
-            set({ 
-              toolList, 
+
+            // Get the list of currently available servers from the fresh tool list
+            const availableServers = [...new Set(toolList.map((tool: ToolDefinition) => tool.server).filter((server): server is string => typeof server === 'string'))]
+
+            // Filter persisted enabledServers to only include servers that still exist
+            // This removes servers that were deleted from the config
+            const currentEnabledServers = get().enabledServers
+            const filteredEnabledServers = currentEnabledServers.filter(server => availableServers.includes(server))
+
+            // Filter persisted selectedServers to only include servers that still exist
+            const currentSelectedServers = get().selectedServers
+            const filteredSelectedServers = currentSelectedServers.filter(server =>
+              server === "NO_SERVERS" || availableServers.includes(server)
+            )
+
+            // Filter persisted toolDetails to only include servers that still exist
+            const currentToolDetails = get().toolDetails
+            const filteredToolDetails: Record<string, ToolDefinition> = {}
+            for (const server of Object.keys(currentToolDetails)) {
+              if (availableServers.includes(server)) {
+                filteredToolDetails[server] = currentToolDetails[server]
+              }
+            }
+
+            // Filter expandedServers to only include servers that still exist
+            const currentExpandedServers = get().expandedServers
+            const filteredExpandedServers = new Set<string>()
+            currentExpandedServers.forEach(server => {
+              if (availableServers.includes(server)) {
+                filteredExpandedServers.add(server)
+              }
+            })
+
+            set({
+              toolList,
               isLoadingTools: false,
-              // Auto-enable all servers on first load if none are enabled
-              enabledServers: get().enabledServers.length === 0 
-                ? [...new Set(toolList.map((tool: ToolDefinition) => tool.server).filter((server): server is string => typeof server === 'string'))]
-                : get().enabledServers
+              // Auto-enable all servers on first load if none are enabled, otherwise use filtered list
+              enabledServers: filteredEnabledServers.length === 0
+                ? availableServers
+                : filteredEnabledServers,
+              // Update selectedServers to remove deleted servers
+              selectedServers: filteredSelectedServers,
+              // Update toolDetails to remove deleted servers
+              toolDetails: filteredToolDetails,
+              // Update expandedServers to remove deleted servers
+              expandedServers: filteredExpandedServers
             })
           } catch (error) {
-            set({ 
+            set({
               toolsError: error instanceof Error ? error.message : 'Failed to load tools',
-              isLoadingTools: false 
+              isLoadingTools: false
             })
           }
         },
@@ -266,6 +305,10 @@ export const useMCPStore = create<MCPState>()(
           // Convert expandedServers array back to Set
           if (state && Array.isArray(state.expandedServers)) {
             state.expandedServers = new Set(state.expandedServers)
+          }
+          // Ensure loading state is false after rehydration if we have tools
+          if (state && state.toolList && state.toolList.length > 0) {
+            state.isLoadingTools = false
           }
         }
       }

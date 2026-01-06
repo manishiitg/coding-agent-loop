@@ -702,6 +702,12 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/mcp-config/discover", api.handleDiscoverServers).Methods("POST")
 	apiRouter.HandleFunc("/mcp-config/status", api.handleGetMCPConfigStatus).Methods("GET")
 
+	// OAuth API routes (from oauth_routes.go)
+	apiRouter.HandleFunc("/oauth/start", api.handleOAuthStart).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/oauth/callback", api.handleOAuthCallback).Methods("GET")
+	apiRouter.HandleFunc("/oauth/status", api.handleOAuthStatus).Methods("GET")
+	apiRouter.HandleFunc("/oauth/logout", api.handleOAuthLogout).Methods("POST", "OPTIONS")
+
 	// Observer APIs removed - events are now stored by sessionID, no observers needed
 
 	// Active Session API routes (from polling.go)

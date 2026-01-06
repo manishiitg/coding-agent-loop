@@ -437,14 +437,16 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 				Provider: ptom.presetPhaseLLM.Provider,
 				ModelID:  ptom.presetPhaseLLM.ModelID,
 			},
-			Fallbacks: orchestratorLLMConfig.Fallbacks,
-			APIKeys:   orchestratorLLMConfig.APIKeys,
+			Fallbacks: ptom.GetFallbacks(), // Safe: returns nil if orchestratorLLMConfig is nil
+			APIKeys:   ptom.GetAPIKeys(),   // Safe: returns nil if orchestratorLLMConfig is nil
 		}
 		ptom.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for plan tool optimization: %s/%s", ptom.presetPhaseLLM.Provider, ptom.presetPhaseLLM.ModelID))
-	} else {
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig
-		ptom.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default tool optimization LLM: %s/%s", ptom.GetProvider(), ptom.GetModel()))
+		ptom.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default tool optimization LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for plan tool optimization agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)

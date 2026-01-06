@@ -94,6 +94,10 @@ type BaseOrchestrator struct {
 	enableContextEditing        bool // Enable context editing (dynamic context reduction)
 	contextEditingThreshold     int  // Token threshold for context editing
 	contextEditingTurnThreshold int  // Turn age threshold for context editing
+
+	// MCP session ID for connection sharing across agents
+	// When set, all agents created by this orchestrator share MCP connections
+	mcpSessionID string
 }
 
 // NewBaseOrchestrator creates a new unified base orchestrator
@@ -226,4 +230,17 @@ func getMapKeys(m map[string]string) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// SetMCPSessionID sets the MCP session ID for connection sharing across agents
+// When set, all agents created by this orchestrator share MCP connections
+// Connections persist until CloseSession() is called (not when agents close)
+func (bo *BaseOrchestrator) SetMCPSessionID(sessionID string) {
+	bo.mcpSessionID = sessionID
+	bo.logger.Info(fmt.Sprintf("🔗 Set MCP session ID for connection sharing: %s", sessionID))
+}
+
+// GetMCPSessionID returns the MCP session ID
+func (bo *BaseOrchestrator) GetMCPSessionID() string {
+	return bo.mcpSessionID
 }

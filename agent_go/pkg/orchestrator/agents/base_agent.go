@@ -137,6 +137,7 @@ func NewBaseAgent(
 	contextEditingTurnThreshold int, // Turn age threshold for context editing (0 = use default)
 	llmConfig *LLMConfig, // NEW: Full LLM configuration
 	apiKeys *AgentAPIKeys, // API keys for providers
+	mcpSessionID string, // MCP session ID for connection sharing across agents
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
 	// All agents use Simple mode
@@ -276,6 +277,15 @@ func NewBaseAgent(
 	}
 	if v2Logger != nil {
 		options = append(options, mcpagent.WithLogger(v2Logger))
+	}
+
+	// Add MCP session ID for connection sharing across agents in the same workflow
+	// When set, connections are stored in a session registry and reused
+	if mcpSessionID != "" {
+		options = append(options, mcpagent.WithSessionID(mcpSessionID))
+		logger.Info("🔗 Using MCP session for connection sharing",
+			loggerv2.String("session_id", mcpSessionID),
+			loggerv2.String("agent_name", name))
 	}
 
 	// Create agent with all options

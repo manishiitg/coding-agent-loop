@@ -176,16 +176,31 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       // Build LLM config with agent-specific defaults for workflow mode
       // Save execution_llm, validation_llm, learning_llm, and phase_llm
       let finalLLMConfig: PresetLLMConfig | undefined = llmConfig || undefined;
-      if (effectiveAgentMode === 'workflow' && (executionLLM || validationLLM || learningLLM || phaseLLM)) {
-        // For workflow mode, include the 4 main agent configs
+      if (effectiveAgentMode === 'workflow') {
+        // For workflow mode, always include all 4 agent configs
+        // Use the displayed fallback value (from llmConfig) if user didn't explicitly select
+        // This ensures the visual selection is saved even if user didn't explicitly click the dropdown
+        const defaultAgentLLM: AgentLLMConfig | undefined = llmConfig?.provider && llmConfig?.model_id ? {
+          provider: llmConfig.provider,
+          model_id: llmConfig.model_id
+        } : undefined;
+
         finalLLMConfig = {
           ...(llmConfig || {}),
-          execution_llm: executionLLM || undefined,
-          validation_llm: validationLLM || undefined,
-          learning_llm: learningLLM || undefined,
-          phase_llm: phaseLLM || undefined,
+          execution_llm: executionLLM || defaultAgentLLM,
+          validation_llm: validationLLM || defaultAgentLLM,
+          learning_llm: learningLLM || defaultAgentLLM,
+          phase_llm: phaseLLM || defaultAgentLLM,
         };
       }
+      console.log('[PRESET_MODAL] Agent LLM configs being saved:', {
+        executionLLM: executionLLM,
+        validationLLM: validationLLM,
+        learningLLM: learningLLM,
+        phaseLLM: phaseLLM,
+        defaultAgentLLM: llmConfig?.provider && llmConfig?.model_id ? { provider: llmConfig.provider, model_id: llmConfig.model_id } : undefined,
+        finalLLMConfig: finalLLMConfig,
+      });
       console.log('[code_execution] [PRESET_MODAL] Saving preset with code execution mode:', {
         useCodeExecutionMode,
         type: typeof useCodeExecutionMode,

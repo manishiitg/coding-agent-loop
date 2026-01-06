@@ -1229,11 +1229,34 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				// Load preset LLM config for agent defaults
 				if len(preset.LLMConfig) > 0 {
+					log.Printf("[PRESET LLM DEBUG] Raw preset LLM config JSON: %s", string(preset.LLMConfig))
 					if err := json.Unmarshal(preset.LLMConfig, &presetLLMConfig); err != nil {
-						log.Printf("[PRESET LLM] Failed to parse preset LLM config: %w", err)
+						log.Printf("[PRESET LLM] Failed to parse preset LLM config: %v", err)
 					} else {
 						log.Printf("[PRESET LLM] Loaded preset LLM config with agent defaults")
+						// Debug: log what was loaded
+						if presetLLMConfig != nil {
+							log.Printf("[PRESET LLM DEBUG] Legacy: provider=%s, model=%s", presetLLMConfig.Provider, presetLLMConfig.ModelID)
+							if presetLLMConfig.ExecutionLLM != nil {
+								log.Printf("[PRESET LLM DEBUG] ExecutionLLM: provider=%s, model=%s", presetLLMConfig.ExecutionLLM.Provider, presetLLMConfig.ExecutionLLM.ModelID)
+							}
+							if presetLLMConfig.ValidationLLM != nil {
+								log.Printf("[PRESET LLM DEBUG] ValidationLLM: provider=%s, model=%s", presetLLMConfig.ValidationLLM.Provider, presetLLMConfig.ValidationLLM.ModelID)
+							}
+							if presetLLMConfig.LearningLLM != nil {
+								log.Printf("[PRESET LLM DEBUG] LearningLLM: provider=%s, model=%s", presetLLMConfig.LearningLLM.Provider, presetLLMConfig.LearningLLM.ModelID)
+							}
+							if presetLLMConfig.PhaseLLM != nil {
+								log.Printf("[PRESET LLM DEBUG] PhaseLLM: provider=%s, model=%s", presetLLMConfig.PhaseLLM.Provider, presetLLMConfig.PhaseLLM.ModelID)
+							} else {
+								log.Printf("[PRESET LLM DEBUG] PhaseLLM: nil (will use fallback)")
+							}
+						} else {
+							log.Printf("[PRESET LLM DEBUG] presetLLMConfig is nil after unmarshal")
+						}
 					}
+				} else {
+					log.Printf("[PRESET LLM DEBUG] No preset LLM config found (empty or null)")
 				}
 				// Load code execution mode from preset
 				useCodeExecutionMode = preset.UseCodeExecutionMode

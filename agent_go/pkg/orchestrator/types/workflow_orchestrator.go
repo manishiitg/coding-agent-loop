@@ -161,6 +161,10 @@ type WorkflowOrchestrator struct {
 
 	// Frontend-provided execution options (when provided, skips interactive prompts)
 	executionOptions *step_based_workflow.ExecutionOptions
+
+	// Session ID for MCP connection management
+	// Generated once when workflow starts, used by all agents to share MCP connections
+	sessionID string
 }
 
 // SetExecutionOptions sets the execution options from frontend
@@ -303,6 +307,12 @@ func NewWorkflowOrchestrator(
 				Provider: presetLLMConfig.PhaseLLM.Provider,
 				ModelID:  presetLLMConfig.PhaseLLM.ModelID,
 			}
+		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
+			// Fall back to legacy single default for phase agents
+			presetPhaseLLM = &step_based_workflow.AgentLLMConfig{
+				Provider: presetLLMConfig.Provider,
+				ModelID:  presetLLMConfig.ModelID,
+			}
 		}
 		// Initialize all learning-related agents from learning LLM (not individually configurable in UI)
 		if presetLearningLLM != nil {
@@ -335,6 +345,18 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	selectedOptions *database.WorkflowSelectedOptions,
 	stepID string, // Optional step ID for step-specific phase execution
 ) (string, error) {
+	// Initialize MCP session ID early so all agents share connections
+	// This generates the session ID and propagates it to BaseOrchestrator
+	sessionID := wo.getSessionID()
+	wo.GetLogger().Info(fmt.Sprintf("🔗 Workflow using MCP session: %s", sessionID))
+
+	// Close all session connections when workflow ends
+	// This releases browser profiles and other resources held by MCP servers
+	defer func() {
+		wo.GetLogger().Info(fmt.Sprintf("🔗 Closing MCP session: %s", sessionID))
+		mcpagent.CloseSession(sessionID)
+	}()
+
 	// Set workspace path from parameter
 	wo.SetWorkspacePath(workspacePath)
 	if wo.GetWorkspacePath() == "" {
@@ -417,6 +439,9 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
 	}
 
+	// Propagate MCP session ID to child orchestrator for connection sharing
+	todoPlannerAgent.SetMCPSessionID(wo.getSessionID())
+
 	// Run only planning
 	result, err := todoPlannerAgent.CreatePlanOnly(ctx, objective, wo.GetWorkspacePath())
 	if err != nil {
@@ -498,6 +523,9 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		wo.GetLogger().Error(fmt.Sprintf("❌ Failed to create orchestrator: %v", err), nil)
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
 	}
+
+	// Propagate MCP session ID to child orchestrator for connection sharing
+	todoPlannerAgent.SetMCPSessionID(wo.getSessionID())
 
 	// Pass execution options if set
 	// CRITICAL: Execution options are required for evaluation execution
@@ -700,6 +728,9 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
 	}
 
+	// Propagate MCP session ID to child orchestrator for connection sharing
+	todoPlannerAgent.SetMCPSessionID(wo.getSessionID())
+
 	// Pass execution options from WorkflowOrchestrator to the todo planner if set
 	if wo.executionOptions != nil {
 		todoPlannerAgent.SetExecutionOptions(wo.executionOptions)
@@ -733,10 +764,22 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 
 // Helper methods for workflow operations
 // getSessionID returns the session ID for this workflow
+// The session ID is generated once and reused for all agents in the workflow
+// This allows MCP connections to be shared across agents in the same workflow
 func (wo *WorkflowOrchestrator) getSessionID() string {
-	// This should be passed from the server or generated
-	// For now, return a placeholder
-	return "workflow-session-" + fmt.Sprintf("%d", time.Now().Unix())
+	if wo.sessionID == "" {
+		// Generate session ID once when first requested
+		wo.sessionID = fmt.Sprintf("workflow-session-%d", time.Now().UnixNano())
+		wo.GetLogger().Info(fmt.Sprintf("🔗 Generated MCP session ID: %s", wo.sessionID))
+		// Propagate to BaseOrchestrator so all agents inherit the session ID via config
+		wo.SetMCPSessionID(wo.sessionID)
+	}
+	return wo.sessionID
+}
+
+// GetMCPSessionID returns the MCP session ID for external use (e.g., agent config)
+func (wo *WorkflowOrchestrator) GetMCPSessionID() string {
+	return wo.getSessionID()
 }
 
 // getWorkflowID returns the workflow ID for this workflow

@@ -998,9 +998,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution LLM for conditional agent: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
-	} else {
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 		llmConfig = orchestratorLLMConfig
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional LLM: %s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for conditional agent: step config, preset execution LLM, and orchestrator default LLM are all empty or invalid")
 	}
 
 	// Create agent config with custom LLM if needed
@@ -1120,9 +1122,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific orchestration orchestrator LLM: %s/%s", orchestrationLLMConfig.Primary.Provider, orchestrationLLMConfig.Primary.ModelID))
-	} else {
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 		llmConfig = orchestratorLLMConfig
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default orchestration orchestrator LLM: %s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for orchestration orchestrator agent: step config and orchestrator default LLM are both empty or invalid")
 	}
 
 	// Create agent config with custom LLM if needed

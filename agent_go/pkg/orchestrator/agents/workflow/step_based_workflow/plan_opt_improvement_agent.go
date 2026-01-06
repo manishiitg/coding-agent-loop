@@ -172,9 +172,11 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 			APIKeys:   apiKeys,
 		}
 		pim.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM as fallback for plan improvement: %s/%s", pim.presetPhaseLLM.Provider, pim.presetPhaseLLM.ModelID))
-	} else {
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 		llmConfigToUse = orchestratorLLMConfig
-		pim.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default plan improvement LLM: %s/%s", pim.GetProvider(), pim.GetModel()))
+		pim.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default plan improvement LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for plan improvement agent: presetPlanImprovementLLM, presetPhaseLLM, and orchestrator default LLM are all empty or invalid")
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)

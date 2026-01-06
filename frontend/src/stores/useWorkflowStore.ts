@@ -287,20 +287,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }
         return false  // Default to false
       })(),
-      // Save validation responses to workspace (persists across page refreshes via localStorage)
-      // Load from localStorage on initialization
-      saveValidationResponses: (() => {
-        try {
-          const saved = localStorage.getItem(SAVE_VALIDATION_RESPONSES_KEY)
-          if (saved !== null) {
-            const parsed = JSON.parse(saved) as boolean
-            return parsed
-          }
-        } catch (error) {
-          console.error('[WorkflowStore] Failed to load save validation responses from localStorage:', error)
-        }
-        return true  // Default to true (save validation responses by default)
-      })(),
+      // Save validation responses to workspace (always enabled)
+      saveValidationResponses: true,
       // Disable shell exec access (persists across page refreshes via localStorage)
       // Load from localStorage on initialization
       disableShellExecAccess: (() => {
@@ -925,12 +913,12 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }
       },
       
-      setSaveValidationResponses: (enabled: boolean) => {
-        set({ saveValidationResponses: enabled })
+      setSaveValidationResponses: (_enabled: boolean) => {
+        set({ saveValidationResponses: true })
         try {
-          // Save to localStorage
-          localStorage.setItem(SAVE_VALIDATION_RESPONSES_KEY, JSON.stringify(enabled))
-          console.log(`[WorkflowStore] Save validation responses set: ${enabled}`)
+          // Always save true to localStorage
+          localStorage.setItem(SAVE_VALIDATION_RESPONSES_KEY, JSON.stringify(true))
+          console.log(`[WorkflowStore] Save validation responses forced to true`)
         } catch (error) {
           console.error('[WorkflowStore] Failed to save save validation responses to localStorage:', error)
         }

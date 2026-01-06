@@ -245,7 +245,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 
 	// Check if step has step-specific config (conditional LLM or code execution mode)
 	agentConfigs := getAgentConfigs(step)
-	hasStepSpecificConfig := agentConfigs != nil && (agentConfigs.ConditionalLLM != nil || agentConfigs.UseCodeExecutionMode != nil)
+	hasValidConditionalLLM := agentConfigs != nil && agentConfigs.ConditionalLLM != nil && agentConfigs.ConditionalLLM.Provider != "" && agentConfigs.ConditionalLLM.ModelID != ""
+	hasStepSpecificConfig := agentConfigs != nil && (hasValidConditionalLLM || agentConfigs.UseCodeExecutionMode != nil)
 
 	if hasStepSpecificConfig {
 		// Determine code execution mode for cache key
@@ -273,7 +274,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 		var llmConfig *orchestrator.LLMConfig
 		orchestratorLLMConfig := hcpo.GetLLMConfig()
 
-		if agentConfigs.ConditionalLLM != nil {
+		if hasValidConditionalLLM {
 			conditionalLLMConfig := agentConfigs.ConditionalLLM
 			llmConfig = &orchestrator.LLMConfig{
 				Primary: orchestrator.LLMModel{
@@ -299,8 +300,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 				},
 				APIKeys: orchestratorLLMConfig.APIKeys,
 			}
-		} else {
+		} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 			llmConfig = orchestratorLLMConfig
+		} else {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ No valid LLM configuration found for conditional agent step '%s', falling back to default", step.GetTitle()))
+			return hcpo.conditionalAgent // Fallback to default
 		}
 
 		// Use provided agent name, or fallback to default format
@@ -347,7 +351,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 		hcpo.stepConditionalAgentCache[cacheKey] = stepConditionalAgent
 		hcpo.stepConditionalAgentMutex.Unlock()
 
-		if agentConfigs.ConditionalLLM != nil {
+		if hasValidConditionalLLM {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created step-specific conditional agent for step '%s' (ID: %s, code exec: %v): %s/%s", step.GetTitle(), stepID, isCodeExecutionMode, agentConfigs.ConditionalLLM.Provider, agentConfigs.ConditionalLLM.ModelID))
 		} else {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created step-specific conditional agent for step '%s' (ID: %s, code exec: %v): using execution LLM", step.GetTitle(), stepID, isCodeExecutionMode))
@@ -397,10 +401,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalLLMForStep(step PlanSte
 			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution LLM for conditional LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
-	} else {
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 		// Use orchestrator default LLM config
 		llmConfig = orchestratorLLMConfig
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional LLM: %s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for conditional LLM: step config, preset execution LLM, and orchestrator default LLM are all empty or invalid")
 	}
 
 	// Convert to OrchestratorAgentConfig
@@ -1226,13 +1232,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetExecutionOptions(options *Executio
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Fallback to original LLM on validation failure enabled - will use original LLM instead of temp override when validation fails"))
 		}
 
-		// Store save validation responses flag (frontend always sends this value)
-		hcpo.saveValidationResponses = options.SaveValidationResponses
-		if !hcpo.saveValidationResponses {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Save validation responses disabled - validation responses will not be saved to workspace"))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Save validation responses enabled - validation responses will be saved to workspace"))
-		}
+		// Store save validation responses flag (always enabled)
+		hcpo.saveValidationResponses = true
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Save validation responses enabled - validation responses will be saved to workspace"))
 
 		// Store tool access control flags
 		hcpo.disableShellExecAccess = options.DisableShellExecAccess

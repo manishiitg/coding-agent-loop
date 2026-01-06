@@ -121,6 +121,11 @@ type OrchestratorAgentConfig struct {
 	EnableContextEditing        bool `json:"enable_context_editing,omitempty"`         // Enable context editing (dynamic context reduction)
 	ContextEditingThreshold     int  `json:"context_editing_threshold,omitempty"`      // Token threshold for context editing (0 = use default: 100)
 	ContextEditingTurnThreshold int  `json:"context_editing_turn_threshold,omitempty"` // Turn age threshold for context editing (0 = use default: 20)
+
+	// MCP session ID for connection management
+	// When set, MCP connections are shared across agents with the same session ID
+	// Connections persist until CloseSession() is called (not when agent closes)
+	MCPSessionID string `json:"mcp_session_id,omitempty"`
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration

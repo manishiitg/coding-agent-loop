@@ -269,16 +269,20 @@ func (em *EvaluationManager) createEvaluationAgent(ctx context.Context, phase st
 
 	var llmConfigToUse *orchestrator.LLMConfig
 	orchestratorLLMConfig := em.GetLLMConfig()
-	if em.presetPhaseLLM != nil {
+	if em.presetPhaseLLM != nil && em.presetPhaseLLM.Provider != "" && em.presetPhaseLLM.ModelID != "" {
 		llmConfigToUse = &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
 				Provider: em.presetPhaseLLM.Provider,
 				ModelID:  em.presetPhaseLLM.ModelID,
 			},
-			APIKeys: orchestratorLLMConfig.APIKeys,
+			APIKeys: em.GetAPIKeys(), // Safe: returns nil if orchestratorLLMConfig is nil
 		}
-	} else {
+		em.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for evaluation planning: %s/%s", em.presetPhaseLLM.Provider, em.presetPhaseLLM.ModelID))
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 		llmConfigToUse = orchestratorLLMConfig
+		em.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default evaluation LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for evaluation planning agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
 	}
 
 	agentConfig := em.CreateStandardAgentConfigWithLLM("evaluation-planning-agent", 100, agents.OutputFormatStructured, llmConfigToUse)

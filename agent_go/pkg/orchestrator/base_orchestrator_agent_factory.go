@@ -88,6 +88,12 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	config.Timeout = 300 // Same timeout for all agents
 	config.RateLimit = 60
 
+	// Inject MCP session ID for connection sharing across agents in the same workflow
+	// When set, connections are stored in a session registry and reused
+	if bo.mcpSessionID != "" {
+		config.MCPSessionID = bo.mcpSessionID
+	}
+
 	// Context summarization configuration from orchestrator
 	config.EnableContextSummarization = bo.GetEnableContextSummarization()
 	config.SummarizeOnTokenThreshold = bo.GetSummarizeOnTokenThreshold()

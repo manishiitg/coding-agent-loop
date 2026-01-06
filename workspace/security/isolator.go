@@ -194,12 +194,12 @@ func (iso *Isolator) generateMountScript(command string, args []string) string {
 				fullPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
 			}
 			// Hide blocked path with tmpfs (makes it appear empty)
-			sb.WriteString(fmt.Sprintf("mount -t tmpfs tmpfs %s 2>/dev/null || true\n", fullPath))
+			sb.WriteString(fmt.Sprintf("mount -t tmpfs tmpfs \"%s\" 2>/dev/null || true\n", fullPath))
 		}
 		sb.WriteString("\n")
 
 		// Change to working directory
-		sb.WriteString(fmt.Sprintf("cd %s\n", iso.WorkDir))
+		sb.WriteString(fmt.Sprintf("cd \"%s\"\n", iso.WorkDir))
 
 		// Build and execute command
 		fullCmd := command
@@ -219,47 +219,65 @@ func (iso *Isolator) generateMountScript(command string, args []string) string {
 
 	// Step 1: Create temp directory and bind mount workspace there (preserve original)
 	sb.WriteString("# Preserve original workspace in temp location\n")
-	sb.WriteString(fmt.Sprintf("mkdir -p %s\n", tempDir))
-	sb.WriteString(fmt.Sprintf("mount --bind %s %s\n\n", baseDir, tempDir))
+	sb.WriteString(fmt.Sprintf("mkdir -p \"%s\"\n", tempDir))
+	sb.WriteString(fmt.Sprintf("mount --bind \"%s\" \"%s\"\n\n", baseDir, tempDir))
 
 	// Step 2: Hide workspace with tmpfs overlay
 	sb.WriteString("# Hide workspace with tmpfs overlay\n")
-	sb.WriteString(fmt.Sprintf("mount -t tmpfs tmpfs %s\n\n", baseDir))
+	sb.WriteString(fmt.Sprintf("mount -t tmpfs tmpfs \"%s\"\n\n", baseDir))
 
 	// Step 3: Bind-mount read paths from temp location (read-only)
 	if len(iso.ReadPaths) > 0 {
-		sb.WriteString("# Mount read-only paths from original workspace\n")
+		sb.WriteString("# Mount read-only paths from original workspace (skip if source doesn't exist)\n")
 		for _, path := range iso.ReadPaths {
-			// Get relative path
+			// Get relative path - handle both absolute and relative paths
 			relPath := strings.TrimPrefix(path, baseDir+"/")
-			if relPath == path {
-				relPath = filepath.Base(path)
+			if relPath == path && !strings.HasPrefix(path, "/") {
+				// Path is already relative, use as-is
+				relPath = path
 			}
 			tempPath := filepath.Join(tempDir, relPath)
+			// Ensure path is absolute for mount
+			absPath := path
+			if !strings.HasPrefix(path, "/") {
+				absPath = filepath.Join(baseDir, path)
+			}
 
-			// Create directory structure in tmpfs
-			sb.WriteString(fmt.Sprintf("mkdir -p %s\n", path))
-			// Bind mount from temp location (read-only)
-			sb.WriteString(fmt.Sprintf("mount --bind -o ro %s %s\n", tempPath, path))
+			// Only mount if source exists in original workspace
+			sb.WriteString(fmt.Sprintf("if [ -e \"%s\" ]; then\n", tempPath))
+			sb.WriteString(fmt.Sprintf("  mkdir -p \"%s\"\n", absPath))
+			sb.WriteString(fmt.Sprintf("  mount --bind -o ro \"%s\" \"%s\"\n", tempPath, absPath))
+			sb.WriteString("fi\n")
 		}
 		sb.WriteString("\n")
 	}
 
 	// Step 4: Bind-mount write paths from temp location (read-write)
 	if len(iso.WritePaths) > 0 {
-		sb.WriteString("# Mount read-write paths from original workspace\n")
+		sb.WriteString("# Mount read-write paths from original workspace (create if doesn't exist)\n")
 		for _, path := range iso.WritePaths {
-			// Get relative path
+			// Get relative path - handle both absolute and relative paths
 			relPath := strings.TrimPrefix(path, baseDir+"/")
-			if relPath == path {
-				relPath = filepath.Base(path)
+			if relPath == path && !strings.HasPrefix(path, "/") {
+				// Path is already relative, use as-is
+				relPath = path
 			}
 			tempPath := filepath.Join(tempDir, relPath)
+			// Ensure path is absolute for mount
+			absPath := path
+			if !strings.HasPrefix(path, "/") {
+				absPath = filepath.Join(baseDir, path)
+			}
 
-			// Create directory structure in tmpfs
-			sb.WriteString(fmt.Sprintf("mkdir -p %s\n", path))
-			// Bind mount from temp location (read-write)
-			sb.WriteString(fmt.Sprintf("mount --bind %s %s\n", tempPath, path))
+			// For write paths, create source in original workspace if it doesn't exist
+			// This allows agents to write to new folders
+			// Use || true to continue if mkdir fails (e.g., permission issues on original fs)
+			sb.WriteString(fmt.Sprintf("mkdir -p \"%s\" 2>/dev/null || true\n", tempPath))
+			sb.WriteString(fmt.Sprintf("mkdir -p \"%s\"\n", absPath))
+			// Only mount if source was created successfully
+			sb.WriteString(fmt.Sprintf("if [ -d \"%s\" ]; then\n", tempPath))
+			sb.WriteString(fmt.Sprintf("  mount --bind \"%s\" \"%s\"\n", tempPath, absPath))
+			sb.WriteString("fi\n")
 		}
 		sb.WriteString("\n")
 	}
@@ -268,12 +286,12 @@ func (iso *Isolator) generateMountScript(command string, args []string) string {
 	downloadsPath := filepath.Join(baseDir, "Downloads")
 	tempDownloads := filepath.Join(tempDir, "Downloads")
 	sb.WriteString("# Downloads always accessible\n")
-	sb.WriteString(fmt.Sprintf("mkdir -p %s\n", downloadsPath))
-	sb.WriteString(fmt.Sprintf("mkdir -p %s 2>/dev/null || true\n", tempDownloads))
-	sb.WriteString(fmt.Sprintf("mount --bind %s %s\n\n", tempDownloads, downloadsPath))
+	sb.WriteString(fmt.Sprintf("mkdir -p \"%s\"\n", downloadsPath))
+	sb.WriteString(fmt.Sprintf("mkdir -p \"%s\" 2>/dev/null || true\n", tempDownloads))
+	sb.WriteString(fmt.Sprintf("mount --bind \"%s\" \"%s\"\n\n", tempDownloads, downloadsPath))
 
 	// Change to working directory
-	sb.WriteString(fmt.Sprintf("cd %s\n", iso.WorkDir))
+	sb.WriteString(fmt.Sprintf("cd \"%s\"\n", iso.WorkDir))
 
 	// Build and execute command
 	fullCmd := command

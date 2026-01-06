@@ -103,8 +103,10 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 	// Use current workspace for execution/logs, original workspace for learnings/planning
 	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
 	knowledgebasePath := getKnowledgebasePath(originalWorkspacePath)
+	runsPath := fmt.Sprintf("%s/runs", originalWorkspacePath)
 	readPaths := []string{
 		currentWorkspacePath, // Read execution results and logs from current workspace
+		runsPath,             // Read access to all runs
 		knowledgebasePath,    // Read knowledgebase folder (persistent files across runs)
 		learningsPath,        // Read learnings from original workspace (shared and step-specific)
 		planningPath,         // Read plan.json from original workspace
@@ -652,11 +654,8 @@ func (agent *WorkflowPlanImprovementAgent) Execute(ctx context.Context, template
 	// Provide default allowed paths if not present
 	allowedPaths := templateVars["AllowedPaths"]
 	if allowedPaths == "" {
-		if runPathRelative != "" {
-			allowedPaths = fmt.Sprintf("['planning/', 'learnings/', '%s/']", runPathRelative)
-		} else {
-			allowedPaths = "['planning/', 'learnings/', 'runs/']"
-		}
+		// Allow access to the entire runs/ folder for comparative analysis
+		allowedPaths = "['planning/', 'learnings/', 'runs/']"
 	}
 
 	// Prepare template variables

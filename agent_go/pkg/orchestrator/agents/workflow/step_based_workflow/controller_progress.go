@@ -466,7 +466,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) initializeFreshProgress(ctx context.C
 	return nil
 }
 
-// archiveLogsFolder archives (renames) a logs folder instead of deleting it
+// archiveLogsFolder archives log files within a folder by moving them to an "archived/{timestamp}" subfolder
 // This preserves logs for debugging while allowing clean re-execution
 func (hcpo *StepBasedWorkflowOrchestrator) archiveLogsFolder(ctx context.Context, logsFolderPath string, folderName string) error {
 	// Check if the logs folder exists
@@ -481,27 +481,53 @@ func (hcpo *StepBasedWorkflowOrchestrator) archiveLogsFolder(ctx context.Context
 		return nil
 	}
 
-	// Generate archive name with timestamp
+	// List files in the logs folder
+	files, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, logsFolderPath)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to list files in logs folder %s: %v", folderName, err))
+		return nil // Don't fail - folder may be empty
+	}
+
+	// Filter for log files to archive (validation*.json, execution-attempt*.json, learning*.json, etc.)
+	logFilePatterns := []string{"validation", "execution-attempt", "learning", "orchestration", "conditional", "decision"}
+	filesToArchive := []string{}
+	for _, file := range files {
+		for _, pattern := range logFilePatterns {
+			if strings.HasPrefix(file, pattern) && strings.HasSuffix(file, ".json") {
+				filesToArchive = append(filesToArchive, file)
+				break
+			}
+		}
+	}
+
+	if len(filesToArchive) == 0 {
+		hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ No log files to archive in %s", folderName))
+		return nil
+	}
+
+	// Generate archive subfolder with timestamp
 	timestamp := time.Now().Format("20060102-150405")
-	archivedFolderName := fmt.Sprintf("%s-archived-%s", folderName, timestamp)
+	archivedSubfolder := fmt.Sprintf("%s/archived/%s", logsFolderPath, timestamp)
 
-	// Build archived path (same parent directory)
-	// Extract parent directory from logsFolderPath
-	lastSlash := strings.LastIndex(logsFolderPath, "/")
-	if lastSlash == -1 {
-		return fmt.Errorf("invalid logs folder path: %s", logsFolderPath)
+	hcpo.GetLogger().Info(fmt.Sprintf("📦 Archiving %d log files from %s to archived/%s", len(filesToArchive), folderName, timestamp))
+
+	// Move each file to the archived subfolder
+	archivedCount := 0
+	for _, file := range filesToArchive {
+		sourcePath := fmt.Sprintf("%s/%s", logsFolderPath, file)
+		destPath := fmt.Sprintf("%s/%s", archivedSubfolder, file)
+
+		if err := hcpo.MoveWorkspaceFile(ctx, sourcePath, destPath); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive %s: %v", file, err))
+			continue
+		}
+		archivedCount++
 	}
-	parentDir := logsFolderPath[:lastSlash]
-	archivedFolderPath := fmt.Sprintf("%s/%s", parentDir, archivedFolderName)
 
-	hcpo.GetLogger().Info(fmt.Sprintf("📦 Archiving logs folder: %s -> %s", folderName, archivedFolderName))
-
-	// Use MoveWorkspaceFile to rename the folder
-	if err := hcpo.MoveWorkspaceFile(ctx, logsFolderPath, archivedFolderPath); err != nil {
-		return fmt.Errorf("failed to archive logs folder %s: %w", folderName, err)
+	if archivedCount > 0 {
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Archived %d/%d log files from %s", archivedCount, len(filesToArchive), folderName))
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully archived logs folder: %s -> %s", folderName, archivedFolderName))
 	return nil
 }
 

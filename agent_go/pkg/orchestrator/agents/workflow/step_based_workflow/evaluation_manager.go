@@ -271,9 +271,11 @@ func (em *EvaluationManager) createEvaluationAgent(ctx context.Context, phase st
 	orchestratorLLMConfig := em.GetLLMConfig()
 	if em.presetPhaseLLM != nil {
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider: em.presetPhaseLLM.Provider,
-			ModelID:  em.presetPhaseLLM.ModelID,
-			APIKeys:  orchestratorLLMConfig.APIKeys,
+			Primary: orchestrator.LLMModel{
+				Provider: em.presetPhaseLLM.Provider,
+				ModelID:  em.presetPhaseLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys,
 		}
 	} else {
 		llmConfigToUse = orchestratorLLMConfig

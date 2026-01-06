@@ -149,8 +149,12 @@ func NewStepBasedWorkflowOrchestrator(
 	// Get LLM config from orchestrator to preserve API keys from frontend
 	orchestratorLLMConfig := baseOrchestrator.GetLLMConfig()
 	conditionalAgentConfig := &agents.OrchestratorAgentConfig{
-		Provider:             provider,
-		Model:                model,
+		LLMConfig: agents.LLMConfig{
+			Primary: agents.LLMModel{
+				Provider: provider,
+				ModelID:  model,
+			},
+		},
 		Temperature:          temperature,
 		MaxRetries:           3,
 		ServerNames:          selectedServers,      // Pass servers for agent
@@ -272,25 +276,28 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 		if agentConfigs.ConditionalLLM != nil {
 			conditionalLLMConfig := agentConfigs.ConditionalLLM
 			llmConfig = &orchestrator.LLMConfig{
-				Provider:       conditionalLLMConfig.Provider,
-				ModelID:        conditionalLLMConfig.ModelID,
-				FallbackModels: []string{},
-				APIKeys:        orchestratorLLMConfig.APIKeys,
+				Primary: orchestrator.LLMModel{
+					Provider: conditionalLLMConfig.Provider,
+					ModelID:  conditionalLLMConfig.ModelID,
+				},
+				APIKeys: orchestratorLLMConfig.APIKeys,
 			}
 		} else if agentConfigs.ExecutionLLM != nil && agentConfigs.ExecutionLLM.Provider != "" && agentConfigs.ExecutionLLM.ModelID != "" {
 			executionLLMConfig := agentConfigs.ExecutionLLM
 			llmConfig = &orchestrator.LLMConfig{
-				Provider:       executionLLMConfig.Provider,
-				ModelID:        executionLLMConfig.ModelID,
-				FallbackModels: []string{},
-				APIKeys:        orchestratorLLMConfig.APIKeys,
+				Primary: orchestrator.LLMModel{
+					Provider: executionLLMConfig.Provider,
+					ModelID:  executionLLMConfig.ModelID,
+				},
+				APIKeys: orchestratorLLMConfig.APIKeys,
 			}
 		} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
 			llmConfig = &orchestrator.LLMConfig{
-				Provider:       hcpo.presetExecutionLLM.Provider,
-				ModelID:        hcpo.presetExecutionLLM.ModelID,
-				FallbackModels: []string{},
-				APIKeys:        orchestratorLLMConfig.APIKeys,
+				Primary: orchestrator.LLMModel{
+					Provider: hcpo.presetExecutionLLM.Provider,
+					ModelID:  hcpo.presetExecutionLLM.ModelID,
+				},
+				APIKeys: orchestratorLLMConfig.APIKeys,
 			}
 		} else {
 			llmConfig = orchestratorLLMConfig
@@ -373,41 +380,37 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalLLMForStep(step PlanSte
 		// Use step-specific execution LLM config
 		executionLLMConfig := agentConfigs.ExecutionLLM
 		llmConfig = &orchestrator.LLMConfig{
-			Provider:       executionLLMConfig.Provider,
-			ModelID:        executionLLMConfig.ModelID,
-			FallbackModels: []string{},
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution LLM for conditional LLM: %s/%s", executionLLMConfig.Provider, executionLLMConfig.ModelID))
-	} else if agentConfigs != nil && agentConfigs.ExecutionLLM != nil && agentConfigs.ExecutionLLM.Provider != "" && agentConfigs.ExecutionLLM.ModelID != "" {
-		// Use step-specific execution LLM config
-		executionLLMConfig := agentConfigs.ExecutionLLM
-		llmConfig = &orchestrator.LLMConfig{
-			Provider:       executionLLMConfig.Provider,
-			ModelID:        executionLLMConfig.ModelID,
-			FallbackModels: []string{},
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys
+			Primary: orchestrator.LLMModel{
+				Provider: executionLLMConfig.Provider,
+				ModelID:  executionLLMConfig.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution LLM for conditional LLM: %s/%s", executionLLMConfig.Provider, executionLLMConfig.ModelID))
 	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
 		// Use preset execution LLM as fallback
 		llmConfig = &orchestrator.LLMConfig{
-			Provider:       hcpo.presetExecutionLLM.Provider,
-			ModelID:        hcpo.presetExecutionLLM.ModelID,
-			FallbackModels: []string{},
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys
+			Primary: orchestrator.LLMModel{
+				Provider: hcpo.presetExecutionLLM.Provider,
+				ModelID:  hcpo.presetExecutionLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution LLM for conditional LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
 	} else {
 		// Use orchestrator default LLM config
 		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional LLM: %s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
 	}
 
 	// Convert to OrchestratorAgentConfig
 	agentConfig := &agents.OrchestratorAgentConfig{
-		Provider:    llmConfig.Provider,
-		Model:       llmConfig.ModelID,
+		LLMConfig: agents.LLMConfig{
+			Primary: agents.LLMModel{
+				Provider: llmConfig.Primary.Provider,
+				ModelID:  llmConfig.Primary.ModelID,
+			},
+		},
 		Temperature: 0.0, // Use deterministic temperature for conditional decisions
 		MaxRetries:  3,
 	}

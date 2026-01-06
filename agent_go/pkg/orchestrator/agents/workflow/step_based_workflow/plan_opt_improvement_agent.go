@@ -131,45 +131,43 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 	var llmConfigToUse *orchestrator.LLMConfig
 	orchestratorLLMConfig := pim.GetLLMConfig()
 	if pim.presetPlanImprovementLLM != nil && pim.presetPlanImprovementLLM.Provider != "" && pim.presetPlanImprovementLLM.ModelID != "" {
-		// Initialize fallback/cpf/apiKeys with safe defaults
-		var fallbackModels []string
-		var crossProviderFallback *agents.CrossProviderFallback
+		// Initialize fallbacks/apiKeys with safe defaults
+		var fallbacks []orchestrator.LLMModel
 		var apiKeys *orchestrator.APIKeys
 
 		// Only copy from orchestratorLLMConfig if it's not nil
 		if orchestratorLLMConfig != nil {
-			fallbackModels = orchestratorLLMConfig.FallbackModels
-			crossProviderFallback = orchestratorLLMConfig.CrossProviderFallback
+			fallbacks = orchestratorLLMConfig.Fallbacks
 			apiKeys = orchestratorLLMConfig.APIKeys
 		}
 
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              pim.presetPlanImprovementLLM.Provider,
-			ModelID:               pim.presetPlanImprovementLLM.ModelID,
-			FallbackModels:        fallbackModels,        // Preserve fallback models from orchestrator (or nil if orchestrator config is nil)
-			CrossProviderFallback: crossProviderFallback, // Preserve cross-provider fallback (or nil if orchestrator config is nil)
-			APIKeys:               apiKeys,               // Preserve API keys from orchestrator (or nil if orchestrator config is nil)
+			Primary: orchestrator.LLMModel{
+				Provider: pim.presetPlanImprovementLLM.Provider,
+				ModelID:  pim.presetPlanImprovementLLM.ModelID,
+			},
+			Fallbacks: fallbacks, // Preserve fallbacks from orchestrator (or nil if orchestrator config is nil)
+			APIKeys:   apiKeys,   // Preserve API keys from orchestrator (or nil if orchestrator config is nil)
 		}
 		pim.GetLogger().Info(fmt.Sprintf("🔧 Using preset default plan improvement LLM: %s/%s", pim.presetPlanImprovementLLM.Provider, pim.presetPlanImprovementLLM.ModelID))
 	} else if pim.presetPhaseLLM != nil && pim.presetPhaseLLM.Provider != "" && pim.presetPhaseLLM.ModelID != "" {
 		// Fallback to phase LLM if plan improvement LLM not set
-		var fallbackModels []string
-		var crossProviderFallback *agents.CrossProviderFallback
+		var fallbacks []orchestrator.LLMModel
 		var apiKeys *orchestrator.APIKeys
 
 		// Only copy from orchestratorLLMConfig if it's not nil
 		if orchestratorLLMConfig != nil {
-			fallbackModels = orchestratorLLMConfig.FallbackModels
-			crossProviderFallback = orchestratorLLMConfig.CrossProviderFallback
+			fallbacks = orchestratorLLMConfig.Fallbacks
 			apiKeys = orchestratorLLMConfig.APIKeys
 		}
 
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              pim.presetPhaseLLM.Provider,
-			ModelID:               pim.presetPhaseLLM.ModelID,
-			FallbackModels:        fallbackModels,
-			CrossProviderFallback: crossProviderFallback,
-			APIKeys:               apiKeys,
+			Primary: orchestrator.LLMModel{
+				Provider: pim.presetPhaseLLM.Provider,
+				ModelID:  pim.presetPhaseLLM.ModelID,
+			},
+			Fallbacks: fallbacks,
+			APIKeys:   apiKeys,
 		}
 		pim.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM as fallback for plan improvement: %s/%s", pim.presetPhaseLLM.Provider, pim.presetPhaseLLM.ModelID))
 	} else {

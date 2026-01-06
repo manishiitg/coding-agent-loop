@@ -433,11 +433,12 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 	if ptom.presetPhaseLLM != nil && ptom.presetPhaseLLM.Provider != "" && ptom.presetPhaseLLM.ModelID != "" {
 		// Use preset phase LLM
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              ptom.presetPhaseLLM.Provider,
-			ModelID:               ptom.presetPhaseLLM.ModelID,
-			FallbackModels:        orchestratorLLMConfig.FallbackModels,
-			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
-			APIKeys:               orchestratorLLMConfig.APIKeys,
+			Primary: orchestrator.LLMModel{
+				Provider: ptom.presetPhaseLLM.Provider,
+				ModelID:  ptom.presetPhaseLLM.ModelID,
+			},
+			Fallbacks: orchestratorLLMConfig.Fallbacks,
+			APIKeys:   orchestratorLLMConfig.APIKeys,
 		}
 		ptom.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for plan tool optimization: %s/%s", ptom.presetPhaseLLM.Provider, ptom.presetPhaseLLM.ModelID))
 	} else {

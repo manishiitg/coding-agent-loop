@@ -1,9 +1,33 @@
 import { useState, useEffect, useRef } from 'react';
-import { Brain, ChevronDown, Check, RefreshCw, Search } from 'lucide-react';
+import { Brain, ChevronDown, Check, RefreshCw, Search, Thermometer, Box, DollarSign } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import type { LLMOption } from '../types/llm';
+
+// Helper to format context window size
+const formatContextWindow = (tokens?: number): string => {
+  if (!tokens) return '';
+  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`;
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(0)}k`;
+  return `${tokens}`;
+};
+
+// Helper to format cost
+const formatCost = (cost?: number): string => {
+  if (cost === undefined || cost === null) return '';
+  return `$${cost.toFixed(2)}`;
+};
+
+// Helper to get options summary
+const getOptionsSummary = (options?: Record<string, unknown>): string => {
+  if (!options || Object.keys(options).length === 0) return '';
+  const parts: string[] = [];
+  if (options.reasoning_effort) parts.push(`Reasoning: ${options.reasoning_effort}`);
+  if (options.thinking_level) parts.push(`Thinking: ${options.thinking_level}`);
+  if (options.thinking_budget) parts.push(`Budget: ${options.thinking_budget}`);
+  return parts.join(' • ');
+};
 
 interface LLMSelectionDropdownProps {
   availableLLMs: LLMOption[];
@@ -232,44 +256,75 @@ export default function LLMSelectionDropdown({
                             </div>
                             
                             {/* Provider's LLMs */}
-                            {llms.map((llm, index) => (
-                              <div 
-                                key={`${provider}-${llm.model}-${index}`}
-                                className="flex items-center space-x-2 p-2 rounded-md hover:bg-secondary cursor-pointer ml-2"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleLLMSelect(llm);
-                                  setIsOpen(false);
-                                }}
-                                role="menuitem"
-                                tabIndex={0}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter' || e.key === ' ') {
-                                    e.preventDefault();
+                            {llms.map((llm, index) => {
+                              const optionsSummary = getOptionsSummary(llm.options);
+                              const hasMetadata = llm.contextWindow || llm.inputCostPer1M || llm.temperature !== undefined;
+
+                              return (
+                                <div
+                                  key={`${provider}-${llm.model}-${index}`}
+                                  className="flex items-start space-x-2 p-2 rounded-md hover:bg-secondary cursor-pointer ml-2"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     handleLLMSelect(llm);
                                     setIsOpen(false);
-                                  }
-                                }}
-                                aria-label={`Select ${llm.label}`}
-                              >
-                                <div className="flex-1">
-                                  <div className="text-sm font-medium text-foreground">
-                                    {llm.label}
-                                  </div>
-                                  {llm.description && (
-                                    <div className="text-xs text-muted-foreground">
-                                      {llm.description}
+                                  }}
+                                  role="menuitem"
+                                  tabIndex={0}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      handleLLMSelect(llm);
+                                      setIsOpen(false);
+                                    }
+                                  }}
+                                  aria-label={`Select ${llm.label}`}
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-medium text-foreground truncate">
+                                      {llm.label}
                                     </div>
-                                  )}
-                                  <div className="text-xs text-muted-foreground">
-                                    {llm.model}
+                                    <div className="text-xs text-muted-foreground truncate">
+                                      {llm.model}
+                                    </div>
+
+                                    {/* Metadata row: context, cost, temperature */}
+                                    {hasMetadata && (
+                                      <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] text-muted-foreground">
+                                        {llm.contextWindow && (
+                                          <span className="flex items-center gap-0.5" title="Context window">
+                                            <Box className="w-3 h-3" />
+                                            {formatContextWindow(llm.contextWindow)}
+                                          </span>
+                                        )}
+                                        {llm.inputCostPer1M !== undefined && (
+                                          <span className="flex items-center gap-0.5" title="Input cost per 1M tokens">
+                                            <DollarSign className="w-3 h-3" />
+                                            {formatCost(llm.inputCostPer1M)}/1M
+                                          </span>
+                                        )}
+                                        {llm.temperature !== undefined && (
+                                          <span className="flex items-center gap-0.5" title="Temperature">
+                                            <Thermometer className="w-3 h-3" />
+                                            {llm.temperature.toFixed(1)}
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* Options row: reasoning, thinking, etc. */}
+                                    {optionsSummary && (
+                                      <div className="text-[10px] text-primary/70 mt-0.5">
+                                        {optionsSummary}
+                                      </div>
+                                    )}
                                   </div>
+                                  {selectedLLM && selectedLLM.provider === llm.provider && selectedLLM.model === llm.model && (
+                                    <Check className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
+                                  )}
                                 </div>
-                                {selectedLLM && selectedLLM.provider === llm.provider && selectedLLM.model === llm.model && (
-                                  <Check className="w-4 h-4 text-primary" />
-                                )}
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         ));
                       })()
@@ -284,12 +339,41 @@ export default function LLMSelectionDropdown({
                     )}
                   </div>
 
-                  {/* Instructions */}
-                  <div className="text-xs text-muted-foreground">
-                    {selectedLLM 
-                      ? `Selected: ${selectedLLM.label}`
-                      : 'No LLM selected - will use default'
-                    }
+                  {/* Selected LLM Info */}
+                  <div className="text-xs text-muted-foreground space-y-1">
+                    {selectedLLM ? (
+                      <>
+                        <div className="font-medium text-foreground">Selected: {selectedLLM.label}</div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="px-1.5 py-0.5 bg-secondary rounded text-[10px] capitalize">
+                            {selectedLLM.provider}
+                          </span>
+                          {selectedLLM.contextWindow && (
+                            <span className="flex items-center gap-0.5">
+                              <Box className="w-3 h-3" />
+                              {formatContextWindow(selectedLLM.contextWindow)} ctx
+                            </span>
+                          )}
+                          {selectedLLM.inputCostPer1M !== undefined && (
+                            <span>
+                              {formatCost(selectedLLM.inputCostPer1M)}/1M in
+                            </span>
+                          )}
+                          {selectedLLM.temperature !== undefined && (
+                            <span>
+                              Temp: {selectedLLM.temperature.toFixed(1)}
+                            </span>
+                          )}
+                        </div>
+                        {getOptionsSummary(selectedLLM.options) && (
+                          <div className="text-[10px] text-primary/70">
+                            {getOptionsSummary(selectedLLM.options)}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      'No LLM selected - will use default'
+                    )}
                   </div>
                 </div>
               </Card>

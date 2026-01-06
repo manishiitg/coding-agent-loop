@@ -473,6 +473,7 @@ export interface ToolCallEndEvent {
   context_usage_percent?: number;
   model_context_window?: number;
   context_window_usage?: number;
+  model_id?: string;
 }
 export interface ToolCallErrorEvent {
   timestamp?: string;
@@ -1520,6 +1521,8 @@ export interface StepProgressUpdatedEvent {
   workspace_path?: string;
   run_folder?: string;
   last_completed_step?: number;
+  last_completed_step_id?: string;
+  last_completed_step_title?: string;
   branch_steps?: {
     [k: string]: BranchStepProgress;
   };

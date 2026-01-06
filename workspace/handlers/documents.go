@@ -455,6 +455,16 @@ func ListDocuments(c *gin.Context) {
 		return
 	}
 
+	// Parse blocked paths from comma-separated string
+	var blockedPaths []string
+	if req.BlockedPaths != "" {
+		blockedPaths = strings.Split(req.BlockedPaths, ",")
+		for i, p := range blockedPaths {
+			blockedPaths[i] = strings.TrimSpace(p)
+		}
+		fmt.Printf("[FOLDER GUARD] List with blocked paths: %v\n", blockedPaths)
+	}
+
 	// Use recursive function to get all documents with max depth
 	documents, err := getAllDocumentsRecursively(searchPath, docsDir, req.MaxDepth)
 	if err != nil {
@@ -475,6 +485,27 @@ func ListDocuments(c *gin.Context) {
 			Error:   err.Error(),
 		})
 		return
+	}
+
+	// Filter out blocked paths before building hierarchy
+	if len(blockedPaths) > 0 {
+		var filteredDocuments []models.Document
+		for _, doc := range documents {
+			isBlocked := false
+			for _, blocked := range blockedPaths {
+				blocked = strings.TrimSuffix(blocked, "/")
+				if blocked != "" && (strings.HasPrefix(doc.FilePath, blocked+"/") || doc.FilePath == blocked ||
+					strings.HasPrefix(doc.FilePath, blocked)) {
+					isBlocked = true
+					fmt.Printf("[FOLDER GUARD] Filtered out: %s\n", doc.FilePath)
+					break
+				}
+			}
+			if !isBlocked {
+				filteredDocuments = append(filteredDocuments, doc)
+			}
+		}
+		documents = filteredDocuments
 	}
 
 	// Build hierarchical structure from flat list using normalized folder path
@@ -537,6 +568,16 @@ func GlobDocuments(c *gin.Context) {
 		maxDepth = -1 // Unlimited
 	}
 
+	// Parse blocked paths from comma-separated string
+	var blockedPaths []string
+	if req.BlockedPaths != "" {
+		blockedPaths = strings.Split(req.BlockedPaths, ",")
+		for i, p := range blockedPaths {
+			blockedPaths[i] = strings.TrimSpace(p)
+		}
+		fmt.Printf("[FOLDER GUARD] Glob with blocked paths: %v\n", blockedPaths)
+	}
+
 	// Get all documents recursively
 	allDocuments, err := getAllDocumentsRecursively(searchPath, docsDir, maxDepth)
 	if err != nil {
@@ -546,6 +587,27 @@ func GlobDocuments(c *gin.Context) {
 			Error:   err.Error(),
 		})
 		return
+	}
+
+	// Filter out blocked paths before matching
+	if len(blockedPaths) > 0 {
+		var filteredDocuments []models.Document
+		for _, doc := range allDocuments {
+			isBlocked := false
+			for _, blocked := range blockedPaths {
+				blocked = strings.TrimSuffix(blocked, "/")
+				if blocked != "" && (strings.HasPrefix(doc.FilePath, blocked+"/") || doc.FilePath == blocked ||
+					strings.HasPrefix(doc.FilePath, blocked)) {
+					isBlocked = true
+					fmt.Printf("[FOLDER GUARD] Filtered out: %s\n", doc.FilePath)
+					break
+				}
+			}
+			if !isBlocked {
+				filteredDocuments = append(filteredDocuments, doc)
+			}
+		}
+		allDocuments = filteredDocuments
 	}
 
 	// Match files against glob pattern

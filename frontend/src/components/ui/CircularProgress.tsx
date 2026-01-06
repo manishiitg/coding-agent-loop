@@ -8,6 +8,7 @@ export interface ContextOnlyTokenUsage {
   context_usage_percent: number
   model_context_window?: number
   context_window_usage?: number
+  model_id?: string
 }
 
 interface CircularProgressProps {
@@ -21,7 +22,7 @@ interface CircularProgressProps {
 export const CircularProgress: React.FC<CircularProgressProps> = ({
   percentage,
   size = 20,
-  strokeWidth = 2,
+  strokeWidth = 4,
   className = '',
   tokenUsage
 }) => {
@@ -58,13 +59,22 @@ export const CircularProgress: React.FC<CircularProgressProps> = ({
       const contextOnlyUsage = tokenUsage as ContextOnlyTokenUsage
       const modelContextWindow = contextOnlyUsage.model_context_window
       const contextWindowUsage = contextOnlyUsage.context_window_usage
-      
+      const modelId = contextOnlyUsage.model_id
+
       return (
         <div className="space-y-1.5 text-xs min-w-[280px]">
           <div className="font-semibold text-sm mb-1.5 border-b pb-1">
             Context Usage: {percentageText}
           </div>
-          
+
+          {/* Model info */}
+          {modelId && (
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 dark:text-gray-400">Model:</span>
+              <span className="font-medium">{modelId}</span>
+            </div>
+          )}
+
           {modelContextWindow && modelContextWindow > 0 && (
             <div className="space-y-0.5">
               <div className="flex items-center justify-between gap-4">

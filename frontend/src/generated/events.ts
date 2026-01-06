@@ -1144,6 +1144,8 @@ export interface StepProgressUpdatedEvent {
   hierarchy_level?: number;
   is_end_event?: boolean;
   last_completed_step?: number;
+  last_completed_step_id?: string;
+  last_completed_step_title?: string;
   metadata?: {
     [k: string]: unknown;
   };
@@ -1399,6 +1401,7 @@ export interface ToolCallEndEvent {
     [k: string]: unknown;
   };
   model_context_window?: number;
+  model_id?: string;
   parent_id?: string;
   result?: string;
   server_name?: string;

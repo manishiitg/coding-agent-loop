@@ -42,17 +42,32 @@ const (
 	OutputFormatStructured OutputFormat = "structured"
 )
 
+// LLMModel represents a single LLM configuration
+type LLMModel struct {
+	Provider string  `json:"provider"` // "anthropic", "openai", "bedrock", etc.
+	ModelID  string  `json:"model_id"` // "claude-sonnet-4.5", "gpt-5", etc.
+
+	// Auth per model
+	APIKey *string `json:"api_key,omitempty"` // For OpenRouter, OpenAI, Anthropic, Vertex
+	Region *string `json:"region,omitempty"`  // For Bedrock
+}
+
+// LLMConfig holds the primary and fallback LLM configurations
+type LLMConfig struct {
+	Primary   LLMModel   `json:"primary"`
+	Fallbacks []LLMModel `json:"fallbacks"`
+}
+
 // OrchestratorAgentConfig defines the configuration for an orchestrator agent
 type OrchestratorAgentConfig struct {
-	// Required LLM configuration
-	Provider    string  `json:"provider" validate:"required"`
-	Model       string  `json:"model" validate:"required"`
-	Temperature float64 `json:"temperature" validate:"required"`
+	// Unified LLM configuration (Primary + Fallbacks)
+	LLMConfig LLMConfig `json:"llm_config"`
 
-	// Detailed LLM configuration from frontend
-	FallbackModels        []string               `json:"fallback_models,omitempty"`
-	CrossProviderFallback *CrossProviderFallback `json:"cross_provider_fallback,omitempty"`
-	APIKeys               *AgentAPIKeys          `json:"api_keys,omitempty"`
+	// Temperature is kept separate as it may be overridden per-agent
+	Temperature float64 `json:"temperature"`
+
+	// API keys for different providers
+	APIKeys *AgentAPIKeys `json:"api_keys,omitempty"`
 
 	// Required Agent behavior
 	Mode         AgentMode    `json:"mode" validate:"required"`
@@ -131,8 +146,8 @@ type BedrockAgentConfig struct {
 // NewOrchestratorAgentConfig creates a new agent configuration with minimal defaults
 func NewOrchestratorAgentConfig(name string) *OrchestratorAgentConfig {
 	return &OrchestratorAgentConfig{
-		Provider:    "", // Must be set by caller
-		Model:       "", // Must be set by caller
+		// LLMConfig.Primary must be set by caller
+		LLMConfig:   LLMConfig{},
 		Temperature: 0.0,
 
 		Mode:           "", // Must be set by caller
@@ -152,12 +167,12 @@ func NewOrchestratorAgentConfig(name string) *OrchestratorAgentConfig {
 func LoadOrchestratorAgentConfigFromEnv(name string) *OrchestratorAgentConfig {
 	config := NewOrchestratorAgentConfig(name)
 
-	// Load from environment variables if available
+	// Load LLM configuration from environment variables
 	if provider := os.Getenv("ORCHESTRATOR_PROVIDER"); provider != "" {
-		config.Provider = provider
+		config.LLMConfig.Primary.Provider = provider
 	}
 	if model := os.Getenv("ORCHESTRATOR_MODEL"); model != "" {
-		config.Model = model
+		config.LLMConfig.Primary.ModelID = model
 	}
 	if tempStr := os.Getenv("ORCHESTRATOR_TEMPERATURE"); tempStr != "" {
 		if temp, err := strconv.ParseFloat(tempStr, 64); err == nil {
@@ -202,15 +217,12 @@ func LoadOrchestratorAgentConfigFromEnv(name string) *OrchestratorAgentConfig {
 func ValidateOrchestratorAgentConfig(config *OrchestratorAgentConfig) error {
 	var errors []string
 
-	// Check required LLM configuration
-	if config.Provider == "" {
-		errors = append(errors, "Provider is required")
+	// Check required LLM configuration (using unified LLMConfig)
+	if config.LLMConfig.Primary.Provider == "" {
+		errors = append(errors, "LLMConfig.Primary.Provider is required")
 	}
-	if config.Model == "" {
-		errors = append(errors, "Model is required")
-	}
-	if config.Temperature == 0.0 {
-		errors = append(errors, "Temperature is required")
+	if config.LLMConfig.Primary.ModelID == "" {
+		errors = append(errors, "LLMConfig.Primary.ModelID is required")
 	}
 
 	// Check required agent behavior

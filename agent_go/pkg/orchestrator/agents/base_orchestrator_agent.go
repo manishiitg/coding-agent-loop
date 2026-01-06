@@ -96,10 +96,10 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		return fmt.Errorf("failed to create LLM: %w", err)
 	}
 
-	// Create traceID
+	// Create traceID using LLMConfig.Primary
 	traceID := observability.TraceID(fmt.Sprintf("%s-agent-%s-%d",
 		boa.agentType,
-		boa.config.Model,
+		boa.config.LLMConfig.Primary.ModelID,
 		time.Now().UnixNano()))
 
 	// Determine agent name: use unique AgentName from config if available, otherwise fall back to agent type
@@ -107,7 +107,7 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		agentName = boa.config.AgentName
 	}
 
-	// Create base agent
+	// Create base agent using LLMConfig as source of truth
 	baseAgent, err := NewBaseAgent(
 		ctx,
 		boa.agentType,
@@ -115,20 +115,20 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		llmInstance,
 		boa.systemPrompt,
 		boa.config.ServerNames,
-		boa.config.SelectedTools,        // NEW: Pass selected tools
-		boa.config.UseCodeExecutionMode, // NEW: Pass code execution mode
+		boa.config.SelectedTools,
+		boa.config.UseCodeExecutionMode,
 		boa.config.Mode,
 		boa.tracer,
 		traceID,
 		boa.config.MCPConfigPath,
-		boa.config.Model,
+		boa.config.LLMConfig.Primary.ModelID,
 		boa.config.Temperature,
 		boa.config.ToolChoice,
 		boa.config.MaxTurns,
-		boa.config.Provider,
+		boa.config.LLMConfig.Primary.Provider,
 		boa.logger,
 		false,                                 // cacheOnly - not used in orchestrator agents
-		boa.config.EnableContextOffloading,    // NEW: Pass context offloading setting
+		boa.config.EnableContextOffloading,
 		boa.config.EnableContextSummarization, // Context summarization configuration
 		boa.config.SummarizeOnTokenThreshold,
 		boa.config.TokenThresholdPercent,
@@ -138,6 +138,8 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.EnableContextEditing, // Context editing configuration
 		boa.config.ContextEditingThreshold,
 		boa.config.ContextEditingTurnThreshold,
+		&boa.config.LLMConfig, // Pass LLMConfig
+		boa.config.APIKeys,    // Pass API keys
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create base agent: %w", err)
@@ -503,8 +505,8 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 		AgentType:    string(boa.agentType),
 		AgentName:    agentName,
 		InputData:    templateVars,
-		ModelID:      boa.config.Model,
-		Provider:     boa.config.Provider,
+		ModelID:      boa.config.LLMConfig.Primary.ModelID,
+		Provider:     boa.config.LLMConfig.Primary.Provider,
 		ServersCount: len(boa.config.ServerNames),
 		MaxTurns:     boa.config.MaxTurns,
 	}
@@ -548,8 +550,8 @@ func (boa *BaseOrchestratorAgent) emitAgentEndEventWithStructuredResponse(ctx co
 			return ""
 		}(),
 		Duration:              duration,
-		ModelID:               boa.config.Model,
-		Provider:              boa.config.Provider,
+		ModelID:               boa.config.LLMConfig.Primary.ModelID,
+		Provider:              boa.config.LLMConfig.Primary.Provider,
 		ServersCount:          len(boa.config.ServerNames),
 		MaxTurns:              boa.config.MaxTurns,
 		PromptTokens:          promptTokens,
@@ -574,33 +576,32 @@ func getMapKeys(m map[string]interface{}) []string {
 }
 
 // createLLM creates an LLM instance based on the agent configuration
+// Uses the unified LLMConfig (Primary + Fallbacks) as the source of truth
 func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 	// Generate trace ID for this agent session
 	traceID := observability.TraceID(fmt.Sprintf("%s-agent-%d", boa.agentType, time.Now().UnixNano()))
 
-	// Build fallback models list
+	// Get primary LLM config
+	primaryProvider := boa.config.LLMConfig.Primary.Provider
+	primaryModel := boa.config.LLMConfig.Primary.ModelID
+
+	// Build fallback models list from LLMConfig.Fallbacks
 	var fallbackModels []string
-
-	// Add custom fallback models from frontend if provided
-	if len(boa.config.FallbackModels) > 0 {
-		fallbackModels = append(fallbackModels, boa.config.FallbackModels...)
-		// Using custom fallback models from frontend
+	if len(boa.config.LLMConfig.Fallbacks) > 0 {
+		for _, fallback := range boa.config.LLMConfig.Fallbacks {
+			// Format: provider/model for cross-provider fallbacks, or just model for same-provider
+			if fallback.Provider != "" && fallback.Provider != primaryProvider {
+				fallbackModels = append(fallbackModels, fmt.Sprintf("%s/%s", fallback.Provider, fallback.ModelID))
+			} else {
+				fallbackModels = append(fallbackModels, fallback.ModelID)
+			}
+		}
 	} else {
-		// Use default fallback models for the provider
-		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModels(llm.Provider(boa.config.Provider))...)
-		// Using default fallback models for provider
-	}
-
-	// Add cross-provider fallback models if configured
-	if boa.config.CrossProviderFallback != nil && len(boa.config.CrossProviderFallback.Models) > 0 {
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(boa.config.CrossProviderFallback.Provider))
+		// Use default fallback models for the provider if no fallbacks configured
+		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModels(llm.Provider(primaryProvider))...)
+		// Also add default cross-provider fallbacks
+		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(primaryProvider))
 		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-		// Added cross-provider fallback models
-	} else {
-		// Add default cross-provider fallbacks
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(boa.config.Provider))
-		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-		// Added default cross-provider fallback models
 	}
 
 	// Convert API keys from agent config to LLM config format
@@ -634,11 +635,10 @@ func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 		llmLogger = llmLoggerInstance
 	}
 
-	// Create LLM configuration
-	// Use llmLogger (separate file) for multi-llm-provider-go logs, not the server logger
+	// Create LLM configuration using unified LLMConfig
 	config := llm.Config{
-		Provider:       llm.Provider(boa.config.Provider),
-		ModelID:        boa.config.Model,
+		Provider:       llm.Provider(primaryProvider),
+		ModelID:        primaryModel,
 		Temperature:    boa.config.Temperature,
 		Tracers:        nil, // Tracers will be set later if needed
 		TraceID:        traceID,

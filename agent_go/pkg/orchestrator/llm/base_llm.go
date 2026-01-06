@@ -83,6 +83,7 @@ func createLLMLogger() loggerv2.Logger {
 }
 
 // CreateLLMInstance creates an LLM instance with standard configuration
+// Uses config.LLMConfig as the source of truth for provider/model/fallbacks
 func CreateLLMInstance(
 	config *agents.OrchestratorAgentConfig,
 	logger loggerv2.Logger,
@@ -96,31 +97,33 @@ func CreateLLMInstance(
 	// Generate trace ID for this LLM session
 	traceID := observability.TraceID(fmt.Sprintf("%s-llm-%d", llmType, time.Now().UnixNano()))
 
-	// Build fallback models list
+	// Get primary LLM config from unified LLMConfig
+	primaryProvider := config.LLMConfig.Primary.Provider
+	primaryModel := config.LLMConfig.Primary.ModelID
+
+	// Build fallback models list from LLMConfig.Fallbacks
 	var fallbackModels []string
-
-	// Add custom fallback models from config if provided
-	if len(config.FallbackModels) > 0 {
-		fallbackModels = append(fallbackModels, config.FallbackModels...)
-		logger.Info(fmt.Sprintf("🔧 Using custom fallback models for %s LLM: %v", llmType, config.FallbackModels))
+	if len(config.LLMConfig.Fallbacks) > 0 {
+		for _, fallback := range config.LLMConfig.Fallbacks {
+			// Format: provider/model for cross-provider fallbacks, or just model for same-provider
+			if fallback.Provider != "" && fallback.Provider != primaryProvider {
+				fallbackModels = append(fallbackModels, fmt.Sprintf("%s/%s", fallback.Provider, fallback.ModelID))
+			} else {
+				fallbackModels = append(fallbackModels, fallback.ModelID)
+			}
+		}
+		logger.Info(fmt.Sprintf("🔧 Using configured fallback models for %s LLM: %v", llmType, fallbackModels))
 	} else {
-		// Use default fallback models for the provider
-		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModels(llm.Provider(config.Provider))...)
-		logger.Info(fmt.Sprintf("🔧 Using default fallback models for %s LLM provider: %s", llmType, config.Provider))
-	}
-
-	// Add cross-provider fallback models if configured
-	if config.CrossProviderFallback != nil && len(config.CrossProviderFallback.Models) > 0 {
-		fallbackModels = append(fallbackModels, config.CrossProviderFallback.Models...)
-		logger.Info(fmt.Sprintf("🔧 Using configured cross-provider fallback models for %s LLM: %v", llmType, config.CrossProviderFallback.Models))
-	} else {
-		// Add default cross-provider fallbacks
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(config.Provider))
+		// Use default fallback models for the provider if no fallbacks configured
+		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModels(llm.Provider(primaryProvider))...)
+		// Also add default cross-provider fallbacks
+		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(primaryProvider))
 		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-		logger.Info(fmt.Sprintf("🔧 Added default cross-provider fallback models for %s LLM: %v", llmType, crossProviderFallbacks))
+		logger.Info(fmt.Sprintf("🔧 Using default fallback models for %s LLM provider: %s", llmType, primaryProvider))
 	}
 
 	// Convert API keys from agent config to LLM config format
+	// Priority: per-model APIKey > global APIKeys
 	var llmAPIKeys *llm.ProviderAPIKeys
 	if config.APIKeys != nil {
 		llmAPIKeys = &llm.ProviderAPIKeys{
@@ -136,11 +139,30 @@ func CreateLLMInstance(
 		}
 	}
 
-	// Create LLM configuration
-	// Use llmLogger (separate file) for multi-llm-provider-go logs, not the server logger
+	// Check for per-model API key (takes priority over global if set)
+	// This handles cases where API key is specified in LLMConfig.Primary.APIKey
+	if config.LLMConfig.Primary.APIKey != nil && *config.LLMConfig.Primary.APIKey != "" {
+		if llmAPIKeys == nil {
+			llmAPIKeys = &llm.ProviderAPIKeys{}
+		}
+		// Set the appropriate provider key based on primary provider
+		switch primaryProvider {
+		case "vertex":
+			llmAPIKeys.Vertex = config.LLMConfig.Primary.APIKey
+		case "openai":
+			llmAPIKeys.OpenAI = config.LLMConfig.Primary.APIKey
+		case "anthropic":
+			llmAPIKeys.Anthropic = config.LLMConfig.Primary.APIKey
+		case "openrouter":
+			llmAPIKeys.OpenRouter = config.LLMConfig.Primary.APIKey
+		}
+		logger.Info(fmt.Sprintf("🔑 Using per-model API key for %s provider", primaryProvider))
+	}
+
+	// Create LLM configuration using unified LLMConfig
 	llmConfig := llm.Config{
-		Provider:       llm.Provider(config.Provider),
-		ModelID:        config.Model,
+		Provider:       llm.Provider(primaryProvider),
+		ModelID:        primaryModel,
 		Temperature:    config.Temperature,
 		Tracers:        nil, // Tracers will be set later if needed
 		TraceID:        traceID,
@@ -158,7 +180,7 @@ func CreateLLMInstance(
 	}
 
 	logger.Info(fmt.Sprintf("✅ %s LLM created successfully - Provider: %s, Model: %s, Temperature: %.1f",
-		llmType, config.Provider, config.Model, config.Temperature))
+		llmType, primaryProvider, primaryModel, config.Temperature))
 
 	return llmInstance, nil
 }
@@ -215,7 +237,7 @@ func CreateConditionalLLMWithEventBridge(
 	}
 
 	logger.Info(fmt.Sprintf("✅ Conditional LLM created successfully with event bridge - Provider: %s, Model: %s, Temperature: %.1f",
-		config.Provider, config.Model, config.Temperature))
+		config.LLMConfig.Primary.Provider, config.LLMConfig.Primary.ModelID, config.Temperature))
 
 	return conditionalLLM, nil
 }
@@ -241,7 +263,7 @@ func CreateStructuredOutputLLMWithEventBridge(
 	}
 
 	logger.Info(fmt.Sprintf("✅ Structured output LLM created successfully with event bridge - Provider: %s, Model: %s, Temperature: %.1f",
-		config.Provider, config.Model, config.Temperature))
+		config.LLMConfig.Primary.Provider, config.LLMConfig.Primary.ModelID, config.Temperature))
 
 	return structuredOutputLLM, nil
 }

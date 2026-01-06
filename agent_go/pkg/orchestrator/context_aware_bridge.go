@@ -124,8 +124,9 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	// Intercept token_usage events and persist directly to file (no in-memory accumulation)
 	if event.Type == events.TokenUsage {
 		if tokenEvent, ok := event.Data.(*events.TokenUsageEvent); ok {
-			// Extract cache tokens
-			cacheTokens := extractCacheTokens(tokenEvent)
+			// Extract cache tokens (separated into read and write for accurate pricing)
+			// Cache reads are discounted, cache writes are premium (1.25x base rate)
+			cacheTokensSeparate := extractCacheTokensSeparate(tokenEvent)
 
 			// Extract LLM call count from event (cumulative for conversation end, 1 for single calls)
 			llmCallCount := extractLLMCallCount(tokenEvent)
@@ -134,13 +135,15 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 			var modelTokenData *ModelTokenData
 			if tokenEvent.ModelID != "" {
 				modelTokenData = &ModelTokenData{
-					ModelID:         tokenEvent.ModelID,
-					Provider:        tokenEvent.Provider,
-					InputTokens:     tokenEvent.PromptTokens,     // input tokens
-					OutputTokens:    tokenEvent.CompletionTokens, // output tokens
-					CacheTokens:     cacheTokens,
-					ReasoningTokens: tokenEvent.ReasoningTokens,
-					LLMCallCount:    llmCallCount, // Extract actual call count from event
+					ModelID:          tokenEvent.ModelID,
+					Provider:         tokenEvent.Provider,
+					InputTokens:      tokenEvent.PromptTokens,     // input tokens
+					OutputTokens:     tokenEvent.CompletionTokens, // output tokens
+					CacheTokens:      cacheTokensSeparate.Total,   // total cache (backward compat)
+					CacheReadTokens:  cacheTokensSeparate.ReadTokens,  // cache reads (discounted)
+					CacheWriteTokens: cacheTokensSeparate.WriteTokens, // cache writes (premium 1.25x)
+					ReasoningTokens:  tokenEvent.ReasoningTokens,
+					LLMCallCount:     llmCallCount, // Extract actual call count from event
 				}
 			}
 
@@ -152,12 +155,14 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 				var phaseTokenData *PhaseTokenData
 				if currentPhase != "" {
 					phaseTokenData = &PhaseTokenData{
-						Phase:           currentPhase,
-						InputTokens:     tokenEvent.PromptTokens,     // input tokens
-						OutputTokens:    tokenEvent.CompletionTokens, // output tokens
-						CacheTokens:     cacheTokens,
-						ReasoningTokens: tokenEvent.ReasoningTokens,
-						LLMCallCount:    llmCallCount, // Extract actual call count from event
+						Phase:            currentPhase,
+						InputTokens:      tokenEvent.PromptTokens,     // input tokens
+						OutputTokens:     tokenEvent.CompletionTokens, // output tokens
+						CacheTokens:      cacheTokensSeparate.Total,   // total cache (backward compat)
+						CacheReadTokens:  cacheTokensSeparate.ReadTokens,  // cache reads (discounted)
+						CacheWriteTokens: cacheTokensSeparate.WriteTokens, // cache writes (premium 1.25x)
+						ReasoningTokens:  tokenEvent.ReasoningTokens,
+						LLMCallCount:     llmCallCount, // Extract actual call count from event
 					}
 				}
 
@@ -186,13 +191,15 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 				var stepTokenData *StepTokenData
 				if currentPhase != "" {
 					stepTokenData = &StepTokenData{
-						Phase:           currentPhase,
-						Step:            currentStep,
-						InputTokens:     tokenEvent.PromptTokens,     // input tokens
-						OutputTokens:    tokenEvent.CompletionTokens, // output tokens
-						CacheTokens:     cacheTokens,
-						ReasoningTokens: tokenEvent.ReasoningTokens,
-						LLMCallCount:    llmCallCount, // Extract actual call count from event
+						Phase:            currentPhase,
+						Step:             currentStep,
+						InputTokens:      tokenEvent.PromptTokens,     // input tokens
+						OutputTokens:     tokenEvent.CompletionTokens, // output tokens
+						CacheTokens:      cacheTokensSeparate.Total,   // total cache (backward compat)
+						CacheReadTokens:  cacheTokensSeparate.ReadTokens,  // cache reads (discounted)
+						CacheWriteTokens: cacheTokensSeparate.WriteTokens, // cache writes (premium 1.25x)
+						ReasoningTokens:  tokenEvent.ReasoningTokens,
+						LLMCallCount:     llmCallCount, // Extract actual call count from event
 					}
 				}
 

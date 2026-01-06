@@ -16,7 +16,29 @@ type FolderGuardConfig struct {
 	Enabled         bool     `json:"enabled"`
 	ReadPaths       []string `json:"read_paths"`
 	WritePaths      []string `json:"write_paths"`
+	BlockedPaths    []string `json:"blocked_paths"`    // Paths to block (deny list) - takes precedence over read/write paths
 	EnforcementMode string   `json:"enforcement_mode"` // "strict" | "warn" | "audit"
+}
+
+// IsPathBlocked checks if a path is in the blocked paths list
+func (f *FolderGuardConfig) IsPathBlocked(path string) bool {
+	if f == nil || !f.Enabled || len(f.BlockedPaths) == 0 {
+		return false
+	}
+	for _, blocked := range f.BlockedPaths {
+		if len(path) >= len(blocked) && path[:len(blocked)] == blocked {
+			return true
+		}
+		// Also check without trailing slash
+		blockedNoSlash := blocked
+		if len(blocked) > 0 && blocked[len(blocked)-1] == '/' {
+			blockedNoSlash = blocked[:len(blocked)-1]
+		}
+		if path == blockedNoSlash {
+			return true
+		}
+	}
+	return false
 }
 
 // ExecuteShellResponse represents the response from shell command execution

@@ -1,15 +1,20 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { devtools } from 'zustand/middleware'
-import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationRequest } from '../services/api-types'
+import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationRequest, AgentLLMConfiguration, SavedLLM, LLMModel } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import type { StoreActions } from './types'
-import { getAllAvailableLLMs, getAvailableModels } from '../utils/llmConfig'
 import { llmConfigService } from '../services/llm-config-api'
 
 interface LLMState extends StoreActions {
   // Primary LLM configuration (unified from sidebar and chat input)
   primaryConfig: LLMConfiguration
+  
+  // New unified configuration (Tiered Fallback System)
+  agentConfig: AgentLLMConfiguration | null
+  
+  // Saved/Published LLM Library
+  savedLLMs: SavedLLM[]
   
   // Provider-specific configurations with API keys
   openrouterConfig: ExtendedLLMConfiguration
@@ -44,6 +49,7 @@ interface LLMState extends StoreActions {
   
   // Actions
   setPrimaryConfig: (config: LLMConfiguration) => void
+  setAgentConfig: (config: AgentLLMConfiguration | null) => void
   setOpenrouterConfig: (config: ExtendedLLMConfiguration) => void
   setBedrockConfig: (config: ExtendedLLMConfiguration) => void
   setOpenaiConfig: (config: ExtendedLLMConfiguration) => void
@@ -52,6 +58,10 @@ interface LLMState extends StoreActions {
   setShowLLMModal: (show: boolean) => void
   loadDefaultsFromBackend: () => Promise<void>
   
+  // Library management
+  saveLLM: (llm: LLMModel, name: string, modelName?: string, authMethod?: 'api_key' | 'oauth' | 'none') => void
+  deleteSavedLLM: (id: string) => void
+
   // Custom model management
   addCustomBedrockModel: (model: string) => void
   removeCustomBedrockModel: (model: string) => void
@@ -70,7 +80,7 @@ interface LLMState extends StoreActions {
   refreshAvailableLLMs: () => Promise<void>
   
   // API key management
-  testAPIKey: (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic', apiKey: string, modelId?: string) => Promise<{valid: boolean, error: string | null}>
+  testAPIKey: (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic', apiKey: string, modelId?: string, options?: Record<string, unknown>) => Promise<{valid: boolean, error: string | null}>
   
   // Helper methods
   getCurrentLLMOption: () => LLMOption | null
@@ -88,6 +98,11 @@ export const useLLMStore = create<LLMState>()(
           fallback_models: [],
           cross_provider_fallback: undefined
         },
+        
+        agentConfig: null,
+        
+        // Saved/Published LLM Library
+        savedLLMs: [],
         
         // Provider-specific configurations - will be loaded from backend
         openrouterConfig: {
@@ -152,6 +167,10 @@ export const useLLMStore = create<LLMState>()(
           set({ primaryConfig: config, error: null })
         },
 
+        setAgentConfig: (config) => {
+          set({ agentConfig: config, error: null })
+        },
+
         setOpenrouterConfig: (config) => {
           set({ openrouterConfig: config, error: null })
         },
@@ -174,6 +193,29 @@ export const useLLMStore = create<LLMState>()(
 
         setShowLLMModal: (show) => {
           set({ showLLMModal: show })
+        },
+
+        // Library management
+        saveLLM: (llm, name, modelName, authMethod) => {
+          const { savedLLMs, refreshAvailableLLMs } = get()
+          const newSavedLLM: SavedLLM = {
+            ...llm,
+            id: crypto.randomUUID(),
+            name,
+            model_name: modelName,
+            auth_method: authMethod,
+            created_at: new Date().toISOString()
+          }
+          set({ savedLLMs: [...savedLLMs, newSavedLLM] })
+          // Auto-refresh availableLLMs when a new LLM is published
+          refreshAvailableLLMs()
+        },
+
+        deleteSavedLLM: (id) => {
+          const { savedLLMs, refreshAvailableLLMs } = get()
+          set({ savedLLMs: savedLLMs.filter(llm => llm.id !== id) })
+          // Auto-refresh availableLLMs when an LLM is deleted
+          refreshAvailableLLMs()
         },
 
         // Custom model management
@@ -300,9 +342,12 @@ export const useLLMStore = create<LLMState>()(
               error: null,
               isLoadingLLMs: false
             })
+
+            // Refresh availableLLMs from savedLLMs (Published LLMs)
+            get().refreshAvailableLLMs()
           } catch (error) {
             console.error('Failed to load LLM defaults from backend:', error)
-            set({ 
+            set({
               error: 'Failed to load LLM defaults from backend',
               defaultsLoaded: false,
               isLoadingLLMs: false
@@ -311,7 +356,7 @@ export const useLLMStore = create<LLMState>()(
         },
 
         // API key testing
-        testAPIKey: async (provider, apiKey, modelId?: string) => {
+        testAPIKey: async (provider, apiKey, modelId?: string, options?: Record<string, unknown>) => {
           try {
             // Only check for empty API key for providers that require it (not bedrock, not vertex)
             // Vertex supports OAuth fallback, so API key is optional
@@ -320,7 +365,8 @@ export const useLLMStore = create<LLMState>()(
             }
             
             const request: APIKeyValidationRequest = {
-              provider
+              provider,
+              options
             }
             
             // Only include api_key for providers that need it (not bedrock, optional for vertex)
@@ -355,36 +401,34 @@ export const useLLMStore = create<LLMState>()(
 
         updateProvider: (provider) => {
           const state = get()
-          const availableModels = getAvailableModels(provider)
+          let availableModels: string[] = []
+          
+          switch(provider) {
+            case 'openrouter': 
+              availableModels = [...state.availableOpenRouterModels, ...state.customOpenRouterModels];
+              break;
+            case 'bedrock': 
+              availableModels = [...state.availableBedrockModels, ...state.customBedrockModels]; 
+              break;
+            case 'openai': 
+              availableModels = [...state.availableOpenAIModels, ...state.customOpenAIModels]; 
+              break;
+            case 'vertex': 
+              availableModels = [...state.availableVertexModels, ...state.customVertexModels]; 
+              break;
+            case 'anthropic': 
+              availableModels = state.availableAnthropicModels; 
+              break;
+          }
           
           // Set appropriate fallback models based on provider
-          let fallbackModels: string[] = []
-          let crossProviderFallback: LLMConfiguration['cross_provider_fallback']
-          
-          if (provider === 'openrouter') {
-            fallbackModels = ['z-ai/glm-4.5', 'openai/gpt-4o-mini']
-            crossProviderFallback = {
-              provider: 'openai',
-              models: ['gpt-4o-mini']
-            }
-          } else if (provider === 'bedrock') {
-            fallbackModels = [
-              'us.anthropic.claude-sonnet-4-20250514-v1:0',
-              'us.anthropic.claude-3-7-sonnet-20250219-v1:0'
-            ]
-            crossProviderFallback = {
-              provider: 'openrouter',
-              models: ['x-ai/grok-code-fast-1', 'openai/gpt-4o-mini']
-            }
-          }
-
           set({
             primaryConfig: {
               ...state.primaryConfig,
               provider,
               model_id: availableModels[0] || '',
-              fallback_models: fallbackModels,
-              cross_provider_fallback: crossProviderFallback
+              fallback_models: [],
+              cross_provider_fallback: undefined
             },
             error: null
           })
@@ -422,53 +466,74 @@ export const useLLMStore = create<LLMState>()(
 
         refreshAvailableLLMs: async () => {
           set({ isLoadingLLMs: true, error: null })
-          
+
           try {
             const state = get()
-            const baseLLMs = getAllAvailableLLMs()
-            
-            // Add custom models from store
-            const customBedrockLLMs = state.customBedrockModels.map(model => ({
-              provider: 'bedrock' as const,
-              model,
-              label: `Bedrock - ${model}`,
-              description: 'Custom Bedrock model'
-            }))
-            
-            const customVertexLLMs = state.customVertexModels.map(model => ({
-              provider: 'vertex' as const,
-              model,
-              label: `Vertex - ${model}`,
-              description: 'Custom Vertex AI model'
-            }))
-            
-            const customOpenAILLMs = state.customOpenAIModels.map(model => ({
-              provider: 'openai' as const,
-              model,
-              label: `OpenAI - ${model}`,
-              description: 'Custom OpenAI model'
-            }))
-            
-            const availableLLMs = [
-              ...baseLLMs,
-              ...customBedrockLLMs,
-              ...customVertexLLMs,
-              ...customOpenAILLMs
-            ]
-            
+            const availableLLMs: LLMOption[] = []
+
+            // Fetch model metadata for cost/context info
+            let metadataMap: Record<string, { contextWindow: number; inputCost: number; outputCost: number }> = {}
+            try {
+              const metadataResponse = await llmConfigService.getModelMetadata()
+              metadataResponse.models.forEach(m => {
+                metadataMap[m.model_id] = {
+                  contextWindow: m.context_window,
+                  inputCost: m.input_cost_per_1m,
+                  outputCost: m.output_cost_per_1m
+                }
+              })
+            } catch (e) {
+              console.warn('Failed to fetch model metadata for dropdown:', e)
+            }
+
+            // Build availableLLMs from Published LLMs (savedLLMs)
+            // This replaces the old provider-specific model lists
+            state.savedLLMs.forEach(savedLLM => {
+              const metadata = metadataMap[savedLLM.model_id]
+              availableLLMs.push({
+                provider: savedLLM.provider,
+                model: savedLLM.model_id,
+                label: savedLLM.name || `${savedLLM.provider} - ${savedLLM.model_id}`,
+                description: savedLLM.model_name || `Published ${savedLLM.provider} model`,
+                temperature: savedLLM.temperature,
+                options: savedLLM.options,
+                contextWindow: metadata?.contextWindow,
+                inputCostPer1M: metadata?.inputCost,
+                outputCostPer1M: metadata?.outputCost
+              })
+            })
+
             set({ availableLLMs, isLoadingLLMs: false })
           } catch (error) {
-            set({ 
+            set({
               error: error instanceof Error ? error.message : 'Failed to load LLMs',
-              isLoadingLLMs: false 
+              isLoadingLLMs: false
             })
           }
         },
 
         getCurrentLLMOption: () => {
           const state = get()
+
+          // Use agentConfig primary if available (new tiered system)
+          if (state.agentConfig?.primary) {
+            const primary = state.agentConfig.primary
+            // Try to find matching published LLM for better label
+            const publishedLLM = state.savedLLMs.find(
+              llm => llm.provider === primary.provider && llm.model_id === primary.model_id
+            )
+
+            return {
+              provider: primary.provider,
+              model: primary.model_id,
+              label: publishedLLM?.name || `${primary.provider} - ${primary.model_id}`,
+              description: publishedLLM?.model_name || 'Primary LLM'
+            }
+          }
+
+          // Fallback to legacy primaryConfig
           const currentConfig = state.primaryConfig
-          
+
           return {
             provider: currentConfig.provider,
             model: currentConfig.model_id,
@@ -491,6 +556,7 @@ export const useLLMStore = create<LLMState>()(
               fallback_models: [],
               cross_provider_fallback: undefined
             },
+            agentConfig: null,
             openrouterConfig: {
               provider: 'openrouter',
               model_id: '',
@@ -539,6 +605,8 @@ export const useLLMStore = create<LLMState>()(
         partialize: (state) => ({
           // Persist user configurations and custom models, but NOT default models from backend
           primaryConfig: state.primaryConfig,
+          agentConfig: state.agentConfig,
+          savedLLMs: state.savedLLMs,
           openrouterConfig: state.openrouterConfig,
           bedrockConfig: state.bedrockConfig,
           openaiConfig: state.openaiConfig,

@@ -67,7 +67,16 @@ func getModelMetadata(provider, modelID string) (*llmtypes.ModelMetadata, error)
 	}
 }
 
+// CachePricing holds separated cache read and write costs
+type CachePricing struct {
+	ReadCost  float64 // Cost for cache reads (discounted rate)
+	WriteCost float64 // Cost for cache writes (premium rate, 1.25x)
+	TotalCost float64 // Total cache cost (read + write)
+}
+
 // calculatePricingFromModelData calculates pricing from ModelTokenData using model metadata
+// Returns input, output, reasoning, cache costs, total cost, and context window size
+// Cache costs are now separated into read (discounted) and write (premium 1.25x) components
 func calculatePricingFromModelData(modelData *ModelTokenData) (inputCost, outputCost, reasoningCost, cacheCost, totalCost float64, contextWindow int) {
 	if modelData == nil {
 		return 0, 0, 0, 0, 0, 0
@@ -83,8 +92,13 @@ func calculatePricingFromModelData(modelData *ModelTokenData) (inputCost, output
 	contextWindow = metadata.ContextWindow
 
 	// Calculate input cost (excluding cached tokens which are charged separately)
-	// Input tokens = total input tokens - cached tokens (cached tokens are charged separately at a different rate)
-	inputTokens := modelData.InputTokens - modelData.CacheTokens
+	// Input tokens = total input tokens - all cached tokens (both read and write are charged separately)
+	totalCacheTokens := modelData.CacheReadTokens + modelData.CacheWriteTokens
+	// Fall back to CacheTokens if separate fields are not set (backward compatibility)
+	if totalCacheTokens == 0 && modelData.CacheTokens > 0 {
+		totalCacheTokens = modelData.CacheTokens
+	}
+	inputTokens := modelData.InputTokens - totalCacheTokens
 	if inputTokens < 0 {
 		// Safety check: cache tokens should not exceed input tokens
 		// This could indicate a data inconsistency, but we'll clamp to 0 to prevent negative costs
@@ -104,10 +118,33 @@ func calculatePricingFromModelData(modelData *ModelTokenData) (inputCost, output
 		reasoningCost = calculateCostFromTokens(modelData.ReasoningTokens, metadata.ReasoningCostPer1MTokens)
 	}
 
-	// Calculate cache cost (cached tokens are charged at a different rate)
-	if modelData.CacheTokens > 0 && metadata.CachedInputCostPer1MTokens > 0 {
-		cacheCost = calculateCostFromTokens(modelData.CacheTokens, metadata.CachedInputCostPer1MTokens)
+	// Calculate cache costs separately for read and write
+	// Cache read tokens are charged at discounted rate (CachedInputCostPer1MTokens)
+	// Cache write tokens are charged at premium rate (CachedInputCostWritePer1MTokens, typically 1.25x base)
+	var cacheReadCost, cacheWriteCost float64
+
+	if modelData.CacheReadTokens > 0 && metadata.CachedInputCostPer1MTokens > 0 {
+		cacheReadCost = calculateCostFromTokens(modelData.CacheReadTokens, metadata.CachedInputCostPer1MTokens)
 	}
+
+	if modelData.CacheWriteTokens > 0 && metadata.CachedInputCostWritePer1MTokens > 0 {
+		cacheWriteCost = calculateCostFromTokens(modelData.CacheWriteTokens, metadata.CachedInputCostWritePer1MTokens)
+	}
+
+	// Backward compatibility: if separate cache fields are not set but CacheTokens is,
+	// treat all as read tokens (conservative estimate - discounted rate)
+	if modelData.CacheReadTokens == 0 && modelData.CacheWriteTokens == 0 && modelData.CacheTokens > 0 {
+		if metadata.CachedInputCostPer1MTokens > 0 {
+			cacheReadCost = calculateCostFromTokens(modelData.CacheTokens, metadata.CachedInputCostPer1MTokens)
+		}
+	}
+
+	cacheCost = cacheReadCost + cacheWriteCost
+
+	// Store the separated costs back to modelData for persistence
+	modelData.CacheReadCost = cacheReadCost
+	modelData.CacheWriteCost = cacheWriteCost
+	modelData.CacheCost = cacheCost
 
 	totalCost = inputCost + outputCost + reasoningCost + cacheCost
 
@@ -525,18 +562,24 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 			existing.InputTokens += modelTokenData.InputTokens
 			existing.OutputTokens += modelTokenData.OutputTokens
 			existing.CacheTokens += modelTokenData.CacheTokens
+			existing.CacheReadTokens += modelTokenData.CacheReadTokens
+			existing.CacheWriteTokens += modelTokenData.CacheWriteTokens
 			existing.ReasoningTokens += modelTokenData.ReasoningTokens
 			existing.LLMCallCount += modelTokenData.LLMCallCount
 			// Recalculate formatted strings
 			existing.InputTokensM = formatTokensM(existing.InputTokens)
 			existing.OutputTokensM = formatTokensM(existing.OutputTokens)
 			existing.CacheTokensM = formatTokensM(existing.CacheTokens)
+			existing.CacheReadTokensM = formatTokensM(existing.CacheReadTokens)
+			existing.CacheWriteTokensM = formatTokensM(existing.CacheWriteTokens)
 			existing.ReasoningTokensM = formatTokensM(existing.ReasoningTokens)
 			// Accumulate pricing
 			existing.InputCost += inputCost
 			existing.OutputCost += outputCost
 			existing.ReasoningCost += reasoningCost
 			existing.CacheCost += cacheCost
+			existing.CacheReadCost += modelTokenData.CacheReadCost
+			existing.CacheWriteCost += modelTokenData.CacheWriteCost
 			existing.TotalCost += totalCost
 			// Update context window tracking
 			if contextWindow > 0 {
@@ -552,21 +595,27 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 		} else {
 			// New model - create entry
 			tokenFile.ByModel[modelTokenData.ModelID] = &ModelTokenUsage{
-				Provider:            modelTokenData.Provider,
-				InputTokens:         modelTokenData.InputTokens,
-				OutputTokens:        modelTokenData.OutputTokens,
-				InputTokensM:        formatTokensM(modelTokenData.InputTokens),
-				OutputTokensM:       formatTokensM(modelTokenData.OutputTokens),
-				CacheTokens:         modelTokenData.CacheTokens,
-				CacheTokensM:        formatTokensM(modelTokenData.CacheTokens),
-				ReasoningTokens:     modelTokenData.ReasoningTokens,
-				ReasoningTokensM:    formatTokensM(modelTokenData.ReasoningTokens),
-				LLMCallCount:        modelTokenData.LLMCallCount,
-				InputCost:           inputCost,
-				OutputCost:          outputCost,
-				ReasoningCost:       reasoningCost,
-				CacheCost:           cacheCost,
-				TotalCost:           totalCost,
+				Provider:          modelTokenData.Provider,
+				InputTokens:       modelTokenData.InputTokens,
+				OutputTokens:      modelTokenData.OutputTokens,
+				InputTokensM:      formatTokensM(modelTokenData.InputTokens),
+				OutputTokensM:     formatTokensM(modelTokenData.OutputTokens),
+				CacheTokens:       modelTokenData.CacheTokens,
+				CacheTokensM:      formatTokensM(modelTokenData.CacheTokens),
+				CacheReadTokens:   modelTokenData.CacheReadTokens,
+				CacheReadTokensM:  formatTokensM(modelTokenData.CacheReadTokens),
+				CacheWriteTokens:  modelTokenData.CacheWriteTokens,
+				CacheWriteTokensM: formatTokensM(modelTokenData.CacheWriteTokens),
+				ReasoningTokens:   modelTokenData.ReasoningTokens,
+				ReasoningTokensM:  formatTokensM(modelTokenData.ReasoningTokens),
+				LLMCallCount:      modelTokenData.LLMCallCount,
+				InputCost:         inputCost,
+				OutputCost:        outputCost,
+				ReasoningCost:     reasoningCost,
+				CacheCost:         cacheCost,
+				CacheReadCost:     modelTokenData.CacheReadCost,
+				CacheWriteCost:    modelTokenData.CacheWriteCost,
+				TotalCost:         totalCost,
 				ContextWindowUsage:  totalTokens,
 				ModelContextWindow:  contextWindow,
 				ContextUsagePercent: contextUsagePercent,
@@ -603,18 +652,24 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 			existing.InputTokens += modelTokenData.InputTokens
 			existing.OutputTokens += modelTokenData.OutputTokens
 			existing.CacheTokens += modelTokenData.CacheTokens
+			existing.CacheReadTokens += modelTokenData.CacheReadTokens
+			existing.CacheWriteTokens += modelTokenData.CacheWriteTokens
 			existing.ReasoningTokens += modelTokenData.ReasoningTokens
 			existing.LLMCallCount += modelTokenData.LLMCallCount
 			// Recalculate formatted strings
 			existing.InputTokensM = formatTokensM(existing.InputTokens)
 			existing.OutputTokensM = formatTokensM(existing.OutputTokens)
 			existing.CacheTokensM = formatTokensM(existing.CacheTokens)
+			existing.CacheReadTokensM = formatTokensM(existing.CacheReadTokens)
+			existing.CacheWriteTokensM = formatTokensM(existing.CacheWriteTokens)
 			existing.ReasoningTokensM = formatTokensM(existing.ReasoningTokens)
 			// Accumulate pricing
 			existing.InputCost += inputCost
 			existing.OutputCost += outputCost
 			existing.ReasoningCost += reasoningCost
 			existing.CacheCost += cacheCost
+			existing.CacheReadCost += modelTokenData.CacheReadCost
+			existing.CacheWriteCost += modelTokenData.CacheWriteCost
 			existing.TotalCost += totalCost
 			// Update context window tracking
 			if contextWindow > 0 {
@@ -630,21 +685,27 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 		} else {
 			// New model for this step - create entry
 			tokenFile.ByStepAndModel[stepKey][modelID] = &ModelTokenUsage{
-				Provider:            modelTokenData.Provider,
-				InputTokens:         modelTokenData.InputTokens,
-				OutputTokens:        modelTokenData.OutputTokens,
-				InputTokensM:        formatTokensM(modelTokenData.InputTokens),
-				OutputTokensM:       formatTokensM(modelTokenData.OutputTokens),
-				CacheTokens:         modelTokenData.CacheTokens,
-				CacheTokensM:        formatTokensM(modelTokenData.CacheTokens),
-				ReasoningTokens:     modelTokenData.ReasoningTokens,
-				ReasoningTokensM:    formatTokensM(modelTokenData.ReasoningTokens),
-				LLMCallCount:        modelTokenData.LLMCallCount,
-				InputCost:           inputCost,
-				OutputCost:          outputCost,
-				ReasoningCost:       reasoningCost,
-				CacheCost:           cacheCost,
-				TotalCost:           totalCost,
+				Provider:          modelTokenData.Provider,
+				InputTokens:       modelTokenData.InputTokens,
+				OutputTokens:      modelTokenData.OutputTokens,
+				InputTokensM:      formatTokensM(modelTokenData.InputTokens),
+				OutputTokensM:     formatTokensM(modelTokenData.OutputTokens),
+				CacheTokens:       modelTokenData.CacheTokens,
+				CacheTokensM:      formatTokensM(modelTokenData.CacheTokens),
+				CacheReadTokens:   modelTokenData.CacheReadTokens,
+				CacheReadTokensM:  formatTokensM(modelTokenData.CacheReadTokens),
+				CacheWriteTokens:  modelTokenData.CacheWriteTokens,
+				CacheWriteTokensM: formatTokensM(modelTokenData.CacheWriteTokens),
+				ReasoningTokens:   modelTokenData.ReasoningTokens,
+				ReasoningTokensM:  formatTokensM(modelTokenData.ReasoningTokens),
+				LLMCallCount:      modelTokenData.LLMCallCount,
+				InputCost:         inputCost,
+				OutputCost:        outputCost,
+				ReasoningCost:     reasoningCost,
+				CacheCost:         cacheCost,
+				CacheReadCost:     modelTokenData.CacheReadCost,
+				CacheWriteCost:    modelTokenData.CacheWriteCost,
+				TotalCost:         totalCost,
 				ContextWindowUsage:  totalTokens,
 				ModelContextWindow:  contextWindow,
 				ContextUsagePercent: contextUsagePercent,
@@ -816,18 +877,24 @@ func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 			existing.InputTokens += modelTokenData.InputTokens
 			existing.OutputTokens += modelTokenData.OutputTokens
 			existing.CacheTokens += modelTokenData.CacheTokens
+			existing.CacheReadTokens += modelTokenData.CacheReadTokens
+			existing.CacheWriteTokens += modelTokenData.CacheWriteTokens
 			existing.ReasoningTokens += modelTokenData.ReasoningTokens
 			existing.LLMCallCount += modelTokenData.LLMCallCount
 			// Recalculate formatted strings
 			existing.InputTokensM = formatTokensM(existing.InputTokens)
 			existing.OutputTokensM = formatTokensM(existing.OutputTokens)
 			existing.CacheTokensM = formatTokensM(existing.CacheTokens)
+			existing.CacheReadTokensM = formatTokensM(existing.CacheReadTokens)
+			existing.CacheWriteTokensM = formatTokensM(existing.CacheWriteTokens)
 			existing.ReasoningTokensM = formatTokensM(existing.ReasoningTokens)
 			// Accumulate pricing
 			existing.InputCost += inputCost
 			existing.OutputCost += outputCost
 			existing.ReasoningCost += reasoningCost
 			existing.CacheCost += cacheCost
+			existing.CacheReadCost += modelTokenData.CacheReadCost
+			existing.CacheWriteCost += modelTokenData.CacheWriteCost
 			existing.TotalCost += totalCost
 			// Update context window tracking
 			if contextWindow > 0 {
@@ -843,21 +910,27 @@ func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 		} else {
 			// New model - create entry
 			tokenFile.ByModel[modelTokenData.ModelID] = &ModelTokenUsage{
-				Provider:            modelTokenData.Provider,
-				InputTokens:         modelTokenData.InputTokens,
-				OutputTokens:        modelTokenData.OutputTokens,
-				InputTokensM:        formatTokensM(modelTokenData.InputTokens),
-				OutputTokensM:       formatTokensM(modelTokenData.OutputTokens),
-				CacheTokens:         modelTokenData.CacheTokens,
-				CacheTokensM:        formatTokensM(modelTokenData.CacheTokens),
-				ReasoningTokens:     modelTokenData.ReasoningTokens,
-				ReasoningTokensM:    formatTokensM(modelTokenData.ReasoningTokens),
-				LLMCallCount:        modelTokenData.LLMCallCount,
-				InputCost:           inputCost,
-				OutputCost:          outputCost,
-				ReasoningCost:       reasoningCost,
-				CacheCost:           cacheCost,
-				TotalCost:           totalCost,
+				Provider:          modelTokenData.Provider,
+				InputTokens:       modelTokenData.InputTokens,
+				OutputTokens:      modelTokenData.OutputTokens,
+				InputTokensM:      formatTokensM(modelTokenData.InputTokens),
+				OutputTokensM:     formatTokensM(modelTokenData.OutputTokens),
+				CacheTokens:       modelTokenData.CacheTokens,
+				CacheTokensM:      formatTokensM(modelTokenData.CacheTokens),
+				CacheReadTokens:   modelTokenData.CacheReadTokens,
+				CacheReadTokensM:  formatTokensM(modelTokenData.CacheReadTokens),
+				CacheWriteTokens:  modelTokenData.CacheWriteTokens,
+				CacheWriteTokensM: formatTokensM(modelTokenData.CacheWriteTokens),
+				ReasoningTokens:   modelTokenData.ReasoningTokens,
+				ReasoningTokensM:  formatTokensM(modelTokenData.ReasoningTokens),
+				LLMCallCount:      modelTokenData.LLMCallCount,
+				InputCost:         inputCost,
+				OutputCost:        outputCost,
+				ReasoningCost:     reasoningCost,
+				CacheCost:         cacheCost,
+				CacheReadCost:     modelTokenData.CacheReadCost,
+				CacheWriteCost:    modelTokenData.CacheWriteCost,
+				TotalCost:         totalCost,
 				ContextWindowUsage:  totalTokens,
 				ModelContextWindow:  contextWindow,
 				ContextUsagePercent: contextUsagePercent,
@@ -895,18 +968,24 @@ func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 			existing.InputTokens += modelTokenData.InputTokens
 			existing.OutputTokens += modelTokenData.OutputTokens
 			existing.CacheTokens += modelTokenData.CacheTokens
+			existing.CacheReadTokens += modelTokenData.CacheReadTokens
+			existing.CacheWriteTokens += modelTokenData.CacheWriteTokens
 			existing.ReasoningTokens += modelTokenData.ReasoningTokens
 			existing.LLMCallCount += modelTokenData.LLMCallCount
 			// Recalculate formatted strings
 			existing.InputTokensM = formatTokensM(existing.InputTokens)
 			existing.OutputTokensM = formatTokensM(existing.OutputTokens)
 			existing.CacheTokensM = formatTokensM(existing.CacheTokens)
+			existing.CacheReadTokensM = formatTokensM(existing.CacheReadTokens)
+			existing.CacheWriteTokensM = formatTokensM(existing.CacheWriteTokens)
 			existing.ReasoningTokensM = formatTokensM(existing.ReasoningTokens)
 			// Accumulate pricing
 			existing.InputCost += inputCost
 			existing.OutputCost += outputCost
 			existing.ReasoningCost += reasoningCost
 			existing.CacheCost += cacheCost
+			existing.CacheReadCost += modelTokenData.CacheReadCost
+			existing.CacheWriteCost += modelTokenData.CacheWriteCost
 			existing.TotalCost += totalCost
 			// Update context window tracking
 			if contextWindow > 0 {
@@ -922,21 +1001,27 @@ func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 		} else {
 			// New model for this phase - create entry
 			tokenFile.ByPhaseAndModel[phaseKey][modelID] = &ModelTokenUsage{
-				Provider:            modelTokenData.Provider,
-				InputTokens:         modelTokenData.InputTokens,
-				OutputTokens:        modelTokenData.OutputTokens,
-				InputTokensM:        formatTokensM(modelTokenData.InputTokens),
-				OutputTokensM:       formatTokensM(modelTokenData.OutputTokens),
-				CacheTokens:         modelTokenData.CacheTokens,
-				CacheTokensM:        formatTokensM(modelTokenData.CacheTokens),
-				ReasoningTokens:     modelTokenData.ReasoningTokens,
-				ReasoningTokensM:    formatTokensM(modelTokenData.ReasoningTokens),
-				LLMCallCount:        modelTokenData.LLMCallCount,
-				InputCost:           inputCost,
-				OutputCost:          outputCost,
-				ReasoningCost:       reasoningCost,
-				CacheCost:           cacheCost,
-				TotalCost:           totalCost,
+				Provider:          modelTokenData.Provider,
+				InputTokens:       modelTokenData.InputTokens,
+				OutputTokens:      modelTokenData.OutputTokens,
+				InputTokensM:      formatTokensM(modelTokenData.InputTokens),
+				OutputTokensM:     formatTokensM(modelTokenData.OutputTokens),
+				CacheTokens:       modelTokenData.CacheTokens,
+				CacheTokensM:      formatTokensM(modelTokenData.CacheTokens),
+				CacheReadTokens:   modelTokenData.CacheReadTokens,
+				CacheReadTokensM:  formatTokensM(modelTokenData.CacheReadTokens),
+				CacheWriteTokens:  modelTokenData.CacheWriteTokens,
+				CacheWriteTokensM: formatTokensM(modelTokenData.CacheWriteTokens),
+				ReasoningTokens:   modelTokenData.ReasoningTokens,
+				ReasoningTokensM:  formatTokensM(modelTokenData.ReasoningTokens),
+				LLMCallCount:      modelTokenData.LLMCallCount,
+				InputCost:         inputCost,
+				OutputCost:        outputCost,
+				ReasoningCost:     reasoningCost,
+				CacheCost:         cacheCost,
+				CacheReadCost:     modelTokenData.CacheReadCost,
+				CacheWriteCost:    modelTokenData.CacheWriteCost,
+				TotalCost:         totalCost,
 				ContextWindowUsage:  totalTokens,
 				ModelContextWindow:  contextWindow,
 				ContextUsagePercent: contextUsagePercent,

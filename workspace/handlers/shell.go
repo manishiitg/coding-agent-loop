@@ -103,9 +103,10 @@ func ExecuteShellCommand(c *gin.Context) {
 	if req.FolderGuard != nil && req.FolderGuard.Enabled {
 		// Use isolated execution with filesystem restrictions
 		isolator := &security.Isolator{
-			ReadPaths:  req.FolderGuard.ReadPaths,
-			WritePaths: req.FolderGuard.WritePaths,
-			WorkDir:    workingDir,
+			ReadPaths:    req.FolderGuard.ReadPaths,
+			WritePaths:   req.FolderGuard.WritePaths,
+			BlockedPaths: req.FolderGuard.BlockedPaths,
+			WorkDir:      workingDir,
 		}
 
 		if len(req.Args) > 0 {

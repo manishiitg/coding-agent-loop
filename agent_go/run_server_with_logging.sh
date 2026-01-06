@@ -88,6 +88,9 @@ export TOOL_EXECUTION_TIMEOUT="5m"
 # Set MCP cache TTL to 7 days (10080 minutes)
 export MCP_CACHE_TTL_MINUTES="10080"
 
+# Workspace semantic search configuration (disabled by default - requires Qdrant)
+export WORKSPACE_ENABLE_SEMANTIC_SEARCH="${WORKSPACE_ENABLE_SEMANTIC_SEARCH:-false}"
+
 # Context summarization configuration
 export ENABLE_CONTEXT_SUMMARIZATION="true"
 export SUMMARIZE_ON_TOKEN_THRESHOLD="true"
@@ -102,29 +105,17 @@ export ENABLE_CONTEXT_EDITING="true"  # Enable context editing (default: true)
 export CONTEXT_EDITING_THRESHOLD="10000"  # Compact outputs larger than 10k tokens (default: 10000)
 export CONTEXT_EDITING_TURN_THRESHOLD="20"  # Compact outputs older than 20 turns (default: 20)
 
-# Set main LLM configuration
-export DEEP_SEARCH_MAIN_LLM_PROVIDER="openrouter"
-export DEEP_SEARCH_MAIN_LLM_MODEL="x-ai/grok-code-fast-1"
+# Set main LLM configuration (uses Bedrock with AWS credentials from environment)
+# Note: Frontend Published LLMs override this for actual agent execution
+export DEEP_SEARCH_MAIN_LLM_PROVIDER="bedrock"
+export DEEP_SEARCH_MAIN_LLM_MODEL="global.anthropic.claude-sonnet-4-5-20250929-v1:0"
 export DEEP_SEARCH_MAIN_LLM_TEMPERATURE="0.0"
 export DEEP_SEARCH_MAIN_LLM_MAX_TOKENS="40000"
 
-# Set agent provider environment variable (used by server.go)
-export AGENT_PROVIDER="openrouter"
-export AGENT_MODEL="x-ai/grok-code-fast-1"
-# export AGENT_MODEL="deepseek/deepseek-chat-v3.1:free" 
-# export AGENT_MODEL="z-ai/glm-4.5" 
-# export AGENT_MODEL="x-ai/grok-code-fast-1"
-# export AGENT_MODEL="openrouter/sonoma-dusk-alpha"
-
-# Set OpenRouter fallback models
-export OPENROUTER_FALLBACK_MODELS="x-ai/grok-code-fast-1,openai/gpt-5-mini"
-
-# Set cross-model fallback configuration (if OpenRouter fails, fall back to OpenAI)
-export OPENROUTER_CROSS_FALLBACK_PROVIDER="openai"
-export OPENROUTER_CROSS_FALLBACK_MODELS="gpt-5-mini"
-
-# Set Vertex Anthropic fallback models (if Vertex fails, fall back to Anthropic)
-export VERTEX_ANTHROPIC_FALLBACK_MODELS="claude-sonnet-4-5-20250929,claude-haiku-4-5-20251001"
+# Set agent provider environment variable (used by server.go for internal operations)
+# Note: Actual agent execution uses Published LLMs from frontend with their own API keys
+export AGENT_PROVIDER="bedrock"
+export AGENT_MODEL="global.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
 # Set available models for each provider
 export BEDROCK_AVAILABLE_MODELS="global.anthropic.claude-sonnet-4-5-20250929-v1:0,us.anthropic.claude-sonnet-4-20250514-v1:0,us.anthropic.claude-3-7-sonnet-20250219-v1:0"
@@ -181,14 +172,12 @@ echo "- Agent Model: $AGENT_MODEL" | tee -a "$LOG_FILE"
 echo "- Main LLM Provider: $DEEP_SEARCH_MAIN_LLM_PROVIDER" | tee -a "$LOG_FILE"
 echo "- Main LLM Model: $DEEP_SEARCH_MAIN_LLM_MODEL" | tee -a "$LOG_FILE"
 echo "- Main LLM Temperature: $DEEP_SEARCH_MAIN_LLM_TEMPERATURE" | tee -a "$LOG_FILE"
-echo "- OpenRouter Fallback Models: $OPENROUTER_FALLBACK_MODELS" | tee -a "$LOG_FILE"
-echo "- OpenRouter Cross-Provider Fallback: $OPENROUTER_CROSS_FALLBACK_PROVIDER/$OPENROUTER_CROSS_FALLBACK_MODELS" | tee -a "$LOG_FILE"
-echo "- Vertex Anthropic Fallback Models: $VERTEX_ANTHROPIC_FALLBACK_MODELS" | tee -a "$LOG_FILE"
 echo "- Available Bedrock Models: $BEDROCK_AVAILABLE_MODELS" | tee -a "$LOG_FILE"
 echo "- Available OpenRouter Models: $OPENROUTER_AVAILABLE_MODELS" | tee -a "$LOG_FILE"
 echo "- Available OpenAI Models: $OPENAI_AVAILABLE_MODELS" | tee -a "$LOG_FILE"
 echo "- Structured Output LLM: $DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER/$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL" | tee -a "$LOG_FILE"
 echo "- Workspace tools: Enabled" | tee -a "$LOG_FILE"
+echo "- Workspace Semantic Search: $WORKSPACE_ENABLE_SEMANTIC_SEARCH" | tee -a "$LOG_FILE"
 echo "- Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION" | tee -a "$LOG_FILE"
 echo "- Token Threshold: $TOKEN_THRESHOLD_PERCENT (70%) | Fixed: ${FIXED_TOKEN_THRESHOLD} tokens" | tee -a "$LOG_FILE"
 echo "- Keep Last Messages: $SUMMARY_KEEP_LAST_MESSAGES" | tee -a "$LOG_FILE"
@@ -205,16 +194,16 @@ echo "⏱️  Tool Timeout: $TOOL_EXECUTION_TIMEOUT"
 echo "💾 MCP Cache TTL: $MCP_CACHE_TTL_MINUTES minutes (7 days)"
 echo "🤖 Agent Provider: $AGENT_PROVIDER/$AGENT_MODEL"
 echo "🔧 Main LLM: $DEEP_SEARCH_MAIN_LLM_PROVIDER/$DEEP_SEARCH_MAIN_LLM_MODEL"
-echo "🔄 OpenRouter Cross-Provider Fallback: $OPENROUTER_CROSS_FALLBACK_PROVIDER/$OPENROUTER_CROSS_FALLBACK_MODELS"
-echo "🔄 Vertex Anthropic Fallback Models: $VERTEX_ANTHROPIC_FALLBACK_MODELS"
 echo "🔧 Structured Output LLM: $DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER/$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL"
 echo "📁 Workspace Tools: Enabled"
+echo "🔍 Workspace Semantic Search: $WORKSPACE_ENABLE_SEMANTIC_SEARCH"
 echo "📝 Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION (Threshold: $TOKEN_THRESHOLD_PERCENT = 70%, Fixed: ${FIXED_TOKEN_THRESHOLD} tokens, Keep: $SUMMARY_KEEP_LAST_MESSAGES msgs)"
 echo "✂️  Context Editing: $ENABLE_CONTEXT_EDITING (Threshold: ${CONTEXT_EDITING_THRESHOLD} tokens, Age: ${CONTEXT_EDITING_TURN_THRESHOLD} turns)"
 echo "📊 Debug level: $LOG_LEVEL"
 
 # Run the server with all the enhanced configuration and log to both file and console
-# Using 'tee' to capture output to file while also displaying on console
+# Using 'tee' to display on console while server writes to log file via --log-file
+# Note: Don't use 'tee "$LOG_FILE"' since --log-file already writes to that file (causes duplicate logs)
 # Code execution uses 'go run' with HTTP API calls - no binary build needed
 echo "🚀 Starting server with 'go run'..."
 go run main.go server \
@@ -230,4 +219,4 @@ go run main.go server \
     --agent-mode "$DEEP_SEARCH_AGENT_MODE" \
     --structured-output-provider "$DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER" \
     --structured-output-model "$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL" \
-    --structured-output-temp "$DEEP_SEARCH_STRUCTURED_OUTPUT_TEMPERATURE" 2>&1 | tee "$LOG_FILE" 
+    --structured-output-temp "$DEEP_SEARCH_STRUCTURED_OUTPUT_TEMPERATURE" 2>&1 | tee /dev/stderr 

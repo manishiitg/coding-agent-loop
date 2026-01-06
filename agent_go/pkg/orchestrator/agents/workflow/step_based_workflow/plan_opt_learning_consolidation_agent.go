@@ -98,11 +98,12 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 	if lcm.presetPhaseLLM != nil && lcm.presetPhaseLLM.Provider != "" && lcm.presetPhaseLLM.ModelID != "" {
 		// Use preset phase LLM
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              lcm.presetPhaseLLM.Provider,
-			ModelID:               lcm.presetPhaseLLM.ModelID,
-			FallbackModels:        orchestratorLLMConfig.FallbackModels,
-			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
-			APIKeys:               orchestratorLLMConfig.APIKeys,
+			Primary: orchestrator.LLMModel{
+				Provider: lcm.presetPhaseLLM.Provider,
+				ModelID:  lcm.presetPhaseLLM.ModelID,
+			},
+			Fallbacks: orchestratorLLMConfig.Fallbacks,
+			APIKeys:   orchestratorLLMConfig.APIKeys,
 		}
 		lcm.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for learning consolidation: %s/%s", lcm.presetPhaseLLM.Provider, lcm.presetPhaseLLM.ModelID))
 	} else {

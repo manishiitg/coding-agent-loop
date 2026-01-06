@@ -260,9 +260,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   
   const onClearAllServers = useCallback(() => {
     if (activeTabId) {
-      setTabConfig(activeTabId, { selectedServers: [] })
+      setTabConfig(activeTabId, { selectedServers: ["NO_SERVERS"] })
       // Sync to global MCP store so new tabs inherit this selection
-      setGlobalSelectedServers([])
+      setGlobalSelectedServers(["NO_SERVERS"])
     }
   }, [activeTabId, setTabConfig, setGlobalSelectedServers])
   

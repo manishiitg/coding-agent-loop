@@ -308,18 +308,20 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     const indicesStr = JSON.stringify(indices.slice().sort((a, b) => a - b))
     const prevIndicesStr = prevIndicesRef.current
     const indicesChanged = prevIndicesStr !== indicesStr
-    
-    console.log('[EFFECT_DEBUG] WorkflowCanvas - completedStepIndices sync effect:', {
+
+    console.log('[EFFECT_DEBUG] WorkflowCanvas - stepProgress sync effect:', {
       selectedRunFolder,
       stepProgressIsNull: stepProgress === null,
-      stepProgressRef: stepProgress,
+      stepProgress: stepProgress,
+      indices,
       prevIndicesStr,
       newIndicesStr: indicesStr,
       indicesChanged,
       willUpdate: indicesChanged
     })
-    
+
     if (indicesChanged) {
+      console.log('[EFFECT_DEBUG] WorkflowCanvas - UPDATING completedStepIndices to:', indices)
       prevIndicesRef.current = indicesStr
       setCompletedStepIndices(indices)
     }
@@ -1614,6 +1616,97 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     // Update previous status map (for tracking changes)
     prevStepStatusMapRef.current = new Map(stepStatusMap)
   }, [stepStatusMap, setNodes])
+
+  // Track previous completedStepIndices to detect actual changes
+  const prevCompletedIndicesRef = React.useRef<string>('')
+
+  // Update node status based on completedStepIndices and last_completed_step_id from step_progress_updated events
+  // This handles the case where step_progress_updated arrives but step_execution_end doesn't
+  React.useEffect(() => {
+    const lastCompletedStepId = stepProgress?.last_completed_step_id
+
+    console.log('[WorkflowCanvas] completedStepIndices effect triggered:', {
+      hasSteps: !!plan?.steps,
+      stepsLength: plan?.steps?.length,
+      completedIndicesLength: completedStepIndices.length,
+      completedStepIndices,
+      lastCompletedStepId,
+      prevRef: prevCompletedIndicesRef.current
+    })
+
+    if (completedStepIndices.length === 0) {
+      console.log('[WorkflowCanvas] Skipping - no completed indices')
+      return
+    }
+
+    // Check if completedStepIndices actually changed
+    const indicesStr = JSON.stringify(completedStepIndices) + '|' + (lastCompletedStepId || '')
+    if (indicesStr === prevCompletedIndicesRef.current) {
+      console.log('[WorkflowCanvas] Skipping - indices unchanged')
+      return // No actual changes, skip update
+    }
+    prevCompletedIndicesRef.current = indicesStr
+
+    console.log('[WorkflowCanvas] Syncing node status from completedStepIndices:', completedStepIndices)
+
+    // Build a map of step IDs that should be marked as completed
+    const completedStepIds = new Set<string>()
+
+    // If we have last_completed_step_id directly from the event, use it
+    if (lastCompletedStepId) {
+      completedStepIds.add(lastCompletedStepId)
+      console.log('[WorkflowCanvas] Using last_completed_step_id directly:', lastCompletedStepId)
+    }
+
+    // Also map indices to IDs if plan is available (for all completed steps, not just the last one)
+    if (plan?.steps) {
+      for (const index of completedStepIndices) {
+        if (index >= 0 && index < plan.steps.length) {
+          const step = plan.steps[index]
+          if (step?.id) {
+            completedStepIds.add(step.id)
+            console.log('[WorkflowCanvas] Mapped index', index, 'to stepId:', step.id)
+          }
+        }
+      }
+    }
+
+    console.log('[WorkflowCanvas] completedStepIds:', Array.from(completedStepIds))
+
+    if (completedStepIds.size === 0) {
+      console.log('[WorkflowCanvas] No step IDs found, skipping')
+      return
+    }
+
+    setNodes(nds => {
+      console.log('[WorkflowCanvas] Updating nodes, total nodes:', nds.length)
+      let hasUpdates = false
+      const updatedNodes = nds.map(node => {
+        if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
+          const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
+          const stepId = nodeData?.step?.id || node.id
+          const currentStatus = nodeData?.status
+
+          // If this step is in completedStepIds and not already marked completed, update it
+          if (completedStepIds.has(stepId) && currentStatus !== 'completed') {
+            console.log('[WorkflowCanvas] Updating node', node.id, 'stepId:', stepId, 'from', currentStatus, 'to completed')
+            hasUpdates = true
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                status: 'completed' as const
+              }
+            } as WorkflowNode
+          }
+        }
+        return node
+      })
+
+      console.log('[WorkflowCanvas] hasUpdates:', hasUpdates)
+      return hasUpdates ? updatedNodes : nds
+    })
+  }, [completedStepIndices, stepProgress?.last_completed_step_id, plan, setNodes])
 
   // Handle node selection - disabled: nodes no longer open sidebar on click
   // Sidebar is now opened via settings icon button on nodes

@@ -117,13 +117,15 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
   const contextUsagePercent = event.context_usage_percent
   const modelContextWindow = event.model_context_window
   const contextWindowUsage = event.context_window_usage
+  const modelId = event.model_id
 
   // Create a minimal token usage object for the tooltip (only context info available)
-  const tokenUsageForTooltip: ContextOnlyTokenUsage | undefined = 
+  const tokenUsageForTooltip: ContextOnlyTokenUsage | undefined =
     contextUsagePercent !== undefined && contextUsagePercent > 0 ? {
       context_usage_percent: contextUsagePercent,
       model_context_window: modelContextWindow,
       context_window_usage: contextWindowUsage,
+      model_id: modelId,
     } : undefined
 
   // Single-line layout following design guidelines

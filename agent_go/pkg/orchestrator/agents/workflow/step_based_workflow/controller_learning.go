@@ -55,7 +55,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	updateMetadataWhenSkipped := func(skipReason string) error {
 		// Determine which LLM would have been used (for metadata tracking)
 		learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
-		learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Provider, learningLLMConfig.ModelID)
+		learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Primary.Provider, learningLLMConfig.Primary.ModelID)
 
 		// Update metadata with turnCount but don't increment counters (learning was skipped)
 		// We still want to record last_turn_count for complexity tracking
@@ -247,7 +247,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 
 	// Determine which LLM was used for learning (for metadata tracking)
 	learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
-	learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Provider, learningLLMConfig.ModelID)
+	learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Primary.Provider, learningLLMConfig.Primary.ModelID)
 
 	// Update metadata and check if auto-lock should be triggered
 	shouldAutoLock, metadataErr := hcpo.updateLearningMetadataWithTurnCount(
@@ -325,7 +325,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	updateMetadataWhenSkippedFailure := func(skipReason string) error {
 		// Determine which LLM would have been used (for metadata tracking)
 		learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
-		learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Provider, learningLLMConfig.ModelID)
+		learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Primary.Provider, learningLLMConfig.Primary.ModelID)
 
 		// Update metadata with turnCount but don't increment counters (learning was skipped)
 		// We still want to record last_turn_count for complexity tracking
@@ -507,7 +507,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 
 	// Determine which LLM was used for learning (for metadata tracking)
 	learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
-	learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Provider, learningLLMConfig.ModelID)
+	learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Primary.Provider, learningLLMConfig.Primary.ModelID)
 
 	// Update metadata and check if auto-lock should be triggered
 	// Even though we assume new learning, TotalIterations still increments and can trigger lock after 10 tries

@@ -2,7 +2,40 @@
 import type { PollingEventSchema } from '../generated/events-bridge'
 import type { EventTypeString } from '../generated/event-types'
 
-// LLM Configuration types
+// New LLM Configuration types (Tiered Fallback System)
+export interface LLMModel {
+  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
+  model_id: string
+
+  // Auth per model (each model carries its own credentials)
+  api_key?: string      // For OpenRouter, OpenAI, Anthropic, Vertex
+  region?: string       // For Bedrock
+  
+  // Model-specific options (reasoning_effort, thinking_level, thinking_budget, etc.)
+  options?: Record<string, unknown>
+  
+  // Model-specific temperature (0.0 - 1.0)
+  temperature?: number
+}
+
+// Saved/Published LLM Configuration (User library)
+export interface SavedLLM extends LLMModel {
+  id: string
+  name: string
+  model_name?: string // Display name from metadata (e.g., "Claude 3.5 Sonnet")
+  auth_method?: 'api_key' | 'oauth' | 'none' // Auth method used
+  created_at?: string
+}
+
+export interface AgentLLMConfiguration {
+  // Primary LLM
+  primary: LLMModel
+
+  // Fallback LLMs (ordered array - fallback in this exact order)
+  fallbacks: LLMModel[]
+}
+
+// Legacy LLM Configuration types (kept for backward compatibility)
 export interface LLMConfiguration {
   provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
   model_id: string
@@ -24,10 +57,12 @@ export interface LLMConfiguration {
   }
 }
 
-// Extended LLM Configuration for frontend (secrets/UI-only)
+// ExtendedLLM Configuration for frontend (secrets/UI-only)
 export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
   api_key?: string
   region?: string
+  options?: Record<string, unknown>
+  temperature?: number
 }
 
 // Execution mode constants matching backend enum
@@ -43,7 +78,8 @@ export interface AgentQueryRequest {
   enabled_servers?: string[]
   selected_tools?: string[] // Array of "server:tool" strings
   agent_mode?: 'simple' | 'workflow'
-  llm_config?: LLMConfiguration
+  // Support both legacy and new config format
+  llm_config?: LLMConfiguration | AgentLLMConfiguration
   preset_query_id?: string
   // Code execution mode: When enabled, only virtual tools are added to LLM
   // MCP tools are accessed via generated Go code using discover_code_files and write_code
@@ -88,6 +124,7 @@ export interface APIKeyValidationRequest {
   provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic'
   api_key?: string // Optional for Bedrock (uses IAM credentials)
   model_id?: string // Optional model ID for Bedrock validation
+  options?: Record<string, unknown> // Model options like reasoning_effort, thinking_level, etc.
 }
 
 export interface APIKeyValidationResponse {
@@ -721,6 +758,7 @@ export interface StepProgress {
   total_steps: number;
   last_updated: string;  // ISO timestamp
   branch_steps?: Record<number, BranchStepProgress>;  // key is step index (0-based)
+  last_completed_step_id?: string;  // Step ID for direct node updates (from step_progress_updated event)
 }
 
 export interface ProgressResponse {

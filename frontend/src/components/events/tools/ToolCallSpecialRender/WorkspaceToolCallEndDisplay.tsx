@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
 import type { ToolCallEndEvent } from '../../../../generated/events'
 import { ToolMarkdownRenderer } from '../../../ui/MarkdownRenderer'
+import { CircularProgress, type ContextOnlyTokenUsage } from '../../../ui/CircularProgress'
+import { TooltipProvider } from '../../../ui/tooltip'
 
 interface WorkspaceToolCallEndDisplayProps {
   event: ToolCallEndEvent
@@ -67,7 +69,22 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
   }
 
   const toolName = event.tool_name || ''
-  
+
+  // Extract context usage information for CircularProgress
+  const contextUsagePercent = event.context_usage_percent
+  const modelContextWindow = event.model_context_window
+  const contextWindowUsage = event.context_window_usage
+  const modelId = event.model_id
+
+  // Create a minimal token usage object for the tooltip (only context info available)
+  const tokenUsageForTooltip: ContextOnlyTokenUsage | undefined =
+    contextUsagePercent !== undefined && contextUsagePercent > 0 ? {
+      context_usage_percent: contextUsagePercent,
+      model_context_window: modelContextWindow,
+      context_window_usage: contextWindowUsage,
+      model_id: modelId,
+    } : undefined
+
   // Handle list_workspace_files tool response
   if (toolName === 'list_workspace_files') {
     // The response is an array of files/folders
@@ -112,7 +129,7 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-green-700 dark:text-green-300">
+              <div className="text-sm font-medium text-green-700 dark:text-green-300 flex items-center gap-2">
                 📂 Files Listed Successfully{' '}
                 <span className="text-xs font-normal text-green-600 dark:text-green-400">
                   {event.turn && `• Turn: ${event.turn}`}
@@ -120,6 +137,17 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
                   {event.server_name && ` • Server: ${event.server_name}`}
                   {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
                 </span>
+                {/* Context completion indicator */}
+                {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
+                  <TooltipProvider>
+                    <CircularProgress
+                      percentage={contextUsagePercent}
+                      size={18}
+                      strokeWidth={2}
+                      tokenUsage={tokenUsageForTooltip}
+                    />
+                  </TooltipProvider>
+                )}
               </div>
             </div>
           </div>
@@ -164,7 +192,7 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-green-700 dark:text-green-300">
+              <div className="text-sm font-medium text-green-700 dark:text-green-300 flex items-center gap-2">
                 📖 {resultMessage}{' '}
                 <span className="text-xs font-normal text-green-600 dark:text-green-400">
                   {event.turn && `• Turn: ${event.turn}`}
@@ -172,6 +200,17 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
                   {event.server_name && ` • Server: ${event.server_name}`}
                   {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
                 </span>
+                {/* Context completion indicator */}
+                {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
+                  <TooltipProvider>
+                    <CircularProgress
+                      percentage={contextUsagePercent}
+                      size={18}
+                      strokeWidth={2}
+                      tokenUsage={tokenUsageForTooltip}
+                    />
+                  </TooltipProvider>
+                )}
               </div>
             </div>
           </div>
@@ -258,7 +297,7 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-green-700 dark:text-green-300">
+              <div className="text-sm font-medium text-green-700 dark:text-green-300 flex items-center gap-2">
                 {icon} File {action} Successfully{' '}
                 <span className="text-xs font-normal text-green-600 dark:text-green-400">
                   {event.turn && `• Turn: ${event.turn}`}
@@ -266,6 +305,17 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
                   {event.server_name && ` • Server: ${event.server_name}`}
                   {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
                 </span>
+                {/* Context completion indicator */}
+                {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
+                  <TooltipProvider>
+                    <CircularProgress
+                      percentage={contextUsagePercent}
+                      size={18}
+                      strokeWidth={2}
+                      tokenUsage={tokenUsageForTooltip}
+                    />
+                  </TooltipProvider>
+                )}
               </div>
             </div>
           </div>
@@ -317,13 +367,13 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
     const filepath = (parsedResult.filepath as string) || ''
     const folder = (parsedResult.folder as string) || ''
     const deleted = (parsedResult.deleted as boolean) || false
-    
+
     return (
       <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded p-2">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-green-700 dark:text-green-300">
+              <div className="text-sm font-medium text-green-700 dark:text-green-300 flex items-center gap-2">
                 🗑️ File Deleted Successfully{' '}
                 <span className="text-xs font-normal text-green-600 dark:text-green-400">
                   {event.turn && `• Turn: ${event.turn}`}
@@ -331,6 +381,17 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
                   {event.server_name && ` • Server: ${event.server_name}`}
                   {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
                 </span>
+                {/* Context completion indicator */}
+                {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
+                  <TooltipProvider>
+                    <CircularProgress
+                      percentage={contextUsagePercent}
+                      size={18}
+                      strokeWidth={2}
+                      tokenUsage={tokenUsageForTooltip}
+                    />
+                  </TooltipProvider>
+                )}
               </div>
             </div>
           </div>

@@ -44,8 +44,9 @@ type CreateDocumentResponse struct {
 
 // ListDocumentsRequest represents the request to list documents
 type ListDocumentsRequest struct {
-	Folder   string `form:"folder"`               // Base directory
-	MaxDepth int    `form:"max_depth,default=-1"` // Max directory depth (-1 = unlimited)
+	Folder       string `form:"folder"`               // Base directory
+	MaxDepth     int    `form:"max_depth,default=-1"` // Max directory depth (-1 = unlimited)
+	BlockedPaths string `form:"blocked_paths"`        // Comma-separated list of paths to exclude
 }
 
 // DeleteDocumentRequest represents the request to delete a document
@@ -147,8 +148,9 @@ type CopyFolderResponse struct {
 
 // GlobDocumentsRequest represents the request to discover files using glob patterns
 type GlobDocumentsRequest struct {
-	Pattern     string `form:"pattern" binding:"required"` // Glob pattern (e.g., "*.go", "**/*.md")
-	Folder      string `form:"folder"`                     // Base directory to search within (default: root)
-	MaxDepth    int    `form:"max_depth,default=-1"`       // Max directory depth (-1 = unlimited)
-	IncludeDirs bool   `form:"include_dirs,default=false"` // Include directories in results
+	Pattern      string `form:"pattern" binding:"required"` // Glob pattern (e.g., "*.go", "**/*.md")
+	Folder       string `form:"folder"`                     // Base directory to search within (default: root)
+	MaxDepth     int    `form:"max_depth,default=-1"`       // Max directory depth (-1 = unlimited)
+	IncludeDirs  bool   `form:"include_dirs,default=false"` // Include directories in results
+	BlockedPaths string `form:"blocked_paths"`              // Comma-separated list of paths to exclude
 }

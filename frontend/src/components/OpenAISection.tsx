@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Key, CheckCircle, AlertCircle, Loader2, BookOpen } from 'lucide-react'
+import { Key, CheckCircle, AlertCircle, Loader2, BookOpen, Plus, Trash2 } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Card } from './ui/Card'
 import { useLLMStore } from '../stores'
@@ -8,7 +8,7 @@ import type { ModelMetadata } from '../services/llm-config-api'
 import { ModelSelector } from './ui/ModelSelector'
 import { ModelOptionsConfig } from './llm/ModelOptionsConfig'
 
-interface AnthropicSectionProps {
+interface OpenAISectionProps {
   config: ExtendedLLMConfiguration
   onUpdate: (config: ExtendedLLMConfiguration) => void
   onTestAPIKey: (apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => void
@@ -19,24 +19,40 @@ interface AnthropicSectionProps {
   metadata?: ModelMetadata[]
 }
 
-export function AnthropicSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, metadata }: AnthropicSectionProps) {
+export function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, metadata }: OpenAISectionProps) {
   const [apiKey, setApiKey] = useState(config.api_key || '')
+  const [newCustomModel, setNewCustomModel] = useState('')
   const [isPublishing, setIsPublishing] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [publishName, setPublishName] = useState('')
   const [publishError, setPublishError] = useState<string | null>(null)
-  const { availableAnthropicModels, saveLLM, testAPIKey: testAPIKeyFromStore } = useLLMStore()
+  const { availableOpenAIModels, customOpenAIModels, addCustomOpenAIModel, removeCustomOpenAIModel, refreshAvailableLLMs, saveLLM, testAPIKey: testAPIKeyFromStore } = useLLMStore()
 
   useEffect(() => {
-    if (config.api_key) {
-      setApiKey(config.api_key)
-    }
+    if (config.api_key) setApiKey(config.api_key)
   }, [config.api_key])
 
   const handleAPIKeyChange = (newApiKey: string) => {
     setApiKey(newApiKey)
     onUpdate({ ...config, api_key: newApiKey })
     setPublishError(null)
+  }
+
+  // Drive all models from metadata if available, otherwise fallback to store
+  const modelsFromMetadata = metadata?.filter(m => m.provider === 'openai').map(m => m.model_id) || []
+  const allModels = Array.from(new Set([...modelsFromMetadata, ...availableOpenAIModels, ...customOpenAIModels]))
+
+  const handleAddCustomModel = () => {
+    if (newCustomModel.trim() && !allModels.includes(newCustomModel.trim())) {
+      addCustomOpenAIModel(newCustomModel.trim())
+      setNewCustomModel('')
+      refreshAvailableLLMs()
+    }
+  }
+  
+  const handleRemoveCustomModel = (model: string) => {
+    removeCustomOpenAIModel(model)
+    refreshAvailableLLMs()
   }
 
   const handleOptionsChange = (newOptions: Record<string, unknown>, newTemp?: number) => {
@@ -77,9 +93,9 @@ export function AnthropicSection({ config, onUpdate, onTestAPIKey, apiKeyStatus,
   const handlePublishToLibrary = async () => {
     if (!publishName.trim() || !config.model_id) return
     
-    // Validate API key is required for Anthropic
+    // Validate API key is required for OpenAI
     if (!apiKey.trim()) {
-      setPublishError('API key is required to publish Anthropic models')
+      setPublishError('API key is required to publish OpenAI models')
       return
     }
 
@@ -91,11 +107,11 @@ export function AnthropicSection({ config, onUpdate, onTestAPIKey, apiKeyStatus,
       const optionsWithTemp = config.temperature !== undefined 
         ? { ...config.options, temperature: config.temperature }
         : config.options
-      const testResult = await testAPIKeyFromStore('anthropic', apiKey, config.model_id, optionsWithTemp)
+      const testResult = await testAPIKeyFromStore('openai', apiKey, config.model_id, optionsWithTemp)
       
       if (testResult.valid) {
         const llmModel = {
-          provider: 'anthropic' as const,
+          provider: 'openai' as const,
           model_id: config.model_id,
           api_key: config.api_key,
           options: config.options,
@@ -119,16 +135,12 @@ export function AnthropicSection({ config, onUpdate, onTestAPIKey, apiKeyStatus,
     }
   }
 
-  // Drive all models from metadata if available, otherwise fallback to store
-  const modelsFromMetadata = metadata?.filter(m => m.provider === 'anthropic').map(m => m.model_id) || []
-  const allModels = Array.from(new Set([...modelsFromMetadata, ...availableAnthropicModels]))
-
   const currentModelMetadata = metadata?.find(m => m.model_id === config.model_id)
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-foreground">Anthropic Configuration</h3>
+        <h3 className="text-lg font-semibold text-foreground">OpenAI Configuration</h3>
       </div>
       
       <Card className="p-4">
@@ -141,16 +153,14 @@ export function AnthropicSection({ config, onUpdate, onTestAPIKey, apiKeyStatus,
               onChange={(val) => onUpdate({ ...config, model_id: val })}
               models={allModels}
               metadata={metadata || []}
-              placeholder="Select an Anthropic model"
+              placeholder="Select an OpenAI model"
             />
-            {currentModelMetadata && (
-              <ModelOptionsConfig 
-                metadata={currentModelMetadata} 
-                options={config.options || {}} 
-                temperature={config.temperature}
-                onChange={handleOptionsChange}
-              />
-            )}
+            <ModelOptionsConfig 
+              metadata={currentModelMetadata} 
+              options={config.options || {}} 
+              temperature={config.temperature}
+              onChange={handleOptionsChange}
+            />
           </div>
 
           <div className="border-t border-border pt-4 space-y-3">
@@ -158,48 +168,17 @@ export function AnthropicSection({ config, onUpdate, onTestAPIKey, apiKeyStatus,
               <Key className="w-4 h-4 text-muted-foreground" />
               <h5 className="text-sm font-medium text-foreground">API Key</h5>
             </div>
-            {apiKey && (
-              <div className="text-sm text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-2 rounded-md">
-                <div className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4" />
-                  <span>API key loaded from environment variables</span>
-                </div>
-              </div>
-            )}
+            {apiKey && <div className="text-sm text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-2 rounded-md"><div className="flex items-center gap-2"><CheckCircle className="w-4 h-4" /><span>API key loaded from environment variables</span></div></div>}
             <div className="space-y-2">
               <div className="flex gap-2">
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => handleAPIKeyChange(e.target.value)}
-                  placeholder="Enter your Anthropic API key"
-                  className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
-                />
-                <Button
-                  onClick={() => onTestAPIKey(apiKey, config.model_id, config.options, config.temperature)}
-                  disabled={!apiKey.trim() || apiKeyStatus === 'testing'}
-                  size="sm"
-                  variant="outline"
-                >
-                  {apiKeyStatus === 'testing' ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : apiKeyStatus === 'valid' ? (
-                    <CheckCircle className="w-4 h-4 text-green-500" />
-                  ) : apiKeyStatus === 'invalid' ? (
-                    <AlertCircle className="w-4 h-4 text-red-500" />
-                  ) : (
-                    'Test'
-                  )}
+                <input type="password" value={apiKey} onChange={(e) => handleAPIKeyChange(e.target.value)} placeholder="Enter your OpenAI API key" className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary" />
+                <Button onClick={() => onTestAPIKey(apiKey, config.model_id, config.options, config.temperature)} disabled={!apiKey.trim() || apiKeyStatus === 'testing'} size="sm" variant="outline">
+                  {apiKeyStatus === 'testing' ? <Loader2 className="w-4 h-4 animate-spin" /> : apiKeyStatus === 'valid' ? <CheckCircle className="w-4 h-4 text-green-500" /> : apiKeyStatus === 'invalid' ? <AlertCircle className="w-4 h-4 text-red-500" /> : 'Test'}
                 </Button>
               </div>
-              {apiKey && (
-                <div className="text-xs text-muted-foreground">
-                  <button onClick={() => handleAPIKeyChange('')} className="text-primary hover:underline">Clear and enter new key</button>
-                </div>
-              )}
+              {apiKey && <div className="text-xs text-muted-foreground"><button onClick={() => handleAPIKeyChange('')} className="text-primary hover:underline">Clear and enter new key</button></div>}
               {apiKeyStatus === 'valid' && <div className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1"><CheckCircle className="w-4 h-4" />API key is valid</div>}
               {apiKeyStatus === 'invalid' && <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1"><AlertCircle className="w-4 h-4" />{apiKeyError || 'API key is invalid'}</div>}
-              {apiKeyStatus === 'timeout' && <div className="text-sm text-yellow-600 dark:text-yellow-400 flex items-center gap-1"><AlertCircle className="w-4 h-4" />{apiKeyError || 'Validation timeout - check your connection'}</div>}
             </div>
           </div>
 
@@ -244,6 +223,29 @@ export function AnthropicSection({ config, onUpdate, onTestAPIKey, apiKeyStatus,
               </Button>
             )}
           </div>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <h4 className="font-medium text-foreground mb-4">Custom Models</h4>
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <input type="text" value={newCustomModel} onChange={(e) => setNewCustomModel(e.target.value)} placeholder="Enter custom model ID" className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary" onKeyPress={(e) => e.key === 'Enter' && handleAddCustomModel()} />
+            <Button onClick={handleAddCustomModel} disabled={!newCustomModel.trim() || allModels.includes(newCustomModel.trim())} size="sm" variant="outline"><Plus className="w-4 h-4" /></Button>
+          </div>
+          {customOpenAIModels.length > 0 && (
+            <div className="space-y-2">
+              <h5 className="text-sm font-medium text-muted-foreground">Custom Models:</h5>
+              <div className="space-y-1">
+                {customOpenAIModels.map((model) => (
+                  <div key={model} className="flex items-center justify-between bg-muted/50 p-2 rounded-md">
+                    <span className="text-sm text-foreground font-mono">{model}</span>
+                    <Button onClick={() => handleRemoveCustomModel(model)} size="sm" variant="ghost" className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20"><Trash2 className="w-4 h-4" /></Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </Card>
     </div>

@@ -430,10 +430,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createPlanningAgent(ctx context.Conte
 	if hcpo.presetPhaseLLM != nil && hcpo.presetPhaseLLM.Provider != "" && hcpo.presetPhaseLLM.ModelID != "" {
 		// Use phase LLM for planning agent
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:       hcpo.presetPhaseLLM.Provider,
-			ModelID:        hcpo.presetPhaseLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for preset defaults
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Primary: orchestrator.LLMModel{
+				Provider: hcpo.presetPhaseLLM.Provider,
+				ModelID:  hcpo.presetPhaseLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for planning: %s/%s", hcpo.presetPhaseLLM.Provider, hcpo.presetPhaseLLM.ModelID))
 	} else {

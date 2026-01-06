@@ -135,6 +135,8 @@ func NewBaseAgent(
 	enableContextEditing bool, // Context editing configuration
 	contextEditingThreshold int, // Token threshold for context editing (0 = use default)
 	contextEditingTurnThreshold int, // Turn age threshold for context editing (0 = use default)
+	llmConfig *LLMConfig, // NEW: Full LLM configuration
+	apiKeys *AgentAPIKeys, // API keys for providers
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
 	// All agents use Simple mode
@@ -147,6 +149,45 @@ func NewBaseAgent(
 		mcpagent.WithToolChoice(toolChoice),
 		mcpagent.WithMaxTurns(maxTurns),
 		mcpagent.WithProvider(internalLLM.Provider(provider)),
+	}
+
+	// Add LLM config if provided
+	if llmConfig != nil {
+		// Convert orchestrator LLMConfig to mcpagent AgentLLMConfiguration
+		mcpConfig := mcpagent.AgentLLMConfiguration{
+			Primary: mcpagent.LLMModel{
+				Provider: llmConfig.Primary.Provider,
+				ModelID:  llmConfig.Primary.ModelID,
+				APIKey:   llmConfig.Primary.APIKey,
+				Region:   llmConfig.Primary.Region,
+			},
+			Fallbacks: make([]mcpagent.LLMModel, len(llmConfig.Fallbacks)),
+		}
+		for i, fb := range llmConfig.Fallbacks {
+			mcpConfig.Fallbacks[i] = mcpagent.LLMModel{
+				Provider: fb.Provider,
+				ModelID:  fb.ModelID,
+				APIKey:   fb.APIKey,
+				Region:   fb.Region,
+			}
+		}
+		agentOptions = append(agentOptions, mcpagent.WithLLMConfig(mcpConfig))
+	}
+
+	// Add API keys if provided
+	if apiKeys != nil {
+		mcpAPIKeys := &mcpagent.AgentAPIKeys{
+			OpenRouter: apiKeys.OpenRouter,
+			OpenAI:     apiKeys.OpenAI,
+			Anthropic:  apiKeys.Anthropic,
+			Vertex:     apiKeys.Vertex,
+		}
+		if apiKeys.Bedrock != nil {
+			mcpAPIKeys.Bedrock = &mcpagent.AgentBedrockConfig{
+				Region: apiKeys.Bedrock.Region,
+			}
+		}
+		agentOptions = append(agentOptions, mcpagent.WithAPIKeys(mcpAPIKeys))
 	}
 
 	// Add selected servers for "all tools" mode determination

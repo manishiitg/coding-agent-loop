@@ -2885,6 +2885,12 @@
         "last_completed_step": {
           "type": "integer"
         },
+        "last_completed_step_id": {
+          "type": "string"
+        },
+        "last_completed_step_title": {
+          "type": "string"
+        },
         "metadata": {
           "type": "object"
         },
@@ -3631,6 +3637,9 @@
         },
         "model_context_window": {
           "type": "integer"
+        },
+        "model_id": {
+          "type": "string"
         },
         "parent_id": {
           "type": "string"

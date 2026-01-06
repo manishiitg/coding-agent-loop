@@ -34,6 +34,16 @@ func SearchDocuments(c *gin.Context) {
 	query := req.Query
 	folder := req.Folder
 
+	// Parse blocked paths from comma-separated string
+	var blockedPaths []string
+	if req.BlockedPaths != "" {
+		blockedPaths = strings.Split(req.BlockedPaths, ",")
+		for i, p := range blockedPaths {
+			blockedPaths[i] = strings.TrimSpace(p)
+		}
+		fmt.Printf("[FOLDER GUARD] Search with blocked paths: %v\n", blockedPaths)
+	}
+
 	// Build search path
 	var searchPath string
 	if folder != "" {
@@ -65,7 +75,7 @@ func SearchDocuments(c *gin.Context) {
 	// Check if ripgrep is available
 	if !isRipgrepAvailable() {
 		// Fallback to basic regex search
-		results, err := basicRegexSearch(searchPath, query, req.Limit)
+		results, err := basicRegexSearch(searchPath, query, req.Limit, blockedPaths)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 				Success: false,
@@ -91,7 +101,7 @@ func SearchDocuments(c *gin.Context) {
 	}
 
 	// Use ripgrep for regex search
-	results, err := ripgrepRegexSearch(searchPath, query, req.Limit)
+	results, err := ripgrepRegexSearch(searchPath, query, req.Limit, blockedPaths)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
@@ -255,7 +265,7 @@ func isRipgrepAvailable() bool {
 }
 
 // ripgrepRegexSearch performs regex search using ripgrep
-func ripgrepRegexSearch(docsDir, query string, limit int) ([]map[string]interface{}, error) {
+func ripgrepRegexSearch(docsDir, query string, limit int, blockedPaths []string) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
 
 	// Build ripgrep command for regex search
@@ -266,9 +276,19 @@ func ripgrepRegexSearch(docsDir, query string, limit int) ([]map[string]interfac
 		"--with-filename", // Include filename
 		"--line-number",   // Include line numbers
 		"--column",        // Include column numbers
-		query,             // Regex query (positional argument)
-		docsDir,           // Search directory
 	}
+
+	// Add exclusion patterns for blocked paths
+	for _, blocked := range blockedPaths {
+		if blocked != "" {
+			// Use glob pattern to exclude directory and its contents
+			args = append(args, "--glob", fmt.Sprintf("!%s/**", strings.TrimSuffix(blocked, "/")))
+			args = append(args, "--glob", fmt.Sprintf("!%s", strings.TrimSuffix(blocked, "/")))
+		}
+	}
+
+	// Add query and search directory
+	args = append(args, query, docsDir)
 
 	// Execute ripgrep
 	cmd := exec.Command("rg", args...)
@@ -371,7 +391,7 @@ func ripgrepRegexSearch(docsDir, query string, limit int) ([]map[string]interfac
 }
 
 // basicRegexSearch performs basic regex search as fallback
-func basicRegexSearch(docsDir, query string, limit int) ([]map[string]interface{}, error) {
+func basicRegexSearch(docsDir, query string, limit int, blockedPaths []string) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
 
 	// Compile regex pattern
@@ -380,13 +400,36 @@ func basicRegexSearch(docsDir, query string, limit int) ([]map[string]interface{
 		return nil, fmt.Errorf("invalid regex pattern: %v", err)
 	}
 
+	// Helper function to check if path is blocked
+	isBlocked := func(relPath string) bool {
+		for _, blocked := range blockedPaths {
+			blocked = strings.TrimSuffix(blocked, "/")
+			if blocked != "" && (strings.HasPrefix(relPath, blocked+"/") || relPath == blocked) {
+				return true
+			}
+		}
+		return false
+	}
+
 	err = filepath.Walk(docsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// Skip directories and non-text files
+		// Get relative path for blocking check
+		relPath, _ := filepath.Rel(docsDir, path)
+
+		// Skip blocked directories entirely
 		if info.IsDir() {
+			if isBlocked(relPath) {
+				fmt.Printf("[FOLDER GUARD] Skipping blocked directory: %s\n", relPath)
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Skip blocked files
+		if isBlocked(relPath) {
 			return nil
 		}
 
@@ -402,7 +445,7 @@ func basicRegexSearch(docsDir, query string, limit int) ([]map[string]interface{
 		}
 
 		contentStr := string(content)
-		relPath, _ := filepath.Rel(docsDir, path)
+		// relPath already computed above for blocking check
 
 		// Determine folder
 		folder := ""

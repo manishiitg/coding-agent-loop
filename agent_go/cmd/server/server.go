@@ -139,6 +139,97 @@ func createCustomTools(includeHumanTools bool) ([]llmtypes.Tool, map[string]inte
 	return allTools, allExecutors, toolCategories
 }
 
+// wrapExecutorsWithChatModeFolderGuard wraps workspace tool executors to block Workflow/ folder WRITE access in chat mode
+// This creates a wrapper that:
+// 1. ALLOWS read access to Workflow/ (list, search, read operations)
+// 2. BLOCKS write access to Workflow/ (update, delete, move, shell commands)
+// 3. BLOCKS git commands (can leak data through .git/ database)
+func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error)) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+	// Blocked paths for WRITE operations - Workflow/ folder is read-only in chat mode
+	blockedWritePaths := []string{"Workflow/", "Workflow"}
+
+	// Write tools that should be blocked for Workflow/ paths
+	writeTools := map[string]bool{
+		"update_workspace_file":     true,
+		"delete_workspace_file":     true,
+		"move_workspace_file":       true,
+		"diff_patch_workspace_file": true,
+	}
+
+	// Path parameters to check for write tools
+	writePathParams := []string{"filepath", "source_filepath", "destination_filepath"}
+
+	wrappedExecutors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
+
+	for toolName, executor := range executors {
+		toolNameCopy := toolName
+		originalExecutor := executor
+
+		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
+			// For shell commands, block git commands and commands referencing Workflow/
+			// Shell commands can potentially write, so we block Workflow/ access entirely
+			if toolNameCopy == "execute_shell_command" {
+				if cmdValue, exists := args["command"]; exists {
+					if cmdStr, ok := cmdValue.(string); ok {
+						cmdLower := strings.ToLower(cmdStr)
+
+						// Block git commands entirely - they can leak/modify Workflow data through .git/ database
+						if strings.HasPrefix(cmdLower, "git ") || strings.Contains(cmdLower, " git ") ||
+							strings.Contains(cmdLower, "&& git ") || strings.Contains(cmdLower, "; git ") ||
+							strings.Contains(cmdLower, "| git ") || strings.Contains(cmdLower, "|| git ") {
+							log.Printf("[CHAT MODE FOLDER GUARD] Blocked git command (can modify restricted folder): %s", cmdStr)
+							return "", fmt.Errorf("access denied: git commands are not allowed in chat mode (they can modify restricted folders)")
+						}
+
+						// Block shell commands referencing Workflow/ (can't distinguish read/write at shell level)
+						for _, blockedPath := range blockedWritePaths {
+							blockedLower := strings.ToLower(strings.TrimSuffix(blockedPath, "/"))
+							if strings.Contains(cmdLower, blockedLower+"/") ||
+								strings.Contains(cmdLower, blockedLower+" ") ||
+								strings.Contains(cmdLower, " "+blockedLower) ||
+								strings.Contains(cmdLower, "/"+blockedLower) ||
+								strings.HasSuffix(cmdLower, blockedLower) {
+								log.Printf("[CHAT MODE FOLDER GUARD] Blocked shell command referencing '%s': %s", blockedPath, cmdStr)
+								return "", fmt.Errorf("access denied: shell commands cannot reference '%s' (use workspace tools for read access)", blockedPath)
+							}
+						}
+					}
+				}
+				// Inject blocked paths for kernel-level sandboxing (defense in depth for writes)
+				log.Printf("[CHAT MODE FOLDER GUARD] Shell command - kernel-level sandbox will block writes to: %v", blockedWritePaths)
+				ctx = context.WithValue(ctx, virtualtools.FolderGuardBlockedPathsKey, blockedWritePaths)
+			}
+
+			// For WRITE tools only, check path parameters for Workflow/ paths
+			if writeTools[toolNameCopy] {
+				for _, paramName := range writePathParams {
+					if paramValue, exists := args[paramName]; exists {
+						if pathStr, ok := paramValue.(string); ok && pathStr != "" {
+							for _, blockedPath := range blockedWritePaths {
+								if strings.HasPrefix(pathStr, blockedPath) {
+									log.Printf("[CHAT MODE FOLDER GUARD] Blocked WRITE to '%s' for tool %s - Workflow/ is read-only in chat mode", pathStr, toolNameCopy)
+									return "", fmt.Errorf("access denied: cannot write to '%s' (Workflow/ folder is read-only in chat mode)", pathStr)
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// READ tools (list, search, read_workspace_file) are ALLOWED for Workflow/
+			// No blocking or context injection needed for read operations
+
+			// Call original executor
+			return originalExecutor(ctx, args)
+		}
+
+		wrappedExecutors[toolNameCopy] = wrappedExecutor
+	}
+
+	log.Printf("[CHAT MODE FOLDER GUARD] Wrapped %d executors - Workflow/ is READ-ONLY (writes blocked)", len(wrappedExecutors))
+	return wrappedExecutors
+}
+
 // ServerCmd represents the server command
 var ServerCmd = &cobra.Command{
 	Use:   "server",
@@ -234,7 +325,6 @@ type StreamingAPI struct {
 	// Active session tracking for page refresh recovery
 	activeSessions    map[string]*ActiveSessionInfo
 	activeSessionsMux sync.RWMutex
-	internalLLM       llmtypes.Model
 
 	// Orchestrator objects in memory for guidance injection
 	workflowOrchestrators    map[string]orchestrator.Orchestrator
@@ -544,23 +634,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Create internal LLM instance for workflow orchestrator
-	internalLLMProvider, err := llm.ValidateProvider(config.Provider)
-	if err != nil {
-		log.Fatalf("Invalid internal LLM provider: %w", err)
-	}
-
-	internalLLMConfig := llm.Config{
-		Provider:    internalLLMProvider,
-		ModelID:     config.ModelID,
-		Temperature: config.Temperature,
-		Logger:      createLLMLogger(),
-	}
-	internalLLM, err := llm.InitializeLLM(internalLLMConfig)
-	if err != nil {
-		log.Fatalf("Failed to create internal LLM: %w", err)
-	}
-
 	api := &StreamingAPI{
 		config:                       config,
 		agentCancelFuncs:             make(map[string]context.CancelFunc),
@@ -574,7 +647,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		mcpConfigPath:                configPath,
 		temperature:                  config.Temperature,
 		workspaceRoot:                "./Tasks",
-		internalLLM:                  internalLLM,
 		toolStatus:                   make(map[string]ToolStatus),
 		enabledTools:                 make(map[string][]string),
 		mcpConfig:                    mcpConfig,
@@ -603,6 +675,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
 	apiRouter.HandleFunc("/capabilities", api.handleCapabilities).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/defaults", api.handleGetLLMDefaults).Methods("GET")
+	apiRouter.HandleFunc("/llm-config/models/metadata", api.handleGetModelMetadata).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/validate-key", api.handleValidateAPIKey).Methods("POST")
 	apiRouter.HandleFunc("/session/stop", api.handleStopSession).Methods("POST")
 	apiRouter.HandleFunc("/session/clear", api.handleClearSession).Methods("POST")
@@ -991,14 +1064,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Extract LLM config (prefer LLMConfig field, fallback to Provider/ModelID)
 			if req.LLMConfig != nil {
 				config.LLMConfig = &database.LLMConfigForStorage{
-					Provider:       req.LLMConfig.Provider,
-					ModelID:        req.LLMConfig.ModelID,
-					FallbackModels: req.LLMConfig.FallbackModels,
+					Provider: req.LLMConfig.Primary.Provider,
+					ModelID:  req.LLMConfig.Primary.ModelID,
 				}
-				if req.LLMConfig.CrossProviderFallback != nil {
-					config.LLMConfig.CrossProvider = &database.CrossProviderFallback{
-						Provider: req.LLMConfig.CrossProviderFallback.Provider,
-						Models:   req.LLMConfig.CrossProviderFallback.Models,
+				// Convert Fallbacks to FallbackModels for storage
+				if len(req.LLMConfig.Fallbacks) > 0 {
+					for _, fallback := range req.LLMConfig.Fallbacks {
+						config.LLMConfig.FallbackModels = append(config.LLMConfig.FallbackModels, fallback.ModelID)
 					}
 				}
 			} else if req.Provider != "" || req.ModelID != "" {
@@ -1060,21 +1132,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Use LLM configuration from request if provided, otherwise use request defaults
 	var finalProvider string
 	var finalModelID string
-	var fallbackModels []string
-	var crossProviderFallback *agent.CrossProviderFallback
+	var fallbacks []agent.FallbackModel
 
 	if req.LLMConfig != nil {
-		// Use LLM configuration from frontend
-		finalProvider = req.LLMConfig.Provider
-		finalModelID = req.LLMConfig.ModelID
-		fallbackModels = req.LLMConfig.FallbackModels
+		// Use LLM configuration from frontend (new unified structure)
+		finalProvider = req.LLMConfig.Primary.Provider
+		finalModelID = req.LLMConfig.Primary.ModelID
 
-		// Only set cross-provider fallback if it's not nil
-		if req.LLMConfig.CrossProviderFallback != nil {
-			crossProviderFallback = &agent.CrossProviderFallback{
-				Provider: req.LLMConfig.CrossProviderFallback.Provider,
-				Models:   req.LLMConfig.CrossProviderFallback.Models,
-			}
+		// Convert Fallbacks to agent.FallbackModel slice
+		for _, fallback := range req.LLMConfig.Fallbacks {
+			fallbacks = append(fallbacks, agent.FallbackModel{
+				Provider: fallback.Provider,
+				ModelID:  fallback.ModelID,
+			})
 		}
 	} else {
 		// Fall back to request defaults
@@ -1673,9 +1743,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			SmartRoutingMaxTools:   20, // Enable when more than 20 tools
 			SmartRoutingMaxServers: 4,  // Enable when more than 4 servers
 
-			// Detailed LLM configuration from frontend
-			FallbackModels:        fallbackModels,
-			CrossProviderFallback: crossProviderFallback,
+			// Detailed LLM configuration from frontend (unified fallback structure)
+			Fallbacks: fallbacks,
 			// Code execution mode: When enabled, only virtual tools are added to LLM
 			// MCP tools are accessed via generated Go code using discover_code_files and write_code
 			UseCodeExecutionMode: useCodeExecutionMode,
@@ -1844,9 +1913,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// This ensures custom tools are available and code generation is triggered
 		// Only register workspace tools if workspace access is enabled
 		// Note: Frontend always sends enable_workspace_access for chat mode (true/false)
-		// For workflow mode, the field is not sent (undefined), so we skip workspace tools here
-		// (they're handled differently in workflow orchestrator)
-		if req.AgentMode == "simple" && llmAgent.GetUnderlyingAgent() != nil {
+		// Chat mode is detected by: "simple", "" (empty/default), or "chat" agent mode
+		// Workflow/orchestrator modes handle workspace tools differently, so exclude them
+		isChatMode := req.AgentMode == "simple" || req.AgentMode == "" || req.AgentMode == "chat"
+		log.Printf("[FOLDER GUARD DEBUG] req.AgentMode=%s, isChatMode=%v, GetUnderlyingAgent()!=nil: %v", req.AgentMode, isChatMode, llmAgent.GetUnderlyingAgent() != nil)
+		if isChatMode && llmAgent.GetUnderlyingAgent() != nil {
 			// Check if workspace access is enabled
 			// Default to true for backward compatibility with legacy requests
 			// nil = inherit default (true), non-nil = explicit override
@@ -1859,6 +1930,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				workspaceTools := virtualtools.CreateWorkspaceTools()
 				workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
 				_, _, toolCategories := createCustomTools(false) // Get toolCategories map (no human tools for chat mode)
+
+				// Apply folder guard to block Workflow/ folder access in chat mode
+				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors)
+				log.Printf("[CHAT MODE FOLDER GUARD] Applied Workflow/ folder restriction to chat mode")
 
 				log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for simple agent (enable_workspace_access: %v)", len(workspaceTools), enableWorkspaceAccess)
 

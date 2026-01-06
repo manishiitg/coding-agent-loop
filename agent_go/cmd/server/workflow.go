@@ -126,20 +126,20 @@ func readProgressForFolder(ctx context.Context, stepsFilePath string) (*StepProg
 func extractIterationFoldersFromTypedChildren(children []virtualtools.WorkspaceFolderItem, existingFolders []string) []string {
 	for _, child := range children {
 		// Check for is_directory or type field using typed struct
-		isDir := child.IsDirectory || child.IsDir || child.Type == "folder"
+		isDir := child.IsDirectory || child.Type == "folder"
 
-		// Get name from filepath or name field
-		name := child.Name
-		if name == "" && child.Filepath != "" {
+		// Get name from FilePath field
+		name := ""
+		if child.FilePath != "" {
 			// Extract relative path from runs folder (e.g., "Workflow/HDFC Personal Accounts/runs/iteration-3/group-1" -> "iteration-3/group-1")
 			// Find "runs/" in the path and extract everything after it
-			runsIndex := strings.Index(child.Filepath, "/runs/")
+			runsIndex := strings.Index(child.FilePath, "/runs/")
 			if runsIndex >= 0 {
-				relativePath := child.Filepath[runsIndex+6:] // Skip "/runs/"
+				relativePath := child.FilePath[runsIndex+6:] // Skip "/runs/"
 				name = relativePath
 			} else {
 				// Fallback: extract last part
-				parts := strings.Split(child.Filepath, "/")
+				parts := strings.Split(child.FilePath, "/")
 				if len(parts) > 0 {
 					name = parts[len(parts)-1]
 				}
@@ -159,15 +159,15 @@ func extractIterationFoldersFromTypedChildren(children []virtualtools.WorkspaceF
 						groupFolders := []string{}
 
 						for _, groupChild := range child.Children {
-							if groupChild.IsDirectory || groupChild.IsDir || groupChild.Type == "folder" {
-								groupName := groupChild.Name
-								if groupName == "" && groupChild.Filepath != "" {
+							if groupChild.IsDirectory || groupChild.Type == "folder" {
+								groupName := ""
+								if groupChild.FilePath != "" {
 									// Extract relative path
-									runsIndex := strings.Index(groupChild.Filepath, "/runs/")
+									runsIndex := strings.Index(groupChild.FilePath, "/runs/")
 									if runsIndex >= 0 {
-										groupName = groupChild.Filepath[runsIndex+6:]
+										groupName = groupChild.FilePath[runsIndex+6:]
 									} else {
-										parts := strings.Split(groupChild.Filepath, "/")
+										parts := strings.Split(groupChild.FilePath, "/")
 										if len(parts) > 0 {
 											groupName = parts[len(parts)-1]
 										}

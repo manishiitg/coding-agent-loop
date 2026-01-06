@@ -12,9 +12,10 @@ import (
 )
 
 type Isolator struct {
-	ReadPaths  []string
-	WritePaths []string
-	WorkDir    string
+	ReadPaths    []string
+	WritePaths   []string
+	BlockedPaths []string // Paths to explicitly deny (deny-list, takes precedence)
+	WorkDir      string
 }
 
 // ExecuteIsolated runs a command with filesystem restrictions
@@ -107,6 +108,24 @@ func (iso *Isolator) generateSandboxProfile() string {
 
 	baseDir := "/app/workspace-docs"
 
+	// Mode 1: BlockedPaths only (deny-list mode for chat)
+	// In this mode, allow everything EXCEPT blocked paths
+	if len(iso.BlockedPaths) > 0 && len(iso.ReadPaths) == 0 && len(iso.WritePaths) == 0 {
+		sb.WriteString("; Deny-list mode: block specific paths\n")
+		sb.WriteString("(deny file-read* file-write*\n")
+		for _, path := range iso.BlockedPaths {
+			// Handle both relative and absolute paths
+			fullPath := path
+			if !strings.HasPrefix(path, "/") {
+				fullPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
+			}
+			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", fullPath))
+		}
+		sb.WriteString(")\n\n")
+		return sb.String()
+	}
+
+	// Mode 2: Allow-list mode (workflow mode with ReadPaths/WritePaths)
 	// CRITICAL: Deny BOTH read and write access to workspace by default
 	sb.WriteString("(deny file-read* file-write*\n")
 	sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", baseDir))
@@ -134,7 +153,22 @@ func (iso *Isolator) generateSandboxProfile() string {
 	downloadsPath := filepath.Join(baseDir, "Downloads")
 	sb.WriteString("(allow file-read* file-write*\n")
 	sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", downloadsPath))
-	sb.WriteString(")\n")
+	sb.WriteString(")\n\n")
+
+	// CRITICAL: Explicit deny for blocked paths (takes precedence, added last)
+	if len(iso.BlockedPaths) > 0 {
+		sb.WriteString("; Explicit deny for blocked paths (overrides allows)\n")
+		sb.WriteString("(deny file-read* file-write*\n")
+		for _, path := range iso.BlockedPaths {
+			// Handle both relative and absolute paths
+			fullPath := path
+			if !strings.HasPrefix(path, "/") {
+				fullPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
+			}
+			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", fullPath))
+		}
+		sb.WriteString(")\n")
+	}
 
 	return sb.String()
 }
@@ -148,6 +182,39 @@ func (iso *Isolator) generateMountScript(command string, args []string) string {
 	sb.WriteString("set -e\n\n")
 
 	baseDir := "/app/workspace-docs"
+
+	// Mode 1: BlockedPaths only (deny-list mode for chat)
+	// In this mode, just hide the blocked paths with tmpfs
+	if len(iso.BlockedPaths) > 0 && len(iso.ReadPaths) == 0 && len(iso.WritePaths) == 0 {
+		sb.WriteString("# Deny-list mode: hide specific blocked paths\n")
+		for _, path := range iso.BlockedPaths {
+			// Handle both relative and absolute paths
+			fullPath := path
+			if !strings.HasPrefix(path, "/") {
+				fullPath = filepath.Join(baseDir, strings.TrimSuffix(path, "/"))
+			}
+			// Hide blocked path with tmpfs (makes it appear empty)
+			sb.WriteString(fmt.Sprintf("mount -t tmpfs tmpfs %s 2>/dev/null || true\n", fullPath))
+		}
+		sb.WriteString("\n")
+
+		// Change to working directory
+		sb.WriteString(fmt.Sprintf("cd %s\n", iso.WorkDir))
+
+		// Build and execute command
+		fullCmd := command
+		if len(args) > 0 {
+			fullCmd = fmt.Sprintf("%s %s", command, strings.Join(args, " "))
+		}
+
+		// Escape single quotes in command for shell execution
+		escapedCmd := strings.ReplaceAll(fullCmd, "'", "'\\''")
+		sb.WriteString(fmt.Sprintf("exec sh -c '%s'\n", escapedCmd))
+
+		return sb.String()
+	}
+
+	// Mode 2: Allow-list mode (workflow mode with ReadPaths/WritePaths)
 	tempDir := "/tmp/workspace-original-$$"
 
 	// Step 1: Create temp directory and bind mount workspace there (preserve original)

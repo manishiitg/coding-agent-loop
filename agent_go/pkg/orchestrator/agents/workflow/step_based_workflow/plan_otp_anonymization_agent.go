@@ -96,11 +96,12 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 	if am.presetPhaseLLM != nil && am.presetPhaseLLM.Provider != "" && am.presetPhaseLLM.ModelID != "" {
 		// Use preset phase LLM
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              am.presetPhaseLLM.Provider,
-			ModelID:               am.presetPhaseLLM.ModelID,
-			FallbackModels:        orchestratorLLMConfig.FallbackModels,        // Preserve fallback models from orchestrator
-			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback, // Preserve cross-provider fallback
-			APIKeys:               orchestratorLLMConfig.APIKeys,               // Preserve API keys from orchestrator
+			Primary: orchestrator.LLMModel{
+				Provider: am.presetPhaseLLM.Provider,
+				ModelID:  am.presetPhaseLLM.ModelID,
+			},
+			Fallbacks: orchestratorLLMConfig.Fallbacks, // Preserve fallbacks from orchestrator
+			APIKeys:   orchestratorLLMConfig.APIKeys,   // Preserve API keys from orchestrator
 		}
 		am.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for anonymization: %s/%s", am.presetPhaseLLM.Provider, am.presetPhaseLLM.ModelID))
 	} else {

@@ -97,6 +97,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   
   // Get selected run folder and workspace fetchFiles function
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
   const updateStepProgressFromEvent = useWorkflowStore(state => state.updateStepProgressFromEvent)
   const { fetchFiles } = useWorkspaceStore()
   
@@ -244,14 +245,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
   // Listen for step_progress_updated events to refresh workspace files for current iteration
   useEffect(() => {
-    if (events.length === 0 || !workspacePath || !selectedRunFolder || selectedRunFolder === 'new') {
+    if (events.length === 0 || !workspacePath) {
       return
     }
-    
+
     // Find new step_progress_updated events that we haven't processed yet
     for (let i = lastProcessedStepProgressIndexRef.current + 1; i < events.length; i++) {
       const event = events[i]
-      
+
       if (event.type === 'step_progress_updated') {
         // Use helper function to extract raw event data (handles nested structure)
         const rawData = getRawEventData(event)
@@ -261,6 +262,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           completed_step_indices?: number[]
           total_steps?: number
           last_completed_step?: number
+          last_completed_step_id?: string  // Step ID for direct node updates (new field from backend)
+          last_completed_step_title?: string
           branch_steps?: {
             [k: string]: {
               branch_executed: string
@@ -268,13 +271,40 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             }
           }
         } | undefined
-        
+
         if (!eventData) {
           continue
         }
-        
-        // Only process if this event is for the currently selected iteration
-        if (eventData.run_folder === selectedRunFolder && eventData.workspace_path === workspacePath) {
+
+        // Check if this event is for the current workspace
+        const isForCurrentWorkspace = eventData.workspace_path === workspacePath
+        // Check if selectedRunFolder matches OR if selectedRunFolder is 'new' (just started execution)
+        // When selectedRunFolder is 'new', we should still process events to update the store
+        const isForCurrentOrNewRun =
+          selectedRunFolder === 'new' ||
+          selectedRunFolder === eventData.run_folder
+
+        console.log('[WorkflowLayout] step_progress_updated event received:', {
+          eventRunFolder: eventData.run_folder,
+          eventWorkspacePath: eventData.workspace_path,
+          selectedRunFolder,
+          workspacePath,
+          isForCurrentWorkspace,
+          isForCurrentOrNewRun,
+          willProcess: isForCurrentWorkspace && isForCurrentOrNewRun,
+          completedIndices: eventData.completed_step_indices,
+          lastCompleted: eventData.last_completed_step
+        })
+
+        // Process if this event is for the current workspace and either:
+        // 1. Matches the selected run folder, OR
+        // 2. We just started execution (selectedRunFolder is 'new')
+        if (isForCurrentWorkspace && isForCurrentOrNewRun) {
+          // If selectedRunFolder is 'new', update it to the actual run folder from the event
+          if (selectedRunFolder === 'new' && eventData.run_folder) {
+            console.log('[WorkflowLayout] Updating selectedRunFolder from new to:', eventData.run_folder)
+            setSelectedRunFolder(eventData.run_folder)
+          }
           console.log('[WorkflowLayout] Step progress updated for current iteration:', {
             runFolder: eventData.run_folder,
             completedSteps: eventData.completed_step_indices?.length || 0,
@@ -287,26 +317,36 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           // This ensures completedStepIndices is updated in real-time during execution
           if (eventData.completed_step_indices !== undefined && eventData.total_steps !== undefined) {
             // Convert branch_steps keys from string to number (event has string keys, StepProgress expects number keys)
-            const branchSteps: Record<number, { branch_executed: string; completed_steps: string[] }> | undefined = 
+            const branchSteps: Record<number, { branch_executed: string; completed_steps: string[] }> | undefined =
               eventData.branch_steps ? Object.fromEntries(
                 Object.entries(eventData.branch_steps).map(([key, value]) => [parseInt(key, 10), value])
               ) : undefined
-            
+
             updateStepProgressFromEvent({
               completed_step_indices: eventData.completed_step_indices,
               total_steps: eventData.total_steps,
               branch_steps: branchSteps,
-              last_updated: new Date().toISOString()
+              last_updated: new Date().toISOString(),
+              last_completed_step_id: eventData.last_completed_step_id  // Pass step ID for direct node updates
             })
           }
           
           // Auto-focus on the last completed step if available
-          if (eventData.last_completed_step !== undefined && eventData.last_completed_step >= 0 && plan?.steps && canvasRef.current) {
+          // Use last_completed_step_id directly from event (no index mapping needed)
+          if (eventData.last_completed_step_id && canvasRef.current) {
+            console.log('[WorkflowLayout] Focusing on completed step using step_id:', {
+              stepId: eventData.last_completed_step_id,
+              stepTitle: eventData.last_completed_step_title,
+              stepIndex: eventData.last_completed_step
+            })
+            canvasRef.current.focusStep(eventData.last_completed_step_id)
+          } else if (eventData.last_completed_step !== undefined && eventData.last_completed_step >= 0 && plan?.steps && canvasRef.current) {
+            // Fallback: use index mapping if step_id not available (backwards compatibility)
             const stepIndex = eventData.last_completed_step
             if (stepIndex < plan.steps.length) {
               const completedStep = plan.steps[stepIndex]
               if (completedStep?.id) {
-                console.log('[WorkflowLayout] Focusing on completed step:', {
+                console.log('[WorkflowLayout] Focusing on completed step using index mapping:', {
                   stepIndex,
                   stepId: completedStep.id,
                   stepTitle: completedStep.title
@@ -325,7 +365,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         }
       }
     }
-  }, [events, workspacePath, selectedRunFolder, fetchFiles, updateStepProgressFromEvent, plan])
+  }, [events, workspacePath, selectedRunFolder, setSelectedRunFolder, fetchFiles, updateStepProgressFromEvent, plan])
 
   // Track if reconnection has already been attempted to prevent duplicates
   const hasReconnectedRef = useRef(false)

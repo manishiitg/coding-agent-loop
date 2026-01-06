@@ -1194,13 +1194,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) getOrchestrationOrchestratorAgentForS
 	if orchestrationStepConfig != nil && orchestrationStepConfig.ExecutionLLM == nil && orchestrationStepConfig.ConditionalLLM != nil {
 		// Check if we got orchestrator default (no tempLLM, no step ExecutionLLM, no preset ExecutionLLM)
 		// If so, use ConditionalLLM as an additional fallback before orchestrator default
-		if llmConfig.Provider == orchestratorLLMConfig.Provider && llmConfig.ModelID == orchestratorLLMConfig.ModelID {
+		if llmConfig.Primary.Provider == orchestratorLLMConfig.Primary.Provider && llmConfig.Primary.ModelID == orchestratorLLMConfig.Primary.ModelID {
 			conditionalLLMConfig := orchestrationStepConfig.ConditionalLLM
 			llmConfig = &orchestrator.LLMConfig{
-				Provider:       conditionalLLMConfig.Provider,
-				ModelID:        conditionalLLMConfig.ModelID,
-				FallbackModels: []string{},
-				APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys
+				Primary: orchestrator.LLMModel{
+					Provider: conditionalLLMConfig.Provider,
+					ModelID:  conditionalLLMConfig.ModelID,
+				},
+				APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys
 			}
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional LLM for orchestration orchestrator (fallback when ExecutionLLM not available): %s/%s", conditionalLLMConfig.Provider, conditionalLLMConfig.ModelID))
 		}

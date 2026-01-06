@@ -22,6 +22,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"mcpagent/events"
+	"workspace/models"
 
 	"golang.org/x/image/draw"
 )
@@ -45,6 +46,8 @@ const (
 	FolderGuardReadPathsKey contextKey = "folder_guard_read_paths"
 	// FolderGuardWritePathsKey is the context key for folder guard write paths
 	FolderGuardWritePathsKey contextKey = "folder_guard_write_paths"
+	// FolderGuardBlockedPathsKey is the context key for blocked paths (deny list)
+	FolderGuardBlockedPathsKey contextKey = "folder_guard_blocked_paths"
 )
 
 // Legacy constants for backward compatibility (use exported versions)
@@ -207,44 +210,33 @@ func emitWorkspaceFileOperation(ctx context.Context, operation, filepath, folder
 	}
 }
 
-// WorkspaceAPIResponse represents the response structure from the workspace API
-type WorkspaceAPIResponse struct {
-	Success bool        `json:"success"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data"` // Can be WorkspaceFolderListing, WorkspaceFileContent, etc.
-	Error   string      `json:"error,omitempty"`
-}
+// Type aliases for workspace models - using proper types from workspace/models package
+type (
+	// WorkspaceAPIResponse uses the generic API response from workspace models
+	// Note: We use interface{} for Data since we need to handle various response types
+	WorkspaceAPIResponse = models.APIResponse[interface{}]
 
-// WorkspaceFile represents a file in the workspace
-type WorkspaceFile struct {
-	Filepath    string    `json:"filepath"`
-	Size        int64     `json:"size,omitempty"`
-	ModifiedAt  time.Time `json:"modified_at,omitempty"`
-	IsDirectory bool      `json:"is_directory,omitempty"`
-}
+	// WorkspaceDocument is an alias for workspace Document type
+	WorkspaceDocument = models.Document
 
-// WorkspaceFolderItem represents a single item (file or folder) in a workspace folder listing
-type WorkspaceFolderItem struct {
-	Filepath    string                `json:"filepath"`
-	Folder      string                `json:"folder,omitempty"`
-	Name        string                `json:"name,omitempty"`
-	Size        int64                 `json:"size,omitempty"`
-	ModifiedAt  time.Time             `json:"modified_at,omitempty"`
-	Type        string                `json:"type,omitempty"` // "file" or "folder"
-	IsDirectory bool                  `json:"is_directory,omitempty"`
-	IsDir       bool                  `json:"is_dir,omitempty"`   // Alternative field name
-	Children    []WorkspaceFolderItem `json:"children,omitempty"` // Nested children for folders
-}
+	// WorkspaceFile is an alias for workspace Document type (used for file listings)
+	WorkspaceFile = models.Document
 
-// WorkspaceFolderListing represents the folder listing response from workspace API
-// The API returns an array of folder items, where each item can have nested children
-type WorkspaceFolderListing []WorkspaceFolderItem
+	// WorkspaceFileContent is an alias for workspace Document type (used for file content)
+	WorkspaceFileContent = models.Document
 
-// WorkspaceFileContent represents the content response when reading a file
-type WorkspaceFileContent struct {
-	Filepath string `json:"filepath"`
-	Content  string `json:"content"`
-}
+	// WorkspaceFolderItem is an alias for workspace Document type (used for folder items)
+	WorkspaceFolderItem = models.Document
+
+	// WorkspaceFolderListing is an alias for []models.Document (folder listing response)
+	WorkspaceFolderListing = []models.Document
+
+	// WorkspaceSearchResult is an alias for workspace SearchResult type
+	WorkspaceSearchResult = models.SearchResult
+
+	// WorkspaceSearchResponse is an alias for workspace SearchResponse type
+	WorkspaceSearchResponse = models.SearchResponse
+)
 
 // getWorkspaceAPIURL returns the workspace API base URL from environment or default
 func getWorkspaceAPIURL() string {
@@ -252,6 +244,13 @@ func getWorkspaceAPIURL() string {
 		return url
 	}
 	return "http://localhost:8081"
+}
+
+// isSemanticSearchEnabled checks if semantic search is enabled via environment variable
+// Returns true only if WORKSPACE_ENABLE_SEMANTIC_SEARCH is explicitly set to "true" or "1"
+func isSemanticSearchEnabled() bool {
+	val := os.Getenv("WORKSPACE_ENABLE_SEMANTIC_SEARCH")
+	return strings.ToLower(val) == "true" || val == "1"
 }
 
 // isImageFile checks if a file is an image based on its extension
@@ -494,33 +493,35 @@ func CreateWorkspaceTools() []llmtypes.Tool {
 	}
 	workspaceTools = append(workspaceTools, regexSearchTool)
 
-	// Add semantic_search_workspace_files tool
-	semanticSearchTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "semantic_search_workspace_files",
-			Description: "Search files using AI-powered semantic similarity. Finds content by meaning, not just exact text matches. Uses embeddings to understand context and relationships between concepts. For exact text matches, use search_workspace_files tool instead.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"query": map[string]interface{}{
-						"type":        "string",
-						"description": "Natural language search query (e.g., 'docker configuration', 'error handling', 'API endpoints', 'authentication setup', 'database connection')",
+	// Add semantic_search_workspace_files tool only if enabled via environment variable
+	if isSemanticSearchEnabled() {
+		semanticSearchTool := llmtypes.Tool{
+			Type: "function",
+			Function: &llmtypes.FunctionDefinition{
+				Name:        "semantic_search_workspace_files",
+				Description: "Search files using AI-powered semantic similarity. Finds content by meaning, not just exact text matches. Uses embeddings to understand context and relationships between concepts. For exact text matches, use search_workspace_files tool instead.",
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"query": map[string]interface{}{
+							"type":        "string",
+							"description": "Natural language search query (e.g., 'docker configuration', 'error handling', 'API endpoints', 'authentication setup', 'database connection')",
+						},
+						"folder": map[string]interface{}{
+							"type":        "string",
+							"description": "Folder path to search within (e.g., 'docs', 'src', 'configs'). Required parameter for semantic search.",
+						},
+						"limit": map[string]interface{}{
+							"type":        "integer",
+							"description": "Maximum number of semantic results to return (default: 10, max: 50)",
+						},
 					},
-					"folder": map[string]interface{}{
-						"type":        "string",
-						"description": "Folder path to search within (e.g., 'docs', 'src', 'configs'). Required parameter for semantic search.",
-					},
-					"limit": map[string]interface{}{
-						"type":        "integer",
-						"description": "Maximum number of semantic results to return (default: 10, max: 50)",
-					},
-				},
-				"required": []string{"query", "folder"},
-			}),
-		},
+					"required": []string{"query", "folder"},
+				}),
+			},
+		}
+		workspaceTools = append(workspaceTools, semanticSearchTool)
 	}
-	workspaceTools = append(workspaceTools, semanticSearchTool)
 
 	// Add glob_discover_workspace_files tool
 	globDiscoverTool := llmtypes.Tool{
@@ -732,7 +733,10 @@ func CreateWorkspaceToolExecutors() map[string]func(ctx context.Context, args ma
 	executors["diff_patch_workspace_file"] = handleDiffPatchWorkspaceFile
 	// executors["get_workspace_file_nested"] = handleGetWorkspaceFileNested // REMOVED - no longer needed
 	executors["regex_search_workspace_files"] = handleRegexSearchWorkspaceFiles
-	executors["semantic_search_workspace_files"] = handleSemanticSearchWorkspaceFiles
+	// Only register semantic search executor if enabled
+	if isSemanticSearchEnabled() {
+		executors["semantic_search_workspace_files"] = handleSemanticSearchWorkspaceFiles
+	}
 	executors["glob_discover_workspace_files"] = handleGlobDiscoverWorkspaceFiles
 	executors["sync_workspace_to_github"] = handleSyncWorkspaceToGitHub
 	executors["get_workspace_github_status"] = handleGetWorkspaceGitHubStatus
@@ -763,6 +767,17 @@ func handleListWorkspaceFiles(ctx context.Context, args map[string]interface{}) 
 		}
 	}
 
+	// Extract blocked paths from context (for folder guard)
+	var blockedPaths []string
+	if bp := ctx.Value(FolderGuardBlockedPathsKey); bp != nil {
+		if paths, ok := bp.([]string); ok {
+			blockedPaths = paths
+			fmt.Printf("[FOLDER GUARD DEBUG] list_workspace_files extracted blocked paths from context: %v\n", blockedPaths)
+		}
+	} else {
+		fmt.Printf("[FOLDER GUARD DEBUG] list_workspace_files no blocked paths in context\n")
+	}
+
 	// Build API URL
 	apiURL := getWorkspaceAPIURL() + "/api/documents"
 
@@ -776,6 +791,10 @@ func handleListWorkspaceFiles(ctx context.Context, args map[string]interface{}) 
 	q := req.URL.Query()
 	q.Add("folder", folder)
 	q.Add("max_depth", fmt.Sprintf("%d", maxDepth))
+	// Add blocked paths if present (for folder guard)
+	if len(blockedPaths) > 0 {
+		q.Add("blocked_paths", strings.Join(blockedPaths, ","))
+	}
 	req.URL.RawQuery = q.Encode()
 
 	// Debug logging
@@ -828,6 +847,9 @@ func handleListWorkspaceFiles(ctx context.Context, args map[string]interface{}) 
 	if apiResp.Data == nil {
 		fmt.Printf("[DEBUG] Workspace API returned nil data for folder: %s, maxDepth: %d\n", folder, maxDepth)
 	}
+
+	// Note: Blocked paths filtering is now handled by the Workspace API
+	// The blocked_paths query parameter was passed above, so results are already filtered
 
 	// Marshal the response data
 	responseData, err := json.Marshal(apiResp.Data)
@@ -1214,6 +1236,14 @@ func handleRegexSearchWorkspaceFiles(ctx context.Context, args map[string]interf
 		limit = 100 // Max limit
 	}
 
+	// Extract blocked paths from context (for folder guard)
+	var blockedPaths []string
+	if bp := ctx.Value(FolderGuardBlockedPathsKey); bp != nil {
+		if paths, ok := bp.([]string); ok {
+			blockedPaths = paths
+		}
+	}
+
 	// Build API URL with proper URL encoding
 	baseURL := getWorkspaceAPIURL() + "/api/search"
 	u, err := url.Parse(baseURL)
@@ -1226,6 +1256,10 @@ func handleRegexSearchWorkspaceFiles(ctx context.Context, args map[string]interf
 	q.Set("query", query)
 	q.Set("folder", folder)
 	q.Set("limit", fmt.Sprintf("%d", limit))
+	// Add blocked paths if present
+	if len(blockedPaths) > 0 {
+		q.Set("blocked_paths", strings.Join(blockedPaths, ","))
+	}
 	u.RawQuery = q.Encode()
 
 	apiURL := u.String()
@@ -1270,6 +1304,9 @@ func handleRegexSearchWorkspaceFiles(ctx context.Context, args map[string]interf
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
 
+	// Note: Blocked paths filtering is now handled by the Workspace API
+	// The blocked_paths query parameter was passed above, so results are already filtered
+
 	// Debug: Log the actual data structure for troubleshooting
 	if apiResp.Data != nil {
 		if dataBytes, err := json.Marshal(apiResp.Data); err == nil {
@@ -1308,6 +1345,14 @@ func handleSemanticSearchWorkspaceFiles(ctx context.Context, args map[string]int
 		limit = 50 // Max limit for semantic search
 	}
 
+	// Extract blocked paths from context (for folder guard)
+	var blockedPaths []string
+	if bp := ctx.Value(FolderGuardBlockedPathsKey); bp != nil {
+		if paths, ok := bp.([]string); ok {
+			blockedPaths = paths
+		}
+	}
+
 	// Build API URL with proper URL encoding
 	baseURL := getWorkspaceAPIURL() + "/api/search/semantic"
 	u, err := url.Parse(baseURL)
@@ -1320,6 +1365,10 @@ func handleSemanticSearchWorkspaceFiles(ctx context.Context, args map[string]int
 	q.Set("query", query)
 	q.Set("folder", folder)
 	q.Set("limit", fmt.Sprintf("%d", limit))
+	// Add blocked paths if present
+	if len(blockedPaths) > 0 {
+		q.Set("blocked_paths", strings.Join(blockedPaths, ","))
+	}
 
 	u.RawQuery = q.Encode()
 	finalURL := u.String()
@@ -1353,6 +1402,9 @@ func handleSemanticSearchWorkspaceFiles(ctx context.Context, args map[string]int
 		return "", fmt.Errorf("semantic search API error: %s", apiResp.Error)
 	}
 
+	// Note: Blocked paths filtering is now handled by the Workspace API
+	// The blocked_paths query parameter was passed above, so results are already filtered
+
 	// Format the semantic search results for the LLM
 	return formatSemanticSearchResults(apiResp.Data, query)
 }
@@ -1374,8 +1426,16 @@ func handleGlobDiscoverWorkspaceFiles(ctx context.Context, args map[string]inter
 
 	includeDirs := getBoolValue(args, "include_dirs")
 
+	// Extract blocked paths from context (for folder guard)
+	var blockedPaths []string
+	if bp := ctx.Value(FolderGuardBlockedPathsKey); bp != nil {
+		if paths, ok := bp.([]string); ok {
+			blockedPaths = paths
+		}
+	}
+
 	// Build API URL with proper URL encoding
-	baseURL := getWorkspaceAPIURL() + "/api/documents/glob"
+	baseURL := getWorkspaceAPIURL() + "/api/glob"
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse base URL: %w", err)
@@ -1392,6 +1452,10 @@ func handleGlobDiscoverWorkspaceFiles(ctx context.Context, args map[string]inter
 	}
 	if includeDirs {
 		q.Set("include_dirs", "true")
+	}
+	// Add blocked paths if present
+	if len(blockedPaths) > 0 {
+		q.Set("blocked_paths", strings.Join(blockedPaths, ","))
 	}
 	u.RawQuery = q.Encode()
 
@@ -1437,87 +1501,97 @@ func handleGlobDiscoverWorkspaceFiles(ctx context.Context, args map[string]inter
 		return "", fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
 
+	// Note: Blocked paths filtering is now handled by the Workspace API
+	// The blocked_paths query parameter was passed above, so results are already filtered
+
 	// Format the glob discovery results for the LLM
 	return formatGlobDiscoveryResults(apiResp.Data, pattern)
 }
 
 // formatGlobDiscoveryResults formats the glob discovery results for the LLM
+// Returns only file paths - this is a file discovery tool, not content retrieval
 func formatGlobDiscoveryResults(data interface{}, pattern string) (string, error) {
-	// Convert data to array of documents
-	var documents []WorkspaceFolderItem
+	// Handle nil data (no matches found)
+	if data == nil {
+		return fmt.Sprintf("**Glob: `%s`** - Found 0 files\n\nNo files found matching the pattern.\n", pattern), nil
+	}
+
+	// Extract file paths from response
+	var filepaths []string
+
+	// Handle both map response (with results key) and direct array response
 	switch v := data.(type) {
+	case map[string]interface{}:
+		// API returns wrapped response like {"results": [...], "total": N}
+		// Try common keys: "results", "files", "documents", "matches"
+		var resultsArray []interface{}
+		for _, key := range []string{"results", "files", "documents", "matches"} {
+			if results, exists := v[key]; exists {
+				if arr, ok := results.([]interface{}); ok {
+					resultsArray = arr
+					break
+				}
+			}
+		}
+		// If no known key found, try to use the map values directly
+		if resultsArray == nil {
+			// Debug: log available keys
+			keys := make([]string, 0, len(v))
+			for k := range v {
+				keys = append(keys, k)
+			}
+			fmt.Printf("[DEBUG] formatGlobDiscoveryResults: map keys available: %v\n", keys)
+		}
+		// Extract filepaths from results array
+		for _, item := range resultsArray {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				if fp := getStringValue(itemMap, "filepath"); fp != "" {
+					filepaths = append(filepaths, fp)
+				} else if fp := getStringValue(itemMap, "path"); fp != "" {
+					filepaths = append(filepaths, fp)
+				} else if fp := getStringValue(itemMap, "name"); fp != "" {
+					filepaths = append(filepaths, fp)
+				}
+			} else if str, ok := item.(string); ok {
+				// Handle case where results is just an array of strings
+				filepaths = append(filepaths, str)
+			}
+		}
 	case []interface{}:
-		// Convert []interface{} to []WorkspaceFolderItem
+		// Direct array response
 		for _, item := range v {
 			if itemMap, ok := item.(map[string]interface{}); ok {
-				doc := WorkspaceFolderItem{
-					Filepath:    getStringValue(itemMap, "filepath"),
-					Folder:      getStringValue(itemMap, "folder"),
-					Name:        getStringValue(itemMap, "name"),
-					Size:        int64(getIntValue(itemMap, "size")),
-					Type:        getStringValue(itemMap, "type"),
-					IsDirectory: getBoolValue(itemMap, "is_directory"),
+				if fp := getStringValue(itemMap, "filepath"); fp != "" {
+					filepaths = append(filepaths, fp)
+				} else if fp := getStringValue(itemMap, "path"); fp != "" {
+					filepaths = append(filepaths, fp)
+				} else if fp := getStringValue(itemMap, "name"); fp != "" {
+					filepaths = append(filepaths, fp)
 				}
-				// Parse ModifiedAt if present
-				if modTimeStr := getStringValue(itemMap, "modified_at"); modTimeStr != "" {
-					if t, err := time.Parse(time.RFC3339, modTimeStr); err == nil {
-						doc.ModifiedAt = t
-					}
-				}
-				documents = append(documents, doc)
+			} else if str, ok := item.(string); ok {
+				filepaths = append(filepaths, str)
 			}
 		}
 	default:
-		return "", fmt.Errorf("unexpected response format from glob API - expected array, got %T", data)
+		return "", fmt.Errorf("unexpected response format from glob API - expected array or object, got %T", data)
 	}
 
-	// Format the response
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("🔍 **Glob Pattern Discovery: `%s`**\n", pattern))
-	result.WriteString(fmt.Sprintf("**Found %d matching files**:\n", len(documents)))
+	// Sort filepaths alphabetically
+	sort.Strings(filepaths)
 
-	if len(documents) == 0 {
-		result.WriteString("No files found matching the glob pattern.\n")
-		result.WriteString("💡 **Tips**:\n")
-		result.WriteString("- Use `*` to match any characters (e.g., `*.go`)\n")
-		result.WriteString("- Use `**` to match directories recursively (e.g., `**/*.md`)\n")
-		result.WriteString("- Use `?` to match a single character (e.g., `test?.py`)\n")
-		result.WriteString("- Use `[chars]` to match character sets (e.g., `file[0-9].txt`)\n")
+	// Format simple output - just paths
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("**Glob: `%s`** - Found %d files\n\n", pattern, len(filepaths)))
+
+	if len(filepaths) == 0 {
+		result.WriteString("No files found matching the pattern.\n")
 		return result.String(), nil
 	}
 
-	// Sort documents: directories first (if included), then by filepath
-	sort.Slice(documents, func(i, j int) bool {
-		if documents[i].IsDirectory != documents[j].IsDirectory {
-			return documents[i].IsDirectory
-		}
-		return documents[i].Filepath < documents[j].Filepath
-	})
-
-	for i, doc := range documents {
-		icon := "📄"
-		if doc.IsDirectory {
-			icon = "📁"
-		}
-
-		result.WriteString(fmt.Sprintf("%d. %s **%s**", i+1, icon, doc.Filepath))
-
-		if doc.Folder != "" {
-			result.WriteString(fmt.Sprintf(" | 📂 `%s`", doc.Folder))
-		}
-
-		if !doc.IsDirectory && doc.Size > 0 {
-			result.WriteString(fmt.Sprintf(" | 📊 %d bytes", doc.Size))
-		}
-
-		if !doc.ModifiedAt.IsZero() {
-			result.WriteString(fmt.Sprintf(" | 🕒 %s", doc.ModifiedAt.Format("2006-01-02 15:04:05")))
-		}
-
-		result.WriteString("\n")
+	// List paths only
+	for _, fp := range filepaths {
+		result.WriteString(fmt.Sprintf("- %s\n", fp))
 	}
-
-	result.WriteString("💡 **Tip**: Use `read_workspace_file` to read the content of any file.")
 
 	return result.String(), nil
 }
@@ -1747,6 +1821,7 @@ func handleExecuteShellCommand(ctx context.Context, args map[string]interface{})
 	// NEW: Extract folder guard paths from context
 	var folderGuardReadPaths []string
 	var folderGuardWritePaths []string
+	var folderGuardBlockedPaths []string
 
 	if readPaths := ctx.Value(FolderGuardReadPathsKey); readPaths != nil {
 		if paths, ok := readPaths.([]string); ok {
@@ -1758,18 +1833,24 @@ func handleExecuteShellCommand(ctx context.Context, args map[string]interface{})
 			folderGuardWritePaths = paths
 		}
 	}
+	if blockedPaths := ctx.Value(FolderGuardBlockedPathsKey); blockedPaths != nil {
+		if paths, ok := blockedPaths.([]string); ok {
+			folderGuardBlockedPaths = paths
+		}
+	}
 
 	// Add folder guard configuration to request if paths are set
-	if len(folderGuardReadPaths) > 0 || len(folderGuardWritePaths) > 0 {
+	if len(folderGuardReadPaths) > 0 || len(folderGuardWritePaths) > 0 || len(folderGuardBlockedPaths) > 0 {
 		requestBody["folder_guard"] = map[string]interface{}{
 			"enabled":          true,
 			"read_paths":       folderGuardReadPaths,
 			"write_paths":      folderGuardWritePaths,
+			"blocked_paths":    folderGuardBlockedPaths,
 			"enforcement_mode": "strict",
 		}
 
-		fmt.Printf("[DEBUG] Folder guard enabled for shell execution - Read: %v, Write: %v\n",
-			folderGuardReadPaths, folderGuardWritePaths)
+		fmt.Printf("[DEBUG] Folder guard enabled for shell execution - Read: %v, Write: %v, Blocked: %v\n",
+			folderGuardReadPaths, folderGuardWritePaths, folderGuardBlockedPaths)
 	}
 
 	// Create HTTP request with context
@@ -2246,6 +2327,110 @@ func handleDiffPatchWorkspaceFile(ctx context.Context, args map[string]interface
 	emitWorkspaceFileOperation(ctx, "patch", filepath, "")
 
 	return string(responseData), nil
+}
+
+// filterBlockedPathsFromListResults filters out list results that match blocked paths (folder guard)
+// This handles the list_workspace_files response format (array of file/folder objects)
+func filterBlockedPathsFromListResults(data interface{}, blockedPaths []string) interface{} {
+	if len(blockedPaths) == 0 {
+		return data
+	}
+
+	// Handle direct array of items (list_workspace_files format)
+	if resultsArray, ok := data.([]interface{}); ok {
+		var filteredResults []interface{}
+		for _, item := range resultsArray {
+			itemMap, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			// Check name and path fields
+			name := getStringValue(itemMap, "name")
+			path := getStringValue(itemMap, "path")
+
+			isBlocked := false
+			for _, blockedPath := range blockedPaths {
+				// Check if name or path starts with blocked path
+				if strings.HasPrefix(name, blockedPath) || strings.HasPrefix(path, blockedPath) {
+					isBlocked = true
+					fmt.Printf("[FOLDER GUARD] Filtered out list item from blocked path: %s\n", name)
+					break
+				}
+			}
+
+			if !isBlocked {
+				// Recursively filter children if present
+				if children, exists := itemMap["children"]; exists {
+					itemMap["children"] = filterBlockedPathsFromListResults(children, blockedPaths)
+				}
+				filteredResults = append(filteredResults, item)
+			}
+		}
+		return filteredResults
+	}
+
+	return data
+}
+
+// filterBlockedPathsFromResults filters out results that match blocked paths (folder guard)
+// This is used to enforce folder guard restrictions on search results
+func filterBlockedPathsFromResults(data interface{}, blockedPaths []string) interface{} {
+	if len(blockedPaths) == 0 {
+		return data
+	}
+
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return data
+	}
+
+	// Get the results array
+	results, exists := dataMap["results"]
+	if !exists {
+		return data
+	}
+
+	resultsArray, ok := results.([]interface{})
+	if !ok {
+		return data
+	}
+
+	// Filter out results from blocked paths
+	var filteredResults []interface{}
+	for _, item := range resultsArray {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Check filepath and folder fields
+		filepath := getStringValue(itemMap, "filepath")
+		folder := getStringValue(itemMap, "folder")
+
+		isBlocked := false
+		for _, blockedPath := range blockedPaths {
+			// Check if filepath or folder starts with blocked path
+			if strings.HasPrefix(filepath, blockedPath) || strings.HasPrefix(folder, blockedPath) {
+				isBlocked = true
+				fmt.Printf("[FOLDER GUARD] Filtered out result from blocked path: %s\n", filepath)
+				break
+			}
+		}
+
+		if !isBlocked {
+			filteredResults = append(filteredResults, item)
+		}
+	}
+
+	// Update the results in the data map
+	dataMap["results"] = filteredResults
+	// Update total count if present
+	if _, exists := dataMap["total"]; exists {
+		dataMap["total"] = len(filteredResults)
+	}
+
+	return dataMap
 }
 
 // Helper functions for safe type conversion

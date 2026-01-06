@@ -270,7 +270,7 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 	// Removed verbose logging
 
 	for _, fileInfo := range filesList {
-		filepath := fileInfo.Filepath
+		filepath := fileInfo.FilePath
 		if filepath == "" {
 			// Removed verbose logging
 			continue
@@ -448,7 +448,7 @@ func (bo *BaseOrchestrator) ListWorkspaceDirectories(ctx context.Context, dirPat
 	// Extract only directories (folders) from the list
 	var directoryNames []string
 	for _, fileInfo := range filesList {
-		filepath := fileInfo.Filepath
+		filepath := fileInfo.FilePath
 		if filepath == "" {
 			continue
 		}
@@ -569,7 +569,7 @@ func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath stri
 	// Extract file and directory names (last part of path)
 	var names []string
 	for _, fileInfo := range filesList {
-		filepath := fileInfo.Filepath
+		filepath := fileInfo.FilePath
 		if filepath == "" {
 			continue
 		}

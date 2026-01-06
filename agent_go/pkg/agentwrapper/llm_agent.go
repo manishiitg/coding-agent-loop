@@ -56,9 +56,8 @@ type LLMAgentConfig struct {
 	SmartRoutingMaxTools   int  // Threshold for max tools before enabling smart routing
 	SmartRoutingMaxServers int  // Threshold for max servers before enabling smart routing
 
-	// Detailed LLM configuration from frontend
-	FallbackModels        []string               // Custom fallback models from frontend
-	CrossProviderFallback *CrossProviderFallback // Cross-provider fallback configuration
+	// Unified fallback configuration (replaces FallbackModels and CrossProviderFallback)
+	Fallbacks []FallbackModel // Fallback models with optional provider override
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed via generated Go code using discover_code_files and write_code
 	UseCodeExecutionMode bool
@@ -78,10 +77,11 @@ type LLMAgentConfig struct {
 	ContextEditingTurnThreshold int  // Turn age threshold for context editing (0 = use default: 5)
 }
 
-// CrossProviderFallback represents cross-provider fallback configuration
-type CrossProviderFallback struct {
-	Provider string   `json:"provider"`
-	Models   []string `json:"models"`
+// FallbackModel represents a fallback model configuration
+// If Provider is empty, it uses the same provider as the primary model
+type FallbackModel struct {
+	Provider string `json:"provider,omitempty"` // Optional: override provider for cross-provider fallback
+	ModelID  string `json:"model_id"`
 }
 
 // agentMetricsImpl is the concrete implementation of AgentMetrics interface
@@ -190,16 +190,25 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		mcpagent.WithToolTimeout(config.ToolTimeout),
 	}
 
-	// Add cross-provider fallback configuration if provided
-	if config.CrossProviderFallback != nil {
-		// Convert from agentwrapper.CrossProviderFallback to mcpagent.CrossProviderFallback
+	// Add cross-provider fallback configuration if any fallbacks have a different provider
+	var crossProviderModels []string
+	var crossProviderName string
+	for _, fb := range config.Fallbacks {
+		if fb.Provider != "" && fb.Provider != string(config.Provider) {
+			crossProviderModels = append(crossProviderModels, fb.ModelID)
+			if crossProviderName == "" {
+				crossProviderName = fb.Provider
+			}
+		}
+	}
+	if len(crossProviderModels) > 0 {
 		crossProviderFallback := &mcpagent.CrossProviderFallback{
-			Provider: config.CrossProviderFallback.Provider,
-			Models:   config.CrossProviderFallback.Models,
+			Provider: crossProviderName,
+			Models:   crossProviderModels,
 		}
 		agentOptions = append(agentOptions, mcpagent.WithCrossProviderFallback(crossProviderFallback))
 		logger.Info(fmt.Sprintf("🔄 Cross-provider fallback configured - Provider: %s, Models: %v",
-			crossProviderFallback.Provider, crossProviderFallback.Models))
+			crossProviderName, crossProviderModels))
 	}
 
 	// Add selected servers for tool filtering
@@ -628,28 +637,27 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, trac
 		return nil, fmt.Errorf("invalid LLM provider '%s': %w", config.Provider, err)
 	}
 
-	// Build fallback models list
+	// Build fallback models list from unified Fallbacks structure
 	var fallbackModels []string
 
-	// Add custom fallback models from frontend if provided
-	if len(config.FallbackModels) > 0 {
-		fallbackModels = append(fallbackModels, config.FallbackModels...)
-		logger.Info(fmt.Sprintf("Using custom fallback models from frontend: %v", config.FallbackModels))
+	// Add custom fallback models from config if provided
+	if len(config.Fallbacks) > 0 {
+		for _, fb := range config.Fallbacks {
+			// Format: provider/model for cross-provider fallbacks, or just model for same-provider
+			if fb.Provider != "" && fb.Provider != string(config.Provider) {
+				fallbackModels = append(fallbackModels, fmt.Sprintf("%s/%s", fb.Provider, fb.ModelID))
+			} else {
+				fallbackModels = append(fallbackModels, fb.ModelID)
+			}
+		}
+		logger.Info(fmt.Sprintf("Using custom fallback models from config: %v", fallbackModels))
 	} else {
 		// Use default fallback models for the provider
 		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModels(llmProvider)...)
-		logger.Info(fmt.Sprintf("Using default fallback models for provider %s: %v", config.Provider, fallbackModels))
-	}
-
-	// Add cross-provider fallback models if configured
-	if config.CrossProviderFallback != nil && len(config.CrossProviderFallback.Models) > 0 {
-		fallbackModels = append(fallbackModels, config.CrossProviderFallback.Models...)
-		logger.Info(fmt.Sprintf("Added cross-provider fallback models for %s: %v", config.CrossProviderFallback.Provider, config.CrossProviderFallback.Models))
-	} else {
-		// Add default cross-provider fallbacks
+		// Also add default cross-provider fallbacks
 		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llmProvider)
 		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-		logger.Info(fmt.Sprintf("Added default cross-provider fallback models: %v", crossProviderFallbacks))
+		logger.Info(fmt.Sprintf("Using default fallback models for provider %s: %v", config.Provider, fallbackModels))
 	}
 
 	// Create a separate LLM logger that writes to llm_debug.log
@@ -725,11 +733,10 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 		}
 
 		// Update the agent's history with the updated messages from the conversation
-		if len(updatedMessages) > len(messages) {
-			w.mu.Lock()
-			w.history = updatedMessages
-			w.mu.Unlock()
-		}
+		// Always update - messages may have been summarized (fewer) or expanded (more)
+		w.mu.Lock()
+		w.history = updatedMessages
+		w.mu.Unlock()
 
 		// Send the full response as a single chunk
 		if response != "" {

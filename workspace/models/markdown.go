@@ -46,16 +46,18 @@ type PatchRequest struct {
 
 // SearchRequest represents the request to search documents
 type SearchRequest struct {
-	Query  string `form:"query" binding:"required"`
-	Folder string `form:"folder"` // Optional folder to search in
-	Limit  int    `form:"limit,default=50"`
+	Query        string `form:"query" binding:"required"`
+	Folder       string `form:"folder"`                     // Optional folder to search in
+	Limit        int    `form:"limit,default=50"`
+	BlockedPaths string `form:"blocked_paths"`              // Comma-separated list of paths to exclude from search
 }
 
 // SemanticSearchRequest represents the request for semantic search
 type SemanticSearchRequest struct {
-	Query  string `form:"query" binding:"required"`
-	Folder string `form:"folder"`           // Optional folder to search in
-	Limit  int    `form:"limit,default=10"` // Default to 10 for semantic search
+	Query        string `form:"query" binding:"required"`
+	Folder       string `form:"folder"`                     // Optional folder to search in
+	Limit        int    `form:"limit,default=10"`           // Default to 10 for semantic search
+	BlockedPaths string `form:"blocked_paths"`              // Comma-separated list of paths to exclude from search
 }
 
 // SemanticSearchResult represents a semantic search result

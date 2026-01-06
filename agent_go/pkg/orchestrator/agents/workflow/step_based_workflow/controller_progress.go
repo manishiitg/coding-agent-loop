@@ -238,6 +238,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitStepProgressUpdatedEvent(ctx cont
 		}
 	}
 
+	// Get step ID and title from the approved plan if available
+	var lastCompletedStepId string
+	var lastCompletedStepTitle string
+	if lastCompletedStep >= 0 && hcpo.approvedPlan != nil && lastCompletedStep < len(hcpo.approvedPlan.Steps) {
+		step := hcpo.approvedPlan.Steps[lastCompletedStep]
+		lastCompletedStepId = step.GetID()
+		lastCompletedStepTitle = step.GetTitle()
+	}
+
 	// Use local BranchStepProgress (already in same package)
 	branchSteps := progress.BranchSteps
 
@@ -245,13 +254,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitStepProgressUpdatedEvent(ctx cont
 		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		CompletedStepIndices: progress.CompletedStepIndices,
-		TotalSteps:           progress.TotalSteps,
-		WorkspacePath:        hcpo.GetWorkspacePath(),
-		RunFolder:            hcpo.selectedRunFolder,
-		LastCompletedStep:    lastCompletedStep,
-		BranchSteps:          branchSteps,
-		ValidationFailures:   progress.ValidationFailures,
+		CompletedStepIndices:   progress.CompletedStepIndices,
+		TotalSteps:             progress.TotalSteps,
+		WorkspacePath:          hcpo.GetWorkspacePath(),
+		RunFolder:              hcpo.selectedRunFolder,
+		LastCompletedStep:      lastCompletedStep,
+		LastCompletedStepId:    lastCompletedStepId,
+		LastCompletedStepTitle: lastCompletedStepTitle,
+		BranchSteps:            branchSteps,
+		ValidationFailures:     progress.ValidationFailures,
 	}
 
 	// Create unified event wrapper

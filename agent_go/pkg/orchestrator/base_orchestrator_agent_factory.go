@@ -32,37 +32,27 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	// Store the unique agent name for use in agent initialization
 	config.AgentName = agentName
 
-	// Use detailed LLM configuration from frontend if available
-	llmProvider := bo.GetProvider()
-	llmModel := bo.GetModel()
 	// Use orchestrator-configured temperature unless an agent must override explicitly
 	llmTemp := bo.GetTemperature()
 
+	// Populate LLMConfig from orchestrator.LLMConfig (unified structure)
 	if llmConfig != nil {
-		llmProvider = llmConfig.Provider
-		llmModel = llmConfig.ModelID
-		// Removed verbose logging
-	}
-
-	config.Provider = llmProvider
-	config.Model = llmModel
-	config.Temperature = llmTemp // Uses orchestrator-configured temperature
-	config.MCPConfigPath = bo.GetMCPConfigPath()
-	config.MaxTurns = maxTurns
-	config.ToolChoice = "auto"
-	config.ServerNames = bo.GetSelectedServers()
-	config.SelectedTools = bo.GetSelectedTools()               // NEW field
-	config.UseCodeExecutionMode = bo.GetUseCodeExecutionMode() // NEW field
-	config.Mode = agents.AgentMode(bo.GetAgentMode())
-	config.OutputFormat = outputFormat
-	config.MaxRetries = 3
-	config.Timeout = 300 // Same timeout for all agents
-	config.RateLimit = 60
-
-	// Detailed LLM configuration from frontend
-	if llmConfig != nil {
-		config.FallbackModels = llmConfig.FallbackModels
-		config.CrossProviderFallback = llmConfig.CrossProviderFallback
+		// Copy Primary
+		config.LLMConfig.Primary = agents.LLMModel{
+			Provider: llmConfig.Primary.Provider,
+			ModelID:  llmConfig.Primary.ModelID,
+			APIKey:   llmConfig.Primary.APIKey,
+			Region:   llmConfig.Primary.Region,
+		}
+		// Copy Fallbacks
+		for _, fallback := range llmConfig.Fallbacks {
+			config.LLMConfig.Fallbacks = append(config.LLMConfig.Fallbacks, agents.LLMModel{
+				Provider: fallback.Provider,
+				ModelID:  fallback.ModelID,
+				APIKey:   fallback.APIKey,
+				Region:   fallback.Region,
+			})
+		}
 		// Convert API keys from orchestrator format to agent format
 		if llmConfig.APIKeys != nil {
 			config.APIKeys = &agents.AgentAPIKeys{
@@ -77,7 +67,26 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 				}
 			}
 		}
+	} else {
+		// Fallback to orchestrator defaults
+		config.LLMConfig.Primary = agents.LLMModel{
+			Provider: bo.GetProvider(),
+			ModelID:  bo.GetModel(),
+		}
 	}
+
+	config.Temperature = llmTemp
+	config.MCPConfigPath = bo.GetMCPConfigPath()
+	config.MaxTurns = maxTurns
+	config.ToolChoice = "auto"
+	config.ServerNames = bo.GetSelectedServers()
+	config.SelectedTools = bo.GetSelectedTools()
+	config.UseCodeExecutionMode = bo.GetUseCodeExecutionMode()
+	config.Mode = agents.AgentMode(bo.GetAgentMode())
+	config.OutputFormat = outputFormat
+	config.MaxRetries = 3
+	config.Timeout = 300 // Same timeout for all agents
+	config.RateLimit = 60
 
 	// Context summarization configuration from orchestrator
 	config.EnableContextSummarization = bo.GetEnableContextSummarization()

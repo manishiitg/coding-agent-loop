@@ -130,13 +130,15 @@ func NewStepTokenUsageEvent(phase string, step int, stepTitle string, promptToke
 // StepProgressUpdatedEvent represents the event when step progress is updated (steps_done.json changes)
 type StepProgressUpdatedEvent struct {
 	baseevents.BaseEventData
-	CompletedStepIndices []int                      `json:"completed_step_indices"`        // 0-based indices of completed steps
-	TotalSteps           int                        `json:"total_steps"`                   // Total number of steps in the plan
-	WorkspacePath        string                     `json:"workspace_path"`                // Workspace path for file operations
-	RunFolder            string                     `json:"run_folder"`                    // Run folder name (e.g., "iteration-1")
-	LastCompletedStep    int                        `json:"last_completed_step"`           // Most recently completed step index (-1 if unknown)
-	BranchSteps          map[int]BranchStepProgress `json:"branch_steps,omitempty"`        // Branch step progress for conditional steps
-	ValidationFailures   map[string]int             `json:"validation_failures,omitempty"` // Validation failure counts per step path
+	CompletedStepIndices  []int                      `json:"completed_step_indices"`          // 0-based indices of completed steps
+	TotalSteps            int                        `json:"total_steps"`                     // Total number of steps in the plan
+	WorkspacePath         string                     `json:"workspace_path"`                  // Workspace path for file operations
+	RunFolder             string                     `json:"run_folder"`                      // Run folder name (e.g., "iteration-1")
+	LastCompletedStep     int                        `json:"last_completed_step"`             // Most recently completed step index (-1 if unknown)
+	LastCompletedStepId   string                     `json:"last_completed_step_id,omitempty"` // Step ID of the last completed step (for frontend node updates)
+	LastCompletedStepTitle string                    `json:"last_completed_step_title,omitempty"` // Title of the last completed step
+	BranchSteps           map[int]BranchStepProgress `json:"branch_steps,omitempty"`          // Branch step progress for conditional steps
+	ValidationFailures    map[string]int             `json:"validation_failures,omitempty"`   // Validation failure counts per step path
 }
 
 func (e *StepProgressUpdatedEvent) GetEventType() baseevents.EventType {

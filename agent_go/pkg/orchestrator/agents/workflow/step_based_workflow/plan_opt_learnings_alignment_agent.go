@@ -106,11 +106,12 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 	if plam.presetPhaseLLM != nil && plam.presetPhaseLLM.Provider != "" && plam.presetPhaseLLM.ModelID != "" {
 		// Use preset phase LLM
 		llmConfigToUse = &orchestrator.LLMConfig{
-			Provider:              plam.presetPhaseLLM.Provider,
-			ModelID:               plam.presetPhaseLLM.ModelID,
-			FallbackModels:        orchestratorLLMConfig.FallbackModels,
-			CrossProviderFallback: orchestratorLLMConfig.CrossProviderFallback,
-			APIKeys:               orchestratorLLMConfig.APIKeys,
+			Primary: orchestrator.LLMModel{
+				Provider: plam.presetPhaseLLM.Provider,
+				ModelID:  plam.presetPhaseLLM.ModelID,
+			},
+			Fallbacks: orchestratorLLMConfig.Fallbacks,
+			APIKeys:   orchestratorLLMConfig.APIKeys,
 		}
 		plam.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for plan learnings alignment: %s/%s", plam.presetPhaseLLM.Provider, plam.presetPhaseLLM.ModelID))
 	} else {

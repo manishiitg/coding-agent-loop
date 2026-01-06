@@ -145,21 +145,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 		if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only LLM: %s/%s", stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
 			return &orchestrator.LLMConfig{
-				Provider:       stepConfig.ExecutionLLM.Provider,
-				ModelID:        stepConfig.ExecutionLLM.ModelID,
-				FallbackModels: []string{},                    // Use empty fallback for step-specific configs
-				APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+				Primary: orchestrator.LLMModel{
+					Provider: stepConfig.ExecutionLLM.Provider,
+					ModelID:  stepConfig.ExecutionLLM.ModelID,
+				},
+				APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 			}
 		} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution-only LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
 			return &orchestrator.LLMConfig{
-				Provider:       hcpo.presetExecutionLLM.Provider,
-				ModelID:        hcpo.presetExecutionLLM.ModelID,
-				FallbackModels: []string{},                    // Use empty fallback for preset defaults
-				APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+				Primary: orchestrator.LLMModel{
+					Provider: hcpo.presetExecutionLLM.Provider,
+					ModelID:  hcpo.presetExecutionLLM.ModelID,
+				},
+				APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 			}
 		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default execution-only LLM: %s/%s", orchestratorLLMConfig.Provider, orchestratorLLMConfig.ModelID))
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default execution-only LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
 			return orchestratorLLMConfig
 		}
 	}
@@ -244,38 +246,42 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 		// Note: tempLLM2 is NOT blocked by shouldSkipTempOverride - it's part of the cascading fallback strategy
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 2 (attempt %d, learnings folder has files): %s/%s", retryAttempt, hcpo.tempOverrideLLM2.Provider, hcpo.tempOverrideLLM2.ModelID))
 		return &orchestrator.LLMConfig{
-			Provider:       hcpo.tempOverrideLLM2.Provider,
-			ModelID:        hcpo.tempOverrideLLM2.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for temp override
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Primary: orchestrator.LLMModel{
+				Provider: hcpo.tempOverrideLLM2.Provider,
+				ModelID:  hcpo.tempOverrideLLM2.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 	} else if !shouldSkipTempOverride && !learningsFolderEmpty && retryAttempt == 1 && hasTempLLM1 {
 		// First attempt: Use tempLLM1
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 1 (attempt %d, learnings folder has files): %s/%s", retryAttempt, hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID))
 		return &orchestrator.LLMConfig{
-			Provider:       hcpo.tempOverrideLLM.Provider,
-			ModelID:        hcpo.tempOverrideLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for temp override
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Primary: orchestrator.LLMModel{
+				Provider: hcpo.tempOverrideLLM.Provider,
+				ModelID:  hcpo.tempOverrideLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 	} else if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only LLM: %s/%s", stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
 		return &orchestrator.LLMConfig{
-			Provider:       stepConfig.ExecutionLLM.Provider,
-			ModelID:        stepConfig.ExecutionLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Primary: orchestrator.LLMModel{
+				Provider: stepConfig.ExecutionLLM.Provider,
+				ModelID:  stepConfig.ExecutionLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution-only LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
 		return &orchestrator.LLMConfig{
-			Provider:       hcpo.presetExecutionLLM.Provider,
-			ModelID:        hcpo.presetExecutionLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for preset defaults
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Primary: orchestrator.LLMModel{
+				Provider: hcpo.presetExecutionLLM.Provider,
+				ModelID:  hcpo.presetExecutionLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default execution-only LLM: %s/%s", orchestratorLLMConfig.Provider, orchestratorLLMConfig.ModelID))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default execution-only LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
 		return orchestratorLLMConfig
 	}
 }
@@ -457,21 +463,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectValidationLLM(stepConfig *Agent
 	if stepConfig != nil && stepConfig.ValidationLLM != nil && stepConfig.ValidationLLM.Provider != "" && stepConfig.ValidationLLM.ModelID != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific validation LLM: %s/%s", stepConfig.ValidationLLM.Provider, stepConfig.ValidationLLM.ModelID))
 		return &orchestrator.LLMConfig{
-			Provider:       stepConfig.ValidationLLM.Provider,
-			ModelID:        stepConfig.ValidationLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Primary: orchestrator.LLMModel{
+				Provider: stepConfig.ValidationLLM.Provider,
+				ModelID:  stepConfig.ValidationLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 	} else if hcpo.presetValidationLLM != nil && hcpo.presetValidationLLM.Provider != "" && hcpo.presetValidationLLM.ModelID != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default validation LLM: %s/%s", hcpo.presetValidationLLM.Provider, hcpo.presetValidationLLM.ModelID))
 		return &orchestrator.LLMConfig{
-			Provider:       hcpo.presetValidationLLM.Provider,
-			ModelID:        hcpo.presetValidationLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for preset defaults
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Primary: orchestrator.LLMModel{
+				Provider: hcpo.presetValidationLLM.Provider,
+				ModelID:  hcpo.presetValidationLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default validation LLM: %s/%s", orchestratorLLMConfig.Provider, orchestratorLLMConfig.ModelID))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default validation LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
 		return orchestratorLLMConfig
 	}
 }
@@ -601,10 +609,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 			if shouldUseTempLLM && hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != "" {
 				hcpo.GetLogger().Info(fmt.Sprintf("💰 [COST_OPTIMIZATION] Switching learning agent to cheaper tempLLM (%s/%s): %s", hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID, reason))
 				return &orchestrator.LLMConfig{
-					Provider:       hcpo.tempOverrideLLM.Provider,
-					ModelID:        hcpo.tempOverrideLLM.ModelID,
-					FallbackModels: []string{},                    // No fallbacks for tempLLM
-					APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+					Primary: orchestrator.LLMModel{
+						Provider: hcpo.tempOverrideLLM.Provider,
+						ModelID:  hcpo.tempOverrideLLM.ModelID,
+					},
+					APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 				}
 			}
 		}
@@ -614,21 +623,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 	if stepConfig != nil && stepConfig.LearningLLM != nil && stepConfig.LearningLLM.Provider != "" && stepConfig.LearningLLM.ModelID != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific learning LLM: %s/%s", stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID))
 		return &orchestrator.LLMConfig{
-			Provider:       stepConfig.LearningLLM.Provider,
-			ModelID:        stepConfig.LearningLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Primary: orchestrator.LLMModel{
+				Provider: stepConfig.LearningLLM.Provider,
+				ModelID:  stepConfig.LearningLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 	} else if hcpo.presetLearningLLM != nil && hcpo.presetLearningLLM.Provider != "" && hcpo.presetLearningLLM.ModelID != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default learning LLM: %s/%s", hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID))
 		return &orchestrator.LLMConfig{
-			Provider:       hcpo.presetLearningLLM.Provider,
-			ModelID:        hcpo.presetLearningLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for preset defaults
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Primary: orchestrator.LLMModel{
+				Provider: hcpo.presetLearningLLM.Provider,
+				ModelID:  hcpo.presetLearningLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default learning LLM: %s/%s", orchestratorLLMConfig.Provider, orchestratorLLMConfig.ModelID))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default learning LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
 		return orchestratorLLMConfig
 	}
 }
@@ -970,24 +981,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 		// Use step-specific execution LLM config
 		executionLLMConfig := stepConfig.ExecutionLLM
 		llmConfig = &orchestrator.LLMConfig{
-			Provider:       executionLLMConfig.Provider,
-			ModelID:        executionLLMConfig.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for step-specific configs
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Primary: orchestrator.LLMModel{
+				Provider: executionLLMConfig.Provider,
+				ModelID:  executionLLMConfig.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution LLM for conditional agent: %s/%s", executionLLMConfig.Provider, executionLLMConfig.ModelID))
 	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
 		// Use preset execution LLM as fallback
 		llmConfig = &orchestrator.LLMConfig{
-			Provider:       hcpo.presetExecutionLLM.Provider,
-			ModelID:        hcpo.presetExecutionLLM.ModelID,
-			FallbackModels: []string{},                    // Use empty fallback for preset defaults
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Primary: orchestrator.LLMModel{
+				Provider: hcpo.presetExecutionLLM.Provider,
+				ModelID:  hcpo.presetExecutionLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution LLM for conditional agent: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
 	} else {
 		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional LLM: %s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
 	}
 
 	// Create agent config with custom LLM if needed
@@ -1098,17 +1111,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 	// Determine LLM config: Priority: step config > preset default > orchestrator default
 	var llmConfig *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
-	if orchestrationLLMConfig != nil && orchestrationLLMConfig.Provider != "" && orchestrationLLMConfig.ModelID != "" {
+	if orchestrationLLMConfig != nil && orchestrationLLMConfig.Primary.Provider != "" && orchestrationLLMConfig.Primary.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
-			Provider:       orchestrationLLMConfig.Provider,
-			ModelID:        orchestrationLLMConfig.ModelID,
-			FallbackModels: []string{},
-			APIKeys:        orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Primary: orchestrator.LLMModel{
+				Provider: orchestrationLLMConfig.Primary.Provider,
+				ModelID:  orchestrationLLMConfig.Primary.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific orchestration orchestrator LLM: %s/%s", orchestrationLLMConfig.Provider, orchestrationLLMConfig.ModelID))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific orchestration orchestrator LLM: %s/%s", orchestrationLLMConfig.Primary.Provider, orchestrationLLMConfig.Primary.ModelID))
 	} else {
 		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default orchestration orchestrator LLM: %s/%s", llmConfig.Provider, llmConfig.ModelID))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default orchestration orchestrator LLM: %s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
 	}
 
 	// Create agent config with custom LLM if needed

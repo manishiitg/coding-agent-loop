@@ -30,11 +30,73 @@ Before tool execution, a wrapper validates all path parameters against allowed l
 -   **Generated Tools**: Tool functions are generated with embedded `validatePath()` calls that check permissions before making API requests.
 -   **Path Embedding**: Folder guard paths are compiled into the generated Go code as variables.
 
-### 3. Shell Execution Security
+### 3. Chat Mode Folder Guard (Read-Only Mode)
+In chat mode, certain folders (e.g., `Workflow/`) are **read-only**. This allows viewing but prevents modifications:
+
+**✅ ALLOWED (Read Operations):**
+-   `list_workspace_files` - List files in Workflow/
+-   `read_workspace_file` - Read files from Workflow/
+-   `regex_search_workspace_files` - Search in Workflow/
+-   `semantic_search_workspace_files` - Semantic search in Workflow/
+-   `glob_discover_workspace_files` - Discover files in Workflow/
+
+**❌ BLOCKED (Write Operations):**
+-   `update_workspace_file` - Cannot write to Workflow/
+-   `delete_workspace_file` - Cannot delete from Workflow/
+-   `move_workspace_file` - Cannot move files in/out of Workflow/
+-   `diff_patch_workspace_file` - Cannot patch files in Workflow/
+-   `execute_shell_command` - Cannot reference Workflow/ in commands
+-   All git commands - Blocked entirely (can modify via `.git/` database)
+
+**Implementation:** `agent_go/cmd/server/server.go` - `wrapExecutorsWithChatModeFolderGuard()`
+
+```go
+// Write tools that should be blocked for Workflow/ paths
+writeTools := map[string]bool{
+    "update_workspace_file":     true,
+    "delete_workspace_file":     true,
+    "move_workspace_file":       true,
+    "diff_patch_workspace_file": true,
+}
+
+// Block git commands (can modify via .git/ database)
+if strings.HasPrefix(cmdLower, "git ") {
+    return "", fmt.Errorf("access denied: git commands not allowed in chat mode")
+}
+
+// Block shell commands referencing Workflow/
+if strings.Contains(cmdLower, "workflow/") {
+    return "", fmt.Errorf("access denied: use workspace tools for read access")
+}
+```
+
+### 4. Shell Execution Security
 When shell commands are executed, the system applies **three layers of security**:
 
-#### A. Environment Sanitization
+#### A. Deny-List Mode (Chat Mode)
+**Platform:** All platforms (macOS and Linux)
+
+When only `BlockedPaths` is configured (no `ReadPaths`/`WritePaths`), the isolator uses deny-list mode:
+
+**macOS (`sandbox-exec`):**
+```scheme
+(version 1)
+(allow default)
+; Deny-list mode: block specific paths
+(deny file-read* file-write*
+  (subpath "/app/workspace-docs/Workflow"))
+```
+
+**Linux (`unshare`):**
+```bash
+# Hide blocked path with tmpfs (makes it appear empty)
+mount -t tmpfs tmpfs /app/workspace-docs/Workflow
+```
+
+#### B. Environment Sanitization
 Child processes replace inherited environment variables with a strict whitelist to prevent secret leakage (e.g., `DATABASE_URL`, `API_KEYS`).
+
+> **Note:** Sections C and D below describe the **allow-list mode** used in workflow execution (with `ReadPaths`/`WritePaths`).
 
 **Implementation:** `workspace/security/environment.go`
 ```go
@@ -50,7 +112,7 @@ func BuildSafeEnvironment() []string {
 }
 ```
 
-#### B. Filesystem Isolation (Linux)
+#### C. Filesystem Isolation (Linux) - Allow-List Mode
 **Platform:** Docker containers with `unshare -m` and mount namespaces
 
 **Strategy:** Hide workspace with tmpfs overlay, then selectively expose allowed paths
@@ -68,7 +130,7 @@ func BuildSafeEnvironment() []string {
 - ✅ **Write Protection**: Read-only paths cannot be modified
 - ✅ **Namespace Privacy**: Mounts are private and don't affect host or other processes
 
-#### C. Filesystem Isolation (macOS)
+#### D. Filesystem Isolation (macOS) - Allow-List Mode
 **Platform:** macOS native using `sandbox-exec`
 
 **Strategy:** Deny all workspace access by default, then selectively allow specific paths
@@ -96,6 +158,11 @@ graph TD
     C -->|Simple Mode| D[WrapWorkspaceToolsWithFolderGuard]
     C -->|Code Execution| E[generateWorkspaceToolsWithFolderGuards]
     C -->|Shell Execution| S[ExecuteIsolated]
+
+    CHAT[Chat Mode Server] -->|blockedPaths| WRAP[wrapExecutorsWithChatModeFolderGuard]
+    WRAP -->|Git Blocking| GIT[Block git commands]
+    WRAP -->|Command Check| CMD[Block commands with Workflow/]
+    WRAP -->|Context Injection| CTX[Inject BlockedPaths to context]
 
     D -->|Runtime Wrapper| F[Wrapped Executors]
     E -->|Generate Code| G[workspace_tools Package]
@@ -160,11 +227,13 @@ No special configuration required! The system automatically uses `sandbox-exec` 
 ## ⚙️ Configuration & Constraints
 
 ### Tool Classification
-| Tool Type | Allowed Paths |
-| :--- | :--- |
-| **Read Tools** | `readPaths` + `writePaths` (combined) |
-| **Write Tools** | `writePaths` only |
-| **Shell Tools** | Environment sanitized + Filesystem isolated |
+| Tool Type | Allowed Paths | Blocked Paths |
+| :--- | :--- | :--- |
+| **Read Tools** | `readPaths` + `writePaths` (combined) | `blockedPaths` (denied) |
+| **Write Tools** | `writePaths` only | `blockedPaths` (denied) |
+| **Shell Tools** | Environment sanitized + Filesystem isolated | Git commands + `blockedPaths` references |
+| **Chat Mode Read** | All paths including `Workflow/` | None |
+| **Chat Mode Write** | All except `Workflow/` | `Workflow/` folder (read-only) |
 
 ### Security Constraints
 ✅ **Allowed:**

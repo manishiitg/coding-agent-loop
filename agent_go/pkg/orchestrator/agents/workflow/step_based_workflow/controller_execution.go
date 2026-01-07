@@ -229,20 +229,30 @@ func getLearningFolderPath(baseWorkspacePath string, stepPath string) string {
 	return fmt.Sprintf("%s/learnings/step-%d", baseWorkspacePath, pathInfo.ParentStepNumber)
 }
 
-// getLearningFolderPathByStepID returns the learning folder path using step ID (NEW FORMAT)
+// getLearningFolderPathByStepID returns the RELATIVE learning folder path using step ID (NEW FORMAT)
 // For all steps (regular, branch, sub-agent): "learnings/{stepID}/"
+// For evaluation steps (when isEvaluationMode=true): "evaluation/learnings/{stepID}/"
 // All steps have their own unique step IDs, so we just use the stepID directly
-func getLearningFolderPathByStepID(baseWorkspacePath string, stepID string, stepPath string) string {
+// NOTE: This returns a RELATIVE path for use with workspace functions (ReadWorkspaceFile, WriteWorkspaceFile, etc.)
+// The baseWorkspacePath parameter is IGNORED and kept only for backward compatibility - will be removed in future
+func getLearningFolderPathByStepID(baseWorkspacePath string, stepID string, stepPath string, isEvaluationMode bool) string {
 	// All steps (regular, branch, sub-agent) have their own unique step IDs
 	// Just use the stepID directly without any suffix
-	return fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
+	// Return RELATIVE path - workspace functions auto-prepend workspacePath
+	if isEvaluationMode {
+		return fmt.Sprintf("evaluation/learnings/%s", stepID)
+	}
+	return fmt.Sprintf("learnings/%s", stepID)
 }
 
 // ensureStepLearningsFolderExists ensures the step learnings folder exists by creating it if needed
-func (hcpo *StepBasedWorkflowOrchestrator) ensureStepLearningsFolderExists(ctx context.Context, stepLearningsPath string) error {
+// Takes a RELATIVE path and constructs the absolute path internally using GetWorkspacePath()
+func (hcpo *StepBasedWorkflowOrchestrator) ensureStepLearningsFolderExists(ctx context.Context, stepLearningsRelativePath string) error {
+	// Construct absolute path for os.MkdirAll (which requires absolute paths)
+	absolutePath := filepath.Join(hcpo.GetWorkspacePath(), stepLearningsRelativePath)
 	// Create directory if it doesn't exist
-	if err := os.MkdirAll(stepLearningsPath, 0755); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step learnings folder: %s: %v (continuing)", stepLearningsPath, err))
+	if err := os.MkdirAll(absolutePath, 0755); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step learnings folder: %s: %v (continuing)", absolutePath, err))
 		return fmt.Errorf("failed to create step learnings folder: %w", err)
 	}
 	return nil
@@ -1154,8 +1164,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// Get learning file paths for user message (when KeepLearningFull is false)
 				if !keepLearningFull {
 					// Generate file paths list for user message
-					baseWorkspacePath := hcpo.GetWorkspacePath()
-					stepLearningsPath := getLearningFolderPathByStepID(baseWorkspacePath, step.GetID(), stepPath)
+					// getLearningFolderPathByStepID now returns RELATIVE path - workspace functions auto-prepend workspacePath
+					stepLearningsPath := getLearningFolderPathByStepID("", step.GetID(), stepPath, execCtx.IsEvaluationMode)
 					learningFiles, readErr := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
 					if readErr == nil && len(learningFiles) > 0 {
 						// Build list of file paths
@@ -3416,8 +3426,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) readLearningHistory(
 
 	// Determine step folder path - learnings are at workspace root (not inside runs/)
 	// Use step ID based path for learnings (new format)
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	stepLearningsPath := getLearningFolderPathByStepID(baseWorkspacePath, stepID, stepPath)
+	// In evaluation mode, learnings are stored in evaluation/learnings/
+	// getLearningFolderPathByStepID now returns RELATIVE path - workspace functions auto-prepend workspacePath
+	stepLearningsPath := getLearningFolderPathByStepID("", stepID, stepPath, hcpo.isEvaluationMode)
 
 	// Read learning files from step folder (works for both regular and branch steps)
 	// This automatically excludes metadata files and checks all subfolders (code/, scripts/)

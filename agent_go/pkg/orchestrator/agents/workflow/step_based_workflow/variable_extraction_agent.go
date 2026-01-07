@@ -213,7 +213,8 @@ func writeVariableChangelogEntry(ctx context.Context, workspacePath string, entr
 		entry.Timestamp = now.Format(time.RFC3339)
 	}
 
-	changelogPath := filepath.Join(workspacePath, "variables", "changelog", variableChangelogSessionFile)
+	// Use relative path only - ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath
+	changelogPath := filepath.Join("variables", "changelog", variableChangelogSessionFile)
 
 	// Read existing changelog if it exists
 	var changelog VariableChangeLog
@@ -257,7 +258,8 @@ func resetVariableChangelogSession() {
 // readVariableChangelog reads all changelog files from variables/changelog/ directory and combines them
 // Returns all entries sorted by timestamp (oldest first)
 func readVariableChangelog(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error), listFiles func(context.Context, string) ([]string, error)) (*VariableChangeLog, error) {
-	changelogDir := filepath.Join(workspacePath, "variables", "changelog")
+	// Use relative path only - ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath
+	changelogDir := filepath.Join("variables", "changelog")
 
 	// List all files in changelog directory
 	files, err := listFiles(ctx, changelogDir)
@@ -321,7 +323,8 @@ func readVariableChangelog(ctx context.Context, workspacePath string, readFile f
 
 // readVariablesFromFile reads variables.json from the workspace using BaseOrchestrator's ReadWorkspaceFile
 func readVariablesFromFile(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error)) (*VariablesManifest, error) {
-	variablesPath := filepath.Join(workspacePath, "variables", "variables.json")
+	// Use relative path only - ReadWorkspaceFile auto-prepends workspacePath
+	variablesPath := filepath.Join("variables", "variables.json")
 
 	variablesFileMutex.Lock()
 	defer variablesFileMutex.Unlock()
@@ -341,7 +344,8 @@ func readVariablesFromFile(ctx context.Context, workspacePath string, readFile f
 
 // writeVariablesToFile writes VariablesManifest to variables.json in the workspace using BaseOrchestrator's WriteWorkspaceFile
 func writeVariablesToFile(ctx context.Context, workspacePath string, manifest *VariablesManifest, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger loggerv2.Logger) error {
-	variablesPath := filepath.Join(workspacePath, "variables", "variables.json")
+	// Use relative path only - WriteWorkspaceFile auto-prepends workspacePath
+	variablesPath := filepath.Join("variables", "variables.json")
 
 	variablesFileMutex.Lock()
 	defer variablesFileMutex.Unlock()

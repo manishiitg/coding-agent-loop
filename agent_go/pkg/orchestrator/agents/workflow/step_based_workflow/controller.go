@@ -48,6 +48,9 @@ type StepBasedWorkflowOrchestrator struct {
 	// Skip human input mode tracking (runs learning but skips human feedback)
 	skipHumanInput bool // Whether to skip human feedback requests (auto-approve steps)
 
+	// Evaluation mode tracking (learnings go to evaluation/learnings/)
+	isEvaluationMode bool // Whether we're running evaluation steps
+
 	// Learning detail level preference (set once before execution, used for all learning phases)
 	learningDetailLevel string // "exact" or "general"
 
@@ -491,7 +494,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	}
 
 	// Check if plan.json exists - REQUIRED for execution
-	planPath := fmt.Sprintf("%s/planning/plan.json", hcpo.GetWorkspacePath())
+	// Use relative path - ReadWorkspaceFile auto-prepends workspacePath
+	planPath := "planning/plan.json"
 	planExists, existingPlan, err := hcpo.checkExistingPlan(ctx, planPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to check for existing plan: %w", err)
@@ -1096,6 +1100,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 		if err != nil {
 			return "", fmt.Errorf("execution phase failed: %w", err)
 		}
+
+		// Auto-evaluation: Run scoring if evaluation_plan.json exists
+		if !hcpo.isEvaluationMode {
+			if evalErr := hcpo.MaybeRunAutoEvaluation(ctx); evalErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Auto-evaluation failed: %v", evalErr))
+				// Don't fail the whole execution if auto-evaluation fails
+			}
+		}
 	}
 
 	duration := time.Since(hcpo.GetStartTime())
@@ -1270,9 +1282,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildExecutionContext() *ExecutionCon
 		FastExecuteEndStep: hcpo.fastExecuteEndStep,
 		RunSingleStepOnly:  hcpo.runSingleStepOnly,
 		SingleStepTarget:   hcpo.singleStepTarget,
+		IsEvaluationMode:   hcpo.isEvaluationMode,
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Built ExecutionContext: skipHumanInput=%v, fastExecuteMode=%v, fastExecuteEndStep=%d, runSingleStepOnly=%v, singleStepTarget=%d", execCtx.SkipHumanInput, execCtx.FastExecuteMode, execCtx.FastExecuteEndStep, execCtx.RunSingleStepOnly, execCtx.SingleStepTarget))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Built ExecutionContext: skipHumanInput=%v, fastExecuteMode=%v, fastExecuteEndStep=%d, runSingleStepOnly=%v, singleStepTarget=%d, isEvaluationMode=%v", execCtx.SkipHumanInput, execCtx.FastExecuteMode, execCtx.FastExecuteEndStep, execCtx.RunSingleStepOnly, execCtx.SingleStepTarget, execCtx.IsEvaluationMode))
 
 	return execCtx
 }

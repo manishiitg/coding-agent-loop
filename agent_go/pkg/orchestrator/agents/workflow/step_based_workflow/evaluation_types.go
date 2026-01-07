@@ -33,10 +33,10 @@ func (e *EvaluationStep) StepType() StepType                       { return Step
 
 func (e *EvaluationStep) GetCommonFields() CommonStepFields {
 	return CommonStepFields{
-		ID:              e.ID,
-		Title:           e.Title,
-		Description:     e.Description,
-		SuccessCriteria: e.SuccessCriteria,
+		ID:               e.ID,
+		Title:            e.Title,
+		Description:      e.Description,
+		SuccessCriteria:  e.SuccessCriteria,
 		ValidationSchema: e.PreValidation,
 	}
 }
@@ -59,14 +59,25 @@ type EvaluationPlan struct {
 }
 
 // UnmarshalJSON implements custom unmarshaling for EvaluationPlan
+// Handles both formats:
+// 1. {"steps": [...]} - expected format
+// 2. [...] - legacy format (array at top level)
 func (ep *EvaluationPlan) UnmarshalJSON(data []byte) error {
+	// First, try to unmarshal as object with "steps" field
 	var temp struct {
 		Steps []*EvaluationStep `json:"steps"`
 	}
-	if err := json.Unmarshal(data, &temp); err != nil {
+	if err := json.Unmarshal(data, &temp); err == nil && temp.Steps != nil {
+		ep.Steps = temp.Steps
+		return nil
+	}
+
+	// If that fails, try to unmarshal as a top-level array (legacy format)
+	var stepsArray []*EvaluationStep
+	if err := json.Unmarshal(data, &stepsArray); err != nil {
 		return err
 	}
-	ep.Steps = temp.Steps
+	ep.Steps = stepsArray
 	return nil
 }
 
@@ -77,4 +88,26 @@ func (ep *EvaluationPlan) ToPlanSteps() []PlanStepInterface {
 		steps[i] = step
 	}
 	return steps
+}
+
+// EvaluationStepScore represents the score for a single evaluation step
+type EvaluationStepScore struct {
+	StepID          string `json:"step_id"`
+	StepTitle       string `json:"step_title"`
+	Score           int    `json:"score"`
+	MaxScore        int    `json:"max_score"`
+	Reasoning       string `json:"reasoning"`
+	Evidence        string `json:"evidence"`
+	SuccessCriteria string `json:"success_criteria"`
+}
+
+// EvaluationReport represents the final evaluation report with all scores
+type EvaluationReport struct {
+	TargetRunFolder string                 `json:"target_run_folder"`
+	GeneratedAt     string                 `json:"generated_at"`
+	TotalScore      int                    `json:"total_score"`
+	MaxPossibleScore int                   `json:"max_possible_score"`
+	ScorePercentage float64                `json:"score_percentage"`
+	StepScores      []*EvaluationStepScore `json:"step_scores"`
+	Summary         string                 `json:"summary"`
 }

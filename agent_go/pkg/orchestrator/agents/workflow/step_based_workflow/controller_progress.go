@@ -11,12 +11,14 @@ import (
 	baseevents "mcpagent/events"
 )
 
-// getStepsProgressPath returns the path to steps_done.json file in the run folder
+// getStepsProgressPath returns the RELATIVE path to steps_done.json file in the run folder
+// NOTE: Returns relative path (without workspacePath) because ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath
 func (hcpo *StepBasedWorkflowOrchestrator) getStepsProgressPath() (string, error) {
 	if hcpo.selectedRunFolder == "" {
 		return "", fmt.Errorf(fmt.Sprintf("selectedRunFolder not set - run folder must be resolved before accessing steps_done.json"), nil)
 	}
-	return fmt.Sprintf("%s/runs/%s/steps_done.json", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder), nil
+	// Return relative path - ReadWorkspaceFile/WriteWorkspaceFile will prepend workspacePath
+	return fmt.Sprintf("runs/%s/steps_done.json", hcpo.selectedRunFolder), nil
 }
 
 // loadStepProgress loads progress from steps_done.json

@@ -113,6 +113,7 @@ type ExecutionContext struct {
 	RunSingleStepOnly  bool                    // Whether to run only a single step and stop
 	SingleStepTarget   int                     // Target step index to run (0-based)
 	ResumeBranchStep   *BranchStepResumeTarget // For resuming from a specific branch step (nil if not resuming from branch)
+	IsEvaluationMode   bool                    // Whether we're running evaluation steps (learnings go to evaluation/learnings/)
 }
 
 // DecisionContext represents context from a decision step that routed to this step

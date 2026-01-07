@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"text/template"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -16,6 +15,49 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// Pre-parsed templates for learning consolidation - panics at startup if invalid
+var consolidationSystemTemplate = MustRegisterTemplate("consolidationSystem", `# Learning Consolidation Agent
+
+## 🤖 Role
+Audit and merge patterns within 'learnings/step-{X}/' folders.
+
+## 🚨 CRITICAL RULE: Isolation
+- Consolidate ONLY within the **SAME** step folder (e.g., 'learnings/step-1/').
+- **NEVER** merge across step folders (e.g., do NOT merge step-1/ with step-2/).
+- **NEVER** merge branch folders with parent folders.
+- **NEVER** create 'general_patterns_learning.md' or 'consolidated_patterns_learning.md'. Merge into **EXISTING** step-specific files.
+
+## 🔍 CONSOLIDATION CRITERIA
+1. **Duplicates**: Same tool calls/logic WITHIN the folder.
+2. **Similarities**: Overlapping patterns (merge into the best/most generalized version).
+3. **Outdated**: Success rate <50% or superseded by a better pattern.
+4. **Score Merging**: Combined Runs = Sum(Runs); Success % = (Total Success / Total Runs) * 100.
+
+## 📋 WORKFLOW
+1. **Analysis**: Discover relative step folders in 'learnings/'. Read all variations of '*_learning.md', '.py', '.go'.
+2. **Proposal**: Use 'human_feedback' to list proposed merges/deletions/updates and impact estimate.
+3. **Action**: ONLY call 'update_workspace_file' or 'delete_workspace_file' AFTER explicit user approval.
+
+*No summaries. No auto-modifications. No guessing.*`)
+
+var consolidationUserTemplate = MustRegisterTemplate("consolidationUser", `# Learning Consolidation Task
+
+## 📊 Objective
+Analyze, merge, and clean up redundant patterns within 'learnings/' step folders.
+
+## 📋 Context
+- **Workspace**: {{.WorkspacePath}}
+- **Allowed Access**: {{.AllowedPaths}}
+
+## 🧠 Instructions
+1. **Discover**: List step folders in 'learnings/' (e.g., 'step-1/', 'step-3-true-0/').
+2. **Retrieve**: Read all '*.md', '.py', '.go' variations in those folders.
+3. **Analyze**: Identify duplicates, similar patterns, and outdated/low-success patterns.
+4. **Report**: Use 'human_feedback' to present a list of proposed merges/updates.
+5. **Action**: ONLY CALL 'update_workspace_file' or 'delete_workspace_file' AFTER user approval.
+
+**Final Goal**: Consolidate patterns into existing step files and remove redundant variations.`)
 
 // WorkflowLearningConsolidationTemplate holds template variables for consolidation prompts
 type WorkflowLearningConsolidationTemplate struct {
@@ -342,36 +384,8 @@ func (agent *WorkflowLearningConsolidationAgent) Execute(ctx context.Context, te
 
 // consolidationSystemPromptProcessor creates the system prompt for learning consolidation
 func (agent *WorkflowLearningConsolidationAgent) consolidationSystemPromptProcessor(templateVars map[string]string) string {
-	templateStr := `# Learning Consolidation Agent
-
-## 🤖 Role
-Audit and merge patterns within 'learnings/step-{X}/' folders.
-
-## 🚨 CRITICAL RULE: Isolation
-- Consolidate ONLY within the **SAME** step folder (e.g., 'learnings/step-1/').
-- **NEVER** merge across step folders (e.g., do NOT merge step-1/ with step-2/).
-- **NEVER** merge branch folders with parent folders.
-- **NEVER** create 'general_patterns_learning.md' or 'consolidated_patterns_learning.md'. Merge into **EXISTING** step-specific files.
-
-## 🔍 CONSOLIDATION CRITERIA
-1. **Duplicates**: Same tool calls/logic WITHIN the folder.
-2. **Similarities**: Overlapping patterns (merge into the best/most generalized version).
-3. **Outdated**: Success rate <50% or superseded by a better pattern.
-4. **Score Merging**: Combined Runs = Sum(Runs); Success % = (Total Success / Total Runs) * 100.
-
-## 📋 WORKFLOW
-1. **Analysis**: Discover relative step folders in 'learnings/'. Read all variations of '*_learning.md', '.py', '.go'.
-2. **Proposal**: Use 'human_feedback' to list proposed merges/deletions/updates and impact estimate.
-3. **Action**: ONLY call 'update_workspace_file' or 'delete_workspace_file' AFTER explicit user approval.
-
-*No summaries. No auto-modifications. No guessing.*`
-
-	tmpl, err := template.New("consolidationSystemPrompt").Parse(templateStr)
-	if err != nil {
-		return "Error parsing consolidation system prompt template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateVars); err != nil {
+	if err := consolidationSystemTemplate.Execute(&result, templateVars); err != nil {
 		return "Error executing consolidation system prompt template: " + err.Error()
 	}
 	return result.String()
@@ -379,30 +393,8 @@ Audit and merge patterns within 'learnings/step-{X}/' folders.
 
 // consolidationUserMessageProcessor creates the user message for learning consolidation
 func (agent *WorkflowLearningConsolidationAgent) consolidationUserMessageProcessor(templateVars map[string]string) string {
-	templateStr := `# Learning Consolidation Task
-
-## 📊 Objective
-Analyze, merge, and clean up redundant patterns within 'learnings/' step folders.
-
-## 📋 Context
-- **Workspace**: {{.WorkspacePath}}
-- **Allowed Access**: {{.AllowedPaths}}
-
-## 🧠 Instructions
-1. **Discover**: List step folders in 'learnings/' (e.g., 'step-1/', 'step-3-true-0/').
-2. **Retrieve**: Read all '*.md', '.py', '.go' variations in those folders.
-3. **Analyze**: Identify duplicates, similar patterns, and outdated/low-success patterns.
-4. **Report**: Use 'human_feedback' to present a list of proposed merges/updates.
-5. **Action**: ONLY CALL 'update_workspace_file' or 'delete_workspace_file' AFTER user approval.
-
-**Final Goal**: Consolidate patterns into existing step files and remove redundant variations.`
-
-	tmpl, err := template.New("consolidationUserMessage").Parse(templateStr)
-	if err != nil {
-		return "Error parsing consolidation user message template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateVars); err != nil {
+	if err := consolidationUserTemplate.Execute(&result, templateVars); err != nil {
 		return "Error executing consolidation user message template: " + err.Error()
 	}
 	return result.String()

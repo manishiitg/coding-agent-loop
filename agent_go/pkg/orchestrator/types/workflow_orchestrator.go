@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
@@ -66,7 +67,7 @@ func GetWorkflowConstants() WorkflowConstants {
 				Options:     []WorkflowPhaseOption{}, // No options for execution phase
 			},
 			{
-				ID:          "evaluation-planning",
+				ID:          "evaluation-designer",
 				Title:       "Evaluation Designer",
 				Description: "Create evaluation guides to assess workflow execution results. Define what to check, how to pre-validate, and score-based success criteria (0-10).",
 				Options:     []WorkflowPhaseOption{},
@@ -371,8 +372,8 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return wo.runPlanningOnly(ctx, objective, selectedOptions)
 	}
 
-	if workflowStatus == "evaluation-planning" {
-		return wo.runEvaluationPlanningOnly(ctx, objective, selectedOptions)
+	if workflowStatus == "evaluation-designer" {
+		return wo.runEvaluationDesignerOnly(ctx, objective, selectedOptions)
 	}
 
 	if workflowStatus == "evaluation-execution" {
@@ -452,9 +453,9 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 	return result, nil
 }
 
-// runEvaluationPlanningOnly runs only the evaluation planning phase
-func (wo *WorkflowOrchestrator) runEvaluationPlanningOnly(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("📋 Starting Evaluation Planning Phase"))
+// runEvaluationDesignerOnly runs only the evaluation designer phase
+func (wo *WorkflowOrchestrator) runEvaluationDesignerOnly(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Info(fmt.Sprintf("📋 Starting Evaluation Designer Phase"))
 
 	// Create evaluation manager directly (independent from controller)
 	evaluationManager := step_based_workflow.NewEvaluationManager(
@@ -464,13 +465,13 @@ func (wo *WorkflowOrchestrator) runEvaluationPlanningOnly(ctx context.Context, o
 		wo.getWorkflowID(),
 	)
 
-	// Run evaluation planning
+	// Run evaluation designer
 	result, err := evaluationManager.CreateEvaluationPlanOnly(ctx, objective, wo.GetWorkspacePath())
 	if err != nil {
-		return "", fmt.Errorf("evaluation planning failed: %w", err)
+		return "", fmt.Errorf("evaluation designer failed: %w", err)
 	}
 
-	wo.GetLogger().Info(fmt.Sprintf("✅ Evaluation planning completed successfully"))
+	wo.GetLogger().Info(fmt.Sprintf("✅ Evaluation Designer completed successfully"))
 	return result, nil
 }
 
@@ -485,11 +486,19 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 	}
 
 	// Fast-fail: Check if evaluation plan exists before setting up orchestrator
-	evalPlanPath := "planning/evaluation_plan.json"
+	// Note: evaluation_plan.json is stored in evaluation/ directory (not planning/) per documentation
+	// ReadWorkspaceFile will automatically prepend workspace path for relative paths
+	evalPlanPath := "evaluation/evaluation_plan.json"
 	_, err := wo.ReadWorkspaceFile(ctx, evalPlanPath)
 	if err != nil {
-		wo.GetLogger().Error(fmt.Sprintf("❌ Evaluation plan not found: %v", err), nil)
-		return "", fmt.Errorf("evaluation plan not found at %s. Please run Evaluation Designer first to create an evaluation plan", evalPlanPath)
+		// Check if it's actually a "file not found" error vs other errors (parsing, network, etc.)
+		errMsg := err.Error()
+		errMsgLower := strings.ToLower(errMsg)
+		if strings.Contains(errMsgLower, "not found") || strings.Contains(errMsgLower, "no such file") || strings.Contains(errMsgLower, "document not found") || strings.Contains(errMsgLower, "file does not exist") || strings.Contains(errMsgLower, "file not found") {
+			return "", fmt.Errorf("evaluation plan not found at %s. Please run Evaluation Designer first to create an evaluation plan", evalPlanPath)
+		}
+		// Other errors (parsing, network, etc.) should be returned as-is
+		return "", fmt.Errorf("failed to read evaluation plan at %s: %w", evalPlanPath, err)
 	}
 
 	// Create human controlled planner orchestrator
@@ -880,7 +889,7 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 				validStatuses := []string{
 					"planning",                             // Planning phase
 					database.WorkflowStatusPreVerification, // Execution phase
-					"evaluation-planning",                  // Evaluation planning phase
+					"evaluation-designer",                  // Evaluation Designer phase
 					"evaluation-execution",                 // Evaluation execution phase
 					"plan-improvement",                     // Plan improvement phase
 					"plan-tool-optimization",               // Plan tool optimization phase

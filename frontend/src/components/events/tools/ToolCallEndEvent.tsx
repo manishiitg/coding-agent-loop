@@ -146,10 +146,10 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
               {/* Context completion indicator */}
               {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
                 <TooltipProvider>
-                  <CircularProgress 
-                    percentage={contextUsagePercent} 
+                  <CircularProgress
+                    percentage={contextUsagePercent}
                     size={18}
-                    strokeWidth={2}
+                    strokeWidth={3}
                     tokenUsage={tokenUsageForTooltip}
                   />
                 </TooltipProvider>

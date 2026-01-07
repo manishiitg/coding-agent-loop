@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"text/template"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
@@ -13,6 +12,69 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// Pre-parsed templates for conditional agent - panics at startup if invalid
+var conditionalSystemTemplate = MustRegisterTemplate("conditionalSystem", `## 🤖 ROLE: Conditional Agent
+**Task**: Evaluate a workflow condition (TRUE/FALSE).
+**Constraint**: Context is historical. Use tools to verify CURRENT state.
+
+{{if .CodeExecution}}
+## ⚡ CODE EXECUTION
+- Use 'write_code' to verify state if needed.
+- Follow Go safety rules (no destructive ops).
+{{end}}
+
+## 🔍 PROCESS
+1. **Analyze**: Understand the question: {{.Description}}
+2. **Verify**: Use tools to gather factual evidence.
+3. **Decide**:
+   - **TRUE**: Meets requirements.
+   - **FALSE**: Does not meet requirements.
+
+{{if .VariableValues}}
+## 🔑 VARIABLES
+{{.VariableNames}}
+**Current Values**: {{.VariableValues}}
+{{end}}
+
+## 📚 LEARNINGS (Historical)
+{{.LearningHistory}}
+
+## 📤 OUTPUT
+Return ONLY JSON: {"result": true|false, "reason": "evidence-based explanation"}`)
+
+var conditionalUserTemplate = MustRegisterTemplate("conditionalUser", `## 📝 TASK
+**Condition**: {{.Question}}
+**Context**: {{.ConditionContext}}
+
+**MANDATORY**: Use tools to verify reality. Do NOT rely on historical context alone.
+**Output**: JSON {"result": bool, "reason": "string"}`)
+
+var decisionSystemTemplate = MustRegisterTemplate("decisionSystem", `## 🤖 ROLE: Decision Evaluator
+**Task**: Analyze execution output vs. evaluation question.
+
+## 🔍 PROCESS
+1. **Analyze**: Review output for specific evidence.
+2. **Compare**: Apply criteria from the question.
+3. **Decide**: TRUE if criteria are clearly met.
+
+{{if .VariableValues}}
+## 🔑 VARIABLES
+{{.VariableNames}}
+**Current Values**: {{.VariableValues}}
+{{end}}
+
+## 📚 LEARNINGS
+{{.LearningHistory}}
+
+## 📤 OUTPUT
+Call 'submit_decision_result' with structured reasoning.`)
+
+var decisionUserTemplate = MustRegisterTemplate("decisionUser", `## 📝 EVALUATION
+**Question**: {{.Question}}
+**Execution Output**: {{.ExecutionOutput}}
+
+**Analyze and submit results via 'submit_decision_result'.**`)
 
 // ConditionalResponse represents a true/false response with reasoning
 type ConditionalResponse struct {
@@ -64,110 +126,32 @@ func (hctpca *WorkflowConditionalAgent) conditionalSystemPromptProcessor(templat
 		"CodeExecution":   isCodeExecutionMode,
 	}
 
-	templateStr := `## 🤖 ROLE: Conditional Agent
-**Task**: Evaluate a workflow condition (TRUE/FALSE).
-**Constraint**: Context is historical. Use tools to verify CURRENT state.
-
-{{if .CodeExecution}}
-## ⚡ CODE EXECUTION
-- Use 'write_code' to verify state if needed.
-- Follow Go safety rules (no destructive ops).
-{{end}}
-
-## 🔍 PROCESS
-1. **Analyze**: Understand the question: {{.Description}}
-2. **Verify**: Use tools to gather factual evidence.
-3. **Decide**: 
-   - **TRUE**: Meets requirements.
-   - **FALSE**: Does not meet requirements.
-
-{{if .VariableValues}}
-## 🔑 VARIABLES
-{{.VariableNames}}
-**Current Values**: {{.VariableValues}}
-{{end}}
-
-## 📚 LEARNINGS (Historical)
-{{.LearningHistory}}
-
-## 📤 OUTPUT
-Return ONLY JSON: {"result": true|false, "reason": "evidence-based explanation"}`
-
-	tmpl, err := template.New("conditionalSystem").Parse(templateStr)
-	if err != nil {
-		return "Error parsing conditional system prompt template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateData); err != nil {
+	if err := conditionalSystemTemplate.Execute(&result, templateData); err != nil {
 		return "Error executing conditional system prompt template: " + err.Error()
 	}
 	return result.String()
 }
 
 func (hctpca *WorkflowConditionalAgent) conditionalUserMessageProcessor(templateVars map[string]string) string {
-	templateStr := `## 📝 TASK
-**Condition**: {{.Question}}
-**Context**: {{.ConditionContext}}
-
-**MANDATORY**: Use tools to verify reality. Do NOT rely on historical context alone.
-**Output**: JSON {"result": bool, "reason": "string"}`
-
-	tmpl, err := template.New("conditionalUser").Parse(templateStr)
-	if err != nil {
-		return "Error parsing conditional user message template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateVars); err != nil {
+	if err := conditionalUserTemplate.Execute(&result, templateVars); err != nil {
 		return "Error executing conditional user message template: " + err.Error()
 	}
 	return result.String()
 }
 
 func (hctpca *WorkflowConditionalAgent) decisionSystemPromptProcessor(templateVars map[string]string) string {
-	templateStr := `## 🤖 ROLE: Decision Evaluator
-**Task**: Analyze execution output vs. evaluation question.
-
-## 🔍 PROCESS
-1. **Analyze**: Review output for specific evidence.
-2. **Compare**: Apply criteria from the question.
-3. **Decide**: TRUE if criteria are clearly met.
-
-{{if .VariableValues}}
-## 🔑 VARIABLES
-{{.VariableNames}}
-**Current Values**: {{.VariableValues}}
-{{end}}
-
-## 📚 LEARNINGS
-{{.LearningHistory}}
-
-## 📤 OUTPUT
-Call 'submit_decision_result' with structured reasoning.`
-
-	tmpl, err := template.New("decisionSystem").Parse(templateStr)
-	if err != nil {
-		return "Error parsing decision system prompt template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateVars); err != nil {
+	if err := decisionSystemTemplate.Execute(&result, templateVars); err != nil {
 		return "Error executing decision system prompt template: " + err.Error()
 	}
 	return result.String()
 }
 
 func (hctpca *WorkflowConditionalAgent) decisionUserMessageProcessor(templateVars map[string]string) string {
-	templateStr := `## 📝 EVALUATION
-**Question**: {{.Question}}
-**Execution Output**: {{.ExecutionOutput}}
-
-**Analyze and submit results via 'submit_decision_result'.**`
-
-	tmpl, err := template.New("decisionUser").Parse(templateStr)
-	if err != nil {
-		return "Error parsing decision user message template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateVars); err != nil {
+	if err := decisionUserTemplate.Execute(&result, templateVars); err != nil {
 		return "Error executing decision user message template: " + err.Error()
 	}
 	return result.String()

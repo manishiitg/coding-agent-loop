@@ -643,8 +643,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 
 			// Read existing orchestrator learnings
 			existingLearningsContent := ""
-			baseWorkspacePath := hcpo.GetWorkspacePath()
-			stepLearningsPath := getLearningFolderPathByStepID(baseWorkspacePath, orchestrationStepID, orchestrationStepPath)
+			// getLearningFolderPathByStepID now returns RELATIVE path - workspace functions auto-prepend workspacePath
+			stepLearningsPath := getLearningFolderPathByStepID("", orchestrationStepID, orchestrationStepPath, execCtx.IsEvaluationMode)
 			orchestratorLearningPath := fmt.Sprintf("%s/orchestrator_learning.md", stepLearningsPath)
 			existingLearnings, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningPath)
 			if err == nil && existingLearnings != "" {
@@ -1041,8 +1041,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationOrchestratorStep(
 		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled for orchestration step %d - skipping orchestrator learning history reading", stepIndex+1))
 	} else {
 		// Read orchestrator learnings from orchestrator_learning.md
-		baseWorkspacePath := hcpo.GetWorkspacePath()
-		stepLearningsPath := getLearningFolderPathByStepID(baseWorkspacePath, orchestrationStepID, stepPath)
+		// getLearningFolderPathByStepID now returns RELATIVE path - workspace functions auto-prepend workspacePath
+		stepLearningsPath := getLearningFolderPathByStepID("", orchestrationStepID, stepPath, execCtx.IsEvaluationMode)
 		orchestratorLearningPath := fmt.Sprintf("%s/orchestrator_learning.md", stepLearningsPath)
 
 		orchestratorLearnings, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningPath)

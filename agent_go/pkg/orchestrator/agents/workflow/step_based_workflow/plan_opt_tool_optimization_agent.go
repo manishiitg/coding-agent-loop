@@ -146,7 +146,8 @@ func writeToolConfigChangelogEntry(ctx context.Context, workspacePath string, en
 		entry.Timestamp = now.Format(time.RFC3339)
 	}
 
-	changelogPath := filepath.Join(workspacePath, "planning", "changelog", toolConfigChangelogSessionFile)
+	// Use relative path only - ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath
+	changelogPath := filepath.Join("planning", "changelog", toolConfigChangelogSessionFile)
 
 	// Read existing changelog if it exists
 	var changelog ToolConfigChangeLog
@@ -232,7 +233,8 @@ func getUpdateStepConfigToolsSchema() string {
 
 // readStepConfigFromFile reads step_config.json from the workspace using BaseOrchestrator's ReadWorkspaceFile
 func readStepConfigFromFile(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error)) ([]StepConfig, error) {
-	configPath := filepath.Join(workspacePath, "planning", "step_config.json")
+	// Use relative path only - ReadWorkspaceFile auto-prepends workspacePath
+	configPath := filepath.Join("planning", "step_config.json")
 
 	stepConfigFileMutex.Lock()
 	defer stepConfigFileMutex.Unlock()
@@ -257,7 +259,8 @@ func readStepConfigFromFile(ctx context.Context, workspacePath string, readFile 
 // writeStepConfigToFile writes step configs to step_config.json in object format using BaseOrchestrator's WriteWorkspaceFile
 // Format: { "steps": [{ "id": "...", "agent_configs": {...} }] }
 func writeStepConfigToFile(ctx context.Context, workspacePath string, configs []StepConfig, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger loggerv2.Logger) error {
-	configPath := filepath.Join(workspacePath, "planning", "step_config.json")
+	// Use relative path only - WriteWorkspaceFile auto-prepends workspacePath
+	configPath := filepath.Join("planning", "step_config.json")
 
 	stepConfigFileMutex.Lock()
 	defer stepConfigFileMutex.Unlock()

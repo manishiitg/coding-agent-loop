@@ -14,7 +14,7 @@ import (
 )
 
 // evaluationSystemPromptTemplate is parsed at package init - panics on startup if invalid
-var evaluationSystemPromptTemplate = template.Must(template.New("evaluationSystemPrompt").Parse(`You are an Evaluation Planning Agent. Your goal is to design a high-level assessment to verify if the workflow execution successfully achieved its goal.
+var evaluationSystemPromptTemplate = template.Must(template.New("evaluationSystemPrompt").Parse(`You are an Evaluation Designer Agent. Your goal is to design a high-level assessment to verify if the workflow execution successfully achieved its goal.
 
 ## ⚠️ INPUT SOURCE
 **Derive the goal and success criteria SOLELY from the Execution Plan provided below.**
@@ -43,18 +43,31 @@ Example Success Criteria:
 "Score 10 if the summary captures all key points from the source text. Score 5 if it captures main points but misses details. Score 0 if it is unrelated."
 
 Available Tools:
-- add_evaluation_step: Add a new step.
-- update_evaluation_step: Update an existing step.
-- delete_evaluation_step: Delete steps.
+- add_evaluation_step: **APPENDS** a new step to the existing plan. Does NOT replace existing steps.
+- update_evaluation_step: Update an existing step by ID.
+- delete_evaluation_step: Delete steps by ID(s). Use this to remove unwanted steps.
 - human_feedback: Ask user for guidance and confirm strategy.
 
-Work ONLY in the 'planning/' directory. The evaluation plan is stored in 'planning/evaluation_plan.json'.
+**IMPORTANT - Plan Management:**
+- The evaluation plan may already contain steps from previous sessions.
+- If you want to **replace** the entire plan with a new single step, you MUST first delete ALL existing steps using delete_evaluation_step, then add your new step.
+- Always check the tool response to see the current state of the plan (e.g., "Plan now has 3 step(s): ...").
+- If you see unexpected steps remaining after a delete, delete them before adding new ones.
+
+Read from 'planning/' directory (for plan.json) and write to 'evaluation/' directory. The evaluation plan is stored in 'evaluation/evaluation_plan.json'.
 
 ## 📊 CONTEXT
 **Execution Plan (Source of Truth)**:
 {{.ExecutionPlanJSON}}
 
-{{if .ExistingEvaluationPlanJSON}}Existing Evaluation Plan:
+{{if .ExistingEvaluationPlanJSON}}
+## ⚠️ EXISTING EVALUATION PLAN
+The following evaluation plan already exists. If the user wants to modify it:
+- To **update** a step: use update_evaluation_step with the step ID
+- To **remove** steps: use delete_evaluation_step with the step ID(s)
+- To **replace entirely**: first delete ALL existing steps, then add new one(s)
+
+Current plan:
 {{.ExistingEvaluationPlanJSON}}{{end}}`))
 
 // HumanControlledEvaluationAgent is a conversational agent for evaluation planning
@@ -65,7 +78,7 @@ type HumanControlledEvaluationAgent struct {
 // NewHumanControlledEvaluationAgent creates a new evaluation agent
 func NewHumanControlledEvaluationAgent(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 	return &HumanControlledEvaluationAgent{
-		BaseOrchestratorAgent: agents.NewBaseOrchestratorAgentWithEventBridge(cfg, logger, tracer, agents.AgentType("evaluation-planning"), eventBridge),
+		BaseOrchestratorAgent: agents.NewBaseOrchestratorAgentWithEventBridge(cfg, logger, tracer, agents.AgentType("evaluation-designer"), eventBridge),
 	}
 }
 

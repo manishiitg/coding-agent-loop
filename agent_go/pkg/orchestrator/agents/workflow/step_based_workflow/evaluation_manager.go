@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -64,7 +65,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) checkExistingEvaluationPlan(ctx conte
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) loadEvaluationPlan(ctx context.Context) (*EvaluationPlan, error) {
-	content, err := hcpo.ReadWorkspaceFile(ctx, "planning/evaluation_plan.json")
+	// Note: evaluation_plan.json is stored in evaluation/ directory (not planning/) per documentation
+	content, err := hcpo.ReadWorkspaceFile(ctx, "evaluation/evaluation_plan.json")
 	if err != nil {
 		return nil, err
 	}
@@ -80,10 +82,41 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveEvaluationPlan(ctx context.Contex
 	if err != nil {
 		return err
 	}
-	return hcpo.WriteWorkspaceFile(ctx, "planning/evaluation_plan.json", string(data))
+	// Note: evaluation_plan.json is stored in evaluation/ directory (not planning/) per documentation
+	return hcpo.WriteWorkspaceFile(ctx, "evaluation/evaluation_plan.json", string(data))
 }
 
 // Methods for EvaluationManager
+
+// deleteStepLearnings deletes the entire learnings folder for a specific evaluation step ID.
+// Evaluation learnings are stored in evaluation/learnings/{stepID} (separate from workflow learnings)
+func (em *EvaluationManager) deleteStepLearnings(ctx context.Context, stepID string) error {
+	if stepID == "" {
+		return fmt.Errorf("cannot delete learnings: stepID is empty")
+	}
+
+	// Construct RELATIVE path - workspace functions auto-prepend workspacePath
+	stepLearningsPath := filepath.Join("evaluation", "learnings", stepID)
+
+	// Check if folder exists
+	exists, err := em.BaseOrchestrator.CheckWorkspaceFileExists(ctx, stepLearningsPath)
+	if err != nil {
+		return fmt.Errorf("failed to check if learnings folder exists: %w", err)
+	}
+
+	if !exists {
+		return nil
+	}
+
+	// Delete the folder recursively
+	err = em.BaseOrchestrator.DeleteWorkspaceFile(ctx, stepLearningsPath)
+	if err != nil {
+		return fmt.Errorf("failed to delete learnings folder %s: %w", stepLearningsPath, err)
+	}
+
+	em.GetLogger().Info(fmt.Sprintf("🗑️ Deleted learnings for evaluation step ID: %s", stepID))
+	return nil
+}
 
 // CreateEvaluationPlanOnly runs only the evaluation planning phase
 func (em *EvaluationManager) CreateEvaluationPlanOnly(ctx context.Context, objective, workspacePath string) (string, error) {
@@ -94,7 +127,8 @@ func (em *EvaluationManager) CreateEvaluationPlanOnly(ctx context.Context, objec
 	em.SetWorkspacePath(workspacePath)
 
 	// Check if evaluation_plan.json already exists
-	evalPlanPath := "planning/evaluation_plan.json"
+	// Note: evaluation_plan.json is stored in evaluation/ directory (not planning/) per documentation
+	evalPlanPath := "evaluation/evaluation_plan.json"
 	planExists, existingPlan, err := em.checkExistingEvaluationPlan(ctx, evalPlanPath)
 	if err != nil {
 		em.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check for existing evaluation plan: %v", err))
@@ -129,7 +163,7 @@ func (em *EvaluationManager) CreateEvaluationPlanOnly(ctx context.Context, objec
 		}
 
 		if approvedInternal {
-			em.GetLogger().Info(fmt.Sprintf("✅ Evaluation plan approved by human"))
+			em.GetLogger().Info("✅ Evaluation plan approved by human")
 			break
 		}
 
@@ -167,7 +201,8 @@ func (em *EvaluationManager) checkExistingEvaluationPlan(ctx context.Context, pl
 }
 
 func (em *EvaluationManager) loadEvaluationPlan(ctx context.Context) (*EvaluationPlan, error) {
-	content, err := em.ReadWorkspaceFile(ctx, "planning/evaluation_plan.json")
+	// Note: evaluation_plan.json is stored in evaluation/ directory (not planning/) per documentation
+	content, err := em.ReadWorkspaceFile(ctx, "evaluation/evaluation_plan.json")
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +218,8 @@ func (em *EvaluationManager) saveEvaluationPlan(ctx context.Context, plan *Evalu
 	if err != nil {
 		return err
 	}
-	return em.WriteWorkspaceFile(ctx, "planning/evaluation_plan.json", string(data))
+	// Note: evaluation_plan.json is stored in evaluation/ directory (not planning/) per documentation
+	return em.WriteWorkspaceFile(ctx, "evaluation/evaluation_plan.json", string(data))
 }
 
 func (em *EvaluationManager) requestEvaluationPlanApproval(ctx context.Context, revisionAttempt int) (bool, string, error) {
@@ -199,12 +235,14 @@ func (em *EvaluationManager) requestEvaluationPlanApproval(ctx context.Context, 
 }
 
 func (em *EvaluationManager) runEvaluationPlanningPhase(ctx context.Context, iteration int, humanFeedback string, conversationHistory []llmtypes.MessageContent, existingPlan *EvaluationPlan) (*EvaluationPlan, []llmtypes.MessageContent, error) {
+	workspacePath := em.GetWorkspacePath()
 	templateVars := map[string]string{
-		"WorkspacePath": em.GetWorkspacePath(),
+		"WorkspacePath": workspacePath,
 	}
 
 	// Read the execution plan to provide context for evaluation
-	executionPlanContent, err := em.ReadWorkspaceFile(ctx, "planning/plan.json")
+	planPath := "planning/plan.json"
+	executionPlanContent, err := em.ReadWorkspaceFile(ctx, planPath)
 	if err != nil {
 		em.GetLogger().Warn(fmt.Sprintf("⚠️ Could not read execution plan for evaluation designer: %v", err))
 		templateVars["ExecutionPlanJSON"] = "No execution plan found."
@@ -227,7 +265,7 @@ func (em *EvaluationManager) runEvaluationPlanningPhase(ctx context.Context, ite
 	}
 
 	// Create evaluation agent
-	agent, err := em.createEvaluationAgent(ctx, "evaluation-planning", 0, iteration)
+	agent, err := em.createEvaluationAgent(ctx, "evaluation-designer", 0, iteration)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -250,7 +288,8 @@ func (em *EvaluationManager) runEvaluationPlanningPhase(ctx context.Context, ite
 	}
 
 	// Read the plan back
-	_, plan, err := em.checkExistingEvaluationPlan(ctx, "planning/evaluation_plan.json")
+	// Note: evaluation_plan.json is stored in evaluation/ directory (not planning/) per documentation
+	_, plan, err := em.checkExistingEvaluationPlan(ctx, "evaluation/evaluation_plan.json")
 	if err != nil {
 		return nil, updatedHistory, err
 	}
@@ -261,11 +300,12 @@ func (em *EvaluationManager) runEvaluationPlanningPhase(ctx context.Context, ite
 func (em *EvaluationManager) createEvaluationAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
 	baseWorkspacePath := em.GetWorkspacePath()
 	planningPath := fmt.Sprintf("%s/planning", baseWorkspacePath)
+	evaluationPath := fmt.Sprintf("%s/evaluation", baseWorkspacePath)
 
-	// Evaluation designer agent: read/write access to planning/ folder only
-	// Can read planning/plan.json and write planning/evaluation_plan.json
-	// NO access to runs/ or evaluation/ folders - evaluation designer only analyzes the plan
-	em.SetWorkspacePathForFolderGuard([]string{planningPath}, []string{planningPath})
+	// Evaluation designer agent: read access to planning/ folder, write access to evaluation/ folder
+	// Can read planning/plan.json and write evaluation/evaluation_plan.json
+	// NO access to runs/ folder - evaluation designer only analyzes the plan
+	em.SetWorkspacePathForFolderGuard([]string{planningPath}, []string{evaluationPath})
 
 	var llmConfigToUse *orchestrator.LLMConfig
 	orchestratorLLMConfig := em.GetLLMConfig()
@@ -285,7 +325,7 @@ func (em *EvaluationManager) createEvaluationAgent(ctx context.Context, phase st
 		return nil, fmt.Errorf("no valid LLM configuration found for evaluation planning agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
 	}
 
-	agentConfig := em.CreateStandardAgentConfigWithLLM("evaluation-planning-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
+	agentConfig := em.CreateStandardAgentConfigWithLLM("evaluation-designer-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
 	agentConfig.ServerNames = []string{mcpclient.NoServers}
 	agentConfig.UseCodeExecutionMode = false
 
@@ -418,6 +458,12 @@ func (em *EvaluationManager) createAddEvaluationStepTool() func(context.Context,
 			return "", fmt.Errorf("missing or invalid argument: success_criteria (string required)")
 		}
 
+		// Delete existing learnings for this step ID if they exist (clean start for new/re-added step)
+		if err := em.deleteStepLearnings(ctx, id); err != nil {
+			em.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete existing learnings for step %s: %v", id, err))
+			// Continue adding step even if deletion failed
+		}
+
 		step := &EvaluationStep{
 			ID:              id,
 			Title:           title,
@@ -445,7 +491,13 @@ func (em *EvaluationManager) createAddEvaluationStepTool() func(context.Context,
 		if err := em.saveEvaluationPlan(ctx, plan); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Added evaluation step: %s", step.ID), nil
+
+		// Build informative response showing all steps in the plan
+		allStepIDs := make([]string, len(plan.Steps))
+		for i, s := range plan.Steps {
+			allStepIDs[i] = s.ID
+		}
+		return fmt.Sprintf("Added evaluation step: %s. Plan now has %d step(s): %s", step.ID, len(plan.Steps), strings.Join(allStepIDs, ", ")), nil
 	}
 }
 
@@ -468,6 +520,11 @@ func (em *EvaluationManager) createUpdateEvaluationStepTool() func(context.Conte
 		found := false
 		for i, s := range plan.Steps {
 			if s.ID == id {
+				// Delete existing learnings because step definition is changing
+				if err := em.deleteStepLearnings(ctx, id); err != nil {
+					em.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete existing learnings for step %s during update: %v", id, err))
+				}
+
 				if v, ok := args["title"].(string); ok {
 					plan.Steps[i].Title = v
 				}
@@ -519,18 +576,75 @@ func (em *EvaluationManager) createDeleteEvaluationStepTool() func(context.Conte
 			return "", err
 		}
 
-		idsRaw, ok := args["ids"].([]interface{})
-		if !ok {
-			return "", fmt.Errorf("missing or invalid argument: ids (array of strings required)")
+		idsToDelete := make(map[string]bool)
+
+		// Robust handling for 'ids': accepts various LLM output formats
+		switch v := args["ids"].(type) {
+		case string:
+			if v != "" {
+				// Check if it's a Python-style list literal like "['id1', 'id2']"
+				trimmed := strings.TrimSpace(v)
+				if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+					// Try to parse as JSON array first
+					var ids []string
+					if err := json.Unmarshal([]byte(trimmed), &ids); err == nil {
+						for _, id := range ids {
+							if id != "" {
+								idsToDelete[id] = true
+							}
+						}
+					} else {
+						// Try to parse Python-style list with single quotes: ['id1', 'id2']
+						// Convert single quotes to double quotes and try JSON
+						jsonStyle := strings.ReplaceAll(trimmed, "'", "\"")
+						if err := json.Unmarshal([]byte(jsonStyle), &ids); err == nil {
+							for _, id := range ids {
+								if id != "" {
+									idsToDelete[id] = true
+								}
+							}
+						} else {
+							// If all parsing fails, treat as single ID
+							idsToDelete[v] = true
+						}
+					}
+				} else {
+					// Single ID string
+					idsToDelete[v] = true
+				}
+			}
+		case []interface{}:
+			for _, idRaw := range v {
+				id, ok := idRaw.(string)
+				if !ok {
+					return "", fmt.Errorf("invalid argument in ids: element is not a string")
+				}
+				idsToDelete[id] = true
+			}
+		case []string:
+			for _, id := range v {
+				if id != "" {
+					idsToDelete[id] = true
+				}
+			}
+		default:
+			return "", fmt.Errorf("missing or invalid argument: ids (array of strings or single string required)")
 		}
 
-		idsToDelete := make(map[string]bool)
-		for _, idRaw := range idsRaw {
-			id, ok := idRaw.(string)
-			if !ok {
-				return "", fmt.Errorf("invalid argument in ids: element is not a string")
+		// Track which steps actually existed and were deleted
+		actuallyDeleted := []string{}
+		notFound := []string{}
+		existingIDs := make(map[string]bool)
+		for _, s := range plan.Steps {
+			existingIDs[s.ID] = true
+		}
+
+		for id := range idsToDelete {
+			if existingIDs[id] {
+				actuallyDeleted = append(actuallyDeleted, id)
+			} else {
+				notFound = append(notFound, id)
 			}
-			idsToDelete[id] = true
 		}
 
 		newSteps := []*EvaluationStep{}
@@ -540,10 +654,41 @@ func (em *EvaluationManager) createDeleteEvaluationStepTool() func(context.Conte
 			}
 		}
 
+		// Delete learnings for all deleted steps
+		for _, id := range actuallyDeleted {
+			if err := em.deleteStepLearnings(ctx, id); err != nil {
+				em.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete learnings for deleted step %s: %v", id, err))
+			}
+		}
+
 		plan.Steps = newSteps
 		if err := em.saveEvaluationPlan(ctx, plan); err != nil {
 			return "", err
 		}
-		return "Deleted evaluation steps", nil
+
+		// Build informative response message
+		var response strings.Builder
+		if len(actuallyDeleted) > 0 {
+			response.WriteString(fmt.Sprintf("Deleted %d evaluation step(s): %s. ", len(actuallyDeleted), strings.Join(actuallyDeleted, ", ")))
+		} else {
+			response.WriteString("No steps were deleted. ")
+		}
+
+		if len(notFound) > 0 {
+			response.WriteString(fmt.Sprintf("WARNING: The following IDs were not found in the plan: %s. ", strings.Join(notFound, ", ")))
+		}
+
+		// Always show remaining steps for context
+		if len(newSteps) > 0 {
+			remainingIDs := make([]string, len(newSteps))
+			for i, s := range newSteps {
+				remainingIDs[i] = s.ID
+			}
+			response.WriteString(fmt.Sprintf("Plan now has %d step(s) remaining: %s", len(newSteps), strings.Join(remainingIDs, ", ")))
+		} else {
+			response.WriteString("Plan is now empty (0 steps).")
+		}
+
+		return response.String(), nil
 	}
 }

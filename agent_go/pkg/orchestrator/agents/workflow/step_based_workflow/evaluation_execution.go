@@ -2,8 +2,10 @@ package step_based_workflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -16,7 +18,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	hcpo.SetWorkspacePath(workspacePath)
 
 	// Check if evaluation_plan.json exists
-	evalPlanPath := "planning/evaluation_plan.json"
+	// Note: evaluation_plan.json is stored in evaluation/ directory (not planning/) per documentation
+	evalPlanPath := "evaluation/evaluation_plan.json"
 	planExists, evaluationPlan, err := hcpo.checkExistingEvaluationPlan(ctx, evalPlanPath)
 	if err != nil {
 		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to check evaluation plan: %v", err), nil)
@@ -37,6 +40,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	// We use ".." to step out of the standard "runs/" folder that the orchestrator assumes,
 	// and point to "evaluation/runs/<targetRunFolder>"
 	hcpo.selectedRunFolder = filepath.Join("..", "evaluation", "runs", targetRunFolder)
+
+	// Set iteration folder for token persistence - this ensures token_usage.json goes to evaluation/runs/<targetRunFolder>/
+	hcpo.SetIterationFolder(hcpo.selectedRunFolder)
 
 	// Load runtime variable values if available (needed for variable resolution in evaluation steps)
 	variableValues, err := LoadVariableValues(ctx, hcpo.BaseOrchestrator, hcpo.GetWorkspacePath(), hcpo.GetWorkspacePath())
@@ -86,9 +92,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 		}
 	}
 
-	// Build execution context (skip human input by default for automated evaluation?)
-	// For now, follow orchestrator settings
+	// Set evaluation mode flag - this causes learnings to be stored in evaluation/learnings/
+	hcpo.isEvaluationMode = true
+
+	// Build execution context with human input skipped for automated evaluation
+	hcpo.SetSkipHumanInput(true) // Evaluation runs are always automated - no human feedback prompts
 	execCtx := hcpo.buildExecutionContext()
+	execCtx.SkipHumanInput = true // Ensure execution context also has this set
 
 	// Run execution phase
 	err = hcpo.runExecutionPhase(ctx, breakdownSteps, 1, progress, 0, execCtx)
@@ -98,5 +108,239 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	}
 
 	hcpo.GetLogger().Info("✅ Evaluation execution completed successfully")
-	return "Evaluation execution complete.", nil
+
+	// Run scoring phase after all evaluation steps complete
+	hcpo.GetLogger().Info("📊 Starting evaluation scoring phase")
+	report, err := hcpo.runEvaluationScoringPhase(ctx, evaluationPlan, targetRunFolder)
+	if err != nil {
+		hcpo.GetLogger().Error(fmt.Sprintf("❌ Evaluation scoring failed: %v", err), nil)
+		return "", fmt.Errorf("evaluation scoring phase failed: %w", err)
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Evaluation complete. Total Score: %d/%d (%.1f%%)",
+		report.TotalScore, report.MaxPossibleScore, report.ScorePercentage))
+
+	return fmt.Sprintf("Evaluation complete. Score: %d/%d (%.1f%%)", report.TotalScore, report.MaxPossibleScore, report.ScorePercentage), nil
+}
+
+// runEvaluationScoringPhase analyzes execution outputs and calculates scores for each step
+func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context.Context, evaluationPlan *EvaluationPlan, targetRunFolder string) (*EvaluationReport, error) {
+	// Note: We use relative paths here because WriteWorkspaceFile/ReadWorkspaceFile auto-prepend the workspace path
+	// Using baseWorkspacePath in paths would cause double-prepending
+
+	// Evaluation execution outputs are in: evaluation/runs/{targetRunFolder}/execution/step-{N}/
+	evalExecutionPath := filepath.Join("evaluation", "runs", targetRunFolder, "execution")
+
+	report := &EvaluationReport{
+		TargetRunFolder:  targetRunFolder,
+		GeneratedAt:      time.Now().Format(time.RFC3339),
+		StepScores:       make([]*EvaluationStepScore, 0),
+		MaxPossibleScore: len(evaluationPlan.Steps) * 10, // Assuming max score per step is 10
+	}
+
+	// Process each evaluation step
+	for i, step := range evaluationPlan.Steps {
+		stepFolder := fmt.Sprintf("step-%d", i+1)
+		stepPath := filepath.Join(evalExecutionPath, stepFolder)
+
+		hcpo.GetLogger().Info(fmt.Sprintf("📊 Scoring step %d: %s", i+1, step.Title))
+
+		// Read execution output from step folder
+		executionOutput, err := hcpo.readStepExecutionOutput(ctx, stepPath)
+		if err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not read execution output for step %d: %v", i+1, err))
+			executionOutput = fmt.Sprintf("Error reading output: %v", err)
+		}
+
+		// Calculate score for this step using LLM
+		stepScore, err := hcpo.calculateStepScore(ctx, step, executionOutput)
+		if err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Error calculating score for step %d: %v", i+1, err))
+			// Create a zero-score entry for failed scoring
+			stepScore = &EvaluationStepScore{
+				StepID:          step.ID,
+				StepTitle:       step.Title,
+				Score:           0,
+				MaxScore:        10,
+				Reasoning:       fmt.Sprintf("Scoring failed: %v", err),
+				Evidence:        "",
+				SuccessCriteria: step.SuccessCriteria,
+			}
+		}
+
+		report.StepScores = append(report.StepScores, stepScore)
+		report.TotalScore += stepScore.Score
+	}
+
+	// Calculate percentage
+	if report.MaxPossibleScore > 0 {
+		report.ScorePercentage = float64(report.TotalScore) / float64(report.MaxPossibleScore) * 100
+	}
+
+	// Generate summary
+	report.Summary = hcpo.generateEvaluationSummary(report)
+
+	// Save report to file (use relative path - WriteWorkspaceFile auto-prepends workspace path)
+	reportPath := filepath.Join("evaluation", "runs", targetRunFolder, "evaluation_report.json")
+	reportJSON, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return report, fmt.Errorf("failed to marshal evaluation report: %w", err)
+	}
+
+	if err := hcpo.WriteWorkspaceFile(ctx, reportPath, string(reportJSON)); err != nil {
+		return report, fmt.Errorf("failed to write evaluation report: %w", err)
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("📄 Evaluation report saved to: %s", reportPath))
+
+	return report, nil
+}
+
+// readStepExecutionOutput reads all relevant output files from evaluation step execution
+// It looks in multiple locations since execution outputs are stored in logs folders
+func (hcpo *StepBasedWorkflowOrchestrator) readStepExecutionOutput(ctx context.Context, stepPath string) (string, error) {
+	var outputs []string
+
+	// The stepPath is like: evaluation/runs/{targetRunFolder}/execution/step-{N}
+	// But execution logs are written to: evaluation/runs/{targetRunFolder}/logs/step-{N}/execution/
+	// We need to convert the path to look in the logs folder
+
+	// Extract the step folder name (e.g., "step-1") from the path
+	stepFolder := filepath.Base(stepPath)                                                          // "step-1"
+	evalRunFolder := filepath.Dir(filepath.Dir(stepPath))                                          // "evaluation/runs/{targetRunFolder}"
+	logsExecutionPath := filepath.Join(evalRunFolder, "logs", stepFolder, "execution")             // logs path for execution files
+	logsValidationPath := filepath.Join(evalRunFolder, "logs", stepFolder, "validation")           // logs path for validation files
+	executionStepPath := filepath.Join(evalRunFolder, "execution", stepFolder)                     // execution/step-{N} path for step outputs
+
+	hcpo.GetLogger().Info(fmt.Sprintf("📂 Looking for execution outputs in: logs=%s, execution=%s", logsExecutionPath, executionStepPath))
+
+	// 1. Try to read execution result files from logs folder (execution-attempt-{N}-iteration-{N}.json)
+	for attempt := 1; attempt <= 5; attempt++ {
+		for iteration := 0; iteration <= 5; iteration++ {
+			executionFile := fmt.Sprintf("execution-attempt-%d-iteration-%d.json", attempt, iteration)
+			filePath := filepath.Join(logsExecutionPath, executionFile)
+			content, err := hcpo.ReadWorkspaceFile(ctx, filePath)
+			if err == nil && content != "" {
+				outputs = append(outputs, fmt.Sprintf("=== %s ===\n%s", executionFile, content))
+			}
+		}
+	}
+
+	// 2. Try to read validation files from logs folder (if validation was enabled)
+	validationFiles := []string{"validation.json", "validation-1.json", "validation-2.json"}
+	for _, filename := range validationFiles {
+		filePath := filepath.Join(logsValidationPath, filename)
+		content, err := hcpo.ReadWorkspaceFile(ctx, filePath)
+		if err == nil && content != "" {
+			outputs = append(outputs, fmt.Sprintf("=== %s ===\n%s", filename, content))
+		}
+	}
+
+	// 3. Try to read step output files from execution folder (verification reports, etc.)
+	// First, try to list all files in the execution step folder and read any JSON/MD files found
+	execFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, executionStepPath)
+	if listErr == nil && len(execFiles) > 0 {
+		for _, filename := range execFiles {
+			// Read any JSON or MD files in the execution folder
+			if strings.HasSuffix(filename, ".json") || strings.HasSuffix(filename, ".md") {
+				filePath := filepath.Join(executionStepPath, filename)
+				content, err := hcpo.ReadWorkspaceFile(ctx, filePath)
+				if err == nil && content != "" {
+					outputs = append(outputs, fmt.Sprintf("=== %s ===\n%s", filename, content))
+				}
+			}
+		}
+	} else {
+		// Fallback: Try specific file names if listing failed
+		stepOutputFiles := []string{
+			"final_verification_report.json",
+			"verification_report.json",
+			"verification_summary.json",
+			"verification_report.md",
+			"output.json",
+			"result.json",
+			"summary.json",
+		}
+		for _, filename := range stepOutputFiles {
+			filePath := filepath.Join(executionStepPath, filename)
+			content, err := hcpo.ReadWorkspaceFile(ctx, filePath)
+			if err == nil && content != "" {
+				outputs = append(outputs, fmt.Sprintf("=== %s ===\n%s", filename, content))
+			}
+		}
+	}
+
+	if len(outputs) == 0 {
+		return "No execution output files found. The evaluation step may not have run or produced no output.", nil
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("📄 Found %d output file(s) for evaluation scoring", len(outputs)))
+	return strings.Join(outputs, "\n\n"), nil
+}
+
+// calculateStepScore uses LLM to analyze output and determine score
+// This method uses the factory pattern from controller_agent_factory.go for proper event bridging
+func (hcpo *StepBasedWorkflowOrchestrator) calculateStepScore(ctx context.Context, step *EvaluationStep, executionOutput string) (*EvaluationStepScore, error) {
+	// Use the factory method which handles:
+	// - presetPhaseLLM selection (Priority: presetPhaseLLM > orchestrator default)
+	// - Proper event bridging via CreateAndSetupStandardAgentWithConfig
+	// - submit_score tool registration
+	// - Agent execution and score capture
+	_, stepScore, err := hcpo.createEvaluationScoringAgent(ctx, "evaluation-scoring", step, executionOutput)
+	if err != nil {
+		return nil, err
+	}
+	return stepScore, nil
+}
+
+// generateEvaluationSummary creates a human-readable summary of the evaluation
+func (hcpo *StepBasedWorkflowOrchestrator) generateEvaluationSummary(report *EvaluationReport) string {
+	var summary strings.Builder
+
+	summary.WriteString(fmt.Sprintf("Evaluation of %s completed.\n", report.TargetRunFolder))
+	summary.WriteString(fmt.Sprintf("Overall Score: %d/%d (%.1f%%)\n\n", report.TotalScore, report.MaxPossibleScore, report.ScorePercentage))
+
+	summary.WriteString("Step Results:\n")
+	for _, stepScore := range report.StepScores {
+		summary.WriteString(fmt.Sprintf("- %s: %d/%d - %s\n", stepScore.StepTitle, stepScore.Score, stepScore.MaxScore, stepScore.Reasoning))
+	}
+
+	return summary.String()
+}
+
+// ============================================================================
+// AUTO-EVALUATION (runs automatically after normal execution if evaluation_plan.json exists)
+// ============================================================================
+
+// MaybeRunAutoEvaluation checks if evaluation_plan.json exists and automatically runs
+// the full evaluation process (same as manual evaluation) after normal execution completes.
+func (hcpo *StepBasedWorkflowOrchestrator) MaybeRunAutoEvaluation(ctx context.Context) error {
+	// Check if evaluation_plan.json exists
+	evalPlanPath := "evaluation/evaluation_plan.json"
+	planExists, _, err := hcpo.checkExistingEvaluationPlan(ctx, evalPlanPath)
+	if err != nil {
+		return fmt.Errorf("failed to check evaluation plan: %w", err)
+	}
+	if !planExists {
+		hcpo.GetLogger().Info("ℹ️ No evaluation_plan.json found - skipping auto-evaluation")
+		return nil // Not an error - just no evaluation plan defined
+	}
+
+	// Get the target run folder from the current execution
+	targetRunFolder := hcpo.selectedRunFolder
+	if targetRunFolder == "" {
+		hcpo.GetLogger().Warn("⚠️ No run folder set - skipping auto-evaluation")
+		return nil
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("📊 Starting auto-evaluation for run folder: %s", targetRunFolder))
+
+	// Call the same evaluation process as manual evaluation
+	// This executes evaluation steps and scores them
+	_, err = hcpo.ExecuteEvaluationOnly(ctx, hcpo.GetObjective(), hcpo.GetWorkspacePath(), targetRunFolder)
+	if err != nil {
+		return fmt.Errorf("auto-evaluation failed: %w", err)
+	}
+
+	return nil
 }

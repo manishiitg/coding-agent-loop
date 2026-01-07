@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"text/template"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -20,6 +19,95 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// Pre-parsed templates for plan improvement - panics at startup if invalid
+var improvementSystemTemplate = MustRegisterTemplate("improvementSystem", `# Plan Improvement Agent
+**Context**: Analyzing run path '{{.RunPathRelative}}'
+
+## 🤖 ROLE
+Post-execution analyst. Identify and fix plan issues by analyzing ACTUAL tool calls and failures.
+
+## ⚠️ CRITICAL RULES
+1. **Confirm First**: Use 'human_feedback' BEFORE any plan changes.
+2. **Start with Questions**: Ask "What would you like to improve?" first.
+3. **Gather Evidence**: Read files (plan, logs, learnings) before proposing fixes.
+4. **Concrete Criteria**: Success criteria MUST be file-verifiable (counts, samples) and hard to fake.
+
+## 📋 EVIDENCE SOURCES
+- **Default (Fast)**: 'planning/plan.json', 'learnings/', '{{.RunPathRelative}}/execution/', 'knowledgebase/'.
+- **Knowledgebase**: Read 'knowledgebase/' for persistent templates, reference data, or global configs shared across all runs.
+- **Logs (Slow/Requested)**: Only read '{{.RunPathRelative}}/logs/' if user asks about specific failures or "why" a step failed.
+- **Evaluation Reports**: Read 'evaluation/runs/{targetRunFolder}/evaluation_report.json' for LLM-scored assessments of execution quality.
+
+---
+
+## 🧩 ANALYSIS CHECKLISTS
+
+### 1. Orchestration Steps (Main + Sub-Agents)
+Orchestration involves a Main Orchestrator looping over Sub-Agents.
+- **Main Orchestrator**: Read 'orchestration-evaluation.json'. Is it looping forever? Are route conditions clear?
+- **Sub-Agents**: Read 'logs/step-X-sub-agent-{i}/'. Are sub-agent success criteria file-verifiable? Did they receive correct instructions?
+- **Root Cause**: If a sub-agent fails, check if the main orchestrator provided the right context.
+
+### 2. Validation Failures
+- **Pre-Validation (Structural)**: If this fails, update the 'validation_schema' (file exists, JSON format).
+- **LLM Validation (Authenticity)**: If this fails, update 'success_criteria' to focus on execution history (proving work was done).
+
+### 3. Anti-Gaming Principle
+Avoid status-only criteria like 'status: "success"'. Require concrete evidence:
+- ✅ "File 'X' contains array 'Y' with length 'Z'".
+- ❌ "Step shows as success in verification file".
+
+### 4. JSON File Size Issues
+If JSON context output files are too large (> 100KB), they will fail to load during pre-validation:
+- **Problem**: Large JSON files cause parsing failures ("invalid character 'd' after object key:value pair", file loading failures)
+- **Solution**: Update step's context_output structure to reference markdown files for large content
+- **Recommendation**: Suggest splitting large JSON into structured data (JSON) + large text (markdown file reference)
+- **Example Fix**: Change {"large_content": "very long text..."} to {"summary": "brief", "details_file": "step_X_details.md"}
+
+### 5. Evaluation Reports (LLM-Scored Quality Assessment)
+Evaluation reports provide independent LLM-scored assessments of execution quality:
+- **Location**: 'evaluation/{{.RunPathRelative}}/evaluation_report.json' (scoped to THIS iteration only)
+- **Structure**: Contains 'total_score', 'max_possible_score', 'score_percentage', and 'step_scores[]' with per-step details
+- **Per-Step Scores**: Each 'step_scores' entry has 'step_id', 'score', 'max_score', 'reasoning', 'evidence', 'success_criteria'
+- **How to Use**:
+  - Low scores (< 50%) indicate steps that need better success criteria or clearer instructions
+  - Read 'reasoning' and 'evidence' fields to understand WHY a step scored poorly
+  - Use insights to update 'success_criteria' in plan steps to be more specific and verifiable
+  - Cross-reference with 'evaluation/evaluation_plan.json' to see what criteria were used for scoring
+- **Evaluation Plan**: 'evaluation/evaluation_plan.json' defines the evaluation steps used for scoring
+- **Evaluation Learnings**: 'evaluation/learnings/{stepID}/' contains learnings from evaluation runs (separate from workflow learnings)
+- **Access Scope**: You can ONLY read evaluation data for the selected iteration ({{.RunPathRelative}}), not other iterations
+
+---
+
+## 🔄 WORKFLOW
+1. **Ask**: Use 'human_feedback' to align with user needs.
+2. **Read**: Inspect logs/outputs/learnings.
+3. **Propose**: Describe what/why/how to the user.
+4. **Update**: After approval ("yes", "ok"), use plan modification tools.
+
+## 🛠️ PLAN MODIFICATION TOOLS
+Use 'update_*', 'add_*', 'delete_plan_steps', 'convert_step_to_conditional', etc., ONLY after user approval.
+
+{{if .AllowedPaths}}**Allowed Paths**: {{.AllowedPaths}}{{end}}`)
+
+var improvementUserTemplate = MustRegisterTemplate("improvementUser", `# Plan Improvement Task
+## 📋 CONTEXT
+- **Workspace**: {{.WorkspacePath}}
+- **Selected Run**: {{.RunPathRelative}}
+
+## 📊 DATA
+**Execution Summary**:
+{{.ExecutionResultsSummary}}
+
+**Current Plan**:
+{{if .PlanJSON}}{{.PlanJSON}}{{else}}No plan provided.{{end}}
+
+## 🧠 TASK
+1. Analyze the plan vs. execution results.
+2. Ask the user what to improve via 'human_feedback'.
+3. Propose specific fixes and get approval before updating the plan.`)
 
 // WorkflowPlanImprovementTemplate holds template variables for plan improvement prompts
 type WorkflowPlanImprovementTemplate struct {
@@ -102,15 +190,36 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 	// Build read paths list - explicit read-only access
 	// Use current workspace for execution/logs, original workspace for learnings/planning
 	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
+	// Evaluation folder: scoped to specific iteration being analyzed
 	knowledgebasePath := getKnowledgebasePath(originalWorkspacePath)
 	runsPath := fmt.Sprintf("%s/runs", originalWorkspacePath)
-	readPaths := []string{
-		currentWorkspacePath, // Read execution results and logs from current workspace
-		runsPath,             // Read access to all runs
-		knowledgebasePath,    // Read knowledgebase folder (persistent files across runs)
-		learningsPath,        // Read learnings from original workspace (shared and step-specific)
-		planningPath,         // Read plan.json from original workspace
+
+	// Extract iteration folder from workspacePath to scope evaluation access
+	// workspacePath = {originalWorkspacePath}/runs/iteration-X or {originalWorkspacePath}/runs/iteration-X/group-Y
+	// We need to extract the relative path after "runs/" to match evaluation folder structure
+	iterationFolder := strings.TrimPrefix(workspacePath, originalWorkspacePath+"/runs/")
+	if iterationFolder == workspacePath {
+		// Fallback: try without leading slash
+		iterationFolder = strings.TrimPrefix(workspacePath, originalWorkspacePath+"runs/")
 	}
+
+	// Evaluation paths - scoped to specific iteration
+	evaluationPlanPath := fmt.Sprintf("%s/evaluation/evaluation_plan.json", originalWorkspacePath)     // Read evaluation plan definition
+	evaluationLearningsPath := fmt.Sprintf("%s/evaluation/learnings", originalWorkspacePath)           // Read evaluation learnings (shared)
+	evaluationRunPath := fmt.Sprintf("%s/evaluation/runs/%s", originalWorkspacePath, iterationFolder)  // Read only this iteration's evaluation report
+
+	readPaths := []string{
+		currentWorkspacePath,    // Read execution results and logs from current workspace
+		runsPath,                // Read access to all runs
+		knowledgebasePath,       // Read knowledgebase folder (persistent files across runs)
+		learningsPath,           // Read learnings from original workspace (shared and step-specific)
+		planningPath,            // Read plan.json from original workspace
+		evaluationPlanPath,      // Read evaluation plan definition
+		evaluationLearningsPath, // Read evaluation learnings (shared across runs)
+		evaluationRunPath,       // Read evaluation report for THIS iteration only
+	}
+
+	pim.GetLogger().Info(fmt.Sprintf("📊 Evaluation access scoped to iteration: %s", iterationFolder))
 
 	// Step-specific learnings are always enabled - folders are at workspace root
 	// The learningsPath already covers these since they're under learnings/
@@ -309,7 +418,42 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, orig
 	// Create execution results summary based on the selected run folder.
 	// Execution/logs live under runs/<run>/..., while plan/learnings are at workspace root.
 	executionResultsSummary := fmt.Sprintf(
-		"Workspace root: %s\nSelected run folder: %s\n\nRun folder contains:\n- %s/execution/ - step execution outputs\n- %s/logs/ - validation and execution logs\n\nKnowledgebase folder (shared across all runs):\n- %s/knowledgebase/ - persistent files across all runs (templates, reference data, configurations - NEVER deleted during cleanup)\n\nUse list_workspace_files to explore:\n- Execution result files in %s/execution/\n- Knowledgebase files in %s/knowledgebase/ (persistent across all runs, at workspace root)\n- Detailed logs in %s/logs/step-X/ including:\n  * validation-{N}.json - validation responses for each validation attempt\n  * execution/execution-attempt-{N}-iteration-{M}.json - execution results with retry/loop information\n  * execution/execution-attempt-{N}-iteration-{M}-conversation.json - full conversation history for each execution attempt\n\nLearnings are stored at workspace root:\n- learnings/\n- learnings/{step_id}/ (regular steps, using step IDs from plan.json)\n- learnings/{step_id}/ (branch steps, using step IDs from plan.json where step_id is the branch step's own ID)\n- learnings/{step_id}/ (orchestration sub-agents, using step IDs from plan.json where step_id is the sub-agent's own ID)\n\nPlan is stored at:\n- planning/plan.json",
+		`Workspace root: %s
+Selected run folder: %s
+
+Run folder contains:
+- %s/execution/ - step execution outputs
+- %s/logs/ - validation and execution logs
+
+Knowledgebase folder (shared across all runs):
+- %s/knowledgebase/ - persistent files across all runs (templates, reference data, configurations - NEVER deleted during cleanup)
+
+Use list_workspace_files to explore:
+- Execution result files in %s/execution/
+- Knowledgebase files in %s/knowledgebase/ (persistent across all runs, at workspace root)
+- Detailed logs in %s/logs/step-X/ including:
+  * validation-{N}.json - validation responses for each validation attempt
+  * execution/execution-attempt-{N}-iteration-{M}.json - execution results with retry/loop information
+  * execution/execution-attempt-{N}-iteration-{M}-conversation.json - full conversation history for each execution attempt
+
+Learnings are stored at workspace root:
+- learnings/
+- learnings/{step_id}/ (regular steps, using step IDs from plan.json)
+- learnings/{step_id}/ (branch steps, using step IDs from plan.json where step_id is the branch step's own ID)
+- learnings/{step_id}/ (orchestration sub-agents, using step IDs from plan.json where step_id is the sub-agent's own ID)
+
+Plan is stored at:
+- planning/plan.json
+
+Evaluation data (LLM-scored quality assessments) - ACCESS SCOPED TO THIS ITERATION ONLY:
+- evaluation/evaluation_plan.json - defines evaluation criteria (shared)
+- evaluation/learnings/{step_id}/ - learnings from evaluation runs (shared)
+- evaluation/%s/evaluation_report.json - scored report for THIS iteration
+  * Contains: total_score, max_possible_score, score_percentage, step_scores[]
+  * Each step_scores entry has: step_id, score, max_score, reasoning, evidence, success_criteria
+  * Use low-scoring steps (<50%%) to identify plan improvements needed
+  * Read 'reasoning' and 'evidence' fields to understand WHY steps scored poorly
+  * NOTE: You can only access evaluation data for the selected iteration, not other iterations`,
 		originalWorkspacePath,
 		validatedRunPath,
 		validatedRunPath,
@@ -318,6 +462,7 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, orig
 		validatedRunPath,
 		originalWorkspacePath,
 		validatedRunPath,
+		validatedRunPath, // For evaluation path
 	)
 
 	// Create plan improvement agent with run workspace path (for reading run artifacts)
@@ -329,7 +474,8 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, orig
 
 	// Prepare template variables
 	// Use workspace root for plan/learnings, and runs/<run> for execution/logs.
-	allowedPaths := fmt.Sprintf("['planning/', 'learnings/', '%s/']", validatedRunPath)
+	// Include evaluation/ for reading evaluation reports and plans.
+	allowedPaths := fmt.Sprintf("['planning/', 'learnings/', '%s/', 'evaluation/']", validatedRunPath)
 	planImprovementTemplateVars := map[string]string{
 		// Workspace root (plan/learnings live here)
 		"WorkspacePath": originalWorkspacePath,
@@ -1012,97 +1158,16 @@ func (agent *WorkflowPlanImprovementAgent) Execute(ctx context.Context, template
 
 // planImprovementSystemPromptProcessor creates the system prompt for plan improvement
 func (agent *WorkflowPlanImprovementAgent) planImprovementSystemPromptProcessor(templateVars map[string]string) string {
-	templateStr := `# Plan Improvement Agent
-**Context**: Analyzing run path '{{.RunPathRelative}}'
-
-## 🤖 ROLE
-Post-execution analyst. Identify and fix plan issues by analyzing ACTUAL tool calls and failures.
-
-## ⚠️ CRITICAL RULES
-1. **Confirm First**: Use 'human_feedback' BEFORE any plan changes.
-2. **Start with Questions**: Ask "What would you like to improve?" first.
-3. **Gather Evidence**: Read files (plan, logs, learnings) before proposing fixes.
-4. **Concrete Criteria**: Success criteria MUST be file-verifiable (counts, samples) and hard to fake.
-
-## 📋 EVIDENCE SOURCES
-- **Default (Fast)**: 'planning/plan.json', 'learnings/', '{{.RunPathRelative}}/execution/', 'knowledgebase/'.
-- **Knowledgebase**: Read 'knowledgebase/' for persistent templates, reference data, or global configs shared across all runs.
-- **Logs (Slow/Requested)**: Only read '{{.RunPathRelative}}/logs/' if user asks about specific failures or "why" a step failed.
-
----
-
-## 🧩 ANALYSIS CHECKLISTS
-
-### 1. Orchestration Steps (Main + Sub-Agents)
-Orchestration involves a Main Orchestrator looping over Sub-Agents.
-- **Main Orchestrator**: Read 'orchestration-evaluation.json'. Is it looping forever? Are route conditions clear?
-- **Sub-Agents**: Read 'logs/step-X-sub-agent-{i}/'. Are sub-agent success criteria file-verifiable? Did they receive correct instructions?
-- **Root Cause**: If a sub-agent fails, check if the main orchestrator provided the right context.
-
-### 2. Validation Failures
-- **Pre-Validation (Structural)**: If this fails, update the 'validation_schema' (file exists, JSON format).
-- **LLM Validation (Authenticity)**: If this fails, update 'success_criteria' to focus on execution history (proving work was done).
-
-### 3. Anti-Gaming Principle
-Avoid status-only criteria like 'status: "success"'. Require concrete evidence:
-- ✅ "File 'X' contains array 'Y' with length 'Z'".
-- ❌ "Step shows as success in verification file".
-
-### 4. JSON File Size Issues
-If JSON context output files are too large (> 100KB), they will fail to load during pre-validation:
-- **Problem**: Large JSON files cause parsing failures ("invalid character 'd' after object key:value pair", file loading failures)
-- **Solution**: Update step's context_output structure to reference markdown files for large content
-- **Recommendation**: Suggest splitting large JSON into structured data (JSON) + large text (markdown file reference)
-- **Example Fix**: Change {"large_content": "very long text..."} to {"summary": "brief", "details_file": "step_X_details.md"}
-
----
-
-## 🔄 WORKFLOW
-1. **Ask**: Use 'human_feedback' to align with user needs.
-2. **Read**: Inspect logs/outputs/learnings.
-3. **Propose**: Describe what/why/how to the user.
-4. **Update**: After approval ("yes", "ok"), use plan modification tools.
-
-## 🛠️ PLAN MODIFICATION TOOLS
-Use 'update_*', 'add_*', 'delete_plan_steps', 'convert_step_to_conditional', etc., ONLY after user approval.
-
-{{if .AllowedPaths}}**Allowed Paths**: {{.AllowedPaths}}{{end}}`
-
-	tmpl, err := template.New("improvementSystem").Parse(templateStr)
-	if err != nil {
-		return "Error parsing improvement system prompt template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateVars); err != nil {
+	if err := improvementSystemTemplate.Execute(&result, templateVars); err != nil {
 		return "Error executing improvement system prompt template: " + err.Error()
 	}
 	return result.String()
 }
 
 func (agent *WorkflowPlanImprovementAgent) planImprovementUserMessageProcessor(templateVars map[string]string) string {
-	templateStr := `# Plan Improvement Task
-## 📋 CONTEXT
-- **Workspace**: {{.WorkspacePath}}
-- **Selected Run**: {{.RunPathRelative}}
-
-## 📊 DATA
-**Execution Summary**:
-{{.ExecutionResultsSummary}}
-
-**Current Plan**:
-{{if .PlanJSON}}{{.PlanJSON}}{{else}}No plan provided.{{end}}
-
-## 🧠 TASK
-1. Analyze the plan vs. execution results.
-2. Ask the user what to improve via 'human_feedback'.
-3. Propose specific fixes and get approval before updating the plan.`
-
-	tmpl, err := template.New("improvementUser").Parse(templateStr)
-	if err != nil {
-		return "Error parsing improvement user message template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateVars); err != nil {
+	if err := improvementUserTemplate.Execute(&result, templateVars); err != nil {
 		return "Error executing improvement user message template: " + err.Error()
 	}
 	return result.String()

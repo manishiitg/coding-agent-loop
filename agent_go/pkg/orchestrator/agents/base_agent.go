@@ -42,6 +42,7 @@ const (
 	TodoPlannerPlanToolOptimizationAgentType AgentType = "todo_planner_plan_tool_optimization" // Optimizes tool selections in step_config.json based on learnings
 	ConditionalAgentType                     AgentType = "conditional"                         // Conditional decision agent for evaluating step conditions
 	OrchestrationAgentType                   AgentType = "orchestration"                       // DEPRECATED: Legacy orchestration agent type (no longer used). Current orchestration uses OrchestrationOrchestratorAgent which handles execution, evaluation, and routing in one step.
+	EvaluationScoringAgentType               AgentType = "evaluation_scoring"                  // Calculates scores for evaluation steps based on success criteria
 )
 
 // BaseAgentInterface defines the interface for base agent operations

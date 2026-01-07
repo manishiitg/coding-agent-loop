@@ -1,5 +1,7 @@
 import React from 'react'
 import type { ToolCallEndEvent } from '../../../../generated/events'
+import { CircularProgress, type ContextOnlyTokenUsage } from '../../../ui/CircularProgress'
+import { TooltipProvider } from '../../../ui/tooltip'
 
 interface CodeExecutionToolCallEndDisplayProps {
   event: ToolCallEndEvent
@@ -24,6 +26,21 @@ const formatDuration = (durationNs: number) => {
 }
 
 export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndDisplayProps> = ({ event }) => {
+
+  // Extract context usage information for CircularProgress
+  const contextUsagePercent = event.context_usage_percent
+  const modelContextWindow = event.model_context_window
+  const contextWindowUsage = event.context_window_usage
+  const modelId = event.model_id
+
+  // Create a minimal token usage object for the tooltip (only context info available)
+  const tokenUsageForTooltip: ContextOnlyTokenUsage | undefined =
+    contextUsagePercent !== undefined && contextUsagePercent > 0 ? {
+      context_usage_percent: contextUsagePercent,
+      model_context_window: modelContextWindow,
+      context_window_usage: contextWindowUsage,
+      model_id: modelId,
+    } : undefined
 
   if (!event.result) {
     return null
@@ -89,12 +106,23 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0 flex-1">
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                <div className="text-sm font-medium text-blue-700 dark:text-blue-300 flex items-center gap-2">
                   ✅ Code Structure Discovered{' '}
                   <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
                     {event.turn && `• Turn: ${event.turn}`}
                     {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
                   </span>
+                  {/* Context completion indicator */}
+                  {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
+                    <TooltipProvider>
+                      <CircularProgress
+                        percentage={contextUsagePercent}
+                        size={18}
+                        strokeWidth={3}
+                        tokenUsage={tokenUsageForTooltip}
+                      />
+                    </TooltipProvider>
+                  )}
                 </div>
               </div>
             </div>
@@ -229,13 +257,24 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0 flex-1">
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                <div className="text-sm font-medium text-blue-700 dark:text-blue-300 flex items-center gap-2">
                   ✅ Discovery Complete{' '}
                   <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
                     {event.turn && `• Turn: ${event.turn}`}
                     {event.tool_name && ` • Tool: ${event.tool_name}`}
                     {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
                   </span>
+                  {/* Context completion indicator */}
+                  {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
+                    <TooltipProvider>
+                      <CircularProgress
+                        percentage={contextUsagePercent}
+                        size={18}
+                        strokeWidth={3}
+                        tokenUsage={tokenUsageForTooltip}
+                      />
+                    </TooltipProvider>
+                  )}
                 </div>
               </div>
             </div>
@@ -348,12 +387,23 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
           <div className="flex items-center justify-between gap-2 py-0.5">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <div className="min-w-0 flex-1">
-                <div className="text-xs font-medium text-blue-700 dark:text-blue-300">
+                <div className="text-xs font-medium text-blue-700 dark:text-blue-300 flex items-center gap-2">
                   ✅ Go Code Retrieved{' '}
                   <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
                     {event.turn && `• Turn: ${event.turn}`}
                     {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
                   </span>
+                  {/* Context completion indicator */}
+                  {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
+                    <TooltipProvider>
+                      <CircularProgress
+                        percentage={contextUsagePercent}
+                        size={18}
+                        strokeWidth={3}
+                        tokenUsage={tokenUsageForTooltip}
+                      />
+                    </TooltipProvider>
+                  )}
                 </div>
               </div>
             </div>
@@ -423,12 +473,23 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
         <div className="flex items-center justify-between gap-2 py-0.5">
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <div className="min-w-0 flex-1">
-              <div className={`text-xs font-medium ${textColor}`}>
+              <div className={`text-xs font-medium ${textColor} flex items-center gap-2`}>
                 {statusIcon} {statusText}{' '}
                 <span className={`text-xs font-normal ${secondaryTextColor}`}>
                   {event.turn && `• Turn: ${event.turn}`}
                   {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
                 </span>
+                {/* Context completion indicator */}
+                {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
+                  <TooltipProvider>
+                    <CircularProgress
+                      percentage={contextUsagePercent}
+                      size={18}
+                      strokeWidth={3}
+                      tokenUsage={tokenUsageForTooltip}
+                    />
+                  </TooltipProvider>
+                )}
               </div>
             </div>
           </div>

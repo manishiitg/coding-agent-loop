@@ -198,6 +198,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   const [expandedExecutions, setExpandedExecutions] = useState<Set<string>>(new Set())
   const [expandedArchived, setExpandedArchived] = useState<Set<string>>(new Set())
   const [showCostBreakdown, setShowCostBreakdown] = useState(false)
+  const [costViewMode, setCostViewMode] = useState<'model' | 'step'>('step') // Default to step view
   const [expandedCostModels, setExpandedCostModels] = useState<Set<string>>(new Set())
   
   // State for viewing full file content (conversation logs)
@@ -263,6 +264,19 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
       other: 0
     }
 
+    // Step-wise costs (aggregated across all phases for each step)
+    const stepCosts: Record<number, {
+      stepNum: number
+      stepTitle: string
+      execution: number
+      validation: number
+      learning: number
+      totalCost: number
+      inputTokens: number
+      outputTokens: number
+      llmCalls: number
+    }> = {}
+
     // Calculate totals from by_model
     if (logs.token_usage.by_model) {
       Object.values(logs.token_usage.by_model).forEach(usage => {
@@ -276,24 +290,72 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
       })
     }
 
-    // Calculate stage costs from by_step_and_model
+    // Calculate stage costs and step-wise costs from by_step_and_model
     if (logs.token_usage.by_step_and_model) {
       Object.entries(logs.token_usage.by_step_and_model).forEach(([key, modelMap]) => {
-        const phase = key.split(':')[0]
-        let cost = 0
-        Object.values(modelMap).forEach(u => cost += u.total_cost_usd || 0)
+        const parts = key.split(':')
+        const phase = parts[0]
+        const stepIndex = parseInt(parts[1] || '0', 10)
+        const stepNum = stepIndex + 1
 
+        let cost = 0
+        let inputTokens = 0
+        let outputTokens = 0
+        let llmCalls = 0
+        Object.values(modelMap).forEach(u => {
+          cost += u.total_cost_usd || 0
+          inputTokens += u.input_tokens || 0
+          outputTokens += u.output_tokens || 0
+          llmCalls += u.llm_call_count || 0
+        })
+
+        // Stage costs
         if (phase === 'execution_only') {
           stageCosts.execution += cost
         } else if (phase === 'validation') {
           stageCosts.validation += cost
-        } else if (phase === 'success_learning' || phase === 'failure_learning') {
+        } else if (phase === 'success_learning' || phase === 'failure_learning' || phase.includes('learning')) {
           stageCosts.learning += cost
         } else {
           stageCosts.other += cost
         }
+
+        // Step-wise costs (aggregate all phases for each step)
+        if (stepNum > 0) {
+          if (!stepCosts[stepNum]) {
+            // Try to get step title from logs.steps
+            const stepId = `step-${stepNum}`
+            const stepData = logs.steps?.[stepId]
+            stepCosts[stepNum] = {
+              stepNum,
+              stepTitle: stepData?.title || '',
+              execution: 0,
+              validation: 0,
+              learning: 0,
+              totalCost: 0,
+              inputTokens: 0,
+              outputTokens: 0,
+              llmCalls: 0
+            }
+          }
+          stepCosts[stepNum].totalCost += cost
+          stepCosts[stepNum].inputTokens += inputTokens
+          stepCosts[stepNum].outputTokens += outputTokens
+          stepCosts[stepNum].llmCalls += llmCalls
+
+          if (phase === 'execution_only') {
+            stepCosts[stepNum].execution += cost
+          } else if (phase === 'validation') {
+            stepCosts[stepNum].validation += cost
+          } else if (phase.includes('learning')) {
+            stepCosts[stepNum].learning += cost
+          }
+        }
       })
     }
+
+    // Sort step costs by step number
+    const sortedStepCosts = Object.values(stepCosts).sort((a, b) => a.stepNum - b.stepNum)
 
     return {
       totalCost,
@@ -304,9 +366,10 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
       totalCacheReadTokens,
       totalCacheWriteTokens,
       totalReasoningTokens,
-      stageCosts
+      stageCosts,
+      stepCosts: sortedStepCosts
     }
-  }, [logs?.token_usage])
+  }, [logs?.token_usage, logs?.steps])
 
   const toggleStep = (stepId: string) => {
     setExpandedSteps(prev => {
@@ -471,15 +534,111 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                     </div>
                   )}
 
-                  {/* Model Breakdown Table */}
+                  {/* Cost Breakdown Table with View Toggle */}
                   {logs.token_usage.by_model && (
                     <div className="bg-card border border-border rounded-lg overflow-hidden shadow-sm">
                       <div className="px-4 py-3 bg-muted/30 border-b border-border flex items-center justify-between">
                         <h3 className="text-sm font-semibold flex items-center gap-2">
                           <DollarSign className="w-4 h-4 text-green-500" />
-                          Cost Breakdown by Model
+                          Cost Breakdown
                         </h3>
+                        {/* View Toggle Buttons */}
+                        <div className="flex items-center gap-1 bg-muted rounded-md p-0.5">
+                          <button
+                            onClick={() => setCostViewMode('step')}
+                            className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                              costViewMode === 'step'
+                                ? 'bg-background text-foreground shadow-sm'
+                                : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            By Step
+                          </button>
+                          <button
+                            onClick={() => setCostViewMode('model')}
+                            className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                              costViewMode === 'model'
+                                ? 'bg-background text-foreground shadow-sm'
+                                : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            By Model
+                          </button>
+                        </div>
                       </div>
+
+                      {/* Step-wise Cost Breakdown View */}
+                      {costViewMode === 'step' && costSummary?.stepCosts && costSummary.stepCosts.length > 0 && (
+                        <div className="p-4 overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-muted-foreground border-b border-border pb-2">
+                                <th className="text-left font-medium pb-2">Step</th>
+                                <th className="text-right font-medium pb-2">Calls</th>
+                                <th className="text-right font-medium pb-2">Tokens</th>
+                                <th className="text-right font-medium pb-2 text-blue-500">Execution</th>
+                                <th className="text-right font-medium pb-2 text-green-500">Validation</th>
+                                <th className="text-right font-medium pb-2 text-purple-500">Learning</th>
+                                <th className="text-right font-medium pb-2">Total Cost</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border">
+                              {costSummary.stepCosts.map((step) => (
+                                <tr key={step.stepNum} className="hover:bg-accent/50 transition-colors">
+                                  <td className="py-2">
+                                    <div className="font-medium text-foreground">
+                                      Step {step.stepNum}{step.stepTitle && `: ${step.stepTitle}`}
+                                    </div>
+                                  </td>
+                                  <td className="py-2 text-right font-mono text-muted-foreground">
+                                    {step.llmCalls.toLocaleString()}
+                                  </td>
+                                  <td className="py-2 text-right font-mono text-muted-foreground">
+                                    {(step.inputTokens + step.outputTokens).toLocaleString()}
+                                  </td>
+                                  <td className="py-2 text-right font-mono text-blue-600 dark:text-blue-400">
+                                    {formatUSD(step.execution)}
+                                  </td>
+                                  <td className="py-2 text-right font-mono text-green-600 dark:text-green-400">
+                                    {formatUSD(step.validation)}
+                                  </td>
+                                  <td className="py-2 text-right font-mono text-purple-600 dark:text-purple-400">
+                                    {formatUSD(step.learning)}
+                                  </td>
+                                  <td className="py-2 text-right font-bold text-foreground">
+                                    {formatUSD(step.totalCost)}
+                                  </td>
+                                </tr>
+                              ))}
+                              {/* Total Row */}
+                              <tr className="bg-muted/30 font-semibold">
+                                <td className="py-2 text-foreground">Total</td>
+                                <td className="py-2 text-right font-mono text-muted-foreground">
+                                  {costSummary.totalLLMCalls.toLocaleString()}
+                                </td>
+                                <td className="py-2 text-right font-mono text-muted-foreground">
+                                  {costSummary.totalTokens.toLocaleString()}
+                                </td>
+                                <td className="py-2 text-right font-mono text-blue-600 dark:text-blue-400">
+                                  {formatUSD(costSummary.stageCosts.execution)}
+                                </td>
+                                <td className="py-2 text-right font-mono text-green-600 dark:text-green-400">
+                                  {formatUSD(costSummary.stageCosts.validation)}
+                                </td>
+                                <td className="py-2 text-right font-mono text-purple-600 dark:text-purple-400">
+                                  {formatUSD(costSummary.stageCosts.learning)}
+                                </td>
+                                <td className="py-2 text-right font-bold text-green-600 dark:text-green-400">
+                                  {formatUSD(costSummary.totalCost)}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {/* Model-wise Cost Breakdown View (existing table) */}
+                      {costViewMode === 'model' && (
                       <div className="p-4 overflow-x-auto">
                         <table className="w-full text-xs">
                           <thead>
@@ -575,69 +734,57 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                     <tr className="bg-muted/20">
                                       <td colSpan={9} className="p-0">
                                         <div className="p-4 space-y-4 animate-in fade-in slide-in-from-top-1 duration-200">
-                                          {/* Aggregate Cards */}
-                                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-                                            {/* Token Breakdown */}
-                                            <div className="space-y-2 border border-border bg-background/50 rounded-md p-3">
-                                              <h4 className="font-semibold text-muted-foreground uppercase tracking-wider text-[10px] flex items-center gap-1.5">
-                                                <Cpu className="w-3 h-3" /> Token Breakdown
-                                              </h4>
-                                              <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
-                                                <span className="text-muted-foreground">Input:</span>
-                                                <span className="text-foreground text-right">{usage.input_tokens.toLocaleString()} <span className="text-muted-foreground opacity-70">({formatUSD(usage.input_cost_usd)})</span></span>
-                                                
-                                                <span className="text-muted-foreground">Output:</span>
-                                                <span className="text-foreground text-right">{usage.output_tokens.toLocaleString()} <span className="text-muted-foreground opacity-70">({formatUSD(usage.output_cost_usd)})</span></span>
-                                                
-                                                {usage.reasoning_tokens > 0 && (
-                                                  <>
-                                                    <span className="text-muted-foreground">Reasoning:</span>
-                                                    <span className="text-foreground text-right">{usage.reasoning_tokens.toLocaleString()} <span className="text-muted-foreground opacity-70">({formatUSD(usage.reasoning_cost_usd)})</span></span>
-                                                  </>
-                                                )}
-                                              </div>
-                                            </div>
+                                          {/* Efficiency Metrics */}
+                                          {(() => {
+                                            const inputCostPer1K = usage.input_tokens > 0 ? (usage.input_cost_usd / usage.input_tokens) * 1000 : 0
+                                            const outputCostPer1K = usage.output_tokens > 0 ? (usage.output_cost_usd / usage.output_tokens) * 1000 : 0
+                                            const avgTokensPerCall = usage.llm_call_count > 0 ? Math.round((usage.input_tokens + usage.output_tokens) / usage.llm_call_count) : 0
+                                            const avgCostPerCall = usage.llm_call_count > 0 ? usage.total_cost_usd / usage.llm_call_count : 0
+                                            const cacheHitRate = usage.input_tokens > 0 ? (cacheRead / usage.input_tokens) * 100 : 0
+                                            // Estimate savings: cache reads cost ~10% of input tokens (rough estimate)
+                                            const estimatedSavings = cacheRead > 0 ? cacheRead * inputCostPer1K * 0.9 / 1000 : 0
+                                            return (
+                                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                                                {/* Cost per Call */}
+                                                <div className="bg-gradient-to-br from-green-500/10 to-green-600/5 border border-green-500/20 rounded-lg p-3">
+                                                  <div className="text-[10px] text-green-600 dark:text-green-400 font-medium uppercase tracking-wider mb-1">Avg Cost/Call</div>
+                                                  <div className="text-lg font-bold text-foreground">{formatUSD(avgCostPerCall)}</div>
+                                                  <div className="text-[10px] text-muted-foreground">{usage.llm_call_count} calls total</div>
+                                                </div>
 
-                                            {/* Cache Details */}
-                                            <div className="space-y-2 border border-border bg-background/50 rounded-md p-3">
-                                              <h4 className="font-semibold text-muted-foreground uppercase tracking-wider text-[10px] flex items-center gap-1.5">
-                                                <History className="w-3 h-3" /> Cache Performance
-                                              </h4>
-                                              <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
-                                                <span className="text-muted-foreground">Total Cache:</span>
-                                                <span className="text-foreground text-right">{usage.cache_tokens.toLocaleString()}</span>
-                                                
-                                                <span className="text-muted-foreground">Read (Hit):</span>
-                                                <span className="text-foreground text-right">{usage.cache_read_tokens?.toLocaleString() || '0'} <span className="text-green-600/70 dark:text-green-400/70">({formatUSD(usage.cache_read_cost_usd)})</span></span>
-                                                
-                                                <span className="text-muted-foreground">Write (Miss):</span>
-                                                <span className="text-foreground text-right">{usage.cache_write_tokens?.toLocaleString() || '0'} <span className="text-yellow-600/70 dark:text-yellow-400/70">({formatUSD(usage.cache_write_cost_usd)})</span></span>
-                                              </div>
-                                            </div>
+                                                {/* Avg Tokens per Call */}
+                                                <div className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/20 rounded-lg p-3">
+                                                  <div className="text-[10px] text-blue-600 dark:text-blue-400 font-medium uppercase tracking-wider mb-1">Avg Tokens/Call</div>
+                                                  <div className="text-lg font-bold text-foreground">{avgTokensPerCall.toLocaleString()}</div>
+                                                  <div className="text-[10px] text-muted-foreground">in: {formatTokens(usage.input_tokens)} out: {formatTokens(usage.output_tokens)}</div>
+                                                </div>
 
-                                            {/* Context Window */}
-                                            <div className="space-y-2 border border-border bg-background/50 rounded-md p-3">
-                                              <h4 className="font-semibold text-muted-foreground uppercase tracking-wider text-[10px] flex items-center gap-1.5">
-                                                <FileText className="w-3 h-3" /> Context Window
-                                              </h4>
-                                              <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
-                                                <span className="text-muted-foreground">Peak Usage:</span>
-                                                <span className="text-foreground text-right">{usage.context_window_usage?.toLocaleString() || '-'}</span>
-                                                
-                                                <span className="text-muted-foreground">Limit:</span>
-                                                <span className="text-foreground text-right">{usage.model_context_window?.toLocaleString() || '-'}</span>
-                                                
-                                                <span className="text-muted-foreground">Utilization:</span>
-                                                <span className="text-foreground text-right font-medium">
-                                                  {usage.context_usage_percent ? (
-                                                    <span className={usage.context_usage_percent > 80 ? 'text-red-500' : usage.context_usage_percent > 50 ? 'text-yellow-500' : 'text-green-500'}>
-                                                      {usage.context_usage_percent.toFixed(1)}%
+                                                {/* Cache Hit Rate */}
+                                                <div className="bg-gradient-to-br from-purple-500/10 to-purple-600/5 border border-purple-500/20 rounded-lg p-3">
+                                                  <div className="text-[10px] text-purple-600 dark:text-purple-400 font-medium uppercase tracking-wider mb-1">Cache Hit Rate</div>
+                                                  <div className="text-lg font-bold text-foreground">
+                                                    <span className={cacheHitRate > 50 ? 'text-green-500' : cacheHitRate > 20 ? 'text-yellow-500' : 'text-muted-foreground'}>
+                                                      {cacheHitRate.toFixed(1)}%
                                                     </span>
-                                                  ) : '-'}
-                                                </span>
+                                                  </div>
+                                                  <div className="text-[10px] text-muted-foreground">{formatTokens(cacheRead)} cached tokens</div>
+                                                </div>
+
+                                                {/* Estimated Savings */}
+                                                <div className="bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 rounded-lg p-3">
+                                                  <div className="text-[10px] text-amber-600 dark:text-amber-400 font-medium uppercase tracking-wider mb-1">Cache Savings</div>
+                                                  <div className="text-lg font-bold text-foreground">
+                                                    {estimatedSavings > 0 ? (
+                                                      <span className="text-green-500">~{formatUSD(estimatedSavings)}</span>
+                                                    ) : (
+                                                      <span className="text-muted-foreground">-</span>
+                                                    )}
+                                                  </div>
+                                                  <div className="text-[10px] text-muted-foreground">estimated from cache</div>
+                                                </div>
                                               </div>
-                                            </div>
-                                          </div>
+                                            )
+                                          })()}
                                           
                                           {/* Usage by Step Table */}
                                           {modelSteps.length > 0 && (
@@ -720,6 +867,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                           </tfoot>
                         </table>
                       </div>
+                      )}
                     </div>
                   )}
                 </div>

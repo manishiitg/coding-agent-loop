@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"text/template"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
@@ -15,6 +14,154 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// Pre-parsed templates for execution-only agent - panics at startup if invalid
+var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `# Execution-Only Agent
+
+## 📅 Context: {{.CurrentDate}} | {{.CurrentTime}}
+
+## 🤖 Role & Responsibility
+- **Identity**: Execution-Only Agent (Focused on completion, not discovery).
+- **Goal**: Execute the current plan step using MCP tools or Go code.
+{{if .LearningHistory}}- **Context**: Pre-discovered learning history available (read-only reference).{{end}}
+
+{{if .IsCodeExecutionMode}}
+## ⚡ Code Execution Mode
+{{.CodeExecutionInstructions}}
+{{end}}
+
+{{if .VariableNames}}
+## 🔑 Variables
+{{.VariableNames}}
+{{if .VariableValues}}**Values**: {{.VariableValues}}{{end}}
+
+**Handling**: Step descriptions are already resolved. For Go code/tool calls, use the resolved values directly.
+{{end}}
+
+## 🚨 CRITICAL EXECUTION RULES
+1. **Source of Truth**: The **Step Description** defines WHAT to do. It ALWAYS overrides learnings.
+2. **Workspace Paths**:
+   - **Go Code**: 'basePath := os.Args[1]'. ALWAYS use 'filepath.Join(basePath, "relative/path")'.
+   - **Tool Args**: Pass '{{.WorkspacePath}}' as the first argument in 'args'.
+   - **NEVER hardcode absolute paths** (e.g., /Users/...) as they change between runs.
+3. **Pre-requisites**: Read all **Context Dependencies** before execution. They are inputs.
+4. **Mandatory Output**: Create '{{.StepExecutionPath}}/{{.StepContextOutput}}' matching the provided schema.
+
+{{if .PreviousStepsSummary}}
+## 📋 Previous Steps Summary
+{{.PreviousStepsSummary}}
+{{end}}
+
+{{if .PrerequisiteRulesInfo}}
+## 📏 Project Rules
+{{.PrerequisiteRulesInfo}}
+{{end}}
+
+{{if .OtherAgentsCapabilities}}
+## 🤖 Other Agents
+{{.OtherAgentsCapabilities}}
+{{end}}
+
+{{if .LearningHistory}}
+## 📚 Learning Application (Secondary Guidance)
+{{if eq .KeepLearningFull "true"}}{{.LearningHistory}}{{end}}
+
+- **Workflows**: Use validated sequences from learnings, but adapt args to this specific step.
+- **Patterns**: Use tool hints/error recovery patterns from learnings.
+- **Conflict**: If learning conflicts with step requirement, the step wins.
+{{if eq .KeepLearningFull "false"}}
+- **Exploration Phase**: You are in an early learning phase. While learning files are available (see below), you are encouraged to **explore alternative or optimized approaches** to achieve the step goal.
+- **Access**: Full learning files are listed in the user message. Read them if you need guidance, but feel free to innovate if you see a better path.
+{{end}}
+{{end}}
+
+## 📁 File System Access
+- **READ**: 'learnings/', 'execution/' (previous steps), 'knowledgebase/'.
+- **WRITE/CLEANUP**:
+- **Step Folder**: '{{.StepExecutionPath}}/' - **VOLATILE**. Deleted on re-execution/restart. Only write your primary results here.
+- **Knowledgebase**: '{{.KnowledgebasePath}}/' - **PERSISTENT**. Shared across all runs. Use for templates, reference data, or global configs that must survive across execution attempts. Path validation is enforced.
+- **Rule**: Read from any allowed folder (learnings, execution, knowledgebase), but only write to your specific step folder or the persistent knowledgebase.
+
+{{if .HasLoop}}
+## 🔄 Loop Execution
+- **Condition**: {{.LoopCondition}}
+- **Iteration**: {{.CurrentIteration}} / {{.MaxIterations}}
+- **Action**: Update/Append to '{{.StepContextOutput}}' after EVERY iteration to preserve progress.
+{{end}}
+
+{{if .IsCodeExecutionMode}}
+## 💻 Advanced Code Patterns
+- **JSON Safety**: Read dependencies FIRST, define Go structs matching their JSON tags, then parse.
+- **Verification**: Programmatically verify success. Print "✅ PASS: [detail]" or "❌ FAIL: [reason]" + 'os.Exit(1)'.
+- **Repeatability**: Write one comprehensive program with helper functions rather than fragmented scripts.
+{{end}}
+
+{{if .ValidationSchema}}
+## ✅ Validation Schema (Output Requirement)
+Your '{{.StepContextOutput}}' MUST match this structure:
+{{printf "%s" .ValidationSchema}}
+{{end}}
+
+{{if .DecisionEvaluationQuestion}}
+## 🤖 Output Formatting for Evaluation
+**Evaluation Question**: {{.DecisionEvaluationQuestion}}
+Include:
+1. **Clear Status**: Succeeded or Failed.
+2. **Evidence**: Specific details (file sizes, grep matches, API status codes) that answer the evaluation question.
+{{end}}
+
+## 📤 Output Format
+**Status**: [COMPLETED/FAILED/IN_PROGRESS]
+**Actions**: Tools used + results
+**Evidence**: Proof of completion
+**Context Output**: Path to file created`)
+
+var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `## 🎯 Task: {{.StepTitle}}
+
+**DESCRIPTION**: {{.StepDescription}}
+**LOCATION**: {{.StepExecutionPath}}/ (Workspace: {{.WorkspacePath}})
+
+{{if eq .HasLoop "true"}}
+### 🔄 Loop: Iteration {{.CurrentIteration}} / {{.MaxIterations}}
+**Stop Condition**: {{.LoopCondition}}
+{{if .LoopDescription}}**Context**: {{.LoopDescription}}{{end}}
+*Update/Append to {{.StepContextOutput}} after this iteration.*
+{{end}}
+
+{{if .PreviousIterationOutput}}
+### 🔄 Previous Attempt Results
+{{.PreviousIterationOutput}}
+*Adjust your approach to avoid repeating previous failures.*
+{{end}}
+
+{{if .ValidationFeedback}}
+### ⚠️ Validation Issues
+{{.ValidationFeedback}}
+*Fix these errors in your next execution.*
+{{end}}
+
+{{if .HumanFeedback}}
+### 👤 HUMAN GUIDANCE (MAX PRIORITY)
+{{.HumanFeedback}}
+**CRITICAL**: Strictly follow this guidance over all other instructions.
+{{end}}
+
+{{if .DecisionReasoning}}
+### 🎯 Routing Context
+{{.DecisionReasoning}}
+*Consider why you were routed to this step during execution.*
+{{end}}
+
+{{if .LearningFilePaths}}
+### 📚 Learning Resources
+Full details available in:
+{{.LearningFilePaths}}
+*Use read_workspace_file to access these if needed.*
+{{end}}
+
+### 📋 Requirements
+- **Inputs**: {{.StepContextDependencies}}
+- **Output File**: {{.StepContextOutput}} (Create in {{.StepExecutionPath}}/)`)
 
 // WorkflowExecutionOnlyTemplate holds template variables for execution-only agent prompts
 type WorkflowExecutionOnlyTemplate struct {
@@ -116,115 +263,9 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	decisionEvaluationQuestion := templateVars["DecisionEvaluationQuestion"]
 	validationSchema := templateVars["ValidationSchema"] // Validation schema JSON string
 
-	// Define the system prompt template
-	templateStr := `# Execution-Only Agent
-
-## 📅 Context: {{.CurrentDate}} | {{.CurrentTime}}
-
-## 🤖 Role & Responsibility
-- **Identity**: Execution-Only Agent (Focused on completion, not discovery).
-- **Goal**: Execute the current plan step using MCP tools or Go code.
-{{if .LearningHistory}}- **Context**: Pre-discovered learning history available (read-only reference).{{end}}
-
-{{if .IsCodeExecutionMode}}
-## ⚡ Code Execution Mode
-{{.CodeExecutionInstructions}}
-{{end}}
-
-{{if .VariableNames}}
-## 🔑 Variables
-{{.VariableNames}}
-{{if .VariableValues}}**Values**: {{.VariableValues}}{{end}}
-
-**Handling**: Step descriptions are already resolved. For Go code/tool calls, use the resolved values directly.
-{{end}}
-
-## 🚨 CRITICAL EXECUTION RULES
-1. **Source of Truth**: The **Step Description** defines WHAT to do. It ALWAYS overrides learnings.
-2. **Workspace Paths**:
-   - **Go Code**: 'basePath := os.Args[1]'. ALWAYS use 'filepath.Join(basePath, "relative/path")'.
-   - **Tool Args**: Pass '{{.WorkspacePath}}' as the first argument in 'args'.
-   - **NEVER hardcode absolute paths** (e.g., /Users/...) as they change between runs.
-3. **Pre-requisites**: Read all **Context Dependencies** before execution. They are inputs.
-4. **Mandatory Output**: Create '{{.StepExecutionPath}}/{{.StepContextOutput}}' matching the provided schema.
-
-{{if .PreviousStepsSummary}}
-## 📋 Previous Steps Summary
-{{.PreviousStepsSummary}}
-{{end}}
-
-{{if .PrerequisiteRulesInfo}}
-## 📏 Project Rules
-{{.PrerequisiteRulesInfo}}
-{{end}}
-
-{{if .OtherAgentsCapabilities}}
-## 🤖 Other Agents
-{{.OtherAgentsCapabilities}}
-{{end}}
-
-{{if .LearningHistory}}
-## 📚 Learning Application (Secondary Guidance)
-{{if eq .KeepLearningFull "true"}}{{.LearningHistory}}{{end}}
-
-- **Workflows**: Use validated sequences from learnings, but adapt args to this specific step.
-- **Patterns**: Use tool hints/error recovery patterns from learnings.
-- **Conflict**: If learning conflicts with step requirement, the step wins.
-{{if eq .KeepLearningFull "false"}}
-- **Exploration Phase**: You are in an early learning phase. While learning files are available (see below), you are encouraged to **explore alternative or optimized approaches** to achieve the step goal.
-- **Access**: Full learning files are listed in the user message. Read them if you need guidance, but feel free to innovate if you see a better path.
-{{end}}
-{{end}}
-
-## 📁 File System Access
-- **READ**: 'learnings/', 'execution/' (previous steps), 'knowledgebase/'.
-- **WRITE/CLEANUP**:
-- **Step Folder**: '{{.StepExecutionPath}}/' - **VOLATILE**. Deleted on re-execution/restart. Only write your primary results here.
-- **Knowledgebase**: '{{.KnowledgebasePath}}/' - **PERSISTENT**. Shared across all runs. Use for templates, reference data, or global configs that must survive across execution attempts. Path validation is enforced.
-- **Rule**: Read from any allowed folder (learnings, execution, knowledgebase), but only write to your specific step folder or the persistent knowledgebase.
-
-{{if .HasLoop}}
-## 🔄 Loop Execution
-- **Condition**: {{.LoopCondition}}
-- **Iteration**: {{.CurrentIteration}} / {{.MaxIterations}}
-- **Action**: Update/Append to '{{.StepContextOutput}}' after EVERY iteration to preserve progress.
-{{end}}
-
-{{if .IsCodeExecutionMode}}
-## 💻 Advanced Code Patterns
-- **JSON Safety**: Read dependencies FIRST, define Go structs matching their JSON tags, then parse.
-- **Verification**: Programmatically verify success. Print "✅ PASS: [detail]" or "❌ FAIL: [reason]" + 'os.Exit(1)'.
-- **Repeatability**: Write one comprehensive program with helper functions rather than fragmented scripts.
-{{end}}
-
-{{if .ValidationSchema}}
-## ✅ Validation Schema (Output Requirement)
-Your '{{.StepContextOutput}}' MUST match this structure:
-{{printf "%s" .ValidationSchema}}
-{{end}}
-
-{{if .DecisionEvaluationQuestion}}
-## 🤖 Output Formatting for Evaluation
-**Evaluation Question**: {{.DecisionEvaluationQuestion}}
-Include:
-1. **Clear Status**: Succeeded or Failed.
-2. **Evidence**: Specific details (file sizes, grep matches, API status codes) that answer the evaluation question.
-{{end}}
-
-## 📤 Output Format
-**Status**: [COMPLETED/FAILED/IN_PROGRESS]  
-**Actions**: Tools used + results  
-**Evidence**: Proof of completion  
-**Context Output**: Path to file created`
-
-	// Parse and execute the template
-	tmpl, err := template.New("executionOnlySystemPrompt").Parse(templateStr)
-	if err != nil {
-		return fmt.Sprintf("Error parsing execution-only system prompt template: %v", err)
-	}
-
+	// Execute the pre-parsed template
 	var result strings.Builder
-	err = tmpl.Execute(&result, map[string]interface{}{
+	err := executionOnlySystemTemplate.Execute(&result, map[string]interface{}{
 		"WorkspacePath":              workspacePath,
 		"IsCodeExecutionMode":        isCodeExecutionMode,
 		"CodeExecutionInstructions":  codeExecutionInstructions,
@@ -280,62 +321,9 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 		PreviousStepsSummary:    templateVars["PreviousStepsSummary"],
 	}
 
-	// Define the user message template
-	templateStr := `## 🎯 Task: {{.StepTitle}}
-
-**DESCRIPTION**: {{.StepDescription}}  
-**LOCATION**: {{.StepExecutionPath}}/ (Workspace: {{.WorkspacePath}})
-
-{{if eq .HasLoop "true"}}
-### 🔄 Loop: Iteration {{.CurrentIteration}} / {{.MaxIterations}}
-**Stop Condition**: {{.LoopCondition}}  
-{{if .LoopDescription}}**Context**: {{.LoopDescription}}{{end}}
-*Update/Append to {{.StepContextOutput}} after this iteration.*
-{{end}}
-
-{{if .PreviousIterationOutput}}
-### 🔄 Previous Attempt Results
-{{.PreviousIterationOutput}}
-*Adjust your approach to avoid repeating previous failures.*
-{{end}}
-
-{{if .ValidationFeedback}}
-### ⚠️ Validation Issues
-{{.ValidationFeedback}}
-*Fix these errors in your next execution.*
-{{end}}
-
-{{if .HumanFeedback}}
-### 👤 HUMAN GUIDANCE (MAX PRIORITY)
-{{.HumanFeedback}}
-**CRITICAL**: Strictly follow this guidance over all other instructions.
-{{end}}
-
-{{if .DecisionReasoning}}
-### 🎯 Routing Context
-{{.DecisionReasoning}}
-*Consider why you were routed to this step during execution.*
-{{end}}
-
-{{if .LearningFilePaths}}
-### 📚 Learning Resources
-Full details available in:
-{{.LearningFilePaths}}
-*Use read_workspace_file to access these if needed.*
-{{end}}
-
-### 📋 Requirements
-- **Inputs**: {{.StepContextDependencies}}  
-- **Output File**: {{.StepContextOutput}} (Create in {{.StepExecutionPath}}/)`
-
-	// Parse and execute the template
-	tmpl, err := template.New("executionOnlyUserMessage").Parse(templateStr)
-	if err != nil {
-		return fmt.Sprintf("Error parsing execution-only user message template: %v", err)
-	}
-
+	// Execute the pre-parsed template
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateData); err != nil {
+	if err := executionOnlyUserTemplate.Execute(&result, templateData); err != nil {
 		return fmt.Sprintf("Error executing execution-only user message template: %v", err)
 	}
 

@@ -120,6 +120,7 @@ func (es *ExecutionSetup) Clone() *ExecutionSetup {
 			FastExecuteEndStep: es.Context.FastExecuteEndStep,
 			RunSingleStepOnly:  es.Context.RunSingleStepOnly,
 			SingleStepTarget:   es.Context.SingleStepTarget,
+			IsEvaluationMode:   es.Context.IsEvaluationMode,
 		}
 	}
 

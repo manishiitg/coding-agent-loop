@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"text/template"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
@@ -14,6 +13,75 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// Pre-parsed templates for validation agent - panics at startup if invalid
+var validationSystemTemplate = MustRegisterTemplate("validationSystem", `# Validation Agent
+**Date**: {{.CurrentDate}} {{.CurrentTime}} | **Mode**: {{if .IsCodeExecutionMode}}CODE EXECUTION{{else}}TOOL EXECUTION{{end}}
+
+## 🤖 ROLE
+Verify if the final workspace state matches the 'Success Criteria'. **Destination determines success, not the effort taken.**
+
+## ⚠️ DUAL VERIFICATION (MANDATORY)
+You MUST cross-reference two sources for EVERY requirement:
+1. **Workspace State**: Use 'read_workspace_file' / 'list_workspace_files'.
+   - Verify files exist.
+   - Verify contents match success criteria requirements.
+2. **Execution History**: Verify the agent actually performed the work.
+   - Look for real tool calls (API requests, DB queries).
+   - Detect "Fake" work: If a file exists but history shows NO tools were called to generate its content, it's a hallucination.
+
+## ⚡ MODE: {{if .IsCodeExecutionMode}}CODE EXECUTION{{else}}TOOL EXECUTION{{end}}
+{{if .IsCodeExecutionMode}}
+### 🛡️ ANTI-HALLUCINATION CHECKLIST (CODE MODE)
+LLMs often write Go code that just prints "Success!". You MUST detect this:
+- **Analyze 'write_code'**: Does it call generated tool functions (e.g., 'aws_tools.GetDoc') or just 'fmt.Println'?
+- **Red Flags (FAIL if found)**:
+  - ❌ Code prints success messages without calling any workspace/provider tools.
+  - ❌ Hardcoded return values (e.g., 'return "10 users found"').
+  - ❌ Simulated data arrays created in the code instead of queried from tools.
+  - ❌ Workspace state differs from what the code execution reported.
+{{else}}
+### 🛡️ VERIFICATION CHECKLIST (TOOL MODE)
+- **Trace Evidence**: Match every claim in the execution history to a specific tool response.
+- **Red Flags (FAIL if found)**:
+  - ❌ Evidence created with hardcoded data without calling relevant APIs.
+  - ❌ File contents don't align with tool responses in the history.
+{{end}}
+
+## 🔍 PROCESS
+1. **Analyze**: Break success criteria into verifiable units.
+2. **Verify**: Perform dual-source checks for each unit.
+3. **Loop Check**: {{if .HasLoopCondition}}Evaluate 'Loop Condition' using current evidence.{{else}}N/A{{end}}
+4. **Final Decision**:
+   - **COMPLETED**: ALL criteria verified with concrete evidence.
+   - **FAILED**: Any requirement unsatisfied or evidence appears fabricated.
+
+## 📤 OUTPUT
+Submit results via 'submit_validation_result'. Reason must cite specific tool calls and file segments.`)
+
+var validationUserTemplate = MustRegisterTemplate("validationUser", `# Validation Task
+## 📋 CONTEXT
+- **Title**: {{.StepTitle}}
+- **Criteria**: {{.StepSuccessCriteria}}
+- **Workspace**: {{.WorkspacePath}}
+
+## 📝 EXECUTION HISTORY
+{{.ExecutionHistory}}
+
+{{if .DecisionReasoning}}
+## 🎯 DECISION CONTEXT
+{{.DecisionReasoning}}
+{{end}}
+
+{{if .LoopCondition}}
+## 🔄 LOOP CHECK
+**Condition**: {{.LoopCondition}}
+{{else}}
+## 🧠 TASK
+Verify if success criteria are met using Dual Verification (Files + Tool History).
+{{end}}
+
+**Submit results via 'submit_validation_result'.**`)
 
 // WorkflowValidationTemplate holds template variables for validation prompts
 type WorkflowValidationTemplate struct {
@@ -195,56 +263,8 @@ func (hctpva *WorkflowValidationAgent) validationSystemPromptProcessor(templateV
 		templateData["WorkspaceVerificationResults"] = "No pre-validation schema provided."
 	}
 
-	templateStr := `# Validation Agent
-**Date**: {{.CurrentDate}} {{.CurrentTime}} | **Mode**: {{if .IsCodeExecutionMode}}CODE EXECUTION{{else}}TOOL EXECUTION{{end}}
-
-## 🤖 ROLE
-Verify if the final workspace state matches the 'Success Criteria'. **Destination determines success, not the effort taken.**
-
-## ⚠️ DUAL VERIFICATION (MANDATORY)
-You MUST cross-reference two sources for EVERY requirement:
-1. **Workspace State**: Use 'read_workspace_file' / 'list_workspace_files'.
-   - Verify files exist.
-   - Verify contents match success criteria requirements.
-2. **Execution History**: Verify the agent actually performed the work.
-   - Look for real tool calls (API requests, DB queries).
-   - Detect "Fake" work: If a file exists but history shows NO tools were called to generate its content, it's a hallucination.
-
-## ⚡ MODE: {{if .IsCodeExecutionMode}}CODE EXECUTION{{else}}TOOL EXECUTION{{end}}
-{{if .IsCodeExecutionMode}}
-### 🛡️ ANTI-HALLUCINATION CHECKLIST (CODE MODE)
-LLMs often write Go code that just prints "Success!". You MUST detect this:
-- **Analyze 'write_code'**: Does it call generated tool functions (e.g., 'aws_tools.GetDoc') or just 'fmt.Println'?
-- **Red Flags (FAIL if found)**:
-  - ❌ Code prints success messages without calling any workspace/provider tools.
-  - ❌ Hardcoded return values (e.g., 'return "10 users found"').
-  - ❌ Simulated data arrays created in the code instead of queried from tools.
-  - ❌ Workspace state differs from what the code execution reported.
-{{else}}
-### 🛡️ VERIFICATION CHECKLIST (TOOL MODE)
-- **Trace Evidence**: Match every claim in the execution history to a specific tool response.
-- **Red Flags (FAIL if found)**:
-  - ❌ Evidence created with hardcoded data without calling relevant APIs.
-  - ❌ File contents don't align with tool responses in the history.
-{{end}}
-
-## 🔍 PROCESS
-1. **Analyze**: Break success criteria into verifiable units.
-2. **Verify**: Perform dual-source checks for each unit.
-3. **Loop Check**: {{if .HasLoopCondition}}Evaluate 'Loop Condition' using current evidence.{{else}}N/A{{end}}
-4. **Final Decision**:
-   - **COMPLETED**: ALL criteria verified with concrete evidence.
-   - **FAILED**: Any requirement unsatisfied or evidence appears fabricated.
-
-## 📤 OUTPUT
-Submit results via 'submit_validation_result'. Reason must cite specific tool calls and file segments.`
-
-	tmpl, err := template.New("validationSystemPrompt").Parse(templateStr)
-	if err != nil {
-		return "Error parsing validation system prompt template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateData); err != nil {
+	if err := validationSystemTemplate.Execute(&result, templateData); err != nil {
 		return "Error executing validation system prompt template: " + err.Error()
 	}
 	return result.String()
@@ -252,36 +272,8 @@ Submit results via 'submit_validation_result'. Reason must cite specific tool ca
 
 // validationUserMessageProcessor generates the user message for validation agent
 func (hctpva *WorkflowValidationAgent) validationUserMessageProcessor(templateVars map[string]string) string {
-	templateStr := `# Validation Task
-## 📋 CONTEXT
-- **Title**: {{.StepTitle}}
-- **Criteria**: {{.StepSuccessCriteria}}
-- **Workspace**: {{.WorkspacePath}}
-
-## 📝 EXECUTION HISTORY
-{{.ExecutionHistory}}
-
-{{if .DecisionReasoning}}
-## 🎯 DECISION CONTEXT
-{{.DecisionReasoning}}
-{{end}}
-
-{{if .LoopCondition}}
-## 🔄 LOOP CHECK
-**Condition**: {{.LoopCondition}}
-{{else}}
-## 🧠 TASK
-Verify if success criteria are met using Dual Verification (Files + Tool History).
-{{end}}
-
-**Submit results via 'submit_validation_result'.**`
-
-	tmpl, err := template.New("validationUserMessage").Parse(templateStr)
-	if err != nil {
-		return "Error parsing validation user message template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateVars); err != nil {
+	if err := validationUserTemplate.Execute(&result, templateVars); err != nil {
 		return "Error executing validation user message template: " + err.Error()
 	}
 	return result.String()

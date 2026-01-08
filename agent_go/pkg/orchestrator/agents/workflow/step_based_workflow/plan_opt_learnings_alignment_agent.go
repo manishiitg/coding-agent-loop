@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"text/template"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -18,6 +17,59 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// Pre-parsed templates for plan learnings alignment - panics at startup if invalid
+var alignmentSystemPromptTemplate = MustRegisterTemplate("alignmentSystemPrompt", `# Plan-Learnings Alignment Agent
+
+## 🤖 Role
+Expert auditor ensuring consistency between 'plan.json' and the 'learnings/' folder structure.
+
+## 📁 FOLDER ARCHITECTURE (MANDATORY)
+Navigate the workspace to discover all step-specific folders:
+- **Regular/Decision/Routing**: `+"`learnings/step-{X}/`"+`
+- **Branch Steps**: `+"`learnings/step-{X}-{true/false}-{Y}/`"+`
+- **Orchestration Sub-Agents**: `+"`learnings/step-{X}-sub-agent-{index}/`"+`
+
+## 🔍 ALIGNMENT ALGORITHM
+1. **Discover**: List 'learnings/' to find all step folders. List files within each.
+2. **Classify**:
+   - **MATCHED ✅**: Filename + Folder are correct for a plan step.
+   - **MISMATCH ⚠️**: Valid filename/content but in WRONG folder (suggest move).
+   - **CONSOLIDATED ✅**: Valid pattern files (prefix 'consolidated_', 'general_').
+   - **CORRECTNESS 🛡️**: Check for "Fake Success" (mocks/hallucinations).
+     - **VERIFIED_OK**: Claims match workspace reality.
+     - **SUSPICIOUS**: Hardcoded "success", simulated results, or stubs.
+     - **UNVERIFIABLE**: Cannot verify with available tools.
+   - **ORPHANED 🗑️**: No relevance to current plan (suggest delete).
+
+## 📋 OUTPUT WORKFLOW
+1. **Scan Changelog**: Read 'planning/changelog/changelog-*.json' to identify recently changed steps.
+2. **Audit**: Categorize every file and check for missing learnings per step.
+3. **Report**: Use 'human_feedback' to present findings and recommended moves/deletions.
+4. **Action**: ONLY perform 'move_workspace_file' or 'delete_workspace_file' AFTER user approval.
+
+*Be precise. No auto-deletion. No guessing.*`)
+
+var alignmentUserMessageTemplate = MustRegisterTemplate("alignmentUserMessage", `# Plan-Learnings Alignment Check
+
+## 📊 TASK
+Verify all learning files against the current plan. Categorize files and detect inconsistencies or mocks.
+
+## 📋 CONTEXT
+- **Workspace**: {{.WorkspacePath}}
+- **Allowed Access**: {{.AllowedPaths}}
+
+## 🧠 ALIGNMENT CHECKLIST
+1. **Phase 0**: Scan 'planning/changelog/' for recent step changes.
+2. **Phase 1**: Analyze 'plan.json' (below) to map step IDs to their expected 'learnings/' subfolders.
+3. **Phase 2**: Discover files in ALL step folders. Categorize (MATCHED, MISMATCH, CONSOLIDATED, ORPHANED).
+4. **Phase 3**: Audit for **CorrectnessStatus** (VERIFIED_OK, SUSPICIOUS, UNVERIFIABLE).
+5. **Phase 4**: Report findings via 'human_feedback'.
+
+## 📄 CURRENT PLAN
+{{.PlanJSON}}
+
+**Final Goal**: Present a clear report and await user approval for any file relocations or deletions.`)
 
 // WorkflowPlanLearningsAlignmentTemplate holds template variables for alignment prompts
 type WorkflowPlanLearningsAlignmentTemplate struct {
@@ -110,14 +162,16 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 				Provider: plam.presetPhaseLLM.Provider,
 				ModelID:  plam.presetPhaseLLM.ModelID,
 			},
-			Fallbacks: orchestratorLLMConfig.Fallbacks,
-			APIKeys:   orchestratorLLMConfig.APIKeys,
+			Fallbacks: plam.GetFallbacks(), // Safe: returns nil if orchestratorLLMConfig is nil
+			APIKeys:   plam.GetAPIKeys(),   // Safe: returns nil if orchestratorLLMConfig is nil
 		}
 		plam.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for plan learnings alignment: %s/%s", plam.presetPhaseLLM.Provider, plam.presetPhaseLLM.ModelID))
-	} else {
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig
-		plam.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default alignment LLM: %s/%s", plam.GetProvider(), plam.GetModel()))
+		plam.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default alignment LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for plan learnings alignment agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)
@@ -410,43 +464,8 @@ func (agent *WorkflowPlanLearningsAlignmentAgent) Execute(ctx context.Context, t
 
 // alignmentSystemPromptProcessor creates the system prompt for plan learnings alignment
 func (agent *WorkflowPlanLearningsAlignmentAgent) alignmentSystemPromptProcessor(templateVars map[string]string) string {
-	templateStr := `# Plan-Learnings Alignment Agent
-
-## 🤖 Role
-Expert auditor ensuring consistency between 'plan.json' and the 'learnings/' folder structure.
-
-## 📁 FOLDER ARCHITECTURE (MANDATORY)
-Navigate the workspace to discover all step-specific folders:
-- **Regular/Decision/Routing**: ` + "`learnings/step-{X}/`" + `
-- **Branch Steps**: ` + "`learnings/step-{X}-{true/false}-{Y}/`" + `
-- **Orchestration Sub-Agents**: ` + "`learnings/step-{X}-sub-agent-{index}/`" + `
-
-## 🔍 ALIGNMENT ALGORITHM
-1. **Discover**: List 'learnings/' to find all step folders. List files within each.
-2. **Classify**:
-   - **MATCHED ✅**: Filename + Folder are correct for a plan step.
-   - **MISMATCH ⚠️**: Valid filename/content but in WRONG folder (suggest move).
-   - **CONSOLIDATED ✅**: Valid pattern files (prefix 'consolidated_', 'general_').
-   - **CORRECTNESS 🛡️**: Check for "Fake Success" (mocks/hallucinations).
-     - **VERIFIED_OK**: Claims match workspace reality.
-     - **SUSPICIOUS**: Hardcoded "success", simulated results, or stubs.
-     - **UNVERIFIABLE**: Cannot verify with available tools.
-   - **ORPHANED 🗑️**: No relevance to current plan (suggest delete).
-
-## 📋 OUTPUT WORKFLOW
-1. **Scan Changelog**: Read 'planning/changelog/changelog-*.json' to identify recently changed steps.
-2. **Audit**: Categorize every file and check for missing learnings per step.
-3. **Report**: Use 'human_feedback' to present findings and recommended moves/deletions.
-4. **Action**: ONLY perform 'move_workspace_file' or 'delete_workspace_file' AFTER user approval.
-
-*Be precise. No auto-deletion. No guessing.*`
-
-	tmpl, err := template.New("alignmentSystemPrompt").Parse(templateStr)
-	if err != nil {
-		return "Error parsing alignment system prompt template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateVars); err != nil {
+	if err := alignmentSystemPromptTemplate.Execute(&result, templateVars); err != nil {
 		return "Error executing alignment system prompt template: " + err.Error()
 	}
 	return result.String()
@@ -454,33 +473,8 @@ Navigate the workspace to discover all step-specific folders:
 
 // alignmentUserMessageProcessor creates the user message for plan learnings alignment
 func (agent *WorkflowPlanLearningsAlignmentAgent) alignmentUserMessageProcessor(templateVars map[string]string) string {
-	templateStr := `# Plan-Learnings Alignment Check
-
-## 📊 TASK
-Verify all learning files against the current plan. Categorize files and detect inconsistencies or mocks.
-
-## 📋 CONTEXT
-- **Workspace**: {{.WorkspacePath}}
-- **Allowed Access**: {{.AllowedPaths}}
-
-## 🧠 ALIGNMENT CHECKLIST
-1. **Phase 0**: Scan 'planning/changelog/' for recent step changes.
-2. **Phase 1**: Analyze 'plan.json' (below) to map step IDs to their expected 'learnings/' subfolders.
-3. **Phase 2**: Discover files in ALL step folders. Categorize (MATCHED, MISMATCH, CONSOLIDATED, ORPHANED).
-4. **Phase 3**: Audit for **CorrectnessStatus** (VERIFIED_OK, SUSPICIOUS, UNVERIFIABLE).
-5. **Phase 4**: Report findings via 'human_feedback'.
-
-## 📄 CURRENT PLAN
-{{.PlanJSON}}
-
-**Final Goal**: Present a clear report and await user approval for any file relocations or deletions.`
-
-	tmpl, err := template.New("alignmentUserMessage").Parse(templateStr)
-	if err != nil {
-		return "Error parsing alignment user message template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateVars); err != nil {
+	if err := alignmentUserMessageTemplate.Execute(&result, templateVars); err != nil {
 		return "Error executing alignment user message template: " + err.Error()
 	}
 	return result.String()

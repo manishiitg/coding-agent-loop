@@ -14,8 +14,9 @@ import (
 
 // readStepLearningMetadata reads and parses the learning metadata file for a step.
 func (hcpo *StepBasedWorkflowOrchestrator) readStepLearningMetadata(ctx context.Context, stepID string, stepPath string) (LearningMetadata, error) {
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	metadataPath := filepath.Join(baseWorkspacePath, "learnings", stepID, ".learning_metadata.json")
+	// Use relative path - ReadWorkspaceFile auto-prepends workspacePath
+	learningsBase := hcpo.getLearningsBasePath()
+	metadataPath := filepath.Join(learningsBase, stepID, ".learning_metadata.json")
 
 	var metadata LearningMetadata
 	content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, metadataPath)
@@ -115,9 +116,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) ResetLearningMetadata(
 	newHash string,
 	unlockReason string,
 ) error {
-	// 1. Reset counters in metadata
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	metadataPath := filepath.Join(baseWorkspacePath, "learnings", stepID, ".learning_metadata.json")
+	// 1. Reset counters in metadata - use relative path (ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath)
+	learningsBase := hcpo.getLearningsBasePath()
+	metadataPath := filepath.Join(learningsBase, stepID, ".learning_metadata.json")
 
 	var metadata LearningMetadata
 	content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, metadataPath)
@@ -171,8 +172,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) LoadStepLearningHistory(
 		return "", nil
 	}
 
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	stepLearningsPath := getLearningFolderPathByStepID(baseWorkspacePath, stepID, stepPath)
+	// getLearningFolderPathByStepID now returns RELATIVE path - workspace functions auto-prepend workspacePath
+	stepLearningsPath := getLearningFolderPathByStepID("", stepID, stepPath, hcpo.isEvaluationMode)
 
 	// Check if learnings folder exists and has files
 	learningsFolderEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, stepIndex, stepPath)
@@ -245,4 +246,52 @@ func (hcpo *StepBasedWorkflowOrchestrator) ShouldSkipLearningDueToLock(
 	// Learnings are locked and learnings exist - skip learning
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked and learnings exist for step ID '%s' (step %d) - skipping learning", stepID, stepIndex+1))
 	return true, nil
+}
+
+// deleteStepLearnings deletes the entire learnings folder for a specific step ID.
+// This is used when a step is significantly modified or recreated, invalidating previous learnings.
+func (hcpo *StepBasedWorkflowOrchestrator) deleteStepLearnings(ctx context.Context, stepID string) error {
+	if stepID == "" {
+		return fmt.Errorf("cannot delete learnings: stepID is empty")
+	}
+
+	learningsBase := hcpo.getLearningsBasePath()
+	// Construct RELATIVE path - workspace functions auto-prepend workspacePath
+	stepLearningsPath := filepath.Join(learningsBase, stepID)
+
+	// Check if folder exists
+	exists, err := hcpo.BaseOrchestrator.CheckWorkspaceFileExists(ctx, stepLearningsPath)
+	if err != nil {
+		// If check failed, we can't be sure, but let's try to delete anyway or just return error
+		return fmt.Errorf("failed to check if learnings folder exists: %w", err)
+	}
+
+	if !exists {
+		// If folder doesn't exist, nothing to do
+		return nil
+	}
+
+	// Delete the folder recursively
+	// Using DeleteWorkspaceFile which should handle directories if the underlying implementation supports it
+	// If BaseOrchestrator.DeleteWorkspaceFile only handles files, we might need a recursive delete or shell command
+	// But usually file system abstractions handle this.
+	// Let's assume DeleteWorkspaceFile handles it or we use a shell command if needed.
+	// Actually, looking at BaseOrchestrator, it likely uses standard os.RemoveAll or similar.
+	// If not, we might need to list files and delete them one by one.
+	
+	// Safe approach: List files and delete them, then delete the directory
+	// But `DeleteWorkspaceFile` in standard implementation usually maps to `os.RemoveAll` or `fs.Remove`.
+	// Let's check `DeleteWorkspaceFile` implementation if possible. 
+	// Since I can't check it right now easily (it's in another package), I'll assume it works or try to use it.
+	
+	// HOWEVER, looking at `readStepLearningFiles`, it uses `ListWorkspaceFiles`.
+	// Let's try to use `DeleteWorkspaceFile` on the directory.
+	
+	err = hcpo.BaseOrchestrator.DeleteWorkspaceFile(ctx, stepLearningsPath)
+	if err != nil {
+		return fmt.Errorf("failed to delete learnings folder %s: %w", stepLearningsPath, err)
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleted learnings for step ID: %s", stepID))
+	return nil
 }

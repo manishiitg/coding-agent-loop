@@ -146,7 +146,8 @@ func writeToolConfigChangelogEntry(ctx context.Context, workspacePath string, en
 		entry.Timestamp = now.Format(time.RFC3339)
 	}
 
-	changelogPath := filepath.Join(workspacePath, "planning", "changelog", toolConfigChangelogSessionFile)
+	// Use relative path only - ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath
+	changelogPath := filepath.Join("planning", "changelog", toolConfigChangelogSessionFile)
 
 	// Read existing changelog if it exists
 	var changelog ToolConfigChangeLog
@@ -232,7 +233,8 @@ func getUpdateStepConfigToolsSchema() string {
 
 // readStepConfigFromFile reads step_config.json from the workspace using BaseOrchestrator's ReadWorkspaceFile
 func readStepConfigFromFile(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error)) ([]StepConfig, error) {
-	configPath := filepath.Join(workspacePath, "planning", "step_config.json")
+	// Use relative path only - ReadWorkspaceFile auto-prepends workspacePath
+	configPath := filepath.Join("planning", "step_config.json")
 
 	stepConfigFileMutex.Lock()
 	defer stepConfigFileMutex.Unlock()
@@ -257,7 +259,8 @@ func readStepConfigFromFile(ctx context.Context, workspacePath string, readFile 
 // writeStepConfigToFile writes step configs to step_config.json in object format using BaseOrchestrator's WriteWorkspaceFile
 // Format: { "steps": [{ "id": "...", "agent_configs": {...} }] }
 func writeStepConfigToFile(ctx context.Context, workspacePath string, configs []StepConfig, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger loggerv2.Logger) error {
-	configPath := filepath.Join(workspacePath, "planning", "step_config.json")
+	// Use relative path only - WriteWorkspaceFile auto-prepends workspacePath
+	configPath := filepath.Join("planning", "step_config.json")
 
 	stepConfigFileMutex.Lock()
 	defer stepConfigFileMutex.Unlock()
@@ -437,14 +440,16 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 				Provider: ptom.presetPhaseLLM.Provider,
 				ModelID:  ptom.presetPhaseLLM.ModelID,
 			},
-			Fallbacks: orchestratorLLMConfig.Fallbacks,
-			APIKeys:   orchestratorLLMConfig.APIKeys,
+			Fallbacks: ptom.GetFallbacks(), // Safe: returns nil if orchestratorLLMConfig is nil
+			APIKeys:   ptom.GetAPIKeys(),   // Safe: returns nil if orchestratorLLMConfig is nil
 		}
 		ptom.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for plan tool optimization: %s/%s", ptom.presetPhaseLLM.Provider, ptom.presetPhaseLLM.ModelID))
-	} else {
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 		// Fall back to orchestrator default
 		llmConfigToUse = orchestratorLLMConfig
-		ptom.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default tool optimization LLM: %s/%s", ptom.GetProvider(), ptom.GetModel()))
+		ptom.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default tool optimization LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for plan tool optimization agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)

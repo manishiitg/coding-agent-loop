@@ -40,6 +40,9 @@ import type {
   StepExecutionLogs,
   ValidationLog,
   ExecutionAttemptLog,
+  EvaluationReportsResponse,
+  EvaluationReport,
+  EvaluationStepScore,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -74,6 +77,9 @@ export type {
   StepExecutionLogs,
   ValidationLog,
   ExecutionAttemptLog,
+  EvaluationReportsResponse,
+  EvaluationReport,
+  EvaluationStepScore,
 } from './api-types'
 
 const API_BASE_URL = 'http://localhost:8000'
@@ -774,6 +780,16 @@ export const agentApi = {
   getLogFile: async (filePath: string): Promise<any> => {
     const response = await api.get('/api/workflow/logs/file', {
       params: { file_path: filePath }
+    })
+    return response.data
+  },
+
+  // Get evaluation reports for a workflow
+  // If runFolder is empty, returns aggregate across all evaluation runs
+  // If runFolder is specified, returns report for that specific run
+  getEvaluationReports: async (workspacePath: string, runFolder?: string): Promise<EvaluationReportsResponse> => {
+    const response = await api.get('/api/workflow/evaluation-reports', {
+      params: { workspace_path: workspacePath, run_folder: runFolder || '' }
     })
     return response.data
   },

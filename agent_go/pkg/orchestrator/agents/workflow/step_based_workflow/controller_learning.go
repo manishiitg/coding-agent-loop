@@ -133,8 +133,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 
 	// Read previous learnings BEFORE learning phase runs (for comparison after learning phase completes)
 	// This captures the state before the learning agent potentially modifies the files
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	stepLearningsPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier)
+	// Use RELATIVE path - workspace functions auto-prepend workspacePath
+	// getLearningsBasePath returns "evaluation/learnings" or "learnings" based on isEvaluationMode
+	learningsBase := hcpo.getLearningsBasePath()
+	stepLearningsPath := filepath.Join(learningsBase, learningPathIdentifier)
 
 	// Ensure the learning folder exists before reading/writing learnings
 	if err := hcpo.ensureStepLearningsFolderExists(ctx, stepLearningsPath); err != nil {
@@ -325,8 +327,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
 func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.Context, stepIndex int, stepPath string, learningPathIdentifier string, totalSteps int, step PlanStepInterface, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool, turnCount int) (string, string, error) {
 	// Ensure the learning folder exists before reading/writing learnings
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	stepLearningsPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier)
+	// Use RELATIVE path - workspace functions auto-prepend workspacePath
+	// getLearningsBasePath returns "evaluation/learnings" or "learnings" based on isEvaluationMode
+	learningsBase := hcpo.getLearningsBasePath()
+	stepLearningsPath := filepath.Join(learningsBase, learningPathIdentifier)
 	if err := hcpo.ensureStepLearningsFolderExists(ctx, stepLearningsPath); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure learning folder exists: %v", err))
 	}
@@ -448,8 +452,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 
 	// Read previous learnings BEFORE learning phase runs (for comparison after learning phase completes)
 	// This captures the state before the learning agent potentially modifies the files
-	baseWorkspacePath = hcpo.GetWorkspacePath()
-	stepLearningsPath = filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier)
+	// Note: stepLearningsPath was already set earlier with RELATIVE path
 	previousLearningFiles, _ := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
 	previousLearningsContent := ""
 	if len(previousLearningFiles) > 0 {
@@ -762,15 +765,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) formatStepLearningFilesAsHistory(lear
 }
 
 // getExistingLearningFilePath checks if an existing learning file exists for the given step
-// Returns the full file path if it exists, empty string otherwise
+// Returns the RELATIVE file path if it exists, empty string otherwise
 func (hcpo *StepBasedWorkflowOrchestrator) getExistingLearningFilePath(ctx context.Context, stepNumber int, stepTitle string) string {
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-
 	// Resolve variables in step title
 	resolvedTitle := ResolveVariables(stepTitle, hcpo.variableValues)
 
-	// Always use learnings folder (unified folder for all learning types)
-	learningsBasePath := fmt.Sprintf("%s/learnings/step-%d", baseWorkspacePath, stepNumber)
+	// Use RELATIVE path - workspace functions auto-prepend workspacePath
+	// getLearningsBasePath returns "evaluation/learnings" or "learnings" based on isEvaluationMode
+	learningsBase := hcpo.getLearningsBasePath()
+	learningsBasePath := fmt.Sprintf("%s/step-%d", learningsBase, stepNumber)
 
 	// Construct the expected file path
 	learningFileName := fmt.Sprintf("%s_learning.md", resolvedTitle)
@@ -779,7 +782,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getExistingLearningFilePath(ctx conte
 	// Try to read the file to check if it exists
 	_, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, expectedFilePath)
 	if err == nil {
-		// File exists, return the path
+		// File exists, return the RELATIVE path
 		return expectedFilePath
 	}
 

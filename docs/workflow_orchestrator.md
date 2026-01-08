@@ -47,7 +47,7 @@ The orchestrator operates through 7 distinct phases, each isolated and independe
 | **0. Variable Extraction** | `variable-extraction` | `runVariableExtraction()` | `variables.json` | Use/Extract new/Update |
 | **1. Planning** | `planning` | `runPlanningOnly()` | `plan.json` | Use/Create/Update (max 20 rev) |
 | **2. Execution** | `execution` | `runPlanning()` | Step results | Approve/Re-execute/Stop |
-| **3. Evaluation Designer** | `evaluation-planning` | `runEvaluationPlanningOnly()` | `evaluation_plan.json` | Review evaluation guide |
+| **3. Evaluation Designer** | `evaluation-designer` | `runEvaluationDesignerOnly()` | `evaluation_plan.json` | Review evaluation guide |
 | **4. Evaluation Execution** | `evaluation-execution` | `runEvaluationExecutionOnly()` | Scores & Reports | - |
 | **5. Anonymize Learnings** | `anonymize-learnings` | `runAnonymization()` | Anonymized learnings | Confirm replacements |
 | **6. Plan Improvement** | `plan-improvement` | `runPlanImprovement()` | Feedback report | Review feedback |

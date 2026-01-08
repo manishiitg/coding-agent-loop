@@ -36,7 +36,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	}
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	// Step-specific learnings folder: learnings/{stepID}/ (only this step's learnings, not full learnings folder)
-	stepLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
+	// In evaluation mode, learnings are stored in evaluation/learnings/
+	var stepLearningsPath string
+	if hcpo.isEvaluationMode {
+		stepLearningsPath = fmt.Sprintf("%s/evaluation/learnings/%s", baseWorkspacePath, stepID)
+	} else {
+		stepLearningsPath = fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
+	}
 	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
 	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 
@@ -526,7 +532,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupConditionalFolderGuard(stepPath 
 	}
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	// Step-specific learnings folder: learnings/{stepID}/ (only this step's learnings, not full learnings folder)
-	stepLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
+	// In evaluation mode, learnings are stored in evaluation/learnings/
+	var stepLearningsPath string
+	if hcpo.isEvaluationMode {
+		stepLearningsPath = fmt.Sprintf("%s/evaluation/learnings/%s", baseWorkspacePath, stepID)
+	} else {
+		stepLearningsPath = fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
+	}
 	// Step-specific execution folder: execution/step-{X}/ or execution/step-{X}-{branch}/ (for writing evaluation results)
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
 	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
@@ -555,12 +567,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupLearningFolderGuard(learningPath
 
 	// Step-specific learnings: write to learnings/{learningPathIdentifier} at workspace root (not inside runs/)
 	// Supports both regular steps (step-{X}) and branch steps (step-{X}-{true/false}-{Y})
-	learningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, learningPathIdentifier)
+	// In evaluation mode, learnings are stored in evaluation/learnings/
+	var learningsPath string
+	var baseLearningsPath string
+	if hcpo.isEvaluationMode {
+		learningsPath = fmt.Sprintf("%s/evaluation/learnings/%s", baseWorkspacePath, learningPathIdentifier)
+		baseLearningsPath = fmt.Sprintf("%s/evaluation/learnings", baseWorkspacePath)
+	} else {
+		learningsPath = fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, learningPathIdentifier)
+		baseLearningsPath = fmt.Sprintf("%s/learnings", baseWorkspacePath)
+	}
 
 	// Build read paths: execution path + base learnings path (for reading existing learnings)
 	readPaths = []string{executionPath}
 	// Add base learnings path for reading existing learnings (we read from base but write to step folder)
-	baseLearningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
 	readPaths = append(readPaths, baseLearningsPath)
 
 	writePaths = []string{learningsPath}
@@ -894,8 +914,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 	toolsToRegister, executorsToUse := hcpo.prepareCustomTools(stepConfig)
 
 	// 5. Use base factory! (This handles all setup automatically)
-	// Extract step number from learningPathIdentifier for event bridge context
-	pathInfo := parseStepPath(learningPathIdentifier)
+	// Extract step number from stepPath for event bridge context
+	// NOTE: We use stepPath (e.g., "step-1") instead of learningPathIdentifier (which is now a step ID like "read-credentials")
+	pathInfo := parseStepPath(stepPath)
 	stepNumberForContext := pathInfo.ParentStepNumber - 1 // Convert to 0-based for SetOrchestratorContext
 
 	// Create agent factory function based on code execution mode
@@ -998,9 +1019,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution LLM for conditional agent: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
-	} else {
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 		llmConfig = orchestratorLLMConfig
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional LLM: %s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for conditional agent: step config, preset execution LLM, and orchestrator default LLM are all empty or invalid")
 	}
 
 	// Create agent config with custom LLM if needed
@@ -1120,9 +1143,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific orchestration orchestrator LLM: %s/%s", orchestrationLLMConfig.Primary.Provider, orchestrationLLMConfig.Primary.ModelID))
-	} else {
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 		llmConfig = orchestratorLLMConfig
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default orchestration orchestrator LLM: %s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for orchestration orchestrator agent: step config and orchestrator default LLM are both empty or invalid")
 	}
 
 	// Create agent config with custom LLM if needed
@@ -1236,6 +1261,151 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created orchestration orchestrator agent using standard factory pattern: %s (step %d, phase %s)", agentName, step+1, phase))
 	return agent, nil
+}
+
+// selectEvaluationScoringLLM selects the LLM config for evaluation scoring agents
+// Priority: presetPhaseLLM > orchestrator default
+func (hcpo *StepBasedWorkflowOrchestrator) selectEvaluationScoringLLM() (*orchestrator.LLMConfig, error) {
+	orchestratorLLMConfig := hcpo.GetLLMConfig()
+
+	if hcpo.presetPhaseLLM != nil && hcpo.presetPhaseLLM.Provider != "" && hcpo.presetPhaseLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for evaluation scoring: %s/%s", hcpo.presetPhaseLLM.Provider, hcpo.presetPhaseLLM.ModelID))
+		return &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: hcpo.presetPhaseLLM.Provider,
+				ModelID:  hcpo.presetPhaseLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+		}, nil
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default LLM for evaluation scoring: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+		return orchestratorLLMConfig, nil
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for evaluation scoring agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
+	}
+}
+
+// createEvaluationScoringAgent creates an evaluation scoring agent using the standard factory pattern
+// This agent analyzes evaluation step outputs and calculates scores based on success criteria
+func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx context.Context, phase string, step *EvaluationStep, executionOutput string) (agents.OrchestratorAgent, *EvaluationStepScore, error) {
+	agentName := "evaluation-scoring-agent"
+
+	// Select LLM config using presetPhaseLLM priority
+	llmConfig, err := hcpo.selectEvaluationScoringLLM()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Create agent config
+	maxTurns := 5 // Fixed max turns for scoring agent
+	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+
+	// Scoring agents always use NoServers (pure LLM analysis agent)
+	config.ServerNames = []string{mcpclient.NoServers}
+	config.UseCodeExecutionMode = false
+
+	// Variable to capture the score from the tool
+	var capturedScore *EvaluationStepScore
+
+	// Use base factory to create agent with proper event bridging
+	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
+		ctx,
+		config,
+		phase,
+		0, // step (not used for scoring agents)
+		0, // iteration (not used for scoring agents)
+		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+			return NewWorkflowEvaluationScoringAgent(cfg, logger, tracer, eventBridge)
+		},
+		nil, // no additional tools to register
+		nil, // no additional executors
+		true, // overwrite system prompt
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create and setup evaluation scoring agent: %w", err)
+	}
+
+	// Register the submit_score tool on the created agent
+	baseAgent := agent.GetBaseAgent()
+	if baseAgent == nil {
+		return nil, nil, fmt.Errorf("base agent is nil after creation for %s", agentName)
+	}
+	mcpAgent := baseAgent.Agent()
+	if mcpAgent == nil {
+		return nil, nil, fmt.Errorf("mcp agent is nil after creation for %s", agentName)
+	}
+
+	mcpAgent.RegisterCustomTool(
+		"submit_score",
+		"Submit the evaluation score for this step. You MUST call this tool with your analysis.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"step_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The ID of the evaluation step",
+				},
+				"score": map[string]interface{}{
+					"type":        "integer",
+					"description": "The score (0, 5, or 10 based on success criteria)",
+				},
+				"reasoning": map[string]interface{}{
+					"type":        "string",
+					"description": "Brief explanation of why this score was assigned",
+				},
+				"evidence": map[string]interface{}{
+					"type":        "string",
+					"description": "Key evidence from the execution output supporting this score",
+				},
+			},
+			"required": []string{"step_id", "score", "reasoning", "evidence"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			stepID, _ := args["step_id"].(string)
+			scoreFloat, _ := args["score"].(float64)
+			score := int(scoreFloat)
+			reasoning, _ := args["reasoning"].(string)
+			evidence, _ := args["evidence"].(string)
+
+			capturedScore = &EvaluationStepScore{
+				StepID:          stepID,
+				StepTitle:       step.Title,
+				Score:           score,
+				MaxScore:        10,
+				Reasoning:       reasoning,
+				Evidence:        evidence,
+				SuccessCriteria: step.SuccessCriteria,
+			}
+
+			return fmt.Sprintf("Score submitted: %d/10 for step %s", score, stepID), nil
+		},
+		"structured_output",
+	)
+
+	// Cast to concrete type and set up user message processor
+	scoringAgent, ok := agent.(*WorkflowEvaluationScoringAgent)
+	if !ok {
+		return nil, nil, fmt.Errorf("failed to cast agent to WorkflowEvaluationScoringAgent")
+	}
+
+	// Build prompts and set user message
+	userPrompt := scoringAgent.GetUserPrompt(step.ID, step.Title, step.Description, step.SuccessCriteria, executionOutput)
+	scoringAgent.SetUserMessageProcessor(func(map[string]string) string {
+		return userPrompt
+	})
+
+	// Execute the scoring agent
+	_, _, err = scoringAgent.Execute(ctx, nil, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("scoring agent execution failed: %w", err)
+	}
+
+	if capturedScore == nil {
+		return nil, nil, fmt.Errorf("scoring agent did not submit a score")
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Evaluation scoring agent completed: %s scored %d/10", step.Title, capturedScore.Score))
+	return agent, capturedScore, nil
 }
 
 // createOrchestrationLearningAgent creates an orchestration learning agent for analyzing orchestrator decisions

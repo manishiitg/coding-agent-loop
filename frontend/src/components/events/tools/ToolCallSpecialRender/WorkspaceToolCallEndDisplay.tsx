@@ -143,7 +143,7 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
                     <CircularProgress
                       percentage={contextUsagePercent}
                       size={18}
-                      strokeWidth={2}
+                      strokeWidth={3}
                       tokenUsage={tokenUsageForTooltip}
                     />
                   </TooltipProvider>
@@ -206,7 +206,7 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
                     <CircularProgress
                       percentage={contextUsagePercent}
                       size={18}
-                      strokeWidth={2}
+                      strokeWidth={3}
                       tokenUsage={tokenUsageForTooltip}
                     />
                   </TooltipProvider>
@@ -311,7 +311,7 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
                     <CircularProgress
                       percentage={contextUsagePercent}
                       size={18}
-                      strokeWidth={2}
+                      strokeWidth={3}
                       tokenUsage={tokenUsageForTooltip}
                     />
                   </TooltipProvider>
@@ -387,7 +387,7 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
                     <CircularProgress
                       percentage={contextUsagePercent}
                       size={18}
-                      strokeWidth={2}
+                      strokeWidth={3}
                       tokenUsage={tokenUsageForTooltip}
                     />
                   </TooltipProvider>

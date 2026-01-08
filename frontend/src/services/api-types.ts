@@ -1052,4 +1052,47 @@ export interface BatchExecutionCanceledEvent {
   canceled_group_id: string;
   remaining_group_ids: string[];
   reason: string;
+}
+
+// Evaluation Report types
+export interface EvaluationStepScore {
+  step_id: string;
+  step_title: string;
+  score: number;
+  max_score: number;
+  reasoning: string;
+  evidence: string;
+  success_criteria: string;
+}
+
+export interface EvaluationReport {
+  target_run_folder: string;
+  generated_at: string;
+  total_score: number;
+  max_possible_score: number;
+  score_percentage: number;
+  step_scores: EvaluationStepScore[];
+  summary: string;
+}
+
+// Evaluation reports response for aggregate view
+export interface EvaluationReportsResponse {
+  success: boolean;
+  reports: EvaluationReportEntry[];
+  aggregate?: EvaluationAggregate;
+  error?: string;
+}
+
+export interface EvaluationReportEntry {
+  run_folder: string;
+  report: EvaluationReport;
+}
+
+export interface EvaluationAggregate {
+  total_runs: number;
+  average_score: number;
+  average_percentage: number;
+  highest_score: number;
+  lowest_score: number;
+  max_possible_score: number;
 } 

@@ -172,39 +172,37 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 		return false, executionResult, fmt.Errorf("WORKFLOW_END: decision step's inner step '%s' signaled workflow termination", innerStepPlan.GetTitle())
 	}
 
-	// Store inner step execution result to logs (if enabled)
-	if hcpo.saveValidationResponses {
-		// Determine validation workspace path (same logic as validation agent)
-		var validationWorkspacePath string
-		if hcpo.selectedRunFolder != "" {
-			validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	// Store inner step execution result to logs (always enabled)
+	// Determine validation workspace path (same logic as validation agent)
+	var validationWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	} else {
+		validationWorkspacePath = hcpo.GetWorkspacePath()
+	}
+
+	// Get execution logs folder path based on innerStepPath (step-{X}-decision)
+	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, innerStepPath)
+
+	// Save inner step execution result
+	executionResultFilePath := fmt.Sprintf("%s/decision-inner-step.json", executionLogsFolderPath)
+	executionResponse := map[string]interface{}{
+		"step_index":       stepIndex + 1,
+		"step_path":        innerStepPath,
+		"decision_step_id": step.GetID(),
+		"execution_result": executionResult,
+		"timestamp":        time.Now().Format(time.RFC3339),
+	}
+
+	// Marshal and save execution result
+	executionJSON, err := json.MarshalIndent(executionResponse, "", "  ")
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal decision inner step execution response to JSON: %v", err))
+	} else {
+		if err := hcpo.WriteWorkspaceFile(ctx, executionResultFilePath, string(executionJSON)); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write decision inner step execution response to %s: %v", executionResultFilePath, err))
 		} else {
-			validationWorkspacePath = hcpo.GetWorkspacePath()
-		}
-
-		// Get execution logs folder path based on innerStepPath (step-{X}-decision)
-		executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, innerStepPath)
-
-		// Save inner step execution result
-		executionResultFilePath := fmt.Sprintf("%s/decision-inner-step.json", executionLogsFolderPath)
-		executionResponse := map[string]interface{}{
-			"step_index":       stepIndex + 1,
-			"step_path":        innerStepPath,
-			"decision_step_id": step.GetID(),
-			"execution_result": executionResult,
-			"timestamp":        time.Now().Format(time.RFC3339),
-		}
-
-		// Marshal and save execution result
-		executionJSON, err := json.MarshalIndent(executionResponse, "", "  ")
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal decision inner step execution response to JSON: %v", err))
-		} else {
-			if err := hcpo.WriteWorkspaceFile(ctx, executionResultFilePath, string(executionJSON)); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write decision inner step execution response to %s: %v", executionResultFilePath, err))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("💾 Decision inner step execution response saved to: %s", executionResultFilePath))
-			}
+			hcpo.GetLogger().Info(fmt.Sprintf("💾 Decision inner step execution response saved to: %s", executionResultFilePath))
 		}
 	}
 
@@ -307,43 +305,35 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 	// Emit decision_evaluated event with structured response
 	hcpo.emitDecisionEvaluatedEvent(ctx, step, stepIndex, decisionStepPath, decisionResponse)
 
-	// Store decision evaluation result to logs (if enabled)
-	if hcpo.saveValidationResponses {
-		// Determine validation workspace path (same logic as validation agent)
-		var validationWorkspacePath string
-		if hcpo.selectedRunFolder != "" {
-			validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	// Store decision evaluation result to logs (always enabled)
+	// Determine validation workspace path (same logic as validation agent)
+	// validationWorkspacePath already defined above
+	// Get validation folder path based on decisionStepPath (step-{X})
+	validationFolderPath := getValidationFolderPath(validationWorkspacePath, decisionStepPath)
+
+	// Save decision evaluation result
+	decisionEvaluationFilePath := fmt.Sprintf("%s/decision-evaluation.json", validationFolderPath)
+	decisionEvaluationResponse := map[string]interface{}{
+		"step_index":                   stepIndex + 1,
+		"step_path":                    decisionStepPath,
+		"decision_step_id":             step.GetID(),
+		"decision_evaluation_question": decisionStep.DecisionEvaluationQuestion,
+		"decision_result":              decisionResponse.Result,
+		"decision_reasoning":           decisionResponse.Reasoning,
+		"if_true_next_step_id":         decisionStep.IfTrueNextStepID,
+		"if_false_next_step_id":        decisionStep.IfFalseNextStepID,
+		"timestamp":                    time.Now().Format(time.RFC3339),
+	}
+
+	// Marshal and save decision evaluation result
+	decisionJSON, err := json.MarshalIndent(decisionEvaluationResponse, "", "  ")
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal decision evaluation response to JSON: %v", err))
+	} else {
+		if err := hcpo.WriteWorkspaceFile(ctx, decisionEvaluationFilePath, string(decisionJSON)); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write decision evaluation response to %s: %v", decisionEvaluationFilePath, err))
 		} else {
-			validationWorkspacePath = hcpo.GetWorkspacePath()
-		}
-
-		// Get validation folder path based on decisionStepPath (step-{X})
-		validationFolderPath := getValidationFolderPath(validationWorkspacePath, decisionStepPath)
-
-		// Save decision evaluation result
-		decisionEvaluationFilePath := fmt.Sprintf("%s/decision-evaluation.json", validationFolderPath)
-		decisionEvaluationResponse := map[string]interface{}{
-			"step_index":                   stepIndex + 1,
-			"step_path":                    decisionStepPath,
-			"decision_step_id":             step.GetID(),
-			"decision_evaluation_question": decisionStep.DecisionEvaluationQuestion,
-			"decision_result":              decisionResponse.Result,
-			"decision_reasoning":           decisionResponse.Reasoning,
-			"if_true_next_step_id":         decisionStep.IfTrueNextStepID,
-			"if_false_next_step_id":        decisionStep.IfFalseNextStepID,
-			"timestamp":                    time.Now().Format(time.RFC3339),
-		}
-
-		// Marshal and save decision evaluation result
-		decisionJSON, err := json.MarshalIndent(decisionEvaluationResponse, "", "  ")
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal decision evaluation response to JSON: %v", err))
-		} else {
-			if err := hcpo.WriteWorkspaceFile(ctx, decisionEvaluationFilePath, string(decisionJSON)); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write decision evaluation response to %s: %v", decisionEvaluationFilePath, err))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("💾 Decision evaluation response saved to: %s", decisionEvaluationFilePath))
-			}
+			hcpo.GetLogger().Info(fmt.Sprintf("💾 Decision evaluation response saved to: %s", decisionEvaluationFilePath))
 		}
 	}
 

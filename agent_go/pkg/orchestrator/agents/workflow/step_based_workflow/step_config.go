@@ -39,23 +39,47 @@ func ParseStepConfigContent(content string) ([]StepConfig, error) {
 
 // ReadStepConfigs reads step_config.json from the workspace
 // Public method that accepts BaseOrchestrator, workspacePath, and runWorkspacePath as parameters
+// NOTE: workspacePath and runWorkspacePath are kept for API compatibility but paths are constructed as relative
+// ReadWorkspaceFile auto-prepends the workspace path, so we only pass relative paths
 func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, workspacePath, runWorkspacePath string) ([]StepConfig, error) {
+	// Extract the run folder relative path from runWorkspacePath
+	// runWorkspacePath is typically "{workspace}/runs/{selectedRunFolder}" or just "{workspace}"
+	// We need to construct relative paths for ReadWorkspaceFile
+
 	// First, try to read from run folder (run-specific config)
-	runConfigPath := filepath.Join(runWorkspacePath, "planning", "step_config.json")
-	content, err := bo.ReadWorkspaceFile(ctx, runConfigPath)
+	// Use relative path - ReadWorkspaceFile auto-prepends workspacePath
+	var runConfigRelativePath string
+	if runWorkspacePath != workspacePath && runWorkspacePath != "" {
+		// Extract relative run path from runWorkspacePath
+		// runWorkspacePath = "{workspace}/runs/{runFolder}" -> relative = "runs/{runFolder}"
+		relativePart := runWorkspacePath
+		if len(workspacePath) > 0 && len(runWorkspacePath) > len(workspacePath) {
+			relativePart = runWorkspacePath[len(workspacePath):]
+			relativePart = filepath.Clean(relativePart)
+			relativePart = filepath.ToSlash(relativePart)
+			if len(relativePart) > 0 && relativePart[0] == '/' {
+				relativePart = relativePart[1:]
+			}
+		}
+		runConfigRelativePath = filepath.Join(relativePart, "planning", "step_config.json")
+	} else {
+		runConfigRelativePath = filepath.Join("planning", "step_config.json")
+	}
+
+	content, err := bo.ReadWorkspaceFile(ctx, runConfigRelativePath)
 	if err == nil {
 		// Run folder config exists - use it
 		configs, err := ParseStepConfigContent(content)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse run folder step_config.json: %w", err)
 		}
-		bo.GetLogger().Info(fmt.Sprintf("📁 Using run-specific step_config.json from: %s", runConfigPath))
+		bo.GetLogger().Info(fmt.Sprintf("📁 Using run-specific step_config.json from: %s", runConfigRelativePath))
 		return configs, nil
 	}
 
 	// Fallback to workspace default config
-	// Note: configs are saved to workspacePath/planning/step_config.json
-	configPath := filepath.Join(workspacePath, "planning", "step_config.json")
+	// Use relative path only - ReadWorkspaceFile auto-prepends workspacePath
+	configPath := filepath.Join("planning", "step_config.json")
 	content, err = bo.ReadWorkspaceFile(ctx, configPath)
 	if err != nil {
 		// File doesn't exist yet - return empty array
@@ -96,9 +120,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepConfigs(ctx context.Context) 
 // Format: { "steps": [{ "id": "...", "agent_configs": {...} }] }
 // Uses the orchestrator's WriteWorkspaceFile method
 // Note: Directory creation is handled automatically by the workspace API
+// WriteWorkspaceFile auto-prepends the workspace path, so we only pass the relative path
 func (hcpo *StepBasedWorkflowOrchestrator) WriteStepConfigs(ctx context.Context, configs []StepConfig) error {
-	workspacePath := hcpo.GetWorkspacePath()
-	configPath := filepath.Join(workspacePath, "planning", "step_config.json")
+	// Use relative path only - WriteWorkspaceFile auto-prepends workspacePath
+	configPath := filepath.Join("planning", "step_config.json")
 
 	// Write in object format with "steps" field
 	configFile := StepConfigFile{

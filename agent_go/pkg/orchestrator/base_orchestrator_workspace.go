@@ -15,7 +15,24 @@ import (
 )
 
 // ReadWorkspaceFile reads a file from the workspace using MCP tools
+// If filePath is relative, it will be resolved relative to the workspace path
+// IMPORTANT: Callers should pass RELATIVE paths (e.g., "planning/plan.json").
+// The workspacePath is automatically prepended for relative paths.
 func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath string) (string, error) {
+	// If path is relative and we have a workspace path, prepend it
+	workspacePath := bo.GetWorkspacePath()
+	if workspacePath != "" && !filepath.IsAbs(filePath) {
+		// DEFENSIVE FIX: Check if the relative path already starts with workspacePath
+		// This prevents double-prepending bugs (e.g., "ws/ws/file.json")
+		if strings.HasPrefix(filePath, workspacePath+"/") || filePath == workspacePath {
+			bo.GetLogger().Warn(fmt.Sprintf("⚠️ ReadWorkspaceFile: path '%s' already contains workspace path '%s' - using as-is to prevent double-prepend. Please fix caller to use relative path only.", filePath, workspacePath))
+			// Don't prepend - use path as-is
+		} else {
+			// Join workspace path with relative file path
+			filePath = filepath.Join(workspacePath, filePath)
+		}
+	}
+
 	// Prepare tool call parameters (MCP tools expect map[string]interface{})
 	readArgs := map[string]interface{}{
 		"filepath": filePath,
@@ -83,7 +100,23 @@ func (bo *BaseOrchestrator) CheckWorkspaceFileExists(ctx context.Context, filePa
 }
 
 // WriteWorkspaceFile writes content to a file in the workspace using MCP tools
+// If filePath is relative, it will be resolved relative to the workspace path
+// IMPORTANT: Callers should pass RELATIVE paths (e.g., "planning/plan.json").
+// The workspacePath is automatically prepended for relative paths.
 func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath string, content string) error {
+	// If path is relative and we have a workspace path, prepend it
+	workspacePath := bo.GetWorkspacePath()
+	if workspacePath != "" && !filepath.IsAbs(filePath) {
+		// DEFENSIVE FIX: Check if the relative path already starts with workspacePath
+		// This prevents double-prepending bugs (e.g., "ws/ws/file.json")
+		if strings.HasPrefix(filePath, workspacePath+"/") || filePath == workspacePath {
+			bo.GetLogger().Warn(fmt.Sprintf("⚠️ WriteWorkspaceFile: path '%s' already contains workspace path '%s' - using as-is to prevent double-prepend. Please fix caller to use relative path only.", filePath, workspacePath))
+			// Don't prepend - use path as-is
+		} else {
+			// Join workspace path with relative file path
+			filePath = filepath.Join(workspacePath, filePath)
+		}
+	}
 	startTime := time.Now()
 	contentSize := len(content)
 
@@ -391,8 +424,25 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 
 // ListWorkspaceDirectories lists all directories in a given path
 // Returns a slice of directory names (not full paths)
+// IMPORTANT: Callers should pass RELATIVE paths (e.g., "runs").
+// The workspacePath is automatically prepended for relative paths.
 func (bo *BaseOrchestrator) ListWorkspaceDirectories(ctx context.Context, dirPath string) ([]string, error) {
 	startTime := time.Now()
+
+	// If path is relative and we have a workspace path, prepend it
+	workspacePath := bo.GetWorkspacePath()
+	if workspacePath != "" && !filepath.IsAbs(dirPath) {
+		// DEFENSIVE FIX: Check if the relative path already starts with workspacePath
+		// This prevents double-prepending bugs (e.g., "ws/ws/folder")
+		if strings.HasPrefix(dirPath, workspacePath+"/") || dirPath == workspacePath {
+			bo.GetLogger().Warn(fmt.Sprintf("⚠️ ListWorkspaceDirectories: path '%s' already contains workspace path '%s' - using as-is to prevent double-prepend. Please fix caller to use relative path only.", dirPath, workspacePath))
+			// Don't prepend - use path as-is
+		} else {
+			// Join workspace path with relative dir path
+			dirPath = filepath.Join(workspacePath, dirPath)
+		}
+	}
+
 	bo.GetLogger().Info(fmt.Sprintf("📁 Listing directories in: %s", dirPath))
 
 	// Use list_workspace_files to enumerate directories
@@ -485,8 +535,25 @@ func (bo *BaseOrchestrator) ListWorkspaceDirectories(ctx context.Context, dirPat
 
 // ListWorkspaceFiles lists all files and directories in a given path
 // Returns a slice of file/directory names (not full paths)
+// IMPORTANT: Callers should pass RELATIVE paths (e.g., "learnings/step-1").
+// The workspacePath is automatically prepended for relative paths.
 func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath string) ([]string, error) {
 	startTime := time.Now()
+
+	// If path is relative and we have a workspace path, prepend it
+	workspacePath := bo.GetWorkspacePath()
+	if workspacePath != "" && !filepath.IsAbs(dirPath) {
+		// DEFENSIVE FIX: Check if the relative path already starts with workspacePath
+		// This prevents double-prepending bugs (e.g., "ws/ws/folder")
+		if strings.HasPrefix(dirPath, workspacePath+"/") || dirPath == workspacePath {
+			bo.GetLogger().Warn(fmt.Sprintf("⚠️ ListWorkspaceFiles: path '%s' already contains workspace path '%s' - using as-is to prevent double-prepend. Please fix caller to use relative path only.", dirPath, workspacePath))
+			// Don't prepend - use path as-is
+		} else {
+			// Join workspace path with relative dir path
+			dirPath = filepath.Join(workspacePath, dirPath)
+		}
+	}
+
 	bo.GetLogger().Info(fmt.Sprintf("📁 Listing files and directories in: %s", dirPath))
 
 	// Use list_workspace_files to enumerate files and directories

@@ -42,6 +42,7 @@ const (
 	TodoPlannerPlanToolOptimizationAgentType AgentType = "todo_planner_plan_tool_optimization" // Optimizes tool selections in step_config.json based on learnings
 	ConditionalAgentType                     AgentType = "conditional"                         // Conditional decision agent for evaluating step conditions
 	OrchestrationAgentType                   AgentType = "orchestration"                       // DEPRECATED: Legacy orchestration agent type (no longer used). Current orchestration uses OrchestrationOrchestratorAgent which handles execution, evaluation, and routing in one step.
+	EvaluationScoringAgentType               AgentType = "evaluation_scoring"                  // Calculates scores for evaluation steps based on success criteria
 )
 
 // BaseAgentInterface defines the interface for base agent operations
@@ -137,6 +138,7 @@ func NewBaseAgent(
 	contextEditingTurnThreshold int, // Turn age threshold for context editing (0 = use default)
 	llmConfig *LLMConfig, // NEW: Full LLM configuration
 	apiKeys *AgentAPIKeys, // API keys for providers
+	mcpSessionID string, // MCP session ID for connection sharing across agents
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
 	// All agents use Simple mode
@@ -276,6 +278,15 @@ func NewBaseAgent(
 	}
 	if v2Logger != nil {
 		options = append(options, mcpagent.WithLogger(v2Logger))
+	}
+
+	// Add MCP session ID for connection sharing across agents in the same workflow
+	// When set, connections are stored in a session registry and reused
+	if mcpSessionID != "" {
+		options = append(options, mcpagent.WithSessionID(mcpSessionID))
+		logger.Info("🔗 Using MCP session for connection sharing",
+			loggerv2.String("session_id", mcpSessionID),
+			loggerv2.String("agent_name", name))
 	}
 
 	// Create agent with all options

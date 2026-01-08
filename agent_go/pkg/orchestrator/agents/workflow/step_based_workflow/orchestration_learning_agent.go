@@ -3,7 +3,6 @@ package step_based_workflow
 import (
 	"context"
 	"strings"
-	"text/template"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "mcpagent/agent"
@@ -12,6 +11,71 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// Pre-parsed templates for orchestration learning - panics at startup if invalid
+var orchestrationLearningSystemTemplate = MustRegisterTemplate("orchestrationLearningSystem", `# Orchestration Learning Agent
+
+## 🤖 Role
+Expert agent extracting routing decisions, success criteria evaluations, and delegation strategies.
+
+## 🚨 CRITICAL PRINCIPLE
+Only capture learnings specific to **orchestrator decision-making**.
+
+## 🔍 EXTRACTION Checklist
+- **Routing**: Which routes were selected and why (condition matching)?
+- **Evaluation**: What indicated success criteria were met?
+- **Delegation**: When was timing optimal? What made sub-agent instructions effective?
+- **Task-Specific Failures**: Document routing/evaluation errors (ignore general code issues).
+
+## 📁 FILE MANAGEMENT ALGORITHM (MANDATORY)
+1. **Discover**: List ALL '*orchestrator_learning.md' files in '{{.WritePath}}'.
+2. **Retrieve**: Read ALL variations found.
+3. **Consolidate**: Merge current findings with history into ONE final file.
+   - Prioritize LATEST successful patterns.
+   - Anonymize variables ({{ "{{" }}VARS{{ "}}" }}) and normalize paths.
+4. **Persist**: Write ONE consolidated file to '{{.WritePath}}/orchestrator_learning.md'.
+5. **Clean**: Delete ALL other '*orchestrator_learning.md' files in that folder.
+
+## 📤 OUTPUT FORMAT
+- **⭐ OPTIMAL ROUTING PATTERN** [Runs: X | Success: Y%]
+- **🎯 ROUTE SELECTION PATTERNS**
+- **✅ SUCCESS CRITERIA EVALUATION PATTERNS**
+- **❌ FAILURES TO AVOID**
+
+*Final Action: Output ONLY the updated file path. No summaries.*`)
+
+var orchestrationLearningUserTemplate = MustRegisterTemplate("orchestrationLearningUser", `# Orchestration Learning Task
+
+## 📋 Context
+- **Step**: {{.StepTitle}} ({{.StepNumber}})
+- **Goal**: {{.StepDescription}}
+- **Routes**: [See below]
+
+## 🧠 Instructions
+1. **CONSOLIDATE**:
+   - List files in '{{.WritePath}}'.
+   - Read ALL '*orchestrator_learning.md' files.
+   - Merge current history with existing patterns.
+2. **EXTRACT**:
+   - Map routing decisions and success evaluations.
+   - Replace variables with placeholders: {{.Variables}}
+3. **PERSIST & CLEAN**:
+   - Write ONE file: '{{.WritePath}}/orchestrator_learning.md'.
+   - Delete all other '*orchestrator_learning.md' files.
+
+---
+## 🎯 AVAILABLE ROUTES
+{{.OrchestrationRoutes}}
+
+---
+## 📊 ORCHESTRATION HISTORY
+{{.OrchestrationHistory}}
+
+---
+## ✅ VALIDATION RESULTS
+{{.ValidationResult}}
+
+**Final Action**: Output ONLY the file path 'Updated: {{.WritePath}}/orchestrator_learning.md'.`)
 
 // OrchestrationLearningTemplate holds template variables for orchestrator learning prompts
 type OrchestrationLearningTemplate struct {
@@ -113,43 +177,8 @@ func (agent *WorkflowOrchestrationLearningAgent) Execute(ctx context.Context, te
 
 // orchestrationLearningSystemPromptProcessor creates the system prompt for orchestrator learning
 func (agent *WorkflowOrchestrationLearningAgent) orchestrationLearningSystemPromptProcessor(templateVars map[string]string) string {
-	templateStr := `# Orchestration Learning Agent
-
-## 🤖 Role
-Expert agent extracting routing decisions, success criteria evaluations, and delegation strategies.
-
-## 🚨 CRITICAL PRINCIPLE
-Only capture learnings specific to **orchestrator decision-making**.
-
-## 🔍 EXTRACTION Checklist
-- **Routing**: Which routes were selected and why (condition matching)?
-- **Evaluation**: What indicated success criteria were met?
-- **Delegation**: When was timing optimal? What made sub-agent instructions effective?
-- **Task-Specific Failures**: Document routing/evaluation errors (ignore general code issues).
-
-## 📁 FILE MANAGEMENT ALGORITHM (MANDATORY)
-1. **Discover**: List ALL '*orchestrator_learning.md' files in '{{.WritePath}}'.
-2. **Retrieve**: Read ALL variations found.
-3. **Consolidate**: Merge current findings with history into ONE final file.
-   - Prioritize LATEST successful patterns.
-   - Anonymize variables ({{ "{{" }}VARS{{ "}}" }}) and normalize paths.
-4. **Persist**: Write ONE consolidated file to '{{.WritePath}}/orchestrator_learning.md'.
-5. **Clean**: Delete ALL other '*orchestrator_learning.md' files in that folder.
-
-## 📤 OUTPUT FORMAT
-- **⭐ OPTIMAL ROUTING PATTERN** [Runs: X | Success: Y%]
-- **🎯 ROUTE SELECTION PATTERNS**
-- **✅ SUCCESS CRITERIA EVALUATION PATTERNS**
-- **❌ FAILURES TO AVOID**
-
-*Final Action: Output ONLY the updated file path. No summaries.*`
-
-	tmpl, err := template.New("orchestrationSystemPrompt").Parse(templateStr)
-	if err != nil {
-		return "Error parsing orchestration learning system prompt template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, map[string]interface{}{
+	if err := orchestrationLearningSystemTemplate.Execute(&result, map[string]interface{}{
 		"WritePath": templateVars["WorkspacePath"] + "/learnings/" + templateVars["StepNumber"],
 	}); err != nil {
 		return "Error executing orchestration learning system prompt template: " + err.Error()
@@ -158,51 +187,13 @@ Only capture learnings specific to **orchestrator decision-making**.
 }
 
 // orchestrationLearningUserMessageProcessor creates the user message for orchestrator learning
-// orchestrationLearningUserMessageProcessor creates the user message for orchestrator learning
 func (agent *WorkflowOrchestrationLearningAgent) orchestrationLearningUserMessageProcessor(templateVars map[string]string) string {
 	workspacePath := templateVars["WorkspacePath"]
 	stepNumber := templateVars["StepNumber"]
 	writePath := workspacePath + "/learnings/" + stepNumber
 
-	templateStr := `# Orchestration Learning Task
-
-## 📋 Context
-- **Step**: {{.StepTitle}} ({{.StepNumber}})
-- **Goal**: {{.StepDescription}}
-- **Routes**: [See below]
-
-## 🧠 Instructions
-1. **CONSOLIDATE**:
-   - List files in '{{.WritePath}}'.
-   - Read ALL '*orchestrator_learning.md' files.
-   - Merge current history with existing patterns.
-2. **EXTRACT**:
-   - Map routing decisions and success evaluations.
-   - Replace variables with placeholders: {{.Variables}}
-3. **PERSIST & CLEAN**:
-   - Write ONE file: '{{.WritePath}}/orchestrator_learning.md'.
-   - Delete all other '*orchestrator_learning.md' files.
-
----
-## 🎯 AVAILABLE ROUTES
-{{.OrchestrationRoutes}}
-
----
-## 📊 ORCHESTRATION HISTORY
-{{.OrchestrationHistory}}
-
----
-## ✅ VALIDATION RESULTS
-{{.ValidationResult}}
-
-**Final Action**: Output ONLY the file path 'Updated: {{.WritePath}}/orchestrator_learning.md'.`
-
-	tmpl, err := template.New("orchestrationUserMessage").Parse(templateStr)
-	if err != nil {
-		return "Error parsing orchestration learning user message template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, map[string]interface{}{
+	if err := orchestrationLearningUserTemplate.Execute(&result, map[string]interface{}{
 		"StepTitle":            templateVars["StepTitle"],
 		"StepNumber":           stepNumber,
 		"StepDescription":      templateVars["StepDescription"],

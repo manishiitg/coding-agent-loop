@@ -391,10 +391,10 @@ export const StepLegend: React.FC<StepLegendProps> = ({
               // Show lock icon if lock_learnings is true and learning is not disabled (matching StepNode behavior)
               const lockLearnings = lockLearningsConfig === true && !isLearningDisabled
 
-              // Check validation skipped (skip_llm_validation_if_pre_validation_passes)
+              // Check validation skipped (llm_validation_mode === 'skip')
               const skipLLMValidation = isOrchestrationStep(step)
-                ? orchestrationStepConfigs?.skip_llm_validation_if_pre_validation_passes
-                : stepConfigs?.skip_llm_validation_if_pre_validation_passes
+                ? orchestrationStepConfigs?.llm_validation_mode === 'skip'
+                : stepConfigs?.llm_validation_mode === 'skip'
               
               // Check if validation is disabled (only pre-validation runs)
               const isValidationDisabled = isOrchestrationStep(step)

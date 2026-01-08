@@ -287,7 +287,7 @@ type AgentConfigs struct {
 	LearningMaxTurns                       *int               `json:"learning_max_turns,omitempty"`                           // default: 100
 	OrchestrationMaxIterations             *int               `json:"orchestration_max_iterations,omitempty"`                 // default: orchestrator max turns (typically 100)
 	DisableValidation                      *bool              `json:"disable_validation,omitempty"`                           // skip validation entirely (nil = not set/enabled, true = disabled, false = explicitly enabled)
-	SkipLLMValidationIfPreValidationPasses *bool              `json:"skip_llm_validation_if_pre_validation_passes,omitempty"` // if true, skip LLM validation when pre-validation passes (assume validation success)
+	LLMValidationMode                      string             `json:"llm_validation_mode,omitempty"`                          // "auto" (default), "always", or "skip". Controls LLM validation behavior when pre-validation passes.
 	DisableLearning                        *bool              `json:"disable_learning,omitempty"`                             // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
 	LockLearnings                          *bool              `json:"lock_learnings,omitempty"`                               // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
 	LearningAfterLoopIteration             bool               `json:"learning_after_loop_iteration,omitempty"`                // run learning after each loop iteration

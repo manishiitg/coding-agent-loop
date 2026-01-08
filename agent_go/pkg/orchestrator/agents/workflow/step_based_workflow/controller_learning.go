@@ -84,6 +84,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		return metadataErr
 	}
 
+	// LIMIT SUCCESS LEARNING: Check if we already have sufficient successful learnings (>= 3)
+	// If so, skip success learning but keep unlocked to allow failure learning
+	// We check cumulative successful runs across all complexities
+	metadata, err := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
+	if err == nil && metadata != nil {
+		totalSuccessfulLearnings := metadata.SuccessfulRunsSimple + metadata.SuccessfulRunsMedium + metadata.SuccessfulRunsComplex
+		if totalSuccessfulLearnings >= 3 {
+			hcpo.GetLogger().Info(fmt.Sprintf("🧠 Sufficient success learnings captured (%d >= 3) for %s - skipping success learning agent", totalSuccessfulLearnings, learningPathIdentifier))
+			// Skip learning but record turnCount (without incrementing counters)
+			// This effectively "locks" success learning but keeps the step unlocked for failure learning
+			_ = updateMetadataWhenSkipped(fmt.Sprintf("sufficient success learnings (%d >= 3)", totalSuccessfulLearnings))
+			return nil
+		}
+	} else if err != nil {
+		// Log warning but continue if metadata read fails (assume 0 learnings)
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning metadata for limit check: %v (continuing)", err))
+	}
+
 	// LOCK LEARNINGS: Check if learnings are locked (prevents learning agent from running but still uses existing learnings)
 	// Note: Lock learnings takes precedence - even in code execution mode, if learnings are locked, skip learning agent
 	// EXCEPTION: If learnings are locked but learnings don't exist, still run learning to create initial learnings
@@ -162,7 +180,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		learningMode = "exact"
 	}
 	successLearningAgentName := fmt.Sprintf("%s-success-learning-%s-%s", learningPathIdentifier, sanitizedTitle, learningMode)
-	successLearningAgent, err := hcpo.createSuccessLearningAgent(ctx, "success_learning", learningPathIdentifier, successLearningAgentName, agentConfigs, isCodeExecutionMode, step.GetID(), stepPath)
+	successLearningAgent, err := hcpo.createSuccessLearningAgent(ctx, "success_learning", learningPathIdentifier, successLearningAgentName, agentConfigs, isCodeExecutionMode, step.GetID(), stepPath, stepIndex)
 	if err != nil {
 		return fmt.Errorf("failed to create success learning agent: %w", err)
 	}
@@ -176,7 +194,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	// Prepare template variables for success learning agent
 	// Use interface methods instead of direct field access to support all step types (RegularPlanStep, EvaluationStep, etc.)
 	stepContextOutput := step.GetContextOutput().String()
-	formattedHistory := shared.FormatConversationHistory(executionHistory)
+	formattedHistory := shared.FormatHistoryForLearning(executionHistory)
 
 	successLearningTemplateVars := map[string]string{
 		"StepTitle":           step.GetTitle(),
@@ -241,11 +259,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	if err != nil {
 		// Log learning failure
 		_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
-			"type":             "learning_failed",
-			"step_path":        stepPath,
-			"learning_type":    "success",
-			"error":            err.Error(),
-			"timestamp":        time.Now().Format(time.RFC3339),
+			"type":          "learning_failed",
+			"step_path":     stepPath,
+			"learning_type": "success",
+			"error":         err.Error(),
+			"timestamp":     time.Now().Format(time.RFC3339),
 		})
 		return fmt.Errorf("success learning extraction failed: %w", err)
 	}
@@ -261,7 +279,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	}
 	validationFolderPath := getValidationFolderPath(validationWorkspacePath, stepPath)
 	convPath := fmt.Sprintf("%s/learning-conversation.json", validationFolderPath)
-	
+
 	// Save conversation
 	convJSON, _ := json.MarshalIndent(learningConv, "", "  ")
 	_ = hcpo.WriteWorkspaceFile(ctx, convPath, string(convJSON))
@@ -472,7 +490,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 		learningMode = "general"
 	}
 	failureLearningAgentName := fmt.Sprintf("%s-failure-learning-%s-%s", learningPathIdentifier, sanitizedTitle, learningMode)
-	failureLearningAgent, err := hcpo.createFailureLearningAgent(ctx, "failure_learning", learningPathIdentifier, failureLearningAgentName, agentConfigs, isCodeExecutionMode, step.GetID(), stepPath)
+	failureLearningAgent, err := hcpo.createFailureLearningAgent(ctx, "failure_learning", learningPathIdentifier, failureLearningAgentName, agentConfigs, isCodeExecutionMode, step.GetID(), stepPath, stepIndex)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create failure learning agent: %w", err)
 	}
@@ -491,7 +509,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 		"StepSuccessCriteria": step.GetSuccessCriteria(),
 		"StepContextOutput":   step.GetContextOutput().String(),
 		"WorkspacePath":       hcpo.GetWorkspacePath(),
-		"ExecutionHistory":    shared.FormatConversationHistory(executionHistory),
+		"ExecutionHistory":    shared.FormatHistoryForLearning(executionHistory),
 		"ValidationResult":    string(validationResultJSON),
 		"CurrentObjective":    hcpo.GetObjective(),
 		"LearningDetailLevel": learningDetailLevel, // Pass learning detail preference
@@ -547,11 +565,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	if err != nil {
 		// Log learning failure
 		_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
-			"type":             "learning_failed",
-			"step_path":        stepPath,
-			"learning_type":    "failure",
-			"error":            err.Error(),
-			"timestamp":        time.Now().Format(time.RFC3339),
+			"type":          "learning_failed",
+			"step_path":     stepPath,
+			"learning_type": "failure",
+			"error":         err.Error(),
+			"timestamp":     time.Now().Format(time.RFC3339),
 		})
 		return "", "", fmt.Errorf("failure learning extraction failed: %w", err)
 	}
@@ -567,7 +585,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	}
 	validationFolderPath := getValidationFolderPath(validationWorkspacePath, stepPath)
 	convPath := fmt.Sprintf("%s/learning-failure-conversation.json", validationFolderPath)
-	
+
 	// Save conversation
 	convJSON, _ := json.MarshalIndent(learningConv, "", "  ")
 	_ = hcpo.WriteWorkspaceFile(ctx, convPath, string(convJSON))
@@ -804,16 +822,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) logLearningExecution(ctx context.Cont
 	// For regular steps: "logs/step-{X}/"
 	// For branch steps: "logs/step-{parentStep}-{true/false}-{branchIdx}/"
 	validationFolderPath := getValidationFolderPath(validationWorkspacePath, stepPath)
-	
+
 	// Create logs folder if it doesn't exist (using BaseOrchestrator.WriteWorkspaceFile which handles dirs, or manual check)
 	// We'll rely on appendOrchestrationLogEntry logic which handles file writing
-	
+
 	learningLogFilePath := fmt.Sprintf("%s/learning-execution.json", validationFolderPath)
-	
+
 	// Use existing appendOrchestrationLogEntry helper which handles JSONL appending
 	if err := hcpo.appendOrchestrationLogEntry(ctx, learningLogFilePath, entry); err != nil {
 		return fmt.Errorf("failed to append learning log entry: %w", err)
 	}
-	
+
 	return nil
 }

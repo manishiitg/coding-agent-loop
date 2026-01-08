@@ -1191,6 +1191,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			// Track which tempLLM was used during successful execution (for learning phase decision)
 			var usedTempLLM string // "tempLLM1", "tempLLM2", or "" (original LLM)
 
+			// Track failure learning attempts for this execution session
+			failureLearningAttempts := 0
+
 			// Retry loop: Execute with validation feedback, reusing the same learning history
 			for retryAttempt := 1; retryAttempt <= maxRetryAttempts; retryAttempt++ {
 				// Check for context cancellation before retry attempt
@@ -1648,20 +1651,52 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					} else {
 						// Pre-validation passed - check if we should skip LLM validation
 						agentConfigs := getAgentConfigs(step)
-						skipLLMValidation := agentConfigs != nil && agentConfigs.SkipLLMValidationIfPreValidationPasses != nil && *agentConfigs.SkipLLMValidationIfPreValidationPasses
+						
+						// Determine validation mode (default: "auto")
+						validationMode := "auto"
+						if agentConfigs != nil {
+							if agentConfigs.LLMValidationMode != "" {
+								validationMode = agentConfigs.LLMValidationMode
+							}
+						}
 
-						if skipLLMValidation {
+						shouldSkipLLMValidation := false
+						skipReason := ""
+
+						if validationMode == "skip" {
+							shouldSkipLLMValidation = true
+							skipReason = "configured to skip when pre-validation passes"
+						} else if validationMode == "auto" {
+							// Check if we have enough successful runs to trust pre-validation only
+							learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
+							metadata, err := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
+							if err == nil && metadata != nil {
+								totalSuccess := metadata.SuccessfulRunsSimple + metadata.SuccessfulRunsMedium + metadata.SuccessfulRunsComplex
+								if totalSuccess >= 3 {
+									shouldSkipLLMValidation = true
+									skipReason = fmt.Sprintf("auto-skipped after %d successful runs (threshold: 3)", totalSuccess)
+								} else {
+									hcpo.GetLogger().Info(fmt.Sprintf("🔍 Step %d auto-validation: %d/3 successful runs - running LLM validation", stepIndex+1, totalSuccess))
+								}
+							} else {
+								// If metadata fails or doesn't exist, default to running validation (safest)
+								hcpo.GetLogger().Info(fmt.Sprintf("🔍 Step %d auto-validation: No metadata found - running LLM validation", stepIndex+1))
+							}
+						}
+						// "always" mode falls through (shouldSkipLLMValidation = false)
+
+						if shouldSkipLLMValidation {
 							// Skip LLM validation and assume validation success
-							hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d pre-validation passed - skipping LLM validation (assume success)", stepIndex+1))
+							hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d pre-validation passed - skipping LLM validation (%s)", stepIndex+1, skipReason))
 							validationResponse = &ValidationResponse{
 								IsSuccessCriteriaMet: true,
 								ExecutionStatus:      "COMPLETED",
-								Reasoning:            formatWorkspaceResults(workspaceResults) + "\n\nPre-validation passed - LLM validation skipped (configured to skip when pre-validation passes).",
+								Reasoning:            formatWorkspaceResults(workspaceResults) + fmt.Sprintf("\n\nPre-validation passed - LLM validation skipped (%s).", skipReason),
 								Feedback:             []ValidationFeedback{},
 							}
 							if hasLoop(step) {
 								validationResponse.LoopConditionMet = true
-								validationResponse.LoopReasoning = "Loop condition met (pre-validation passed, LLM validation skipped)"
+								validationResponse.LoopReasoning = fmt.Sprintf("Loop condition met (pre-validation passed, LLM validation skipped: %s)", skipReason)
 							}
 						} else {
 							// Pre-validation passed - proceed to LLM validation
@@ -2146,10 +2181,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						// SKIP failure learning for loop steps - loop steps only run success learning when condition is met
 						if hasLoop(step) {
 							hcpo.GetLogger().Info(fmt.Sprintf("🔄 Step %s is a loop step - skipping failure learning (loop steps only run success learning when condition is met)", stepPath))
+						} else if failureLearningAttempts >= 2 {
+							hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Failure learning attempts limit reached (%d >= 2) - skipping failure learning analysis for %s", failureLearningAttempts, stepPath))
 						} else {
+							failureLearningAttempts++
 							var refinedTaskDescription string
 							learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
-							hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running failure learning analysis for %s", stepPath))
+							hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running failure learning analysis for %s (attempt %d/2)", stepPath, failureLearningAttempts))
 							// Populate runtime fields for runFailureLearningPhase
 							stepConfigs, err := hcpo.ReadStepConfigs(ctx)
 							if err != nil {

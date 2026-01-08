@@ -206,6 +206,16 @@ func NewBaseOrchestrator(
 		contextEditingTurnThreshold: contextEditingTurnThreshold,
 	}
 
+	// Ensure llmConfig.Primary is populated if llmConfig is provided
+	if orchestrator.llmConfig != nil {
+		if orchestrator.llmConfig.Primary.Provider == "" {
+			orchestrator.llmConfig.Primary.Provider = provider
+		}
+		if orchestrator.llmConfig.Primary.ModelID == "" {
+			orchestrator.llmConfig.Primary.ModelID = model
+		}
+	}
+
 	// Set token persister on bridge (no longer using accumulators)
 	contextAwareBridge.SetTokenPersister(orchestrator)
 

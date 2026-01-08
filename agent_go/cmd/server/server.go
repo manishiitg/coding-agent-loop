@@ -765,8 +765,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/variable-groups", api.handleUpdateVariableGroups).Methods("POST", "PUT", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/logs", api.handleGetExecutionLogs).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/logs/file", api.handleGetLogFile).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/costs", api.handleGetCosts).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/evaluation-reports", api.handleGetEvaluationReports).Methods("GET", "OPTIONS")
-
 
 	// Plan and Step Config API routes
 	apiRouter.HandleFunc("/workflow/plan/update-step", api.handleUpdatePlanStep).Methods("POST", "OPTIONS")
@@ -1148,6 +1148,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Use LLM configuration from frontend (new unified structure)
 		finalProvider = req.LLMConfig.Primary.Provider
 		finalModelID = req.LLMConfig.Primary.ModelID
+
+		// Fallback to request defaults if LLMConfig is partially empty
+		if finalProvider == "" {
+			finalProvider = req.Provider
+		}
+		if finalModelID == "" {
+			finalModelID = req.ModelID
+		}
 
 		// Convert Fallbacks to agent.FallbackModel slice
 		for _, fallback := range req.LLMConfig.Fallbacks {

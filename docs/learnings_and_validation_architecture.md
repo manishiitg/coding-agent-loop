@@ -1,6 +1,6 @@
-# Learnings Architecture: Explore vs. Exploit
+# Learning & Validation Architecture: Explore vs. Exploit
 
-This document outlines the workflow for learning stabilization and model optimization in the orchestrator.
+This document outlines the workflow for learning stabilization, model optimization, and validation strategies in the orchestrator.
 
 ## 🔄 Core Learning Loop
 
@@ -31,6 +31,37 @@ This document outlines the workflow for learning stabilization and model optimiz
     - **Learning Agent:** **NOT CALLED**. No new patterns are extracted.
 - **Existing Learnings:** **STILL LOADED** into system prompt if they exist (via `LoadStepLearningHistory()`).
 - **Trigger to Unlock:** If validation fails while locked, the system automatically unlocks to trigger re-learning.
+    - **Metadata Update:** `AutoUnlockReason = "validation_failed"`.
+    - **Behavior:** Ensures the agent can learn from the failure and refine its approach.
+
+---
+
+## 🛡️ Validation Architecture
+
+The system supports flexible validation strategies to balance reliability and speed/cost. This is controlled by the `llm_validation_mode` setting in the step configuration.
+
+### Validation Modes
+
+1. **Auto (Default)**: Smart validation based on stability.
+   - **Logic:** Runs LLM validation for the first **3 successful executions**.
+   - **Optimization:** Once a step has 3 successful runs (sum of `successful_runs_simple` + `successful_runs_medium` + `successful_runs_complex`), LLM validation is automatically skipped if pre-validation passes.
+   - **Benefit:** Ensures reliability during the learning/unstable phase, then optimizes for speed and cost once the step is proven stable.
+   - **Reset:** If the step definition changes (hash mismatch), counters reset to 0, and "Auto" mode will resume validation until 3 successes are reached again.
+
+2. **Always**: Strict validation.
+   - **Logic:** Always runs LLM validation, regardless of execution history.
+   - **Use Case:** Critical steps where verification is mandatory every time (e.g., deployments, financial transactions).
+
+3. **Skip**: Trust pre-validation.
+   - **Logic:** Skips LLM validation if code-based pre-validation passes.
+   - **Use Case:** Simple steps where file existence/structure checks are sufficient (e.g., "Check if file exists").
+
+### Pre-Validation Layer
+- **Timing:** Runs immediately after execution and before LLM validation.
+- **Scope:** Checks file existence, JSON structure, and schema compliance based on `validation_schema`.
+- **Result:** 
+  - **Pass:** Proceed to LLM validation check (or skip if mode allows).
+  - **Fail:** LLM validation is **BLOCKED**. The step is marked as failed immediately. This prevents wasting LLM tokens on validation when the output structure is fundamentally incorrect.
 
 ---
 
@@ -44,22 +75,30 @@ The system uses a simple, reliable approach: count successful executions and loc
    - System records the `TurnCount` (number of LLM turns)
    - Increments successful run counter for that complexity level
    - Checks if threshold reached → auto-locks if yes
+   - **Success Learning Cap:** If cumulative successful learnings (`simple + medium + complex`) reach **3**, success learning is skipped to avoid redundancy. The step remains "Unlocked" to allow failure learning, but no further success patterns are extracted.
    - **Cost Optimization:** After reaching 50% of stable runs, learning agents use cheaper tempLLM
      - **Simple:** After **2** runs (of 3) → use tempLLM for learning
      - **Medium:** After **3** runs (of 5) → use tempLLM for learning
      - **Complex:** After **5** runs (of 10) → use tempLLM for learning
 
-2. **Complexity Classification:**
+2. **After each failed execution** (validation failed):
+   - **Failure Learning Agent:** Runs to analyze the failure and provide a refined task description for the retry attempt.
+   - **Failure Learning Cap:** Limited to **2** attempts per single step execution session (across retries) to prevent infinite learning loops.
+   - **No Counter Increment:** Successful run counters are **NOT** incremented on failure.
+   - **Detection Skipped:** Failure learning skips the "New Learning Detection" check (always assumes new learning) to keep the retry loop active and avoid premature locking during instability.
+   - **Safety Lock:** Auto-lock will still trigger if `TotalIterations` reaches 15, preventing infinite retry-learning loops.
+
+3. **Complexity Classification:**
    - **Simple:** `< 15 turns` → Lock after **3** successful runs
    - **Medium:** `15-30 turns` → Lock after **5** successful runs  
    - **Complex:** `> 30 turns` → Lock after **10** successful runs
 
-3. **Locking Behavior:**
+4. **Locking Behavior:**
    - Once threshold reached, `LockLearnings = true` is set automatically
    - Learning agents stop running (no new extraction)
    - Existing learnings continue to be used
 
-4. **Unlocking & Reset Triggers:**
+5. **Unlocking & Reset Triggers:**
    - **Plan changes (Step Hash mismatch):**
      - Unlocks learnings (`LockLearnings = false`)
      - Resets all stable run counters to 0
@@ -88,9 +127,10 @@ The system uses a simple, reliable approach: count successful executions and loc
 4. **Preset Default LLM** (if configured)
 5. **Orchestrator Default LLM** (fallback)
 
-#### tempLLM Usage Rules:
+#### LLM Fallback Rules:
 - **Only used when:** Step has existing learnings (learnings folder has files)
 - **Skipped when:** Learnings folder is empty → uses original LLM
+- **Validation Failure Fallback:** If validation failed on a previous attempt, the system can be configured to **fallback to the Original LLM** (High-IQ) for the next retry/iteration, bypassing the `tempLLM` to ensure high quality for the fix.
 - **Cascading:** tempLLM1 → tempLLM2 → base LLM (on retry attempts)
 - **Independent:** Works the same whether learnings are locked or unlocked
 
@@ -269,6 +309,7 @@ You can override this dynamic behavior using the `keep_learning_full` feature fl
 | **TurnCount Tracker** | Tracks successful execution count per complexity level. Triggers auto-lock when threshold reached. | Post-Execution |
 | **Execution LLM Selector** | Selects execution LLM based on learnings existence + retry attempts (independent of lock status). | Execution |
 | **Learning LLM Selector** | Selects learning agent LLM based on stable run progress. Uses tempLLM after 50% threshold for cost optimization. | Post-Execution |
+| **Validation Controller** | Manages pre-validation and LLM validation based on `llm_validation_mode` and success counters. | Execution |
 
 ---
 
@@ -301,18 +342,23 @@ learnings/
    - Locked: Skip learning agents (no new extraction)
    - Unlocked: Run learning agents (extract new patterns)
 
-2. **TurnCount-Based Auto-Locking**
+2. **Validation Mode = Verification Strategy**
+   - **Auto:** Validate until stable (3 runs), then optimize.
+   - **Always:** Critical steps need constant verification.
+   - **Skip:** Pre-validation (structure check) is enough.
+
+3. **TurnCount-Based Auto-Locking**
    - Locking is based on successful execution count, not learning detection
    - Complexity is determined by `TurnCount` (number of LLM turns in execution)
    - Simple steps (< 15 turns) lock faster (3 runs), complex steps (> 30 turns) need more runs (10 runs)
    - Each successful run (validation passed) increments the counter
 
-3. **Existing Learnings Usage (Explore vs. Exploit)**
+4. **Existing Learnings Usage (Explore vs. Exploit)**
    - If learnings exist, they are **always available** to the agent.
    - **Exploration Phase (Early):** Passed as file references in user message. Prompt encourages **innovation and alternative approaches**.
    - **Exploitation Phase (Late):** Passed as full content in system prompt. Prompt encourages **strict adherence** to stable patterns.
 
-4. **Model Selection Strategy**
+5. **Model Selection Strategy**
    - **Execution LLM:** Independent of lock status, based on learnings existence + retry attempts
    - **Learning LLM:** Cost-optimized based on stable run progress
          - Early phase (< 50%): High-IQ model for quality
@@ -339,6 +385,12 @@ learnings/
 - [x] **Dynamic LLM Switching**: Refactor `selectLearningLLM` to switch to `tempLLM` once a step reaches the 50% stability threshold.
 - [x] **Event Logging**: Log cost-optimization model switches for transparency.
      
-     ### Phase 4: Integration & Validation (TODO)
-     - [ ] **Cleanup:** Remove legacy detection logic and unused metadata fields.
-     - [ ] **Testing:** Verify "Change Step -> Reset" and "Run X times -> Auto-lock" workflows.     
+          ### Phase 4: Integration & Validation (DONE)
+     
+          - [x] **Validation Modes:** Implemented `Auto`, `Always`, `Skip` validation strategies.
+     
+          - [x] **Cleanup:** Removed legacy `skip_llm_validation_if_pre_validation_passes` boolean and detection logic.
+     
+          - [x] **Testing:** Verify "Change Step -> Reset" and "Run X times -> Auto-lock" workflows.
+     
+     

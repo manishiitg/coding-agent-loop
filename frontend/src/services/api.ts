@@ -37,12 +37,8 @@ import type {
   SlackTestResponse,
   SlackTestReplyResponse,
   ExecutionLogsResponse,
-  StepExecutionLogs,
-  ValidationLog,
-  ExecutionAttemptLog,
   EvaluationReportsResponse,
-  EvaluationReport,
-  EvaluationStepScore,
+  TokenUsageFile,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -745,7 +741,7 @@ export const agentApi = {
   },
 
   // Get learning metadata for all steps
-  getAllStepLearnings: async (workspacePath: string): Promise<{ success: boolean; learnings: Record<string, any> }> => {
+  getAllStepLearnings: async (workspacePath: string): Promise<{ success: boolean; learnings: Record<string, Record<string, unknown> | null> }> => {
     const response = await api.get('/api/workflow/learnings/all', {
       params: { workspace_path: workspacePath }
     })
@@ -768,7 +764,7 @@ export const agentApi = {
     return response.data
   },
 
-  // Get execution logs for a workflow run
+  // Get execution logs for a workflow run (steps, validations, etc.)
   getExecutionLogs: async (workspacePath: string, runFolder: string): Promise<ExecutionLogsResponse> => {
     const response = await api.get('/api/workflow/logs', {
       params: { workspace_path: workspacePath, run_folder: runFolder }
@@ -776,8 +772,17 @@ export const agentApi = {
     return response.data
   },
 
+  // Get cost data (token usage) for a workflow run
+  getCosts: async (workspacePath: string, runFolder: string): Promise<{ success: boolean; token_usage?: TokenUsageFile }> => {
+    const response = await api.get('/api/workflow/costs', {
+      params: { workspace_path: workspacePath, run_folder: runFolder }
+    })
+    return response.data
+  },
+
   // Get content of a specific log file
-  getLogFile: async (filePath: string): Promise<any> => {
+  // Returns string content (may be JSON that needs parsing)
+  getLogFile: async (filePath: string): Promise<string | Record<string, unknown>> => {
     const response = await api.get('/api/workflow/logs/file', {
       params: { file_path: filePath }
     })

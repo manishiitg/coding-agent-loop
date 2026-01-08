@@ -134,7 +134,7 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
     selected_tools?: string[]
     enabled_custom_tools?: string[]
     enable_context_offloading?: boolean
-    skip_llm_validation_if_pre_validation_passes?: boolean
+    llm_validation_mode?: string
   } }
 
   // Determine code execution mode: step config > preset default
@@ -491,9 +491,9 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
           </div>
         )}
         {/* Validation Skipped Badge */}
-        {stepConfig?.agent_configs?.skip_llm_validation_if_pre_validation_passes && (
+        {stepConfig?.agent_configs?.llm_validation_mode === 'skip' && (
           <div 
-            className="flex items-center justify-center w-8 h-8 rounded-md bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800"
+            className="flex items-center justify-center w-8 h-8 rounded-md bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-400 border border-cyan-200 dark:border-cyan-800"
             title="LLM validation will be skipped if pre-validation passes"
           >
             <SkipForward className="w-3.5 h-3.5" />
@@ -726,4 +726,3 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
 
 DecisionNode.displayName = 'DecisionNode'
 export default DecisionNode
-

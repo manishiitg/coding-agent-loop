@@ -587,20 +587,33 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                               )}
                             </button>
                             {metadata && (
-                              <div className="flex items-center gap-1">
-                                <span className="text-muted-foreground">Complexity:</span>
-                                <span className={`font-medium ${
-                                  complexity === 'simple' ? 'text-green-600 dark:text-green-400' :
-                                  complexity === 'medium' ? 'text-yellow-600 dark:text-yellow-400' :
-                                  complexity === 'complex' ? 'text-orange-600 dark:text-orange-400' :
-                                  'text-gray-500 dark:text-gray-400'
-                                }`}>
-                                  {complexity.charAt(0).toUpperCase() + complexity.slice(1)}
-                                </span>
-                                {metadata.last_turn_count && metadata.last_turn_count > 0 && (
-                                  <span className="text-xs text-muted-foreground">
-                                    ({metadata.last_turn_count} turns)
+                              <div className="flex flex-col gap-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-muted-foreground">Complexity:</span>
+                                  <span className={`font-medium ${
+                                    complexity === 'simple' ? 'text-green-600 dark:text-green-400' :
+                                    complexity === 'medium' ? 'text-yellow-600 dark:text-yellow-400' :
+                                    complexity === 'complex' ? 'text-orange-600 dark:text-orange-400' :
+                                    'text-gray-500 dark:text-gray-400'
+                                  }`}>
+                                    {complexity.charAt(0).toUpperCase() + complexity.slice(1)}
                                   </span>
+                                  {metadata.last_turn_count && metadata.last_turn_count > 0 && (
+                                    <span className="text-xs text-muted-foreground">
+                                      ({metadata.last_turn_count} turns)
+                                    </span>
+                                  )}
+                                </div>
+                                
+                                {metadata.total_iterations !== undefined && (
+                                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                    <span>Total Iterations: {metadata.total_iterations}</span>
+                                    {metadata.auto_lock_reason && (
+                                      <span className="text-amber-600 dark:text-amber-500" title={metadata.auto_lock_reason}>
+                                        • Reason: {metadata.auto_lock_reason.replace('threshold_reached_', '').replace(/_/g, ' ')}
+                                      </span>
+                                    )}
+                                  </div>
                                 )}
                               </div>
                             )}
@@ -625,6 +638,21 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                                 }`}
                                 style={{ width: `${Math.min(progress, 100)}%` }}
                               />
+                            </div>
+                            
+                            {/* Learning Caps Info */}
+                            <div className="flex items-center gap-4 mt-1.5 text-[10px] text-muted-foreground">
+                              <div className="flex items-center gap-1">
+                                <span className={successfulRuns >= 3 ? "text-amber-600 dark:text-amber-500 font-medium" : ""}>
+                                  Success Cap: 3 runs
+                                </span>
+                                {successfulRuns >= 3 && !isLocked && (
+                                  <span className="text-[9px] bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 px-1 rounded">
+                                    Capped (Skipping)
+                                  </span>
+                                )}
+                              </div>
+                              <div>Failure Cap: Max 2/run</div>
                             </div>
                           </div>
                         )}

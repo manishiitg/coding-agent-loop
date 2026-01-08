@@ -619,14 +619,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       finalConfigs.disable_validation = undefined;
     }
 
-    // Handle skip_llm_validation_if_pre_validation_passes: save if explicitly set by user
-    if (agentConfigs.skip_llm_validation_if_pre_validation_passes !== undefined) {
-      finalConfigs.skip_llm_validation_if_pre_validation_passes = agentConfigs.skip_llm_validation_if_pre_validation_passes;
-    } else {
-      // Not explicitly set - delete the field so it uses default (false)
-      delete finalConfigs.skip_llm_validation_if_pre_validation_passes;
-    }
-
     // Handle use_code_execution_mode: save if explicitly set by user
     // If undefined, step will use preset default (field will be omitted from JSON)
     if (agentConfigs.use_code_execution_mode !== undefined) {
@@ -1265,19 +1257,38 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     </div>
                   </div>
                   <div className="flex items-center gap-2 pt-1">
-                    <label className="flex items-center gap-1.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={agentConfigs.skip_llm_validation_if_pre_validation_passes || false}
-                        onChange={(e) => {
-                          handleToggleChange('skip_llm_validation_if_pre_validation_passes', e.target.checked);
-                        }}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                      />
-                      <span className="text-xs text-gray-600 dark:text-gray-400">
-                        Skip LLM if pre-validation passes
-                      </span>
-                    </label>
+                    <label className="text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">Mode:</label>
+                    <select
+                      value={agentConfigs.llm_validation_mode || 'auto'}
+                      onChange={(e) => {
+                        const mode = e.target.value as 'auto' | 'always' | 'skip';
+                        setAgentConfigs((prev) => ({
+                          ...prev,
+                          llm_validation_mode: mode,
+                        }));
+                      }}
+                      className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 flex-1"
+                    >
+                      <option value="auto">Auto (Validate initial runs)</option>
+                      <option value="always">Always Validate</option>
+                      <option value="skip">Skip if Pre-check Passes</option>
+                    </select>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help">ℹ️</span>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p className="text-xs">
+                            <strong>Auto:</strong> Runs LLM validation for the first 3 successful executions, then skips (assuming stability).
+                            <br />
+                            <strong>Always:</strong> Always runs LLM validation.
+                            <br />
+                            <strong>Skip:</strong> Skips LLM validation if code-based pre-validation passes.
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </div>
                 </div>
               ) : (

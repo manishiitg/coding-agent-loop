@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState } from 'react'
 import {
   X,
   Loader2,
@@ -18,19 +18,23 @@ import {
   Split,
   BookOpen,
   History,
-  DollarSign,
-  Coins,
-  Cpu,
-  List
+  Filter,
+  RefreshCw
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
-import type { ExecutionLogsResponse, StepExecutionLogs, ValidationLog, ArchivedLogEntry, ModelTokenUsage } from '../../services/api-types'
+import type { ExecutionLogsResponse } from '../../services/api-types'
+
+interface ValidationFeedback {
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | string
+  description: string
+}
 
 interface ExecutionLogsPopupProps {
   isOpen: boolean
   onClose: () => void
   workspacePath: string | null
   runFolder: string | null
+  runFolders: string[] // Available run folders (iterations and groups)
 }
 
 const getStepIcon = (type: string) => {
@@ -51,29 +55,6 @@ const getStepIcon = (type: string) => {
     default:
       return <Terminal className="w-4 h-4 text-muted-foreground" />
   }
-}
-
-// Format cost in USD
-const formatUSD = (amount?: number) => {
-  if (amount === undefined || amount === null) return '$0.00'
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 4
-  }).format(amount)
-}
-
-// Format token count (e.g., 1,234,567 -> 1.23M)
-const formatTokens = (count?: number) => {
-  if (!count) return '0'
-  if (count >= 1000000) {
-    return (count / 1000000).toFixed(2) + 'M'
-  }
-  if (count >= 1000) {
-    return (count / 1000).toFixed(1) + 'K'
-  }
-  return count.toString()
 }
 
 // Parse step ID into sortable segments
@@ -188,7 +169,8 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   isOpen,
   onClose,
   workspacePath,
-  runFolder
+  runFolder: initialRunFolder,
+  runFolders
 }) => {
   const [loading, setLoading] = useState(false)
   const [logs, setLogs] = useState<ExecutionLogsResponse | null>(null)
@@ -197,33 +179,38 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   const [expandedValidations, setExpandedValidations] = useState<Set<string>>(new Set())
   const [expandedExecutions, setExpandedExecutions] = useState<Set<string>>(new Set())
   const [expandedArchived, setExpandedArchived] = useState<Set<string>>(new Set())
-  const [showCostBreakdown, setShowCostBreakdown] = useState(false)
-  const [costViewMode, setCostViewMode] = useState<'model' | 'step'>('step') // Default to step view
-  const [expandedCostModels, setExpandedCostModels] = useState<Set<string>>(new Set())
+  const [selectedRunFolder, setSelectedRunFolder] = useState<string>(initialRunFolder || '')
   
   // State for viewing full file content (conversation logs)
   const [viewingFile, setViewingFile] = useState<{path: string, title: string, content: string} | null>(null)
   const [loadingFiles, setLoadingFiles] = useState<Set<string>>(new Set())
 
+  // Update selected run folder when prop changes
   useEffect(() => {
-    if (isOpen && workspacePath) {
+    if (initialRunFolder !== selectedRunFolder) {
+      setSelectedRunFolder(initialRunFolder || '')
+    }
+  }, [initialRunFolder, selectedRunFolder])
+
+  useEffect(() => {
+    if (isOpen && workspacePath && selectedRunFolder) {
       loadLogs()
     } else {
       setLogs(null)
       setError(null)
       setViewingFile(null)
-      setExpandedCostModels(new Set())
     }
-  }, [isOpen, workspacePath, runFolder])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, workspacePath, selectedRunFolder])
 
   const loadLogs = async () => {
-    if (!workspacePath) return
+    if (!workspacePath || !selectedRunFolder) return
     
     setLoading(true)
     setError(null)
     try {
-      // Use selected run folder or default to logs/ if not selected (handled by backend)
-      const data = await agentApi.getExecutionLogs(workspacePath, runFolder || '')
+      // Use selected run folder
+      const data = await agentApi.getExecutionLogs(workspacePath, selectedRunFolder)
       setLogs(data)
       
       // Auto-expand steps with failures or recent activity
@@ -244,133 +231,6 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
     }
   }
 
-  // Calculate total costs and tokens
-  const costSummary = useMemo(() => {
-    if (!logs?.token_usage?.by_model) return null
-
-    let totalCost = 0
-    let totalInputTokens = 0
-    let totalOutputTokens = 0
-    let totalLLMCalls = 0
-    let totalCacheReadTokens = 0
-    let totalCacheWriteTokens = 0
-    let totalReasoningTokens = 0
-    
-    // Stage costs
-    const stageCosts = {
-      execution: 0,
-      validation: 0,
-      learning: 0,
-      other: 0
-    }
-
-    // Step-wise costs (aggregated across all phases for each step)
-    const stepCosts: Record<number, {
-      stepNum: number
-      stepTitle: string
-      execution: number
-      validation: number
-      learning: number
-      totalCost: number
-      inputTokens: number
-      outputTokens: number
-      llmCalls: number
-    }> = {}
-
-    // Calculate totals from by_model
-    if (logs.token_usage.by_model) {
-      Object.values(logs.token_usage.by_model).forEach(usage => {
-        totalCost += usage.total_cost_usd || 0
-        totalInputTokens += usage.input_tokens || 0
-        totalOutputTokens += usage.output_tokens || 0
-        totalLLMCalls += usage.llm_call_count || 0
-        totalCacheReadTokens += usage.cache_read_tokens || usage.cache_tokens || 0
-        totalCacheWriteTokens += usage.cache_write_tokens || 0
-        totalReasoningTokens += usage.reasoning_tokens || 0
-      })
-    }
-
-    // Calculate stage costs and step-wise costs from by_step_and_model
-    if (logs.token_usage.by_step_and_model) {
-      Object.entries(logs.token_usage.by_step_and_model).forEach(([key, modelMap]) => {
-        const parts = key.split(':')
-        const phase = parts[0]
-        const stepIndex = parseInt(parts[1] || '0', 10)
-        const stepNum = stepIndex + 1
-
-        let cost = 0
-        let inputTokens = 0
-        let outputTokens = 0
-        let llmCalls = 0
-        Object.values(modelMap).forEach(u => {
-          cost += u.total_cost_usd || 0
-          inputTokens += u.input_tokens || 0
-          outputTokens += u.output_tokens || 0
-          llmCalls += u.llm_call_count || 0
-        })
-
-        // Stage costs
-        if (phase === 'execution_only') {
-          stageCosts.execution += cost
-        } else if (phase === 'validation') {
-          stageCosts.validation += cost
-        } else if (phase === 'success_learning' || phase === 'failure_learning' || phase.includes('learning')) {
-          stageCosts.learning += cost
-        } else {
-          stageCosts.other += cost
-        }
-
-        // Step-wise costs (aggregate all phases for each step)
-        if (stepNum > 0) {
-          if (!stepCosts[stepNum]) {
-            // Try to get step title from logs.steps
-            const stepId = `step-${stepNum}`
-            const stepData = logs.steps?.[stepId]
-            stepCosts[stepNum] = {
-              stepNum,
-              stepTitle: stepData?.title || '',
-              execution: 0,
-              validation: 0,
-              learning: 0,
-              totalCost: 0,
-              inputTokens: 0,
-              outputTokens: 0,
-              llmCalls: 0
-            }
-          }
-          stepCosts[stepNum].totalCost += cost
-          stepCosts[stepNum].inputTokens += inputTokens
-          stepCosts[stepNum].outputTokens += outputTokens
-          stepCosts[stepNum].llmCalls += llmCalls
-
-          if (phase === 'execution_only') {
-            stepCosts[stepNum].execution += cost
-          } else if (phase === 'validation') {
-            stepCosts[stepNum].validation += cost
-          } else if (phase.includes('learning')) {
-            stepCosts[stepNum].learning += cost
-          }
-        }
-      })
-    }
-
-    // Sort step costs by step number
-    const sortedStepCosts = Object.values(stepCosts).sort((a, b) => a.stepNum - b.stepNum)
-
-    return {
-      totalCost,
-      totalInputTokens,
-      totalOutputTokens,
-      totalTokens: totalInputTokens + totalOutputTokens,
-      totalLLMCalls,
-      totalCacheReadTokens,
-      totalCacheWriteTokens,
-      totalReasoningTokens,
-      stageCosts,
-      stepCosts: sortedStepCosts
-    }
-  }, [logs?.token_usage, logs?.steps])
-
   const toggleStep = (stepId: string) => {
     setExpandedSteps(prev => {
       const next = new Set(prev)
@@ -383,18 +243,6 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
     })
   }
 
-  const toggleCostModel = (modelId: string) => {
-    setExpandedCostModels(prev => {
-      const next = new Set(prev)
-      if (next.has(modelId)) {
-        next.delete(modelId)
-      } else {
-        next.add(modelId)
-      }
-      return next
-    })
-  }
-
   const toggleValidation = (id: string) => {
     setExpandedValidations(prev => {
       const next = new Set(prev)
@@ -402,6 +250,30 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
         next.delete(id)
       }
       else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const toggleExecution = (id: string) => {
+    setExpandedExecutions(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const toggleArchived = (id: string) => {
+    setExpandedArchived(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
         next.add(id)
       }
       return next
@@ -448,27 +320,35 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
               Execution Logs
             </h2>
             <div className="flex items-center gap-4 mt-1">
-              <p className="text-sm text-muted-foreground whitespace-nowrap">
-                Run: <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded text-foreground">{runFolder || 'Default'}</span>
-              </p>
-              {costSummary && (
-                <div className="flex items-center gap-3 text-xs border-l border-border pl-4">
-                  <div className="flex items-center gap-1.5 text-green-600 dark:text-green-400 font-medium">
-                    <DollarSign className="w-3.5 h-3.5" />
-                    {formatUSD(costSummary.totalCost)}
-                  </div>
-                  <div className="flex items-center gap-1.5 text-muted-foreground">
-                    <Coins className="w-3.5 h-3.5" />
-                    {formatTokens(costSummary.totalTokens)} tokens
-                  </div>
-                  <button 
-                    onClick={() => setShowCostBreakdown(!showCostBreakdown)}
-                    className="text-primary hover:underline ml-1"
+              {/* Run Folder Selector */}
+              {runFolders.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <Filter className="w-4 h-4 text-muted-foreground" />
+                  <select
+                    value={selectedRunFolder}
+                    onChange={(e) => setSelectedRunFolder(e.target.value)}
+                    className="text-xs bg-muted border border-border rounded-md px-2 py-1 text-foreground min-w-[200px]"
                   >
-                    {showCostBreakdown ? 'Hide Details' : 'View Details'}
-                  </button>
+                    <option value="">Select iteration/group...</option>
+                    {runFolders.map(folder => (
+                      <option key={folder} value={folder}>{folder}</option>
+                    ))}
+                  </select>
                 </div>
               )}
+              {selectedRunFolder && (
+                <p className="text-sm text-muted-foreground whitespace-nowrap">
+                  Run: <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded text-foreground">{selectedRunFolder}</span>
+                </p>
+              )}
+              <button
+                onClick={loadLogs}
+                disabled={loading || !selectedRunFolder}
+                className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Refresh logs"
+              >
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              </button>
             </div>
           </div>
           <button 
@@ -497,383 +377,32 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                 Retry
               </button>
             </div>
-          ) : !logs || Object.keys(logs.steps).length === 0 ? (
+          ) : !selectedRunFolder ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <FileText className="w-12 h-12 mb-3 opacity-50" />
-              <p>No execution logs found for this run.</p>
+              <p className="text-sm font-medium">Select an iteration or group to view logs</p>
+              <p className="text-xs mt-2 opacity-70">
+                {runFolders.length > 0 
+                  ? `Choose from ${runFolders.length} available ${runFolders.length === 1 ? 'run' : 'runs'} above.`
+                  : 'No run folders available. Execute a workflow to generate logs.'}
+              </p>
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Cost Breakdown Section */}
-              {showCostBreakdown && logs?.token_usage && (
-                <div className="space-y-4 mb-6 animate-in fade-in slide-in-from-top-2 duration-300">
-                  
-                  {/* Stage Summary Cards */}
-                  {costSummary?.stageCosts && (
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
-                        <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Execution</div>
-                        <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.execution)}</div>
-                        <div className="text-[10px] text-muted-foreground">Core Agent Logic</div>
-                      </div>
-                      <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
-                        <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Validation</div>
-                        <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.validation)}</div>
-                        <div className="text-[10px] text-muted-foreground">Quality Checks</div>
-                      </div>
-                      <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
-                        <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Learning</div>
-                        <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.learning)}</div>
-                        <div className="text-[10px] text-muted-foreground">Self-Improvement</div>
-                      </div>
-                      <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
-                        <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Other</div>
-                        <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.other)}</div>
-                        <div className="text-[10px] text-muted-foreground">Orchestration/System</div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Cost Breakdown Table with View Toggle */}
-                  {logs.token_usage.by_model && (
-                    <div className="bg-card border border-border rounded-lg overflow-hidden shadow-sm">
-                      <div className="px-4 py-3 bg-muted/30 border-b border-border flex items-center justify-between">
-                        <h3 className="text-sm font-semibold flex items-center gap-2">
-                          <DollarSign className="w-4 h-4 text-green-500" />
-                          Cost Breakdown
-                        </h3>
-                        {/* View Toggle Buttons */}
-                        <div className="flex items-center gap-1 bg-muted rounded-md p-0.5">
-                          <button
-                            onClick={() => setCostViewMode('step')}
-                            className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                              costViewMode === 'step'
-                                ? 'bg-background text-foreground shadow-sm'
-                                : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                          >
-                            By Step
-                          </button>
-                          <button
-                            onClick={() => setCostViewMode('model')}
-                            className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                              costViewMode === 'model'
-                                ? 'bg-background text-foreground shadow-sm'
-                                : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                          >
-                            By Model
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Step-wise Cost Breakdown View */}
-                      {costViewMode === 'step' && costSummary?.stepCosts && costSummary.stepCosts.length > 0 && (
-                        <div className="p-4 overflow-x-auto">
-                          <table className="w-full text-xs">
-                            <thead>
-                              <tr className="text-muted-foreground border-b border-border pb-2">
-                                <th className="text-left font-medium pb-2">Step</th>
-                                <th className="text-right font-medium pb-2">Calls</th>
-                                <th className="text-right font-medium pb-2">Tokens</th>
-                                <th className="text-right font-medium pb-2 text-blue-500">Execution</th>
-                                <th className="text-right font-medium pb-2 text-green-500">Validation</th>
-                                <th className="text-right font-medium pb-2 text-purple-500">Learning</th>
-                                <th className="text-right font-medium pb-2">Total Cost</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-border">
-                              {costSummary.stepCosts.map((step) => (
-                                <tr key={step.stepNum} className="hover:bg-accent/50 transition-colors">
-                                  <td className="py-2">
-                                    <div className="font-medium text-foreground">
-                                      Step {step.stepNum}{step.stepTitle && `: ${step.stepTitle}`}
-                                    </div>
-                                  </td>
-                                  <td className="py-2 text-right font-mono text-muted-foreground">
-                                    {step.llmCalls.toLocaleString()}
-                                  </td>
-                                  <td className="py-2 text-right font-mono text-muted-foreground">
-                                    {(step.inputTokens + step.outputTokens).toLocaleString()}
-                                  </td>
-                                  <td className="py-2 text-right font-mono text-blue-600 dark:text-blue-400">
-                                    {formatUSD(step.execution)}
-                                  </td>
-                                  <td className="py-2 text-right font-mono text-green-600 dark:text-green-400">
-                                    {formatUSD(step.validation)}
-                                  </td>
-                                  <td className="py-2 text-right font-mono text-purple-600 dark:text-purple-400">
-                                    {formatUSD(step.learning)}
-                                  </td>
-                                  <td className="py-2 text-right font-bold text-foreground">
-                                    {formatUSD(step.totalCost)}
-                                  </td>
-                                </tr>
-                              ))}
-                              {/* Total Row */}
-                              <tr className="bg-muted/30 font-semibold">
-                                <td className="py-2 text-foreground">Total</td>
-                                <td className="py-2 text-right font-mono text-muted-foreground">
-                                  {costSummary.totalLLMCalls.toLocaleString()}
-                                </td>
-                                <td className="py-2 text-right font-mono text-muted-foreground">
-                                  {costSummary.totalTokens.toLocaleString()}
-                                </td>
-                                <td className="py-2 text-right font-mono text-blue-600 dark:text-blue-400">
-                                  {formatUSD(costSummary.stageCosts.execution)}
-                                </td>
-                                <td className="py-2 text-right font-mono text-green-600 dark:text-green-400">
-                                  {formatUSD(costSummary.stageCosts.validation)}
-                                </td>
-                                <td className="py-2 text-right font-mono text-purple-600 dark:text-purple-400">
-                                  {formatUSD(costSummary.stageCosts.learning)}
-                                </td>
-                                <td className="py-2 text-right font-bold text-green-600 dark:text-green-400">
-                                  {formatUSD(costSummary.totalCost)}
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-
-                      {/* Model-wise Cost Breakdown View (existing table) */}
-                      {costViewMode === 'model' && (
-                      <div className="p-4 overflow-x-auto">
-                        <table className="w-full text-xs">
-                          <thead>
-                            <tr className="text-muted-foreground border-b border-border pb-2">
-                              <th className="w-8"></th>
-                              <th className="text-left font-medium pb-2">Model</th>
-                              <th className="text-right font-medium pb-2">Calls</th>
-                              <th className="text-right font-medium pb-2">Input</th>
-                              <th className="text-right font-medium pb-2">Cached In</th>
-                              <th className="text-right font-medium pb-2">Cache Write</th>
-                              <th className="text-right font-medium pb-2">Reasoning</th>
-                              <th className="text-right font-medium pb-2">Output</th>
-                              <th className="text-right font-medium pb-2">Cost (USD)</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-border">
-                            {Object.entries(logs.token_usage.by_model).map(([modelId, usage]) => {
-                              const cacheRead = usage.cache_read_tokens || usage.cache_tokens || 0
-                              const cacheWrite = usage.cache_write_tokens || 0
-                              const reasoning = usage.reasoning_tokens || 0
-                              const cachePercent = usage.input_tokens > 0 ? (cacheRead / usage.input_tokens) * 100 : 0
-                              
-                              // Calculate step-wise breakdown for this model
-                              const modelSteps = logs.token_usage.by_step_and_model
-                                ? Object.entries(logs.token_usage.by_step_and_model)
-                                    .map(([stepKey, modelMap]) => {
-                                      const stepUsage = modelMap[modelId]
-                                      if (!stepUsage) return null
-
-                                      const parts = stepKey.split(':')
-                                      const phase = parts[0]
-                                      const index = parseInt(parts[1] || '0', 10)
-                                      const stepNum = index + 1
-
-                                      // Look up step title from logs.steps
-                                      const stepId = `step-${stepNum}`
-                                      const stepData = logs.steps[stepId]
-                                      const stepTitle = stepData?.title || ''
-
-                                      let phaseLabel = ''
-                                      let type = 'other'
-
-                                      if (phase === 'execution_only') { phaseLabel = 'Execution'; type = 'execution' }
-                                      else if (phase === 'validation') { phaseLabel = 'Validation'; type = 'validation' }
-                                      else if (phase.includes('learning')) { phaseLabel = 'Learning'; type = 'learning' }
-                                      else if (phase === 'workflow') { phaseLabel = 'Workflow'; type = 'workflow' }
-                                      else { phaseLabel = phase }
-
-                                      // Create label with step number, title, and phase
-                                      const label = stepTitle
-                                        ? `Step ${stepNum}: ${stepTitle} (${phaseLabel})`
-                                        : `Step ${stepNum} (${phaseLabel})`
-
-                                      return { key: stepKey, label, type, index, stepNum, stepTitle, usage: stepUsage }
-                                    })
-                                    .filter((s): s is NonNullable<typeof s> => s !== null)
-                                    .sort((a, b) => {
-                                       if (a.index !== b.index) return a.index - b.index
-                                       // If same index, order by phase
-                                       const order: Record<string, number> = { execution: 1, validation: 2, learning: 3, other: 4 }
-                                       return (order[a.type] || 4) - (order[b.type] || 4)
-                                    })
-                                : []
-
-                              return (
-                                <React.Fragment key={modelId}>
-                                  <tr className="hover:bg-accent/50 transition-colors cursor-pointer" onClick={() => toggleCostModel(modelId)}>
-                                    <td className="py-2 pl-2">
-                                      {expandedCostModels.has(modelId) ? (
-                                        <ChevronDown className="w-3 h-3 text-muted-foreground" />
-                                      ) : (
-                                        <ChevronRight className="w-3 h-3 text-muted-foreground" />
-                                      )}
-                                    </td>
-                                    <td className="py-2">
-                                      <div className="font-mono text-foreground font-medium">{modelId}</div>
-                                      <div className="text-[10px] text-muted-foreground uppercase">{usage.provider}</div>
-                                    </td>
-                                    <td className="py-2 text-right text-foreground">{usage.llm_call_count}</td>
-                                    <td className="py-2 text-right text-muted-foreground">{usage.input_tokens.toLocaleString()}</td>
-                                    <td className="py-2 text-right">
-                                      <div className="text-foreground">{cacheRead.toLocaleString()}</div>
-                                      {cachePercent > 0 && (
-                                        <div className="text-[10px] text-green-600 dark:text-green-400">({cachePercent.toFixed(0)}%)</div>
-                                      )}
-                                    </td>
-                                    <td className="py-2 text-right text-muted-foreground">{cacheWrite > 0 ? cacheWrite.toLocaleString() : '-'}</td>
-                                    <td className="py-2 text-right text-muted-foreground">{reasoning > 0 ? reasoning.toLocaleString() : '-'}</td>
-                                    <td className="py-2 text-right text-muted-foreground">{usage.output_tokens.toLocaleString()}</td>
-                                    <td className="py-2 text-right text-green-600 dark:text-green-400 font-semibold">{formatUSD(usage.total_cost_usd)}</td>
-                                  </tr>
-                                  {expandedCostModels.has(modelId) && (
-                                    <tr className="bg-muted/20">
-                                      <td colSpan={9} className="p-0">
-                                        <div className="p-4 space-y-4 animate-in fade-in slide-in-from-top-1 duration-200">
-                                          {/* Efficiency Metrics */}
-                                          {(() => {
-                                            const inputCostPer1K = usage.input_tokens > 0 ? (usage.input_cost_usd / usage.input_tokens) * 1000 : 0
-                                            const outputCostPer1K = usage.output_tokens > 0 ? (usage.output_cost_usd / usage.output_tokens) * 1000 : 0
-                                            const avgTokensPerCall = usage.llm_call_count > 0 ? Math.round((usage.input_tokens + usage.output_tokens) / usage.llm_call_count) : 0
-                                            const avgCostPerCall = usage.llm_call_count > 0 ? usage.total_cost_usd / usage.llm_call_count : 0
-                                            const cacheHitRate = usage.input_tokens > 0 ? (cacheRead / usage.input_tokens) * 100 : 0
-                                            // Estimate savings: cache reads cost ~10% of input tokens (rough estimate)
-                                            const estimatedSavings = cacheRead > 0 ? cacheRead * inputCostPer1K * 0.9 / 1000 : 0
-                                            return (
-                                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                                                {/* Cost per Call */}
-                                                <div className="bg-gradient-to-br from-green-500/10 to-green-600/5 border border-green-500/20 rounded-lg p-3">
-                                                  <div className="text-[10px] text-green-600 dark:text-green-400 font-medium uppercase tracking-wider mb-1">Avg Cost/Call</div>
-                                                  <div className="text-lg font-bold text-foreground">{formatUSD(avgCostPerCall)}</div>
-                                                  <div className="text-[10px] text-muted-foreground">{usage.llm_call_count} calls total</div>
-                                                </div>
-
-                                                {/* Avg Tokens per Call */}
-                                                <div className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/20 rounded-lg p-3">
-                                                  <div className="text-[10px] text-blue-600 dark:text-blue-400 font-medium uppercase tracking-wider mb-1">Avg Tokens/Call</div>
-                                                  <div className="text-lg font-bold text-foreground">{avgTokensPerCall.toLocaleString()}</div>
-                                                  <div className="text-[10px] text-muted-foreground">in: {formatTokens(usage.input_tokens)} out: {formatTokens(usage.output_tokens)}</div>
-                                                </div>
-
-                                                {/* Cache Hit Rate */}
-                                                <div className="bg-gradient-to-br from-purple-500/10 to-purple-600/5 border border-purple-500/20 rounded-lg p-3">
-                                                  <div className="text-[10px] text-purple-600 dark:text-purple-400 font-medium uppercase tracking-wider mb-1">Cache Hit Rate</div>
-                                                  <div className="text-lg font-bold text-foreground">
-                                                    <span className={cacheHitRate > 50 ? 'text-green-500' : cacheHitRate > 20 ? 'text-yellow-500' : 'text-muted-foreground'}>
-                                                      {cacheHitRate.toFixed(1)}%
-                                                    </span>
-                                                  </div>
-                                                  <div className="text-[10px] text-muted-foreground">{formatTokens(cacheRead)} cached tokens</div>
-                                                </div>
-
-                                                {/* Estimated Savings */}
-                                                <div className="bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 rounded-lg p-3">
-                                                  <div className="text-[10px] text-amber-600 dark:text-amber-400 font-medium uppercase tracking-wider mb-1">Cache Savings</div>
-                                                  <div className="text-lg font-bold text-foreground">
-                                                    {estimatedSavings > 0 ? (
-                                                      <span className="text-green-500">~{formatUSD(estimatedSavings)}</span>
-                                                    ) : (
-                                                      <span className="text-muted-foreground">-</span>
-                                                    )}
-                                                  </div>
-                                                  <div className="text-[10px] text-muted-foreground">estimated from cache</div>
-                                                </div>
-                                              </div>
-                                            )
-                                          })()}
-                                          
-                                          {/* Usage by Step Table */}
-                                          {modelSteps.length > 0 && (
-                                            <div className="border border-border rounded-md overflow-hidden bg-background">
-                                              <div className="bg-muted/50 px-4 py-2 border-b border-border flex justify-between items-center">
-                                                <h4 className="font-semibold text-xs text-foreground flex items-center gap-2">
-                                                  <List className="w-3.5 h-3.5" /> Usage by Step
-                                                </h4>
-                                                <span className="text-[10px] text-muted-foreground bg-background px-1.5 py-0.5 rounded border border-border">
-                                                  {modelSteps.length} steps
-                                                </span>
-                                              </div>
-                                              <div className="overflow-x-auto">
-                                                <table className="w-full text-xs">
-                                                  <thead>
-                                                    <tr className="text-muted-foreground border-b border-border bg-muted/30">
-                                                      <th className="px-4 py-2 text-left font-medium">Step</th>
-                                                      <th className="px-4 py-2 text-right font-medium">Input</th>
-                                                      <th className="px-4 py-2 text-right font-medium">Cached In</th>
-                                                      <th className="px-4 py-2 text-right font-medium">Reasoning</th>
-                                                      <th className="px-4 py-2 text-right font-medium">Output</th>
-                                                      <th className="px-4 py-2 text-right font-medium">Cost</th>
-                                                    </tr>
-                                                  </thead>
-                                                  <tbody className="divide-y divide-border">
-                                                    {modelSteps.map((step) => (
-                                                      <tr key={step.key} className="hover:bg-muted/30 transition-colors">
-                                                        <td className="px-4 py-2">
-                                                          <div className="flex items-center gap-2">
-                                                            {step.type === 'execution' && <Terminal className="w-3.5 h-3.5 text-blue-500" />}
-                                                            {step.type === 'validation' && <CheckCircle className="w-3.5 h-3.5 text-purple-500" />}
-                                                            {step.type === 'learning' && <BookOpen className="w-3.5 h-3.5 text-amber-500" />}
-                                                            {step.type === 'workflow' && <Network className="w-3.5 h-3.5 text-foreground" />}
-                                                            <span className="font-medium text-foreground">{step.label}</span>
-                                                          </div>
-                                                        </td>
-                                                        <td className="px-4 py-2 text-right text-muted-foreground">{step.usage.input_tokens.toLocaleString()}</td>
-                                                        <td className="px-4 py-2 text-right text-muted-foreground">
-                                                          {(step.usage.cache_read_tokens || step.usage.cache_tokens || 0).toLocaleString()}
-                                                        </td>
-                                                        <td className="px-4 py-2 text-right text-muted-foreground">
-                                                          {(step.usage.reasoning_tokens || 0).toLocaleString()}
-                                                        </td>
-                                                        <td className="px-4 py-2 text-right text-muted-foreground">{step.usage.output_tokens.toLocaleString()}</td>
-                                                        <td className="px-4 py-2 text-right text-green-600 dark:text-green-400 font-medium">{formatUSD(step.usage.total_cost_usd)}</td>
-                                                      </tr>
-                                                    ))}
-                                                  </tbody>
-                                                </table>
-                                              </div>
-                                            </div>
-                                          )}
-                                        </div>
-                                      </td>
-                                    </tr>
-                                  )}
-                                </React.Fragment>
-                              )
-                            })}
-                          </tbody>
-                          <tfoot>
-                            <tr className="border-t-2 border-border font-bold">
-                              <td></td>
-                              <td className="py-3 text-foreground">Total Summary</td>
-                              <td className="py-3 text-right text-foreground">{costSummary?.totalLLMCalls}</td>
-                              <td className="py-3 text-right text-muted-foreground">{costSummary?.totalInputTokens.toLocaleString()}</td>
-                              <td className="py-3 text-right text-muted-foreground">
-                                {costSummary?.totalCacheReadTokens.toLocaleString()}
-                                {costSummary?.totalInputTokens > 0 && (
-                                  <span className="text-[10px] text-muted-foreground ml-1">
-                                    ({((costSummary.totalCacheReadTokens / costSummary.totalInputTokens) * 100).toFixed(0)}%)
-                                  </span>
-                                )}
-                              </td>
-                              <td className="py-3 text-right text-muted-foreground">{costSummary?.totalCacheWriteTokens.toLocaleString()}</td>
-                              <td className="py-3 text-right text-muted-foreground">{costSummary?.totalReasoningTokens.toLocaleString()}</td>
-                              <td className="py-3 text-right text-muted-foreground">{costSummary?.totalOutputTokens.toLocaleString()}</td>
-                              <td className="py-3 text-right text-green-600 dark:text-green-400">{formatUSD(costSummary?.totalCost)}</td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      </div>
-                      )}
-                    </div>
+              {/* Message when no step logs found */}
+              {logs && Object.keys(logs.steps).length === 0 && (
+                <div className="flex flex-col items-center justify-center py-8 text-muted-foreground border border-dashed border-border rounded-lg">
+                  <FileText className="w-10 h-10 mb-2 opacity-50" />
+                  <p className="text-sm">No step execution logs found for <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">{selectedRunFolder}</span>.</p>
+                  {runFolders.length > 1 && (
+                    <p className="text-xs mt-2 opacity-70">
+                      Try selecting a different iteration or group from the dropdown above.
+                    </p>
                   )}
                 </div>
               )}
 
-              {Object.entries(logs.steps)
+              {Object.entries(logs?.steps || {})
                 .sort((a, b) => sortStepIds(a[0], b[0]))
                 .map(([stepId, stepLogs]) => {
                   const isExpanded = expandedSteps.has(stepId)
@@ -1050,7 +579,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                   const isValExpanded = expandedValidations.has(valId)
                                   const valStatus = val.content?.execution_status
                                   const reasoning = val.content?.reasoning
-                                  const feedback = val.content?.feedback || []
+                                  const feedback = (val.content?.feedback || []) as ValidationFeedback[]
                                   
                                   return (
                                     <div key={idx} className="bg-background rounded border border-border overflow-hidden">
@@ -1080,7 +609,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                             <div className="mb-3">
                                               <div className="font-semibold text-foreground mb-1">Feedback:</div>
                                               <ul className="list-disc pl-4 space-y-1 text-muted-foreground">
-                                                {feedback.map((fb: any, i: number) => (
+                                                {feedback.map((fb, i: number) => (
                                                   <li key={i}>
                                                     <span className={`font-semibold ${fb.severity === 'CRITICAL' || fb.severity === 'HIGH' ? 'text-destructive' : 'text-yellow-500'}`}>[{fb.severity}]</span> {fb.description}
                                                   </li>

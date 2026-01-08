@@ -149,7 +149,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
     selected_tools?: string[]
     enabled_custom_tools?: string[]
     enable_context_offloading?: boolean
-    skip_llm_validation_if_pre_validation_passes?: boolean
+    llm_validation_mode?: string
   } }
   
   // Get preset's default code execution mode
@@ -514,14 +514,12 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
             </div>
           )}
           {/* Validation Skipped Badge */}
-          {stepConfig?.agent_configs?.skip_llm_validation_if_pre_validation_passes && (
-            <div 
-              className="flex items-center justify-center w-8 h-8 rounded-md bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800"
-              title="LLM validation will be skipped if pre-validation passes"
-            >
-              <SkipForward className="w-3.5 h-3.5" />
-            </div>
-          )}
+          {stepConfig?.agent_configs?.llm_validation_mode === 'skip' && (
+              <span className="flex items-center text-[10px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
+                <FastForward className="w-3 h-3 mr-1" />
+                SKIP VAL
+              </span>
+            )}
           {statusIcons[status]}
         </div>
       </div>

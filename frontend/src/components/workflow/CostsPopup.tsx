@@ -1,0 +1,914 @@
+import React, { useEffect, useState, useMemo } from 'react'
+import {
+  X,
+  Loader2,
+  ChevronRight,
+  ChevronDown,
+  AlertCircle,
+  DollarSign,
+  Coins,
+  List,
+  Award,
+  TrendingUp,
+  TrendingDown,
+  RefreshCw
+} from 'lucide-react'
+import { agentApi } from '../../services/api'
+import type { TokenUsageFile, StepExecutionLogs } from '../../services/api-types'
+
+interface CostsPopupProps {
+  isOpen: boolean
+  onClose: () => void
+  workspacePath: string | null
+  runFolders: string[] // Available run folders (iterations and groups)
+  selectedRunFolder: string | null // Currently selected run folder
+}
+
+// Format cost in USD
+const formatUSD = (amount?: number) => {
+  if (amount === undefined || amount === null) return '$0.00'
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 4
+  }).format(amount)
+}
+
+// Format token count (e.g., 1,234,567 -> 1.23M)
+const formatTokens = (count?: number) => {
+  if (!count) return '0'
+  if (count >= 1000000) {
+    return (count / 1000000).toFixed(2) + 'M'
+  }
+  if (count >= 1000) {
+    return (count / 1000).toFixed(1) + 'K'
+  }
+  return count.toString()
+}
+
+interface IterationCosts {
+  runFolder: string
+  tokenUsage: TokenUsageFile | null
+  costSummary: {
+    totalCost: number
+    totalInputTokens: number
+    totalOutputTokens: number
+    totalTokens: number
+    totalLLMCalls: number
+    totalCacheReadTokens: number
+    totalCacheWriteTokens: number
+    totalReasoningTokens: number
+    stageCosts: {
+      execution: number
+      validation: number
+      learning: number
+      other: number
+    }
+    stepCosts: Array<{
+      stepNum: number
+      stepTitle: string
+      execution: number
+      validation: number
+      learning: number
+      totalCost: number
+      inputTokens: number
+      outputTokens: number
+      llmCalls: number
+    }>
+  } | null
+}
+
+const CostsPopup: React.FC<CostsPopupProps> = ({
+  isOpen,
+  onClose,
+  workspacePath,
+  runFolders,
+  selectedRunFolder
+}) => {
+  const [loading, setLoading] = useState(false)
+  const [iterationCosts, setIterationCosts] = useState<IterationCosts[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [expandedIterations, setExpandedIterations] = useState<Set<string>>(new Set())
+  const [expandedCostModels, setExpandedCostModels] = useState<Set<string>>(new Set())
+  const [costViewMode, setCostViewMode] = useState<Record<string, 'step' | 'model'>>({})
+
+  // Calculate cost summary from token usage
+  const calculateCostSummary = (tokenUsage: TokenUsageFile | null, steps?: Record<string, StepExecutionLogs>): IterationCosts['costSummary'] => {
+    if (!tokenUsage?.by_model) return null
+
+    let totalCost = 0
+    let totalInputTokens = 0
+    let totalOutputTokens = 0
+    let totalLLMCalls = 0
+    let totalCacheReadTokens = 0
+    let totalCacheWriteTokens = 0
+    let totalReasoningTokens = 0
+    
+    const stageCosts = {
+      execution: 0,
+      validation: 0,
+      learning: 0,
+      other: 0
+    }
+
+    const stepCosts: Record<number, {
+      stepNum: number
+      stepTitle: string
+      execution: number
+      validation: number
+      learning: number
+      totalCost: number
+      inputTokens: number
+      outputTokens: number
+      llmCalls: number
+    }> = {}
+
+    // Calculate totals from by_model
+    if (tokenUsage.by_model) {
+      Object.values(tokenUsage.by_model).forEach(usage => {
+        totalCost += usage.total_cost_usd || 0
+        totalInputTokens += usage.input_tokens || 0
+        totalOutputTokens += usage.output_tokens || 0
+        totalLLMCalls += usage.llm_call_count || 0
+        totalCacheReadTokens += usage.cache_read_tokens || usage.cache_tokens || 0
+        totalCacheWriteTokens += usage.cache_write_tokens || 0
+        totalReasoningTokens += usage.reasoning_tokens || 0
+      })
+    }
+
+    // Calculate stage costs and step-wise costs from by_step_and_model
+    if (tokenUsage.by_step_and_model) {
+      Object.entries(tokenUsage.by_step_and_model).forEach(([key, modelMap]) => {
+        const parts = key.split(':')
+        const phase = parts[0]
+        const stepIndex = parseInt(parts[1] || '0', 10)
+        const stepNum = stepIndex + 1
+
+        let cost = 0
+        let inputTokens = 0
+        let outputTokens = 0
+        let llmCalls = 0
+        Object.values(modelMap).forEach(u => {
+          cost += u.total_cost_usd || 0
+          inputTokens += u.input_tokens || 0
+          outputTokens += u.output_tokens || 0
+          llmCalls += u.llm_call_count || 0
+        })
+
+        // Stage costs
+        if (phase === 'execution_only') {
+          stageCosts.execution += cost
+        } else if (phase === 'validation') {
+          stageCosts.validation += cost
+        } else if (phase === 'success_learning' || phase === 'failure_learning' || phase.includes('learning')) {
+          stageCosts.learning += cost
+        } else {
+          stageCosts.other += cost
+        }
+
+        // Step-wise costs
+        if (stepNum >= 0) {
+          // For learning phases with stepIndex: -1, we need to handle them specially
+          // They should be attributed to their respective steps, but if stepIndex is -1,
+          // we can't determine which step. For now, we'll group them as "Other (Learning)"
+          // TODO: Backend should fix learning phases to use correct stepIndex
+          const displayStepNum = stepNum
+          let displayTitle = ''
+          
+          if (stepNum === 0 && (phase.includes('learning'))) {
+            // Learning costs with stepIndex: -1 - try to find which step this belongs to
+            // by checking if we can infer from the phase name or other context
+            // For now, label as "Other (Learning)" to distinguish from other "Other" costs
+            displayTitle = 'Other (Learning)'
+          } else if (stepNum === 0) {
+            displayTitle = 'Other'
+          } else {
+            const stepId = `step-${stepNum}`
+            const stepData = steps?.[stepId]
+            displayTitle = stepData?.title || ''
+          }
+          
+          if (!stepCosts[displayStepNum]) {
+            stepCosts[displayStepNum] = {
+              stepNum: displayStepNum,
+              stepTitle: displayTitle,
+              execution: 0,
+              validation: 0,
+              learning: 0,
+              totalCost: 0,
+              inputTokens: 0,
+              outputTokens: 0,
+              llmCalls: 0
+            }
+          }
+          stepCosts[displayStepNum].totalCost += cost
+          stepCosts[displayStepNum].inputTokens += inputTokens
+          stepCosts[displayStepNum].outputTokens += outputTokens
+          stepCosts[displayStepNum].llmCalls += llmCalls
+
+          if (phase === 'execution_only') {
+            stepCosts[displayStepNum].execution += cost
+          } else if (phase === 'validation') {
+            stepCosts[displayStepNum].validation += cost
+          } else if (phase.includes('learning')) {
+            stepCosts[displayStepNum].learning += cost
+          }
+        }
+      })
+    }
+
+    const sortedStepCosts = Object.values(stepCosts).sort((a, b) => a.stepNum - b.stepNum)
+
+    return {
+      totalCost,
+      totalInputTokens,
+      totalOutputTokens,
+      totalTokens: totalInputTokens + totalOutputTokens,
+      totalLLMCalls,
+      totalCacheReadTokens,
+      totalCacheWriteTokens,
+      totalReasoningTokens,
+      stageCosts,
+      stepCosts: sortedStepCosts
+    }
+  }
+
+  // Load costs for all iterations
+  useEffect(() => {
+    if (isOpen && workspacePath && runFolders.length > 0) {
+      loadAllCosts()
+    } else {
+      setIterationCosts([])
+      setError(null)
+      setExpandedIterations(new Set())
+      setExpandedCostModels(new Set())
+      setCostViewMode({})
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, workspacePath, runFolders.length])
+
+  const loadAllCosts = async () => {
+    if (!workspacePath || runFolders.length === 0) return
+
+    setLoading(true)
+    setError(null)
+    try {
+      const costs: IterationCosts[] = []
+      
+      // Load costs for each iteration/group
+      for (const runFolder of runFolders) {
+        try {
+          const data = await agentApi.getCosts(workspacePath, runFolder)
+          if (data.token_usage) {
+            // Also fetch steps to get step titles for cost breakdown
+            let steps: Record<string, StepExecutionLogs> | undefined
+            try {
+              const logsData = await agentApi.getExecutionLogs(workspacePath, runFolder)
+              steps = logsData.steps
+            } catch (err) {
+              // If we can't get steps, continue without them (costs will still work)
+              console.warn(`Failed to load steps for ${runFolder}:`, err)
+            }
+            const costSummary = calculateCostSummary(data.token_usage, steps)
+            costs.push({
+              runFolder,
+              tokenUsage: data.token_usage,
+              costSummary
+            })
+          }
+        } catch (err) {
+          console.warn(`Failed to load costs for ${runFolder}:`, err)
+          // Continue loading other iterations
+        }
+      }
+
+      // Sort by iteration number (extract number from iteration-X or iteration-X/group-Y)
+      costs.sort((a, b) => {
+        const getIterationNum = (folder: string) => {
+          const match = folder.match(/iteration-(\d+)/)
+          return match ? parseInt(match[1], 10) : 0
+        }
+        const numA = getIterationNum(a.runFolder)
+        const numB = getIterationNum(b.runFolder)
+        if (numA !== numB) return numB - numA // Descending order
+        return a.runFolder.localeCompare(b.runFolder)
+      })
+
+      setIterationCosts(costs)
+
+      // Auto-expand selected run folder if provided
+      if (selectedRunFolder && costs.some(c => c.runFolder === selectedRunFolder)) {
+        setExpandedIterations(new Set([selectedRunFolder]))
+      }
+    } catch (err) {
+      console.error('Failed to load costs:', err)
+      setError('Failed to load cost data')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const toggleIteration = (runFolder: string) => {
+    setExpandedIterations(prev => {
+      const next = new Set(prev)
+      if (next.has(runFolder)) {
+        next.delete(runFolder)
+      } else {
+        next.add(runFolder)
+      }
+      return next
+    })
+  }
+
+  const toggleCostModel = (modelId: string) => {
+    setExpandedCostModels(prev => {
+      const next = new Set(prev)
+      if (next.has(modelId)) {
+        next.delete(modelId)
+      } else {
+        next.add(modelId)
+      }
+      return next
+    })
+  }
+
+  const setViewModeForIteration = (runFolder: string, mode: 'step' | 'model') => {
+    setCostViewMode(prev => ({
+      ...prev,
+      [runFolder]: mode
+    }))
+  }
+
+  // Calculate aggregate summary across all iterations
+  const aggregateSummary = useMemo(() => {
+    if (iterationCosts.length === 0) return null
+
+    let totalCost = 0
+    let totalInputTokens = 0
+    let totalOutputTokens = 0
+    let totalLLMCalls = 0
+    let totalCacheReadTokens = 0
+    let totalCacheWriteTokens = 0
+    let totalReasoningTokens = 0
+    const stageCosts = {
+      execution: 0,
+      validation: 0,
+      learning: 0,
+      other: 0
+    }
+    let highestCost = 0
+    let lowestCost = Infinity
+
+    iterationCosts.forEach(iter => {
+      if (iter.costSummary) {
+        totalCost += iter.costSummary.totalCost
+        totalInputTokens += iter.costSummary.totalInputTokens
+        totalOutputTokens += iter.costSummary.totalOutputTokens
+        totalLLMCalls += iter.costSummary.totalLLMCalls
+        totalCacheReadTokens += iter.costSummary.totalCacheReadTokens
+        totalCacheWriteTokens += iter.costSummary.totalCacheWriteTokens
+        totalReasoningTokens += iter.costSummary.totalReasoningTokens
+        stageCosts.execution += iter.costSummary.stageCosts.execution
+        stageCosts.validation += iter.costSummary.stageCosts.validation
+        stageCosts.learning += iter.costSummary.stageCosts.learning
+        stageCosts.other += iter.costSummary.stageCosts.other
+        
+        if (iter.costSummary.totalCost > highestCost) {
+          highestCost = iter.costSummary.totalCost
+        }
+        if (iter.costSummary.totalCost < lowestCost) {
+          lowestCost = iter.costSummary.totalCost
+        }
+      }
+    })
+
+    return {
+      totalCost,
+      totalInputTokens,
+      totalOutputTokens,
+      totalTokens: totalInputTokens + totalOutputTokens,
+      totalLLMCalls,
+      totalCacheReadTokens,
+      totalCacheWriteTokens,
+      totalReasoningTokens,
+      stageCosts,
+      highestCost: highestCost === 0 ? 0 : highestCost,
+      lowestCost: lowestCost === Infinity ? 0 : lowestCost,
+      totalIterations: iterationCosts.length
+    }
+  }, [iterationCosts])
+
+  if (!isOpen) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="bg-background rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] flex flex-col border border-border relative">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
+              <DollarSign className="w-5 h-5 text-primary" />
+              Cost Analysis
+            </h2>
+            <div className="flex items-center gap-4 mt-1">
+              {aggregateSummary && (
+                <div className="flex items-center gap-3 text-xs">
+                  <div className="flex items-center gap-1.5 text-green-600 dark:text-green-400 font-medium">
+                    <DollarSign className="w-3.5 h-3.5" />
+                    {formatUSD(aggregateSummary.totalCost)}
+                  </div>
+                  <div className="flex items-center gap-1.5 text-muted-foreground">
+                    <Coins className="w-3.5 h-3.5" />
+                    {formatTokens(aggregateSummary.totalTokens)} tokens
+                  </div>
+                  <div className="text-muted-foreground">
+                    {aggregateSummary.totalIterations} iteration{aggregateSummary.totalIterations !== 1 ? 's' : ''}
+                  </div>
+                </div>
+              )}
+              <button
+                onClick={loadAllCosts}
+                disabled={loading}
+                className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                title="Refresh"
+              >
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-full hover:bg-accent hover:text-accent-foreground transition-colors ml-4"
+          >
+            <X className="w-5 h-5 text-muted-foreground" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6 bg-background">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <Loader2 className="w-8 h-8 animate-spin mb-3 text-primary" />
+              <p>Loading cost data...</p>
+            </div>
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center py-12 text-destructive">
+              <AlertCircle className="w-12 h-12 mb-3" />
+              <p>{error}</p>
+              <button
+                onClick={loadAllCosts}
+                className="mt-4 px-4 py-2 bg-destructive/10 text-destructive rounded-md hover:bg-destructive/20 transition-colors text-sm font-medium"
+              >
+                Retry
+              </button>
+            </div>
+          ) : iterationCosts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <DollarSign className="w-12 h-12 mb-3 opacity-50" />
+              <p>No cost data found.</p>
+              <p className="text-sm mt-2">Run workflow iterations to see cost data here.</p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Aggregate Summary */}
+              {aggregateSummary && (
+                <div className="bg-card border border-border rounded-lg p-4 shadow-sm">
+                  <h3 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
+                    <Award className="w-4 h-4 text-primary" />
+                    Aggregate Summary ({aggregateSummary.totalIterations} iterations)
+                  </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {/* Total Cost */}
+                    <div className="bg-green-100 dark:bg-green-900/30 rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Total Cost</div>
+                      <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                        {formatUSD(aggregateSummary.totalCost)}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {formatTokens(aggregateSummary.totalTokens)} tokens
+                      </div>
+                    </div>
+
+                    {/* Highest Cost */}
+                    <div className="bg-blue-100 dark:bg-blue-900/30 rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <TrendingUp className="w-3 h-3" />
+                        Highest
+                      </div>
+                      <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                        {formatUSD(aggregateSummary.highestCost)}
+                      </div>
+                    </div>
+
+                    {/* Lowest Cost */}
+                    <div className="bg-purple-100 dark:bg-purple-900/30 rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <TrendingDown className="w-3 h-3" />
+                        Lowest
+                      </div>
+                      <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">
+                        {formatUSD(aggregateSummary.lowestCost)}
+                      </div>
+                    </div>
+
+                    {/* Total Iterations */}
+                    <div className="bg-muted rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Iterations</div>
+                      <div className="text-2xl font-bold text-foreground">
+                        {aggregateSummary.totalIterations}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Stage Costs Summary */}
+                  <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="bg-card border border-border rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Execution</div>
+                      <div className="text-lg font-bold text-foreground">{formatUSD(aggregateSummary.stageCosts.execution)}</div>
+                    </div>
+                    <div className="bg-card border border-border rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Validation</div>
+                      <div className="text-lg font-bold text-foreground">{formatUSD(aggregateSummary.stageCosts.validation)}</div>
+                    </div>
+                    <div className="bg-card border border-border rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Learning</div>
+                      <div className="text-lg font-bold text-foreground">{formatUSD(aggregateSummary.stageCosts.learning)}</div>
+                    </div>
+                    <div className="bg-card border border-border rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Other</div>
+                      <div className="text-lg font-bold text-foreground">{formatUSD(aggregateSummary.stageCosts.other)}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Individual Iterations */}
+              <div className="space-y-3">
+                {iterationCosts.map((iter) => {
+                  const isExpanded = expandedIterations.has(iter.runFolder)
+                  const viewMode = costViewMode[iter.runFolder] || 'step'
+                  const costSummary = iter.costSummary
+
+                  if (!costSummary) return null
+
+                  return (
+                    <div
+                      key={iter.runFolder}
+                      className="border border-border rounded-lg overflow-hidden bg-card"
+                    >
+                      {/* Iteration Header */}
+                      <button
+                        onClick={() => toggleIteration(iter.runFolder)}
+                        className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${
+                          isExpanded ? 'bg-accent/50' : 'hover:bg-accent/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          {isExpanded ? (
+                            <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                          ) : (
+                            <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                          )}
+                          <div className="flex flex-col items-start min-w-0">
+                            <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded text-foreground">
+                              {iter.runFolder}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Cost Badge */}
+                        <div className="flex items-center gap-3 flex-shrink-0 ml-4">
+                          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-100 dark:bg-green-900/30">
+                            <DollarSign className="w-4 h-4 text-green-600 dark:text-green-400" />
+                            <span className="text-sm font-semibold text-green-600 dark:text-green-400">
+                              {formatUSD(costSummary.totalCost)}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              ({formatTokens(costSummary.totalTokens)})
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+
+                      {/* Expanded Content */}
+                      {isExpanded && (
+                        <div className="border-t border-border p-4 space-y-4">
+                          {/* Stage Summary Cards */}
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
+                              <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Execution</div>
+                              <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.execution)}</div>
+                            </div>
+                            <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
+                              <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Validation</div>
+                              <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.validation)}</div>
+                            </div>
+                            <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
+                              <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Learning</div>
+                              <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.learning)}</div>
+                            </div>
+                            <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
+                              <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Other</div>
+                              <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.other)}</div>
+                            </div>
+                          </div>
+
+                          {/* Cost Breakdown Table with View Toggle */}
+                          {iter.tokenUsage && iter.tokenUsage.by_model && (
+                            <div className="bg-card border border-border rounded-lg overflow-hidden shadow-sm">
+                              <div className="px-4 py-3 bg-muted/30 border-b border-border flex items-center justify-between">
+                                <h3 className="text-sm font-semibold flex items-center gap-2">
+                                  <DollarSign className="w-4 h-4 text-green-500" />
+                                  Cost Breakdown
+                                </h3>
+                                {/* View Toggle Buttons */}
+                                <div className="flex items-center gap-1 bg-muted rounded-md p-0.5">
+                                  <button
+                                    onClick={() => setViewModeForIteration(iter.runFolder, 'step')}
+                                    className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                                      viewMode === 'step'
+                                        ? 'bg-background text-foreground shadow-sm'
+                                        : 'text-muted-foreground hover:text-foreground'
+                                    }`}
+                                  >
+                                    By Step
+                                  </button>
+                                  <button
+                                    onClick={() => setViewModeForIteration(iter.runFolder, 'model')}
+                                    className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                                      viewMode === 'model'
+                                        ? 'bg-background text-foreground shadow-sm'
+                                        : 'text-muted-foreground hover:text-foreground'
+                                    }`}
+                                  >
+                                    By Model
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Step-wise Cost Breakdown View */}
+                              {viewMode === 'step' && costSummary.stepCosts.length > 0 && (
+                                <div className="p-4 overflow-x-auto">
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="text-muted-foreground border-b border-border pb-2">
+                                        <th className="text-left font-medium pb-2">Step</th>
+                                        <th className="text-right font-medium pb-2">Calls</th>
+                                        <th className="text-right font-medium pb-2">Tokens</th>
+                                        <th className="text-right font-medium pb-2 text-blue-500">Execution</th>
+                                        <th className="text-right font-medium pb-2 text-green-500">Validation</th>
+                                        <th className="text-right font-medium pb-2 text-purple-500">Learning</th>
+                                        <th className="text-right font-medium pb-2">Total Cost</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-border">
+                                      {costSummary.stepCosts.map((step) => (
+                                        <tr key={step.stepNum} className="hover:bg-accent/50 transition-colors">
+                                          <td className="py-2">
+                                            <div className="font-medium text-foreground">
+                                              {step.stepNum === 0
+                                                ? (
+                                                    <span className="flex items-center gap-1.5">
+                                                      {step.stepTitle || 'Other'}
+                                                      {step.stepTitle === 'Other (Learning)' && (
+                                                        <span 
+                                                          className="text-xs text-muted-foreground cursor-help"
+                                                          title="Learning costs that couldn't be attributed to a specific step. This is usually due to learning phases being recorded with stepIndex: -1. The backend should be fixed to use the correct step index."
+                                                        >
+                                                          ⚠️
+                                                        </span>
+                                                      )}
+                                                    </span>
+                                                  )
+                                                : `Step ${step.stepNum}${step.stepTitle ? `: ${step.stepTitle}` : ''}`
+                                              }
+                                            </div>
+                                          </td>
+                                          <td className="py-2 text-right font-mono text-muted-foreground">
+                                            {step.llmCalls.toLocaleString()}
+                                          </td>
+                                          <td className="py-2 text-right font-mono text-muted-foreground">
+                                            {(step.inputTokens + step.outputTokens).toLocaleString()}
+                                          </td>
+                                          <td className="py-2 text-right font-mono text-blue-600 dark:text-blue-400">
+                                            {formatUSD(step.execution)}
+                                          </td>
+                                          <td className="py-2 text-right font-mono text-green-600 dark:text-green-400">
+                                            {formatUSD(step.validation)}
+                                          </td>
+                                          <td className="py-2 text-right font-mono text-purple-600 dark:text-purple-400">
+                                            {formatUSD(step.learning)}
+                                          </td>
+                                          <td className="py-2 text-right font-bold text-foreground">
+                                            {formatUSD(step.totalCost)}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                      {/* Total Row */}
+                                      <tr className="bg-muted/30 font-semibold">
+                                        <td className="py-2 text-foreground">Total</td>
+                                        <td className="py-2 text-right font-mono text-muted-foreground">
+                                          {costSummary.totalLLMCalls.toLocaleString()}
+                                        </td>
+                                        <td className="py-2 text-right font-mono text-muted-foreground">
+                                          {costSummary.totalTokens.toLocaleString()}
+                                        </td>
+                                        <td className="py-2 text-right font-mono text-blue-600 dark:text-blue-400">
+                                          {formatUSD(costSummary.stageCosts.execution)}
+                                        </td>
+                                        <td className="py-2 text-right font-mono text-green-600 dark:text-green-400">
+                                          {formatUSD(costSummary.stageCosts.validation)}
+                                        </td>
+                                        <td className="py-2 text-right font-mono text-purple-600 dark:text-purple-400">
+                                          {formatUSD(costSummary.stageCosts.learning)}
+                                        </td>
+                                        <td className="py-2 text-right font-bold text-green-600 dark:text-green-400">
+                                          {formatUSD(costSummary.totalCost)}
+                                        </td>
+                                      </tr>
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+
+                              {/* Model-wise Cost Breakdown View */}
+                              {viewMode === 'model' && iter.tokenUsage && (
+                                <div className="p-4 overflow-x-auto">
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="text-muted-foreground border-b border-border pb-2">
+                                        <th className="w-8"></th>
+                                        <th className="text-left font-medium pb-2">Model</th>
+                                        <th className="text-right font-medium pb-2">Calls</th>
+                                        <th className="text-right font-medium pb-2">Input</th>
+                                        <th className="text-right font-medium pb-2">Cached In</th>
+                                        <th className="text-right font-medium pb-2">Cache Write</th>
+                                        <th className="text-right font-medium pb-2">Reasoning</th>
+                                        <th className="text-right font-medium pb-2">Output</th>
+                                        <th className="text-right font-medium pb-2">Cost (USD)</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-border">
+                                      {Object.entries(iter.tokenUsage.by_model).map(([modelId, usage]) => {
+                                        const cacheRead = usage.cache_read_tokens || usage.cache_tokens || 0
+                                        const cacheWrite = usage.cache_write_tokens || 0
+                                        const reasoning = usage.reasoning_tokens || 0
+                                        const cachePercent = usage.input_tokens > 0 ? (cacheRead / usage.input_tokens) * 100 : 0
+                                        const modelKey = `${iter.runFolder}-${modelId}`
+                                        const isModelExpanded = expandedCostModels.has(modelKey)
+
+                                        // Calculate step-wise breakdown for this model
+                                        const modelSteps = iter.tokenUsage && iter.tokenUsage.by_step_and_model
+                                          ? Object.entries(iter.tokenUsage.by_step_and_model)
+                                              .map(([stepKey, modelMap]) => {
+                                                const stepUsage = modelMap[modelId]
+                                                if (!stepUsage) return null
+
+                                                const parts = stepKey.split(':')
+                                                const phase = parts[0]
+                                                const index = parseInt(parts[1] || '0', 10)
+                                                const stepNum = index + 1
+
+                                                let phaseLabel = ''
+                                                if (phase === 'execution_only') { phaseLabel = 'Execution' }
+                                                else if (phase === 'validation') { phaseLabel = 'Validation' }
+                                                else if (phase.includes('learning')) { phaseLabel = 'Learning' }
+                                                else { phaseLabel = phase }
+
+                                                const label = `Step ${stepNum} (${phaseLabel})`
+
+                                                return { key: stepKey, label, usage: stepUsage }
+                                              })
+                                              .filter((s): s is NonNullable<typeof s> => s !== null)
+                                              .sort((a, b) => a.label.localeCompare(b.label))
+                                          : []
+
+                                        return (
+                                          <React.Fragment key={modelId}>
+                                            <tr className="hover:bg-accent/50 transition-colors cursor-pointer" onClick={() => toggleCostModel(modelKey)}>
+                                              <td className="py-2 pl-2">
+                                                {isModelExpanded ? (
+                                                  <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                                                ) : (
+                                                  <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                                                )}
+                                              </td>
+                                              <td className="py-2">
+                                                <div className="font-mono text-foreground font-medium">{modelId}</div>
+                                                <div className="text-[10px] text-muted-foreground uppercase">{usage.provider}</div>
+                                              </td>
+                                              <td className="py-2 text-right text-foreground">{usage.llm_call_count}</td>
+                                              <td className="py-2 text-right text-muted-foreground">{usage.input_tokens.toLocaleString()}</td>
+                                              <td className="py-2 text-right">
+                                                <div className="text-foreground">{cacheRead.toLocaleString()}</div>
+                                                {cachePercent > 0 && (
+                                                  <div className="text-[10px] text-green-600 dark:text-green-400">({cachePercent.toFixed(0)}%)</div>
+                                                )}
+                                              </td>
+                                              <td className="py-2 text-right text-muted-foreground">{cacheWrite > 0 ? cacheWrite.toLocaleString() : '-'}</td>
+                                              <td className="py-2 text-right text-muted-foreground">{reasoning > 0 ? reasoning.toLocaleString() : '-'}</td>
+                                              <td className="py-2 text-right text-muted-foreground">{usage.output_tokens.toLocaleString()}</td>
+                                              <td className="py-2 text-right text-green-600 dark:text-green-400 font-semibold">{formatUSD(usage.total_cost_usd)}</td>
+                                            </tr>
+                                            {isModelExpanded && modelSteps.length > 0 && (
+                                              <tr className="bg-muted/20">
+                                                <td colSpan={9} className="p-0">
+                                                  <div className="p-4 space-y-4">
+                                                    <div className="border border-border rounded-md overflow-hidden bg-background">
+                                                      <div className="bg-muted/50 px-4 py-2 border-b border-border flex justify-between items-center">
+                                                        <h4 className="font-semibold text-xs text-foreground flex items-center gap-2">
+                                                          <List className="w-3.5 h-3.5" /> Usage by Step
+                                                        </h4>
+                                                      </div>
+                                                      <div className="overflow-x-auto">
+                                                        <table className="w-full text-xs">
+                                                          <thead>
+                                                            <tr className="text-muted-foreground border-b border-border bg-muted/30">
+                                                              <th className="px-4 py-2 text-left font-medium">Step</th>
+                                                              <th className="px-4 py-2 text-right font-medium">Input</th>
+                                                              <th className="px-4 py-2 text-right font-medium">Cached In</th>
+                                                              <th className="px-4 py-2 text-right font-medium">Reasoning</th>
+                                                              <th className="px-4 py-2 text-right font-medium">Output</th>
+                                                              <th className="px-4 py-2 text-right font-medium">Cost</th>
+                                                            </tr>
+                                                          </thead>
+                                                          <tbody className="divide-y divide-border">
+                                                            {modelSteps.map((step) => (
+                                                              <tr key={step.key} className="hover:bg-muted/30 transition-colors">
+                                                                <td className="px-4 py-2">
+                                                                  <span className="font-medium text-foreground">{step.label}</span>
+                                                                </td>
+                                                                <td className="px-4 py-2 text-right text-muted-foreground">{step.usage.input_tokens.toLocaleString()}</td>
+                                                                <td className="px-4 py-2 text-right text-muted-foreground">
+                                                                  {(step.usage.cache_read_tokens || step.usage.cache_tokens || 0).toLocaleString()}
+                                                                </td>
+                                                                <td className="px-4 py-2 text-right text-muted-foreground">
+                                                                  {(step.usage.reasoning_tokens || 0).toLocaleString()}
+                                                                </td>
+                                                                <td className="px-4 py-2 text-right text-muted-foreground">{step.usage.output_tokens.toLocaleString()}</td>
+                                                                <td className="px-4 py-2 text-right text-green-600 dark:text-green-400 font-medium">{formatUSD(step.usage.total_cost_usd)}</td>
+                                                              </tr>
+                                                            ))}
+                                                          </tbody>
+                                                        </table>
+                                                      </div>
+                                                    </div>
+                                                  </div>
+                                                </td>
+                                              </tr>
+                                            )}
+                                          </React.Fragment>
+                                        )
+                                      })}
+                                    </tbody>
+                                    <tfoot>
+                                      <tr className="border-t-2 border-border font-bold">
+                                        <td></td>
+                                        <td className="py-3 text-foreground">Total Summary</td>
+                                        <td className="py-3 text-right text-foreground">{costSummary.totalLLMCalls}</td>
+                                        <td className="py-3 text-right text-muted-foreground">{costSummary.totalInputTokens.toLocaleString()}</td>
+                                        <td className="py-3 text-right text-muted-foreground">
+                                          {costSummary.totalCacheReadTokens.toLocaleString()}
+                                          {costSummary.totalInputTokens > 0 && (
+                                            <span className="text-[10px] text-muted-foreground ml-1">
+                                              ({((costSummary.totalCacheReadTokens / costSummary.totalInputTokens) * 100).toFixed(0)}%)
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td className="py-3 text-right text-muted-foreground">{costSummary.totalCacheWriteTokens.toLocaleString()}</td>
+                                        <td className="py-3 text-right text-muted-foreground">{costSummary.totalReasoningTokens.toLocaleString()}</td>
+                                        <td className="py-3 text-right text-muted-foreground">{costSummary.totalOutputTokens.toLocaleString()}</td>
+                                        <td className="py-3 text-right text-green-600 dark:text-green-400">{formatUSD(costSummary.totalCost)}</td>
+                                      </tr>
+                                    </tfoot>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-border flex justify-end bg-background rounded-b-lg">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/80 transition-colors text-sm font-medium"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default CostsPopup

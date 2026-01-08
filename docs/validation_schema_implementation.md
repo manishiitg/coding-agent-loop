@@ -15,7 +15,7 @@ The Structured Validation Schema enables code-based validation of step outputs, 
 - ✅ Integration with execution and orchestration controllers
 - ✅ Pre-validation blocks LLM validation when it fails
 - ✅ Validation schema is **OPTIONAL** (pre-validation skips if schema is nil)
-- ✅ `skip_llm_validation_if_pre_validation_passes` feature - can skip LLM validation when pre-validation passes
+- ✅ **3-mode LLM validation control**: `llm_validation_mode` ("auto", "always", "skip")
 - ✅ LLM-only schema generation (no code-based auto-generation)
 - ✅ Success criteria guidance updated to focus on execution-based validation
 - ✅ Frontend TypeScript types updated
@@ -26,7 +26,7 @@ The Structured Validation Schema enables code-based validation of step outputs, 
 - When updating steps via `update_regular_step` tool, `validation_schema` is required
 - Success criteria focuses on execution history verification, not file structure
 - Pre-validation errors properly block LLM validation (OverallPass: false)
-- If `skip_llm_validation_if_pre_validation_passes: true` and pre-validation passes, LLM validation is skipped
+- Validation behavior is controlled by `llm_validation_mode` (Auto/Always/Skip)
 
 **Key Problem**: Current validation relies entirely on LLM to check files and keys, which is:
 - **Slow**: LLM must read files and analyze content
@@ -338,7 +338,7 @@ sequenceDiagram
     alt Pre-validation failed
         Controller->>Controller: Reject immediately (no LLM validation)
     else Pre-validation passed
-        alt skip_llm_validation_if_pre_validation_passes == true
+        alt llm_validation_mode == "skip"
             Controller->>Controller: Skip LLM validation (assume success)
         else
             Controller->>ValAgent: ExecuteStructured(workspaceResults, executionHistory)
@@ -351,7 +351,7 @@ sequenceDiagram
 **Key Points**:
 - If `validation_schema` is `nil`, pre-validation is skipped (returns `OverallPass: true`)
 - If pre-validation fails (`OverallPass: false`), LLM validation is blocked
-- If pre-validation passes and `skip_llm_validation_if_pre_validation_passes: true`, LLM validation is skipped
+- If pre-validation passes and `llm_validation_mode: "skip"`, LLM validation is skipped
 - Otherwise, LLM validation runs with pre-validation results
 
 ### 3. Validation Agent Integration
@@ -370,23 +370,15 @@ validationTemplateVars := map[string]string{
 }
 ```
 
-**Skip LLM Validation Feature**:
+**LLM Validation Control**:
 
-If `skip_llm_validation_if_pre_validation_passes: true` in step config and pre-validation passes, LLM validation is skipped:
+Validation behavior is determined based on `llm_validation_mode` (default: "auto"). Legacy boolean `skip_llm_validation_if_pre_validation_passes` has been removed.
 
 ```go
-skipLLMValidation := agentConfigs != nil && 
-    agentConfigs.SkipLLMValidationIfPreValidationPasses != nil && 
-    *agentConfigs.SkipLLMValidationIfPreValidationPasses
-
-if skipLLMValidation && workspaceResults.OverallPass {
-    // Skip LLM validation and assume success
-    validationResponse = &ValidationResponse{
-        IsSuccessCriteriaMet: true,
-        ExecutionStatus: "COMPLETED",
-        Reasoning: "Pre-validation passed - LLM validation skipped",
-    }
-}
+// Mode logic is handled in the execution loop
+// "auto": Runs LLM validation for first 3 successful executions, then skips.
+// "always": Always runs LLM validation.
+// "skip": Skips LLM validation if pre-validation passes.
 ```
 
 Validation agent prompt updated to:

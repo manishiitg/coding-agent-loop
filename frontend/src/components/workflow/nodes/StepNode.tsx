@@ -148,7 +148,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     enable_context_offloading?: boolean
     enable_prerequisite_detection?: boolean
     prerequisite_rules?: Array<{ depends_on_step: string; description: string }>
-    skip_llm_validation_if_pre_validation_passes?: boolean
+    llm_validation_mode?: string
   } }
   
   // Backward-compatible prerequisite flags/rules (agent_configs takes priority over top-level fields)
@@ -548,9 +548,9 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
             </div>
           )}
           {/* Validation Skipped Badge */}
-          {stepConfig?.agent_configs?.skip_llm_validation_if_pre_validation_passes && (
+          {stepConfig?.agent_configs?.llm_validation_mode === 'skip' && (
             <div 
-              className="flex items-center justify-center w-8 h-8 rounded-md bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800"
+              className="flex items-center justify-center w-8 h-8 rounded-md bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-400 border border-cyan-200 dark:border-cyan-800"
               title="LLM validation will be skipped if pre-validation passes"
             >
               <SkipForward className="w-3.5 h-3.5" />

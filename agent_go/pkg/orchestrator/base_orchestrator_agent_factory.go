@@ -37,10 +37,19 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 
 	// Populate LLMConfig from orchestrator.LLMConfig (unified structure)
 	if llmConfig != nil {
-		// Copy Primary
+		// Copy Primary with fallbacks if partially empty
+		primaryProvider := llmConfig.Primary.Provider
+		if primaryProvider == "" {
+			primaryProvider = bo.GetProvider()
+		}
+		primaryModel := llmConfig.Primary.ModelID
+		if primaryModel == "" {
+			primaryModel = bo.GetModel()
+		}
+
 		config.LLMConfig.Primary = agents.LLMModel{
-			Provider: llmConfig.Primary.Provider,
-			ModelID:  llmConfig.Primary.ModelID,
+			Provider: primaryProvider,
+			ModelID:  primaryModel,
 			APIKey:   llmConfig.Primary.APIKey,
 			Region:   llmConfig.Primary.Region,
 		}

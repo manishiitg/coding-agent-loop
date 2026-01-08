@@ -586,6 +586,14 @@ func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 	primaryProvider := boa.config.LLMConfig.Primary.Provider
 	primaryModel := boa.config.LLMConfig.Primary.ModelID
 
+	// Safety fallback for empty provider/model
+	if primaryProvider == "" {
+		primaryProvider = "bedrock" // Orchestrator default fallback
+	}
+	if primaryModel == "" {
+		primaryModel = "global.anthropic.claude-sonnet-4-5-v1:0" // Default model fallback
+	}
+
 	// Build fallback models list from LLMConfig.Fallbacks
 	var fallbackModels []string
 	if len(boa.config.LLMConfig.Fallbacks) > 0 {

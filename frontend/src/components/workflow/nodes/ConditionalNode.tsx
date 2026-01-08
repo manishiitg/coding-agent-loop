@@ -112,7 +112,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
     selected_tools?: string[]
     enabled_custom_tools?: string[]
     enable_context_offloading?: boolean
-    skip_llm_validation_if_pre_validation_passes?: boolean
+    llm_validation_mode?: string
   } }
 
   // Determine code execution mode: step config > preset default
@@ -422,15 +422,14 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
           </div>
         )}
         {/* Validation Skipped Badge */}
-        {stepConfig?.agent_configs?.skip_llm_validation_if_pre_validation_passes && (
-          <div 
-            className="flex items-center justify-center w-8 h-8 rounded-md bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800"
-            title="LLM validation will be skipped if pre-validation passes"
-          >
-            <SkipForward className="w-3.5 h-3.5" />
-          </div>
-        )}
-      </div>
+                  {stepConfig?.agent_configs?.llm_validation_mode === 'skip' && (
+                    <div 
+                      className="flex items-center justify-center w-8 h-8 rounded-md bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800"
+                      title="LLM validation will be skipped if pre-validation passes"
+                    >
+                      <SkipForward className="w-3.5 h-3.5" />
+                    </div>
+                  )}      </div>
 
       {/* Condition Badge - Top */}
       <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-600 dark:bg-purple-500 text-white text-[11px] font-semibold shadow-lg">

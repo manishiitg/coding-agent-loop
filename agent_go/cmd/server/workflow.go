@@ -3422,7 +3422,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 	// This uses generic parsing to handle different step types (regular, decision, etc.)
 	planJsonPath := cleanedWorkspacePath + "/planning/plan.json"
 	planContent, exists, _ := readFileFromWorkspace(r.Context(), planJsonPath)
-	
+
 	stepMetadata := make(map[string]map[string]string)
 	if exists {
 		var planDef struct {
@@ -3546,7 +3546,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 
 			if isDir && strings.HasPrefix(name, "step-") {
 				stepId := name
-				
+
 				if len(item.Children) > 0 {
 					for _, child := range item.Children {
 						childName := filepath.Base(child.FilePath)
@@ -3561,7 +3561,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 
 							entry := getStepEntry(stepId)
 							validations, _ := entry["validations"].([]map[string]interface{})
-							
+
 							attempt := 1
 							if childName != "validation.json" {
 								fmt.Sscanf(childName, "validation-%d.json", &attempt)
@@ -3581,7 +3581,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 								"file_path": logPath,
 								"content":   validationData,
 							})
-							
+
 							sort.Slice(validations, func(i, j int) bool {
 								v1, ok1 := validations[i]["attempt"].(int)
 								v2, ok2 := validations[j]["attempt"].(int)
@@ -3590,24 +3590,28 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 								}
 								return v1 < v2
 							})
-							
+
 							entry["validations"] = validations
 						}
 
 						// Learning Logs (JSONL)
 						if !childIsDir && childName == "learning-execution.json" {
 							logPath := child.FilePath
-							if processedPaths[logPath] { continue }
+							if processedPaths[logPath] {
+								continue
+							}
 							processedPaths[logPath] = true
 
 							entry := getStepEntry(stepId)
 							learningLogs, _ := entry["learnings"].([]map[string]interface{})
-							
+
 							content, exists, _ := readFileFromWorkspace(r.Context(), logPath)
 							if exists {
 								lines := strings.Split(content, "\n")
 								for _, line := range lines {
-									if strings.TrimSpace(line) == "" { continue }
+									if strings.TrimSpace(line) == "" {
+										continue
+									}
 									var logEntry map[string]interface{}
 									if err := json.Unmarshal([]byte(line), &logEntry); err == nil {
 										learningLogs = append(learningLogs, logEntry)
@@ -3620,12 +3624,14 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 						// Conditional Logs
 						if !childIsDir && childName == "conditional-evaluation.json" {
 							logPath := child.FilePath
-							if processedPaths[logPath] { continue }
+							if processedPaths[logPath] {
+								continue
+							}
 							processedPaths[logPath] = true
 
 							entry := getStepEntry(stepId)
 							conditionals, _ := entry["conditionals"].([]map[string]interface{})
-							
+
 							content, exists, _ := readFileFromWorkspace(r.Context(), logPath)
 							var condData map[string]interface{}
 							if exists {
@@ -3633,7 +3639,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 									fmt.Printf("Error unmarshalling conditional data for %s: %v\n", logPath, err)
 								}
 							}
-							
+
 							conditionals = append(conditionals, condData)
 							entry["conditionals"] = conditionals
 						}
@@ -3641,12 +3647,14 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 						// Decision Logs
 						if !childIsDir && childName == "decision-evaluation.json" {
 							logPath := child.FilePath
-							if processedPaths[logPath] { continue }
+							if processedPaths[logPath] {
+								continue
+							}
 							processedPaths[logPath] = true
 
 							entry := getStepEntry(stepId)
 							decisions, _ := entry["decisions"].([]map[string]interface{})
-							
+
 							content, exists, _ := readFileFromWorkspace(r.Context(), logPath)
 							var decisionData map[string]interface{}
 							if exists {
@@ -3654,7 +3662,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 									fmt.Printf("Error unmarshalling decision data for %s: %v\n", logPath, err)
 								}
 							}
-							
+
 							decisions = append(decisions, decisionData)
 							entry["decisions"] = decisions
 						}
@@ -3662,17 +3670,21 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 						// Orchestration Logs (JSONL)
 						if !childIsDir && childName == "orchestration-execution.json" {
 							logPath := child.FilePath
-							if processedPaths[logPath] { continue }
+							if processedPaths[logPath] {
+								continue
+							}
 							processedPaths[logPath] = true
 
 							entry := getStepEntry(stepId)
 							orchLogs, _ := entry["orchestration"].([]map[string]interface{})
-							
+
 							content, exists, _ := readFileFromWorkspace(r.Context(), logPath)
 							if exists {
 								lines := strings.Split(content, "\n")
 								for _, line := range lines {
-									if strings.TrimSpace(line) == "" { continue }
+									if strings.TrimSpace(line) == "" {
+										continue
+									}
 									var logEntry map[string]interface{}
 									if err := json.Unmarshal([]byte(line), &logEntry); err == nil {
 										orchLogs = append(orchLogs, logEntry)
@@ -3892,8 +3904,88 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 	}
 
 	response := map[string]interface{}{
+		"success": true,
+		"steps":   stepsLogs,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleGetCosts handles getting cost data (token usage) for workflow runs
+func (api *StreamingAPI) handleGetCosts(w http.ResponseWriter, r *http.Request) {
+	// Enable CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workspacePath := r.URL.Query().Get("workspace_path")
+	if workspacePath == "" {
+		http.Error(w, "workspace_path parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate workspace path to prevent path traversal attacks
+	cleanedWorkspacePath := filepath.Clean(workspacePath)
+	if strings.Contains(cleanedWorkspacePath, "..") {
+		http.Error(w, "Invalid workspace path", http.StatusBadRequest)
+		return
+	}
+
+	runFolder := r.URL.Query().Get("run_folder")
+
+	// Validate run folder to prevent path traversal
+	if runFolder != "" && runFolder != "new" {
+		cleanedRunFolder := filepath.Clean(runFolder)
+		if strings.Contains(cleanedRunFolder, "..") {
+			http.Error(w, "Invalid run folder", http.StatusBadRequest)
+			return
+		}
+		runFolder = cleanedRunFolder
+	}
+
+	// Try to read token_usage.json for the run
+	// With group folders, token_usage.json may be in:
+	// 1. Direct path: runs/{runFolder}/token_usage.json (for single group or group-specific folder)
+	// 2. Group subfolders: runs/{runFolder}/{groupName}/token_usage.json (for parent iteration folder)
+	var tokenUsage interface{} = nil
+	tokenUsagePath := ""
+	if runFolder != "" && runFolder != "new" {
+		tokenUsagePath = fmt.Sprintf("%s/runs/%s/token_usage.json", cleanedWorkspacePath, runFolder)
+	} else {
+		// Try root workspace if no run folder
+		tokenUsagePath = fmt.Sprintf("%s/token_usage.json", cleanedWorkspacePath)
+	}
+
+	if tokenUsagePath != "" {
+		content, exists, _ := readFileFromWorkspace(r.Context(), tokenUsagePath)
+		if exists {
+			if err := json.Unmarshal([]byte(content), &tokenUsage); err != nil {
+				fmt.Printf("Error unmarshalling token usage from %s: %v\n", tokenUsagePath, err)
+			}
+		} else if runFolder != "" && runFolder != "new" && !strings.Contains(runFolder, "/") {
+			// Token usage not found at direct path and runFolder is a parent iteration folder (no "/")
+			// Try to find and aggregate token_usage.json from group subfolders
+			runFolderPath := fmt.Sprintf("%s/runs/%s", cleanedWorkspacePath, runFolder)
+			aggregatedTokenUsage := aggregateGroupTokenUsage(r.Context(), runFolderPath)
+			if aggregatedTokenUsage != nil {
+				tokenUsage = aggregatedTokenUsage
+			}
+		}
+	}
+
+	response := map[string]interface{}{
 		"success":     true,
-		"steps":       stepsLogs,
 		"token_usage": tokenUsage,
 	}
 
@@ -3958,7 +4050,7 @@ func (api *StreamingAPI) handleGetLogFile(w http.ResponseWriter, r *http.Request
 		contentType = "application/json"
 	}
 	w.Header().Set("Content-Type", contentType)
-	
+
 	w.Write([]byte(content))
 }
 
@@ -4284,7 +4376,7 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 			dTitle, _ := decisionStep["title"].(string)
 			dDesc, _ := decisionStep["description"].(string)
 			dId, _ := decisionStep["id"].(string)
-			
+
 			dMeta := map[string]string{
 				"title":       dTitle,
 				"description": dDesc,

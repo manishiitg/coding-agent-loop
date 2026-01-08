@@ -74,3 +74,5 @@ i) prompt tempaltes, need to check variables on compile time
 55. langfuse tracing
 
 56. supabase migration
+
+57. can we create a test propmt in openrouter to test how good a model is, mainly in agentic behaviour

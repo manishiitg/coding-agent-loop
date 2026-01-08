@@ -369,17 +369,43 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 
 			var validationResponse *ValidationResponse
 
-			// Check if we should skip LLM validation
+			// Check validation mode (default: "auto")
+			validationMode := "auto"
 			stepConfigs := getAgentConfigs(orchestrationStepPlan)
-			skipLLMValidation := stepConfigs != nil && stepConfigs.SkipLLMValidationIfPreValidationPasses != nil && *stepConfigs.SkipLLMValidationIfPreValidationPasses
+			if stepConfigs != nil && stepConfigs.LLMValidationMode != "" {
+				validationMode = stepConfigs.LLMValidationMode
+			}
 
-			if skipLLMValidation {
+			shouldSkipLLMValidation := false
+			skipReason := ""
+
+			if validationMode == "skip" {
+				shouldSkipLLMValidation = true
+				skipReason = "configured to skip"
+			} else if validationMode == "auto" {
+				// Check if we have enough successful runs to trust orchestrator output only
+				learningPathIdentifier := getLearningPathIdentifier(orchestrationStepPlan.OrchestrationStep.GetID(), orchestrationStepPath)
+				metadata, err := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
+				if err == nil && metadata != nil {
+					totalSuccess := metadata.SuccessfulRunsSimple + metadata.SuccessfulRunsMedium + metadata.SuccessfulRunsComplex
+					if totalSuccess >= 3 {
+						shouldSkipLLMValidation = true
+						skipReason = fmt.Sprintf("auto-skipped after %d successful runs (threshold: 3)", totalSuccess)
+					} else {
+						hcpo.GetLogger().Info(fmt.Sprintf("🔍 Step %d auto-validation: %d/3 successful runs - running LLM validation", stepIndex+1, totalSuccess))
+					}
+				} else {
+					hcpo.GetLogger().Info(fmt.Sprintf("🔍 Step %d auto-validation: No metadata found - running LLM validation", stepIndex+1))
+				}
+			}
+
+			if shouldSkipLLMValidation {
 				// Skip LLM validation and assume validation success
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration step %d - skipping LLM validation (configured to skip)", stepIndex+1))
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration step %d - skipping LLM validation (%s)", stepIndex+1, skipReason))
 				validationResponse = &ValidationResponse{
 					IsSuccessCriteriaMet: true,
 					ExecutionStatus:      "COMPLETED",
-					Reasoning:            "Orchestration step validation skipped (configured to skip LLM validation).",
+					Reasoning:            fmt.Sprintf("Orchestration step validation skipped (%s).", skipReason),
 					Feedback:             []ValidationFeedback{},
 				}
 			} else {
@@ -614,7 +640,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 
 			// Create orchestration learning agent
 			learningAgentName := fmt.Sprintf("orchestration-learning-step-%d", stepIndex+1)
-			learningAgent, err := hcpo.createOrchestrationLearningAgent(ctx, "orchestration_learning", learningPathIdentifier, learningAgentName, orchestrationStepConfig, orchestrationStepID, orchestrationStepPath)
+			learningAgent, err := hcpo.createOrchestrationLearningAgent(ctx, "orchestration_learning", learningPathIdentifier, learningAgentName, orchestrationStepConfig, orchestrationStepID, orchestrationStepPath, stepIndex)
 			if err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to create orchestration learning agent: %v", err), nil)
 				return false, "", fmt.Errorf("failed to create orchestration learning agent: %w", err)

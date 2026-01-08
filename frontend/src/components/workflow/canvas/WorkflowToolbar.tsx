@@ -22,6 +22,7 @@ import {
   RotateCcw,
   FileText,
   BarChart3,
+  DollarSign,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
@@ -37,6 +38,7 @@ import BulkStepConfigModal from '../BulkStepConfigModal'
 import LearningsPopup from '../LearningsPopup'
 import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import EvaluationPopup from '../EvaluationPopup'
+import CostsPopup from '../CostsPopup'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
@@ -157,6 +159,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // Execution logs popup state
   const [showExecutionLogsPopup, setShowExecutionLogsPopup] = useState(false)
+
+  // Costs popup state
+  const [showCostsPopup, setShowCostsPopup] = useState(false)
 
   // Evaluation popup state
   const [showEvaluationPopup, setShowEvaluationPopup] = useState(false)
@@ -1881,6 +1886,17 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </button>
         )}
         
+        {/* Show Costs - opens popup with cost analysis across all iterations */}
+        {workspacePath && (
+          <button
+            onClick={() => setShowCostsPopup(true)}
+            className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            title="Show cost analysis"
+          >
+            <DollarSign className="w-3.5 h-3.5" />
+          </button>
+        )}
+        
         {/* Show Execution Logs - opens popup with detailed execution logs */}
         {workspacePath && (
           <button
@@ -2067,12 +2083,22 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       plan={plan || null}
     />
 
+    {/* Costs Popup */}
+    <CostsPopup
+      isOpen={showCostsPopup}
+      onClose={() => setShowCostsPopup(false)}
+      workspacePath={workspacePath || null}
+      runFolders={runFolders.map(rf => rf.name)}
+      selectedRunFolder={selectedRunFolder === 'new' ? null : selectedRunFolder}
+    />
+
     {/* Execution Logs Popup */}
     <ExecutionLogsPopup
       isOpen={showExecutionLogsPopup}
       onClose={() => setShowExecutionLogsPopup(false)}
       workspacePath={workspacePath || null}
       runFolder={selectedRunFolder === 'new' ? null : selectedRunFolder}
+      runFolders={runFolders.map(rf => rf.name)}
     />
 
     {/* Evaluation Reports Popup */}

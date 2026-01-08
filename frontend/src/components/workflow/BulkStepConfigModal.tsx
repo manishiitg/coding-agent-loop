@@ -217,8 +217,9 @@ export default function BulkStepConfigModal({
     action:
       | "disable_validation"
       | "enable_validation"
-      | "skip_llm_validation"
-      | "enable_llm_validation"
+      | "set_validation_mode_auto"
+      | "set_validation_mode_always"
+      | "set_validation_mode_skip"
       | "disable_learning"
       | "enable_learning"
       | "lock_learnings"
@@ -260,11 +261,14 @@ export default function BulkStepConfigModal({
           case "enable_validation":
             newAgentConfigs.disable_validation = false;
             break;
-          case "skip_llm_validation":
-            newAgentConfigs.skip_llm_validation_if_pre_validation_passes = true;
+          case "set_validation_mode_auto":
+            newAgentConfigs.llm_validation_mode = "auto";
             break;
-          case "enable_llm_validation":
-            newAgentConfigs.skip_llm_validation_if_pre_validation_passes = false;
+          case "set_validation_mode_always":
+            newAgentConfigs.llm_validation_mode = "always";
+            break;
+          case "set_validation_mode_skip":
+            newAgentConfigs.llm_validation_mode = "skip";
             break;
           case "disable_learning":
             newAgentConfigs.disable_learning = true;
@@ -642,43 +646,43 @@ export default function BulkStepConfigModal({
                     </p>
                   </div>
 
-                  {/* Skip LLM Validation */}
+                  {/* Set Validation Mode: Auto */}
                   <div className="space-y-2">
                     <Button
                       variant="outline"
-                      onClick={() => handleImmediateAction("skip_llm_validation")}
+                      onClick={() => handleImmediateAction("set_validation_mode_auto")}
                       disabled={applyingAction !== null}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-orange-50 dark:hover:bg-orange-950/20 hover:border-orange-300 dark:hover:border-orange-800 transition-all"
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-800 transition-all"
                     >
                       <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "skip_llm_validation" ? (
+                        {applyingAction === "set_validation_mode_auto" ? (
                           <>
                             <Loader2 className="w-4 h-4 animate-spin text-primary" />
                             <span className="font-medium">Applying...</span>
                           </>
                         ) : (
                           <>
-                            <Shield className="w-4 h-4 text-orange-500" />
-                            <span className="font-medium text-sm">Skip LLM Validation</span>
+                            <Settings className="w-4 h-4 text-blue-500" />
+                            <span className="font-medium text-sm">Set Mode: Auto</span>
                           </>
                         )}
                       </div>
                     </Button>
                     <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Skips LLM-based validation when pre-validation (schema/pattern checks) passes. Faster execution while still checking basic requirements.
+                      Runs LLM validation for the first 3 successful executions, then skips (assuming stability).
                     </p>
                   </div>
 
-                  {/* Enable LLM Validation */}
+                  {/* Set Validation Mode: Always */}
                   <div className="space-y-2">
                     <Button
                       variant="outline"
-                      onClick={() => handleImmediateAction("enable_llm_validation")}
+                      onClick={() => handleImmediateAction("set_validation_mode_always")}
                       disabled={applyingAction !== null}
                       className="w-full justify-start h-auto py-3 px-4 hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-800 transition-all"
                     >
                       <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "enable_llm_validation" ? (
+                        {applyingAction === "set_validation_mode_always" ? (
                           <>
                             <Loader2 className="w-4 h-4 animate-spin text-primary" />
                             <span className="font-medium">Applying...</span>
@@ -686,13 +690,40 @@ export default function BulkStepConfigModal({
                         ) : (
                           <>
                             <Shield className="w-4 h-4 text-blue-500" />
-                            <span className="font-medium text-sm">Enable LLM Validation</span>
+                            <span className="font-medium text-sm">Set Mode: Always</span>
                           </>
                         )}
                       </div>
                     </Button>
                     <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Ensures LLM validation always runs, even when pre-validation passes. More thorough checks but slower execution.
+                      Ensures LLM validation always runs, even when pre-validation passes.
+                    </p>
+                  </div>
+
+                  {/* Set Validation Mode: Skip */}
+                  <div className="space-y-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => handleImmediateAction("set_validation_mode_skip")}
+                      disabled={applyingAction !== null}
+                      className="w-full justify-start h-auto py-3 px-4 hover:bg-orange-50 dark:hover:bg-orange-950/20 hover:border-orange-300 dark:hover:border-orange-800 transition-all"
+                    >
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "set_validation_mode_skip" ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="font-medium">Applying...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Shield className="w-4 h-4 text-orange-500" />
+                            <span className="font-medium text-sm">Set Mode: Skip</span>
+                          </>
+                        )}
+                      </div>
+                    </Button>
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Skips LLM validation if code-based pre-validation passes.
                     </p>
                   </div>
                 </div>

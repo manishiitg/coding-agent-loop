@@ -1,10 +1,35 @@
-# Workflow Execution Logs
+# Workflow Execution Logs & Cost Analysis
 
-The Workflow Execution Logs feature provides a comprehensive, step-wise view of the validation, execution, learning, and orchestration history for a specific workflow run. This tool is designed to help developers debug complex multi-step workflows by surfacing internal agent decisions, communication, and learning insights that are otherwise hidden in the workspace file system.
+This document describes the workflow monitoring and analysis features, which are organized into two distinct scopes:
+
+## Scope Overview
+
+### Workflow-Level Features (Across All Iterations/Groups)
+- **Cost Analysis** - Aggregated costs across all iterations with drill-down capability
+- **Evaluation Reports** - Aggregate evaluation scores and per-iteration reports
+- **Learnings** - Accumulated knowledge across all workflow runs
+
+### Group/Iteration-Level Features (Specific to Selected Iteration/Group)
+- **Execution Logs** - Detailed step-by-step logs for a specific iteration or group
+
+---
+
+# Execution Logs
+
+The Workflow Execution Logs feature provides a comprehensive, step-wise view of the validation, execution, learning, and orchestration history for a **specific iteration or group** within a workflow run. This tool is designed to help developers debug complex multi-step workflows by surfacing internal agent decisions, communication, and learning insights that are otherwise hidden in the workspace file system.
 
 ## Overview
 
-Logs are retrieved dynamically from the workspace's `runs/{runId}/logs/` directory. The system maps these raw log files back to the human-readable step titles, descriptions, and logical IDs defined in the workflow's `planning/plan.json`.
+**Scope:** Execution Logs are **group/iteration-level** - they show logs for a single selected iteration or group (e.g., `iteration-15` or `iteration-15/group-1`). This is different from Costs, Evaluation, and Learnings which are **workflow-level** (showing data across all iterations).
+
+Logs are retrieved dynamically from the workspace's `runs/{runId}/logs/` directory (or `runs/{runId}/{groupName}/logs/` for group-specific folders). The system maps these raw log files back to the human-readable step titles, descriptions, and logical IDs defined in the workflow's `planning/plan.json`.
+
+## Iteration/Group Selector
+
+The Execution Logs popup includes a dropdown selector to choose which iteration or group to view logs for:
+- **Available Options:** All run folders (iterations and groups) that have been executed
+- **Selection Required:** Users must select a specific iteration/group before logs are loaded
+- **Empty State:** If no iteration is selected, a message prompts the user to select one from the dropdown
 
 ## Supported Log Types
 
@@ -50,32 +75,40 @@ The log viewer automatically detects and renders the following types of informat
 
 ### Backend (Golang)
 - **Path:** `agent_go/cmd/server/workflow.go`
+- **Endpoints:**
+    - `/api/workflow/logs` - Returns execution logs (steps, validations, learnings, etc.) for a specific iteration/group
+    - `/api/workflow/costs` - Returns token usage/cost data for a specific iteration/group
 - **Logic:** 
-    - Recursively scans the workspace `logs/` folder.
+    - Recursively scans the workspace `logs/` folder for the selected iteration/group.
     - Uses `populateStepMetadata` to recursively map folder names (e.g., `step-1`, `step-3-true-0`) to logical step IDs (`original_id`) and titles from `plan.json`.
     - Reads `learning-execution.json` to populate the new `learnings` array.
-    - Reads `token_usage.json` from the iteration folder root to provide cost insights.
     - Proxies file reading via the Workspace API to handle large conversation logs on demand.
 
 ### Frontend (React + TypeScript)
 - **Component:** `ExecutionLogsPopup.tsx`
 - **Service:** `agentApi.getExecutionLogs`
 - **Features:**
+    - **Iteration/Group Selector:** Dropdown to select which iteration or group to view logs for
     - **Visual Hierarchy:** Reordered sections to match workflow flow: Execution -> Validation -> Learning.
     - **Step Icons:** Type-specific icons (Network, GitBranch, User, Bot, Terminal) for quick identification.
     - **Logical IDs:** Displays the logical step ID (e.g., `fetch-pr-data`) alongside the title for better context.
     - **Semantic Theming:** Uses `bg-background`, `text-foreground`, and `border-border` for Light/Dark mode support.
     - **Lazy Loading:** Conversation logs (Execution & Learning) are fetched only when requested.
 
-# Cost Viewer
+# Cost Analysis
 
-The Cost Viewer provides transparency into the financial impact of workflow executions by aggregating token usage and costs from the LLM providers.
+The Cost Analysis feature provides transparency into the financial impact of workflow executions by aggregating token usage and costs from the LLM providers **across all iterations and groups**.
 
 ## Overview
-Integrated directly into the Execution Logs header, it shows a summary of the total USD cost and total tokens consumed for the selected run iteration.
+**Scope:** Cost Analysis is **workflow-level** - it shows costs aggregated across all iterations and groups, with the ability to drill down into individual iterations. This is separate from Execution Logs which are group/iteration-specific.
+
+The Cost Analysis popup provides a comprehensive view of costs with:
+- **Aggregate Summary:** Total costs, highest/lowest costs, and stage costs across all iterations
+- **Grouped by Iteration:** Each iteration/group is shown as an expandable section with detailed breakdowns
 
 ## Data Sources
-- **Token Usage:** Reads from `runs/{iteration}/token_usage.json`.
+- **Token Usage:** Reads from `runs/{iteration}/token_usage.json` or `runs/{iteration}/{group}/token_usage.json`.
+- **Aggregation:** For parent iteration folders, automatically aggregates token usage from group subfolders.
 - **Metrics tracked:**
     - **Input/Output Tokens:** Raw counts and formatted "millions".
     - **Cache Tokens:** Breakdown of cached tokens (reads/writes) for models supporting prompt caching.
@@ -83,13 +116,19 @@ Integrated directly into the Execution Logs header, it shows a summary of the to
     - **USD Costs:** Calculated based on model-specific pricing metadata.
 
 ## Features
-- **Header Summary:** Immediate visibility into total run cost and token count.
-- **Stage-Based Breakdown:** "Cost Summary by Stage" grid shows costs grouped by workflow phase (Execution, Validation, Learning, Other).
-- **Expandable Model Details:** The "Cost Breakdown by Model" table supports row expansion to reveal deep insights:
-    - **Token Breakdown:** Input, Output, and Reasoning tokens with individual costs.
-    - **Cache Performance:** Cache hit/miss rates and associated costs (discounted vs premium).
-    - **Context Window:** Peak usage, model limits, and percentage utilization.
-    - **Usage by Step:** A chronological table listing every step where the model was used, showing specific token counts and costs for granular analysis.
+- **Aggregate Summary:** Shows total cost, highest cost, lowest cost, and total iterations at the top
+- **Stage Costs Summary:** Aggregate costs by workflow phase (Execution, Validation, Learning, Other) across all iterations
+- **Iteration-Level Breakdown:** Each iteration/group is expandable with:
+    - **Stage Summary Cards:** Execution, Validation, Learning, Other costs for that iteration
+    - **Cost Breakdown Table:** Toggle between "By Step" and "By Model" views
+    - **Step-wise View:** Shows costs per step with breakdown by phase (Execution, Validation, Learning)
+    - **Model-wise View:** Shows costs per model with expandable details including:
+        - **Token Breakdown:** Input, Output, and Reasoning tokens with individual costs
+        - **Cache Performance:** Cache hit/miss rates and associated costs
+        - **Usage by Step:** A chronological table listing every step where the model was used
+
+## Access
+Accessed via the **Cost Analysis** button (💰 DollarSign icon) in the workflow toolbar, separate from the Execution Logs button.
 
 # Learnings Popup
 
@@ -109,8 +148,28 @@ Accessed via the "Show Learnings" button in the workflow toolbar, this popup dis
 - **Complexity Tracking:** Visualizes the step's complexity level, which influences how many successful runs are required before the system stops active learning ("exploitation phase").
 - **Lock/Unlock:** Users can manually lock learnings for a step to prevent further updates (forcing the agent to strictly use existing knowledge) or unlock them to resume learning.
 - **Content Inspection:** Expandable sections allow users to read the raw markdown content of the extracted learnings.
+- **Detailed Insights:** Displays **Total Iterations** and **Auto Lock Reason** (if applicable) for better transparency.
+- **Learning Caps:** Visualizes the **Success Learning Cap** (3 runs) and **Failure Learning Cap** (Max 2/run) status, indicating when learning extraction is capped to avoid redundancy.
 
 ## How to Access
+
+### Execution Logs (Group/Iteration Level)
 1. Open the **Workflow Canvas**.
-2. Click the **Execution Logs** button in the bottom toolbar.
-3. Select the desired **Run Folder** (e.g., `iteration-5`) to see the history for that specific execution.
+2. Click the **Execution Logs** button (📄 FileText icon) in the bottom toolbar.
+3. Select the desired **Iteration/Group** from the dropdown (e.g., `iteration-5` or `iteration-5/group-1`).
+4. View logs for that specific iteration/group execution.
+
+### Cost Analysis (Workflow Level)
+1. Open the **Workflow Canvas**.
+2. Click the **Cost Analysis** button (💰 DollarSign icon) in the bottom toolbar.
+3. View aggregate summary across all iterations, then expand individual iterations for detailed breakdowns.
+
+### Evaluation Reports (Workflow Level)
+1. Open the **Workflow Canvas**.
+2. Click the **Evaluation Reports** button (📊 BarChart3 icon) in the bottom toolbar.
+3. View aggregate summary and individual iteration reports.
+
+### Learnings (Workflow Level)
+1. Open the **Workflow Canvas**.
+2. Click the **Learnings** button (📚 BookOpen icon) in the bottom toolbar.
+3. View accumulated learnings across all workflow runs.

@@ -3962,6 +3962,263 @@ func (api *StreamingAPI) handleGetLogFile(w http.ResponseWriter, r *http.Request
 	w.Write([]byte(content))
 }
 
+// handleGetEvaluationReports handles getting evaluation reports for a workflow
+// Returns evaluation_report.json files from evaluation/runs/*/ folders
+func (api *StreamingAPI) handleGetEvaluationReports(w http.ResponseWriter, r *http.Request) {
+	// Enable CORS
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workspacePath := r.URL.Query().Get("workspace_path")
+	runFolder := r.URL.Query().Get("run_folder") // Optional: filter to specific run folder
+
+	if workspacePath == "" {
+		http.Error(w, "workspace_path parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate and clean workspace path
+	cleanedWorkspacePath := filepath.Clean(workspacePath)
+	if strings.Contains(cleanedWorkspacePath, "..") {
+		http.Error(w, "Invalid workspace path", http.StatusBadRequest)
+		return
+	}
+
+	// Evaluation reports are in evaluation/runs/{targetRunFolder}/evaluation_report.json
+	evaluationRunsPath := fmt.Sprintf("%s/evaluation/runs", cleanedWorkspacePath)
+
+	type EvaluationStepScore struct {
+		StepID          string `json:"step_id"`
+		StepTitle       string `json:"step_title"`
+		Score           int    `json:"score"`
+		MaxScore        int    `json:"max_score"`
+		Reasoning       string `json:"reasoning"`
+		Evidence        string `json:"evidence"`
+		SuccessCriteria string `json:"success_criteria"`
+	}
+
+	type EvaluationReport struct {
+		TargetRunFolder  string                `json:"target_run_folder"`
+		GeneratedAt      string                `json:"generated_at"`
+		TotalScore       int                   `json:"total_score"`
+		MaxPossibleScore int                   `json:"max_possible_score"`
+		ScorePercentage  float64               `json:"score_percentage"`
+		StepScores       []EvaluationStepScore `json:"step_scores"`
+		Summary          string                `json:"summary"`
+	}
+
+	type EvaluationReportEntry struct {
+		RunFolder string           `json:"run_folder"`
+		Report    EvaluationReport `json:"report"`
+	}
+
+	type EvaluationAggregate struct {
+		TotalRuns         int     `json:"total_runs"`
+		AverageScore      float64 `json:"average_score"`
+		AveragePercentage float64 `json:"average_percentage"`
+		HighestScore      int     `json:"highest_score"`
+		LowestScore       int     `json:"lowest_score"`
+		MaxPossibleScore  int     `json:"max_possible_score"`
+	}
+
+	type Response struct {
+		Success   bool                    `json:"success"`
+		Reports   []EvaluationReportEntry `json:"reports"`
+		Aggregate *EvaluationAggregate    `json:"aggregate,omitempty"`
+		Error     string                  `json:"error,omitempty"`
+	}
+
+	// List evaluation run folders
+	apiURL := getWorkspaceAPIURL() + "/api/documents"
+	req, err := http.NewRequestWithContext(r.Context(), "GET", apiURL, nil)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Response{Success: false, Error: fmt.Sprintf("Failed to create request: %v", err)})
+		return
+	}
+
+	q := req.URL.Query()
+	q.Add("folder", evaluationRunsPath)
+	q.Add("max_depth", "1")
+	req.URL.RawQuery = q.Encode()
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Response{Success: false, Error: fmt.Sprintf("Failed to list evaluation runs: %v", err)})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		// No evaluation runs folder exists yet - return empty response
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Response{Success: true, Reports: []EvaluationReportEntry{}})
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Response{Success: false, Error: fmt.Sprintf("Failed to list evaluation runs (status %d)", resp.StatusCode)})
+		return
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Response{Success: false, Error: fmt.Sprintf("Failed to read response: %v", err)})
+		return
+	}
+
+	// Parse folder listing
+	type FolderListingResponse struct {
+		Success bool                                `json:"success"`
+		Data    virtualtools.WorkspaceFolderListing `json:"data"`
+	}
+
+	var listResp FolderListingResponse
+	if err := json.Unmarshal(body, &listResp); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Response{Success: false, Error: fmt.Sprintf("Failed to parse folder listing: %v", err)})
+		return
+	}
+
+	var reports []EvaluationReportEntry
+
+	// Iterate through each run folder (e.g., "iteration-1/faisal", "iteration-2")
+	for _, item := range listResp.Data {
+		if item.Type != "folder" {
+			continue
+		}
+
+		// Extract folder name (the last segment of the path)
+		folderName := filepath.Base(item.FilePath)
+
+		// If run_folder filter is specified, only include matching folders
+		if runFolder != "" && !strings.HasPrefix(folderName, runFolder) && folderName != runFolder {
+			continue
+		}
+
+		// Check for evaluation_report.json in this folder
+		// Also check for nested group folders (e.g., iteration-1/faisal/evaluation_report.json)
+		reportPaths := []string{
+			fmt.Sprintf("%s/evaluation_report.json", item.FilePath),
+		}
+
+		// Also check subfolders for group-based evaluation runs
+		subFolderURL := getWorkspaceAPIURL() + "/api/documents"
+		subReq, _ := http.NewRequestWithContext(r.Context(), "GET", subFolderURL, nil)
+		subQ := subReq.URL.Query()
+		subQ.Add("folder", item.FilePath)
+		subQ.Add("max_depth", "1")
+		subReq.URL.RawQuery = subQ.Encode()
+
+		subResp, err := client.Do(subReq)
+		if err == nil && subResp.StatusCode == http.StatusOK {
+			subBody, _ := io.ReadAll(subResp.Body)
+			subResp.Body.Close()
+
+			var subListResp FolderListingResponse
+			if json.Unmarshal(subBody, &subListResp) == nil {
+				for _, subItem := range subListResp.Data {
+					if subItem.Type == "folder" {
+						subFolderName := filepath.Base(subItem.FilePath)
+						if runFolder != "" && !strings.Contains(subItem.FilePath, runFolder) {
+							continue
+						}
+						reportPaths = append(reportPaths, fmt.Sprintf("%s/evaluation_report.json", subItem.FilePath))
+						// Update folder name to include subfolder
+						_ = subFolderName // Used below when creating entries
+					}
+				}
+			}
+		}
+
+		// Try to read evaluation_report.json from each path
+		for _, reportPath := range reportPaths {
+			content, exists, err := readFileFromWorkspace(r.Context(), reportPath)
+			if err != nil || !exists {
+				continue
+			}
+
+			var report EvaluationReport
+			if err := json.Unmarshal([]byte(content), &report); err != nil {
+				continue
+			}
+
+			// Determine the run folder name for this report
+			// Extract from path: evaluation/runs/{run_folder}/evaluation_report.json
+			relPath := strings.TrimPrefix(reportPath, evaluationRunsPath+"/")
+			runFolderName := strings.TrimSuffix(relPath, "/evaluation_report.json")
+
+			reports = append(reports, EvaluationReportEntry{
+				RunFolder: runFolderName,
+				Report:    report,
+			})
+		}
+	}
+
+	// Sort reports by generated_at (most recent first)
+	sort.Slice(reports, func(i, j int) bool {
+		return reports[i].Report.GeneratedAt > reports[j].Report.GeneratedAt
+	})
+
+	// Calculate aggregate statistics if we have multiple reports
+	var aggregate *EvaluationAggregate
+	if len(reports) > 0 {
+		totalScore := 0
+		totalPercentage := 0.0
+		highestScore := 0
+		lowestScore := reports[0].Report.TotalScore
+		maxPossible := 0
+
+		for _, entry := range reports {
+			totalScore += entry.Report.TotalScore
+			totalPercentage += entry.Report.ScorePercentage
+
+			if entry.Report.TotalScore > highestScore {
+				highestScore = entry.Report.TotalScore
+			}
+			if entry.Report.TotalScore < lowestScore {
+				lowestScore = entry.Report.TotalScore
+			}
+			if entry.Report.MaxPossibleScore > maxPossible {
+				maxPossible = entry.Report.MaxPossibleScore
+			}
+		}
+
+		aggregate = &EvaluationAggregate{
+			TotalRuns:         len(reports),
+			AverageScore:      float64(totalScore) / float64(len(reports)),
+			AveragePercentage: totalPercentage / float64(len(reports)),
+			HighestScore:      highestScore,
+			LowestScore:       lowestScore,
+			MaxPossibleScore:  maxPossible,
+		}
+	}
+
+	response := Response{
+		Success:   true,
+		Reports:   reports,
+		Aggregate: aggregate,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
 // populateStepMetadata recursively traverses the plan to build a mapping from step IDs/paths to human-readable metadata
 func populateStepMetadata(steps []map[string]interface{}, prefix string, metadata map[string]map[string]string) {
 	for i, step := range steps {

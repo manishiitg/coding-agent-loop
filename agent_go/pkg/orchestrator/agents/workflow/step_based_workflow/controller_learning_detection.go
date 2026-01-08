@@ -63,13 +63,24 @@ type LearningMetadata struct {
 	// Note: LastConsolidationOutput removed - learning content is stored in files, not metadata
 }
 
+// getLearningsBasePath returns the correct learnings base path based on evaluation mode
+// In evaluation mode: "evaluation/learnings"
+// In regular mode: "learnings"
+func (hcpo *StepBasedWorkflowOrchestrator) getLearningsBasePath() string {
+	if hcpo.isEvaluationMode {
+		return "evaluation/learnings"
+	}
+	return "learnings"
+}
+
 // GetLearningMetadata reads and returns the learning metadata for a given step
 func (hcpo *StepBasedWorkflowOrchestrator) GetLearningMetadata(
 	ctx context.Context,
 	learningPathIdentifier string,
 ) (*LearningMetadata, error) {
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	metadataPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier, ".learning_metadata.json")
+	// Use relative path - ReadWorkspaceFile auto-prepends workspacePath
+	learningsBase := hcpo.getLearningsBasePath()
+	metadataPath := filepath.Join(learningsBase, learningPathIdentifier, ".learning_metadata.json")
 
 	content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, metadataPath)
 	if err != nil {
@@ -115,8 +126,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	validationPassed bool,
 	usedLLM string,
 ) (bool, error) {
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	metadataPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier, ".learning_metadata.json")
+	// Use relative path - ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath
+	learningsBase := hcpo.getLearningsBasePath()
+	metadataPath := filepath.Join(learningsBase, learningPathIdentifier, ".learning_metadata.json")
 
 	// Read existing metadata or create new
 	var metadata LearningMetadata
@@ -282,8 +294,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateConsolidationMetadata(
 	consolidationOutput string,
 	newLearningContent string,
 ) error {
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	metadataPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier, ".learning_metadata.json")
+	// Use relative path - ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath
+	learningsBase := hcpo.getLearningsBasePath()
+	metadataPath := filepath.Join(learningsBase, learningPathIdentifier, ".learning_metadata.json")
 
 	// Read existing metadata or create new
 	var metadata LearningMetadata
@@ -460,8 +473,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateUnlockMetadata(
 	learningPathIdentifier string,
 	unlockReason string,
 ) error {
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	metadataPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier, ".learning_metadata.json")
+	// Use relative path - ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath
+	learningsBase := hcpo.getLearningsBasePath()
+	metadataPath := filepath.Join(learningsBase, learningPathIdentifier, ".learning_metadata.json")
 
 	// Read existing metadata or create new
 	var metadata LearningMetadata
@@ -592,9 +606,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) unlockStepLearningsAndResetMetadata(
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to reset validation failure count for %s: %v", stepPath, err))
 	}
 
-	// Reset metadata counter
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	metadataPath := filepath.Join(baseWorkspacePath, "learnings", learningPathIdentifier, ".learning_metadata.json")
+	// Reset metadata counter - use relative path (ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath)
+	learningsBase := hcpo.getLearningsBasePath()
+	metadataPath := filepath.Join(learningsBase, learningPathIdentifier, ".learning_metadata.json")
 
 	content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, metadataPath)
 	if err == nil {
@@ -670,7 +684,8 @@ func createUnlockLearningsFunctionFromBase(bo *orchestrator.BaseOrchestrator, wo
 				}
 
 				// Write updated configs (using standalone WriteStepConfigs logic)
-				configPath := filepath.Join(workspacePath, "planning", "step_config.json")
+				// Use relative path - WriteWorkspaceFile auto-prepends workspacePath
+				configPath := filepath.Join("planning", "step_config.json")
 				configFile := StepConfigFile{Steps: configs}
 				jsonData, err := json.MarshalIndent(configFile, "", "  ")
 				if err == nil {
@@ -681,8 +696,9 @@ func createUnlockLearningsFunctionFromBase(bo *orchestrator.BaseOrchestrator, wo
 			}
 		}
 
-		// Reset metadata counter
-		metadataPath := filepath.Join(workspacePath, "learnings", learningPathIdentifier, ".learning_metadata.json")
+		// Reset metadata counter - use relative path (ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath)
+		// Note: This function is used for plan improvement which is NOT in evaluation mode, so always use "learnings/"
+		metadataPath := filepath.Join("learnings", learningPathIdentifier, ".learning_metadata.json")
 		content, err := bo.ReadWorkspaceFile(ctx, metadataPath)
 		if err == nil {
 			// Metadata exists - reset counter

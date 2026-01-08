@@ -229,20 +229,30 @@ func getLearningFolderPath(baseWorkspacePath string, stepPath string) string {
 	return fmt.Sprintf("%s/learnings/step-%d", baseWorkspacePath, pathInfo.ParentStepNumber)
 }
 
-// getLearningFolderPathByStepID returns the learning folder path using step ID (NEW FORMAT)
+// getLearningFolderPathByStepID returns the RELATIVE learning folder path using step ID (NEW FORMAT)
 // For all steps (regular, branch, sub-agent): "learnings/{stepID}/"
+// For evaluation steps (when isEvaluationMode=true): "evaluation/learnings/{stepID}/"
 // All steps have their own unique step IDs, so we just use the stepID directly
-func getLearningFolderPathByStepID(baseWorkspacePath string, stepID string, stepPath string) string {
+// NOTE: This returns a RELATIVE path for use with workspace functions (ReadWorkspaceFile, WriteWorkspaceFile, etc.)
+// The baseWorkspacePath parameter is IGNORED and kept only for backward compatibility - will be removed in future
+func getLearningFolderPathByStepID(baseWorkspacePath string, stepID string, stepPath string, isEvaluationMode bool) string {
 	// All steps (regular, branch, sub-agent) have their own unique step IDs
 	// Just use the stepID directly without any suffix
-	return fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
+	// Return RELATIVE path - workspace functions auto-prepend workspacePath
+	if isEvaluationMode {
+		return fmt.Sprintf("evaluation/learnings/%s", stepID)
+	}
+	return fmt.Sprintf("learnings/%s", stepID)
 }
 
 // ensureStepLearningsFolderExists ensures the step learnings folder exists by creating it if needed
-func (hcpo *StepBasedWorkflowOrchestrator) ensureStepLearningsFolderExists(ctx context.Context, stepLearningsPath string) error {
+// Takes a RELATIVE path and constructs the absolute path internally using GetWorkspacePath()
+func (hcpo *StepBasedWorkflowOrchestrator) ensureStepLearningsFolderExists(ctx context.Context, stepLearningsRelativePath string) error {
+	// Construct absolute path for os.MkdirAll (which requires absolute paths)
+	absolutePath := filepath.Join(hcpo.GetWorkspacePath(), stepLearningsRelativePath)
 	// Create directory if it doesn't exist
-	if err := os.MkdirAll(stepLearningsPath, 0755); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step learnings folder: %s: %v (continuing)", stepLearningsPath, err))
+	if err := os.MkdirAll(absolutePath, 0755); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step learnings folder: %s: %v (continuing)", absolutePath, err))
 		return fmt.Errorf("failed to create step learnings folder: %w", err)
 	}
 	return nil
@@ -1154,8 +1164,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// Get learning file paths for user message (when KeepLearningFull is false)
 				if !keepLearningFull {
 					// Generate file paths list for user message
-					baseWorkspacePath := hcpo.GetWorkspacePath()
-					stepLearningsPath := getLearningFolderPathByStepID(baseWorkspacePath, step.GetID(), stepPath)
+					// getLearningFolderPathByStepID now returns RELATIVE path - workspace functions auto-prepend workspacePath
+					stepLearningsPath := getLearningFolderPathByStepID("", step.GetID(), stepPath, execCtx.IsEvaluationMode)
 					learningFiles, readErr := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
 					if readErr == nil && len(learningFiles) > 0 {
 						// Build list of file paths
@@ -1420,64 +1430,62 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d execution completed successfully (attempt %d)", stepIndex+1, retryAttempt))
 
 				// Store execution response to workspace (if enabled)
-				if hcpo.saveValidationResponses {
-					// Determine validation workspace path (same logic as validation agent)
-					var validationWorkspacePath string
-					if hcpo.selectedRunFolder != "" {
-						validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+				// Determine validation workspace path (same logic as validation agent)
+				var validationWorkspacePath string
+				if hcpo.selectedRunFolder != "" {
+					validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+				} else {
+					validationWorkspacePath = hcpo.GetWorkspacePath()
+				}
+
+				// Get execution logs folder path based on stepPath
+				executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepPath)
+
+				// Create unique filename base based on retry attempt and loop iteration
+				// Format: execution-attempt-{retryAttempt}-iteration-{loopIterationCount}
+				filenameBase := fmt.Sprintf("execution-attempt-%d-iteration-%d", retryAttempt, loopIterationCount)
+
+				// Save execution result to separate file
+				executionResultFilePath := fmt.Sprintf("%s/%s.json", executionLogsFolderPath, filenameBase)
+				executionResponse := map[string]interface{}{
+					"step_index":       stepIndex + 1,
+					"step_path":        stepPath,
+					"retry_attempt":    retryAttempt,
+					"loop_iteration":   loopIterationCount,
+					"execution_result": executionResult,
+					"timestamp":        time.Now().Format(time.RFC3339),
+				}
+
+				// Marshal and save execution result
+				executionJSON, err := json.MarshalIndent(executionResponse, "", "  ")
+				if err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal execution response to JSON: %v", err))
+				} else {
+					if err := hcpo.WriteWorkspaceFile(ctx, executionResultFilePath, string(executionJSON)); err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write execution response to %s: %v", executionResultFilePath, err))
 					} else {
-						validationWorkspacePath = hcpo.GetWorkspacePath()
 					}
+				}
 
-					// Get execution logs folder path based on stepPath
-					executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepPath)
+				// Save conversation history to separate file
+				conversationFilePath := fmt.Sprintf("%s/%s-conversation.json", executionLogsFolderPath, filenameBase)
+				conversationResponse := map[string]interface{}{
+					"step_index":           stepIndex + 1,
+					"step_path":            stepPath,
+					"retry_attempt":        retryAttempt,
+					"loop_iteration":       loopIterationCount,
+					"conversation_history": executionConversationHistory, // Store original JSON structure
+					"timestamp":            time.Now().Format(time.RFC3339),
+				}
 
-					// Create unique filename base based on retry attempt and loop iteration
-					// Format: execution-attempt-{retryAttempt}-iteration-{loopIterationCount}
-					filenameBase := fmt.Sprintf("execution-attempt-%d-iteration-%d", retryAttempt, loopIterationCount)
-
-					// Save execution result to separate file
-					executionResultFilePath := fmt.Sprintf("%s/%s.json", executionLogsFolderPath, filenameBase)
-					executionResponse := map[string]interface{}{
-						"step_index":       stepIndex + 1,
-						"step_path":        stepPath,
-						"retry_attempt":    retryAttempt,
-						"loop_iteration":   loopIterationCount,
-						"execution_result": executionResult,
-						"timestamp":        time.Now().Format(time.RFC3339),
-					}
-
-					// Marshal and save execution result
-					executionJSON, err := json.MarshalIndent(executionResponse, "", "  ")
-					if err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal execution response to JSON: %v", err))
+				// Marshal and save conversation history
+				conversationJSON, err := json.MarshalIndent(conversationResponse, "", "  ")
+				if err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal conversation history to JSON: %v", err))
+				} else {
+					if err := hcpo.WriteWorkspaceFile(ctx, conversationFilePath, string(conversationJSON)); err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write conversation history to %s: %v", conversationFilePath, err))
 					} else {
-						if err := hcpo.WriteWorkspaceFile(ctx, executionResultFilePath, string(executionJSON)); err != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write execution response to %s: %v", executionResultFilePath, err))
-						} else {
-						}
-					}
-
-					// Save conversation history to separate file
-					conversationFilePath := fmt.Sprintf("%s/%s-conversation.json", executionLogsFolderPath, filenameBase)
-					conversationResponse := map[string]interface{}{
-						"step_index":           stepIndex + 1,
-						"step_path":            stepPath,
-						"retry_attempt":        retryAttempt,
-						"loop_iteration":       loopIterationCount,
-						"conversation_history": executionConversationHistory, // Store original JSON structure
-						"timestamp":            time.Now().Format(time.RFC3339),
-					}
-
-					// Marshal and save conversation history
-					conversationJSON, err := json.MarshalIndent(conversationResponse, "", "  ")
-					if err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal conversation history to JSON: %v", err))
-					} else {
-						if err := hcpo.WriteWorkspaceFile(ctx, conversationFilePath, string(conversationJSON)); err != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write conversation history to %s: %v", conversationFilePath, err))
-						} else {
-						}
 					}
 				}
 
@@ -3418,8 +3426,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) readLearningHistory(
 
 	// Determine step folder path - learnings are at workspace root (not inside runs/)
 	// Use step ID based path for learnings (new format)
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	stepLearningsPath := getLearningFolderPathByStepID(baseWorkspacePath, stepID, stepPath)
+	// In evaluation mode, learnings are stored in evaluation/learnings/
+	// getLearningFolderPathByStepID now returns RELATIVE path - workspace functions auto-prepend workspacePath
+	stepLearningsPath := getLearningFolderPathByStepID("", stepID, stepPath, hcpo.isEvaluationMode)
 
 	// Read learning files from step folder (works for both regular and branch steps)
 	// This automatically excludes metadata files and checks all subfolders (code/, scripts/)

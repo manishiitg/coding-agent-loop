@@ -23,17 +23,15 @@ i) prompt tempaltes, need to check variables on compile time
 
 18. we need add folder guard in custom shell exec -- done
 
-16. diff patch tool, corrupts json
- --- done
-
 21. see how we can integrate learning locking and make it more automatic
 -- done
 
 22. we should have a human notification tool also.
 
-
 32. remove locking learnings in orchestrator, it should always learn.. or maybe we need thinkg of learnins for orchestrator differently? -- done
+
 26. learnings vs skills? 
+
 27. workspace, sheel exec is reading env variable which is an issue -- done
 
 28.. the context eidting/ summiazation, token call, we do after a turn.. and not after a tool call
@@ -41,7 +39,7 @@ i) prompt tempaltes, need to check variables on compile time
 29.. get credit card, mutual funds, itr complete finacal info
 29. we cannot always, delete all execution when starting a research agent might want to reuse execution
 
-30. refractor how llm are setup and llm fallback
+30. refractor how llm are setup and llm fallback - done
 
 35. fix tests most not relevent anymore - done
 
@@ -49,7 +47,7 @@ i) prompt tempaltes, need to check variables on compile time
 
 37. auto choose models based on llm and generation?
 
-38. plan debugging, does do changelogs?
+38. plan debugging, does do changelogs? - done
 
 39. check learning for validation failure in a loop
 

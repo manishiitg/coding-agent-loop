@@ -150,46 +150,44 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 		branchExecuted = "if_true"
 	}
 
-	// Store conditional evaluation result to logs (if enabled)
+	// Store conditional evaluation result to logs (always enabled)
 	// Note: conditionalStepPath is already defined earlier in the function
-	if hcpo.saveValidationResponses {
-		// Determine validation workspace path (same logic as validation agent)
-		var validationWorkspacePath string
-		if hcpo.selectedRunFolder != "" {
-			validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	// Determine validation workspace path (same logic as validation agent)
+	var validationWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	} else {
+		validationWorkspacePath = hcpo.GetWorkspacePath()
+	}
+
+	// Get validation folder path based on conditionalStepPath (step-{X})
+	validationFolderPath := getValidationFolderPath(validationWorkspacePath, conditionalStepPath)
+
+	// Save conditional evaluation result
+	conditionalEvaluationFilePath := fmt.Sprintf("%s/conditional-evaluation.json", validationFolderPath)
+	conditionalEvaluationResponse := map[string]interface{}{
+		"step_index":            stepIndex + 1,
+		"step_path":             conditionalStepPath,
+		"conditional_step_id":   step.GetID(),
+		"condition_question":    conditionalStep.ConditionQuestion,
+		"condition_result":      conditionResult,
+		"condition_reason":      conditionReason,
+		"branch_executed":       branchExecuted,
+		"if_true_next_step_id":  conditionalStep.IfTrueNextStepID,
+		"if_false_next_step_id": conditionalStep.IfFalseNextStepID,
+		"depth":                 depth,
+		"timestamp":             time.Now().Format(time.RFC3339),
+	}
+
+	// Marshal and save conditional evaluation result
+	conditionalJSON, err := json.MarshalIndent(conditionalEvaluationResponse, "", "  ")
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal conditional evaluation response to JSON: %v", err))
+	} else {
+		if err := hcpo.WriteWorkspaceFile(ctx, conditionalEvaluationFilePath, string(conditionalJSON)); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write conditional evaluation response to %s: %v", conditionalEvaluationFilePath, err))
 		} else {
-			validationWorkspacePath = hcpo.GetWorkspacePath()
-		}
-
-		// Get validation folder path based on conditionalStepPath (step-{X})
-		validationFolderPath := getValidationFolderPath(validationWorkspacePath, conditionalStepPath)
-
-		// Save conditional evaluation result
-		conditionalEvaluationFilePath := fmt.Sprintf("%s/conditional-evaluation.json", validationFolderPath)
-		conditionalEvaluationResponse := map[string]interface{}{
-			"step_index":            stepIndex + 1,
-			"step_path":             conditionalStepPath,
-			"conditional_step_id":   step.GetID(),
-			"condition_question":    conditionalStep.ConditionQuestion,
-			"condition_result":      conditionResult,
-			"condition_reason":      conditionReason,
-			"branch_executed":       branchExecuted,
-			"if_true_next_step_id":  conditionalStep.IfTrueNextStepID,
-			"if_false_next_step_id": conditionalStep.IfFalseNextStepID,
-			"depth":                 depth,
-			"timestamp":             time.Now().Format(time.RFC3339),
-		}
-
-		// Marshal and save conditional evaluation result
-		conditionalJSON, err := json.MarshalIndent(conditionalEvaluationResponse, "", "  ")
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal conditional evaluation response to JSON: %v", err))
-		} else {
-			if err := hcpo.WriteWorkspaceFile(ctx, conditionalEvaluationFilePath, string(conditionalJSON)); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write conditional evaluation response to %s: %v", conditionalEvaluationFilePath, err))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("💾 Conditional evaluation response saved to: %s", conditionalEvaluationFilePath))
-			}
+			hcpo.GetLogger().Info(fmt.Sprintf("💾 Conditional evaluation response saved to: %s", conditionalEvaluationFilePath))
 		}
 	}
 

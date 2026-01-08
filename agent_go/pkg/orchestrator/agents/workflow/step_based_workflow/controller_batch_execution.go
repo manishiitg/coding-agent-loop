@@ -321,6 +321,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		result.CompletedGroupIDs = append(result.CompletedGroupIDs, group.GroupID)
 		hcpo.emitBatchGroupEndEvent(ctx, group.GroupID, groupIndex, totalGroups, true, "", groupDuration, len(progress.CompletedStepIndices), len(breakdownSteps), runFolder, remainingGroups)
 
+		// Auto-evaluation: Run scoring for this group if evaluation_plan.json exists
+		if !hcpo.isEvaluationMode {
+			if evalErr := hcpo.MaybeRunAutoEvaluation(ctx); evalErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Auto-evaluation failed for group %s: %v", group.GroupID, evalErr))
+				// Don't fail the group if auto-evaluation fails
+			}
+		}
+
 		// If single step mode was active, stop batch execution after this group
 		// Single step mode should only run one group, not continue to additional groups
 		if groupSetup.Context.RunSingleStepOnly {

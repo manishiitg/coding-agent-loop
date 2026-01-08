@@ -246,33 +246,31 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 			hcpo.GetLogger().Info(fmt.Sprintf("💾 Orchestration routing entry appended to: %s", orchestrationLogFilePath))
 		}
 
-		// Store main step execution result to logs (if enabled)
-		if hcpo.saveValidationResponses {
-			validationFolderPath := getValidationFolderPath(validationWorkspacePath, orchestrationStepPath)
-			orchestrationLogFilePath := fmt.Sprintf("%s/orchestration-execution.json", validationFolderPath)
-			mainStepEntry := map[string]interface{}{
-				"type":                  "main_step",
-				"step_index":            stepIndex + 1,
-				"step_path":             mainStepPath,
-				"orchestration_step_id": step.GetID(),
-				"iteration":             orchestrationIteration + 1,
-				"orchestration_response": map[string]interface{}{
-					"selected_route_id":                  orchestrationResponse.SelectedRouteID,
-					"success_criteria_met":               orchestrationResponse.SuccessCriteriaMet,
-					"success_reasoning":                  orchestrationResponse.SuccessReasoning,
-					"instructions_to_sub_agent":          orchestrationResponse.InstructionsToSubAgent,
-					"success_criteria_for_sub_agent":     orchestrationResponse.SuccessCriteriaForSubAgent,
-					"context_dependencies_for_sub_agent": orchestrationResponse.ContextDependenciesForSubAgent,
-					"context_output_for_sub_agent":       orchestrationResponse.ContextOutputForSubAgent,
-				},
-				"timestamp": time.Now().Format(time.RFC3339),
-			}
+		// Store main step execution result to logs (always enabled)
+		// validationFolderPath is already defined above
+		// orchestrationLogFilePath is already defined above
+		mainStepEntry := map[string]interface{}{
+			"type":                  "main_step",
+			"step_index":            stepIndex + 1,
+			"step_path":             mainStepPath,
+			"orchestration_step_id": step.GetID(),
+			"iteration":             orchestrationIteration + 1,
+			"orchestration_response": map[string]interface{}{
+				"selected_route_id":                  orchestrationResponse.SelectedRouteID,
+				"success_criteria_met":               orchestrationResponse.SuccessCriteriaMet,
+				"success_reasoning":                  orchestrationResponse.SuccessReasoning,
+				"instructions_to_sub_agent":          orchestrationResponse.InstructionsToSubAgent,
+				"success_criteria_for_sub_agent":     orchestrationResponse.SuccessCriteriaForSubAgent,
+				"context_dependencies_for_sub_agent": orchestrationResponse.ContextDependenciesForSubAgent,
+				"context_output_for_sub_agent":       orchestrationResponse.ContextOutputForSubAgent,
+			},
+			"timestamp": time.Now().Format(time.RFC3339),
+		}
 
-			if err := hcpo.appendOrchestrationLogEntry(ctx, orchestrationLogFilePath, mainStepEntry); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to append orchestration main step entry to log: %v", err))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("💾 Orchestration main step entry appended to: %s", orchestrationLogFilePath))
-			}
+		if err := hcpo.appendOrchestrationLogEntry(ctx, orchestrationLogFilePath, mainStepEntry); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to append orchestration main step entry to log: %v", err))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("💾 Orchestration main step entry appended to: %s", orchestrationLogFilePath))
 		}
 
 		// Store structured response in the step for event emission
@@ -645,8 +643,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 
 			// Read existing orchestrator learnings
 			existingLearningsContent := ""
-			baseWorkspacePath := hcpo.GetWorkspacePath()
-			stepLearningsPath := getLearningFolderPathByStepID(baseWorkspacePath, orchestrationStepID, orchestrationStepPath)
+			// getLearningFolderPathByStepID now returns RELATIVE path - workspace functions auto-prepend workspacePath
+			stepLearningsPath := getLearningFolderPathByStepID("", orchestrationStepID, orchestrationStepPath, execCtx.IsEvaluationMode)
 			orchestratorLearningPath := fmt.Sprintf("%s/orchestrator_learning.md", stepLearningsPath)
 			existingLearnings, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningPath)
 			if err == nil && existingLearnings != "" {
@@ -1043,8 +1041,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationOrchestratorStep(
 		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled for orchestration step %d - skipping orchestrator learning history reading", stepIndex+1))
 	} else {
 		// Read orchestrator learnings from orchestrator_learning.md
-		baseWorkspacePath := hcpo.GetWorkspacePath()
-		stepLearningsPath := getLearningFolderPathByStepID(baseWorkspacePath, orchestrationStepID, stepPath)
+		// getLearningFolderPathByStepID now returns RELATIVE path - workspace functions auto-prepend workspacePath
+		stepLearningsPath := getLearningFolderPathByStepID("", orchestrationStepID, stepPath, execCtx.IsEvaluationMode)
 		orchestratorLearningPath := fmt.Sprintf("%s/orchestrator_learning.md", stepLearningsPath)
 
 		orchestratorLearnings, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningPath)
@@ -1192,7 +1190,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getOrchestrationOrchestratorAgentForS
 	// Additional fallback for orchestration orchestrator: if no ExecutionLLM found, try ConditionalLLM
 	// This is specific to orchestration orchestrator (similar purpose - structured decision making)
 	// Only use ConditionalLLM if we got orchestrator default (meaning no step/preset ExecutionLLM was found, and no tempLLM was used)
-	if orchestrationStepConfig != nil && orchestrationStepConfig.ExecutionLLM == nil && orchestrationStepConfig.ConditionalLLM != nil {
+	if orchestrationStepConfig != nil && orchestrationStepConfig.ExecutionLLM == nil && orchestrationStepConfig.ConditionalLLM != nil && orchestrationStepConfig.ConditionalLLM.Provider != "" && orchestrationStepConfig.ConditionalLLM.ModelID != "" {
 		// Check if we got orchestrator default (no tempLLM, no step ExecutionLLM, no preset ExecutionLLM)
 		// If so, use ConditionalLLM as an additional fallback before orchestrator default
 		if llmConfig.Primary.Provider == orchestratorLLMConfig.Primary.Provider && llmConfig.Primary.ModelID == orchestratorLLMConfig.Primary.ModelID {

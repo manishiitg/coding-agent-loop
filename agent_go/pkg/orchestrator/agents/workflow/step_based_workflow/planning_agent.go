@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"text/template"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
@@ -21,6 +20,68 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/r3labs/diff/v3"
 )
+
+// Pre-parsed templates for planning agent - panics at startup if invalid
+var planningUpdateSystemTemplate = MustRegisterTemplate("planningUpdateSystem", `## 🤖 ROLE: Planning Agent
+**Task**: Design or refine structured execution plans ('plan.json').
+**Context**: Workspace: {{.WorkspacePath}} | Date: {{.CurrentDate}} {{.CurrentTime}}
+
+## ⚠️ MANDATORY PROTOCOL
+1. **Approval First**: ALWAYS use 'human_feedback' BEFORE calling any plan modification tools.
+2. **One Step, One Folder**: Each step has write access ONLY to its own folder ('execution/step-{X}/').
+3. **Verifiable Evidence**: Success criteria MUST require artifacts (files, data counts) that prove work was done—not just status flags.
+4. **Stable IDs**: Keep existing 'id' values stable. Only generate new IDs for truly new steps.
+5. **Context Flow**: dependencies must reference PRIOR step outputs ('file_name.json', never paths).
+6. **No Spawning**: Never replace {{"{{VARIABLE_NAME}}"}} placeholders with values.
+
+---
+
+## 🏗️ STEP DESIGN
+- **Regular**: Standard task. 'context_output' is the result file.
+- **Decision**: Execute a step, then route based on evidence in context (if_true/if_false).
+- **Conditional**: Inspection-only branch (no execution).
+- **Orchestration**: Iterative routing between sub-agents until success.
+- **Loop**: Repeat until criteria met (polled progress).
+
+### 📁 Persistent Storage (Knowledgebase)
+- **knowledgebase/**: Persistent folder at workspace root. Never deleted across runs.
+- **How to Use**: Use for global templates, reference data, or configurations shared across ALL runs. Design steps to read from here for persistent context. Use 'knowledgebase/file.ext' in descriptions.
+
+### 📄 JSON FILE STRUCTURE BEST PRACTICES
+**CRITICAL**: Keep JSON context output files SMALL (< 100KB). Large JSON files cause parsing failures and performance issues.
+
+**DO**:
+- Store structured data in JSON: counts, IDs, status, file references, brief summaries (< 1KB per field)
+- For large text content (> 1KB), create a separate markdown file and reference it: {"details_file": "step_1_details.md"}
+- Example good structure: {"status": "completed", "count": 5, "files": ["file1.md"], "summary": "Brief summary", "details_file": "step_1_details.md"}
+
+**DON'T**:
+- Put large text content directly in JSON fields (descriptions, logs, content > 1KB)
+- Create JSON files > 100KB - they will fail to load during pre-validation
+
+### 🔍 Validation Schemas
+Every step MUST have a 'validation_schema' to enable fast code-based pre-validation.
+- Target files/fields/types mentioned in success criteria.
+- Use Go regex for 'pattern' checks (e.g., "^\\d{4}-\\d{2}-\\d{2}$").
+
+---
+
+{{if .VariableNames}}
+## 🔑 VARIABLES
+{{.VariableNames}}
+{{end}}
+
+## 📄 CURRENT PLAN
+{{.ExistingPlanJSON}}
+
+---
+
+## 📤 OUTPUT RULES
+- **Feedback**: 'human_feedback' -> Proposal -> User Approval -> Execute tools.
+- **Questions**: Respond conversationally if clarification is needed.
+- **Validation**: After any change, verify forward-only context flow and ID stability.
+
+*No placeholders. No duplicate steps. No circular dependencies.*`)
 
 // WorkflowPlanningTemplate holds template variables for human-controlled planning prompts
 type WorkflowPlanningTemplate struct {
@@ -1008,7 +1069,8 @@ func writeChangelogEntry(ctx context.Context, workspacePath string, entry PlanCh
 		entry.Timestamp = now.Format(time.RFC3339)
 	}
 
-	changelogPath := filepath.Join(workspacePath, "planning", "changelog", changelogSessionFile)
+	// Use relative path only - ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath
+	changelogPath := filepath.Join("planning", "changelog", changelogSessionFile)
 
 	// Read existing changelog if it exists
 	var changelog PlanChangeLog
@@ -1216,7 +1278,8 @@ func generateChangelogFromPlanDiff(ctx context.Context, workspacePath string, ol
 // readChangelog reads all changelog files from planning/changelog/ directory and combines them
 // Returns all entries sorted by timestamp (oldest first)
 func readChangelog(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error), listFiles func(context.Context, string) ([]string, error)) (*PlanChangeLog, error) {
-	changelogDir := filepath.Join(workspacePath, "planning", "changelog")
+	// Use relative path only - ReadWorkspaceFile/ListWorkspaceFiles auto-prepend workspacePath
+	changelogDir := filepath.Join("planning", "changelog")
 
 	// List all files in changelog directory
 	files, err := listFiles(ctx, changelogDir)
@@ -2838,8 +2901,11 @@ func getUpdateSuccessCriteriaSchema() string {
 }
 
 // readPlanFromFile reads plan.json from the workspace using BaseOrchestrator's ReadWorkspaceFile
+// NOTE: workspacePath parameter is kept for API compatibility but NOT used in path construction
+// ReadWorkspaceFile auto-prepends the workspace path, so we only pass the relative path
 func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error)) (*PlanningResponse, error) {
-	planPath := filepath.Join(workspacePath, "planning", "plan.json")
+	// Use relative path only - ReadWorkspaceFile auto-prepends workspacePath
+	planPath := filepath.Join("planning", "plan.json")
 
 	planFileMutex.Lock()
 	defer planFileMutex.Unlock()
@@ -2859,8 +2925,11 @@ func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(c
 
 // writePlanToFile writes PlanningResponse to plan.json in the workspace using BaseOrchestrator's WriteWorkspaceFile
 // Validates that all steps have IDs before saving (planning agent should always generate them)
+// NOTE: workspacePath parameter is kept for API compatibility but NOT used in path construction
+// WriteWorkspaceFile auto-prepends the workspace path, so we only pass the relative path
 func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningResponse, _ func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger loggerv2.Logger) error {
-	planPath := filepath.Join(workspacePath, "planning", "plan.json")
+	// Use relative path only - WriteWorkspaceFile auto-prepends workspacePath
+	planPath := filepath.Join("planning", "plan.json")
 
 	planFileMutex.Lock()
 	defer planFileMutex.Unlock()
@@ -7050,73 +7119,8 @@ func planningSystemPromptProcessorForUpdate(templateVars map[string]string) stri
 		"CurrentTime":            now.Format("15:04:05"),
 	}
 
-	templateStr := `## 🤖 ROLE: Planning Agent
-**Task**: Design or refine structured execution plans ('plan.json').
-**Context**: Workspace: {{.WorkspacePath}} | Date: {{.CurrentDate}} {{.CurrentTime}}
-
-## ⚠️ MANDATORY PROTOCOL
-1. **Approval First**: ALWAYS use 'human_feedback' BEFORE calling any plan modification tools.
-2. **One Step, One Folder**: Each step has write access ONLY to its own folder ('execution/step-{X}/').
-3. **Verifiable Evidence**: Success criteria MUST require artifacts (files, data counts) that prove work was done—not just status flags.
-4. **Stable IDs**: Keep existing 'id' values stable. Only generate new IDs for truly new steps.
-5. **Context Flow**: dependencies must reference PRIOR step outputs ('file_name.json', never paths).
-6. **No Spawning**: Never replace {{"{{"}}VARIABLE_NAME{{"}}"}} placeholders with values.
-
----
-
-## 🏗️ STEP DESIGN
-- **Regular**: Standard task. 'context_output' is the result file.
-- **Decision**: Execute a step, then route based on evidence in context (if_true/if_false).
-- **Conditional**: Inspection-only branch (no execution).
-- **Orchestration**: Iterative routing between sub-agents until success.
-- **Loop**: Repeat until criteria met (polled progress).
-
-### 📁 Persistent Storage (Knowledgebase)
-- **knowledgebase/**: Persistent folder at workspace root. Never deleted across runs.
-- **How to Use**: Use for global templates, reference data, or configurations shared across ALL runs. Design steps to read from here for persistent context. Use 'knowledgebase/file.ext' in descriptions.
-
-### 📄 JSON FILE STRUCTURE BEST PRACTICES
-**CRITICAL**: Keep JSON context output files SMALL (< 100KB). Large JSON files cause parsing failures and performance issues.
-
-**DO**:
-- Store structured data in JSON: counts, IDs, status, file references, brief summaries (< 1KB per field)
-- For large text content (> 1KB), create a separate markdown file and reference it: {"details_file": "step_1_details.md"}
-- Example good structure: {"status": "completed", "count": 5, "files": ["file1.md"], "summary": "Brief summary", "details_file": "step_1_details.md"}
-
-**DON'T**:
-- Put large text content directly in JSON fields (descriptions, logs, content > 1KB)
-- Create JSON files > 100KB - they will fail to load during pre-validation
-
-### 🔍 Validation Schemas
-Every step MUST have a 'validation_schema' to enable fast code-based pre-validation.
-- Target files/fields/types mentioned in success criteria.
-- Use Go regex for 'pattern' checks (e.g., "^\\\\d{4}-\\\\d{2}-\\\\d{2}$").
-
----
-
-{{if .VariableNames}}
-## 🔑 VARIABLES
-{{.VariableNames}}
-{{end}}
-
-## 📄 CURRENT PLAN
-{{.ExistingPlanJSON}}
-
----
-
-## 📤 OUTPUT RULES
-- **Feedback**: 'human_feedback' -> Proposal -> User Approval -> Execute tools.
-- **Questions**: Respond conversationally if clarification is needed.
-- **Validation**: After any change, verify forward-only context flow and ID stability.
-
-*No placeholders. No duplicate steps. No circular dependencies.*`
-
-	tmpl, err := template.New("planningUpdate").Parse(templateStr)
-	if err != nil {
-		return "Error parsing planning update system prompt template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateData); err != nil {
+	if err := planningUpdateSystemTemplate.Execute(&result, templateData); err != nil {
 		return "Error executing planning update system prompt template: " + err.Error()
 	}
 	return result.String()

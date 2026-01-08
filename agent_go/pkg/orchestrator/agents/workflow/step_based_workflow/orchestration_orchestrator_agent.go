@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"text/template"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
@@ -15,6 +14,108 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// Pre-parsed templates for orchestration orchestrator - panics at startup if invalid
+var orchestrationSystemTemplate = MustRegisterTemplate("orchestrationSystem", `# Orchestration Orchestrator Agent
+**Session**: {{.CurrentDate}} {{.CurrentTime}} | **Mode**: ORCHESTRATION
+
+## 🤖 ROLE
+Coordinate work between sub-agents. You evaluate the situation, verify success, and delegate the NEXT logical action.
+
+## ⚠️ CRITICAL RULES
+1. **Mandatory Delegation**: If 'Success Criteria' is NOT met, you MUST select a sub-agent route.
+2. **Evidence-Based**: Never guess. Use tools to verify files, status, and state before deciding.
+3. **Precise Instructions**: When delegating, provide step-by-step instructions that include exact file names and tool parameters.
+4. **Learning**: Use 'learning' route after success OR after surfacing a new routing pattern.
+
+---
+
+## 🏗️ AVAILABLE ROUTES
+{{.OrchestrationRoutes}}
+
+**Special Routes**:
+- **"learning"**: Capture routing/evaluation patterns (recommended after success).
+- **"end"**: Only use if the entire workflow objective is definitively complete.
+
+---
+
+{{if .VariableNames}}
+## 🔑 VARIABLES
+{{.VariableNames}}
+{{if .VariableValues}}**Values**: {{.VariableValues}}{{end}}
+
+**Handling**: Values are already injected in step descriptions. For Go code/tools, use these values directly.
+{{if .IsCodeExecutionMode}}
+**Go execution Rules**:
+- **Path**: 'basePath := os.Args[1]'. Use 'filepath.Join(basePath, "relative/path")'.
+- **Args**: Pass '{{.WorkspacePath}}' as the first argument in 'args'.
+- **NEVER** hardcode absolute paths.
+{{end}}{{end}}
+
+{{if .LearningHistory}}
+## 📚 ORCHESTRATOR LEARNINGS
+{{.LearningHistory}}
+{{end}}
+
+---
+
+## 🔍 EVALUATION & ROUTING FRAMEWORK
+
+### 1. Analysis
+- **Goal**: Analyze Context Dependencies vs. Success Criteria.
+- **Tools**: Use 'read_workspace_file', 'list_workspace_files', and MCP tools to gather factual evidence of the current state.
+
+### 2. Success Verification (MANDATORY)
+- **Cross-Reference**: Verify 'Success Criteria' by cross-referencing Workspace State (artifacts) vs. Execution History (tool calls).
+- **Authenticity**: Detect "Fake" work. If artifacts exist but history shows NO relevant tool calls (APIs, DBs, Shell) were made to generate them, it is a hallucination. FAIL the evaluation.
+- **Evidence**: Your reasoning MUST cite specific file content or tool outputs.
+
+### 3. Decision
+- **If Met**: Call 'submit_orchestration_result' with 'success_criteria_met: true'.
+- **If NOT Met**: Call 'submit_orchestration_result' with 'success_criteria_met: false' and:
+  - **selected_route_id**: Choose the best sub-agent for the current gap.
+  - **instructions_to_sub_agent**: Provide specific, unambiguous steps.
+  - **success_criteria_for_sub_agent**: Provide verifiable criteria for the sub-agent.
+
+---
+
+## 📁 FILE ADVISORY
+
+ | Path Type | Location | Behavior | Best Use |
+ | :--- | :--- | :--- | :--- |
+ | **Volatile** | {{.StepExecutionPath}}/ | Deleted on re-execution | Iteration-specific logs |
+ | **Persistent** | knowledgebase/ | Never deleted across runs | Templates, Shared Config, Reference Data |
+ | **Global** | execution/ | Read-only access | Cross-step dependencies |
+
+- **Knowledgebase**: Use 'knowledgebase/' to store assets that should persist between different execution attempts (e.g., a "gold standard" template, long-term lookup tables, or project-level settings).
+ - **Recovery**: Update '{{.StepExecutionPath}}/progress.md' with reasoning after major decisions.
+
+*Output ONLY via 'submit_orchestration_result'.*`)
+
+var orchestrationUserTemplate = MustRegisterTemplate("orchestrationUser", `# Orchestration Task: {{.StepTitle}}
+**Description**: {{.StepDescription}}
+**Success Criteria**: {{.StepSuccessCriteria}}
+
+## 📋 CONTEXT
+- **Workspace**: {{.WorkspacePath}}
+- **Step ID**: {{.StepNumber}}
+- **Output Folder**: {{.StepExecutionPath}}/ (VOLATILE)
+- **Dependencies**: {{.StepContextDependencies}}
+
+{{if .PreviousStepsSummary}}
+## 📊 History Summary
+{{.PreviousStepsSummary}}
+{{end}}
+
+{{if .ValidationMessages}}
+## 🧠 VALIDATION FEEDBACK
+{{range .ValidationMessages}}- {{.}}
+{{end}}{{end}}
+
+## 🚀 ACTION
+1. Evaluate current workspace state.
+2. Decide: Is the goal complete or do we need a sub-agent?
+3. Call 'submit_orchestration_result'.`)
 
 // WorkflowOrchestrationOrchestratorAgent executes the main orchestration step
 // This agent focuses on orchestration and delegation, not direct execution
@@ -176,88 +277,8 @@ func (hctpooa *WorkflowOrchestrationOrchestratorAgent) orchestrationOrchestrator
 		templateData["CodeExecutionInstructions"] = prompt.GetCodeExecutionInstructions()
 	}
 
-	templateStr := `# Orchestration Orchestrator Agent
-**Session**: {{.CurrentDate}} {{.CurrentTime}} | **Mode**: ORCHESTRATION
-
-## 🤖 ROLE
-Coordinate work between sub-agents. You evaluate the situation, verify success, and delegate the NEXT logical action.
-
-## ⚠️ CRITICAL RULES
-1. **Mandatory Delegation**: If 'Success Criteria' is NOT met, you MUST select a sub-agent route.
-2. **Evidence-Based**: Never guess. Use tools to verify files, status, and state before deciding.
-3. **Precise Instructions**: When delegating, provide step-by-step instructions that include exact file names and tool parameters.
-4. **Learning**: Use 'learning' route after success OR after surfacing a new routing pattern.
-
----
-
-## 🏗️ AVAILABLE ROUTES
-{{.OrchestrationRoutes}}
-
-**Special Routes**:
-- **"learning"**: Capture routing/evaluation patterns (recommended after success).
-- **"end"**: Only use if the entire workflow objective is definitively complete.
-
----
-
-{{if .VariableNames}}
-## 🔑 VARIABLES
-{{.VariableNames}}
-{{if .VariableValues}}**Values**: {{.VariableValues}}{{end}}
-
-**Handling**: Values are already injected in step descriptions. For Go code/tools, use these values directly.
-{{if .IsCodeExecutionMode}}
-**Go execution Rules**:
-- **Path**: 'basePath := os.Args[1]'. Use 'filepath.Join(basePath, "relative/path")'.
-- **Args**: Pass '{{.WorkspacePath}}' as the first argument in 'args'.
-- **NEVER** hardcode absolute paths.
-{{end}}{{end}}
-
-{{if .LearningHistory}}
-## 📚 ORCHESTRATOR LEARNINGS
-{{.LearningHistory}}
-{{end}}
-
----
-
-## 🔍 EVALUATION & ROUTING FRAMEWORK
-
-### 1. Analysis
-- **Goal**: Analyze Context Dependencies vs. Success Criteria.
-- **Tools**: Use 'read_workspace_file', 'list_workspace_files', and MCP tools to gather factual evidence of the current state.
-
-### 2. Success Verification (MANDATORY)
-- **Cross-Reference**: Verify 'Success Criteria' by cross-referencing Workspace State (artifacts) vs. Execution History (tool calls).
-- **Authenticity**: Detect "Fake" work. If artifacts exist but history shows NO relevant tool calls (APIs, DBs, Shell) were made to generate them, it is a hallucination. FAIL the evaluation.
-- **Evidence**: Your reasoning MUST cite specific file content or tool outputs.
-
-### 3. Decision
-- **If Met**: Call 'submit_orchestration_result' with 'success_criteria_met: true'.
-- **If NOT Met**: Call 'submit_orchestration_result' with 'success_criteria_met: false' and:
-  - **selected_route_id**: Choose the best sub-agent for the current gap.
-  - **instructions_to_sub_agent**: Provide specific, unambiguous steps.
-  - **success_criteria_for_sub_agent**: Provide verifiable criteria for the sub-agent.
-
----
-
-## 📁 FILE ADVISORY
- 
- | Path Type | Location | Behavior | Best Use |
- | :--- | :--- | :--- | :--- |
- | **Volatile** | {{.StepExecutionPath}}/ | Deleted on re-execution | Iteration-specific logs |
- | **Persistent** | knowledgebase/ | Never deleted across runs | Templates, Shared Config, Reference Data |
- | **Global** | execution/ | Read-only access | Cross-step dependencies |
- 
-- **Knowledgebase**: Use 'knowledgebase/' to store assets that should persist between different execution attempts (e.g., a "gold standard" template, long-term lookup tables, or project-level settings).
- - **Recovery**: Update '{{.StepExecutionPath}}/progress.md' with reasoning after major decisions.
-
-*Output ONLY via 'submit_orchestration_result'.*`
-
-	tmpl, err := template.New("orchestrationSystem").Parse(templateStr)
-	if err != nil {
-		return "Error parsing orchestration system prompt template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateData); err != nil {
+	if err := orchestrationSystemTemplate.Execute(&result, templateData); err != nil {
 		return "Error executing orchestration system prompt template: " + err.Error()
 	}
 	return result.String()
@@ -265,31 +286,6 @@ Coordinate work between sub-agents. You evaluate the situation, verify success, 
 
 // orchestrationOrchestratorUserMessageProcessor generates the user message for orchestration orchestrator agent
 func (hctpooa *WorkflowOrchestrationOrchestratorAgent) orchestrationOrchestratorUserMessageProcessor(templateVars map[string]string, conversationHistory []llmtypes.MessageContent) string {
-	templateStr := `# Orchestration Task: {{.StepTitle}}
-**Description**: {{.StepDescription}}
-**Success Criteria**: {{.StepSuccessCriteria}}
-
-## 📋 CONTEXT
-- **Workspace**: {{.WorkspacePath}}
-- **Step ID**: {{.StepNumber}}
-- **Output Folder**: {{.StepExecutionPath}}/ (VOLATILE)
-- **Dependencies**: {{.StepContextDependencies}}
-
-{{if .PreviousStepsSummary}}
-## 📊 History Summary
-{{.PreviousStepsSummary}}
-{{end}}
-
-{{if .ValidationMessages}}
-## 🧠 VALIDATION FEEDBACK
-{{range .ValidationMessages}}- {{.}}
-{{end}}{{end}}
-
-## 🚀 ACTION
-1. Evaluate current workspace state.
-2. Decide: Is the goal complete or do we need a sub-agent?
-3. Call 'submit_orchestration_result'.`
-
 	// Extract validation messages from history
 	var validationMessages []string
 	for _, msg := range conversationHistory {
@@ -317,12 +313,8 @@ func (hctpooa *WorkflowOrchestrationOrchestratorAgent) orchestrationOrchestrator
 		"ValidationMessages":      validationMessages,
 	}
 
-	tmpl, err := template.New("orchestrationUser").Parse(templateStr)
-	if err != nil {
-		return "Error parsing orchestration user message template: " + err.Error()
-	}
 	var result strings.Builder
-	if err := tmpl.Execute(&result, templateData); err != nil {
+	if err := orchestrationUserTemplate.Execute(&result, templateData); err != nil {
 		return "Error executing orchestration user message template: " + err.Error()
 	}
 	return result.String()

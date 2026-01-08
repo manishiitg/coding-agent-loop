@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"text/template"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -19,6 +18,15 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// Pre-parsed templates for planning management - panics at startup if invalid
+var planningUpdateValidationErrorTemplate = MustRegisterTemplate("planningUpdateValidationError",
+	`Review the existing plan, fix the following validation issues, and then update the plan based on the objective and my feedback: {{.ValidationErr}}. Always use the human_feedback tool first to confirm any changes with me.`)
+
+var planningCreateUserMessageTemplate = MustRegisterTemplate("planningCreateUserMessage",
+	`Objective: {{.Objective}}
+
+Generate a comprehensive structured plan to achieve this objective.`)
 
 // EnhancedPlanWithMetadata stores enhanced plan with caching metadata
 type EnhancedPlanWithMetadata struct {
@@ -179,19 +187,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) runPlanningPhase(ctx context.Context,
 			validationErr := validatePlanStepIDs(existingPlan.Steps)
 			if validationErr != nil {
 				// Fallback: concise instruction for plan updates with validation error fix
-				templateStr := `Review the existing plan, fix the following validation issues, and then update the plan based on the objective and my feedback: {{.ValidationErr}}. Always use the human_feedback tool first to confirm any changes with me.`
-				tmpl, err := template.New("planningUpdateValidationError").Parse(templateStr)
-				if err != nil {
+				var result strings.Builder
+				if err := planningUpdateValidationErrorTemplate.Execute(&result, map[string]interface{}{
+					"ValidationErr": validationErr,
+				}); err != nil {
 					userMessage = "Review the existing plan and update it based on the objective and my feedback. Always use the human_feedback tool first to confirm any changes with me."
 				} else {
-					var result strings.Builder
-					if err := tmpl.Execute(&result, map[string]interface{}{
-						"ValidationErr": validationErr,
-					}); err != nil {
-						userMessage = "Review the existing plan and update it based on the objective and my feedback. Always use the human_feedback tool first to confirm any changes with me."
-					} else {
-						userMessage = result.String()
-					}
+					userMessage = result.String()
 				}
 			} else {
 				// Fallback: concise instruction for plan updates
@@ -201,21 +203,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) runPlanningPhase(ctx context.Context,
 	} else {
 		// CREATE mode: concise, action-oriented instruction for first-time plan generation.
 		// Include the objective explicitly since it's no longer shown in the system prompt.
-		templateStr := `Objective: {{.Objective}}
-
-Generate a comprehensive structured plan to achieve this objective.`
-		tmpl, err := template.New("planningCreateUserMessage").Parse(templateStr)
-		if err != nil {
+		var result strings.Builder
+		if err := planningCreateUserMessageTemplate.Execute(&result, map[string]interface{}{
+			"Objective": hcpo.GetObjective(),
+		}); err != nil {
 			userMessage = fmt.Sprintf("Objective: %s\n\nGenerate a comprehensive structured plan to achieve this objective.", hcpo.GetObjective())
 		} else {
-			var result strings.Builder
-			if err := tmpl.Execute(&result, map[string]interface{}{
-				"Objective": hcpo.GetObjective(),
-			}); err != nil {
-				userMessage = fmt.Sprintf("Objective: %s\n\nGenerate a comprehensive structured plan to achieve this objective.", hcpo.GetObjective())
-			} else {
-				userMessage = result.String()
-			}
+			userMessage = result.String()
 		}
 	}
 
@@ -434,12 +428,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) createPlanningAgent(ctx context.Conte
 				Provider: hcpo.presetPhaseLLM.Provider,
 				ModelID:  hcpo.presetPhaseLLM.ModelID,
 			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			APIKeys: hcpo.GetAPIKeys(), // Safe: returns nil if orchestratorLLMConfig is nil
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for planning: %s/%s", hcpo.presetPhaseLLM.Provider, hcpo.presetPhaseLLM.ModelID))
-	} else {
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 		llmConfigToUse = orchestratorLLMConfig
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default planning LLM: %s/%s", hcpo.GetProvider(), hcpo.GetModel()))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default planning LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for planning agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
 	}
 
 	// Create agent config with custom LLM

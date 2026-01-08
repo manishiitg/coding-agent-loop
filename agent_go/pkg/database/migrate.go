@@ -17,12 +17,16 @@ type Migration struct {
 
 // MigrationRunner handles database migrations
 type MigrationRunner struct {
-	db *sql.DB
+	db         *sql.DB
+	driverName string
 }
 
 // NewMigrationRunner creates a new migration runner
-func NewMigrationRunner(db *sql.DB) *MigrationRunner {
-	return &MigrationRunner{db: db}
+func NewMigrationRunner(db *sql.DB, driverName string) *MigrationRunner {
+	return &MigrationRunner{
+		db:         db,
+		driverName: driverName,
+	}
 }
 
 // RunMigrations runs all pending migrations
@@ -66,7 +70,7 @@ func (mr *MigrationRunner) createMigrationsTable() error {
 	query := `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version INTEGER PRIMARY KEY,
-			applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
 	`
 	_, err := mr.db.Exec(query)
@@ -158,11 +162,22 @@ func (mr *MigrationRunner) isMigrationApplied(version int, appliedMigrations []i
 	return false
 }
 
-// columnExists checks if a column exists in a table using SQLite's pragma_table_info
+// columnExists checks if a column exists in a table using driver-specific query
 func (mr *MigrationRunner) columnExists(tx *sql.Tx, tableName, columnName string) (bool, error) {
 	var count int
-	query := `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`
-	err := tx.QueryRow(query, tableName, columnName).Scan(&count)
+	var query string
+	var args []interface{}
+
+	if mr.driverName == "postgres" {
+		query = `SELECT COUNT(*) FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`
+		args = []interface{}{tableName, columnName}
+	} else {
+		// Default to SQLite
+		query = `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`
+		args = []interface{}{tableName, columnName}
+	}
+
+	err := tx.QueryRow(query, args...).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check column existence: %w", err)
 	}
@@ -235,7 +250,11 @@ func (mr *MigrationRunner) runMigration(migration Migration) error {
 	}
 
 	// Record migration as applied
-	_, err = tx.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, migration.Version)
+	recordQuery := `INSERT INTO schema_migrations (version) VALUES (?)`
+	if mr.driverName == "postgres" {
+		recordQuery = `INSERT INTO schema_migrations (version) VALUES ($1)`
+	}
+	_, err = tx.Exec(recordQuery, migration.Version)
 	if err != nil {
 		return fmt.Errorf("failed to record migration: %w", err)
 	}

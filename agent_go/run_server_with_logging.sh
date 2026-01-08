@@ -204,6 +204,16 @@ echo "📝 Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION (Threshold: $TOK
 echo "✂️  Context Editing: $ENABLE_CONTEXT_EDITING (Threshold: ${CONTEXT_EDITING_THRESHOLD} tokens, Age: ${CONTEXT_EDITING_TURN_THRESHOLD} turns)"
 echo "📊 Debug level: $LOG_LEVEL"
 
+# Database configuration based on DATABASE_URL
+DB_TYPE_FLAG="sqlite"
+if [ -n "$DATABASE_URL" ]; then
+    echo "🗄️  Detected DATABASE_URL, using PostgreSQL (Supabase)"
+    DB_TYPE_FLAG="postgres"
+else
+    echo "🗄️  No DATABASE_URL found, using SQLite"
+    DB_TYPE_FLAG="sqlite"
+fi
+
 # Run the server with all the enhanced configuration and log to both file and console
 # Using 'tee' to display on console while server writes to log file via --log-file
 # Note: Don't use 'tee "$LOG_FILE"' since --log-file already writes to that file (causes duplicate logs)
@@ -213,6 +223,7 @@ go run main.go server \
     --log-level debug \
     --debug \
     --log-file "$LOG_FILE" \
+    --db-type "$DB_TYPE_FLAG" \
     --db-path "./chat_history.db" \
     --provider "$DEEP_SEARCH_MAIN_LLM_PROVIDER" \
     --model "$DEEP_SEARCH_MAIN_LLM_MODEL" \

@@ -9,6 +9,7 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/invopop/jsonschema v0.13.0
 	github.com/joho/godotenv v1.5.1
+	github.com/lib/pq v1.10.9
 	github.com/manishiitg/multi-llm-provider-go v0.2.0
 	github.com/mark3labs/mcp-go v0.44.0-beta.1
 	github.com/mattn/go-sqlite3 v1.14.32
@@ -109,6 +110,7 @@ require (
 	golang.org/x/arch v0.8.0 // indirect
 	golang.org/x/crypto v0.42.0 // indirect
 	golang.org/x/net v0.44.0 // indirect
+	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sys v0.36.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
 	google.golang.org/genai v1.36.0 // indirect

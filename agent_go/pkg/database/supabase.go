@@ -12,18 +12,11 @@ import (
 
 	"mcpagent/events"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/lib/pq"
 )
 
-// pendingEvent holds an event waiting to be batched
-type pendingEvent struct {
-	sessionID string
-	event     *events.AgentEvent
-	timestamp time.Time
-}
-
-// SQLiteDB implements the Database interface using SQLite
-type SQLiteDB struct {
+// SupabaseDB implements the Database interface using PostgreSQL (Supabase)
+type SupabaseDB struct {
 	db *sql.DB
 
 	// Batching infrastructure
@@ -37,52 +30,11 @@ type SQLiteDB struct {
 	flushInterval    time.Duration // Time interval for periodic flushing
 }
 
-// validateWhereClause ensures the WHERE clause only contains safe, parameterized conditions
-// This helps prevent SQL injection when building dynamic queries
-func validateWhereClause(whereClause string) error {
-	// Only allow WHERE/AND/OR followed by column names and = ? or other safe operators
-	// This is a basic check - the real protection is using parameterized queries
-	if strings.Contains(whereClause, ";") || strings.Contains(whereClause, "--") {
-		return fmt.Errorf("unsafe WHERE clause detected")
-	}
-	return nil
-}
-
-// validateUpdateFields ensures UPDATE field names are from a whitelist
-var allowedUpdateFields = map[string]bool{
-	"label":                   true,
-	"query":                   true,
-	"selected_servers":        true,
-	"selected_tools":          true,
-	"selected_folder":         true,
-	"agent_mode":              true,
-	"llm_config":              true,
-	"use_code_execution_mode": true,
-	"workflow_status":         true,
-	"selected_options":        true,
-	"updated_at":              true,
-}
-
-func validateUpdateField(field string) bool {
-	// Extract field name from "field_name = ?" pattern
-	parts := strings.Split(field, "=")
-	if len(parts) != 2 {
-		return false
-	}
-	fieldName := strings.TrimSpace(parts[0])
-	return allowedUpdateFields[fieldName]
-}
-
-// NewSQLiteDB creates a new SQLite database connection
-func NewSQLiteDB(dbPath string) (*SQLiteDB, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+// NewSupabaseDB creates a new Supabase (Postgres) database connection
+func NewSupabaseDB(connStr string) (*SupabaseDB, error) {
+	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
-	}
-
-	// Enable foreign keys
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
 
 	// Test the connection
@@ -90,13 +42,13 @@ func NewSQLiteDB(dbPath string) (*SQLiteDB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	// Run migrations (includes initial schema creation)
-	migrationRunner := NewMigrationRunner(db, "sqlite3")
-	if err := migrationRunner.RunMigrations("pkg/database/migrations"); err != nil {
+	// Run migrations
+	migrationRunner := NewMigrationRunner(db, "postgres")
+	if err := migrationRunner.RunMigrations("pkg/database/migrations_postgres"); err != nil {
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	sqliteDB := &SQLiteDB{
+	supabaseDB := &SupabaseDB{
 		db:               db,
 		eventBuffer:      make(map[string][]pendingEvent),
 		chatSessionCache: make(map[string]string),
@@ -107,22 +59,21 @@ func NewSQLiteDB(dbPath string) (*SQLiteDB, error) {
 	}
 
 	// Start background flusher
-	sqliteDB.startFlusher()
+	supabaseDB.startFlusher()
 
-	return sqliteDB, nil
+	return supabaseDB, nil
 }
 
 // GetDB returns the underlying *sql.DB connection
-// This is needed for integrations that require direct database access
-func (s *SQLiteDB) GetDB() *sql.DB {
+func (s *SupabaseDB) GetDB() *sql.DB {
 	return s.db
 }
 
 // CreateChatSession creates a new chat session
-func (s *SQLiteDB) CreateChatSession(ctx context.Context, req *CreateChatSessionRequest) (*ChatSession, error) {
+func (s *SupabaseDB) CreateChatSession(ctx context.Context, req *CreateChatSessionRequest) (*ChatSession, error) {
 	query := `
 		INSERT INTO chat_sessions (session_id, title, agent_mode, preset_query_id, config, status)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, session_id, title, agent_mode, preset_query_id, config, created_at, completed_at, status
 	`
 
@@ -160,7 +111,7 @@ func (s *SQLiteDB) CreateChatSession(ctx context.Context, req *CreateChatSession
 	if agentModeStr != nil {
 		session.AgentMode = *agentModeStr
 	} else {
-		session.AgentMode = "" // Default to empty string for NULL values
+		session.AgentMode = ""
 	}
 
 	// Handle NULL preset_query_id
@@ -181,11 +132,11 @@ func (s *SQLiteDB) CreateChatSession(ctx context.Context, req *CreateChatSession
 }
 
 // GetChatSession retrieves a chat session by session ID
-func (s *SQLiteDB) GetChatSession(ctx context.Context, sessionID string) (*ChatSession, error) {
+func (s *SupabaseDB) GetChatSession(ctx context.Context, sessionID string) (*ChatSession, error) {
 	query := `
 		SELECT id, session_id, title, agent_mode, preset_query_id, config, created_at, completed_at, status
 		FROM chat_sessions
-		WHERE session_id = ?
+		WHERE session_id = $1
 	`
 
 	var session ChatSession
@@ -206,7 +157,7 @@ func (s *SQLiteDB) GetChatSession(ctx context.Context, sessionID string) (*ChatS
 	if agentModeStr != nil {
 		session.AgentMode = *agentModeStr
 	} else {
-		session.AgentMode = "" // Default to empty string for NULL values
+		session.AgentMode = ""
 	}
 
 	// Handle NULL preset_query_id
@@ -225,25 +176,26 @@ func (s *SQLiteDB) GetChatSession(ctx context.Context, sessionID string) (*ChatS
 }
 
 // UpdateChatSession updates a chat session
-func (s *SQLiteDB) UpdateChatSession(ctx context.Context, sessionID string, req *UpdateChatSessionRequest) (*ChatSession, error) {
+func (s *SupabaseDB) UpdateChatSession(ctx context.Context, sessionID string, req *UpdateChatSessionRequest) (*ChatSession, error) {
+	// Postgres CASE WHEN syntax is standard SQL, same as SQLite
 	query := `
 		UPDATE chat_sessions
 		SET title = CASE 
-		        WHEN ? = '' THEN title 
-		        ELSE ? 
+		        WHEN $1 = '' THEN title 
+		        ELSE $2 
 		    END,
-		    agent_mode = COALESCE(NULLIF(?, ''), agent_mode),
+		    agent_mode = COALESCE(NULLIF($3, ''), agent_mode),
 		    preset_query_id = CASE 
-		        WHEN ? = '' THEN NULL 
-		        ELSE COALESCE(NULLIF(?, ''), preset_query_id) 
+		        WHEN $4 = '' THEN NULL 
+		        ELSE COALESCE(NULLIF($5, ''), preset_query_id) 
 		    END,
 		    config = CASE
-		        WHEN ? IS NULL THEN config
-		        ELSE ?
+		        WHEN $6::text IS NULL THEN config
+		        ELSE $7::text
 		    END,
-		    status = COALESCE(NULLIF(?, ''), status),
-		    completed_at = COALESCE(?, completed_at)
-		WHERE session_id = ?
+		    status = COALESCE(NULLIF($8, ''), status),
+		    completed_at = COALESCE($9, completed_at)
+		WHERE session_id = $10
 		RETURNING id, session_id, title, agent_mode, preset_query_id, config, created_at, completed_at, status
 	`
 
@@ -260,9 +212,6 @@ func (s *SQLiteDB) UpdateChatSession(ctx context.Context, sessionID string, req 
 		configValue = string(req.Config)
 	}
 
-	// For title: pass it twice - first for the WHEN check, second for the ELSE value
-	// If empty string, the CASE will return the existing title
-	// For config: pass it twice - first for the WHEN check, second for the ELSE value
 	err := s.db.QueryRowContext(ctx, query, req.Title, req.Title, req.AgentMode, req.PresetQueryID, req.PresetQueryID, configValue, configValue, req.Status, req.CompletedAt, sessionID).Scan(
 		&session.ID, &session.SessionID, &session.Title, &agentModeStr, &presetQueryIDStr, &configStr, &session.CreatedAt, &session.CompletedAt, &session.Status,
 	)
@@ -277,14 +226,14 @@ func (s *SQLiteDB) UpdateChatSession(ctx context.Context, sessionID string, req 
 	if agentModeStr != nil {
 		session.AgentMode = *agentModeStr
 	} else {
-		session.AgentMode = "" // Default to empty string for NULL values
+		session.AgentMode = ""
 	}
 
 	// Handle NULL preset_query_id
 	if presetQueryIDStr != nil {
 		session.PresetQueryID = presetQueryIDStr
 	} else {
-		session.PresetQueryID = nil // Default to nil for NULL values
+		session.PresetQueryID = nil
 	}
 
 	// Handle NULL config
@@ -303,8 +252,8 @@ func (s *SQLiteDB) UpdateChatSession(ctx context.Context, sessionID string, req 
 }
 
 // DeleteChatSession deletes a chat session and all its events
-func (s *SQLiteDB) DeleteChatSession(ctx context.Context, sessionID string) error {
-	query := `DELETE FROM chat_sessions WHERE session_id = ?`
+func (s *SupabaseDB) DeleteChatSession(ctx context.Context, sessionID string) error {
+	query := `DELETE FROM chat_sessions WHERE session_id = $1`
 
 	result, err := s.db.ExecContext(ctx, query, sessionID)
 	if err != nil {
@@ -323,10 +272,9 @@ func (s *SQLiteDB) DeleteChatSession(ctx context.Context, sessionID string) erro
 	return nil
 }
 
-// DeleteWorkflowSessions deletes all chat sessions with agent_mode = 'workflow' and all their events
-// Returns the number of sessions deleted
-func (s *SQLiteDB) DeleteWorkflowSessions(ctx context.Context) (int64, error) {
-	query := `DELETE FROM chat_sessions WHERE agent_mode = ?`
+// DeleteWorkflowSessions deletes all chat sessions with agent_mode = 'workflow'
+func (s *SupabaseDB) DeleteWorkflowSessions(ctx context.Context) (int64, error) {
+	query := `DELETE FROM chat_sessions WHERE agent_mode = $1`
 
 	result, err := s.db.ExecContext(ctx, query, AgentModeWorkflow)
 	if err != nil {
@@ -342,23 +290,21 @@ func (s *SQLiteDB) DeleteWorkflowSessions(ctx context.Context) (int64, error) {
 }
 
 // ListChatSessions lists chat sessions with pagination
-func (s *SQLiteDB) ListChatSessions(ctx context.Context, limit, offset int, presetQueryID *string) ([]ChatHistorySummary, int, error) {
-	// Build WHERE clause for filtering
+func (s *SupabaseDB) ListChatSessions(ctx context.Context, limit, offset int, presetQueryID *string) ([]ChatHistorySummary, int, error) {
 	var whereClause string
 	var args []interface{}
+	argCount := 0
 
 	if presetQueryID != nil && *presetQueryID != "" {
-		whereClause = " WHERE cs.preset_query_id = ?"
+		argCount++
+		whereClause = fmt.Sprintf(" WHERE cs.preset_query_id = $%d", argCount)
 		args = append(args, *presetQueryID)
 	}
 
-	// Validate WHERE clause for safety
 	if err := validateWhereClause(whereClause); err != nil {
 		return nil, 0, fmt.Errorf("invalid WHERE clause: %w", err)
 	}
 
-	// Get total count
-	//nolint:gosec // G202: whereClause is validated and uses parameterized queries (?)
 	countQuery := `SELECT COUNT(*) FROM chat_sessions cs` + whereClause
 	var total int
 	err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
@@ -366,11 +312,6 @@ func (s *SQLiteDB) ListChatSessions(ctx context.Context, limit, offset int, pres
 		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
 	}
 
-	// Get sessions with summary data
-	// Optimized query: No event aggregation needed for sidebar list view
-	// Events are only loaded when user clicks on a specific chat session
-	// This makes the query much faster - just a simple SELECT with ORDER BY and LIMIT
-	//nolint:gosec // G202: whereClause is validated and uses parameterized queries (?)
 	query := `
 		SELECT 
 			cs.id,
@@ -385,12 +326,11 @@ func (s *SQLiteDB) ListChatSessions(ctx context.Context, limit, offset int, pres
 			0 as total_events,
 			0 as total_turns,
 			NULL as last_activity
-		FROM chat_sessions cs` + whereClause + `
+		FROM chat_sessions cs` + whereClause + fmt.Sprintf(`
 		ORDER BY cs.created_at DESC
-		LIMIT ? OFFSET ?
-	`
+		LIMIT $%d OFFSET $%d
+	`, argCount+1, argCount+2)
 
-	// Add limit and offset to args (only once, used in CTE)
 	args = append(args, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -414,37 +354,31 @@ func (s *SQLiteDB) ListChatSessions(ctx context.Context, limit, offset int, pres
 			return nil, 0, fmt.Errorf("failed to scan session: %w", err)
 		}
 
-		// Handle NULL agent_mode
 		if agentModeStr != nil {
 			session.AgentMode = *agentModeStr
 		} else {
-			session.AgentMode = "" // Default to empty string for NULL values
+			session.AgentMode = ""
 		}
 
-		// Handle NULL preset_query_id
 		if presetQueryIDStr != nil {
 			session.PresetQueryID = *presetQueryIDStr
 		} else {
-			session.PresetQueryID = "" // Default to empty string for NULL values
+			session.PresetQueryID = ""
 		}
 
-		// Handle NULL config
 		if configStr.Valid {
 			session.Config = json.RawMessage(configStr.String)
 		} else {
 			session.Config = nil
 		}
 
-		// Parse lastActivity string to time.Time (can be NULL since we don't load events for list view)
 		if lastActivityStr != nil {
 			if lastActivity, err := time.Parse("2006-01-02 15:04:05.999999999-07:00", *lastActivityStr); err == nil {
 				session.LastActivity = &lastActivity
 			} else {
-				// If parsing fails, leave as nil (not needed for sidebar)
 				session.LastActivity = nil
 			}
 		} else {
-			// No last activity (we don't load events for list view)
 			session.LastActivity = nil
 		}
 
@@ -455,11 +389,10 @@ func (s *SQLiteDB) ListChatSessions(ctx context.Context, limit, offset int, pres
 }
 
 // StoreEvent stores an event in the database (batched)
-func (s *SQLiteDB) StoreEvent(ctx context.Context, sessionID string, event *events.AgentEvent) error {
+func (s *SupabaseDB) StoreEvent(ctx context.Context, sessionID string, event *events.AgentEvent) error {
 	s.batchMux.Lock()
 	defer s.batchMux.Unlock()
 
-	// Add event to buffer
 	if s.eventBuffer[sessionID] == nil {
 		s.eventBuffer[sessionID] = make([]pendingEvent, 0, s.batchSizeLimit)
 	}
@@ -470,18 +403,15 @@ func (s *SQLiteDB) StoreEvent(ctx context.Context, sessionID string, event *even
 		timestamp: time.Now(),
 	})
 
-	// Check if we need to flush immediately due to batch size
 	if len(s.eventBuffer[sessionID]) >= s.batchSizeLimit {
-		// Flush this session's events asynchronously
 		go s.flushSessionEvents(sessionID)
 	}
 
 	return nil
 }
 
-// getChatSessionID gets the chat_session_id for a session, using cache if available
-func (s *SQLiteDB) getChatSessionID(ctx context.Context, sessionID string) (string, error) {
-	// Check cache first
+// getChatSessionID gets the chat_session_id for a session
+func (s *SupabaseDB) getChatSessionID(ctx context.Context, sessionID string) (string, error) {
 	s.batchMux.Lock()
 	if cachedID, ok := s.chatSessionCache[sessionID]; ok {
 		s.batchMux.Unlock()
@@ -489,13 +419,11 @@ func (s *SQLiteDB) getChatSessionID(ctx context.Context, sessionID string) (stri
 	}
 	s.batchMux.Unlock()
 
-	// Cache miss - fetch from database
 	chatSession, err := s.GetChatSession(ctx, sessionID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get chat session: %w", err)
 	}
 
-	// Update cache
 	s.batchMux.Lock()
 	s.chatSessionCache[sessionID] = chatSession.ID
 	s.batchMux.Unlock()
@@ -503,21 +431,18 @@ func (s *SQLiteDB) getChatSessionID(ctx context.Context, sessionID string) (stri
 	return chatSession.ID, nil
 }
 
-// flushSessionEvents flushes all pending events for a specific session
-func (s *SQLiteDB) flushSessionEvents(sessionID string) {
+// flushSessionEvents flushes pending events for a session
+func (s *SupabaseDB) flushSessionEvents(sessionID string) {
 	s.batchMux.Lock()
 	events := s.eventBuffer[sessionID]
 	if len(events) == 0 {
 		s.batchMux.Unlock()
 		return
 	}
-	// Copy events to avoid holding lock during DB operations
-	// Don't delete from buffer yet - only delete after successful commit
 	eventsCopy := make([]pendingEvent, len(events))
 	copy(eventsCopy, events)
 	s.batchMux.Unlock()
 
-	// Flush events in a transaction
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -527,7 +452,6 @@ func (s *SQLiteDB) flushSessionEvents(sessionID string) {
 		return
 	}
 
-	// Get chat_session_id (with caching)
 	chatSessionID, err := s.getChatSessionID(ctx, sessionID)
 	if err != nil {
 		tx.Rollback()
@@ -535,10 +459,9 @@ func (s *SQLiteDB) flushSessionEvents(sessionID string) {
 		return
 	}
 
-	// Prepare batch insert statement
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO events (session_id, chat_session_id, event_type, timestamp, event_data)
-		VALUES (?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5)
 	`)
 	if err != nil {
 		tx.Rollback()
@@ -547,7 +470,6 @@ func (s *SQLiteDB) flushSessionEvents(sessionID string) {
 	}
 	defer stmt.Close()
 
-	// Insert all events in the batch
 	for _, pending := range eventsCopy {
 		eventData, err := json.Marshal(pending.event)
 		if err != nil {
@@ -558,31 +480,22 @@ func (s *SQLiteDB) flushSessionEvents(sessionID string) {
 		_, err = stmt.ExecContext(ctx, pending.sessionID, chatSessionID, pending.event.Type, pending.event.Timestamp, string(eventData))
 		if err != nil {
 			log.Printf("[BATCH ERROR] Failed to insert event for session %s: %v", sessionID, err)
-			// Continue with other events even if one fails
 			continue
 		}
 	}
 
-	// Commit transaction
 	if err := tx.Commit(); err != nil {
 		log.Printf("[BATCH ERROR] Failed to commit transaction for session %s: %v", sessionID, err)
-		// Events remain in buffer for retry on next flush cycle
 		return
 	}
 
-	// Only clear the buffer after successful commit
 	s.batchMux.Lock()
-	// Double-check that the events we flushed are still the same (in case new events were added)
-	// If new events were added, we only remove the ones we successfully flushed
 	if len(s.eventBuffer[sessionID]) >= len(eventsCopy) {
-		// Remove the flushed events from the front of the buffer
 		s.eventBuffer[sessionID] = s.eventBuffer[sessionID][len(eventsCopy):]
-		// If buffer is now empty, remove the session entry
 		if len(s.eventBuffer[sessionID]) == 0 {
 			delete(s.eventBuffer, sessionID)
 		}
 	} else {
-		// Buffer was modified - clear it entirely to be safe
 		delete(s.eventBuffer, sessionID)
 	}
 	s.batchMux.Unlock()
@@ -591,9 +504,8 @@ func (s *SQLiteDB) flushSessionEvents(sessionID string) {
 }
 
 // flushBatches flushes all pending event batches
-func (s *SQLiteDB) flushBatches() {
+func (s *SupabaseDB) flushBatches() {
 	s.batchMux.Lock()
-	// Copy all sessions that need flushing
 	sessionsToFlush := make([]string, 0, len(s.eventBuffer))
 	for sessionID := range s.eventBuffer {
 		if len(s.eventBuffer[sessionID]) > 0 {
@@ -602,20 +514,18 @@ func (s *SQLiteDB) flushBatches() {
 	}
 	s.batchMux.Unlock()
 
-	// Flush each session's events
 	for _, sessionID := range sessionsToFlush {
 		s.flushSessionEvents(sessionID)
 	}
 }
 
-// FlushSessionEvents flushes all pending events for a specific session
-// This can be called when a session completes to ensure all events are persisted immediately
-func (s *SQLiteDB) FlushSessionEvents(sessionID string) {
+// FlushSessionEvents flushes pending events for a specific session
+func (s *SupabaseDB) FlushSessionEvents(sessionID string) {
 	s.flushSessionEvents(sessionID)
 }
 
-// startFlusher starts the background goroutine that periodically flushes batches
-func (s *SQLiteDB) startFlusher() {
+// startFlusher starts the background flusher
+func (s *SupabaseDB) startFlusher() {
 	s.flushTicker = time.NewTicker(s.flushInterval)
 	go func() {
 		for {
@@ -623,7 +533,6 @@ func (s *SQLiteDB) startFlusher() {
 			case <-s.flushTicker.C:
 				s.flushBatches()
 			case <-s.stopFlusher:
-				// Final flush before stopping
 				s.flushBatches()
 				close(s.flushDone)
 				return
@@ -632,39 +541,40 @@ func (s *SQLiteDB) startFlusher() {
 	}()
 }
 
-// GetEvents retrieves events based on the request
-func (s *SQLiteDB) GetEvents(ctx context.Context, req *GetChatHistoryRequest) (*GetEventsResponse, error) {
-	// Build query
+// GetEvents retrieves events
+func (s *SupabaseDB) GetEvents(ctx context.Context, req *GetChatHistoryRequest) (*GetEventsResponse, error) {
 	whereClause := "WHERE 1=1"
 	args := []interface{}{}
+	argCount := 0
 
 	if req.SessionID != "" {
-		whereClause += " AND session_id = ?"
+		argCount++
+		whereClause += fmt.Sprintf(" AND session_id = $%d", argCount)
 		args = append(args, req.SessionID)
 	}
 
 	if req.EventType != "" {
-		whereClause += " AND event_type = ?"
+		argCount++
+		whereClause += fmt.Sprintf(" AND event_type = $%d", argCount)
 		args = append(args, req.EventType)
 	}
 
 	if !req.FromDate.IsZero() {
-		whereClause += " AND timestamp >= ?"
+		argCount++
+		whereClause += fmt.Sprintf(" AND timestamp >= $%d", argCount)
 		args = append(args, req.FromDate)
 	}
 
 	if !req.ToDate.IsZero() {
-		whereClause += " AND timestamp <= ?"
+		argCount++
+		whereClause += fmt.Sprintf(" AND timestamp <= $%d", argCount)
 		args = append(args, req.ToDate)
 	}
 
-	// Validate WHERE clause for safety
 	if err := validateWhereClause(whereClause); err != nil {
 		return nil, fmt.Errorf("invalid WHERE clause: %w", err)
 	}
 
-	// Get total count
-	//nolint:gosec // G201: whereClause is validated and uses parameterized queries (?)
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM events %s", whereClause)
 	var total int
 	err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
@@ -672,10 +582,9 @@ func (s *SQLiteDB) GetEvents(ctx context.Context, req *GetChatHistoryRequest) (*
 		return nil, fmt.Errorf("failed to get total count: %w", err)
 	}
 
-	// Get events
 	limit := req.Limit
 	if limit <= 0 {
-		limit = 100 // Default limit
+		limit = 100
 	}
 
 	offset := req.Offset
@@ -683,13 +592,12 @@ func (s *SQLiteDB) GetEvents(ctx context.Context, req *GetChatHistoryRequest) (*
 		offset = 0
 	}
 
-	//nolint:gosec // G201: whereClause is validated and uses parameterized queries (?)
 	query := fmt.Sprintf(`
 		SELECT id, session_id, chat_session_id, event_type, timestamp, event_data
 		FROM events %s
 		ORDER BY timestamp DESC
-		LIMIT ? OFFSET ?
-	`, whereClause)
+		LIMIT $%d OFFSET $%d
+	`, whereClause, argCount+1, argCount+2)
 
 	args = append(args, limit, offset)
 
@@ -710,7 +618,6 @@ func (s *SQLiteDB) GetEvents(ctx context.Context, req *GetChatHistoryRequest) (*
 			return nil, fmt.Errorf("failed to scan event: %w", err)
 		}
 
-		// Unmarshal event data
 		err = json.Unmarshal([]byte(eventDataJSON), &event.EventData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal event data: %w", err)
@@ -727,14 +634,14 @@ func (s *SQLiteDB) GetEvents(ctx context.Context, req *GetChatHistoryRequest) (*
 	}, nil
 }
 
-// GetEventsBySession retrieves events for a specific session
-func (s *SQLiteDB) GetEventsBySession(ctx context.Context, sessionID string, limit, offset int) ([]Event, error) {
+// GetEventsBySession retrieves events for a session
+func (s *SupabaseDB) GetEventsBySession(ctx context.Context, sessionID string, limit, offset int) ([]Event, error) {
 	query := `
 		SELECT id, session_id, chat_session_id, event_type, timestamp, event_data
 		FROM events
-		WHERE session_id = ?
+		WHERE session_id = $1
 		ORDER BY timestamp ASC
-		LIMIT ? OFFSET ?
+		LIMIT $2 OFFSET $3
 	`
 
 	rows, err := s.db.QueryContext(ctx, query, sessionID, limit, offset)
@@ -754,7 +661,6 @@ func (s *SQLiteDB) GetEventsBySession(ctx context.Context, sessionID string, lim
 			return nil, fmt.Errorf("failed to scan event: %w", err)
 		}
 
-		// Unmarshal event data
 		err = json.Unmarshal([]byte(eventDataJSON), &event.EventData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal event data: %w", err)
@@ -767,18 +673,16 @@ func (s *SQLiteDB) GetEventsBySession(ctx context.Context, sessionID string, lim
 }
 
 // Ping tests the database connection
-func (s *SQLiteDB) Ping(ctx context.Context) error {
+func (s *SupabaseDB) Ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
 
 // CreatePresetQuery creates a new preset query
-func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQueryRequest) (*PresetQuery, error) {
-	// Validate the request
+func (s *SupabaseDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQueryRequest) (*PresetQuery, error) {
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
-	// Convert selected servers to JSON
 	selectedServersJSON := "[]"
 	if len(req.SelectedServers) > 0 {
 		serversJSON, err := json.Marshal(req.SelectedServers)
@@ -788,7 +692,6 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 		selectedServersJSON = string(serversJSON)
 	}
 
-	// Convert selected tools to JSON
 	selectedToolsJSON := "[]"
 	if len(req.SelectedTools) > 0 {
 		toolsJSON, err := json.Marshal(req.SelectedTools)
@@ -798,7 +701,6 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 		selectedToolsJSON = string(toolsJSON)
 	}
 
-	// Prepare LLM config for insert (NULL when absent)
 	var llmConfigParam interface{}
 	if req.LLMConfig != nil {
 		llmConfigBytes, err := json.Marshal(req.LLMConfig)
@@ -810,21 +712,14 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 		llmConfigParam = nil
 	}
 
-	// Set default agent mode if not provided
 	agentMode := req.AgentMode
 	if agentMode == "" {
-		agentMode = AgentModeSimple // Use constant for default
-	}
-
-	// Convert use_code_execution_mode boolean to INTEGER (0/1) for SQLite
-	useCodeExecutionModeInt := 0
-	if req.UseCodeExecutionMode {
-		useCodeExecutionModeInt = 1
+		agentMode = AgentModeSimple
 	}
 
 	query := `
 		INSERT INTO preset_queries (label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, is_predefined, created_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, is_predefined, created_at, updated_at, created_by
 	`
 
@@ -833,15 +728,13 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 	var selectedToolsStr string
 	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
-	var returnedUseCodeExecutionModeInt int
-	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, selectedToolsJSON, req.SelectedFolder, agentMode, llmConfigParam, useCodeExecutionModeInt, req.IsPredefined, "user").Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &returnedUseCodeExecutionModeInt, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, selectedToolsJSON, req.SelectedFolder, agentMode, llmConfigParam, req.UseCodeExecutionMode, req.IsPredefined, "user").Scan(
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create preset query: %w", err)
 	}
 
-	// Parse selected servers JSON
 	preset.SelectedServers = selectedServersStr
 	preset.SelectedTools = selectedToolsStr
 	preset.SelectedFolder = selectedFolderStr
@@ -850,18 +743,16 @@ func (s *SQLiteDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQuery
 	} else {
 		preset.LLMConfig = json.RawMessage("null")
 	}
-	// Convert INTEGER to boolean
-	preset.UseCodeExecutionMode = returnedUseCodeExecutionModeInt != 0
 
 	return &preset, nil
 }
 
 // GetPresetQuery retrieves a preset query by ID
-func (s *SQLiteDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery, error) {
+func (s *SupabaseDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery, error) {
 	query := `
 		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, is_predefined, created_at, updated_at, created_by
 		FROM preset_queries
-		WHERE id = ?
+		WHERE id = $1
 	`
 
 	var preset PresetQuery
@@ -869,9 +760,8 @@ func (s *SQLiteDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery,
 	var selectedToolsStr string
 	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
-	var useCodeExecutionModeInt int
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &useCodeExecutionModeInt, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -888,29 +778,29 @@ func (s *SQLiteDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery,
 	} else {
 		preset.LLMConfig = nil
 	}
-	// Convert INTEGER to boolean
-	preset.UseCodeExecutionMode = useCodeExecutionModeInt != 0
 
 	return &preset, nil
 }
 
 // UpdatePresetQuery updates a preset query
-func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *UpdatePresetQueryRequest) (*PresetQuery, error) {
-	// Validate the request
+func (s *SupabaseDB) UpdatePresetQuery(ctx context.Context, id string, req *UpdatePresetQueryRequest) (*PresetQuery, error) {
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
-	// Build dynamic update query
 	updateFields := []string{}
 	args := []interface{}{}
+	argCount := 0
+
 	if req.Label != "" {
-		updateFields = append(updateFields, "label = ?")
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("label = $%d", argCount))
 		args = append(args, req.Label)
 	}
 
 	if req.Query != "" {
-		updateFields = append(updateFields, "query = ?")
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("query = $%d", argCount))
 		args = append(args, req.Query)
 	}
 
@@ -923,7 +813,8 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 			}
 			selectedServersJSON = string(serversJSON)
 		}
-		updateFields = append(updateFields, "selected_servers = ?")
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("selected_servers = $%d", argCount))
 		args = append(args, selectedServersJSON)
 	}
 
@@ -936,17 +827,20 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 			}
 			selectedToolsJSON = string(toolsJSON)
 		}
-		updateFields = append(updateFields, "selected_tools = ?")
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("selected_tools = $%d", argCount))
 		args = append(args, selectedToolsJSON)
 	}
 
 	if req.SelectedFolder != "" {
-		updateFields = append(updateFields, "selected_folder = ?")
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("selected_folder = $%d", argCount))
 		args = append(args, req.SelectedFolder)
 	}
 
 	if req.AgentMode != "" {
-		updateFields = append(updateFields, "agent_mode = ?")
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("agent_mode = $%d", argCount))
 		args = append(args, req.AgentMode)
 	}
 
@@ -955,50 +849,40 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal LLM config: %w", err)
 		}
-		updateFields = append(updateFields, "llm_config = ?")
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("llm_config = $%d", argCount))
 		args = append(args, string(llmConfigBytes))
 	}
 
 	if req.UseCodeExecutionMode != nil {
-		// Convert boolean to INTEGER (0/1) for SQLite
-		useCodeExecutionModeInt := 0
-		if *req.UseCodeExecutionMode {
-			useCodeExecutionModeInt = 1
-		}
-		updateFields = append(updateFields, "use_code_execution_mode = ?")
-		args = append(args, useCodeExecutionModeInt)
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("use_code_execution_mode = $%d", argCount))
+		args = append(args, *req.UseCodeExecutionMode)
 	}
 
 	if len(updateFields) == 0 {
 		return nil, fmt.Errorf("no fields to update")
 	}
 
-	// Validate all update fields are from whitelist
-	for _, field := range updateFields {
-		if !validateUpdateField(field) {
-			return nil, fmt.Errorf("invalid update field: %s", field)
-		}
-	}
-
 	updateFields = append(updateFields, "updated_at = CURRENT_TIMESTAMP")
+	
+	argCount++
 	args = append(args, id)
 
-	//nolint:gosec // G201: updateFields are validated against whitelist and use parameterized queries (?)
 	query := fmt.Sprintf(`
 		UPDATE preset_queries
 		SET %s
-		WHERE id = ?
+		WHERE id = $%d
 		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, is_predefined, created_at, updated_at, created_by
-	`, strings.Join(updateFields, ", "))
+	`, strings.Join(updateFields, ", "), argCount)
 
 	var preset PresetQuery
 	var selectedServersStr string
 	var selectedToolsStr string
 	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
-	var useCodeExecutionModeInt int
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &useCodeExecutionModeInt, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1015,15 +899,13 @@ func (s *SQLiteDB) UpdatePresetQuery(ctx context.Context, id string, req *Update
 	} else {
 		preset.LLMConfig = nil
 	}
-	// Convert INTEGER to boolean
-	preset.UseCodeExecutionMode = useCodeExecutionModeInt != 0
 
 	return &preset, nil
 }
 
 // DeletePresetQuery deletes a preset query
-func (s *SQLiteDB) DeletePresetQuery(ctx context.Context, id string) error {
-	query := `DELETE FROM preset_queries WHERE id = ?`
+func (s *SupabaseDB) DeletePresetQuery(ctx context.Context, id string) error {
+	query := `DELETE FROM preset_queries WHERE id = $1`
 
 	result, err := s.db.ExecContext(ctx, query, id)
 	if err != nil {
@@ -1043,8 +925,7 @@ func (s *SQLiteDB) DeletePresetQuery(ctx context.Context, id string) error {
 }
 
 // ListPresetQueries lists preset queries with pagination
-func (s *SQLiteDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]PresetQuery, int, error) {
-	// Get total count
+func (s *SupabaseDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]PresetQuery, int, error) {
 	countQuery := `SELECT COUNT(*) FROM preset_queries`
 	var total int
 	err := s.db.QueryRowContext(ctx, countQuery).Scan(&total)
@@ -1052,12 +933,11 @@ func (s *SQLiteDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]
 		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
 	}
 
-	// Get presets
 	query := `
 		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, is_predefined, created_at, updated_at, created_by
 		FROM preset_queries
 		ORDER BY created_at DESC
-		LIMIT ? OFFSET ?
+		LIMIT $1 OFFSET $2
 	`
 
 	rows, err := s.db.QueryContext(ctx, query, limit, offset)
@@ -1066,16 +946,15 @@ func (s *SQLiteDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]
 	}
 	defer rows.Close()
 
-	presets := make([]PresetQuery, 0) // Initialize as empty slice, not nil
+	presets := make([]PresetQuery, 0)
 	for rows.Next() {
 		var preset PresetQuery
 		var selectedServersStr string
 		var selectedToolsStr string
 		var selectedFolderStr sql.NullString
 		var llmConfigNullStr sql.NullString
-		var useCodeExecutionModeInt int
 		err := rows.Scan(
-			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &useCodeExecutionModeInt, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan preset query: %w", err)
@@ -1089,8 +968,6 @@ func (s *SQLiteDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]
 			preset.LLMConfig = json.RawMessage("null")
 		}
 		preset.SelectedFolder = selectedFolderStr
-		// Convert INTEGER to boolean
-		preset.UseCodeExecutionMode = useCodeExecutionModeInt != 0
 		presets = append(presets, preset)
 	}
 
@@ -1098,14 +975,12 @@ func (s *SQLiteDB) ListPresetQueries(ctx context.Context, limit, offset int) ([]
 }
 
 // CreateWorkflow creates a new workflow
-func (s *SQLiteDB) CreateWorkflow(ctx context.Context, req *CreateWorkflowRequest) (*Workflow, error) {
-	// Set default status if not provided
+func (s *SupabaseDB) CreateWorkflow(ctx context.Context, req *CreateWorkflowRequest) (*Workflow, error) {
 	workflowStatus := req.WorkflowStatus
 	if workflowStatus == "" {
 		workflowStatus = WorkflowStatusPreVerification
 	}
 
-	// Prepare selected options JSON
 	var selectedOptionsJSON sql.NullString
 	if req.SelectedOptions != nil {
 		jsonBytes, err := json.Marshal(*req.SelectedOptions)
@@ -1117,7 +992,7 @@ func (s *SQLiteDB) CreateWorkflow(ctx context.Context, req *CreateWorkflowReques
 
 	query := `
 		INSERT INTO workflows (preset_query_id, workflow_status, selected_options)
-		VALUES (?, ?, ?)
+		VALUES ($1, $2, $3)
 		RETURNING id, preset_query_id, workflow_status, selected_options, created_at, updated_at
 	`
 
@@ -1131,7 +1006,6 @@ func (s *SQLiteDB) CreateWorkflow(ctx context.Context, req *CreateWorkflowReques
 		return nil, fmt.Errorf("failed to create workflow: %w", err)
 	}
 
-	// Parse selected options JSON if present
 	if selectedOptionJSONResult.Valid && selectedOptionJSONResult.String != "" {
 		var selectedOptions WorkflowSelectedOptions
 		if err := json.Unmarshal([]byte(selectedOptionJSONResult.String), &selectedOptions); err != nil {
@@ -1144,11 +1018,11 @@ func (s *SQLiteDB) CreateWorkflow(ctx context.Context, req *CreateWorkflowReques
 }
 
 // GetWorkflowByPresetQueryID retrieves a workflow by preset query ID
-func (s *SQLiteDB) GetWorkflowByPresetQueryID(ctx context.Context, presetQueryID string) (*Workflow, error) {
+func (s *SupabaseDB) GetWorkflowByPresetQueryID(ctx context.Context, presetQueryID string) (*Workflow, error) {
 	query := `
 		SELECT id, preset_query_id, workflow_status, selected_options, created_at, updated_at
 		FROM workflows
-		WHERE preset_query_id = ?
+		WHERE preset_query_id = $1
 	`
 
 	var workflow Workflow
@@ -1164,7 +1038,6 @@ func (s *SQLiteDB) GetWorkflowByPresetQueryID(ctx context.Context, presetQueryID
 		return nil, fmt.Errorf("failed to get workflow: %w", err)
 	}
 
-	// Parse selected options JSON if present
 	if selectedOptionJSON.Valid && selectedOptionJSON.String != "" {
 		var selectedOptions WorkflowSelectedOptions
 		if err := json.Unmarshal([]byte(selectedOptionJSON.String), &selectedOptions); err != nil {
@@ -1176,23 +1049,19 @@ func (s *SQLiteDB) GetWorkflowByPresetQueryID(ctx context.Context, presetQueryID
 	return &workflow, nil
 }
 
-// UpdateWorkflow updates a workflow, creating it if it doesn't exist
-func (s *SQLiteDB) UpdateWorkflow(ctx context.Context, presetQueryID string, req *UpdateWorkflowRequest) (*Workflow, error) {
-	// First, check if workflow exists
+// UpdateWorkflow updates a workflow
+func (s *SupabaseDB) UpdateWorkflow(ctx context.Context, presetQueryID string, req *UpdateWorkflowRequest) (*Workflow, error) {
 	existingWorkflow, err := s.GetWorkflowByPresetQueryID(ctx, presetQueryID)
 	if err != nil && !strings.Contains(err.Error(), "workflow not found for preset query") {
 		return nil, fmt.Errorf("failed to check existing workflow: %w", err)
 	}
 
-	// If workflow doesn't exist, create it
 	if existingWorkflow == nil {
-		// Determine default workflow status
 		workflowStatus := "execution"
 		if req.WorkflowStatus != nil {
 			workflowStatus = *req.WorkflowStatus
 		}
 
-		// Create new workflow
 		createReq := &CreateWorkflowRequest{
 			PresetQueryID:   presetQueryID,
 			WorkflowStatus:  workflowStatus,
@@ -1207,22 +1076,23 @@ func (s *SQLiteDB) UpdateWorkflow(ctx context.Context, presetQueryID string, req
 		return workflow, nil
 	}
 
-	// Workflow exists, proceed with update
-	// Build dynamic update query
 	updateFields := []string{}
 	args := []interface{}{}
+	argCount := 0
 
 	if req.WorkflowStatus != nil {
-		updateFields = append(updateFields, "workflow_status = ?")
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("workflow_status = $%d", argCount))
 		args = append(args, *req.WorkflowStatus)
 	}
 
 	if req.SelectedOptions != nil {
-		updateFields = append(updateFields, "selected_options = ?")
 		selectedOptionsJSON, err := json.Marshal(*req.SelectedOptions)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal selected_options: %w", err)
 		}
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("selected_options = $%d", argCount))
 		args = append(args, string(selectedOptionsJSON))
 	}
 
@@ -1230,23 +1100,16 @@ func (s *SQLiteDB) UpdateWorkflow(ctx context.Context, presetQueryID string, req
 		return nil, fmt.Errorf("no fields to update")
 	}
 
-	// Validate all update fields are from whitelist
-	for _, field := range updateFields {
-		if !validateUpdateField(field) {
-			return nil, fmt.Errorf("invalid update field: %s", field)
-		}
-	}
-
 	updateFields = append(updateFields, "updated_at = CURRENT_TIMESTAMP")
+	argCount++
 	args = append(args, presetQueryID)
 
-	//nolint:gosec // G201: updateFields are validated against whitelist and use parameterized queries (?)
 	query := fmt.Sprintf(`
 		UPDATE workflows
 		SET %s
-		WHERE preset_query_id = ?
+		WHERE preset_query_id = $%d
 		RETURNING id, preset_query_id, workflow_status, selected_options, created_at, updated_at
-	`, strings.Join(updateFields, ", "))
+	`, strings.Join(updateFields, ", "), argCount)
 
 	var workflow Workflow
 	var selectedOptionJSON sql.NullString
@@ -1258,7 +1121,6 @@ func (s *SQLiteDB) UpdateWorkflow(ctx context.Context, presetQueryID string, req
 		return nil, err
 	}
 
-	// Parse selected options JSON if present
 	if selectedOptionJSON.Valid && selectedOptionJSON.String != "" {
 		var selectedOptions WorkflowSelectedOptions
 		if err := json.Unmarshal([]byte(selectedOptionJSON.String), &selectedOptions); err != nil {
@@ -1271,8 +1133,8 @@ func (s *SQLiteDB) UpdateWorkflow(ctx context.Context, presetQueryID string, req
 }
 
 // DeleteWorkflow deletes a workflow
-func (s *SQLiteDB) DeleteWorkflow(ctx context.Context, presetQueryID string) error {
-	query := `DELETE FROM workflows WHERE preset_query_id = ?`
+func (s *SupabaseDB) DeleteWorkflow(ctx context.Context, presetQueryID string) error {
+	query := `DELETE FROM workflows WHERE preset_query_id = $1`
 
 	result, err := s.db.ExecContext(ctx, query, presetQueryID)
 	if err != nil {
@@ -1291,16 +1153,14 @@ func (s *SQLiteDB) DeleteWorkflow(ctx context.Context, presetQueryID string) err
 	return nil
 }
 
-// Close closes the database connection and flushes all pending events
-func (s *SQLiteDB) Close() error {
-	// Stop the flusher and wait for it to finish
+// Close closes the database connection
+func (s *SupabaseDB) Close() error {
 	if s.flushTicker != nil {
 		s.flushTicker.Stop()
 		close(s.stopFlusher)
 		<-s.flushDone
 	}
 
-	// Flush any remaining events
 	s.flushBatches()
 
 	return s.db.Close()

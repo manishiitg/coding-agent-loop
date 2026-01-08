@@ -75,17 +75,56 @@ Complex Objective → Structured Plan → Tool Execution → Fact-Checking → V
 # - All 3 agents: Planning + Execution + Validation
 ```
 
-#### **Manual Configuration**
+#### **Manual Configuration (SQLite)**
 ```bash
-# Start server with custom orchestrator settings
+# Start server with custom orchestrator settings using SQLite (default)
 go run main.go server \
     --agent-mode simple \
     --structured-output-provider openai \
     --structured-output-model gpt-4o \
     --provider bedrock \
     --model "us.anthropic.claude-sonnet-4-20250514-v1:0" \
+    --db-type sqlite \
+    --db-path "/app/chat_history.db" \
     --log-file logs/orchestrator-server.log
 ```
+
+#### **Manual Configuration (PostgreSQL)**
+```bash
+# Start server using PostgreSQL (Supabase)
+export DATABASE_URL="postgres://user:password@host:port/dbname?sslmode=disable"
+go run main.go server \
+    --agent-mode simple \
+    --db-type postgres \
+    --log-file logs/orchestrator-server.log
+```
+
+### **Database Migration (SQLite to PostgreSQL)**
+
+If you have existing data in SQLite and want to migrate to PostgreSQL (Supabase), use the provided migration tool:
+
+1. **Build the migration tool**:
+   ```bash
+   cd agent_go
+   go build -o ../bin/migrate-db ./cmd/migrate_db
+   ```
+
+2. **Run the migration**:
+   ```bash
+   # Using environment variable for Postgres URL
+   export DATABASE_URL="postgres://user:password@host:port/dbname?sslmode=disable"
+   ../bin/migrate-db -sqlite "chat_history.db"
+
+   # Or explicitly passing the flag
+   ../bin/migrate-db -sqlite "chat_history.db" -postgres "postgres://..."
+   ```
+
+   The tool will migrate:
+   - Preset Queries (merging with existing ones based on ID)
+   - Chat Sessions (skipping duplicates)
+   - Events (skipping duplicates)
+   - Workflows (skipping duplicates)
+   - Slack Configuration (if enabled)
 
 ## Prerequisites
 

@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"mcpagent/events"
@@ -37,6 +38,9 @@ type Database interface {
 	// Health check
 	Ping(ctx context.Context) error
 	Close() error
+
+	// Access underlying DB connection (for integrations like Slack)
+	GetDB() *sql.DB
 }
 
 // EventStore interface for integrating with existing event system

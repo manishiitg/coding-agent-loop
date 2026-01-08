@@ -441,6 +441,7 @@ func init() {
 
 	// Chat History Database flags
 	ServerCmd.Flags().String("db-path", "/app/chat_history.db", "SQLite database path for chat history")
+	ServerCmd.Flags().String("db-type", "sqlite", "Database type (sqlite, postgres)")
 
 	// Bind flags to viper
 	viper.BindPFlags(ServerCmd.Flags())
@@ -586,18 +587,36 @@ func runServer(cmd *cobra.Command, args []string) {
 	eventStore := events.NewEventStore(10000) // Max 10000 events per session
 
 	// Initialize chat history database
-	dbPath := viper.GetString("db-path")
-	if dbPath == "" {
-		dbPath = "/app/chat_history.db" // Default SQLite database path
+	dbType := viper.GetString("db-type")
+	if dbType == "" {
+		dbType = "sqlite"
 	}
 
-	chatDB, err := database.NewSQLiteDB(dbPath)
+	var chatDB database.Database
+	var connInfo string
+
+	if dbType == "postgres" {
+		connStr := os.Getenv("DATABASE_URL")
+		if connStr == "" {
+			log.Fatalf("DATABASE_URL environment variable is required for postgres")
+		}
+		chatDB, err = database.NewSupabaseDB(connStr)
+		connInfo = "PostgreSQL (Supabase)"
+	} else {
+		dbPath := viper.GetString("db-path")
+		if dbPath == "" {
+			dbPath = "/app/chat_history.db" // Default SQLite database path
+		}
+		chatDB, err = database.NewSQLiteDB(dbPath)
+		connInfo = fmt.Sprintf("SQLite (%s)", dbPath)
+	}
+
 	if err != nil {
 		log.Fatalf("Failed to initialize chat history database: %w", err)
 	}
 	defer chatDB.Close()
 
-	fmt.Printf("💾 Chat History Database: %s\n", dbPath)
+	fmt.Printf("💾 Chat History Database: %s\n", connInfo)
 
 	// Initialize Slack service for human feedback
 	slackSvc, err := slackservice.InitSlackService(chatDB.GetDB())

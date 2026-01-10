@@ -50,6 +50,7 @@ const formatTokens = (count?: number) => {
 interface IterationCosts {
   runFolder: string
   tokenUsage: TokenUsageFile | null
+  steps?: Record<string, StepExecutionLogs> // Store steps for title lookup
   costSummary: {
     totalCost: number
     totalInputTokens: number
@@ -66,8 +67,9 @@ interface IterationCosts {
       other: number
     }
     stepCosts: Array<{
-      stepNum: number
-      stepTitle: string
+      stepID: string        // Step ID (e.g., "fetch-pr-data" or phase name for phase-only agents)
+      stepTitle: string     // Display title
+      stepNum: number       // Step number (for sorting, 0 for non-step entries)
       execution: number
       validation: number
       learning: number
@@ -112,7 +114,8 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
       other: 0
     }
 
-    const stepCosts: Record<number, {
+    const stepCosts: Record<string, {
+      stepID: string
       stepNum: number
       stepTitle: string
       execution: number
@@ -137,13 +140,29 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
       })
     }
 
+    // Helper to find step number and title from stepID
+    const findStepInfo = (stepID: string): { stepNum: number, stepTitle: string } => {
+      // Try to find the step in the steps data by matching the step ID
+      if (steps) {
+        for (const [key, stepData] of Object.entries(steps)) {
+          if (stepData.step_id === stepID) {
+            // Extract step number from key (e.g., "step-1" -> 1)
+            const match = key.match(/step-(\d+)/)
+            const stepNum = match ? parseInt(match[1], 10) : 0
+            return { stepNum, stepTitle: stepData.title || stepID }
+          }
+        }
+      }
+      // If not found, it might be a phase-only agent (use phase name as display)
+      return { stepNum: 0, stepTitle: stepID }
+    }
+
     // Calculate stage costs and step-wise costs from by_step_and_model
     if (tokenUsage.by_step_and_model) {
       Object.entries(tokenUsage.by_step_and_model).forEach(([key, modelMap]) => {
         const parts = key.split(':')
         const phase = parts[0]
-        const stepIndex = parseInt(parts[1] || '0', 10)
-        const stepNum = stepIndex + 1
+        const stepID = parts[1] || ''  // New format: stepID instead of index
 
         let cost = 0
         let inputTokens = 0
@@ -167,58 +186,44 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
           stageCosts.other += cost
         }
 
-        // Step-wise costs
-        if (stepNum >= 0) {
-          // For learning phases with stepIndex: -1, we need to handle them specially
-          // They should be attributed to their respective steps, but if stepIndex is -1,
-          // we can't determine which step. For now, we'll group them as "Other (Learning)"
-          // TODO: Backend should fix learning phases to use correct stepIndex
-          const displayStepNum = stepNum
-          let displayTitle = ''
-          
-          if (stepNum === 0 && (phase.includes('learning'))) {
-            // Learning costs with stepIndex: -1 - try to find which step this belongs to
-            // by checking if we can infer from the phase name or other context
-            // For now, label as "Other (Learning)" to distinguish from other "Other" costs
-            displayTitle = 'Other (Learning)'
-          } else if (stepNum === 0) {
-            displayTitle = 'Other'
-          } else {
-            const stepId = `step-${stepNum}`
-            const stepData = steps?.[stepId]
-            displayTitle = stepData?.title || ''
-          }
-          
-          if (!stepCosts[displayStepNum]) {
-            stepCosts[displayStepNum] = {
-              stepNum: displayStepNum,
-              stepTitle: displayTitle,
-              execution: 0,
-              validation: 0,
-              learning: 0,
-              totalCost: 0,
-              inputTokens: 0,
-              outputTokens: 0,
-              llmCalls: 0
-            }
-          }
-          stepCosts[displayStepNum].totalCost += cost
-          stepCosts[displayStepNum].inputTokens += inputTokens
-          stepCosts[displayStepNum].outputTokens += outputTokens
-          stepCosts[displayStepNum].llmCalls += llmCalls
+        // Step-wise costs - group by stepID
+        const { stepNum, stepTitle } = findStepInfo(stepID)
+        const stepKey = stepID  // Use stepID as the key
 
-          if (phase === 'execution_only') {
-            stepCosts[displayStepNum].execution += cost
-          } else if (phase === 'validation') {
-            stepCosts[displayStepNum].validation += cost
-          } else if (phase.includes('learning')) {
-            stepCosts[displayStepNum].learning += cost
+        if (!stepCosts[stepKey]) {
+          stepCosts[stepKey] = {
+            stepID,
+            stepNum,
+            stepTitle,
+            execution: 0,
+            validation: 0,
+            learning: 0,
+            totalCost: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            llmCalls: 0
           }
+        }
+        stepCosts[stepKey].totalCost += cost
+        stepCosts[stepKey].inputTokens += inputTokens
+        stepCosts[stepKey].outputTokens += outputTokens
+        stepCosts[stepKey].llmCalls += llmCalls
+
+        if (phase === 'execution_only') {
+          stepCosts[stepKey].execution += cost
+        } else if (phase === 'validation') {
+          stepCosts[stepKey].validation += cost
+        } else if (phase.includes('learning')) {
+          stepCosts[stepKey].learning += cost
         }
       })
     }
 
-    const sortedStepCosts = Object.values(stepCosts).sort((a, b) => a.stepNum - b.stepNum)
+    // Sort by step number, then by stepID
+    const sortedStepCosts = Object.values(stepCosts).sort((a, b) => {
+      if (a.stepNum !== b.stepNum) return a.stepNum - b.stepNum
+      return a.stepID.localeCompare(b.stepID)
+    })
 
     return {
       totalCost,
@@ -248,6 +253,18 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, workspacePath, runFolders.length])
 
+  // Auto-expand selected run folder when it changes
+  useEffect(() => {
+    if (isOpen && selectedRunFolder && iterationCosts.some(c => c.runFolder === selectedRunFolder)) {
+      setExpandedIterations(prev => {
+        if (prev.has(selectedRunFolder!)) return prev
+        const next = new Set(prev)
+        next.add(selectedRunFolder!)
+        return next
+      })
+    }
+  }, [isOpen, selectedRunFolder, iterationCosts])
+
   const loadAllCosts = async () => {
     if (!workspacePath || runFolders.length === 0) return
 
@@ -274,6 +291,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
             costs.push({
               runFolder,
               tokenUsage: data.token_usage,
+              steps, // Store steps for later use in model breakdown
               costSummary
             })
           }
@@ -555,14 +573,18 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                   return (
                     <div
                       key={iter.runFolder}
-                      className="border border-border rounded-lg overflow-hidden bg-card"
+                      className={`border rounded-lg overflow-hidden bg-card ${
+                        iter.runFolder === selectedRunFolder 
+                          ? 'border-purple-500/50 ring-1 ring-purple-500/20' 
+                          : 'border-border'
+                      }`}
                     >
                       {/* Iteration Header */}
                       <button
                         onClick={() => toggleIteration(iter.runFolder)}
                         className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${
                           isExpanded ? 'bg-accent/50' : 'hover:bg-accent/50'
-                        }`}
+                        } ${iter.runFolder === selectedRunFolder ? 'bg-purple-50/30 dark:bg-purple-900/10' : ''}`}
                       >
                         <div className="flex items-center gap-3 flex-1 min-w-0">
                           {isExpanded ? (
@@ -570,10 +592,20 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                           ) : (
                             <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                           )}
-                          <div className="flex flex-col items-start min-w-0">
-                            <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded text-foreground">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className={`font-mono text-xs px-1.5 py-0.5 rounded ${
+                              iter.runFolder === selectedRunFolder 
+                                ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 font-bold' 
+                                : 'bg-muted text-foreground'
+                            }`}>
                               {iter.runFolder}
                             </span>
+                            {iter.runFolder === selectedRunFolder && (
+                              <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-purple-500 text-white shadow-sm">
+                                <TrendingUp className="w-2.5 h-2.5" />
+                                Current
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -664,24 +696,26 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                     </thead>
                                     <tbody className="divide-y divide-border">
                                       {costSummary.stepCosts.map((step) => (
-                                        <tr key={step.stepNum} className="hover:bg-accent/50 transition-colors">
+                                        <tr key={step.stepID} className="hover:bg-accent/50 transition-colors">
                                           <td className="py-2">
                                             <div className="font-medium text-foreground">
                                               {step.stepNum === 0
                                                 ? (
                                                     <span className="flex items-center gap-1.5">
-                                                      {step.stepTitle || 'Other'}
-                                                      {step.stepTitle === 'Other (Learning)' && (
-                                                        <span 
-                                                          className="text-xs text-muted-foreground cursor-help"
-                                                          title="Learning costs that couldn't be attributed to a specific step. This is usually due to learning phases being recorded with stepIndex: -1. The backend should be fixed to use the correct step index."
-                                                        >
-                                                          ⚠️
-                                                        </span>
-                                                      )}
+                                                      {step.stepTitle}
+                                                      <span className="text-xs text-muted-foreground">
+                                                        ({step.stepID})
+                                                      </span>
                                                     </span>
                                                   )
-                                                : `Step ${step.stepNum}${step.stepTitle ? `: ${step.stepTitle}` : ''}`
+                                                : (
+                                                    <span>
+                                                      Step {step.stepNum}: {step.stepTitle}
+                                                      <span className="text-xs text-muted-foreground ml-1">
+                                                        ({step.stepID})
+                                                      </span>
+                                                    </span>
+                                                  )
                                               }
                                             </div>
                                           </td>
@@ -767,8 +801,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
 
                                                 const parts = stepKey.split(':')
                                                 const phase = parts[0]
-                                                const index = parseInt(parts[1] || '0', 10)
-                                                const stepNum = index + 1
+                                                const stepID = parts[1] || ''  // New format: stepID instead of index
 
                                                 let phaseLabel = ''
                                                 if (phase === 'execution_only') { phaseLabel = 'Execution' }
@@ -776,12 +809,36 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                                 else if (phase.includes('learning')) { phaseLabel = 'Learning' }
                                                 else { phaseLabel = phase }
 
-                                                const label = `Step ${stepNum} (${phaseLabel})`
+                                                // Try to find step info from stepID
+                                                let stepNum = 0
+                                                let stepTitle = stepID
+                                                if (iter.steps) {
+                                                  for (const [key, stepData] of Object.entries(iter.steps)) {
+                                                    if (stepData.step_id === stepID) {
+                                                      const match = key.match(/step-(\d+)/)
+                                                      stepNum = match ? parseInt(match[1], 10) : 0
+                                                      stepTitle = stepData.title || stepID
+                                                      break
+                                                    }
+                                                  }
+                                                }
 
-                                                return { key: stepKey, label, usage: stepUsage }
+                                                let label = ''
+                                                if (stepNum > 0) {
+                                                  label = `Step ${stepNum}: ${stepTitle} (${phaseLabel})`
+                                                } else {
+                                                  // Phase-only agent
+                                                  label = `${stepTitle} (${phaseLabel})`
+                                                }
+
+                                                return { key: stepKey, label, usage: stepUsage, stepNum }
                                               })
                                               .filter((s): s is NonNullable<typeof s> => s !== null)
-                                              .sort((a, b) => a.label.localeCompare(b.label))
+                                              .sort((a, b) => {
+                                                // Sort by step number first, then by label
+                                                if (a.stepNum !== b.stepNum) return a.stepNum - b.stepNum
+                                                return a.label.localeCompare(b.label)
+                                              })
                                           : []
 
                                         return (

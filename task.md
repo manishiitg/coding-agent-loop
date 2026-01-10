@@ -61,7 +61,7 @@ i) prompt tempaltes, need to check variables on compile time
 
 49. context eidting/ summarization need that configurable? do we capture costs for summary etc properly?
 
-50. we need to have evals for workflows
+50. we need to have evals for workflows -- done
 
 51. summization in chat mode is not ux friendly
 
@@ -73,6 +73,8 @@ i) prompt tempaltes, need to check variables on compile time
 
 55. langfuse tracing
 
-56. supabase migration
+56. supabase migration -- done
 
 57. can we create a test propmt in openrouter to test how good a model is, mainly in agentic behaviour
+
+58. run multiple workflows together

@@ -141,6 +141,7 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 		config,
 		"anonymization",
 		0, 0, // step, iteration
+		"anonymization", // stepID (use phase name for phase-only agents)
 		createAgentFunc,
 		allTools,
 		allExecutors,

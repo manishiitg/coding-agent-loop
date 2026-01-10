@@ -45,6 +45,7 @@ type LearningMetadata struct {
 	SuccessfulRunsMedium     int                         `json:"successful_runs_medium"`      // Successful runs for TurnCount 15-30
 	SuccessfulRunsComplex    int                         `json:"successful_runs_complex"`     // Successful runs for TurnCount > 30
 	LastTurnCount            int                         `json:"last_turn_count"`             // Last recorded TurnCount
+	LastExecutionLLM         string                      `json:"last_execution_llm,omitempty"` // The LLM used for the last execution (associated with last_turn_count)
 	LastLearningLLM          string                      `json:"last_learning_llm,omitempty"` // The LLM used for the last learning cycle
 	LastLearningDetectedAt   string                      `json:"last_learning_detected_at,omitempty"`
 	LastDetectionReasoning   string                      `json:"last_detection_reasoning,omitempty"`
@@ -108,7 +109,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadata(
 ) (bool, error) {
 	// Re-route to the new complexity-based logic with a default turn count of 0 (unknown)
 	// and no plan step (will skip hash check). validationPassed is false (safe default).
-	return hcpo.updateLearningMetadataWithTurnCount(ctx, stepIndex, stepPath, learningPathIdentifier, hasNewLearning, reasoning, confidence, 0, nil, false, "")
+	return hcpo.updateLearningMetadataWithTurnCount(ctx, stepIndex, stepPath, learningPathIdentifier, hasNewLearning, reasoning, confidence, 0, nil, false, "", "")
 }
 
 // updateLearningMetadataWithTurnCount updates the learning metadata with TurnCount-based complexity tracking.
@@ -124,7 +125,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	turnCount int,
 	step PlanStepInterface,
 	validationPassed bool,
-	usedLLM string,
+	executionLLM string,
+	learningLLM string,
 ) (bool, error) {
 	// Use relative path - ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath
 	learningsBase := hcpo.getLearningsBasePath()
@@ -165,7 +167,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	// Update common fields
 	metadata.TotalIterations++
 	metadata.LastTurnCount = turnCount
-	metadata.LastLearningLLM = usedLLM
+	metadata.LastExecutionLLM = executionLLM
+	metadata.LastLearningLLM = learningLLM
 	if step != nil {
 		metadata.StepHash = hcpo.CalculateStepHash(step)
 	}

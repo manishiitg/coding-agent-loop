@@ -17,13 +17,12 @@ import {
   RefreshCw
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
-import type { EvaluationReportsResponse, EvaluationReport, EvaluationStepScore } from '../../services/api-types'
+import type { EvaluationReportsResponse } from '../../services/api-types'
 
 interface EvaluationPopupProps {
   isOpen: boolean
   onClose: () => void
   workspacePath: string | null
-  runFolders: string[] // Available run folders for filtering
   selectedRunFolder: string | null // Currently selected run folder in the UI
 }
 
@@ -57,7 +56,6 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
   isOpen,
   onClose,
   workspacePath,
-  runFolders,
   selectedRunFolder
 }) => {
   const [loading, setLoading] = useState(false)
@@ -66,11 +64,19 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
   const [expandedReports, setExpandedReports] = useState<Set<string>>(new Set())
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())
   const [filterRunFolder, setFilterRunFolder] = useState<string>('')
-  const [viewMode, setViewMode] = useState<'all' | 'single'>('all')
+  const [viewMode, setViewMode] = useState<'all' | 'single'>(selectedRunFolder ? 'single' : 'all')
 
   // Load evaluation reports when popup opens
   useEffect(() => {
     if (isOpen && workspacePath) {
+      // If we have a selected run folder, default to single mode
+      if (selectedRunFolder) {
+        setViewMode('single')
+        setFilterRunFolder(selectedRunFolder)
+      } else {
+        setViewMode('all')
+        setFilterRunFolder('')
+      }
       loadReports()
     } else {
       setData(null)
@@ -78,7 +84,7 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
       setExpandedReports(new Set())
       setExpandedSteps(new Set())
     }
-  }, [isOpen, workspacePath])
+  }, [isOpen, workspacePath, selectedRunFolder])
 
   // Update filter when view mode changes
   useEffect(() => {
@@ -311,14 +317,18 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
                   return (
                     <div
                       key={entry.run_folder}
-                      className="border border-border rounded-lg overflow-hidden bg-card"
+                      className={`border rounded-lg overflow-hidden bg-card ${
+                        entry.run_folder === selectedRunFolder 
+                          ? 'border-purple-500/50 ring-1 ring-purple-500/20' 
+                          : 'border-border'
+                      }`}
                     >
                       {/* Report Header */}
                       <button
                         onClick={() => toggleReport(entry.run_folder)}
                         className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${
                           isExpanded ? 'bg-accent/50' : 'hover:bg-accent/50'
-                        }`}
+                        } ${entry.run_folder === selectedRunFolder ? 'bg-purple-50/30 dark:bg-purple-900/10' : ''}`}
                       >
                         <div className="flex items-center gap-3 flex-1 min-w-0">
                           {isExpanded ? (
@@ -328,9 +338,19 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
                           )}
                           <div className="flex flex-col items-start min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">
+                              <span className={`font-mono text-xs px-1.5 py-0.5 rounded ${
+                                entry.run_folder === selectedRunFolder 
+                                  ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 font-bold' 
+                                  : 'bg-muted text-foreground'
+                              }`}>
                                 {entry.run_folder}
                               </span>
+                              {entry.run_folder === selectedRunFolder && (
+                                <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-purple-500 text-white shadow-sm">
+                                  <Target className="w-2.5 h-2.5" />
+                                  Current
+                                </span>
+                              )}
                               <span className="text-xs text-muted-foreground">
                                 {new Date(report.generated_at).toLocaleString()}
                               </span>

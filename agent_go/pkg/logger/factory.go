@@ -18,7 +18,7 @@ func CreateLogger(logFile string, level string, format string, enableStdout bool
 	if enableStdout {
 		cfg.Output = "stdout"
 	} else if logFile != "" {
-		cfg.Output = logFile
+		// Do not set Output to logFile to avoid duplication as EnableFile handles file output
 	} else {
 		// Default to stdout when no log file is specified and stdout is disabled
 		cfg.Output = "stdout"

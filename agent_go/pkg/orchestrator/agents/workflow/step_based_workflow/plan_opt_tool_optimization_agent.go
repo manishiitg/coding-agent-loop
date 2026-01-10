@@ -483,6 +483,7 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 		config,
 		"plan-tool-optimization",
 		0, 0, // step, iteration
+		"plan-tool-optimization", // stepID (use phase name for phase-only agents)
 		createAgentFunc,
 		allTools,
 		allExecutors,

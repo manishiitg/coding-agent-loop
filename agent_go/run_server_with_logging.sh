@@ -1,7 +1,7 @@
 #!/bin/bash
 # Script to run the MCP agent server with logging enabled
 # This makes it easier to debug event issues by capturing all output to a log file
-# AND displaying it in real-time on the console using tee
+# Terminal output is suppressed as requested.
 
 # Get script directory first (needed for both test and server modes)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,7 +45,7 @@ if [[ "$1" == "--test-connections" || "$1" == "--test-mcp" || "$1" == "-t" ]]; t
     
     # Run the test-all command
     echo "🚀 Running MCP connection tests..."
-    go run main.go mcp test-all --config "$MCP_CONFIG" --log-file "logs/server_debug.log"
+    go run main.go mcp test-all --config "$MCP_CONFIG" --log-file "logs/server_debug.log" >> "logs/server_debug.log" 2>&1
     exit $?
 fi
 
@@ -132,7 +132,7 @@ export SUMMARY_KEEP_LAST_MESSAGES="4"  # Keep last 4 messages when summarizing (
 
 # Context editing configuration (compacts large tool outputs)
 # Note: Higher thresholds preserve cached tokens for cost efficiency
-export ENABLE_CONTEXT_EDITING="true"  # Enable context editing (default: true)
+export ENABLE_CONTEXT_EDITING="false"  # Enable context editing (default: true)
 export CONTEXT_EDITING_THRESHOLD="10000"  # Compact outputs larger than 10k tokens (default: 10000)
 export CONTEXT_EDITING_TURN_THRESHOLD="20"  # Compact outputs older than 20 turns (default: 20)
 
@@ -316,7 +316,7 @@ else
         --agent-mode "$DEEP_SEARCH_AGENT_MODE" \
         --structured-output-provider "$DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER" \
         --structured-output-model "$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL" \
-        --structured-output-temp "$DEEP_SEARCH_STRUCTURED_OUTPUT_TEMPERATURE"
+        --structured-output-temp "$DEEP_SEARCH_STRUCTURED_OUTPUT_TEMPERATURE" >> "$LOG_FILE" 2>&1
     
     EXIT_CODE=$?
     if [ $EXIT_CODE -ne 0 ]; then

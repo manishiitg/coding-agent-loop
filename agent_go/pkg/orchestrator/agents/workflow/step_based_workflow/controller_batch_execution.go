@@ -478,21 +478,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) sanitizeDisplayNameForFolder(displayN
 
 // createGroupRunFolder creates the run folder path for a specific group
 // Uses display_name if available (sanitized), otherwise falls back to group_id
+// ALWAYS uses nested structure (iteration-X/group) regardless of number of groups
 func (hcpo *StepBasedWorkflowOrchestrator) createGroupRunFolder(baseIterationFolder, groupID, displayName string, totalGroups int) string {
-	if totalGroups > 1 {
-		// Multiple groups - use nested structure
-		// Try to use sanitized display_name, fall back to group_id
-		folderName := groupID
-		if displayName != "" {
-			sanitized := hcpo.sanitizeDisplayNameForFolder(displayName)
-			if sanitized != "" {
-				folderName = sanitized
-			}
+	// ALWAYS use nested structure - try to use sanitized display_name, fall back to group_id
+	folderName := groupID
+	if displayName != "" {
+		sanitized := hcpo.sanitizeDisplayNameForFolder(displayName)
+		if sanitized != "" {
+			folderName = sanitized
 		}
-		return fmt.Sprintf("%s/%s", baseIterationFolder, folderName)
 	}
-	// Single group - use base folder directly
-	return baseIterationFolder
+	return fmt.Sprintf("%s/%s", baseIterationFolder, folderName)
 }
 
 // getNextIterationNumber determines the next iteration number for batch execution

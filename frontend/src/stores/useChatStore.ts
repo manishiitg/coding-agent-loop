@@ -219,6 +219,7 @@ interface ChatState extends StoreActions {
       addTabEvents: (sessionId: string, events: PollingEvent[]) => void
       setTabEvents: (sessionId: string, events: PollingEvent[]) => void
       clearTabEvents: (sessionId: string) => void
+      cleanupTabEvents: (sessionId: string, keepCount: number) => void
       getTabLastEventIndex: (sessionId: string) => number
       setTabLastEventIndex: (sessionId: string, index: number) => void
       getTabHasMoreOlderEvents: (sessionId: string) => boolean
@@ -260,7 +261,7 @@ interface ChatState extends StoreActions {
   // Tab management actions
   createChatTab: (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'basic' | 'advanced' | 'tiny') => Promise<string>  // Returns tabId
   switchTab: (tabId: string) => void
-  closeTab: (tabId: string) => Promise<void>
+  closeTab: (tabId: string, stopSession?: boolean, keepEvents?: boolean) => Promise<void>
   getTab: (tabId: string) => ChatTab | undefined
   getActiveTab: () => ChatTab | undefined
   getTabsByMode: (mode: 'chat' | 'workflow') => ChatTab[]
@@ -455,30 +456,31 @@ export const useChatStore = create<ChatState>()(
           
           // Deduplicate events by ID to prevent React key warnings
           // Create a Set of existing event IDs for fast lookup
-          const existingEventIds = new Set(currentEvents.map(e => e.id))
+          // const existingEventIds = new Set(currentEvents.map(e => e.id))
           
           // Filter out events that already exist
-          const uniqueNewEvents = events.filter(event => {
-            if (!event.id) {
-              // If event has no ID, allow it (shouldn't happen, but be safe)
-              console.warn(`[addTabEvents] Event without ID detected:`, event)
-              return true
-            }
-            if (existingEventIds.has(event.id)) {
-              // Event already exists, skip it
-              return false
-            }
-            // New event, add its ID to the set and include it
-            existingEventIds.add(event.id)
-            return true
-          })
+          // const uniqueNewEvents = events.filter(event => {
+          //   if (!event.id) {
+          //     // If event has no ID, allow it (shouldn't happen, but be safe)
+          //     console.warn(`[addTabEvents] Event without ID detected:`, event)
+          //     return true
+          //   }
+          //   if (existingEventIds.has(event.id)) {
+          //     // Event already exists, skip it
+          //     return false
+          //   }
+          //   // New event, add its ID to the set and include it
+          //   existingEventIds.add(event.id)
+          //   return true
+          // })
           
           // Only log if duplicates were found
-          if (uniqueNewEvents.length < events.length) {
-            console.log(`[addTabEvents] Deduplicated ${events.length - uniqueNewEvents.length} duplicate events for session ${sessionId}`)
-          }
+          // if (uniqueNewEvents.length < events.length) {
+          //   console.log(`[addTabEvents] Deduplicated ${events.length - uniqueNewEvents.length} duplicate events for session ${sessionId}`)
+          // }
           
-          const newEvents = [...currentEvents, ...uniqueNewEvents]
+          // TEMPORARILY DISABLED: Show all events including duplicates
+          const newEvents = [...currentEvents, ...events]
           
           // Trigger cleanup if threshold exceeded
           let finalEvents = newEvents
@@ -523,7 +525,7 @@ export const useChatStore = create<ChatState>()(
           delete newTabEventIndices[sessionId]
           const newTabHasMoreOlderEvents = { ...state.tabHasMoreOlderEvents }
           delete newTabHasMoreOlderEvents[sessionId]
-          
+
           return {
             tabEvents: newTabEvents,
             tabEventIndices: newTabEventIndices,
@@ -531,7 +533,29 @@ export const useChatStore = create<ChatState>()(
           }
         })
       },
-      
+
+      cleanupTabEvents: (sessionId: string, keepCount: number) => {
+        set((state) => {
+          const events = state.tabEvents[sessionId]
+
+          if (!events || events.length <= keepCount) {
+            return state // No cleanup needed
+          }
+
+          // Keep only recent events and important events using the utility
+          const cleaned = cleanupOldEvents(events)
+
+          console.log(`[ChatStore] Cleaned up events for ${sessionId}: ${events.length} -> ${cleaned.length}`)
+
+          return {
+            tabEvents: {
+              ...state.tabEvents,
+              [sessionId]: cleaned
+            }
+          }
+        })
+      },
+
       getTabLastEventIndex: (sessionId: string) => {
         const state = get()
         return state.tabEventIndices[sessionId] ?? -1
@@ -836,45 +860,45 @@ export const useChatStore = create<ChatState>()(
         }
       },
       
-      closeTab: async (tabId: string) => {
+      closeTab: async (tabId: string, stopSession: boolean = true, keepEvents: boolean = false) => {
         const state = get()
         const tab = state.chatTabs[tabId]
-        
+
         if (!tab) {
           console.warn(`[ChatStore] Tab ${tabId} not found`)
           return
         }
-        
-        // Stop session if streaming
-        if (tab.isStreaming && tab.sessionId) {
+
+        // Stop session if streaming (unless explicitly disabled, e.g., when minimizing to background)
+        if (stopSession && tab.isStreaming && tab.sessionId) {
           try {
             await agentApi.stopSession(tab.sessionId)
           } catch (error) {
             console.error(`[ChatStore] Failed to stop session ${tab.sessionId}:`, error)
           }
         }
-        
-        // Clear tab's events (by sessionId)
-        const newTabEvents = { ...state.tabEvents }
-        if (tab.sessionId) {
+
+        // Clear tab's events (by sessionId) unless keepEvents is true (e.g., for background workflows)
+        let newTabEvents = state.tabEvents
+        let newTabEventIndices = state.tabEventIndices
+        if (!keepEvents && tab.sessionId) {
+          newTabEvents = { ...state.tabEvents }
           delete newTabEvents[tab.sessionId]
-        }
-        const newTabEventIndices = { ...state.tabEventIndices }
-        if (tab.sessionId) {
+          newTabEventIndices = { ...state.tabEventIndices }
           delete newTabEventIndices[tab.sessionId]
         }
-        
+
         // Remove tab
         const newTabs = { ...state.chatTabs }
         delete newTabs[tabId]
-        
+
         // Switch to another tab if this was active
         let newActiveTabId = state.activeTabId
         if (state.activeTabId === tabId) {
           const remainingTabs = Object.values(newTabs).sort((a, b) => b.createdAt - a.createdAt)
           newActiveTabId = remainingTabs.length > 0 ? remainingTabs[0].tabId : null
         }
-        
+
         set({
           chatTabs: newTabs,
           activeTabId: newActiveTabId,

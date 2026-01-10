@@ -161,7 +161,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       }
     }
     // Convert from old format (backward compatibility)
-    // @ts-expect-error - old format may still exist in database
     const oldCategories = configs.enabled_custom_tool_categories;
     const oldTools = configs.enabled_custom_tools;
     return convertOldFormatToNew(oldCategories, oldTools);
@@ -242,7 +241,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
           setEnabledCustomTools(currentConfigs.enabled_custom_tools);
         } else {
           // Convert from old format
-          // @ts-expect-error - old format may still exist in database
           const oldCategories = currentConfigs.enabled_custom_tool_categories;
           const oldTools = currentConfigs.enabled_custom_tools;
           setEnabledCustomTools(convertOldFormatToNew(oldCategories, oldTools));

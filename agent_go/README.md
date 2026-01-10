@@ -619,6 +619,10 @@ This project welcomes contributions to enhance the 3-agent orchestrator system:
 - **Discussions**: Join community discussions for questions and ideas
 - **Documentation**: Comprehensive guides in `/docs` directory
 
+## 📚 Documentation
+
+- [Runtime MCP Overrides](docs/runtime_mcp_overrides.md) - Dynamic MCP server configuration per workflow (output directories, env vars, args)
+
 ## License
 
 This project is part of the mcp-city-mall repository. The 3-agent orchestrator system represents a significant advancement in AI workflow orchestration, providing enterprise-grade capabilities for complex multi-step processes with built-in quality assurance and validation. 

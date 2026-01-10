@@ -14,12 +14,10 @@ interface AnthropicSectionProps {
   onTestAPIKey: (apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => void
   apiKeyStatus: 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
   apiKeyError: string | null
-  isPrimary: boolean
-  onSetPrimary: () => void
   metadata?: ModelMetadata[]
 }
 
-export function AnthropicSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, metadata }: AnthropicSectionProps) {
+export function AnthropicSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, metadata }: AnthropicSectionProps) {
   const [apiKey, setApiKey] = useState(config.api_key || '')
   const [isPublishing, setIsPublishing] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)

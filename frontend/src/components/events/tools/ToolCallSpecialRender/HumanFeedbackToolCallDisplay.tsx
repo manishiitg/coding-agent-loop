@@ -119,7 +119,7 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       if (!isSubmitting && !isSubmitted && response.trim()) {
         handleSubmit()
@@ -176,7 +176,7 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
                 value={response}
                 onChange={(e) => setResponse(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Please provide your feedback here... (Ctrl/Cmd+Enter to submit)"
+                placeholder="Please provide your feedback here... (Enter to submit, Shift+Enter for newline)"
                 className="min-h-[100px] resize-y text-sm border-gray-200 dark:border-gray-700 focus:border-blue-500 dark:focus:border-blue-400"
                 disabled={isSubmitting}
               />
@@ -206,7 +206,7 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
           {!isSubmitted && (
             <div className="flex gap-2 justify-between items-center">
               <div className="text-xs text-gray-500 dark:text-gray-400">
-                💡 Tip: Press <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs font-mono">Ctrl/Cmd+Enter</kbd> to submit
+                💡 Tip: Press <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs font-mono">Enter</kbd> to submit
               </div>
               <Button
                 onClick={handleSubmit}

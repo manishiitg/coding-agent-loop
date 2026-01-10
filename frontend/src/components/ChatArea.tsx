@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import debounce from 'lodash.debounce'
 import { agentApi, resetSessionId, getSessionId } from '../services/api'
 import type { PollingEvent, ActiveSessionInfo, ExtendedLLMConfiguration } from '../services/api-types'
@@ -11,11 +12,10 @@ import { ToastContainer } from './ui/Toast'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { WorkflowExplanation } from './WorkflowExplanation'
-import { useAppStore, useLLMStore, useMCPStore, useChatStore } from '../stores'
+import { useAppStore, useLLMStore, useMCPStore, useChatStore, useGlobalPresetStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
 import { ModeEmptyState } from './ModeEmptyState'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
-import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import { ChatHeader } from './ChatHeader'
 import type { ChatTab, ChatTabConfig } from '../stores/useChatStore'
@@ -58,10 +58,24 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     setCurrentQuery,
     chatSessionId,
     chatSessionTitle
-  } = useAppStore()
+  } = useAppStore(useShallow(state => ({
+    agentMode: state.agentMode,
+    setCurrentQuery: state.setCurrentQuery,
+    chatSessionId: state.chatSessionId,
+    chatSessionTitle: state.chatSessionTitle
+  })))
   
-  const { selectedModeCategory, getAgentModeFromCategory } = useModeStore()
-  const { getActivePreset, applyPreset, clearActivePreset, currentPresetServers, currentPresetTools } = usePresetApplication()
+  const { selectedModeCategory, getAgentModeFromCategory } = useModeStore(useShallow(state => ({
+    selectedModeCategory: state.selectedModeCategory,
+    getAgentModeFromCategory: state.getAgentModeFromCategory
+  })))
+  const { getActivePreset, applyPreset, clearActivePreset, currentPresetServers, currentPresetTools } = useGlobalPresetStore(useShallow(state => ({
+    getActivePreset: state.getActivePreset,
+    applyPreset: state.applyPreset,
+    clearActivePreset: state.clearActivePreset,
+    currentPresetServers: state.currentPresetServers,
+    currentPresetTools: state.currentPresetTools
+  })))
   
   // Derive correct agent mode from selectedModeCategory (source of truth)
   const correctAgentMode = useMemo(() => {
@@ -78,13 +92,24 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     anthropicConfig,
     vertexConfig,
     bedrockConfig
-  } = useLLMStore()
+  } = useLLMStore(useShallow(state => ({
+    primaryConfig: state.primaryConfig,
+    openrouterConfig: state.openrouterConfig,
+    openaiConfig: state.openaiConfig,
+    anthropicConfig: state.anthropicConfig,
+    vertexConfig: state.vertexConfig,
+    bedrockConfig: state.bedrockConfig
+  })))
   
   const { 
     toolList: allTools,
     selectedServers,
     getAvailableServers
-  } = useMCPStore()
+  } = useMCPStore(useShallow(state => ({
+    toolList: state.toolList,
+    selectedServers: state.selectedServers,
+    getAvailableServers: state.getAvailableServers
+  })))
   
   // Get active tab reactively (works for both chat and workflow modes)
   // Use selector to ensure reactivity when tab config changes
@@ -206,7 +231,44 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     isAtBottom,
     createChatTab,
     switchTab
-  } = useChatStore()
+  } = useChatStore(useShallow(state => ({
+    isStreaming: state.isStreaming,
+    setIsStreaming: state.setIsStreaming,
+    lastEventIndex: state.lastEventIndex,
+    setLastEventIndex: state.setLastEventIndex,
+    pollingInterval: state.pollingInterval,
+    getTabEvents: state.getTabEvents,
+    addTabEvents: state.addTabEvents,
+    setTabEvents: state.setTabEvents,
+    getTabLastEventIndex: state.getTabLastEventIndex,
+    setTabLastEventIndex: state.setTabLastEventIndex,
+    setSessionId: state.setSessionId,
+    setHasActiveChat: state.setHasActiveChat,
+    autoScroll: state.autoScroll,
+    setAutoScroll: state.setAutoScroll,
+    lastScrollTop: state.lastScrollTop,
+    setLastScrollTop: state.setLastScrollTop,
+    finalResponse: state.finalResponse,
+    setFinalResponse: state.setFinalResponse,
+    setIsCompleted: state.setIsCompleted,
+    isLoadingHistory: state.isLoadingHistory,
+    setIsLoadingHistory: state.setIsLoadingHistory,
+    setIsApprovingWorkflow: state.setIsApprovingWorkflow,
+    sessionState: state.sessionState,
+    setSessionState: state.setSessionState,
+    isCheckingActiveSessions: state.isCheckingActiveSessions,
+    setIsCheckingActiveSessions: state.setIsCheckingActiveSessions,
+    currentWorkflowPhase: state.currentWorkflowPhase,
+    setCurrentWorkflowPhase: state.setCurrentWorkflowPhase,
+    setCurrentWorkflowQueryId: state.setCurrentWorkflowQueryId,
+    toasts: state.toasts,
+    addToast: state.addToast,
+    removeToast: state.removeToast,
+    resetChatState: state.resetChatState,
+    isAtBottom: state.isAtBottom,
+    createChatTab: state.createChatTab,
+    switchTab: state.switchTab
+  })))
 
   // Subscribe to tabEvents directly from store to ensure reactivity
   const tabEventsStore = useChatStore((state) => state.tabEvents)
@@ -426,6 +488,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   const lastEventIndexRef = useRef<number>(-1)
   // Deprecated: totalEventsRef removed
   const previousEventCountRef = useRef<number>(0)
+
+  // Ref to track currentWorkflowPhase without causing callback re-renders
+  const currentWorkflowPhaseRef = useRef<string>(currentWorkflowPhase)
+  useEffect(() => {
+    currentWorkflowPhaseRef.current = currentWorkflowPhase
+  }, [currentWorkflowPhase])
 
   // Observer initialization removed - no longer needed
 
@@ -716,10 +784,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
 
   // Get polling management actions from store (before pollEvents callback)
-  const { startPolling, stopPolling, getActiveSessions } = useChatStore()
+  const { startPolling, stopPolling, getActiveSessions } = useChatStore(useShallow(state => ({
+    startPolling: state.startPolling,
+    stopPolling: state.stopPolling,
+    getActiveSessions: state.getActiveSessions
+  })))
 
   // Get active sessions from cache (shared across all components)
-  const { startActiveSessionsPolling } = useChatStore()
+  const startActiveSessionsPolling = useChatStore(state => state.startActiveSessionsPolling)
   
   // Subscribe to active sessions cache updates
   // Get the array first, then memoize the Set to avoid infinite loops
@@ -935,7 +1007,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                   const result = agentEvent.result || ''
                   if (result) {
                     const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
-                    if (currentWorkflowPhase !== planningPhase) {
+                    // Use ref to check current value without causing re-renders
+                    if (currentWorkflowPhaseRef.current !== planningPhase) {
                       setCurrentWorkflowPhase(planningPhase)
                     }
                   }
@@ -981,7 +1054,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         // Continue polling other observers even if one fails
       }
     }
-  }, [selectedModeCategory, getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, pollingInterval, setIsStreaming, setIsCompleted, setHasActiveChat, currentWorkflowPhase, setCurrentWorkflowPhase, processedCompletionEventsRef, stopPolling, activeSessionIds])
+  }, [selectedModeCategory, getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, pollingInterval, setIsStreaming, setIsCompleted, setHasActiveChat, setCurrentWorkflowPhase, processedCompletionEventsRef, stopPolling, activeSessionIds])
 
 
   // Track if we're already processing to prevent infinite loops
@@ -2570,6 +2643,7 @@ ChatAreaInner.displayName = 'ChatAreaInner'
 const ChatArea = ChatAreaInner
 
 ChatArea.displayName = 'ChatArea'
+ChatArea.whyDidYouRender = true
 
 export default ChatArea
 

@@ -305,6 +305,35 @@ go run main.go test shell-security
 | `unshare: Operation not permitted` (macOS) | Using Linux-only command on macOS | Automatic - system now uses `sandbox-exec` on macOS. |
 | Namespace isolation fails (Docker) | Missing Docker privileges | Ensure `SYS_ADMIN` capability and `apparmor:unconfined` in docker-compose.yml. |
 | macOS sandbox blocks system files | Overly restrictive profile | System files (`/usr`, `/bin`, etc.) are allowed by default via `(allow default)`. |
+| Python stdout empty with folder_guard | Double shell wrapping bug | Fixed: `shell.go` was passing `sh -c cmd` to `ExecuteIsolated()`, which already wraps with `exec sh -c`. Now passes command directly. See details below. |
+
+### Double Shell Wrapping Bug (Fixed Jan 2026)
+
+**Symptom:** Python commands executed successfully (exit_code=0) but stdout was always empty when folder_guard was enabled.
+
+**Root Cause:** In `workspace/handlers/shell.go`, the shell handler was calling:
+```go
+// BROKEN - double wrapping
+cmd, cleanup, err = isolator.ExecuteIsolated(ctx, "sh", []string{"-c", fullCommand})
+```
+
+This caused the generated script to have nested shell invocations:
+```bash
+exec sh -c 'sh -c python3 -c "print(1+1)"'
+```
+
+When `sh -c` parses `sh -c python3 -c "print(1+1)"`, it only takes `python3` as the command (first argument after `-c`). The rest (`-c "print(1+1)"`) become `$0` and `$1` positional args, not part of the command.
+
+**Fix:** Pass the command directly without `sh -c` wrapper:
+```go
+// FIXED - single wrapping by generateMountScript()
+cmd, cleanup, err = isolator.ExecuteIsolated(ctx, fullCommand, nil)
+```
+
+Now generates the correct script:
+```bash
+exec sh -c 'python3 -c "print(1+1)"'
+```
 
 ---
 

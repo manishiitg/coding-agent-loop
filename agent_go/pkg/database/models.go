@@ -22,6 +22,23 @@ const (
 	AgentModeWorkflow     = "workflow"
 )
 
+// WorkflowMetadata stores workflow-specific metadata for background/minimized workflows
+// This is stored in the session config to enable querying and restoring background workflows
+type WorkflowMetadata struct {
+	PresetID         string          `json:"preset_id,omitempty"`           // Preset ID for context restoration
+	PresetName       string          `json:"preset_name,omitempty"`         // Display name
+	WorkspacePath    string          `json:"workspace_path,omitempty"`      // Workflow workspace path
+	RunFolder        string          `json:"run_folder,omitempty"`          // Current run folder (e.g., "iteration-1")
+	PhaseID          string          `json:"phase_id,omitempty"`            // Current phase ID (e.g., "execution")
+	PhaseName        string          `json:"phase_name,omitempty"`          // Phase display name
+	IsMinimized      bool            `json:"is_minimized,omitempty"`        // True when workflow is in background
+	MinimizedAt      *int64          `json:"minimized_at,omitempty"`        // Unix timestamp (ms) when minimized
+	StepProgress     json.RawMessage `json:"step_progress,omitempty"`       // Current step progress (StepProgress JSON)
+	CurrentStepID    string          `json:"current_step_id,omitempty"`     // Currently executing step ID
+	CurrentStepTitle string          `json:"current_step_title,omitempty"`  // Currently executing step title
+	LastPolled       *int64          `json:"last_polled,omitempty"`         // Unix timestamp (ms) of last status check
+}
+
 // ChatSessionConfig represents the configuration stored for a chat session
 type ChatSessionConfig struct {
 	SelectedServers            []string             `json:"selected_servers,omitempty"`
@@ -31,6 +48,7 @@ type ChatSessionConfig struct {
 	LLMConfig                  *LLMConfigForStorage `json:"llm_config,omitempty"`                   // LLM config (without API keys)
 	FileContext                []FileContextItem    `json:"file_context,omitempty"`                 // Workspace files/folders
 	EnableWorkspaceAccess      *bool                `json:"enable_workspace_access,omitempty"`      // Workspace access setting
+	WorkflowMetadata           *WorkflowMetadata    `json:"workflow_metadata,omitempty"`            // Workflow-specific metadata (for background workflows)
 }
 
 // LLMConfigForStorage stores LLM config without sensitive API keys

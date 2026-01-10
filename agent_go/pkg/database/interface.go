@@ -15,7 +15,7 @@ type Database interface {
 	GetChatSession(ctx context.Context, sessionID string) (*ChatSession, error)
 	UpdateChatSession(ctx context.Context, sessionID string, req *UpdateChatSessionRequest) (*ChatSession, error)
 	DeleteChatSession(ctx context.Context, sessionID string) error
-	ListChatSessions(ctx context.Context, limit, offset int, presetQueryID *string) ([]ChatHistorySummary, int, error)
+	ListChatSessions(ctx context.Context, limit, offset int, presetQueryID *string, agentMode *string) ([]ChatHistorySummary, int, error)
 
 	// Event storage
 	StoreEvent(ctx context.Context, sessionID string, event *events.AgentEvent) error
@@ -84,7 +84,7 @@ type ChatHistoryServiceInterface interface {
 	EndChatSession(ctx context.Context, sessionID string, status string) error
 
 	// List all chat sessions
-	ListChatSessions(ctx context.Context, limit, offset int, presetQueryID *string) ([]ChatHistorySummary, int, error)
+	ListChatSessions(ctx context.Context, limit, offset int, presetQueryID *string, agentMode *string) ([]ChatHistorySummary, int, error)
 
 	// Search events
 	SearchEvents(ctx context.Context, filter *EventFilter) (*EventSearchResult, error)

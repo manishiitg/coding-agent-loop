@@ -128,6 +128,7 @@ func (bo *BaseOrchestrator) setupStandardAgent(
 	agentName string,
 	phase string,
 	step, iteration int,
+	stepID string, // Step ID (e.g., "fetch-data", "process-results")
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 ) error {
@@ -156,7 +157,7 @@ func (bo *BaseOrchestrator) setupStandardAgent(
 	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
 	baseAgentName := baseAgent.GetName()
 	if cab, ok := eventBridge.(*ContextAwareEventBridge); ok {
-		cab.SetOrchestratorContext(phase, step, baseAgentName)
+		cab.SetOrchestratorContext(phase, step, stepID, baseAgentName)
 		// Ensure iteration folder is applied to bridge (for token persistence)
 		// This ensures all agents automatically get the iteration folder if it's been set
 		bo.applyIterationFolderToBridge()
@@ -165,9 +166,9 @@ func (bo *BaseOrchestrator) setupStandardAgent(
 	} else {
 		// Fallback for interface-based bridge
 		if cab, ok := eventBridge.(interface {
-			SetOrchestratorContext(phase string, step int, agentName string)
+			SetOrchestratorContext(phase string, step int, stepID string, agentName string)
 		}); ok {
-			cab.SetOrchestratorContext(phase, step, baseAgentName)
+			cab.SetOrchestratorContext(phase, step, stepID, baseAgentName)
 			// Ensure iteration folder is applied to bridge (for token persistence)
 			bo.applyIterationFolderToBridge()
 			mcpAgent.AddEventListener(eventBridge)
@@ -299,6 +300,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 	agentName string,
 	phase string,
 	step, iteration int,
+	stepID string, // Step ID (e.g., "fetch-data", "process-results")
 	maxTurns int,
 	outputFormat agents.OutputFormat,
 	createAgentFunc func(*agents.OrchestratorAgentConfig, loggerv2.Logger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
@@ -312,7 +314,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
 
 	// Setup agent using common helper (pass config to check agent-specific code execution mode)
-	if err := bo.setupStandardAgent(ctx, agent, config, agentName, phase, step, iteration, customTools, customToolExecutors); err != nil {
+	if err := bo.setupStandardAgent(ctx, agent, config, agentName, phase, step, iteration, stepID, customTools, customToolExecutors); err != nil {
 		return nil, err
 	}
 
@@ -327,6 +329,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithConfig(
 	config *agents.OrchestratorAgentConfig,
 	phase string,
 	step, iteration int,
+	stepID string, // Step ID (e.g., "fetch-data", "process-results")
 	createAgentFunc func(*agents.OrchestratorAgentConfig, loggerv2.Logger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
@@ -339,7 +342,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithConfig(
 	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
 
 	// Setup agent using common helper (pass config to check agent-specific code execution mode)
-	if err := bo.setupStandardAgent(ctx, agent, config, config.AgentName, phase, step, iteration, customTools, customToolExecutors); err != nil {
+	if err := bo.setupStandardAgent(ctx, agent, config, config.AgentName, phase, step, iteration, stepID, customTools, customToolExecutors); err != nil {
 		return nil, err
 	}
 

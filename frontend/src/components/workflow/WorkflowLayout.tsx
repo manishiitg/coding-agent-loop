@@ -8,6 +8,10 @@ import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import ChatArea, { type ChatAreaRef } from '../ChatArea'
 import { ChatHeader } from '../ChatHeader'
 import { WorkflowChatTabs } from './WorkflowChatTabs'
+import { RunningWorkflowsIndicator } from './RunningWorkflowsIndicator'
+import { RunningWorkflowsDrawer } from './RunningWorkflowsDrawer'
+import { useRunningWorkflowsStore, type RunningWorkflow } from '../../stores/useRunningWorkflowsStore'
+import { sanitizeDisplayNameForFolder } from '../../utils/workflowUtils'
 
 // Helper component to get observerId and render ChatArea
 // Always renders ChatArea (even without observerId) so it can handle initialization
@@ -62,7 +66,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const activePhase = useWorkflowStore(state => state.activePhase)
   const showChatArea = useWorkflowStore(state => state.showChatArea)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
-  
+  const minimizeWorkflow = useRunningWorkflowsStore(state => state.minimizeWorkflow)
+  const stepProgress = useWorkflowStore(state => state.stepProgress)
+
   // Tab management (generalized for both chat and workflow)
   const { createChatTab, getActiveTab } = useChatStore()
   const getPhaseById = useWorkflowStore(state => state.getPhaseById)
@@ -79,38 +85,27 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const lastProcessedStepStartIndexRef = useRef(-1)
   // Store pending query to submit after ChatArea mounts
   const pendingQueryRef = useRef<{ query: string; executionOptions?: ExecutionOptions } | null>(null)
-  
-  // Callback ref that gets called when ChatArea mounts/unmounts
-  const chatAreaCallbackRef = useCallback((node: ChatAreaRef | null) => {
-    chatAreaRef.current = node
-    
-    // When ChatArea mounts and we have a pending query, submit it
-    if (node && pendingQueryRef.current) {
-      const { query, executionOptions } = pendingQueryRef.current
-      console.log('[WorkflowLayout] ChatArea mounted via callback ref, submitting pending query:', query)
-      node.submitQuery(query, executionOptions).catch(error => {
-        console.error('[WorkflowLayout] Failed to submit pending query:', error)
-      })
-      pendingQueryRef.current = null // Clear pending query after submission
-    }
-  }, [])
-  
-  // Get selected run folder and workspace fetchFiles function
+  // Track the previous preset ID for auto-minimize on preset switch
+  const previousPresetIdRef = useRef<string | null>(null)
+
+  // Get selected run folder and workspace functions (defined early for use in useEffect)
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
   const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
   const updateStepProgressFromEvent = useWorkflowStore(state => state.updateStepProgressFromEvent)
-  const { fetchFiles } = useWorkspaceStore()
-  
+  const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
+  const variablesManifest = useWorkflowStore(state => state.variablesManifest)
+  const { fetchFiles, setExpandedFolders } = useWorkspaceStore()
+
   // Get active workflow preset
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const customPresets = useGlobalPresetStore(state => state.customPresets)
   const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
-  
+
   const activeWorkflowPreset = useMemo(() => {
     if (selectedModeCategory === 'workflow' && activePresetId) {
       const customPreset = customPresets.find(p => p.id === activePresetId)
       if (customPreset) return customPreset
-      
+
       const predefinedPreset = predefinedPresets.find(p => p.id === activePresetId)
       if (predefinedPreset) return predefinedPreset
     }
@@ -124,7 +119,126 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
     return null
   }, [activeWorkflowPreset])
-  
+
+  // Auto-expand selectedRunFolder and selected groups in workspace sidebar whenever they change
+  useEffect(() => {
+    if (selectedRunFolder && selectedRunFolder !== 'new' && workspacePath) {
+      const folderPath = `${workspacePath}/runs/${selectedRunFolder}`
+      console.log('[WorkflowLayout] Auto-expanding selected run folder in workspace:', folderPath)
+      console.log('[WorkflowLayout] Selected group IDs:', selectedGroupIds)
+
+      // Fetch files first to ensure folder exists, then expand
+      console.log('[WorkflowLayout] Starting fetchFiles...')
+      fetchFiles().then(() => {
+        console.log('[WorkflowLayout] fetchFiles completed successfully')
+        // Collapse all other iteration folders first
+        const workspaceStore = useWorkspaceStore.getState()
+        const expandedFolders = workspaceStore.expandedFolders
+        const runsPath = `${workspacePath}/runs`
+
+        console.log('[WorkflowLayout] Current expanded folders:', Array.from(expandedFolders))
+        console.log('[WorkflowLayout] Runs path:', runsPath)
+        console.log('[WorkflowLayout] Target folder path:', folderPath)
+
+        // Filter out all iteration-related folders from expandedFolders
+        const newExpandedFolders = new Set<string>()
+        expandedFolders.forEach(folder => {
+          // Keep folders that are NOT under runs/iteration-*
+          // Check all patterns: full paths, relative paths, and iteration folders
+          const isIterationFolder =
+            folder.includes('/runs/iteration-') ||           // Full path: "Workflow/ICICI/runs/iteration-3"
+            /^runs\/iteration-/.test(folder) ||             // Relative: "runs/iteration-3/group-1"
+            /^iteration-\d+/.test(folder)                   // Just iteration: "iteration-3"
+
+          if (!isIterationFolder) {
+            newExpandedFolders.add(folder)
+          } else {
+            console.log('[WorkflowLayout] Collapsing iteration folder:', folder)
+          }
+        })
+
+        // Add the runs folder itself to keep it expanded (both full and relative paths)
+        newExpandedFolders.add(runsPath)
+        newExpandedFolders.add('runs') // Relative path
+
+        // Extract iteration folder from selectedRunFolder (e.g., "iteration-3" from "iteration-3/group-1")
+        const iterationFolder = selectedRunFolder.includes('/')
+          ? selectedRunFolder.split('/')[0]
+          : selectedRunFolder
+
+        // Add all parent folders of the iteration
+        const iterationPath = `${workspacePath}/runs/${iterationFolder}`
+        const iterationPathParts = iterationPath.split('/')
+        let currentPath = ''
+        for (const part of iterationPathParts) {
+          currentPath = currentPath ? `${currentPath}/${part}` : part
+          newExpandedFolders.add(currentPath)
+        }
+
+        // Also add relative paths for iteration
+        newExpandedFolders.add(`runs/${iterationFolder}`)
+        newExpandedFolders.add(iterationFolder)
+
+        // If we have selected groups, expand all of them
+        if (selectedGroupIds && selectedGroupIds.length > 0 && variablesManifest?.groups) {
+          console.log('[WorkflowLayout] Expanding selected groups:', selectedGroupIds)
+
+          selectedGroupIds.forEach(groupId => {
+            // Find the group to get its display name
+            const group = variablesManifest.groups?.find(g => g.group_id === groupId)
+
+            // Use sanitized display_name if available, otherwise use group_id
+            // Sanitization ensures consistent folder naming with backend
+            const folderName = group?.display_name
+              ? sanitizeDisplayNameForFolder(group.display_name)
+              : groupId
+
+            // Build the full group path
+            const groupPath = `${workspacePath}/runs/${iterationFolder}/${folderName}`
+            console.log('[WorkflowLayout] Adding group folder to expanded:', groupPath)
+
+            // Add all parent folders of this group path
+            const groupPathParts = groupPath.split('/')
+            let groupCurrentPath = ''
+            for (const part of groupPathParts) {
+              groupCurrentPath = groupCurrentPath ? `${groupCurrentPath}/${part}` : part
+              newExpandedFolders.add(groupCurrentPath)
+            }
+
+            // Also add relative paths
+            newExpandedFolders.add(`runs/${iterationFolder}/${folderName}`)
+          })
+        }
+        // Legacy code removed: selectedRunFolder no longer contains group paths
+        // Group selection is now exclusively via selectedGroupIds array
+
+        console.log('[WorkflowLayout] New expanded folders:', Array.from(newExpandedFolders))
+
+        // Update the expanded folders using the proper setter
+        setExpandedFolders(newExpandedFolders)
+
+        console.log('[WorkflowLayout] Collapsed other iterations, expanded only:', selectedRunFolder)
+      }).catch(error => {
+        console.error('[WorkflowLayout] Failed to fetch files for auto-expansion:', error)
+      })
+    }
+  }, [selectedRunFolder, selectedGroupIds, workspacePath, variablesManifest, fetchFiles, setExpandedFolders])
+
+  // Callback ref that gets called when ChatArea mounts/unmounts
+  const chatAreaCallbackRef = useCallback((node: ChatAreaRef | null) => {
+    chatAreaRef.current = node
+
+    // When ChatArea mounts and we have a pending query, submit it
+    if (node && pendingQueryRef.current) {
+      const { query, executionOptions } = pendingQueryRef.current
+      console.log('[WorkflowLayout] ChatArea mounted via callback ref, submitting pending query:', query)
+      node.submitQuery(query, executionOptions).catch(error => {
+        console.error('[WorkflowLayout] Failed to submit pending query:', error)
+      })
+      pendingQueryRef.current = null // Clear pending query after submission
+    }
+  }, [])
+
   // Get plan data to map step indices to step IDs
   const { plan } = usePlanData(workspacePath)
 
@@ -616,6 +730,77 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     return () => clearTimeout(timeoutId)
   }, [selectedModeCategory, activePresetId, setShowChatArea])
 
+  // Auto-minimize workflows when switching to a different preset
+  useEffect(() => {
+    // Skip on initial mount (when previousPresetIdRef.current is null)
+    if (previousPresetIdRef.current === null) {
+      previousPresetIdRef.current = activePresetId
+      return
+    }
+
+    // Skip auto-minimize during restore operations (flag is set by RunningWorkflowsDrawer)
+    const isRestoringWorkflow = useRunningWorkflowsStore.getState().isRestoringWorkflow
+    if (isRestoringWorkflow) {
+      console.log('[WorkflowLayout] Skipping auto-minimize during workflow restore')
+      previousPresetIdRef.current = activePresetId
+      return
+    }
+
+    // Check if preset actually changed
+    if (previousPresetIdRef.current !== activePresetId && activePresetId) {
+      const chatStore = useChatStore.getState()
+      const chatTabs = chatStore.chatTabs
+
+      // Find ALL workflow tabs with active sessions that are NOT for the NEW preset
+      // This ensures we minimize any running workflows when switching presets
+      const tabsToMinimize = Object.values(chatTabs).filter(tab =>
+        tab.metadata?.mode === 'workflow' &&
+        tab.sessionId &&
+        // Minimize if: streaming, or has old presetId, or has no presetId (legacy tabs)
+        (tab.isStreaming ||
+         tab.metadata?.presetQueryId === previousPresetIdRef.current ||
+         tab.metadata?.presetQueryId !== activePresetId)
+      )
+
+      if (tabsToMinimize.length > 0) {
+        console.log(`[WorkflowLayout] Preset changed from ${previousPresetIdRef.current} to ${activePresetId}, auto-minimizing ${tabsToMinimize.length} workflows`)
+
+        // Minimize each running tab
+        for (const tab of tabsToMinimize) {
+          if (tab.sessionId) {
+            // Determine which preset this tab belongs to
+            const tabPresetId = tab.metadata?.presetQueryId || previousPresetIdRef.current || 'unknown'
+            const tabCustomPreset = customPresets.find(p => p.id === tabPresetId)
+            const tabPredefinedPreset = predefinedPresets.find(p => p.id === tabPresetId)
+            const tabPresetLabel = tabCustomPreset?.label || tabPredefinedPreset?.label || tab.name || 'Workflow'
+            const tabWorkspacePath = tabCustomPreset?.selectedFolder?.filepath || tabPredefinedPreset?.selectedFolder?.filepath || ''
+
+            minimizeWorkflow({
+              presetId: tabPresetId,
+              presetName: tabPresetLabel,
+              workspacePath: tabWorkspacePath,
+              sessionId: tab.sessionId,
+              runFolder: selectedRunFolder,
+              phaseId: tab.metadata?.phaseId || 'unknown',
+              phaseName: tab.name,
+              progress: stepProgress || undefined,
+              selectedGroupIds: useWorkflowStore.getState().selectedGroupIds
+            })
+
+            // Close the tab UI (keep session running in background)
+            chatStore.closeTab(tab.tabId, false, true)
+          }
+        }
+
+        // Close the chat area to show the new preset's canvas
+        setShowChatArea(false)
+      }
+    }
+
+    // Update the ref for next comparison
+    previousPresetIdRef.current = activePresetId
+  }, [activePresetId, customPresets, predefinedPresets, minimizeWorkflow, selectedRunFolder, stepProgress, setShowChatArea])
+
   // Note: Query submission is now handled via chatAreaCallbackRef when ChatArea mounts
   // No need for useEffect with setTimeout - callback ref is the proper React pattern
 
@@ -779,20 +964,116 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         useModeStore.getState().setModeCategory('workflow')
       }
     }
-    
+
     const phases = useWorkflowStore.getState().phases
     // Look for the "planning" phase explicitly, fallback to second phase (index 1) if not found
     const planningPhase = phases.find(p => p.id === 'planning') || (phases.length > 1 ? phases[1] : phases[0])
     const planningPhaseId = planningPhase?.id || 'planning'
     console.log('[WorkflowLayout] Create plan requested, starting planning phase:', planningPhaseId)
-    
+
     // Show ChatArea immediately (synchronously) before starting the phase
     setShowChatArea(true)
     // Note: Don't set activePhase here - allow parallel execution
-    
+
     // Then start the phase (which will also set showChatArea, but this ensures it's visible immediately)
     handleStartPhase(planningPhaseId)
   }, [handleStartPhase, setShowChatArea, activePresetId])
+
+  // Handle restoring a workflow from running list
+  const handleRestoreWorkflow = useCallback(async (workflow: RunningWorkflow) => {
+    console.log('[WorkflowLayout] Restoring workflow from running list:', workflow)
+
+    // Ensure we're in workflow mode
+    const currentMode = useModeStore.getState().selectedModeCategory
+    if (currentMode !== 'workflow') {
+      useModeStore.getState().setModeCategory('workflow')
+    }
+
+    // If this workflow is for a different preset, switch to it
+    if (workflow.presetId !== activePresetId) {
+      console.log('[WorkflowLayout] Switching to preset:', workflow.presetId)
+      useGlobalPresetStore.getState().setActivePreset('workflow', workflow.presetId)
+    }
+
+    // Load run folders to find the latest iteration
+    const { loadRunFolders, setSelectedGroupIds } = useWorkflowStore.getState()
+
+    if (workflow.workspacePath) {
+      try {
+        // Load run folders for this workspace
+        await loadRunFolders(workflow.workspacePath)
+
+        // Get the updated run folders from state
+        const folders = useWorkflowStore.getState().runFolders
+
+        if (folders.length > 0) {
+          // Folders are already sorted by iteration number descending (newest first)
+          const latestFolder = folders[0]
+          console.log('[WorkflowLayout] Latest iteration:', latestFolder.name, 'Stored iteration:', workflow.runFolder)
+
+          // Always use the latest iteration
+          setSelectedRunFolder(latestFolder.name)
+        } else if (workflow.runFolder && workflow.runFolder !== 'new') {
+          // No folders found, use the stored run folder
+          setSelectedRunFolder(workflow.runFolder)
+        }
+      } catch (error) {
+        console.error('[WorkflowLayout] Failed to load run folders during restore:', error)
+        // Fallback to stored run folder
+        if (workflow.runFolder && workflow.runFolder !== 'new') {
+          setSelectedRunFolder(workflow.runFolder)
+        }
+      }
+    } else if (workflow.runFolder && workflow.runFolder !== 'new') {
+      // No workspace path, just use stored run folder
+      setSelectedRunFolder(workflow.runFolder)
+    }
+
+    // Note: Workspace folder expansion is handled automatically by useEffect when selectedRunFolder changes
+
+    // Restore selected group IDs if they exist
+    if (workflow.selectedGroupIds && workflow.selectedGroupIds.length > 0) {
+      console.log('[WorkflowLayout] Restoring selected groups:', workflow.selectedGroupIds)
+      setSelectedGroupIds(workflow.selectedGroupIds)
+    }
+
+    // Create a new tab connected to the restored session
+    const { createChatTab, switchTab } = useChatStore.getState()
+    const { getPhaseById } = useWorkflowStore.getState()
+
+    // Get phase info
+    const phase = getPhaseById(workflow.phaseId)
+    const phaseName = phase?.title || workflow.phaseName
+
+    // Check if a tab with this sessionId already exists
+    const existingTabs = Object.values(useChatStore.getState().chatTabs)
+    const existingTab = existingTabs.find(tab =>
+      tab.sessionId === workflow.sessionId &&
+      tab.metadata?.mode === 'workflow'
+    )
+
+    if (existingTab) {
+      // Tab already exists, just switch to it
+      console.log('[WorkflowLayout] Found existing tab for session, switching to it:', existingTab.tabId)
+      switchTab(existingTab.tabId)
+    } else {
+      // Create a new tab connected to the session
+      console.log('[WorkflowLayout] Creating new tab for restored session:', workflow.sessionId)
+      const tabId = await createChatTab(phaseName, {
+        mode: 'workflow',
+        phaseId: workflow.phaseId,
+        phaseName,
+        presetQueryId: workflow.presetId
+      }, workflow.sessionId)  // Pass sessionId to connect to existing session
+
+      switchTab(tabId)
+    }
+
+    // Show the chat area so user can see the logs
+    setShowChatArea(true)
+
+    console.log('[WorkflowLayout] Workflow restored, sessionId:', workflow.sessionId)
+  }, [activePresetId, setSelectedRunFolder, setShowChatArea])
 
   // No preset selected state
   if (!activeWorkflowPreset) {
@@ -852,7 +1133,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               <div className="flex-shrink-0">
                 <WorkflowChatTabs />
               </div>
-              
+
               {/* Single ChatArea component - takes remaining space */}
               <div className="flex-1 min-h-0">
                 <ChatAreaWithObserverId
@@ -866,6 +1147,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             </>
           )}
         </div>
+
+        {/* Running Workflows Drawer - overlays when open */}
+        <RunningWorkflowsDrawer
+          onRestoreWorkflow={handleRestoreWorkflow}
+        />
+
+        {/* Running Workflows Indicator - positioned within workflow area */}
+        <RunningWorkflowsIndicator />
       </div>
     </div>
   )

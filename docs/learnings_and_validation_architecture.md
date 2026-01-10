@@ -80,6 +80,12 @@ The system uses a simple, reliable approach: count successful executions and loc
      - **Simple:** After **2** runs (of 3) → use tempLLM for learning
      - **Medium:** After **3** runs (of 5) → use tempLLM for learning
      - **Complex:** After **5** runs (of 10) → use tempLLM for learning
+   - **tempLLM Success with Skip Flags:**
+     - If `tempLLM1` or `tempLLM2` was used AND validation passed
+     - AND the corresponding skip flag is enabled (`SkipLearningWhenTempLLM1` or `SkipLearningWhenTempLLM2`)
+     - Success learning agent is **SKIPPED** (cost optimization)
+     - **BUT** metadata is **STILL UPDATED** with success count and turnCount
+     - **Rationale:** tempLLM succeeded using existing learnings → learnings are good enough → skip expensive learning extraction BUT still track the success toward auto-lock threshold
 
 2. **After each failed execution** (validation failed):
    - **Failure Learning Agent:** Runs to analyze the failure and provide a refined task description for the retry attempt.
@@ -87,6 +93,12 @@ The system uses a simple, reliable approach: count successful executions and loc
    - **No Counter Increment:** Successful run counters are **NOT** incremented on failure.
    - **Detection Skipped:** Failure learning skips the "New Learning Detection" check (always assumes new learning) to keep the retry loop active and avoid premature locking during instability.
    - **Safety Lock:** Auto-lock will still trigger if `TotalIterations` reaches 15, preventing infinite retry-learning loops.
+   - **tempLLM Skip Logic (Cost Optimization):**
+     - If `tempLLM1` or `tempLLM2` was used for execution AND validation failed
+     - AND the corresponding skip flag is enabled (`SkipLearningWhenTempLLM1` or `SkipLearningWhenTempLLM2`)
+     - Then failure learning is **SKIPPED** entirely
+     - The system will retry with the original/main LLM (higher quality model)
+     - **Rationale:** tempLLM failures don't need learning - just retry with better model to save costs
 
 3. **Complexity Classification:**
    - **Simple:** `< 15 turns` → Lock after **3** successful runs
@@ -299,6 +311,58 @@ You can override this dynamic behavior using the `keep_learning_full` feature fl
 
 ---
 
+## 🔁 Loop Learning Strategy (Cost Optimization)
+
+Loop steps present a unique challenge: learning after every iteration can be extremely expensive (10 iterations = 10x learning cost). The system implements a smart default strategy to balance learning quality with cost efficiency.
+
+### Smart Default Behavior
+
+**Default Rule:** Run learning for the **first 2 iterations only**, then stop.
+
+**Rationale:**
+- **Iteration 1:** Learn the initial pattern and approach
+- **Iteration 2:** Capture refinements and edge cases
+- **Iteration 3+:** Pattern is established, no need for redundant learning
+- **Final (Loop Completes):** Final success learning captures the complete workflow
+
+### Configuration Override
+
+Set `learning_after_loop_iteration: true` in `step_config.json` to force learning on **ALL** iterations (not recommended for cost reasons).
+
+```json
+{
+  "agent_configs": {
+    "learning_after_loop_iteration": true
+  }
+}
+```
+
+### Cost Savings Example
+
+**Scenario:** Loop with 10 iterations
+
+| Strategy | Learning Calls | Cost |
+|----------|----------------|------|
+| **All Iterations** | 10 (each iteration) + 1 (final) = **11 times** | 💰💰💰 |
+| **Smart Default** | 2 (first 2 iterations) + 1 (final) = **3 times** | 💰 |
+| **Savings** | **73% cost reduction** 🎉 | |
+
+### Implementation Details
+
+- **Location:** `controller_execution.go:1961-1983`
+- **Check:** `if loopIterationCount <= 2 { learningAfterLoopIteration = true }`
+- **Override:** Explicit config always takes precedence over smart default
+- **Logging:** Clear logs indicate when learning is enabled/skipped per iteration
+
+### Benefits
+
+- ✅ **Cost Efficient:** Massive savings for loops with many iterations
+- ✅ **Quality Preserved:** First 2 iterations capture essential patterns
+- ✅ **Automatic:** Works out-of-the-box with no configuration
+- ✅ **Flexible:** Can be overridden per step if needed
+
+---
+
 ## 🛠 Component Roles
 
 | Component | Responsibility | Timing |
@@ -331,6 +395,8 @@ learnings/
 - `successful_runs_medium`: Counter for medium steps (15-30 turns)
 - `successful_runs_complex`: Counter for complex steps (> 30 turns)
 - `last_turn_count`: Last recorded TurnCount
+- `last_execution_llm`: The LLM used for the last execution (associated with last_turn_count)
+- `last_learning_llm`: The LLM used for the last learning cycle
 - `auto_locked_at`: Timestamp when auto-lock was triggered
 - `auto_lock_reason`: Reason for lock (e.g., "threshold_reached")
 
@@ -386,11 +452,39 @@ learnings/
 - [x] **Event Logging**: Log cost-optimization model switches for transparency.
      
           ### Phase 4: Integration & Validation (DONE)
-     
+
           - [x] **Validation Modes:** Implemented `Auto`, `Always`, `Skip` validation strategies.
-     
+
           - [x] **Cleanup:** Removed legacy `skip_llm_validation_if_pre_validation_passes` boolean and detection logic.
-     
+
           - [x] **Testing:** Verify "Change Step -> Reset" and "Run X times -> Auto-lock" workflows.
-     
-     
+
+### Phase 5: Cost Optimization Enhancements (DONE)
+
+- [x] **Skip Failure Learning for tempLLM Failures:**
+  - Added `usedTempLLM` parameter to `runFailureLearningPhase()`
+  - When tempLLM fails validation, skip failure learning entirely
+  - System retries with main/preset LLM instead (better quality)
+  - Prevents wasting tokens on failure learning when cheaper model fails
+  - Files: `controller_learning.go`, `controller_execution.go`, `controller_orchestration.go`
+
+- [x] **Update Metadata on tempLLM Success Skip:**
+  - When tempLLM succeeds but learning is skipped (due to flags)
+  - Metadata is still updated with success count and turnCount
+  - Ensures step progresses toward auto-lock threshold (3 successes)
+  - Maintains proper tracking even when skipping expensive learning extraction
+  - Files: `controller_execution.go:2099-2124, 1836-1860, 2041-2067`
+
+- [x] **Smart Loop Learning (First 2 Iterations Only):**
+  - Default behavior: Run learning only for first 2 loop iterations
+  - Iteration 1: Learn initial pattern
+  - Iteration 2: Capture refinements
+  - Iteration 3+: Skip learning (pattern established)
+  - Cost savings: ~73% for loops with 10+ iterations
+  - Override: Set `learning_after_loop_iteration: true` in step config to force all iterations
+  - Files: `controller_execution.go:1961-1983`
+
+**Impact:**
+- 🎯 Major cost reduction for loop-heavy workflows (up to 73% savings)
+- 💰 Prevents unnecessary learning on tempLLM failures
+- 📊 Maintains metadata accuracy for auto-lock progression

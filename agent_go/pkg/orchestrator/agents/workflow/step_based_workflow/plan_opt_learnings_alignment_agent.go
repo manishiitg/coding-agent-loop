@@ -204,6 +204,7 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 		config,
 		"plan-learnings-alignment",
 		0, 0, // step, iteration
+		"plan-learnings-alignment", // stepID (use phase name for phase-only agents)
 		createAgentFunc,
 		allTools,
 		allExecutors,

@@ -188,6 +188,7 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 		config,
 		"learning-consolidation",
 		0, 0, // step, iteration
+		"learning-consolidation", // stepID (use phase name for phase-only agents)
 		createAgentFunc,
 		allTools,
 		allExecutors,

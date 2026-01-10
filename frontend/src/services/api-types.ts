@@ -522,6 +522,23 @@ export interface GitSyncResponse {
 }
 
 
+// Workflow metadata for background/minimized workflows
+// Stored in session config to enable querying and restoring background workflows
+export interface WorkflowMetadata {
+  preset_id?: string;           // Preset ID for context restoration
+  preset_name?: string;         // Display name
+  workspace_path?: string;      // Workflow workspace path
+  run_folder?: string;          // Current run folder (e.g., "iteration-1")
+  phase_id?: string;            // Current phase ID (e.g., "execution")
+  phase_name?: string;          // Phase display name
+  is_minimized?: boolean;       // True when workflow is in background
+  minimized_at?: number;        // Unix timestamp (ms) when minimized
+  step_progress?: StepProgress; // Current step progress
+  current_step_id?: string;     // Currently executing step ID
+  current_step_title?: string;  // Currently executing step title
+  last_polled?: number;         // Unix timestamp (ms) of last status check
+}
+
 // Chat Session Configuration
 export interface ChatSessionConfig {
   selected_servers?: string[];
@@ -543,6 +560,7 @@ export interface ChatSessionConfig {
     type: 'file' | 'folder';
   }>;
   enable_workspace_access?: boolean;
+  workflow_metadata?: WorkflowMetadata; // Workflow-specific metadata (for background workflows)
 }
 
 // Chat History API types
@@ -1095,4 +1113,42 @@ export interface EvaluationAggregate {
   highest_score: number;
   lowest_score: number;
   max_possible_score: number;
-} 
+}
+
+// Consolidated workspace state (NEW - single API call for all workspace data)
+export interface WorkspaceStateResponse {
+  success: boolean;
+  data?: WorkspaceState;
+  error?: string;
+}
+
+export interface WorkspaceState {
+  run_folders: RunFolderInfo[];
+  selected_progress?: StepProgress;
+  variables_manifest?: VariablesManifest;
+  phases: WorkflowPhase[];
+}
+
+export interface RunFolderInfo {
+  name: string;
+  progress?: StepProgress;
+}
+
+export interface StepProgress {
+  completed_step_indices: number[];
+  total_steps: number;
+  last_updated: string;
+  branch_steps?: Record<number, BranchStepProgress>;
+}
+
+export interface BranchStepProgress {
+  branch_executed: string;
+  completed_steps: string[];
+}
+
+export interface WorkflowPhase {
+  id: string;
+  title: string;
+  description: string;
+  options?: unknown[];
+}

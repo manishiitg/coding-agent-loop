@@ -7,6 +7,8 @@ export { useWorkspaceStore } from './useWorkspaceStore'
 export { useGlobalPresetStore, usePresetApplication, usePresetManagement, usePresetState } from './useGlobalPresetStore'
 export { useWorkflowStore, useWorkflowPhases, useWorkflowPhasesLoading, useWorkflowRunFolders, useWorkflowProgress, useCompletedStepIndices } from './useWorkflowStore'
 export type { ExecutionModeType } from './useWorkflowStore'
+export { useRunningWorkflowsStore, useRunningWorkflows, useShowRunningDrawer, useRunningWorkflowsRunningCount, useRunningWorkflowsTotalCount } from './useRunningWorkflowsStore'
+export type { RunningWorkflow } from './useRunningWorkflowsStore'
 
 // Export types
 export type * from './types'

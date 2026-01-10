@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, Plus, Edit2, Trash2, Code, X, Check, AlertCircle, Server, ExternalLink } from 'lucide-react';
+import { Loader2, Plus, Trash2, Code, X, Check, AlertCircle, Server } from 'lucide-react';
 import { mcpConfigApi } from '../services/mcpConfigApi';
 import MCPConfigEditor from './MCPConfigEditor';
 
@@ -36,8 +36,6 @@ export const MCPConfigPopup: React.FC<MCPConfigPopupProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showJsonEditor, setShowJsonEditor] = useState(false);
-  const [editingServer, setEditingServer] = useState<string | null>(null);
-  const [newServerName, setNewServerName] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
   const [addFormData, setAddFormData] = useState({
     name: '',

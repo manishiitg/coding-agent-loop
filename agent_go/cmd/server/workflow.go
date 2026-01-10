@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -85,6 +86,12 @@ func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, 
 		return "", false, fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
 
+	// Check if file doesn't exist (API returns Success: true but with error/message)
+	if strings.Contains(apiResp.Message, "File does not exist") ||
+		strings.Contains(apiResp.Error, "File not found") {
+		return "", false, nil // File doesn't exist, not an error
+	}
+
 	// Extract content from response
 	var content string
 	if fileContent, ok := apiResp.Data.(virtualtools.WorkspaceFileContent); ok {
@@ -96,6 +103,9 @@ func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, 
 	}
 
 	if content == "" {
+		// Debug logging to see actual response structure
+		dataBytes, _ := json.Marshal(apiResp.Data)
+		log.Printf("[DEBUG] readFileFromWorkspace: Failed to extract content from response. FilePath: %s, Response Data: %s", filePath, string(dataBytes))
 		return "", false, fmt.Errorf("failed to extract content from API response")
 	}
 
@@ -1886,23 +1896,51 @@ func (api *StreamingAPI) handleGetAllStepLearnings(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Read step configs to get agent configs (use_code_execution_mode, learning_detail_level)
+	stepConfigs, err := readStepConfigFromWorkspace(r.Context(), workspacePath)
+	if err != nil {
+		// Log warning but continue - step configs may not exist
+		log.Printf("Warning: Failed to read step configs: %v", err)
+	}
+
+	// Create a map from step ID to agent configs
+	stepConfigMap := make(map[string]*todo_creation_human.AgentConfigs)
+	for _, config := range stepConfigs {
+		if config.ID != "" && config.AgentConfigs != nil {
+			stepConfigMap[config.ID] = config.AgentConfigs
+		}
+	}
+
 	// Collect all step IDs recursively
 	stepIDs := collectAllStepIDs(plan.Steps)
 
-	// Read learning metadata for each step ID
 	learningsMap := make(map[string]interface{})
 	for _, stepID := range stepIDs {
 		metadata, err := readLearningMetadataForStep(r.Context(), workspacePath, stepID)
 		if err != nil {
-			// Log error but continue with other steps
-			fmt.Printf("Warning: Failed to read learning metadata for step %s: %v\n", stepID, err)
-			learningsMap[stepID] = nil
-		} else {
-			learningsMap[stepID] = metadata
+			log.Printf("Warning: Failed to read learning metadata for step %s: %v", stepID, err)
+			metadata = nil
 		}
+
+		// Merge step config data into metadata
+		if agentConfigs, found := stepConfigMap[stepID]; found && agentConfigs != nil {
+			if metadata == nil {
+				metadata = make(map[string]interface{})
+			}
+			if agentConfigs.UseCodeExecutionMode != nil {
+				metadata["use_code_execution_mode"] = *agentConfigs.UseCodeExecutionMode
+			}
+			if agentConfigs.LearningDetailLevel != "" {
+				metadata["learning_detail_level"] = agentConfigs.LearningDetailLevel
+			}
+			if agentConfigs.LockLearnings != nil {
+				metadata["lock_learnings"] = *agentConfigs.LockLearnings
+			}
+		}
+
+		learningsMap[stepID] = metadata
 	}
 
-	// Return response
 	response := map[string]interface{}{
 		"success":   true,
 		"learnings": learningsMap,
@@ -3500,6 +3538,27 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 	getStepEntry := func(stepId string) map[string]interface{} {
 		if _, exists := stepsLogs[stepId]; !exists {
 			meta := stepMetadata[stepId]
+
+			// If metadata not found, try stripping iteration suffix (e.g. "step-1-sub-agent-1-i-2" -> "step-1-sub-agent-1")
+			if meta == nil {
+				// Check for -i-{N} suffix
+				if idx := strings.LastIndex(stepId, "-i-"); idx > 0 {
+					baseId := stepId[:idx]
+					// Verify it's followed by digits
+					suffix := stepId[idx+3:]
+					isDigit := true
+					for _, c := range suffix {
+						if c < '0' || c > '9' {
+							isDigit = false
+							break
+						}
+					}
+					if isDigit && len(suffix) > 0 {
+						meta = stepMetadata[baseId]
+					}
+				}
+			}
+
 			title := stepId
 			desc := ""
 			originalId := ""

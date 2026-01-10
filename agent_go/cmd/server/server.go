@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -293,9 +292,15 @@ type StreamingAPI struct {
 
 	// Workflow orchestrator sessions: sessionID -> orchestrator.Orchestrator
 
-	// Workflow orchestrator contexts for cancellation: sessionID -> context.CancelFunc
+	// Workflow orchestrator contexts for cancellation: queryID -> context.CancelFunc
+	// Using queryID (not sessionID) ensures each execution is independent
 	workflowOrchestratorContexts   map[string]context.CancelFunc
 	workflowOrchestratorContextMux sync.RWMutex
+
+	// Mapping of sessionID -> []queryID to track which executions belong to which session
+	// Used by handleStopSession to cancel all executions for a session
+	sessionQueryIDs   map[string][]string
+	sessionQueryIDMux sync.RWMutex
 
 	// Workflow objectives: sessionID -> objective
 	workflowObjectives   map[string]string
@@ -464,13 +469,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		StructuredOutputProvider: viper.GetString("structured-output-provider"),
 		StructuredOutputModel:    viper.GetString("structured-output-model"),
 		StructuredOutputTemp:     viper.GetFloat64("structured-output-temp"),
-	}
-
-	absConfigPath, err := filepath.Abs(config.MCPConfigPath)
-	if err != nil {
-		fmt.Printf("[DEBUG] Could not resolve absolute config path: %v\n", err)
-	} else {
-		fmt.Printf("[DEBUG] Absolute config path: %s\n", absConfigPath)
 	}
 
 	log.Printf("[SERVER DEBUG] Using MCP config file: %s", config.MCPConfigPath)
@@ -657,6 +655,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		config:                       config,
 		agentCancelFuncs:             make(map[string]context.CancelFunc),
 		workflowOrchestratorContexts: make(map[string]context.CancelFunc),
+		sessionQueryIDs:              make(map[string][]string),
 		workflowObjectives:           make(map[string]string),
 		conversationHistory:          make(map[string][]llmtypes.MessageContent),
 		chatDB:                       chatDB,
@@ -708,9 +707,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/tools/remove", api.handleRemoveServer).Methods("POST")
 
 	// Tool execution APIs - handlers provided by mcpagent/executor library
-	// Note: We pass nil for logger as server uses different logger interface (utils.ExtendedLogger vs loggerv2.Logger)
-	// The executor package will use its own default noop logger for internal logging
-	executorHandlers := executor.NewExecutorHandlers(api.mcpConfigPath, nil)
+	// Pass server logger for proper debugging of session registry usage
+	executorHandlers := executor.NewExecutorHandlers(api.mcpConfigPath, api.logger)
 	apiRouter.HandleFunc("/mcp/execute", executorHandlers.HandleMCPExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/custom/execute", executorHandlers.HandleCustomExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/virtual/execute", executorHandlers.HandleVirtualExecute).Methods("POST", "OPTIONS")
@@ -774,6 +772,11 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/status", api.handleGetWorkflowStatus).Methods("GET")
 	apiRouter.HandleFunc("/workflow/update", api.handleUpdateWorkflow).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/constants", orchtypes.HandleWorkflowConstants).Methods("GET")
+
+	// Consolidated workspace state endpoint (NEW - loads everything in one call)
+	apiRouter.HandleFunc("/workspace/state", api.handleLoadWorkspaceState).Methods("GET", "OPTIONS")
+
+	// Legacy individual endpoints (kept for backward compatibility)
 	apiRouter.HandleFunc("/workflow/run-folders", api.handleGetRunFolders).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/run-folder", api.handleCreateRunFolder).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/progress", api.handleGetProgress).Methods("GET", "OPTIONS")
@@ -1346,10 +1349,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// This prevents the workflow from being cancelled when the HTTP request ends
 		workflowCtx, workflowCancel := context.WithCancel(context.Background())
 
-		// Store the cancel function for potential cancellation
+		// Store the cancel function for potential cancellation (keyed by queryID for independent executions)
 		api.workflowOrchestratorContextMux.Lock()
-		api.workflowOrchestratorContexts[sessionID] = workflowCancel
+		api.workflowOrchestratorContexts[queryID] = workflowCancel
 		api.workflowOrchestratorContextMux.Unlock()
+
+		// Track which queryIDs belong to this session (for handleStopSession)
+		api.sessionQueryIDMux.Lock()
+		api.sessionQueryIDs[sessionID] = append(api.sessionQueryIDs[sessionID], queryID)
+		api.sessionQueryIDMux.Unlock()
 
 		// Return immediate response with query ID
 		response := QueryResponse{
@@ -1367,11 +1375,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Execute workflow asynchronously
 		go func() {
 			defer func() {
-				// Clean up the cancel function when done
+				// Clean up the cancel function when done (keyed by queryID)
 				api.workflowOrchestratorContextMux.Lock()
-				delete(api.workflowOrchestratorContexts, sessionID)
+				delete(api.workflowOrchestratorContexts, queryID)
 				api.workflowOrchestratorContextMux.Unlock()
 
+				// Remove queryID from session tracking
+				api.sessionQueryIDMux.Lock()
+				if queryIDs, exists := api.sessionQueryIDs[sessionID]; exists {
+					// Filter out this queryID
+					newQueryIDs := make([]string, 0, len(queryIDs)-1)
+					for _, qid := range queryIDs {
+						if qid != queryID {
+							newQueryIDs = append(newQueryIDs, qid)
+						}
+					}
+					if len(newQueryIDs) > 0 {
+						api.sessionQueryIDs[sessionID] = newQueryIDs
+					} else {
+						delete(api.sessionQueryIDs, sessionID)
+					}
+				}
+				api.sessionQueryIDMux.Unlock()
 			}()
 
 			// Check database for workflow approval status if preset_id is provided
@@ -1942,6 +1967,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Default to 0 (use default: 5)
 				return 0
 			}(),
+			// MCP session ID for connection reuse (e.g., Playwright browser sharing)
+			// Use the chat session ID so all agents in the same session share MCP connections
+			SessionID: sessionID,
 		}
 
 		// Set agent mode based on request
@@ -1976,7 +2004,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Chat mode is detected by: "simple", "" (empty/default), or "chat" agent mode
 		// Workflow/orchestrator modes handle workspace tools differently, so exclude them
 		isChatMode := req.AgentMode == "simple" || req.AgentMode == "" || req.AgentMode == "chat"
-		log.Printf("[FOLDER GUARD DEBUG] req.AgentMode=%s, isChatMode=%v, GetUnderlyingAgent()!=nil: %v", req.AgentMode, isChatMode, llmAgent.GetUnderlyingAgent() != nil)
+		// log.Printf("[FOLDER GUARD DEBUG] req.AgentMode=%s, isChatMode=%v, GetUnderlyingAgent()!=nil: %v", req.AgentMode, isChatMode, llmAgent.GetUnderlyingAgent() != nil)
 		if isChatMode && llmAgent.GetUnderlyingAgent() != nil {
 			// Check if workspace access is enabled
 			// Default to true for backward compatibility with legacy requests
@@ -2399,14 +2427,25 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 
 	// Note: No regular agent cleanup needed - fresh agents created per request
 
-	// Cancel workflow orchestrator context if it exists
-	api.workflowOrchestratorContextMux.Lock()
-	if cancelFunc, exists := api.workflowOrchestratorContexts[sessionID]; exists {
-		cancelFunc() // Cancel the workflow orchestrator execution
-		delete(api.workflowOrchestratorContexts, sessionID)
-		log.Printf("[SESSION DEBUG] Cancelled workflow orchestrator execution for session %s", sessionID)
+	// Cancel all workflow orchestrator contexts for this session
+	// Since we now use queryID as the key, we need to look up all queryIDs for this session
+	api.sessionQueryIDMux.Lock()
+	queryIDs := api.sessionQueryIDs[sessionID]
+	delete(api.sessionQueryIDs, sessionID) // Clear the mapping
+	api.sessionQueryIDMux.Unlock()
+
+	if len(queryIDs) > 0 {
+		api.workflowOrchestratorContextMux.Lock()
+		for _, qid := range queryIDs {
+			if cancelFunc, exists := api.workflowOrchestratorContexts[qid]; exists {
+				cancelFunc() // Cancel this workflow execution
+				delete(api.workflowOrchestratorContexts, qid)
+				log.Printf("[SESSION DEBUG] Cancelled workflow execution %s for session %s", qid, sessionID)
+			}
+		}
+		api.workflowOrchestratorContextMux.Unlock()
+		log.Printf("[SESSION DEBUG] Cancelled %d workflow execution(s) for session %s", len(queryIDs), sessionID)
 	}
-	api.workflowOrchestratorContextMux.Unlock()
 
 	// Clear workflow objective
 	api.workflowObjectiveMux.Lock()
@@ -2537,7 +2576,7 @@ func listChatSessionsHandler(db database.Database) http.HandlerFunc {
 			presetQueryIDPtr = &presetQueryID
 		}
 
-		sessions, total, err := db.ListChatSessions(r.Context(), limit, offset, presetQueryIDPtr)
+		sessions, total, err := db.ListChatSessions(r.Context(), limit, offset, presetQueryIDPtr, nil)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

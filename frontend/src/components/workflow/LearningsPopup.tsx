@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from 'react'
-import { X, BookOpen, Lock, Unlock, Loader2, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
+import { X, BookOpen, Lock, Unlock, Loader2, AlertCircle, ChevronDown, ChevronRight, Code, FileText } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { PlanningResponse, PlanStep } from '../../utils/stepConfigMatching'
 import { isConditionalStep, isDecisionStep, isOrchestrationStep } from '../../utils/stepConfigMatching'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
+import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 
 interface LearningsPopupProps {
   isOpen: boolean
@@ -20,6 +21,11 @@ interface LearningMetadata {
   last_turn_count?: number
   auto_locked_at?: string
   auto_lock_reason?: string
+  total_iterations?: number
+  // Fields from step_config.json (merged by backend API)
+  use_code_execution_mode?: boolean
+  learning_detail_level?: string
+  lock_learnings?: boolean
 }
 
 // Determine complexity based on last_turn_count and successful runs counters
@@ -49,7 +55,6 @@ function getLockThreshold(complexity: 'simple' | 'medium' | 'complex' | 'unknown
     case 'simple': return 3
     case 'medium': return 5
     case 'complex': return 10
-    case 'unknown': return 0
     default: return 0
   }
 }
@@ -61,9 +66,17 @@ function getSuccessfulRuns(metadata: LearningMetadata | null, complexity: 'simpl
     case 'simple': return metadata.successful_runs_simple || 0
     case 'medium': return metadata.successful_runs_medium || 0
     case 'complex': return metadata.successful_runs_complex || 0
-    case 'unknown': return 0
     default: return 0
   }
+}
+
+// Parse learnings API response into typed Record
+function parseLearningsResponse(learningsData: Record<string, unknown>): Record<string, LearningMetadata | null> {
+  const result: Record<string, LearningMetadata | null> = {}
+  for (const [stepId, metadata] of Object.entries(learningsData)) {
+    result[stepId] = metadata as LearningMetadata | null
+  }
+  return result
 }
 
 // Get step title from plan
@@ -106,68 +119,34 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
   // Expanded items state - tracks which step IDs have their learning content expanded
   const [expandedStepIds, setExpandedStepIds] = useState<Set<string>>(new Set())
   
-  // Learning content cache - stores fetched markdown content for each step
-  const [learningContentCache, setLearningContentCache] = useState<Record<string, { content: string; error: string | null }>>({})
+  // Learning content cache - stores fetched markdown content and code content for each step
+  const [learningContentCache, setLearningContentCache] = useState<Record<string, { content: string; codeContent?: string; codeFileName?: string; error: string | null }>>({})
   
   // Loading states for individual items
   const [loadingStepIds, setLoadingStepIds] = useState<Set<string>>(new Set())
-  
-  // Step configs state - stores lock_learnings status from step_config.json
-  const [stepConfigs, setStepConfigs] = useState<Record<string, { lock_learnings?: boolean }>>({})
+
   const [updatingLockStepIds, setUpdatingLockStepIds] = useState<Set<string>>(new Set())
 
-  // Fetch step configs to get lock_learnings status
-  const fetchStepConfigs = useCallback(async () => {
-    if (!workspacePath) return
+  // Get preset default for code execution mode (fallback when step doesn't have explicit setting)
+  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
+  const customPresets = useGlobalPresetStore(state => state.customPresets)
+  const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
+  const activePreset = activePresetId
+    ? customPresets.find(p => p.id === activePresetId) || predefinedPresets.find(p => p.id === activePresetId)
+    : null
+  const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
 
-    try {
-      const stepConfigPath = `${workspacePath}/planning/step_config.json`
-      const response = await agentApi.getPlannerFileContent(stepConfigPath)
-      
-      if (response.success && response.data?.content) {
-        const rawContent = JSON.parse(response.data.content)
-        // Handle both object format { "steps": [...] } and array format
-        const configs = rawContent.steps || rawContent || []
-        
-        const configMap: Record<string, { lock_learnings?: boolean }> = {}
-        if (Array.isArray(configs)) {
-          configs.forEach((config: any) => {
-            if (config.id && config.agent_configs) {
-              configMap[config.id] = {
-                lock_learnings: config.agent_configs.lock_learnings
-              }
-            }
-          })
-        }
-        setStepConfigs(configMap)
-      }
-    } catch (err) {
-      // Step config might not exist, that's okay
-      console.debug('[LearningsPopup] Could not load step configs:', err)
-    }
-  }, [workspacePath])
-
-  // Fetch learnings when popup opens
+  // Fetch learnings when popup opens (API now includes step config data merged in)
   useEffect(() => {
     if (!isOpen || !workspacePath) return
 
     setIsLoading(true)
     setError(null)
-    
-    // Fetch both learnings and step configs
-    Promise.all([
-      agentApi.getAllStepLearnings(workspacePath),
-      fetchStepConfigs()
-    ])
-      .then(([learningsResponse]) => {
-        if (learningsResponse.success) {
-          // Type cast the learnings to match our interface
-          const learningsData = learningsResponse.learnings || {}
-          const typedLearnings: Record<string, LearningMetadata | null> = {}
-          for (const [stepId, metadata] of Object.entries(learningsData)) {
-            typedLearnings[stepId] = metadata as LearningMetadata | null
-          }
-          setLearnings(typedLearnings)
+
+    agentApi.getAllStepLearnings(workspacePath)
+      .then((response) => {
+        if (response.success) {
+          setLearnings(parseLearningsResponse(response.learnings || {}))
         } else {
           setError('Failed to load learnings')
         }
@@ -179,44 +158,27 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
       .finally(() => {
         setIsLoading(false)
       })
-  }, [isOpen, workspacePath, fetchStepConfigs])
+  }, [isOpen, workspacePath])
 
-  // Toggle lock/unlock for a step
   const toggleLock = async (stepId: string, isCurrentlyLocked: boolean) => {
     if (!workspacePath || updatingLockStepIds.has(stepId)) return
 
     setUpdatingLockStepIds(prev => new Set(prev).add(stepId))
 
     try {
-      // Get current agent configs from plan or step configs
       const step = plan?.steps?.find(s => s.id === stepId)
-      const stepConfig = stepConfigs[stepId]
-      const currentConfigs = step?.agent_configs || (stepConfig ? { lock_learnings: stepConfig.lock_learnings } : {})
-      
-      // Determine the new lock state
-      // If currently locked (auto or manual), unlock it by setting lock_learnings = false
-      // If currently unlocked, lock it by setting lock_learnings = true
-      const newLockState = !isCurrentlyLocked
-      
-      // Update lock_learnings
-      const updatedConfigs = {
-        ...currentConfigs,
-        lock_learnings: newLockState
-      }
+      const metadata = learnings[stepId]
+      const currentConfigs = step?.agent_configs || (metadata ? { lock_learnings: metadata.lock_learnings } : {})
 
-      await agentApi.updateStepConfig(workspacePath, stepId, updatedConfigs)
-      
-      // Refresh both step configs and learnings
-      await fetchStepConfigs()
-      
+      await agentApi.updateStepConfig(workspacePath, stepId, {
+        ...currentConfigs,
+        lock_learnings: !isCurrentlyLocked
+      })
+
+      // Refresh learnings
       const response = await agentApi.getAllStepLearnings(workspacePath)
       if (response.success) {
-        const learningsData = response.learnings || {}
-        const typedLearnings: Record<string, LearningMetadata | null> = {}
-        for (const [id, metadata] of Object.entries(learningsData)) {
-          typedLearnings[id] = metadata as LearningMetadata | null
-        }
-        setLearnings(typedLearnings)
+        setLearnings(parseLearningsResponse(response.learnings || {}))
       }
     } catch (err: any) {
       console.error('[LearningsPopup] Error toggling lock:', err)
@@ -257,13 +219,16 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
     setLoadingStepIds(prev => new Set(prev).add(stepId))
 
     try {
-      // First, list files in the learnings folder to find the markdown file
       const learningsPath = `${workspacePath}/learnings/${stepId}`
+      let mdContent = ''
+      let codeContent = ''
+      let codeFileName = ''
+      let error: string | null = null
+
+      // List files in the learnings folder to find the markdown file
       const filesResponse = await agentApi.getPlannerFiles(learningsPath, 100)
-      
-      // Handle both direct array response and wrapped response
-      const files = Array.isArray(filesResponse) 
-        ? filesResponse 
+      const files = Array.isArray(filesResponse)
+        ? filesResponse
         : (filesResponse?.data && Array.isArray(filesResponse.data) ? filesResponse.data : [])
 
       // Find the first .md file (excluding metadata files)
@@ -272,44 +237,68 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
         return fileName.endsWith('.md') && !fileName.includes('.learning_metadata')
       })
 
-      if (!mdFile) {
-        setLearningContentCache(prev => ({
-          ...prev,
-          [stepId]: { content: '', error: 'No learning markdown file found' }
-        }))
-        return
+      // Fetch markdown content
+      if (mdFile) {
+        let filePath = mdFile.filepath || mdFile.name
+        if (filePath) {
+          if (!filePath.startsWith(workspacePath)) {
+            const cleanPath = filePath.startsWith('/') ? filePath.slice(1) : filePath
+            filePath = `${workspacePath}/${cleanPath}`
+          }
+          const response = await agentApi.getPlannerFileContent(filePath)
+          if (response.success && response.data && response.data.content) {
+            mdContent = response.data.content
+          }
+        }
       }
 
-      // Construct the full file path
-      let filePath = mdFile.filepath || mdFile.name
-      if (!filePath) {
-        setLearningContentCache(prev => ({
-          ...prev,
-          [stepId]: { content: '', error: 'Invalid file path' }
-        }))
-        return
+      // Also check the code/ subdirectory for .go files
+      try {
+        const codePath = `${learningsPath}/code`
+        console.log('[LearningsPopup] Checking code path:', codePath)
+        const codeFilesResponse = await agentApi.getPlannerFiles(codePath, 100)
+        console.log('[LearningsPopup] Code files response:', codeFilesResponse)
+        const codeFiles = Array.isArray(codeFilesResponse)
+          ? codeFilesResponse
+          : (codeFilesResponse?.data && Array.isArray(codeFilesResponse.data) ? codeFilesResponse.data : [])
+        console.log('[LearningsPopup] Code files found:', codeFiles)
+
+        // Find the first .go file
+        const codeFile = codeFiles.find((file: any) => {
+          const fileName = file.filepath || file.name || ''
+          return fileName.endsWith('.go')
+        })
+        console.log('[LearningsPopup] Code file:', codeFile)
+
+        if (codeFile) {
+          let codeFilePath = codeFile.filepath || codeFile.name
+          if (codeFilePath) {
+            codeFileName = codeFilePath.split('/').pop() || 'code.go'
+            if (!codeFilePath.startsWith(workspacePath)) {
+              const cleanPath = codeFilePath.startsWith('/') ? codeFilePath.slice(1) : codeFilePath
+              codeFilePath = `${workspacePath}/${cleanPath}`
+            }
+            console.log('[LearningsPopup] Fetching code from:', codeFilePath)
+            const codeResponse = await agentApi.getPlannerFileContent(codeFilePath)
+            console.log('[LearningsPopup] Code response:', codeResponse)
+            if (codeResponse.success && codeResponse.data && codeResponse.data.content) {
+              codeContent = codeResponse.data.content
+              console.log('[LearningsPopup] Code content loaded, length:', codeContent.length)
+            }
+          }
+        }
+      } catch (codeErr) {
+        console.log('[LearningsPopup] Code folder error (might not exist):', codeErr)
       }
 
-      // If path doesn't start with workspace path, construct it
-      if (!filePath.startsWith(workspacePath)) {
-        const cleanPath = filePath.startsWith('/') ? filePath.slice(1) : filePath
-        filePath = `${workspacePath}/${cleanPath}`
+      if (!mdContent && !codeContent) {
+        error = 'No learning content found'
       }
-      
-      // Read the file content
-      const response = await agentApi.getPlannerFileContent(filePath)
-      
-      if (response.success && response.data && response.data.content) {
-        setLearningContentCache(prev => ({
-          ...prev,
-          [stepId]: { content: response.data.content, error: null }
-        }))
-      } else {
-        setLearningContentCache(prev => ({
-          ...prev,
-          [stepId]: { content: '', error: 'Failed to read learning file: ' + (response.message || 'Unknown error') }
-        }))
-      }
+
+      setLearningContentCache(prev => ({
+        ...prev,
+        [stepId]: { content: mdContent, codeContent, codeFileName, error }
+      }))
     } catch (err: any) {
       console.error('[LearningsPopup] Error fetching learning content:', err)
       setLearningContentCache(prev => ({
@@ -468,10 +457,9 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
             <div className="space-y-3">
               {stepsWithLearnings.map(({ stepId, stepNumber, stepType, branchType }) => {
                 const metadata = learnings[stepId]
-                const stepConfig = stepConfigs[stepId]
-                // Check lock status from both sources: auto_locked_at (metadata) OR lock_learnings (step_config)
+                // Check lock status from both sources: auto_locked_at (metadata) OR lock_learnings (from step config via API)
                 const isAutoLocked = metadata?.auto_locked_at !== undefined && metadata.auto_locked_at !== ''
-                const isManuallyLocked = stepConfig?.lock_learnings === true
+                const isManuallyLocked = metadata?.lock_learnings === true
                 const isLocked = isAutoLocked || isManuallyLocked
                 const complexity = getComplexity(metadata)
                 const threshold = getLockThreshold(complexity)
@@ -501,6 +489,11 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                   if (stepType === 'decision_inner' || stepType === 'orchestration_inner') return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'
                   return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
                 }
+
+                // Determine effective code execution mode: step config > preset default
+                const effectiveUseCodeExecutionMode = metadata?.use_code_execution_mode !== undefined
+                  ? metadata.use_code_execution_mode
+                  : presetUseCodeExecutionMode
 
                 return (
                   <div
@@ -603,6 +596,36 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                                       ({metadata.last_turn_count} turns)
                                     </span>
                                   )}
+                                  
+                                  {/* Detail Level Badge - from step config (via API) */}
+                                  {metadata?.learning_detail_level && (
+                                    <span className={`ml-2 text-xs px-1.5 py-0.5 rounded font-medium border ${
+                                      metadata.learning_detail_level === 'general'
+                                        ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800'
+                                        : 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-300 dark:border-purple-800'
+                                    }`}>
+                                      {metadata.learning_detail_level === 'general' ? 'General Mode' : 'Exact Mode'}
+                                    </span>
+                                  )}
+
+                                  {/* Execution Mode Badge - Simple vs Agent (step config > preset default) */}
+                                  <span className={`ml-2 text-xs px-1.5 py-0.5 rounded font-medium border flex items-center gap-1 ${
+                                    effectiveUseCodeExecutionMode
+                                      ? 'bg-teal-50 text-teal-600 border-teal-200 dark:bg-teal-900/20 dark:text-teal-400 dark:border-teal-800'
+                                      : 'bg-gray-50 text-gray-600 border-gray-200 dark:bg-gray-800/50 dark:text-gray-400 dark:border-gray-700'
+                                  }`}>
+                                    {effectiveUseCodeExecutionMode ? (
+                                      <>
+                                        <Code className="w-3 h-3" />
+                                        Agent Mode
+                                      </>
+                                    ) : (
+                                      <>
+                                        <FileText className="w-3 h-3" />
+                                        Simple Mode
+                                      </>
+                                    )}
+                                  </span>
                                 </div>
                                 
                                 {metadata.total_iterations !== undefined && (
@@ -689,7 +712,31 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                         </div>
                       )}
 
-                      {!isLoadingContent && cachedContent && !cachedContent.error && !cachedContent.content && (
+                      {/* Code Content Section for Agent Mode */}
+                      {!isLoadingContent && cachedContent && !cachedContent.error && cachedContent.codeContent && (
+                        <div className="mt-4">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Code className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                            <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                              Agent Code
+                            </span>
+                            {cachedContent.codeFileName && (
+                              <span className="text-xs text-muted-foreground font-mono bg-muted px-1.5 py-0.5 rounded">
+                                {cachedContent.codeFileName}
+                              </span>
+                            )}
+                          </div>
+                          <div className="relative rounded-lg border border-emerald-200 dark:border-emerald-800 bg-slate-900 dark:bg-slate-950 overflow-hidden">
+                            <div className="max-h-[400px] overflow-auto">
+                              <pre className="p-4 text-sm font-mono text-slate-100 whitespace-pre-wrap break-words">
+                                <code>{cachedContent.codeContent}</code>
+                              </pre>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {!isLoadingContent && cachedContent && !cachedContent.error && !cachedContent.content && !cachedContent.codeContent && (
                         <div className="text-center py-4 text-sm text-muted-foreground">
                           No learning content available
                         </div>

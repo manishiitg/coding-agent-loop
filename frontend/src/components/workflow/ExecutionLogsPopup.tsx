@@ -19,7 +19,8 @@ import {
   BookOpen,
   History,
   Filter,
-  RefreshCw
+  RefreshCw,
+  ExternalLink
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { ExecutionLogsResponse } from '../../services/api-types'
@@ -243,6 +244,20 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
     })
   }
 
+  const handleJumpToStep = (stepId: string) => {
+    setExpandedSteps(prev => new Set(prev).add(stepId))
+    setTimeout(() => {
+        const element = document.getElementById(`step-${stepId}`)
+        if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            element.classList.add('ring-2', 'ring-primary', 'ring-offset-2')
+            setTimeout(() => {
+                element.classList.remove('ring-2', 'ring-primary', 'ring-offset-2')
+            }, 2000)
+        }
+    }, 100)
+  }
+
   const toggleValidation = (id: string) => {
     setExpandedValidations(prev => {
       const next = new Set(prev)
@@ -305,6 +320,403 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
         return next
       })
     }
+  }
+
+  // Recursive render function for step content
+  const renderStepContent = (stepId: string, stepLogs: any) => {
+      const validations = stepLogs.validations || []
+      
+      return (
+        <div className="border-t border-border divide-y divide-border">
+          {/* Executions Section */}
+          {stepLogs.executions.length > 0 && (
+            <div className="p-4 bg-background">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Execution Logs</h4>
+              <div className="space-y-3">
+                {stepLogs.executions.map((exec: any, idx: number) => {
+                  const execId = `${stepId}-exec-${exec.attempt}-${exec.iteration}`
+                  const isExecExpanded = expandedExecutions.has(execId)
+                  const result = exec.content?.execution_result
+                  const model = exec.content?.model
+                  
+                  return (
+                    <div key={idx} className="bg-background rounded border border-border overflow-hidden">
+                      <button
+                        onClick={() => toggleExecution(execId)}
+                        className="w-full flex items-start gap-3 p-3 text-left hover:bg-accent/50 transition-colors"
+                      >
+                        <Terminal className="w-4 h-4 mt-0.5 text-muted-foreground flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-foreground">
+                                Attempt {exec.attempt} {exec.iteration > 0 && `(Iteration ${exec.iteration})`}
+                              </span>
+                              {model && (
+                                <span className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded text-muted-foreground border border-border">
+                                  {model}
+                                </span>
+                              )}
+                            </div>
+                            {isExecExpanded ? <ChevronDown className="w-3 h-3 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 text-muted-foreground" />}
+                          </div>
+                          {result && (
+                            <p className="text-xs text-muted-foreground line-clamp-2">
+                              {result}
+                            </p>
+                          )}
+                        </div>
+                      </button>
+                      
+                      {isExecExpanded && exec.content && (
+                        <div className="p-3 border-t border-border bg-muted/30 text-xs font-mono">
+                          <div className="flex justify-end mb-2">
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleViewConversation(exec.conversation_path, `Execution Conversation - Step ${stepId} (Attempt ${exec.attempt})`)
+                                }}
+                                disabled={loadingFiles.has(exec.conversation_path)}
+                                className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 rounded transition-colors"
+                            >
+                                {loadingFiles.has(exec.conversation_path) ? <Loader2 className="w-3 h-3 animate-spin" /> : <MessageSquare className="w-3 h-3" />}
+                                View Full Conversation
+                            </button>
+                          </div>
+                          <div className="font-semibold text-foreground mb-1">Execution Result:</div>
+                          <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-60 overflow-y-auto mb-3">
+                            {result}
+                          </pre>
+                          <div className="font-semibold text-foreground mb-1">Full JSON:</div>
+                          <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-40 overflow-y-auto">
+                            {JSON.stringify(exec.content, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Step Output Section */}
+          {stepLogs.output_content && (
+            <div className="p-4 bg-blue-50/50 dark:bg-blue-950/20">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+                <FileText className="w-3.5 h-3.5" />
+                Step Output
+                <span className="text-[10px] font-normal text-muted-foreground bg-background px-1.5 py-0.5 rounded border border-border">
+                  {stepLogs.context_output}
+                </span>
+              </h4>
+              <div className="bg-background rounded border border-border overflow-hidden">
+                <div className="p-3 max-h-64 overflow-auto">
+                  {stepLogs.output_content.is_json ? (
+                    <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words">
+                      {JSON.stringify(stepLogs.output_content.content, null, 2)}
+                    </pre>
+                  ) : (
+                    <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words">
+                      {String(stepLogs.output_content.content)}
+                    </pre>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Validations Section */}
+          {validations.length > 0 && (
+            <div className="p-4 bg-muted/30">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Validations</h4>
+              <div className="space-y-3">
+                {validations.map((val: any, idx: number) => {
+                  const valId = `${stepId}-val-${val.attempt}`
+                  const isValExpanded = expandedValidations.has(valId)
+                  const valStatus = val.content?.execution_status
+                  const reasoning = val.content?.reasoning
+                  const feedback = (val.content?.feedback || []) as ValidationFeedback[]
+                  
+                  return (
+                    <div key={idx} className="bg-background rounded border border-border overflow-hidden">
+                      <button
+                        onClick={() => toggleValidation(valId)}
+                        className="w-full flex items-start gap-3 p-3 text-left hover:bg-accent/50 transition-colors"
+                      >
+                        <div className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${valStatus === 'COMPLETED' ? 'bg-green-500' : valStatus === 'FAILED' ? 'bg-red-500' : 'bg-gray-400'}`} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-sm font-medium text-foreground">
+                              Attempt {val.attempt}
+                            </span>
+                            {isValExpanded ? <ChevronDown className="w-3 h-3 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 text-muted-foreground" />}
+                          </div>
+                          {reasoning && (
+                            <p className="text-xs text-muted-foreground line-clamp-2">
+                              {reasoning}
+                            </p>
+                          )}
+                        </div>
+                      </button>
+                      
+                      {isValExpanded && val.content && (
+                        <div className="p-3 border-t border-border bg-muted/30 text-xs font-mono">
+                          {feedback.length > 0 && (
+                            <div className="mb-3">
+                              <div className="font-semibold text-foreground mb-1">Feedback:</div>
+                              <ul className="list-disc pl-4 space-y-1 text-muted-foreground">
+                                {feedback.map((fb, i: number) => (
+                                  <li key={i}>
+                                    <span className={`font-semibold ${fb.severity === 'CRITICAL' || fb.severity === 'HIGH' ? 'text-destructive' : 'text-yellow-500'}`}>[{fb.severity}]</span> {fb.description}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          <div className="font-semibold text-foreground mb-1">Full Response:</div>
+                          <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-60 overflow-y-auto">
+                            {JSON.stringify(val.content, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Learnings Section */}
+          {stepLogs.learnings && stepLogs.learnings.length > 0 && (
+            <div className="p-4 bg-background border-t border-border">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+                <BookOpen className="w-4 h-4" /> Learning Logs
+              </h4>
+              <div className="space-y-3">
+                {stepLogs.learnings.map((log: any, idx: number) => (
+                  <div key={idx} className="bg-background rounded border border-border p-3 text-sm">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`px-2 py-0.5 rounded text-xs uppercase font-medium ${
+                        log.type === 'learning_completed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' :
+                        log.type === 'learning_failed' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' :
+                        'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                      }`}>
+                        {log.type.replace('learning_', '')}
+                      </span>
+                      <span className="text-xs text-muted-foreground ml-auto">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-xs text-muted-foreground mt-1">
+                        <span>Type: {log.learning_type}</span>
+                        {log.detail_level && <span>Level: {log.detail_level}</span>}
+                    </div>
+                    
+                    {log.result && (
+                        <div className="mt-2 text-xs">
+                            <div className="font-semibold text-foreground mb-1">Extracted Learning:</div>
+                            <pre className="p-2 bg-muted/50 rounded border border-border font-mono whitespace-pre-wrap text-muted-foreground max-h-40 overflow-y-auto">
+                                {log.result}
+                            </pre>
+                        </div>
+                    )}
+
+                    {log.conversation_path && (
+                        <div className="flex justify-end mt-2">
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleViewConversation(log.conversation_path!, `Learning Conversation - Step ${stepId} (${log.learning_type})`)
+                                }}
+                                disabled={loadingFiles.has(log.conversation_path!)}
+                                className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 rounded transition-colors"
+                            >
+                                {loadingFiles.has(log.conversation_path!) ? <Loader2 className="w-3 h-3 animate-spin" /> : <MessageSquare className="w-3 h-3" />}
+                                View Full Conversation
+                            </button>
+                        </div>
+                    )}
+
+                    {log.error && (
+                        <div className="mt-2 text-xs text-destructive bg-destructive/10 p-2 rounded">
+                            Error: {log.error}
+                        </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* Orchestration Section */}
+          {stepLogs.orchestration && stepLogs.orchestration.length > 0 && (
+            <div className="p-4 bg-muted/30 border-t border-border">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+                <Network className="w-4 h-4" /> Orchestration Logs
+              </h4>
+              <div className="space-y-6">
+                {Object.entries(
+                  stepLogs.orchestration.reduce((acc: Record<number, any[]>, log: any) => {
+                    const iter = log.iteration || 1
+                    if (!acc[iter]) acc[iter] = []
+                    // Skip main_step as it's redundant with routing
+                    if (log.type !== 'main_step') {
+                      acc[iter].push(log)
+                    }
+                    return acc
+                  }, {})
+                ).sort(([a], [b]) => Number(a) - Number(b)).map(([iteration, iterLogs]) => (
+                  <div key={iteration} className="relative">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold ring-4 ring-muted/30">
+                        {iteration}
+                      </span>
+                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Iteration {iteration}
+                      </span>
+                      <div className="h-px bg-border flex-1 ml-2" />
+                    </div>
+                    
+                    <div className="space-y-3 pl-2.5 border-l-2 border-border/50 ml-2.5 pb-2">
+                      {(iterLogs as any[]).map((log, idx) => (
+                        <div key={idx} className="pl-4 relative">
+                          {/* Timeline dot */}
+                          <div className={`absolute -left-[5px] top-3 w-2.5 h-2.5 rounded-full border-2 border-background ${
+                            log.type === 'routing' ? 'bg-blue-500' :
+                            log.type === 'evaluation' ? (log.success_criteria_met ? 'bg-green-500' : 'bg-red-500') :
+                            'bg-gray-400'
+                          }`} />
+
+                          <div className="bg-background rounded border border-border p-3 text-sm shadow-sm">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded uppercase font-bold tracking-wide ${
+                                log.type === 'routing' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' :
+                                log.type === 'evaluation' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' :
+                                'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+                              }`}>
+                                {log.type}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground ml-auto font-mono">
+                                {new Date(log.timestamp).toLocaleTimeString()}
+                              </span>
+                            </div>
+
+                            {log.type === 'routing' && log.orchestration_response && (
+                              <div className="space-y-3 mt-3">
+                                <div className="flex flex-col gap-2 p-3 bg-primary/5 rounded border border-primary/20">
+                                    <div className="flex justify-between items-start">
+                                        <span className="font-medium text-foreground text-xs flex items-center gap-1.5 mt-0.5">
+                                          <Split className="w-3.5 h-3.5 text-primary" />
+                                          Selected Sub-Agent
+                                        </span>
+                                        {log.orchestration_response.selected_route_id && 
+                                         log.orchestration_response.selected_route_id !== (log.orchestration_response.selected_sub_agent_title || log.orchestration_response.selected_route_name) && (
+                                          <span className="font-mono text-[10px] text-muted-foreground bg-background px-1.5 py-0.5 rounded border border-border">
+                                            ID: {log.orchestration_response.selected_route_id}
+                                          </span>
+                                        )}
+                                    </div>
+                                    <div className="text-sm font-semibold text-primary pl-5">
+                                        {log.orchestration_response.selected_sub_agent_title || log.orchestration_response.selected_route_name || log.orchestration_response.selected_route_id}
+                                    </div>
+                                    
+                                    {log.orchestration_response.selected_sub_agent_path && (
+                                        <div className="flex justify-end mt-1">
+                                            {/* View Execution button removed in favor of inline expansion */}
+                                        </div>
+                                    )}
+
+                                    {/* Inline Sub-Agent Logs */}
+                                    {log.orchestration_response.selected_sub_agent_path && logs?.steps?.[log.orchestration_response.selected_sub_agent_path] && (
+                                        <div className="mt-3 border-t border-border pt-3">
+                                            <details className="group">
+                                                <summary className="text-xs font-semibold text-primary cursor-pointer hover:text-primary/80 flex items-center gap-2 select-none">
+                                                    <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90" />
+                                                    View Sub-Agent Execution ({logs!.steps[log.orchestration_response.selected_sub_agent_path].title})
+                                                </summary>
+                                                <div className="mt-3 pl-2 border-l-2 border-primary/20">
+                                                    {renderStepContent(log.orchestration_response.selected_sub_agent_path, logs!.steps[log.orchestration_response.selected_sub_agent_path])}
+                                                </div>
+                                            </details>
+                                        </div>
+                                    )}
+                                </div>
+                                
+                                {/* Success Reasoning / Decision Logic */}
+                                {log.orchestration_response.success_reasoning && (
+                                    <div className="text-xs">
+                                        <div className="font-semibold text-foreground mb-1.5 flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                                          <span className="text-sm">💡</span> Why this agent was selected?
+                                        </div>
+                                        <div className="bg-amber-500/10 p-3 rounded-md border border-amber-500/20 text-foreground leading-relaxed shadow-sm">
+                                            "{log.orchestration_response.success_reasoning}"
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Instructions to Sub-Agent */}
+                                {log.orchestration_response.instructions_to_sub_agent && (
+                                    <div className="text-xs mt-2">
+                                        <div className="font-semibold text-foreground mb-1.5 flex items-center gap-1.5">
+                                            <Terminal className="w-3 h-3 text-primary" />
+                                            Instructions to Sub-Agent
+                                        </div>
+                                        <div className="p-3 bg-muted/30 rounded border border-border font-mono whitespace-pre-wrap text-muted-foreground max-h-60 overflow-y-auto text-[11px] leading-relaxed">
+                                            {log.orchestration_response.instructions_to_sub_agent}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Success Criteria for Sub-Agent */}
+                                {log.orchestration_response.success_criteria_for_sub_agent && (
+                                    <div className="text-xs">
+                                        <div className="font-semibold text-foreground mb-1.5 flex items-center gap-1.5">
+                                            <CheckCircle className="w-3 h-3 text-green-600 dark:text-green-400" />
+                                            Sub-Agent Success Criteria
+                                        </div>
+                                        <p className="text-green-700 dark:text-green-300 bg-green-500/10 p-2.5 rounded border border-green-500/20 italic">
+                                            {log.orchestration_response.success_criteria_for_sub_agent}
+                                        </p>
+                                    </div>
+                                )}
+                              </div>
+                            )}
+
+                            {log.type === 'evaluation' && (
+                              <div className="mt-2">
+                                <div className={`flex items-center gap-2 p-2 rounded border ${
+                                  log.success_criteria_met 
+                                    ? 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/10 dark:border-green-900/30 dark:text-green-300' 
+                                    : 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/10 dark:border-red-900/30 dark:text-red-300'
+                                }`}>
+                                    {log.success_criteria_met ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                                    <span className="font-semibold text-xs">
+                                      Success Criteria Met: {log.success_criteria_met ? 'Yes' : 'No'}
+                                    </span>
+                                </div>
+                              </div>
+                            )}
+
+                            <details className="mt-3 group">
+                                <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-1 select-none w-fit">
+                                  <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" />
+                                  View Raw JSON
+                                </summary>
+                                <pre className="mt-2 text-[10px] font-mono whitespace-pre-wrap overflow-x-auto text-muted-foreground bg-muted/50 p-2 rounded max-h-40 overflow-y-auto border border-border">
+                                    {JSON.stringify(log, null, 2)}
+                                </pre>
+                            </details>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* CONDITIONALS_SECTION */}
+          {/* DECISIONS_SECTION */}
+          {/* ARCHIVED_LOGS_SECTION */}
+        </div>
+      )
   }
 
   if (!isOpen) return null
@@ -696,70 +1108,158 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
                                 <Network className="w-4 h-4" /> Orchestration Logs
                               </h4>
-                              <div className="space-y-3">
-                                {stepLogs.orchestration.map((log, idx) => (
-                                  <div key={idx} className="bg-background rounded border border-border p-3 text-sm">
-                                    <div className="flex items-center gap-2 mb-2">
-                                      <span className="font-mono text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded uppercase">{log.type}</span>
-                                      <span className="text-xs text-muted-foreground ml-auto">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                              <div className="space-y-6">
+                                {Object.entries(
+                                  stepLogs.orchestration.reduce((acc: Record<number, any[]>, log: any) => {
+                                    const iter = log.iteration || 1
+                                    if (!acc[iter]) acc[iter] = []
+                                    // Skip main_step as it's redundant with routing
+                                    if (log.type !== 'main_step') {
+                                      acc[iter].push(log)
+                                    }
+                                    return acc
+                                  }, {})
+                                ).sort(([a], [b]) => Number(a) - Number(b)).map(([iteration, iterLogs]) => (
+                                  <div key={iteration} className="relative">
+                                    <div className="flex items-center gap-2 mb-3">
+                                      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold ring-4 ring-muted/30">
+                                        {iteration}
+                                      </span>
+                                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                                        Iteration {iteration}
+                                      </span>
+                                      <div className="h-px bg-border flex-1 ml-2" />
                                     </div>
-                                    {log.type === 'routing' && log.orchestration_response && (
-                                      <div className="space-y-3 mt-2">
-                                        <div className="flex justify-between items-center">
-                                            <span className="font-medium text-foreground">Selected Route:</span>
-                                            <span className="font-mono text-xs bg-accent px-2 py-0.5 rounded border border-border">{log.orchestration_response.selected_route_id}</span>
+                                    
+                                    <div className="space-y-3 pl-2.5 border-l-2 border-border/50 ml-2.5 pb-2">
+                                      {(iterLogs as any[]).map((log, idx) => (
+                                        <div key={idx} className="pl-4 relative">
+                                          {/* Timeline dot */}
+                                          <div className={`absolute -left-[5px] top-3 w-2.5 h-2.5 rounded-full border-2 border-background ${
+                                            log.type === 'routing' ? 'bg-blue-500' :
+                                            log.type === 'evaluation' ? (log.success_criteria_met ? 'bg-green-500' : 'bg-red-500') :
+                                            'bg-gray-400'
+                                          }`} />
+
+                                          <div className="bg-background rounded border border-border p-3 text-sm shadow-sm">
+                                            <div className="flex items-center gap-2 mb-2">
+                                              <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded uppercase font-bold tracking-wide ${
+                                                log.type === 'routing' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' :
+                                                log.type === 'evaluation' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' :
+                                                'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+                                              }`}>
+                                                {log.type}
+                                              </span>
+                                              {log.model && (
+                                                <span className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground border border-border">
+                                                  {log.model}
+                                                </span>
+                                              )}
+                                              <span className="text-[10px] text-muted-foreground ml-auto font-mono">
+                                                {new Date(log.timestamp).toLocaleTimeString()}
+                                              </span>
+                                            </div>
+
+                                            {log.type === 'routing' && log.orchestration_response && (
+                                              <div className="space-y-3 mt-3">
+                                                <div className="flex flex-col gap-2 p-3 bg-primary/5 rounded border border-primary/20">
+                                                    <div className="flex justify-between items-start">
+                                                        <span className="font-medium text-foreground text-xs flex items-center gap-1.5 mt-0.5">
+                                                          <Split className="w-3.5 h-3.5 text-primary" />
+                                                          Selected Sub-Agent
+                                                        </span>
+                                                        {log.orchestration_response.selected_route_id && 
+                                                         log.orchestration_response.selected_route_id !== (log.orchestration_response.selected_sub_agent_title || log.orchestration_response.selected_route_name) && (
+                                                          <span className="font-mono text-[10px] text-muted-foreground bg-background px-1.5 py-0.5 rounded border border-border">
+                                                            ID: {log.orchestration_response.selected_route_id}
+                                                          </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-sm font-semibold text-primary pl-5">
+                                                        {log.orchestration_response.selected_sub_agent_title || log.orchestration_response.selected_route_name || log.orchestration_response.selected_route_id}
+                                                    </div>
+                                                    
+                                                    {log.orchestration_response.selected_sub_agent_path && (
+                                                        <div className="flex justify-end mt-1">
+                                                            <button
+                                                                onClick={() => handleJumpToStep(log.orchestration_response.selected_sub_agent_path)}
+                                                                className="text-[10px] flex items-center gap-1 bg-background border border-border px-2 py-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                                                            >
+                                                                <ExternalLink className="w-3 h-3" />
+                                                                View Execution
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                
+                                                {/* Success Reasoning / Decision Logic */}
+                                                {log.orchestration_response.success_reasoning && (
+                                                    <div className="text-xs">
+                                                        <div className="font-semibold text-foreground mb-1.5 flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                                                          <span className="text-sm">💡</span> Why this agent was selected?
+                                                        </div>
+                                                        <div className="bg-amber-500/10 p-3 rounded-md border border-amber-500/20 text-foreground leading-relaxed shadow-sm">
+                                                            "{log.orchestration_response.success_reasoning}"
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Instructions to Sub-Agent */}
+                                                {log.orchestration_response.instructions_to_sub_agent && (
+                                                    <div className="text-xs mt-2">
+                                                        <div className="font-semibold text-foreground mb-1.5 flex items-center gap-1.5">
+                                                            <Terminal className="w-3 h-3 text-primary" />
+                                                            Instructions to Sub-Agent
+                                                        </div>
+                                                        <div className="p-3 bg-muted/30 rounded border border-border font-mono whitespace-pre-wrap text-muted-foreground max-h-60 overflow-y-auto text-[11px] leading-relaxed">
+                                                            {log.orchestration_response.instructions_to_sub_agent}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Success Criteria for Sub-Agent */}
+                                                {log.orchestration_response.success_criteria_for_sub_agent && (
+                                                    <div className="text-xs">
+                                                        <div className="font-semibold text-foreground mb-1.5 flex items-center gap-1.5">
+                                                            <CheckCircle className="w-3 h-3 text-green-600 dark:text-green-400" />
+                                                            Sub-Agent Success Criteria
+                                                        </div>
+                                                        <p className="text-green-700 dark:text-green-300 bg-green-500/10 p-2.5 rounded border border-green-500/20 italic">
+                                                            {log.orchestration_response.success_criteria_for_sub_agent}
+                                                        </p>
+                                                    </div>
+                                                )}
+                                              </div>
+                                            )}
+
+                                            {log.type === 'evaluation' && (
+                                              <div className="mt-2">
+                                                <div className={`flex items-center gap-2 p-2 rounded border ${
+                                                  log.success_criteria_met 
+                                                    ? 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/10 dark:border-green-900/30 dark:text-green-300' 
+                                                    : 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/10 dark:border-red-900/30 dark:text-red-300'
+                                                }`}>
+                                                    {log.success_criteria_met ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                                                    <span className="font-semibold text-xs">
+                                                      Success Criteria Met: {log.success_criteria_met ? 'Yes' : 'No'}
+                                                    </span>
+                                                </div>
+                                              </div>
+                                            )}
+
+                                            <details className="mt-3 group">
+                                                <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-1 select-none w-fit">
+                                                  <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" />
+                                                  View Raw JSON
+                                                </summary>
+                                                <pre className="mt-2 text-[10px] font-mono whitespace-pre-wrap overflow-x-auto text-muted-foreground bg-muted/50 p-2 rounded max-h-40 overflow-y-auto border border-border">
+                                                    {JSON.stringify(log, null, 2)}
+                                                </pre>
+                                            </details>
+                                          </div>
                                         </div>
-                                        
-                                        {/* Success Reasoning */}
-                                        {log.orchestration_response.success_reasoning && (
-                                            <div className="text-xs">
-                                                <div className="font-semibold text-muted-foreground mb-1">Reasoning:</div>
-                                                <p className="text-muted-foreground border-l-2 border-primary/20 pl-2 italic">
-                                                    {log.orchestration_response.success_reasoning}
-                                                </p>
-                                            </div>
-                                        )}
-
-                                        {/* Instructions to Sub-Agent */}
-                                        {log.orchestration_response.instructions_to_sub_agent && (
-                                            <div className="text-xs">
-                                                <div className="font-semibold text-foreground mb-1 flex items-center gap-1.5">
-                                                    <Terminal className="w-3 h-3 text-primary" />
-                                                    Instructions to Sub-Agent:
-                                                </div>
-                                                <div className="p-2 bg-muted/50 rounded border border-border font-mono whitespace-pre-wrap text-muted-foreground max-h-60 overflow-y-auto">
-                                                    {log.orchestration_response.instructions_to_sub_agent}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* Success Criteria for Sub-Agent */}
-                                        {log.orchestration_response.success_criteria_for_sub_agent && (
-                                            <div className="text-xs">
-                                                <div className="font-semibold text-foreground mb-1 flex items-center gap-1.5">
-                                                    <CheckCircle className="w-3 h-3 text-green-500" />
-                                                    Sub-Agent Success Criteria:
-                                                </div>
-                                                <p className="text-muted-foreground bg-green-500/5 p-2 rounded border border-green-500/20">
-                                                    {log.orchestration_response.success_criteria_for_sub_agent}
-                                                </p>
-                                            </div>
-                                        )}
-                                      </div>
-                                    )}
-                                    {log.type === 'evaluation' && (
-                                      <div className="flex items-center gap-2">
-                                        <span className={`px-2 py-0.5 rounded text-xs ${log.success_criteria_met ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'}`}>
-                                            Success: {log.success_criteria_met ? 'Yes' : 'No'}
-                                        </span>
-                                      </div>
-                                    )}
-                                    <details className="mt-2">
-                                        <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">View Details</summary>
-                                        <pre className="mt-2 text-xs font-mono whitespace-pre-wrap overflow-x-auto text-muted-foreground bg-muted p-2 rounded max-h-40 overflow-y-auto">
-                                            {JSON.stringify(log, null, 2)}
-                                        </pre>
-                                    </details>
+                                      ))}
+                                    </div>
                                   </div>
                                 ))}
                               </div>
@@ -868,7 +1368,14 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                               {archive.executions.map((exec, idx) => (
                                                 <div key={idx} className="text-xs bg-background border border-border rounded p-2 mb-1">
                                                   <div className="flex items-center justify-between mb-1">
-                                                    <span className="font-medium">Attempt {exec.attempt}</span>
+                                                    <div className="flex items-center gap-2">
+                                                      <span className="font-medium">Attempt {exec.attempt}</span>
+                                                      {exec.content?.model && (
+                                                        <span className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded text-muted-foreground border border-border">
+                                                          {exec.content.model}
+                                                        </span>
+                                                      )}
+                                                    </div>
                                                     {exec.conversation_path && (
                                                       <button
                                                         onClick={() => handleViewConversation(exec.conversation_path, `Archived Execution - ${archive.timestamp}`)}

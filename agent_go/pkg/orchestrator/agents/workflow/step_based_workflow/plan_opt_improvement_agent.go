@@ -29,9 +29,10 @@ Post-execution analyst. Identify and fix plan issues by analyzing ACTUAL tool ca
 
 ## ⚠️ CRITICAL RULES
 1. **Confirm First**: Use 'human_feedback' BEFORE any plan changes.
-2. **Start with Questions**: Ask "What would you like to improve?" first.
+2. **Focus on User's Request**: The user has already told you what they want to improve - address their specific request.
 3. **Gather Evidence**: Read files (plan, logs, learnings) before proposing fixes.
 4. **Concrete Criteria**: Success criteria MUST be file-verifiable (counts, samples) and hard to fake.
+
 
 ## 📋 EVIDENCE SOURCES
 - **Default (Fast)**: 'planning/plan.json', 'learnings/', '{{.RunPathRelative}}/execution/', 'knowledgebase/'.
@@ -82,9 +83,9 @@ Evaluation reports provide independent LLM-scored assessments of execution quali
 ---
 
 ## 🔄 WORKFLOW
-1. **Ask**: Use 'human_feedback' to align with user needs.
-2. **Read**: Inspect logs/outputs/learnings.
-3. **Propose**: Describe what/why/how to the user.
+1. **Understand**: Read the user's improvement request carefully - they've already told you what they need.
+2. **Read**: Inspect logs/outputs/learnings relevant to their request.
+3. **Propose**: Describe what/why/how to the user via 'human_feedback'.
 4. **Update**: After approval ("yes", "ok"), use plan modification tools.
 
 ## 🛠️ PLAN MODIFICATION TOOLS
@@ -97,17 +98,21 @@ var improvementUserTemplate = MustRegisterTemplate("improvementUser", `# Plan Im
 - **Workspace**: {{.WorkspacePath}}
 - **Selected Run**: {{.RunPathRelative}}
 
+## 🎯 USER'S IMPROVEMENT REQUEST
+{{if .UserImprovementRequest}}{{.UserImprovementRequest}}{{else}}Analyze the plan and execution results for potential improvements.{{end}}
+
 ## 📊 DATA
 **Execution Summary**:
 {{.ExecutionResultsSummary}}
+
 
 **Current Plan**:
 {{if .PlanJSON}}{{.PlanJSON}}{{else}}No plan provided.{{end}}
 
 ## 🧠 TASK
-1. Analyze the plan vs. execution results.
-2. Ask the user what to improve via 'human_feedback'.
-3. Propose specific fixes and get approval before updating the plan.`)
+1. **Focus on the user's improvement request above** - prioritize addressing what the user specifically asked about.
+2. Analyze the plan vs. execution results relevant to the request.
+3. Propose specific fixes and get approval via 'human_feedback' before updating the plan.`)
 
 // WorkflowPlanImprovementTemplate holds template variables for plan improvement prompts
 type WorkflowPlanImprovementTemplate struct {
@@ -117,6 +122,7 @@ type WorkflowPlanImprovementTemplate struct {
 	PlanJSON                string
 	ExecutionResultsSummary string
 	AllowedPaths            string
+	UserImprovementRequest  string
 }
 
 // WorkflowPlanImprovementAgent analyzes execution results and provides feedback for plan improvement
@@ -204,9 +210,9 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 	}
 
 	// Evaluation paths - scoped to specific iteration
-	evaluationPlanPath := fmt.Sprintf("%s/evaluation/evaluation_plan.json", originalWorkspacePath)     // Read evaluation plan definition
-	evaluationLearningsPath := fmt.Sprintf("%s/evaluation/learnings", originalWorkspacePath)           // Read evaluation learnings (shared)
-	evaluationRunPath := fmt.Sprintf("%s/evaluation/runs/%s", originalWorkspacePath, iterationFolder)  // Read only this iteration's evaluation report
+	evaluationPlanPath := fmt.Sprintf("%s/evaluation/evaluation_plan.json", originalWorkspacePath)    // Read evaluation plan definition
+	evaluationLearningsPath := fmt.Sprintf("%s/evaluation/learnings", originalWorkspacePath)          // Read evaluation learnings (shared)
+	evaluationRunPath := fmt.Sprintf("%s/evaluation/runs/%s", originalWorkspacePath, iterationFolder) // Read only this iteration's evaluation report
 
 	readPaths := []string{
 		currentWorkspacePath,    // Read execution results and logs from current workspace
@@ -318,6 +324,7 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 		config,
 		"plan-improvement",
 		0, 0, // step, iteration
+		"plan-improvement", // stepID (use phase name for phase-only agents)
 		createAgentFunc,
 		allTools,
 		allExecutors,
@@ -386,6 +393,14 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, orig
 
 	// Plan exists - use it for plan improvement
 	pim.GetLogger().Info(fmt.Sprintf("✅ Found plan.json with %d steps for plan improvement", len(existingPlan.Steps)))
+
+	// Ask user what they want to improve via blocking human feedback BEFORE starting the agent
+	pim.GetLogger().Info(fmt.Sprintf("📊 Requesting user input on what they want to improve"))
+	userImprovementRequest, err := pim.requestUserImprovementGoal(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get improvement goal from user: %w", err)
+	}
+	pim.GetLogger().Info(fmt.Sprintf("✅ User improvement request: %s", userImprovementRequest))
 
 	// Count sub-agents in orchestration steps before filtering
 	totalSubAgentsBefore := countSubAgents(existingPlan)
@@ -489,6 +504,7 @@ Evaluation data (LLM-scored quality assessments) - ACCESS SCOPED TO THIS ITERATI
 		"AllowedPaths":            allowedPaths,
 		"SessionID":               pim.sessionID,
 		"WorkflowID":              pim.workflowID,
+		"UserImprovementRequest":  userImprovementRequest, // User's improvement goal from blocking feedback
 	}
 
 	// Execute plan improvement agent
@@ -662,6 +678,49 @@ func countSubAgents(plan *PlanningResponse) int {
 	return count
 }
 
+// requestUserImprovementGoal asks the user what they want to improve via blocking human feedback
+// Returns the user's improvement request/goal
+func (pim *PlanImprovementManager) requestUserImprovementGoal(ctx context.Context) (string, error) {
+	// Generate unique request ID
+	requestID := fmt.Sprintf("plan_improvement_goal_%d", time.Now().UnixNano())
+
+	promptMessage := `What would you like to improve in the plan?
+
+Examples:
+- "Fix the validation criteria for step 3 - it's not checking the right files"
+- "The orchestration step is looping forever, help me fix the exit conditions"
+- "Step 2 is failing because the JSON output is too large"
+- "Improve success criteria to be more specific and file-verifiable"
+
+Please describe what you want to improve or debug:`
+
+	// Request human feedback (blocking call)
+	approved, userGoal, err := pim.RequestHumanFeedback(
+		ctx,
+		requestID,
+		promptMessage,
+		"",
+		pim.sessionID,
+		pim.workflowID,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to get improvement goal from user: %w", err)
+	}
+
+	// If user clicked Approve without providing a goal, use a default
+	if approved && strings.TrimSpace(userGoal) == "" {
+		return "Analyze the plan and execution results for potential improvements.", nil
+	}
+
+	// Clean up the goal
+	userGoal = strings.TrimSpace(userGoal)
+	if userGoal == "" {
+		return "Analyze the plan and execution results for potential improvements.", nil
+	}
+
+	return userGoal, nil
+}
+
 // requestAndValidateFullPath asks the user for the path via blocking human feedback and validates it has execution/ folder
 // User provides paths like "iteration-11" or "iteration-11/group-7" (relative to runs/)
 // Returns the full path relative to original workspace (e.g., "runs/iteration-11" or "runs/iteration-11/group-7")
@@ -817,6 +876,7 @@ func (agent *WorkflowPlanImprovementAgent) Execute(ctx context.Context, template
 		"ValidatedRunPath":        validatedRunPath,
 		"SessionID":               templateVars["SessionID"],
 		"WorkflowID":              templateVars["WorkflowID"],
+		"UserImprovementRequest":  templateVars["UserImprovementRequest"],
 	}
 
 	// Create template data for plan improvement
@@ -827,6 +887,7 @@ func (agent *WorkflowPlanImprovementAgent) Execute(ctx context.Context, template
 		PlanJSON:                planJSON,
 		ExecutionResultsSummary: executionResultsSummary,
 		AllowedPaths:            allowedPaths,
+		UserImprovementRequest:  templateVars["UserImprovementRequest"],
 	}
 
 	// Get logger and MCP agent from base agent

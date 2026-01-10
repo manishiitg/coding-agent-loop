@@ -25,7 +25,8 @@ type ContextAwareEventBridge struct {
 	tokenPersister   TokenPersister // Interface for persisting token usage
 	iterationFolder  string         // Current iteration folder for persistence
 	currentPhase     string
-	currentStep      int
+	currentStep      int    // Step index (deprecated, kept for backward compat)
+	currentStepID    string // Step ID (e.g., "fetch-data", "process-results")
 	currentAgentName string
 	mu               sync.RWMutex
 	logger           loggerv2.Logger
@@ -60,15 +61,16 @@ func (c *ContextAwareEventBridge) SetIterationFolder(iterationFolder string) {
 }
 
 // SetOrchestratorContext sets the current orchestrator context
-func (c *ContextAwareEventBridge) SetOrchestratorContext(phase string, step int, agentName string) {
+func (c *ContextAwareEventBridge) SetOrchestratorContext(phase string, step int, stepID string, agentName string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.currentPhase = phase
 	c.currentStep = step
+	c.currentStepID = stepID
 	c.currentAgentName = agentName
 
-	c.logger.Info(fmt.Sprintf("🎯 Set orchestrator context: %s (step %d)", phase, step+1))
+	c.logger.Info(fmt.Sprintf("🎯 Set orchestrator context: %s (step %d, ID: %s)", phase, step+1, stepID))
 }
 
 // ClearOrchestratorContext clears the orchestrator context
@@ -78,6 +80,7 @@ func (c *ContextAwareEventBridge) ClearOrchestratorContext() {
 
 	c.currentPhase = ""
 	c.currentStep = 0
+	c.currentStepID = ""
 	c.currentAgentName = ""
 
 	c.logger.Info("🧹 Cleared orchestrator context")
@@ -89,6 +92,7 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	c.mu.RLock()
 	currentPhase := c.currentPhase
 	currentStep := c.currentStep
+	currentStepID := c.currentStepID
 	currentAgentName := c.currentAgentName
 	c.mu.RUnlock()
 
@@ -193,6 +197,7 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 					stepTokenData = &StepTokenData{
 						Phase:            currentPhase,
 						Step:             currentStep,
+						StepID:           currentStepID, // Use step ID instead of index
 						InputTokens:      tokenEvent.PromptTokens,     // input tokens
 						OutputTokens:     tokenEvent.CompletionTokens, // output tokens
 						CacheTokens:      cacheTokensSeparate.Total,   // total cache (backward compat)

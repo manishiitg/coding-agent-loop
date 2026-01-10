@@ -148,6 +148,12 @@ func NewStepBasedWorkflowOrchestrator(
 		return nil, fmt.Errorf("failed to create base orchestrator: %w", err)
 	}
 
+	// Generate session ID for MCP connection sharing across all agents in this workflow
+	// This MUST be set before creating any agents to ensure connection reuse
+	workflowSessionID := fmt.Sprintf("session_%d", time.Now().UnixNano())
+	baseOrchestrator.SetMCPSessionID(workflowSessionID)
+	logger.Info(fmt.Sprintf("🔗 Set MCP session ID for workflow: %s", workflowSessionID))
+
 	// Create ConditionalAgent for conditional step evaluation
 	// Get LLM config from orchestrator to preserve API keys from frontend
 	orchestratorLLMConfig := baseOrchestrator.GetLLMConfig()
@@ -192,6 +198,7 @@ func NewStepBasedWorkflowOrchestrator(
 		"conditional_evaluation", // phase
 		0,                        // step (default agent, will be updated per-step)
 		0,                        // iteration
+		"conditional_evaluation", // stepID (use phase name for phase-only agents)
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowConditionalAgent(cfg, logger, tracer, eventBridge)
 		},
@@ -214,7 +221,7 @@ func NewStepBasedWorkflowOrchestrator(
 
 	hcpo := &StepBasedWorkflowOrchestrator{
 		BaseOrchestrator:          baseOrchestrator,
-		sessionID:                 fmt.Sprintf("session_%d", time.Now().UnixNano()),
+		sessionID:                 workflowSessionID, // Use the same session ID set on BaseOrchestrator for MCP connection sharing
 		workflowID:                fmt.Sprintf("workflow_%d", time.Now().UnixNano()),
 		conditionalAgent:          conditionalAgent,
 		stepConditionalAgentCache: make(map[string]*WorkflowConditionalAgent),
@@ -465,9 +472,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 
 	// Set objective and workspace path directly
 	// WorkspacePath is the base workspace path (no subdirectory)
+	// The workspace API will handle internal resolution to ../workspace-docs/ when needed
 	hcpo.SetObjective(objective)
 	hcpo.SetWorkspacePath(workspacePath)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] CreateTodoList: Objective and workspace path set"))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] CreateTodoList: Objective and workspace path set to %s", workspacePath))
 
 	// PHASE 0: Check both variables and plan at start (before any prompts)
 	// Check if variables.json exists - OPTIONAL (planning agent can create it)

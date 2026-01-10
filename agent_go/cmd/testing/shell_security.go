@@ -128,6 +128,239 @@ func init() {
 	// For now, we'll add it manually to the TestingCmd
 }
 
+// shellOutputTestCmd tests stdout/stderr capture specifically
+var shellOutputTestCmd = &cobra.Command{
+	Use:   "shell-output",
+	Short: "Test shell stdout/stderr capture",
+	Long:  `Tests that shell command stdout and stderr are correctly captured and returned.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		logFile := viper.GetString("log-file")
+		logLevel := viper.GetString("log-level")
+		InitTestLogger(logFile, logLevel)
+		logger := GetTestLogger()
+
+		logger.Info("=== Shell Output Capture Test ===")
+
+		apiURL := getWorkspaceAPIURL()
+		logger.Info(fmt.Sprintf("Using workspace API URL: %s", apiURL))
+
+		if err := checkAPIAvailability(apiURL, logger); err != nil {
+			return fmt.Errorf("workspace API not available: %w", err)
+		}
+
+		// Test 1: Simple echo (stdout)
+		logger.Info("\n>>> TEST 1: Simple echo command")
+		requestBody := map[string]interface{}{
+			"command":   "echo 'hello world'",
+			"use_shell": true,
+		}
+		resp, err := executeShellCommand(apiURL, requestBody, logger)
+		if err != nil {
+			return fmt.Errorf("Test 1 failed: %w", err)
+		}
+		logger.Info(fmt.Sprintf("  stdout: [%s]", resp.Data.Stdout))
+		logger.Info(fmt.Sprintf("  stderr: [%s]", resp.Data.Stderr))
+		logger.Info(fmt.Sprintf("  exit_code: %d", resp.Data.ExitCode))
+		if !strings.Contains(resp.Data.Stdout, "hello world") {
+			return fmt.Errorf("Test 1 FAILED: stdout should contain 'hello world', got: [%s]", resp.Data.Stdout)
+		}
+		logger.Info("✅ Test 1 passed")
+
+		// Test 2: Python print (stdout)
+		logger.Info("\n>>> TEST 2: Python print command")
+		requestBody = map[string]interface{}{
+			"command":   "python3 -c \"print('python output')\"",
+			"use_shell": true,
+		}
+		resp, err = executeShellCommand(apiURL, requestBody, logger)
+		if err != nil {
+			return fmt.Errorf("Test 2 failed: %w", err)
+		}
+		logger.Info(fmt.Sprintf("  stdout: [%s]", resp.Data.Stdout))
+		logger.Info(fmt.Sprintf("  stderr: [%s]", resp.Data.Stderr))
+		logger.Info(fmt.Sprintf("  exit_code: %d", resp.Data.ExitCode))
+		if resp.Data.ExitCode == 0 && !strings.Contains(resp.Data.Stdout, "python output") {
+			logger.Warn("Test 2 WARNING: stdout might not be captured correctly")
+		} else {
+			logger.Info("✅ Test 2 passed")
+		}
+
+		// Test 3: Python print with working directory
+		logger.Info("\n>>> TEST 3: Python print with working directory")
+		requestBody = map[string]interface{}{
+			"command":           "python3 -c \"print('wd output')\"",
+			"use_shell":         true,
+			"working_directory": ".",
+		}
+		resp, err = executeShellCommand(apiURL, requestBody, logger)
+		if err != nil {
+			return fmt.Errorf("Test 3 failed: %w", err)
+		}
+		logger.Info(fmt.Sprintf("  stdout: [%s]", resp.Data.Stdout))
+		logger.Info(fmt.Sprintf("  stderr: [%s]", resp.Data.Stderr))
+		logger.Info(fmt.Sprintf("  exit_code: %d", resp.Data.ExitCode))
+		if resp.Data.ExitCode == 0 && !strings.Contains(resp.Data.Stdout, "wd output") {
+			logger.Warn("Test 3 WARNING: stdout not captured with working_directory")
+		} else {
+			logger.Info("✅ Test 3 passed")
+		}
+
+		// Test 4: Stderr capture
+		logger.Info("\n>>> TEST 4: Stderr capture")
+		requestBody = map[string]interface{}{
+			"command":   "python3 -c \"import sys; sys.stderr.write('error output\\n')\"",
+			"use_shell": true,
+		}
+		resp, err = executeShellCommand(apiURL, requestBody, logger)
+		if err != nil {
+			return fmt.Errorf("Test 4 failed: %w", err)
+		}
+		logger.Info(fmt.Sprintf("  stdout: [%s]", resp.Data.Stdout))
+		logger.Info(fmt.Sprintf("  stderr: [%s]", resp.Data.Stderr))
+		logger.Info(fmt.Sprintf("  exit_code: %d", resp.Data.ExitCode))
+		if !strings.Contains(resp.Data.Stderr, "error output") {
+			logger.Warn("Test 4 WARNING: stderr not captured correctly")
+		} else {
+			logger.Info("✅ Test 4 passed")
+		}
+
+		// Test 5: Check pandas version (the original failing case)
+		logger.Info("\n>>> TEST 5: Check pandas version")
+		requestBody = map[string]interface{}{
+			"command":   "python3 -c \"import pandas; print(pandas.__version__)\"",
+			"use_shell": true,
+		}
+		resp, err = executeShellCommand(apiURL, requestBody, logger)
+		if err != nil {
+			return fmt.Errorf("Test 5 failed: %w", err)
+		}
+		logger.Info(fmt.Sprintf("  stdout: [%s]", resp.Data.Stdout))
+		logger.Info(fmt.Sprintf("  stderr: [%s]", resp.Data.Stderr))
+		logger.Info(fmt.Sprintf("  exit_code: %d", resp.Data.ExitCode))
+		if resp.Data.ExitCode != 0 {
+			logger.Warn("Test 5 WARNING: pandas may not be installed")
+		} else if resp.Data.Stdout == "" {
+			return fmt.Errorf("Test 5 FAILED: stdout is empty but exit code is 0")
+		} else {
+			logger.Info("✅ Test 5 passed")
+		}
+
+		// Test 6: Check pandas with working directory (the exact failing case)
+		logger.Info("\n>>> TEST 6: Check pandas with working directory")
+		requestBody = map[string]interface{}{
+			"command":           "python3 -c \"import pandas; print(pandas.__version__)\"",
+			"use_shell":         true,
+			"working_directory": ".",
+		}
+		resp, err = executeShellCommand(apiURL, requestBody, logger)
+		if err != nil {
+			return fmt.Errorf("Test 6 failed: %w", err)
+		}
+		logger.Info(fmt.Sprintf("  stdout: [%s]", resp.Data.Stdout))
+		logger.Info(fmt.Sprintf("  stderr: [%s]", resp.Data.Stderr))
+		logger.Info(fmt.Sprintf("  exit_code: %d", resp.Data.ExitCode))
+		if resp.Data.ExitCode == 0 && resp.Data.Stdout == "" {
+			return fmt.Errorf("Test 6 FAILED: stdout is empty with working_directory but exit code is 0")
+		}
+		logger.Info("✅ Test 6 passed")
+
+		// Test 7: Python script file with print (key test case)
+		logger.Info("\n>>> TEST 7: Python script file with print")
+		// First create a test script
+		scriptContent := `#!/usr/bin/env python3
+import sys
+print("stdout: Hello from Python script")
+print("stdout: Args received:", sys.argv[1:], flush=True)
+sys.stderr.write("stderr: Test error output\n")
+print("stdout: Script completed successfully", flush=True)
+`
+		// Write the script using echo
+		requestBody = map[string]interface{}{
+			"command":   fmt.Sprintf("echo '%s' > /tmp/test_stdout.py && chmod +x /tmp/test_stdout.py", scriptContent),
+			"use_shell": true,
+		}
+		resp, err = executeShellCommand(apiURL, requestBody, logger)
+		if err != nil {
+			return fmt.Errorf("Test 7 setup failed: %w", err)
+		}
+		logger.Info(fmt.Sprintf("  Script created, exit_code: %d", resp.Data.ExitCode))
+
+		// Now run the script
+		requestBody = map[string]interface{}{
+			"command":   "python3 /tmp/test_stdout.py arg1 arg2",
+			"use_shell": true,
+		}
+		resp, err = executeShellCommandWithDebug(apiURL, requestBody, logger, true)
+		if err != nil {
+			return fmt.Errorf("Test 7 failed: %w", err)
+		}
+		logger.Info(fmt.Sprintf("  stdout: [%s]", resp.Data.Stdout))
+		logger.Info(fmt.Sprintf("  stderr: [%s]", resp.Data.Stderr))
+		logger.Info(fmt.Sprintf("  exit_code: %d", resp.Data.ExitCode))
+		if resp.Data.ExitCode == 0 && !strings.Contains(resp.Data.Stdout, "Hello from Python script") {
+			return fmt.Errorf("Test 7 FAILED: Python script stdout not captured. Got: [%s]", resp.Data.Stdout)
+		}
+		logger.Info("✅ Test 7 passed")
+
+		// Test 8: Python script with -u flag (unbuffered)
+		logger.Info("\n>>> TEST 8: Python script with -u flag (unbuffered)")
+		requestBody = map[string]interface{}{
+			"command":   "python3 -u /tmp/test_stdout.py unbuffered_test",
+			"use_shell": true,
+		}
+		resp, err = executeShellCommandWithDebug(apiURL, requestBody, logger, true)
+		if err != nil {
+			return fmt.Errorf("Test 8 failed: %w", err)
+		}
+		logger.Info(fmt.Sprintf("  stdout: [%s]", resp.Data.Stdout))
+		logger.Info(fmt.Sprintf("  stderr: [%s]", resp.Data.Stderr))
+		logger.Info(fmt.Sprintf("  exit_code: %d", resp.Data.ExitCode))
+		if resp.Data.ExitCode == 0 && !strings.Contains(resp.Data.Stdout, "Hello from Python script") {
+			return fmt.Errorf("Test 8 FAILED: Python script stdout not captured with -u flag. Got: [%s]", resp.Data.Stdout)
+		}
+		logger.Info("✅ Test 8 passed")
+
+		// Test 9: Python script in workspace directory (simulates user's case)
+		logger.Info("\n>>> TEST 9: Python script in workspace directory")
+		// Write script to workspace
+		requestBody = map[string]interface{}{
+			"command":   fmt.Sprintf("echo '%s' > test_ws_script.py", scriptContent),
+			"use_shell": true,
+		}
+		resp, err = executeShellCommand(apiURL, requestBody, logger)
+		if err != nil {
+			return fmt.Errorf("Test 9 setup failed: %w", err)
+		}
+
+		// Run script from workspace
+		requestBody = map[string]interface{}{
+			"command":   "python3 test_ws_script.py workspace_arg",
+			"use_shell": true,
+		}
+		resp, err = executeShellCommandWithDebug(apiURL, requestBody, logger, true)
+		if err != nil {
+			return fmt.Errorf("Test 9 failed: %w", err)
+		}
+		logger.Info(fmt.Sprintf("  stdout: [%s]", resp.Data.Stdout))
+		logger.Info(fmt.Sprintf("  stderr: [%s]", resp.Data.Stderr))
+		logger.Info(fmt.Sprintf("  exit_code: %d", resp.Data.ExitCode))
+		if resp.Data.ExitCode == 0 && resp.Data.Stdout == "" {
+			return fmt.Errorf("Test 9 FAILED: Python script in workspace has empty stdout")
+		}
+		logger.Info("✅ Test 9 passed")
+
+		// Cleanup
+		requestBody = map[string]interface{}{
+			"command":   "rm -f /tmp/test_stdout.py test_ws_script.py",
+			"use_shell": true,
+		}
+		_, _ = executeShellCommand(apiURL, requestBody, logger)
+
+		logger.Info("\n=== All Shell Output Tests Completed ===")
+		return nil
+	},
+}
+
 // getWorkspaceAPIURL returns the workspace API URL from environment or default
 func getWorkspaceAPIURL() string {
 	if url := os.Getenv("WORKSPACE_API_URL"); url != "" {
@@ -573,11 +806,21 @@ func testCommandParameters(apiURL string, logger loggerv2.Logger) error {
 
 // executeShellCommand executes a shell command via the workspace API
 func executeShellCommand(apiURL string, requestBody map[string]interface{}, logger loggerv2.Logger) (*models.APIResponse[models.ExecuteShellResponse], error) {
+	return executeShellCommandWithDebug(apiURL, requestBody, logger, false)
+}
+
+// executeShellCommandWithDebug executes a shell command with optional raw response logging
+func executeShellCommandWithDebug(apiURL string, requestBody map[string]interface{}, logger loggerv2.Logger, debug bool) (*models.APIResponse[models.ExecuteShellResponse], error) {
 	executeURL := apiURL + "/api/execute"
 
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	if debug {
+		logger.Info(fmt.Sprintf("  [DEBUG] Request URL: %s", executeURL))
+		logger.Info(fmt.Sprintf("  [DEBUG] Request Body: %s", string(jsonBody)))
 	}
 
 	req, err := http.NewRequest("POST", executeURL, bytes.NewBuffer(jsonBody))
@@ -599,6 +842,16 @@ func executeShellCommand(apiURL string, requestBody map[string]interface{}, logg
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
+	if debug {
+		logger.Info(fmt.Sprintf("  [DEBUG] HTTP Status: %d", resp.StatusCode))
+		// Truncate body if too long
+		bodyStr := string(body)
+		if len(bodyStr) > 500 {
+			bodyStr = bodyStr[:500] + "...[truncated]"
+		}
+		logger.Info(fmt.Sprintf("  [DEBUG] Raw Response: %s", bodyStr))
+	}
+
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusRequestTimeout {
 		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
@@ -606,6 +859,11 @@ func executeShellCommand(apiURL string, requestBody map[string]interface{}, logg
 	var apiResp models.APIResponse[models.ExecuteShellResponse]
 	if err := json.Unmarshal(body, &apiResp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if debug {
+		logger.Info(fmt.Sprintf("  [DEBUG] Parsed stdout: [%s]", apiResp.Data.Stdout))
+		logger.Info(fmt.Sprintf("  [DEBUG] Parsed stderr: [%s]", apiResp.Data.Stderr))
 	}
 
 	return &apiResp, nil

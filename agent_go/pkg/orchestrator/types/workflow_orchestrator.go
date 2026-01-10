@@ -102,72 +102,78 @@ func GetWorkflowConstants() WorkflowConstants {
 				Description: "Analyze alignment between plan.json and learnings folders to identify and categorize learning files. Checks if files match steps, are in correct folders, and identifies orphaned or mismatched files.",
 				Options:     []WorkflowPhaseOption{}, // No options for alignment phase
 			},
-			{
-				ID:          "learning-consolidation",
-				Title:       "Learning Consolidation",
-				Description: "Analyze and consolidate learning files to identify duplicate patterns, similar patterns, and outdated patterns. Merges redundant patterns and optimizes learning structure for better future execution efficiency.",
-				Options:     []WorkflowPhaseOption{}, // No options for consolidation phase
-			},
-		},
-	}
-}
-
-// GetWorkflowPhaseByID returns a workflow phase by its ID
-func GetWorkflowPhaseByID(id string) *WorkflowPhase {
-	constants := GetWorkflowConstants()
-	for _, phase := range constants.Phases {
-		if phase.ID == id {
-			return &phase
-		}
-	}
-	return nil
-}
-
-// HandleWorkflowConstants returns the current workflow constants via HTTP
-func HandleWorkflowConstants(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Get workflow constants
-	workflowConstants := GetWorkflowConstants()
-
-	// Create response
-	response := map[string]interface{}{
-		"success":   true,
-		"constants": workflowConstants,
-		"message":   "Workflow constants retrieved successfully",
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
-		return
-	}
-}
-
-// WorkflowOrchestrator handles todo-list-based workflow execution
-type WorkflowOrchestrator struct {
-	// Base orchestrator for common functionality
-	*orchestrator.BaseOrchestrator
-
-	// Preset-level agent defaults (used when step config doesn't specify)
-	presetExecutionLLM            *step_based_workflow.AgentLLMConfig // Default for execution agents
-	presetValidationLLM           *step_based_workflow.AgentLLMConfig // Default for validation agents
-	presetLearningLLM             *step_based_workflow.AgentLLMConfig // Default for learning agents
-	presetPhaseLLM                *step_based_workflow.AgentLLMConfig // Default for all phase agents (planning, anonymization, plan improvement, etc.)
-	presetPlanImprovementLLM      *step_based_workflow.AgentLLMConfig // Default for plan improvement agent
-	presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig // Default for plan tool optimization agent
-
-	// Frontend-provided execution options (when provided, skips interactive prompts)
-	executionOptions *step_based_workflow.ExecutionOptions
-
-	// Session ID for MCP connection management
-	// Generated once when workflow starts, used by all agents to share MCP connections
-	sessionID string
-}
-
+			            {
+			                ID:          "learning-consolidation",
+			                Title:       "Learning Consolidation",
+			                Description: "Analyze and consolidate learning files to identify duplicate patterns, similar patterns, and outdated patterns. Merges redundant patterns and optimizes learning structure for better future execution efficiency.",
+			                Options:     []WorkflowPhaseOption{}, // No options for consolidation phase
+			            },
+			            {
+			                ID:          "code-exec-debugging",
+			                Title:       "Code Debugger",
+			                Description: "Analyze execution logs and conversation history for code execution steps. Identifies common errors like hardcoded paths, incorrect CLI arguments, and workspace tool misuse, providing specific fixes to the plan.",
+			                Options:     []WorkflowPhaseOption{}, // No options for code debugger phase
+			            },
+			        },
+			    }
+			}
+			
+			// GetWorkflowPhaseByID returns a workflow phase by its ID
+			func GetWorkflowPhaseByID(id string) *WorkflowPhase {
+			    constants := GetWorkflowConstants()
+			    for _, phase := range constants.Phases {
+			        if phase.ID == id {
+			            return &phase
+			        }
+			    }
+			    return nil
+			}
+			
+			// HandleWorkflowConstants returns the current workflow constants via HTTP
+			func HandleWorkflowConstants(w http.ResponseWriter, r *http.Request) {
+			    if r.Method != http.MethodGet {
+			        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			        return
+			    }
+			
+			    // Get workflow constants
+			    workflowConstants := GetWorkflowConstants()
+			
+			    // Create response
+			    response := map[string]interface{}{
+			        "success":   true,
+			        "constants": workflowConstants,
+			        "message":   "Workflow constants retrieved successfully",
+			    }
+			
+			    w.Header().Set("Content-Type", "application/json")
+			    if err := json.NewEncoder(w).Encode(response); err != nil {
+			        http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+			        return
+			    }
+			}
+			
+			// WorkflowOrchestrator handles todo-list-based workflow execution
+			type WorkflowOrchestrator struct {
+			    // Base orchestrator for common functionality
+			    *orchestrator.BaseOrchestrator
+			
+			    // Preset-level agent defaults (used when step config doesn't specify)
+			    presetExecutionLLM            *step_based_workflow.AgentLLMConfig // Default for execution agents
+			    presetValidationLLM           *step_based_workflow.AgentLLMConfig // Default for validation agents
+			    presetLearningLLM             *step_based_workflow.AgentLLMConfig // Default for learning agents
+			    presetPhaseLLM                *step_based_workflow.AgentLLMConfig // Default for all phase agents (planning, anonymization, plan improvement, etc.)
+			    presetPlanImprovementLLM      *step_based_workflow.AgentLLMConfig // Default for plan improvement agent
+			    presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig // Default for plan tool optimization agent
+			    presetCodeExecDebuggingLLM    *step_based_workflow.AgentLLMConfig // Default for code exec debugging agent
+			
+			    // Frontend-provided execution options (when provided, skips interactive prompts)
+			    executionOptions *step_based_workflow.ExecutionOptions
+			
+			    // Session ID for MCP connection management
+			    // Generated once when workflow starts, used by all agents to share MCP connections
+			    sessionID string
+			}
 // SetExecutionOptions sets the execution options from frontend
 // When set, backend will use these options instead of asking interactively
 func (wo *WorkflowOrchestrator) SetExecutionOptions(options *step_based_workflow.ExecutionOptions) {
@@ -400,9 +406,44 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return wo.runLearningConsolidation(ctx, objective, selectedOptions)
 	}
 
+	if workflowStatus == "code-exec-debugging" {
+		return wo.runCodeExecDebugging(ctx, objective, selectedOptions)
+	}
+
 	// All other workflow statuses (execution) go through execution phase
 	// Execution requires both variables.json and plan.json to exist
 	return wo.runPlanning(ctx, objective, selectedOptions)
+}
+
+// runCodeExecDebugging runs only the code execution debugging phase
+func (wo *WorkflowOrchestrator) runCodeExecDebugging(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Code Execution Debugging Phase"))
+
+	// Create code exec debugging manager directly (independent from controller)
+	debuggingManager := step_based_workflow.NewCodeExecDebuggingManager(
+		wo.BaseOrchestrator,
+		wo.presetPhaseLLM, // Use phase LLM for debugging as requested
+		wo.getSessionID(),
+		wo.getWorkflowID(),
+	)
+
+	// Extract selected_run_folder from execution options if available
+	var runPath string
+	if wo.executionOptions != nil && wo.executionOptions.SelectedRunFolder != "" {
+		runPath = wo.executionOptions.SelectedRunFolder
+		wo.GetLogger().Info(fmt.Sprintf("📊 Using selected_run_folder from execution options: %s", runPath))
+	} else {
+		wo.GetLogger().Info(fmt.Sprintf("📊 No selected_run_folder in execution options, will ask user for path"))
+	}
+
+	// Run only code exec debugging
+	result, err := debuggingManager.CodeExecDebuggingOnly(ctx, wo.GetWorkspacePath(), runPath)
+	if err != nil {
+		return "", fmt.Errorf("code execution debugging failed: %w", err)
+	}
+
+	wo.GetLogger().Info(fmt.Sprintf("✅ Code execution debugging completed successfully"))
+	return result, nil
 }
 
 // runPlanningOnly runs only the planning phase
@@ -896,6 +937,7 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 					"learning-anonymization",               // Learning anonymization phase
 					"plan-learnings-alignment",             // Plan-learnings alignment phase
 					"learning-consolidation",               // Learning consolidation phase
+					"code-exec-debugging",                  // Code execution debugging phase
 				}
 				valid := false
 				for _, status := range validStatuses {

@@ -7,6 +7,7 @@ import { useAppStore } from './useAppStore'
 import { useWorkspaceStore } from './useWorkspaceStore'
 import { useMCPStore } from './useMCPStore'
 import { useLLMStore } from './useLLMStore'
+import { useWorkflowStore } from './useWorkflowStore'
 
 export interface PresetApplicationResult {
   success: boolean
@@ -54,6 +55,7 @@ interface GlobalPresetState {
   setSelectedPresetFolder: (folderPath: string | null) => void
   setCurrentQuery: (query: string) => void
   clearPresetState: () => void
+  setActivePreset: (modeCategory: 'chat' | 'workflow', presetId: string | null) => void
   
   // Helper actions
   getPresetsForMode: (modeCategory: 'chat' | 'workflow') => (CustomPreset | PredefinedPreset)[]
@@ -779,10 +781,24 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           
           // Clear chatSessionId to allow fresh session initialization
           useAppStore.getState().setChatSessionId('')
-          
+
           // Note: Session IDs are now managed per-tab, not globally
           // When a preset is applied, tabs will be created with new session IDs as needed
-          
+
+          // Handle workflow state when switching workflows
+          if (modeCategory === 'workflow') {
+            const workflowStore = useWorkflowStore.getState()
+
+            // Save current preset's settings before switching away
+            const currentPresetId = get().activePresetIds.workflow
+            if (currentPresetId && currentPresetId !== preset.id) {
+              workflowStore.saveSettings(currentPresetId)
+            }
+
+            // Switch to new preset - resets context and loads saved settings in one update
+            workflowStore.switchToPreset(preset.id)
+          }
+
           // Set the current query in both stores
           set({ currentQuery: preset.query })
           
@@ -936,6 +952,15 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             'workflow': null
           }
         })
+      },
+
+      setActivePreset: (modeCategory: 'chat' | 'workflow', presetId: string | null) => {
+        set(state => ({
+          activePresetIds: {
+            ...state.activePresetIds,
+            [modeCategory]: presetId
+          }
+        }))
       },
       
       // Helper actions

@@ -1,0 +1,152 @@
+### New console messages
+- [LOG] logged in get @ https://retailnetbanking.icici.bank.in/main.63974970287913dc.js:0
+- [LOG] logged in get @ https://retailnetbanking.icici.bank.in/main.63974970287913dc.js:0
+- [LOG] Dynatrace: Addition action "LoadTimeMeasurement-preLogin-app" @ https://retailnetbanking.icici...
+- [LOG] 2026-01-10T10:35:39.234Z time at action @ https://retailnetbanking.icici.bank.in/main.63974970...
+- [LOG] logged in get @ https://retailnetbanking.icici.bank.in/main.63974970287913dc.js:0
+- [LOG] logged in get @ https://retailnetbanking.icici.bank.in/main.63974970287913dc.js:0
+- [LOG] null false undefined Segement @ https://retailnetbanking.icici.bank.in/main.63974970287913dc.j...
+- [ERROR] G: NG0904
+    at un (https://retailnetbanking.icici.bank.in/vendor.253eba70b260d5ab.js:1:343...
+- [ERROR] TypeError: Cannot read properties of undefined (reading 'includes')
+    at a.ngAfterViewInit...
+- [LOG] event81 value set custom code==>Cannot read properties of undefined (reading 'value') @ https:...
+- [LOG] ----Printing Propositions---- @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9...
+- [LOG] [Object] @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3a473b7f.min.js:10
+- [LOG] -----------In Offer render rule TESTING----- @ :1
+- [LOG] [Object] @ :1
+- [LOG] ------Calling angularComponentRef function------ @ :1
+- [LOG] ----Returned Offer IDs---- @ :1
+- [LOG] undefined @ :1
+- [ERROR] TypeError: Cannot read properties of null (reading 'style')
+    at https://retailnetbanking....
+- [LOG] adobedelay {event: formStart, web: Object, _icicibank: Object} {adobeDataLayer: Array(2), form...
+- [LOG] event81 value set custom code==>Cannot read properties of undefined (reading 'value') @ https:...
+- [LOG] ----Printing Propositions---- @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9...
+- [LOG] [] @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3a473b7f.min.js:10
+- [LOG] SEssion Storage PLT ==>1768041343533 @ :1
+- [LOG] Modified Propositions[object Object] @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/l...
+- [LOG] ====Unique Offer IDs===== @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3...
+- [LOG] [xcore:personalized-offer:189bfc90c4861873] @ https://assets.adobedtm.com/4a0c5698386a/fe6a651...
+- [LOG] position is 2 @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3a473b7f.min....
+- [LOG] flagtrue @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3a473b7f.min.js:10
+- [LOG] ********Printing Offer Prop Modification******** @ https://assets.adobedtm.com/4a0c5698386a/fe...
+- [LOG] [Object] @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3a473b7f.min.js:10
+- [LOG] Modified Propositions[object Object] @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/l...
+- [LOG] ====Unique Offer IDs===== @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3...
+- [LOG] [xcore:personalized-offer:189bfc90c4861873] @ https://assets.adobedtm.com/4a0c5698386a/fe6a651...
+- [LOG] event81 value set custom code==>Cannot read properties of undefined (reading 'value') @ https:...
+- [LOG]  @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3a473b7f.min.js:2
+- [LOG]  @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3a473b7f.min.js:2
+- [LOG]  @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3a473b7f.min.js:2
+- [LOG]  @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3a473b7f.min.js:2
+- [LOG] position is 2 @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3a473b7f.min....
+- [LOG] IP_RIB_LOGIN_BANNER:FD|NONE:FD @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-...
+- [LOG]  @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3a473b7f.min.js:2
+- [LOG] ----Printing Propositions---- @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9...
+- [LOG] [] @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3a473b7f.min.js:10
+- [LOG] ----Printing Propositions---- @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9...
+- [LOG] [] @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3a473b7f.min.js:10
+- [LOG] Dynatrace: Ending action "LoadTimeMeasurement-preLogin" @ https://retailnetbanking.icici.bank....
+- [LOG] 2026-01-10T10:35:43.782Z time at leave action @ https://retailnetbanking.icici.bank.in/main.63...
+- [LOG] Dynatrace: Ending action ID "6" @ https://retailnetbanking.icici.bank.in/main.63974970287913dc...
+
+### Open tabs
+- 0: [Net Banking] (https://www.icici.bank.in/personal-banking/ways-to-bank/net-banking)
+- 1: (current) [ICICI Bank - Login to Net Banking] (https://retailnetbanking.icici.bank.in/login-page)
+
+### Page state
+- Page URL: https://retailnetbanking.icici.bank.in/login-page
+- Page Title: ICICI Bank - Login to Net Banking
+- Page Snapshot:
+```yaml
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - generic [ref=e7]:
+      - list [ref=e8]:
+        - listitem [ref=e9]:
+          - generic [ref=e10]:
+            - img "phone-icon" [ref=e12]
+            - generic [ref=e13]: 1800 1080
+      - generic [ref=e15]:
+        - button "Login Icon" [ref=e16] [cursor=pointer]:
+          - text: Login
+          - img "Icon" [ref=e17]
+        - generic:
+          - generic:
+            - generic: Login to Internet Banking
+          - list:
+            - listitem:
+              - link "Personal":
+                - /url: https://retailnetbanking.icici.bank.in/login-page?ITM=nli_home_na_headerComponent_0CTA_CMS_loginToInternetBanking_personal_RIBNXT
+            - listitem:
+              - link "Corporate":
+                - /url: https://cibnext.icicibank.com/corp/AuthenticationController?FORMSGROUP_ID__=AuthenticationFG&__START_TRAN_FLAG__=Y&FG_BUTTONS__=LOAD&ACTION.LOAD=Y&AuthenticationFG.LOGIN_FLAG=1&BANK_ID=ICI&ITM=nli_corp_primer_login_btn_desk&_ga=2.53055592.151335549.1698035816-1973315115.1690798212&_gac=1.6934150.1697523963.EAIaIQobChMI-7jpvrn8gQMVt6lmAh1nywMHEAAYASAAEgKBxfD_BwE?ITM=nli_personalb_corporate_desktop_login_btn&ITM=nli_imobile_na_headerComponent_0CTA_CMS_loginToInternetBanking_corporate_CIBNXT
+            - listitem:
+              - link "Commercial Card":
+                - /url: https://cibnext.icicibank.com/corp/AuthenticationController?FORMSGROUP_ID__=CreditCardAuthenticationFG&__START_TRAN_FLAG__=Y&__EVENT_ID__=LOAD&ACTION.LOAD=Y&__CALL_MODE__=61&CreditCardAuthenticationFG.LOGIN_FLAG=1&BANK_ID=ICI&ITM=nli_personalb_corporate_desktop_login_btn&ITM=nli_imobile_na_headerComponent_0CTA_CMS_loginToInternetBanking_commercialCard_CIBNXT
+            - listitem:
+              - link "Money2World":
+                - /url: https://infinity.icicibank.com/corp/AuthenticationController?FORMSGROUP_ID__=AuthenticationFG&__START_TRAN_FLAG__=Y&FG_BUTTONS__=LOAD&ACTION.LOAD=Y&AuthenticationFG.LOGIN_FLAG=1&BANK_ID=ICI&ITM=nli_personalb_personal_login_btn&_gl=1*30xkeg*_ga*MTgzMDcxOTY5Ni4xNjIwMDM5NDU0*_ga_SKB78GHTFV*MTYyODIzNDM4NC43Ny4xLjE2MjgyMzQ1MDQuMjc.&_ga=2.169577317.558349428.1699007889-1511871104.1699007888&_gac=1.8201990.1697523963.EAIaIQobChMI-7jpvrn8gQMVt6lmAh1nywMHEAAYASAAEgKBxfD_BwE&ITM=nli_imobile_na_headerComponent_0CTA_CMS_loginToInternetBanking_money2world_RIB
+            - listitem:
+              - link "Money2India":
+                - /url: https://money2india.icicibank.com/?utm_source=NLI-ICICIBank-Homepage&utm_medium=referral&utm_campaign=NLI-promotion&_gl=1*1636b2q*_ga*ODg4ODg4ODg4OC43Nzc3Nzc3Nzc3*_ga_SKB78GHTFV*MTY2MzMyNzEwOC41NzIuMS4xNjYzMzMwMzA2LjMzLjAuMA..&_ga=2.61452136.558349428.1699007889-1511871104.1699007888&_gac=1.238183092.1697523963.EAIaIQobChMI-7jpvrn8gQMVt6lmAh1nywMHEAAYASAAEgKBxfD_BwE&ITM=nli_imobile_na_headerComponent_0CTA_CMS_loginToInternetBanking_money2india_null
+  - generic [ref=e26]:
+    - generic [ref=e33]:
+      - generic [ref=e34]:
+        - img "lock-icon" [ref=e35]
+        - text: Login to Internet Banking
+      - generic [ref=e37]:
+        - generic [ref=e38]:
+          - generic [ref=e39]:
+            - textbox "User ID" [active] [ref=e40]:
+              - /placeholder: ""
+            - generic [ref=e41]: User ID
+            - img "keyboard Icon" [ref=e43] [cursor=pointer]
+          - generic [ref=e44]:
+            - generic [ref=e45] [cursor=pointer]:
+              - text: Remember User ID
+              - checkbox "Remember User ID" [ref=e46]
+            - generic [ref=e48] [cursor=pointer]: Get User ID
+        - generic [ref=e50]:
+          - textbox "Password" [ref=e51]:
+            - /placeholder: ""
+          - generic [ref=e52]: Password
+          - img "password Icon" [ref=e54] [cursor=pointer]
+          - img "keyboard Icon" [ref=e56] [cursor=pointer]
+        - generic [ref=e58] [cursor=pointer]: Get password
+        - generic [ref=e60]:
+          - generic [ref=e61]: "Start In:"
+          - listbox [ref=e63]:
+            - generic [ref=e66] [cursor=pointer]: Overview
+        - button "Login" [disabled] [ref=e69]
+        - generic [ref=e71]: Trouble logging in?
+      - generic [ref=e72]:
+        - img "lock-icon" [ref=e73]
+        - link "Must watch demo videos for banking" [ref=e74] [cursor=pointer]:
+          - /url: https://youtu.be/jK4lNu74jiE
+        - img "Icon" [ref=e75]
+    - generic [ref=e79]:
+      - generic [ref=e81]:
+        - img "important NoticeIcon" [ref=e83]
+        - paragraph [ref=e84]: Important notice
+      - generic [ref=e87]:
+        - paragraph [ref=e88]:
+          - img [ref=e90]
+          - text: Due to a scheduled maintenance activity, you will be unable to perform NEFT/ RTGS transactions from Retail Net Banking and iMobile on Jan 11, 2026 from 01:30 a.m. to 03:00 a.m. IST. Apologies for the inconvenience.
+        - paragraph [ref=e92]:
+          - img [ref=e94]
+          - text: "The new toll-free number to call our Personal Banking Customer Care and avail our banking services : 1800 1080"
+        - paragraph [ref=e96]:
+          - img [ref=e98]
+          - text: An additional feature of “CAPTCHA” has been introduced for ICICI Bank's Internet Banking login to ensure a safer banking experience.
+        - paragraph [ref=e100]:
+          - img [ref=e102]
+          - text: If you are using an old version of Internet Explorer, please update to the latest version immediately, to enjoy a seamless banking experience.
+        - paragraph [ref=e104]:
+          - img [ref=e106]
+          - text: New registrations on the iMobile Pay app are not available on certain Honor and Huawei devices as per regulatory guidelines.
+        - paragraph [ref=e108]:
+          - img [ref=e110]
+          - text: To enjoy a seamless mobile banking experience, please upgrade to Android version 8.0 & above and iOS version 17 & above.
+```

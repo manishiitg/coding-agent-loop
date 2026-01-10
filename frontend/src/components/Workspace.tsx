@@ -92,14 +92,6 @@ export default function Workspace({
     return null
   }, [selectedModeCategory, activePresetId, customPresets, predefinedPresets])
 
-  // State for including Downloads/ folder in the filter
-  // Reset when workflow preset changes or when switching to chat mode
-  const [includeDownloadsFolder, setIncludeDownloadsFolder] = useState(false)
-
-  // Reset Downloads folder toggle when workflow preset changes or mode changes
-  useEffect(() => {
-    setIncludeDownloadsFolder(false)
-  }, [activeWorkflowPreset?.id, selectedModeCategory])
 
   // Export/Import backup state
   const [isExporting, setIsExporting] = useState(false)
@@ -201,13 +193,11 @@ export default function Workspace({
   
   // Filter files to show only the workflow folder when a workflow preset is selected
   // This function collects all files/folders that are within the workflow folder path
-  // Optionally includes Downloads/ folder if includeDownloads is true
-  const filterToWorkflowFolder = useCallback((files: PlannerFile[], parentFolderPath: string, includeDownloads: boolean = false): PlannerFile[] => {
+  const filterToWorkflowFolder = useCallback((files: PlannerFile[], parentFolderPath: string): PlannerFile[] => {
     // Normalize paths for comparison (remove leading/trailing slashes, lowercase)
     const targetPath = normalizePath(parentFolderPath)
-    const downloadsPath = normalizePath('Downloads')
     
-    // Recursively collect all files within the workflow folder (and optionally Downloads/)
+    // Recursively collect all files within the workflow folder
     const collectWorkflowFiles = (fileList: PlannerFile[]): PlannerFile[] => {
       const result: PlannerFile[] = []
       
@@ -217,14 +207,6 @@ export default function Workspace({
         // Check if this is the workflow folder itself
         if (filePath === targetPath) {
           // Found the workflow folder - include it with all its children
-          result.push({
-            ...file,
-            children: file.children ? collectWorkflowFiles(file.children) : []
-          })
-        }
-        // Check if this is the Downloads/ folder (if including downloads)
-        else if (includeDownloads && filePath === downloadsPath) {
-          // Found the Downloads folder - include it with all its children
           result.push({
             ...file,
             children: file.children ? collectWorkflowFiles(file.children) : []
@@ -242,23 +224,11 @@ export default function Workspace({
             result.push(file)
           }
         }
-        // Check if this file/folder is within Downloads/ folder (if including downloads)
-        else if (includeDownloads && filePath.startsWith(downloadsPath + '/')) {
-          // This is a child of the Downloads folder
-          if (file.type === 'folder') {
-            result.push({
-              ...file,
-              children: file.children ? collectWorkflowFiles(file.children) : []
-            })
-          } else {
-            result.push(file)
-          }
-        }
-        // If this is a folder, search its children for workflow folder or Downloads/
+        // If this is a folder, search its children for workflow folder
         else if (file.type === 'folder' && file.children) {
           const found = collectWorkflowFiles(file.children)
           if (found.length > 0) {
-            // Found workflow folder or Downloads/ in children - include parent folder with filtered children
+            // Found workflow folder in children - include parent folder with filtered children
             result.push({
               ...file,
               children: found
@@ -281,7 +251,7 @@ export default function Workspace({
     // Only filter if we're in workflow mode and have a workflow folder path
     // When in chat mode, show all files regardless of preset
     if (selectedModeCategory === 'workflow' && workflowFolderPath) {
-      result = filterToWorkflowFolder(filesToProcess, workflowFolderPath, includeDownloadsFolder)
+      result = filterToWorkflowFolder(filesToProcess, workflowFolderPath)
       
       // Adjust filepaths to show workflow folder as root (remove the workflow folder path prefix)
       // Store original path in originalFilepath for API calls
@@ -289,7 +259,7 @@ export default function Workspace({
     }
     
     return result
-  }, [selectedModeCategory, workflowFolderPath, includeDownloadsFolder, filterToWorkflowFolder])
+  }, [selectedModeCategory, workflowFolderPath, filterToWorkflowFolder])
   
   // Restore expanded folders when files change
   // This runs after store's fetchFiles completes and handles workflow mode filtering
@@ -410,7 +380,7 @@ export default function Workspace({
     // Only filter if we're in workflow mode and have a workflow folder path
     // When in chat mode, show all files regardless of preset
     if (selectedModeCategory === 'workflow' && workflowFolderPath) {
-      result = filterToWorkflowFolder(files, workflowFolderPath, includeDownloadsFolder)
+      result = filterToWorkflowFolder(files, workflowFolderPath)
       
       // Debug logging (only log warnings, not every filter operation)
       if (result.length === 0 && files.length > 0) {
@@ -434,7 +404,7 @@ export default function Workspace({
     result = filterFiles(result, searchQuery)
     
     return result
-  }, [files, workflowFolderPath, filterToWorkflowFolder, searchQuery, activeWorkflowPreset, includeDownloadsFolder, selectedModeCategory])
+  }, [files, workflowFolderPath, filterToWorkflowFolder, searchQuery, activeWorkflowPreset, selectedModeCategory])
   
   // Enhanced file highlighting with folder expansion and auto-scroll
   useEffect(() => {
@@ -646,6 +616,20 @@ export default function Workspace({
   // Handle folder click - only folders are clickable now
   const handleFolderClick = (folder: PlannerFile) => {
     if (folder.type === 'folder') {
+      // In workflow mode, disable direct clicking on iteration/group folders
+      // Only allow checkbox-based selection for these folders
+      if (selectedModeCategory === 'workflow') {
+        const isIterationFolder =
+          folder.filepath.includes('/runs/iteration-') ||
+          /\/iteration-\d+$/.test(folder.filepath) ||
+          /\/runs\/iteration-\d+\/[^/]+$/.test(folder.filepath) // Group folders
+
+        if (isIterationFolder) {
+          console.log('[Workspace] Ignoring click on iteration/group folder (use checkbox instead):', folder.filepath)
+          return // Don't toggle expansion for iteration/group folders in workflow mode
+        }
+      }
+
       // Toggle folder expansion
       if (expandedFolders.has(folder.filepath)) {
         // Collapse folder
@@ -1663,17 +1647,6 @@ export default function Workspace({
                   </span>
                 )}
               </div>
-              <label className="flex items-center gap-1.5 cursor-pointer flex-shrink-0">
-                <input
-                  type="checkbox"
-                  checked={includeDownloadsFolder}
-                  onChange={(e) => setIncludeDownloadsFolder(e.target.checked)}
-                  className="w-3.5 h-3.5 text-blue-600 border-gray-300 rounded focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
-                />
-                <span className="text-xs text-blue-800 dark:text-blue-200 whitespace-nowrap">
-                  Downloads/
-                </span>
-              </label>
             </div>
           </div>
         )}

@@ -463,6 +463,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createPlanningAgent(ctx context.Conte
 		phase,
 		step,
 		iteration,
+		phase, // stepID (use phase name for phase-only agents)
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowPlanningAgent(cfg, logger, tracer, eventBridge)
 		},

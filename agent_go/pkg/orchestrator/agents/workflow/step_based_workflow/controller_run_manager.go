@@ -3,7 +3,6 @@ package step_based_workflow
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -265,20 +264,31 @@ func (hcpo *StepBasedWorkflowOrchestrator) listRunFolders(ctx context.Context, r
 	return hcpo.BaseOrchestrator.ListWorkspaceDirectories(ctx, runsPath)
 }
 
-// createRunFolderStructure creates the basic structure for a run folder
+// createRunFolderStructure creates the basic structure for a run folder.
+// Creates folders via Workspace API only (ensures consistency with list_workspace_files).
+//
+// The runPath can be in any format - it will be normalized by createFolderViaAPI.
+// Typically runPath is already relative to workspace-docs root (e.g., "Workflow/ICICI.../runs/...").
+//
+// NOTE: Do NOT use os.MkdirAll here - see controller_execution.go for explanation.
 func (hcpo *StepBasedWorkflowOrchestrator) createRunFolderStructure(ctx context.Context, runPath string) error {
-	// Create run folder directory
-	if err := os.MkdirAll(runPath, 0755); err != nil {
+	if runPath == "" {
+		return fmt.Errorf("invalid run path: empty")
+	}
+
+	// Create run folder via Workspace API - normalization happens inside
+	if err := createFolderViaAPI(ctx, runPath); err != nil {
 		return fmt.Errorf("failed to create run folder: %w", err)
 	}
 
 	// Create knowledgebase folder at workspace root (shared across all runs)
-	knowledgebasePath := getKnowledgebasePath(hcpo.GetWorkspacePath())
-	if err := os.MkdirAll(knowledgebasePath, 0755); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create knowledgebase folder: %v (continuing)", err))
+	// Use workspacePath parameter to normalize the relative path "knowledgebase"
+	workspacePath := hcpo.GetWorkspacePath()
+	if err := createFolderViaAPI(ctx, KnowledgebaseFolderName, workspacePath); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create knowledgebase folder via API: %v (continuing)", err))
 		// Don't fail - knowledgebase folder will be created when first file is written
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Created knowledgebase folder: %s", knowledgebasePath))
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Created knowledgebase folder: %s/%s", workspacePath, KnowledgebaseFolderName))
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created run folder structure: %s", runPath))

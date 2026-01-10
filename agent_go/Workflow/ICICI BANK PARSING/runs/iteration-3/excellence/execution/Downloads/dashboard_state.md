@@ -1,0 +1,481 @@
+### New console messages
+- [LOG] User-Action-List-0-handleUAFetchSuccess @ embed-0.js:8245
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] User-Action-List-0-handleUAFetchSuccess @ embed-0.js:8245
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://appdr.icicibank.com:7004/eu...
+- [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://appdr.icicibank.com:7004/eu...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+
+### Page state
+- Page URL: https://cibnext.icici.bank.in/corp/AuthenticationController;jsessionid=0000CT-M5p2TCHIhLw6sIx3BzJV:NDR227CIBAPPH?bwayparam=ZZuESlG4MJ8Ggz%2BhqQpuMg%3D%3D
+- Page Title: ICICI Corporate e-BankingDashboard
+- Page Snapshot:
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - paragraph [ref=e4]:
+      - button "modal-redirection" [ref=e6] [cursor=pointer]
+    - generic:
+      - generic:
+        - paragraph
+        - generic:
+          - generic:
+            - paragraph
+    - generic [ref=e8]:
+      - generic [ref=e11]:
+        - text:     
+        - navigation [ref=e12]:
+          - list [ref=e14]:
+            - textbox "How can I help you?" [ref=e19]
+            - generic "Have a Question?" [ref=e20]:
+              - img [ref=e21] [cursor=pointer]
+            - generic:
+              - listitem:
+                - link "Customer Care 1800 10 80":
+                  - /url: "#"
+                  - generic [ref=e22] [cursor=pointer]:
+                    - text: Customer Care
+                    - text: 1800 10 80
+            - text: 
+            - listitem [ref=e23]:
+              - generic [ref=e25] [cursor=pointer]: 
+            - listitem [ref=e26]:
+              - paragraph [ref=e28]:
+                - generic "Log out" [ref=e30] [cursor=pointer]:
+                  - link "Logout " [ref=e31]:
+                    - /url: Finacle;jsessionid=0000VqhcHy7wIRZ66N3yMZBvt_I:NDR227CIBAPPH?bwayparam=x3Na4VKjRv6KqepCzONccV9MANYZ0%2B3AuonsvP8jf4lS4SP6O1O6HrPhNZ3DsMMSJVgp8joTa7%2BWEYhEIEwUqiXEzbr6Ivl3Rmbd3xWLXhAziBHzVuUG7%2Fk%2FtTYqMRcK
+      - generic:
+        - paragraph
+      - list [ref=e33]:
+        - list [ref=e34]:
+          - listitem [ref=e35]:
+            - img "Description" [ref=e37]
+        - separator [ref=e38]
+        - listitem
+        - list [ref=e39]:
+          - listitem [ref=e40]:
+            - paragraph [ref=e42]:
+              - img [ref=e45]
+            - generic [ref=e46]:
+              - link "MANISH PRAKASH" [ref=e47] [cursor=pointer]:
+                - /url: "#"
+                - generic [ref=e49]: MANISH PRAKASH
+              - list
+        - listitem [ref=e50]:
+          - link " Home" [ref=e51] [cursor=pointer]:
+            - /url: Finacle;jsessionid=0000VqhcHy7wIRZ66N3yMZBvt_I:NDR227CIBAPPH?bwayparam=x3Na4VKjRv6KqepCzONccV9MANYZ0%2B3AuonsvP8jf4nTp24IlFH1swULKNreBZ%2BdspDaDqAX9eJ057WRf5FzNOr81ywr7LgqLqJmyP6ZP%2Frnm7KyEIGo0jdFjvZnDhNK%0D%0A6z4HDuDa5KF1dKUyrqdThHK4b5q3jaV1oJUdWtrGhY%2FJrN1oHnv%2B0kbyZsYXHqHx
+            - generic [ref=e52]:
+              - generic [ref=e53]: 
+              - generic [ref=e54]: Home
+        - listitem [ref=e55]:
+          - link " Accounts" [ref=e56] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e57]:
+              - generic [ref=e59]: 
+              - generic [ref=e60]: Accounts
+          - text:  
+        - listitem [ref=e61]:
+          - link " Transfers & Bill Pay" [ref=e62] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e63]:
+              - generic [ref=e65]: 
+              - generic [ref=e66]: Transfers & Bill Pay
+          - text:  
+        - listitem [ref=e67]:
+          - link " Service Requests" [ref=e68] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e69]:
+              - generic [ref=e71]: 
+              - generic [ref=e72]: Service Requests
+          - text:  
+        - listitem [ref=e73]:
+          - link " Tax / EPFO / ESIC" [ref=e74] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e75]:
+              - generic [ref=e77]: 
+              - generic [ref=e78]: Tax / EPFO / ESIC
+          - text:  
+        - listitem [ref=e79]:
+          - link " CMS" [ref=e80] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e81]:
+              - generic [ref=e83]: 
+              - generic [ref=e84]: CMS
+          - text:  
+        - listitem [ref=e85]:
+          - link " Trade" [ref=e86] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e87]:
+              - generic [ref=e89]: 
+              - generic [ref=e90]: Trade
+          - text:  
+        - listitem [ref=e91]:
+          - link " Treasury" [ref=e92] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e93]:
+              - generic [ref=e95]: 
+              - generic [ref=e96]: Treasury
+          - text:  
+        - listitem [ref=e97]:
+          - link " Invest & Insure" [ref=e98] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e99]:
+              - generic [ref=e101]: 
+              - generic [ref=e102]: Invest & Insure
+          - text:  
+        - listitem [ref=e103]:
+          - link " Connected Banking" [ref=e104] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e105]:
+              - generic [ref=e107]: 
+              - generic [ref=e108]: Connected Banking
+          - text:  
+        - listitem [ref=e109]:
+          - link " Exclusive Offerings" [ref=e110] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e111]:
+              - generic [ref=e113]: 
+              - generic [ref=e114]: Exclusive Offerings
+          - text:  
+        - listitem [ref=e115]:
+          - link " Product Lab" [ref=e116] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e117]:
+              - generic [ref=e119]: 
+              - generic [ref=e120]: Product Lab
+          - text:  
+    - generic [ref=e123]:
+      - generic [ref=e125]:
+        - generic [ref=e127]:
+          - generic [ref=e128]: Notice
+          - generic [ref=e130]:
+            - text: Due to a scheduled maintenance activity, you will be unable to perform NEFT/ RTGS transactions from Corporate Net Banking and InstaBIZ on Jan 11 , 2026 from 01:30 a.m. to 3:00 a.m. IST. Apologies for the inconvenience.
+            - generic:
+              - link:
+                - /url: ""
+        - paragraph
+        - paragraph
+        - generic [ref=e131]:
+          - generic [ref=e132]:
+            - generic:
+              - paragraph
+              - generic [ref=e142]:
+                - heading "Account Balance & Clearing" [level=4] [ref=e143]
+                - generic [ref=e146]:
+                  - paragraph [ref=e147]:
+                    - generic [ref=e148]:
+                      - generic "Account" [ref=e149]: "Account:"
+                      - combobox "Account:" [ref=e152]:
+                        - generic "Account" [ref=e153] [cursor=pointer]:
+                          - generic [ref=e154]: 003105026977-EXCELLENCE TECHNOSOFT PVT LTD(INR)
+                  - paragraph
+                - generic [ref=e159]:
+                  - paragraph [ref=e161]:
+                    - generic [ref=e162]: Total Balance
+                  - paragraph [ref=e164]:
+                    - generic [ref=e165]: INR 36,71,369.27
+                    - generic [ref=e166]: CR
+                - generic [ref=e168]:
+                  - paragraph [ref=e170]:
+                    - generic [ref=e171]: Available Balance
+                  - paragraph [ref=e173]:
+                    - generic [ref=e174]: INR 36,71,369.27
+                    - generic [ref=e175]: CR
+                - generic [ref=e177]:
+                  - paragraph [ref=e179]:
+                    - generic [ref=e180]: Reserved for Cheques
+                  - paragraph [ref=e182]:
+                    - generic [ref=e183]: INR 0.00
+                    - generic [ref=e184]: CR
+                - generic [ref=e186]:
+                  - paragraph [ref=e188]:
+                    - generic [ref=e189]: Unclear Balance
+                  - paragraph [ref=e191]:
+                    - generic [ref=e192]: INR 0.00
+                    - generic [ref=e193]: CR
+                - paragraph [ref=e195]:
+                  - link "MORE" [ref=e198] [cursor=pointer]:
+                    - /url: Finacle;jsessionid=0000VqhcHy7wIRZ66N3yMZBvt_I:NDR227CIBAPPH?bwayparam=x3Na4VKjRv6KqepCzONccV9MANYZ0%2B3AuonsvP8jf4nTp24IlFH1swULKNreBZ%2BdspDaDqAX9eJ057WRf5FzNOr81ywr7LgqLqJmyP6ZP%2FrG5K4ByFWJreGmriKhJtvy%0D%0A6z4HDuDa5KF1dKUyrqdThHK4b5q3jaV1oJUdWtrGhY%2FJrN1oHnv%2B0kbyZsYXHqHx
+              - generic [ref=e207]:
+                - heading "Account Statement" [level=4] [ref=e208]
+                - generic [ref=e211]:
+                  - paragraph [ref=e212]:
+                    - combobox [ref=e216]:
+                      - generic "Account Id" [ref=e217] [cursor=pointer]:
+                        - generic [ref=e218]: 003105026977-EXCELLENCE TECHNOSOFT PVT LTD(INR)
+                  - paragraph
+                - list [ref=e224]:
+                  - listitem [ref=e225]:
+                    - button "Yesterday" [ref=e226] [cursor=pointer]
+                  - listitem [ref=e227]:
+                    - button "Today" [ref=e228] [cursor=pointer]
+                  - listitem [ref=e229]:
+                    - button "Month Till Date" [ref=e230] [cursor=pointer]
+                - generic [ref=e231]:
+                  - generic [ref=e234]:
+                    - paragraph
+                    - generic [ref=e237]:
+                      - textbox "FROM DATE" [ref=e238]: 12-11-2025
+                      - img "Calendar" [ref=e239]
+                    - paragraph
+                  - generic [ref=e242]:
+                    - paragraph
+                    - generic [ref=e245]:
+                      - textbox "TO DATE" [ref=e246]: 01-10-2026
+                      - img "Calendar" [ref=e247]
+                    - paragraph
+                - generic [ref=e251]:
+                  - paragraph [ref=e252]:
+                    - combobox [ref=e256]:
+                      - generic "Format" [ref=e257] [cursor=pointer]:
+                        - generic [ref=e258]: Download as
+                  - paragraph
+                - generic [ref=e262]:
+                  - generic [ref=e263] [cursor=pointer]:
+                    - paragraph:
+                      - generic "download" [ref=e264]:
+                        - text: 
+                        - link "DOWNLOAD" [ref=e265]:
+                          - /url: "#"
+                  - paragraph [ref=e267]:
+                    - generic "Consolidated statement" [ref=e269]:
+                      - link "Get Monthly Statement" [ref=e270] [cursor=pointer]:
+                        - /url: Finacle;jsessionid=0000VqhcHy7wIRZ66N3yMZBvt_I:NDR227CIBAPPH?bwayparam=8S%2FfDol8zUN4GpSwzQ2aPYHGNCGkIjtksCdUREWISWVI9k%2BX89EwaPgoCke%2BLNMQWH6J8AFpt46doLJxQUnVc5ofsfhZlvEyAWsS3Ri11hKdpxtAzB%2BFRKcOeUcIiKu4%0D%0A5pcTDtGo742JL%2BIlXKrxmQ%3D%3D
+                - paragraph [ref=e272]:
+                  - generic "Consolidated statement" [ref=e274]:
+                    - link "CONSOLIDATED STATEMENT" [ref=e275] [cursor=pointer]:
+                      - /url: Finacle;jsessionid=0000VqhcHy7wIRZ66N3yMZBvt_I:NDR227CIBAPPH?bwayparam=8S%2FfDol8zUN4GpSwzQ2aPYHGNCGkIjtksCdUREWISWVI9k%2BX89EwaPgoCke%2BLNMQ7Lqi64pPuNB9ryg%2FYaJYtZofsfhZlvEyAWsS3Ri11hKdpxtAzB%2BFRKcOeUcIiKu4%0D%0A5pcTDtGo742JL%2BIlXKrxmQ%3D%3D
+                - paragraph [ref=e277]: Click here for >2000 transactions in selected period.
+                - paragraph [ref=e278]
+              - generic [ref=e284]:
+                - generic [ref=e286]:
+                  - heading "Approvals" [level=4] [ref=e287]:
+                    - paragraph [ref=e288]:
+                      - generic [ref=e290]: Approvals
+                  - list [ref=e291]:
+                    - listitem [ref=e292]:
+                      - generic [ref=e293]:
+                        - generic [ref=e294]:
+                          - generic [ref=e295]: Pending Approvals (0)
+                          - generic [ref=e297] [cursor=pointer]: Act Now
+                        - separator [ref=e298]
+                    - listitem [ref=e299]:
+                      - generic [ref=e300]:
+                        - generic [ref=e301]:
+                          - generic [ref=e302]: Pending Transactions (0)
+                          - generic [ref=e304] [cursor=pointer]: Check Now
+                        - separator [ref=e305]
+                    - listitem [ref=e306]:
+                      - generic [ref=e307]:
+                        - generic [ref=e308]:
+                          - generic [ref=e309]: Rejected Transactions
+                          - generic [ref=e311] [cursor=pointer]: View All
+                        - separator [ref=e312]
+                    - listitem [ref=e313]:
+                      - generic [ref=e314]:
+                        - generic [ref=e315]:
+                          - generic [ref=e316]:
+                            - text: Tax Approvals
+                            - generic "You will be redirected to Tax Payment Application" [ref=e318]:
+                              - img [ref=e319]
+                          - generic [ref=e321] [cursor=pointer]: Act Now
+                        - separator [ref=e322]
+                    - listitem [ref=e323]:
+                      - generic [ref=e324]:
+                        - generic [ref=e325]:
+                          - generic [ref=e327]:
+                            - text: CMS Approvals (0)
+                            - generic "Showing pending txns under parent cust code only. For more details, go to CMS application" [ref=e329]:
+                              - img [ref=e330]
+                          - generic [ref=e332] [cursor=pointer]: Act Now
+                        - separator [ref=e333]
+                - generic:
+                  - generic:
+                    - paragraph
+              - generic [ref=e338]:
+                - generic [ref=e341]:
+                  - heading "Do More" [level=5] [ref=e342]
+                  - generic [ref=e344]:
+                    - generic [ref=e345]:
+                      - paragraph [ref=e346] [cursor=pointer]:
+                        - img [ref=e348]
+                        - generic [ref=e349]: Click here to Manage Users and Workflow of your corporate id
+                      - separator [ref=e350]
+                    - generic [ref=e351]:
+                      - paragraph [ref=e352] [cursor=pointer]:
+                        - img [ref=e354]
+                        - generic [ref=e355]: Settle Inward Remittances through CIB
+                      - separator [ref=e356]
+                    - paragraph [ref=e358] [cursor=pointer]:
+                      - img [ref=e360]
+                      - generic [ref=e361]: iFinance a single-view for savings and current accounts across banks
+                - generic:
+                  - generic:
+                    - paragraph
+              - generic [ref=e366]:
+                - generic [ref=e369]:
+                  - heading "Offers for You" [level=5] [ref=e370]
+                  - generic [ref=e372]:
+                    - button "Previous" [ref=e373] [cursor=pointer]
+                    - button "Next" [ref=e374] [cursor=pointer]
+                    - img [ref=e375]
+                    - paragraph [ref=e376]: A one-stop solution, for your trade needs.
+                    - paragraph [ref=e377]: Explore Trade Emerge, a first-of-its-kind offering for businesses, to optimise their trade journeys and grow in a revamped ecosystem.
+                    - button "Know More" [ref=e379] [cursor=pointer]
+                - generic:
+                  - generic:
+                    - paragraph
+              - generic [ref=e384]:
+                - generic [ref=e387]:
+                  - heading "Offers  More" [level=5] [ref=e388]:
+                    - text: Offers
+                    - generic [ref=e389]: 
+                    - link "More" [ref=e391] [cursor=pointer]:
+                      - /url: javascript:moreOffersLink();
+                  - generic [ref=e392]:
+                    - generic [ref=e393]:
+                      - generic:
+                        - generic [ref=e396]:
+                          - img [ref=e397]
+                          - paragraph [ref=e399]
+                        - tabpanel [ref=e400]:
+                          - generic [ref=e402]:
+                            - img [ref=e403]
+                            - generic [ref=e404]:
+                              - generic [ref=e405]:
+                                - text: Congratulations
+                                - text: MANISH PRAKASH
+                              - list [ref=e406]:
+                                - listitem [ref=e407]: Get a Overdraft with instant approval in few clicks
+                        - tabpanel [ref=e408]:
+                          - generic [ref=e410] [cursor=pointer]:
+                            - img [ref=e411]
+                            - paragraph [ref=e413]
+                        - tabpanel [ref=e414]:
+                          - generic [ref=e416] [cursor=pointer]:
+                            - img [ref=e417]
+                            - paragraph [ref=e419]
+                        - tabpanel [ref=e420]:
+                          - generic [ref=e422] [cursor=pointer]:
+                            - img [ref=e423]
+                            - paragraph [ref=e425]
+                        - generic [ref=e428]:
+                          - img [ref=e429]
+                          - generic [ref=e430]:
+                            - generic [ref=e431]: Congratulations MANISH PRAKASH
+                            - list [ref=e432]:
+                              - listitem [ref=e433]: Get a Overdraft with instant approval in few clicks
+                        - generic [ref=e436]:
+                          - img [ref=e437]
+                          - paragraph [ref=e439]
+                        - generic [ref=e442]:
+                          - img [ref=e443]
+                          - paragraph [ref=e445]
+                        - generic [ref=e448]:
+                          - img [ref=e449]
+                          - paragraph [ref=e451]
+                    - tablist [ref=e452]:
+                      - tab "1 of 4" [selected] [ref=e453] [cursor=pointer]: "1"
+                      - tab "2 of 4" [ref=e454] [cursor=pointer]: "2"
+                      - tab "3 of 4" [ref=e455] [cursor=pointer]: "3"
+                      - tab "4 of 4" [ref=e456] [cursor=pointer]: "4"
+                - generic:
+                  - paragraph
+                - generic:
+                  - generic:
+                    - paragraph
+              - paragraph
+          - generic [ref=e458]:
+            - link "For Any assistance please call our customer care number 1800 10 80" [ref=e461] [cursor=pointer]:
+              - /url: "#"
+              - generic [ref=e463]:
+                - text: For Any assistance
+                - text: please call our customer
+                - text: care number
+                - text: 1800 10 80
+            - heading "Shortcuts" [level=4] [ref=e464] [cursor=pointer]
+            - list [ref=e465]:
+              - listitem [ref=e466] [cursor=pointer]:
+                - link " iFinance" [ref=e469]:
+                  - /url: javascript:quickLink8();
+                  - generic [ref=e470]: 
+                  - text: iFinance
+              - listitem [ref=e471] [cursor=pointer]:
+                - link " Detailed Statement" [ref=e474]:
+                  - /url: javascript:quickLink6();
+                  - generic [ref=e475]: 
+                  - generic [ref=e477]:
+                    - text: Detailed
+                    - text: Statement
+              - listitem [ref=e478] [cursor=pointer]:
+                - link " Fund Transfers" [ref=e481]:
+                  - /url: javascript:quickLink1();
+                  - generic [ref=e482]: 
+                  - text: Fund Transfers
+              - listitem [ref=e483] [cursor=pointer]:
+                - link " Bill Payments" [ref=e486]:
+                  - /url: javascript:quickLink2();
+                  - generic [ref=e487]: 
+                  - generic [ref=e488]: Bill Payments
+              - listitem [ref=e489] [cursor=pointer]:
+                - link " Manage Payees" [ref=e492]:
+                  - /url: javascript:quickLink4();
+                  - generic [ref=e493]: 
+                  - generic [ref=e494]: Manage Payees
+              - listitem [ref=e495] [cursor=pointer]:
+                - link " Open New FD" [ref=e498]:
+                  - /url: javascript:quickLink5();
+                  - generic [ref=e499]: 
+                  - text: Open New FD
+      - paragraph
+      - paragraph [ref=e500]
+      - paragraph
+  - status [ref=e503]
+  - status [ref=e504]
+  - status [ref=e505]
+  - status [ref=e506]
+  - tooltip [ref=e510]:
+    - button [ref=e514] [cursor=pointer]:
+      - generic [ref=e515]:
+        - generic:
+          - img
+        - img [ref=e519]
+      - generic [ref=e523]: Guided tour
+```

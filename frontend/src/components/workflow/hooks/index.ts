@@ -14,8 +14,10 @@ export type {
 } from './usePlanToFlow'
 
 export { useWorkflowExecution } from './useWorkflowExecution'
-export type { 
-  WorkflowExecutionStatus, 
-  UseWorkflowExecutionReturn 
+export type {
+  WorkflowExecutionStatus,
+  UseWorkflowExecutionReturn
 } from './useWorkflowExecution'
 
+export { useWorkspaceState } from './useWorkspaceState'
+export type { UseWorkspaceStateReturn } from './useWorkspaceState'

@@ -78,20 +78,13 @@ export function getOriginalPath(adjustedPath: string, workflowFolderPath: string
  */
 export function shouldIncludeInWorkflowFilter(
   filepath: string, 
-  workflowFolderPath: string, 
-  includeDownloads: boolean = false
+  workflowFolderPath: string
 ): boolean {
   const normalizedPath = normalizePathForComparison(filepath)
   const normalizedWorkflow = normalizePathForComparison(workflowFolderPath)
-  const normalizedDownloads = normalizePathForComparison('Downloads')
   
   // Check if within workflow folder
   if (normalizedPath === normalizedWorkflow || normalizedPath.startsWith(normalizedWorkflow + '/')) {
-    return true
-  }
-  
-  // Check if within Downloads folder (if including)
-  if (includeDownloads && (normalizedPath === normalizedDownloads || normalizedPath.startsWith(normalizedDownloads + '/'))) {
     return true
   }
   

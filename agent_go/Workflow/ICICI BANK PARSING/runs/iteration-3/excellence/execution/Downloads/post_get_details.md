@@ -1,0 +1,520 @@
+### New console messages
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://appdr.icicibank.com:7004/eu...
+- [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://appdr.icicibank.com:7004/eu...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+- [LOG] waiting for calendar data. be patient. @ https://cibnext.icici.bank.in/corp/scripts/common/Nco...
+
+### Page state
+- Page URL: https://cibnext.icici.bank.in/corp/Finacle;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=C4gcXzBz0vcxi8In5Lao%2B1Sr8EvgO4Lmw0fG2Ibmq7qXjV2sU3GQyElac7cvjVPypMwI%2Baneezo31t%2BsupvZc8B0ypkpeXo76DS0kbu8%2BUMKqNOgaKGlMJXNPDDDGIZw%0D%0AzDG5vtZd2O2Iwp7IQiehA%2FLfbCoZGhqSstlkU0VD8dHimFasZoV4jlkKCcRrPE%2F5
+- Page Title: ICICI Corporate e-Banking: Account Details
+- Page Snapshot:
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - paragraph [ref=e4]:
+      - button "modal-redirection" [ref=e6] [cursor=pointer]
+    - generic:
+      - generic:
+        - paragraph
+        - generic:
+          - generic:
+            - paragraph
+    - generic [ref=e8]:
+      - generic [ref=e11]:
+        - text:     
+        - navigation [ref=e12]:
+          - list [ref=e14]:
+            - generic "Have a Question?" [ref=e15]:
+              - img [ref=e16] [cursor=pointer]
+            - generic:
+              - listitem:
+                - link "Customer Care 1800 10 80":
+                  - /url: "#"
+                  - generic [ref=e17] [cursor=pointer]:
+                    - text: Customer Care
+                    - text: 1800 10 80
+            - text: 
+            - listitem [ref=e18]:
+              - generic [ref=e20] [cursor=pointer]: 
+            - listitem [ref=e21]:
+              - paragraph [ref=e23]:
+                - generic "Log out" [ref=e25] [cursor=pointer]:
+                  - link "Logout " [ref=e26]:
+                    - /url: Finacle;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=C4gcXzBz0vcxi8In5Lao%2B1Sr8EvgO4Lmw0fG2Ibmq7rnyP6D%2Br1Kd%2FyZj3Qc37V6Yr8Y4yeqKaBvy9OCg9DWS58Ip7tcMg7rzAAkppmv22cT2WaAnkU4B6WIaovPVA%2Fz
+      - generic:
+        - paragraph
+      - list [ref=e28]:
+        - list [ref=e29]:
+          - listitem [ref=e30]:
+            - img "Description" [ref=e32]
+        - separator [ref=e33]
+        - listitem
+        - list [ref=e34]:
+          - listitem [ref=e35]:
+            - paragraph [ref=e37]:
+              - img [ref=e40]
+            - generic [ref=e41]:
+              - link "MANISH PRAKASH" [ref=e42] [cursor=pointer]:
+                - /url: "#"
+                - generic [ref=e44]: MANISH PRAKASH
+              - list
+        - listitem [ref=e45]:
+          - link " Home" [ref=e46] [cursor=pointer]:
+            - /url: Finacle;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=C4gcXzBz0vcxi8In5Lao%2B1Sr8EvgO4Lmw0fG2Ibmq7qXjV2sU3GQyElac7cvjVPypMwI%2Baneezo31t%2BsupvZc8B0ypkpeXo76DS0kbu8%2BUNm%2BSrCa8MY0Opeu2d8LQvH%0D%0AsneGfFpQDtP1xFncXh04i3GP9DFDhgNsdtoMGbqGCYRThFhv%2FINQSimfmIK81IS3
+            - generic [ref=e47]:
+              - generic [ref=e48]: 
+              - generic [ref=e49]: Home
+        - listitem [ref=e50]:
+          - link " Accounts" [ref=e51] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e52]:
+              - generic [ref=e54]: 
+              - generic [ref=e55]: Accounts
+          - text:  
+        - listitem [ref=e56]:
+          - link " Transfers & Bill Pay" [ref=e57] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e58]:
+              - generic [ref=e60]: 
+              - generic [ref=e61]: Transfers & Bill Pay
+          - text:  
+        - listitem [ref=e62]:
+          - link " Service Requests" [ref=e63] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e64]:
+              - generic [ref=e66]: 
+              - generic [ref=e67]: Service Requests
+          - text:  
+        - listitem [ref=e68]:
+          - link " Tax / EPFO / ESIC" [ref=e69] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e70]:
+              - generic [ref=e72]: 
+              - generic [ref=e73]: Tax / EPFO / ESIC
+          - text:  
+        - listitem [ref=e74]:
+          - link " CMS" [ref=e75] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e76]:
+              - generic [ref=e78]: 
+              - generic [ref=e79]: CMS
+          - text:  
+        - listitem [ref=e80]:
+          - link " Trade" [ref=e81] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e82]:
+              - generic [ref=e84]: 
+              - generic [ref=e85]: Trade
+          - text:  
+        - listitem [ref=e86]:
+          - link " Treasury" [ref=e87] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e88]:
+              - generic [ref=e90]: 
+              - generic [ref=e91]: Treasury
+          - text:  
+        - listitem [ref=e92]:
+          - link " Invest & Insure" [ref=e93] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e94]:
+              - generic [ref=e96]: 
+              - generic [ref=e97]: Invest & Insure
+          - text:  
+        - listitem [ref=e98]:
+          - link " Connected Banking" [ref=e99] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e100]:
+              - generic [ref=e102]: 
+              - generic [ref=e103]: Connected Banking
+          - text:  
+        - listitem [ref=e104]:
+          - link " Exclusive Offerings" [ref=e105] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e106]:
+              - generic [ref=e108]: 
+              - generic [ref=e109]: Exclusive Offerings
+          - text:  
+        - listitem [ref=e110]:
+          - link " Product Lab" [ref=e111] [cursor=pointer]:
+            - /url: javascript:void(0)
+            - generic [ref=e112]:
+              - generic [ref=e114]: 
+              - generic [ref=e115]: Product Lab
+          - text:  
+    - generic [ref=e118]:
+      - generic [ref=e119]:
+        - paragraph
+        - list [ref=e120]:
+          - listitem [ref=e121]:
+            - link "DASHBOARD" [ref=e123] [cursor=pointer]:
+              - /url: Finacle;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=C4gcXzBz0vcxi8In5Lao%2B1Sr8EvgO4Lmw0fG2Ibmq7qXjV2sU3GQyElac7cvjVPypMwI%2Baneezo31t%2BsupvZc8B0ypkpeXo76DS0kbu8%2BUNm%2BSrCa8MY0Opeu2d8LQvH%0D%0AsneGfFpQDtP1xFncXh04i3GP9DFDhgNsdtoMGbqGCYRThFhv%2FINQSimfmIK81IS3
+          - listitem [ref=e124]:
+            - generic [ref=e125]: 
+          - listitem
+          - listitem [ref=e126]: ACCOUNTS
+          - listitem [ref=e127]:
+            - generic [ref=e128]: 
+          - listitem
+          - listitem [ref=e129]:
+            - link "DETAILED STATEMENT" [ref=e131] [cursor=pointer]:
+              - /url: Finacle;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=C4gcXzBz0vcxi8In5Lao%2B1Sr8EvgO4Lmw0fG2Ibmq7qXjV2sU3GQyElac7cvjVPypMwI%2Baneezo31t%2BsupvZcxumOahbEZYAwk45O8aVufzWMeuAgvWXebgEzCrm%2BgMf%0D%0AoLhm1GF1pf1F7LFfPsmPegqo06BooaUwlc08MMMYhnA2T%2B5x5sHpdtj1gzKlIxeG4DfWn7yNyIeALiQmc9l7Wa8XlXvA1ZxNHaiYGpktCSE%3D
+        - generic: 
+        - paragraph
+      - generic [ref=e133]:
+        - paragraph
+        - generic [ref=e683]:
+          - list [ref=e686]:
+            - listitem [ref=e687]:
+              - generic [ref=e688]:
+                - generic [ref=e691] [cursor=pointer]:
+                  - generic [ref=e692]:
+                    - generic [ref=e693]: OPERATIVE ACCOUNTS
+                    - generic [ref=e694]:
+                      - generic [ref=e695]: "003105026977"
+                      - link "" [ref=e697]:
+                        - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=0pbaBk8YEDdS1jvTs%2FDYTUcTE%2B3Aroq4ipbOnnSZu%2FkwfHET79OTl6V%2BlwPCsDMGum9j%2FfuurmB1bfFw2IExqzbEteyLLb%2B4xqWqEpuaC9i5O6B1B6KHKeOChGrWSM44%0D%0A%2FQQ6bcDZBMj6%2BJDQSmgvEO2vSERLsH400TRjks49oiIBQB5MYDBH%2F6XQiBvGLUJ9W1kMJJLHHGoxiS%2Fuxv8q5bb9%2B6SAk07riqxm3jn3BIY3pUYdN756ChTqDhui3y8COu6C%0D%0A7QsZQhMGLMafCyt4InuFUatRlGBZz0tsbgZqnnJidNAX4S8EMxj1JL9sxfUmHyNX%2B%2FL1%2FuRGMpsE43Pt%2BflZgrSJCqmio1eLFWRh9ZiGnhRvd1OOAY6R5m7V4Y0RqqO8wC95%0D%0A6uQ0NxSfqPQ5X6XSAw1SbahMzWrgA8uKHpU3%2FqCEGKc9abpiI9boTfck
+                      - generic [ref=e698]: 
+                    - generic [ref=e700]: EXCELLENCE TECHNOSOFT PVT LTD
+                  - text:  
+                - generic [ref=e702]:
+                  - text: Available Balance
+                  - generic [ref=e703]: INR 36,71,369.27
+              - list [ref=e706] [cursor=pointer]:
+                - listitem [ref=e707]:
+                  - heading "ACCOUNT DETAILS" [level=4] [ref=e709]
+                - listitem [ref=e710]:
+                  - generic [ref=e711]: /
+                - listitem [ref=e712]:
+                  - heading "DETAILED STATEMENT" [level=4] [ref=e714]
+                - listitem [ref=e716]:
+                  - generic [ref=e717]: /
+                - listitem [ref=e718]:
+                  - heading "CHEQUE BOOK ISSUANCE STATUS" [level=4] [ref=e720]
+                - listitem [ref=e721]:
+                  - generic [ref=e722]: /
+                - listitem [ref=e723]:
+                  - heading "CHEQUES DEPOSITED" [level=4] [ref=e725]
+                - listitem [ref=e726]:
+                  - generic [ref=e727]: /
+                - listitem [ref=e728]:
+                  - heading "ISSUED CHEQUE STATUS" [level=4] [ref=e730]
+              - generic [ref=e731]:
+                - generic [ref=e733]:
+                  - heading "MANDATORY FIELDS" [level=6] [ref=e735]
+                  - generic [ref=e736]:
+                    - generic [ref=e737]:
+                      - generic [ref=e740]:
+                        - radio " " [checked] [ref=e741]
+                        - generic [ref=e742]:  
+                        - generic [ref=e743]: Select Date Range
+                      - generic [ref=e747]:
+                        - paragraph
+                        - generic [ref=e750]:
+                          - textbox "Date From" [ref=e751] [cursor=pointer]:
+                            - /placeholder: Transaction Date From
+                            - text: 11-01-2025
+                          - img "Calendar" [ref=e752]
+                        - paragraph
+                      - generic [ref=e757]:
+                        - paragraph
+                        - generic [ref=e760]:
+                          - textbox "Date To" [ref=e761] [cursor=pointer]:
+                            - /placeholder: Transaction Date To
+                            - text: 11-30-2025
+                          - img "Calendar" [ref=e762]
+                        - paragraph
+                      - list [ref=e766]:
+                        - listitem [ref=e767]:
+                          - button "Yesterday" [ref=e768] [cursor=pointer]
+                        - listitem [ref=e769]:
+                          - button "Today" [ref=e770] [cursor=pointer]
+                        - listitem [ref=e771]:
+                          - button "Month Till Date" [ref=e772] [cursor=pointer]
+                    - generic [ref=e773]:
+                      - heading "Additional Filter Criteria" [level=4] [ref=e776]
+                      - generic [ref=e777]:
+                        - generic [ref=e778]:
+                          - heading "Amount Range" [level=6] [ref=e782]
+                          - generic [ref=e786]:
+                            - paragraph
+                            - textbox "Amount From" [ref=e788]:
+                              - /placeholder: From Amount
+                            - paragraph
+                          - generic [ref=e792]:
+                            - paragraph
+                            - textbox "Amount To" [ref=e794]:
+                              - /placeholder: To Amount
+                            - paragraph
+                        - generic [ref=e795]:
+                          - heading "Instrument ID (UTR/Cheque Number)" [level=6] [ref=e799]
+                          - generic [ref=e803]:
+                            - paragraph
+                            - textbox "InstrumentId From" [ref=e805]:
+                              - /placeholder: Instrument ID From
+                            - paragraph
+                          - generic [ref=e809]:
+                            - paragraph
+                            - textbox "InstrumentId To" [ref=e811]:
+                              - /placeholder: Instrument ID To
+                            - paragraph
+                        - generic [ref=e813]:
+                          - heading "Transaction Type" [level=5] [ref=e816]
+                          - paragraph [ref=e821]:
+                            - generic [ref=e826]: Credits
+                          - paragraph [ref=e831]:
+                            - generic [ref=e836]: Debits
+                    - separator [ref=e839]
+                    - generic [ref=e840]:
+                      - generic [ref=e841]:
+                        - generic [ref=e842]:
+                          - generic: 
+                        - generic [ref=e843]:
+                          - generic [ref=e844] [cursor=pointer]: 
+                          - heading "Reset Filters" [level=4] [ref=e845] [cursor=pointer]
+                          - generic:
+                            - paragraph
+                      - generic [ref=e847]:
+                        - generic:
+                          - paragraph:
+                            - button "Get Details" [ref=e848] [cursor=pointer]
+                - generic [ref=e849]:
+                  - heading "TRANSACTION DETAILS" [level=4] [ref=e852]
+                  - paragraph [ref=e854]:
+                    - generic [ref=e855]:
+                      - text: To raise a Dispute/Fraud for any transaction
+                      - generic "Raise Fraud/Dispute" [ref=e856]:
+                        - link "click here" [ref=e857] [cursor=pointer]:
+                          - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=0pbaBk8YEDdS1jvTs%2FDYTUcTE%2B3Aroq4ipbOnnSZu%2FkwfHET79OTl6V%2BlwPCsDMGJN1W45n%2B3W0ZSSC11yaa1uFvEa%2BzufSGM4bbMWGrdnM%3D
+                  - generic [ref=e858]:
+                    - paragraph [ref=e860]:
+                      - generic [ref=e861]: Download As
+                      - generic [ref=e863]:
+                        - combobox [ref=e866]:
+                          - generic "Select Download Format" [ref=e867] [cursor=pointer]:
+                            - generic [ref=e868]: Select
+                        - generic:
+                          - generic "Show All Items"
+                    - generic:
+                      - paragraph
+                - generic [ref=e874]:
+                  - table "summary" [ref=e876]:
+                    - rowgroup [ref=e877]:
+                      - row "Transaction Date Value Date Instruments ID Description Debit Amount (INR) Credit Amount (INR) Account Balance (INR)" [ref=e878]:
+                        - columnheader "Transaction Date" [ref=e879]:
+                          - link "Transaction Date" [ref=e881] [cursor=pointer]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=gMCp7x0l7dTz40ymiKy4Rn0CgR9sVPXMrImSDyQQC1wdX0uCQsVCeRA6StabAFif%2FZk8LLyE5IifncNhvrcDehEEcBvzofV%2BA66iCYqHriCddw8ss%2B4ogv14Pz6fKdSG%0D%0Ahp4Ub3dTjgGOkeZu1eGNEQhG0EcrWZvfAPhCFbNd0lE9QOs%2FOzb3GJUy2BnNCJ6BwrWhJ3ECFJM%2F%2Bdx%2F22SZ1eNeciYHuo%2FsUCVTvmHHLr3Ymh4Y38IBql5VBef9Xv%2BHxJ6F%0D%0APPpFJbrc1EoQ%2FmMuyYdg8f39KHf56TfZ4mb1L37yY8nh2JVUNiYJMhtEss0n
+                        - columnheader "Value Date" [ref=e882]:
+                          - link "Value Date" [ref=e884] [cursor=pointer]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=gMCp7x0l7dTz40ymiKy4Rn0CgR9sVPXMrImSDyQQC1wdX0uCQsVCeRA6StabAFif%2FZk8LLyE5IifncNhvrcDehEEcBvzofV%2BA66iCYqHriCddw8ss%2B4ogv14Pz6fKdSG%0D%0Ahp4Ub3dTjgGOkeZu1eGNEQhG0EcrWZvfAPhCFbNd0lE9QOs%2FOzb3GJUy2BnNCJ6BlKrJTBQQqRp%2BoalxOjdrK8VSpqc7qWfH0rr6i17w1h13W1VB%2Fyehc5c4m2W4xy8X2uLK%0D%0ArnciLWwAoOYvtSSXIBKyviEq5VJ%2F%2Fu%2Bt4KYGdCNThFhv%2FINQSimfmIK81IS3
+                        - columnheader "Instruments ID" [ref=e885] [cursor=pointer]:
+                          - link "Instruments ID" [ref=e887]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=gMCp7x0l7dTz40ymiKy4Rn0CgR9sVPXMrImSDyQQC1wdX0uCQsVCeRA6StabAFif%2FZk8LLyE5IifncNhvrcDehEEcBvzofV%2BA66iCYqHriCddw8ss%2B4ogv14Pz6fKdSG%0D%0Ahp4Ub3dTjgGOkeZu1eGNEQhG0EcrWZvfAPhCFbNd0lE9QOs%2FOzb3GJUy2BnNCJ6BMbxkhquhgXacvBDMRoNgrznP5sXSt7bX5SRnfUqE%2FOShzBRfnn%2BFyx2SCLzvGty62eWs%0D%0A6a9aauRD6W08bmHC8qOZjMU2jh9UsA4%2FZt3sLACx7qXxfzDipFE4OxRynySC
+                        - columnheader "Description" [ref=e888]:
+                          - link "Description" [ref=e890] [cursor=pointer]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=gMCp7x0l7dTz40ymiKy4Rn0CgR9sVPXMrImSDyQQC1wdX0uCQsVCeRA6StabAFif%2FZk8LLyE5IifncNhvrcDehEEcBvzofV%2BA66iCYqHriCddw8ss%2B4ogv14Pz6fKdSG%0D%0Ahp4Ub3dTjgGOkeZu1eGNEQhG0EcrWZvfAPhCFbNd0lE9QOs%2FOzb3GJUy2BnNCJ6BnzuDF%2FyBtJym1hCq5xIa7JAe3ucUoyehdBWOtoxf0oHiUHf3axhk4vMNIhJejZwssvQE%0D%0AMUpDtCcxRUksoY0%2FrUnPIEo0BdQhCUzD7Rg%2BqK9MXKAY8kgkrvskxEG%2FVL95
+                        - columnheader "Debit Amount (INR)" [ref=e891] [cursor=pointer]:
+                          - link "Debit Amount (INR)" [ref=e893]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=gMCp7x0l7dTz40ymiKy4Rn0CgR9sVPXMrImSDyQQC1wdX0uCQsVCeRA6StabAFif%2FZk8LLyE5IifncNhvrcDehEEcBvzofV%2BA66iCYqHriCddw8ss%2B4ogv14Pz6fKdSG%0D%0Ahp4Ub3dTjgGOkeZu1eGNEQhG0EcrWZvfAPhCFbNd0lE9QOs%2FOzb3GJUy2BnNCJ6BHoBsY41rUCo3%2BSlq2n6t7c%2Ft%2F5ynkJtwTn77w3G94tDSjqkna9c0lCAXJ7gcfZcYW7%2BV%0D%0A6xR03Tz6L0P58kxs0uFvEa%2BzufSGM4bbMWGrdnM%3D
+                        - columnheader "Credit Amount (INR)" [ref=e894] [cursor=pointer]:
+                          - link "Credit Amount (INR)" [ref=e896]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=gMCp7x0l7dTz40ymiKy4Rn0CgR9sVPXMrImSDyQQC1wdX0uCQsVCeRA6StabAFif%2FZk8LLyE5IifncNhvrcDehEEcBvzofV%2BA66iCYqHriCddw8ss%2B4ogv14Pz6fKdSG%0D%0Ahp4Ub3dTjgGOkeZu1eGNEQhG0EcrWZvfAPhCFbNd0lE9QOs%2FOzb3GJUy2BnNCJ6BHoBsY41rUCo3%2BSlq2n6t7c%2Ft%2F5ynkJtwTn77w3G94tDSjqkna9c0lCAXJ7gcfZcYW7%2BV%0D%0A6xR03Tz6L0P58kxs0uFvEa%2BzufSGM4bbMWGrdnM%3D
+                        - columnheader "Account Balance (INR)" [ref=e897] [cursor=pointer]:
+                          - link "Account Balance (INR)" [ref=e899]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=gMCp7x0l7dTz40ymiKy4Rn0CgR9sVPXMrImSDyQQC1wdX0uCQsVCeRA6StabAFif%2FZk8LLyE5IifncNhvrcDehEEcBvzofV%2BA66iCYqHriCddw8ss%2B4ogv14Pz6fKdSG%0D%0Ahp4Ub3dTjgGOkeZu1eGNEQhG0EcrWZvfAPhCFbNd0lE9QOs%2FOzb3GJUy2BnNCJ6BUOokS%2BBT0Lmm6sF5BfV6dX8IysCouxSi%2F0y%2FrhYYO4fiUHf3axhk4vMNIhJejZwssvQE%0D%0AMUpDtCcxRUksoY0%2FrUnPIEo0BdQhCUzD7Rg%2BqK9MXKAY8kgkrvskxEG%2FVL95
+                      - row "11-03-2025 09:22:59 AM 11-03-2025 MMT/IMPS/53070959902 0/RDA Vostro FIR /WI SE PAYME/HDFC Bank 1,81,888.61 31,73,528.28" [ref=e900]:
+                        - cell "11-03-2025 09:22:59 AM" [ref=e901]
+                        - cell "11-03-2025" [ref=e902]
+                        - cell [ref=e903]
+                        - cell "MMT/IMPS/53070959902 0/RDA Vostro FIR /WI SE PAYME/HDFC Bank" [ref=e904]:
+                          - link "MMT/IMPS/53070959902 0/RDA Vostro FIR /WI SE PAYME/HDFC Bank" [ref=e905] [cursor=pointer]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=0pbaBk8YEDdS1jvTs%2FDYTZAV3Svjw72qLmsxj5xiA4V08ugckz2bUMGI01DWT82gezuF7vQ0HOyFg%2FGk7P5IYSVwh3u4EWhNI%2Fh7tjXxndPWK20V4os9eusF%2BQAWVKks%0D%0As2V8XZCTg%2FBb6oUMPOg1yfGjOiOag47MvegRvDAIrz4%3D
+                            - text: MMT/IMPS/53070959902
+                            - text: 0/RDA Vostro FIR /WI
+                            - text: SE PAYME/HDFC Bank
+                        - cell [ref=e906]
+                        - cell "1,81,888.61" [ref=e907]
+                        - cell "31,73,528.28" [ref=e908]
+                      - row "11-03-2025 10:36:30 AM 11-03-2025 MMT/IMPS/53073056570 6/Payout/API Bankin 1.00 31,73,529.28" [ref=e909]:
+                        - cell "11-03-2025 10:36:30 AM" [ref=e910]
+                        - cell "11-03-2025" [ref=e911]
+                        - cell [ref=e912]
+                        - cell "MMT/IMPS/53073056570 6/Payout/API Bankin" [ref=e913]:
+                          - link "MMT/IMPS/53073056570 6/Payout/API Bankin" [ref=e914] [cursor=pointer]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=0pbaBk8YEDdS1jvTs%2FDYTZAV3Svjw72qLmsxj5xiA4V08ugckz2bUMGI01DWT82gezuF7vQ0HOyFg%2FGk7P5IYSVwh3u4EWhNI%2Fh7tjXxndPWK20V4os9eusF%2BQAWVKks%0D%0AJWJgzgwbEzsTqPHyHiK1iPGjOiOag47MvegRvDAIrz4%3D
+                            - text: MMT/IMPS/53073056570
+                            - text: 6/Payout/API Bankin
+                        - cell [ref=e915]
+                        - cell "1.00" [ref=e916]
+                        - cell "31,73,529.28" [ref=e917]
+                      - row "11-03-2025 12:43:22 PM 11-03-2025 GRS/0031GRSK25004052 2000521307JS Confi da Legal Technologie s, I~0031GRSK2500405 2 2000521307JS Conf 4,32,520.23 36,06,049.51" [ref=e918]:
+                        - cell "11-03-2025 12:43:22 PM" [ref=e919]
+                        - cell "11-03-2025" [ref=e920]
+                        - cell [ref=e921]
+                        - cell "GRS/0031GRSK25004052 2000521307JS Confi da Legal Technologie s, I~0031GRSK2500405 2 2000521307JS Conf" [ref=e922]:
+                          - link "GRS/0031GRSK25004052 2000521307JS Confi da Legal Technologie s, I~0031GRSK2500405 2 2000521307JS Conf" [ref=e923] [cursor=pointer]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=0pbaBk8YEDdS1jvTs%2FDYTZAV3Svjw72qLmsxj5xiA4V08ugckz2bUMGI01DWT82gezuF7vQ0HOyFg%2FGk7P5IYSVwh3u4EWhNI%2Fh7tjXxndPWK20V4os9eusF%2BQAWVKks%0D%0AeMxbOYN2Ofb3bpvF8VtK8fGjOiOag47MvegRvDAIrz4%3D
+                            - text: GRS/0031GRSK25004052
+                            - text: 2000521307JS Confi
+                            - text: da Legal Technologie
+                            - text: s, I~0031GRSK2500405
+                            - text: 2 2000521307JS Conf
+                        - cell [ref=e924]
+                        - cell "4,32,520.23" [ref=e925]
+                        - cell "36,06,049.51" [ref=e926]
+                      - row "11-03-2025 12:45:10 PM 11-03-2025 GRS/0031GRSK25004052 Slab CGST~0031GRSK2 5004052 Sl 239.63 36,05,809.88" [ref=e927]:
+                        - cell "11-03-2025 12:45:10 PM" [ref=e928]
+                        - cell "11-03-2025" [ref=e929]
+                        - cell [ref=e930]
+                        - cell "GRS/0031GRSK25004052 Slab CGST~0031GRSK2 5004052 Sl" [ref=e931]:
+                          - link "GRS/0031GRSK25004052 Slab CGST~0031GRSK2 5004052 Sl" [ref=e932] [cursor=pointer]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=0pbaBk8YEDdS1jvTs%2FDYTZAV3Svjw72qLmsxj5xiA4V08ugckz2bUMGI01DWT82gezuF7vQ0HOyFg%2FGk7P5IYSVwh3u4EWhNI%2Fh7tjXxndPWK20V4os9eusF%2BQAWVKks%0D%0ASkaRwoaQIxNmdYPtmSOdh%2FGjOiOag47MvegRvDAIrz4%3D
+                            - text: GRS/0031GRSK25004052
+                            - text: Slab CGST~0031GRSK2
+                            - text: 5004052 Sl
+                        - cell "239.63" [ref=e933]
+                        - cell [ref=e934]
+                        - cell "36,05,809.88" [ref=e935]
+                      - row "11-03-2025 12:45:11 PM 11-03-2025 GRS/0031GRSK25004052 Slab SGST~0031GRSK2 5004052 Sl 239.63 36,05,570.25" [ref=e936]:
+                        - cell "11-03-2025 12:45:11 PM" [ref=e937]
+                        - cell "11-03-2025" [ref=e938]
+                        - cell [ref=e939]
+                        - cell "GRS/0031GRSK25004052 Slab SGST~0031GRSK2 5004052 Sl" [ref=e940]:
+                          - link "GRS/0031GRSK25004052 Slab SGST~0031GRSK2 5004052 Sl" [ref=e941] [cursor=pointer]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=0pbaBk8YEDdS1jvTs%2FDYTZAV3Svjw72qLmsxj5xiA4V08ugckz2bUMGI01DWT82gezuF7vQ0HOyFg%2FGk7P5IYSVwh3u4EWhNI%2Fh7tjXxndPWK20V4os9eusF%2BQAWVKks%0D%0Ay8wQNAZQoVCqekLWJi68MPGjOiOag47MvegRvDAIrz4%3D
+                            - text: GRS/0031GRSK25004052
+                            - text: Slab SGST~0031GRSK2
+                            - text: 5004052 Sl
+                        - cell "239.63" [ref=e942]
+                        - cell [ref=e943]
+                        - cell "36,05,570.25" [ref=e944]
+                      - row "11-03-2025 04:35:27 PM 11-03-2025 NEFT-CITIN5202511034 9977519-PAYPAL PAYME NTS PL-OPGSP COLL AC -P0802LA5WHLR8A6MS2 -0521888008-CITI01 7,833.85 36,13,404.10" [ref=e945]:
+                        - cell "11-03-2025 04:35:27 PM" [ref=e946]
+                        - cell "11-03-2025" [ref=e947]
+                        - cell [ref=e948]
+                        - cell "NEFT-CITIN5202511034 9977519-PAYPAL PAYME NTS PL-OPGSP COLL AC -P0802LA5WHLR8A6MS2 -0521888008-CITI01" [ref=e949]:
+                          - link "NEFT-CITIN5202511034 9977519-PAYPAL PAYME NTS PL-OPGSP COLL AC -P0802LA5WHLR8A6MS2 -0521888008-CITI01" [ref=e950] [cursor=pointer]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=0pbaBk8YEDdS1jvTs%2FDYTZAV3Svjw72qLmsxj5xiA4V08ugckz2bUMGI01DWT82gezuF7vQ0HOyFg%2FGk7P5IYSVwh3u4EWhNI%2Fh7tjXxndPWK20V4os9eusF%2BQAWVKks%0D%0AVxq3ftcRgsrtMLttfkTRqfGjOiOag47MvegRvDAIrz4%3D
+                            - text: NEFT-CITIN5202511034
+                            - text: 9977519-PAYPAL PAYME
+                            - text: NTS PL-OPGSP COLL AC
+                            - text: "-P0802LA5WHLR8A6MS2"
+                            - text: "-0521888008-CITI01"
+                        - cell [ref=e951]
+                        - cell "7,833.85" [ref=e952]
+                        - cell "36,13,404.10" [ref=e953]
+                      - row "11-03-2025 11:01:06 PM 11-03-2025 NEFT-SBINN5202511030 6223470-VALIDUS APPA RATUS LLP-/ATTN//INB //ELEC JUL-000000441 82212090-SBIN001051 24,387.00 36,37,791.10" [ref=e954]:
+                        - cell "11-03-2025 11:01:06 PM" [ref=e955]
+                        - cell "11-03-2025" [ref=e956]
+                        - cell [ref=e957]
+                        - cell "NEFT-SBINN5202511030 6223470-VALIDUS APPA RATUS LLP-/ATTN//INB //ELEC JUL-000000441 82212090-SBIN001051" [ref=e958]:
+                          - link "NEFT-SBINN5202511030 6223470-VALIDUS APPA RATUS LLP-/ATTN//INB //ELEC JUL-000000441 82212090-SBIN001051" [ref=e959] [cursor=pointer]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=0pbaBk8YEDdS1jvTs%2FDYTZAV3Svjw72qLmsxj5xiA4V08ugckz2bUMGI01DWT82gezuF7vQ0HOyFg%2FGk7P5IYSVwh3u4EWhNI%2Fh7tjXxndPWK20V4os9eusF%2BQAWVKks%0D%0AGTYqDIrfMJHLjwwBeSxk1PGjOiOag47MvegRvDAIrz4%3D
+                            - text: NEFT-SBINN5202511030
+                            - text: 6223470-VALIDUS APPA
+                            - text: RATUS LLP-/ATTN//INB
+                            - text: //ELEC JUL-000000441
+                            - text: 82212090-SBIN001051
+                        - cell [ref=e960]
+                        - cell "24,387.00" [ref=e961]
+                        - cell "36,37,791.10" [ref=e962]
+                      - row "11-04-2025 09:12:41 PM 11-04-2025 MMT/IMPS/53082153589 8/RDA Vostro FIR /NI UM PTE L/HDFC Bank 1,04,037.60 37,41,828.70" [ref=e963]:
+                        - cell "11-04-2025 09:12:41 PM" [ref=e964]
+                        - cell "11-04-2025" [ref=e965]
+                        - cell [ref=e966]
+                        - cell "MMT/IMPS/53082153589 8/RDA Vostro FIR /NI UM PTE L/HDFC Bank" [ref=e967]:
+                          - link "MMT/IMPS/53082153589 8/RDA Vostro FIR /NI UM PTE L/HDFC Bank" [ref=e968] [cursor=pointer]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=0pbaBk8YEDdS1jvTs%2FDYTZAV3Svjw72qLmsxj5xiA4V08ugckz2bUMGI01DWT82gezuF7vQ0HOyFg%2FGk7P5IYSVwh3u4EWhNI%2Fh7tjXxndPWK20V4os9eusF%2BQAWVKks%0D%0Ab%2FbalRT1tOXy%2BN%2FGmrYW4fGjOiOag47MvegRvDAIrz4%3D
+                            - text: MMT/IMPS/53082153589
+                            - text: 8/RDA Vostro FIR /NI
+                            - text: UM PTE L/HDFC Bank
+                        - cell [ref=e969]
+                        - cell "1,04,037.60" [ref=e970]
+                        - cell "37,41,828.70" [ref=e971]
+                      - row "11-06-2025 02:34:11 PM 11-06-2025 NEFT-INDBN5202511060 8569472-FORT KNOX ME RCHANDISING PVT LTD- ELEC SEP 25-20099985 9539-INDB0000006 23,783.12 37,65,611.82" [ref=e972]:
+                        - cell "11-06-2025 02:34:11 PM" [ref=e973]
+                        - cell "11-06-2025" [ref=e974]
+                        - cell [ref=e975]
+                        - cell "NEFT-INDBN5202511060 8569472-FORT KNOX ME RCHANDISING PVT LTD- ELEC SEP 25-20099985 9539-INDB0000006" [ref=e976]:
+                          - link "NEFT-INDBN5202511060 8569472-FORT KNOX ME RCHANDISING PVT LTD- ELEC SEP 25-20099985 9539-INDB0000006" [ref=e977] [cursor=pointer]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=0pbaBk8YEDdS1jvTs%2FDYTZAV3Svjw72qLmsxj5xiA4V08ugckz2bUMGI01DWT82gezuF7vQ0HOyFg%2FGk7P5IYSVwh3u4EWhNI%2Fh7tjXxndPWK20V4os9eusF%2BQAWVKks%0D%0ALwPodhGTOIUhH2%2Bj6nm4%2BvGjOiOag47MvegRvDAIrz4%3D
+                            - text: NEFT-INDBN5202511060
+                            - text: 8569472-FORT KNOX ME
+                            - text: RCHANDISING PVT LTD-
+                            - text: ELEC SEP 25-20099985
+                            - text: 9539-INDB0000006
+                        - cell [ref=e978]
+                        - cell "23,783.12" [ref=e979]
+                        - cell "37,65,611.82" [ref=e980]
+                      - row "11-06-2025 04:36:47 PM 11-06-2025 NEFT-CITIN5202511065 1595132-PAYPAL PAYME NTS PL-OPGSP COLL AC -P0802LA5WHLR8A6MS2 -0521888008-CITI01 20,971.90 37,86,583.72" [ref=e981]:
+                        - cell "11-06-2025 04:36:47 PM" [ref=e982]
+                        - cell "11-06-2025" [ref=e983]
+                        - cell [ref=e984]
+                        - cell "NEFT-CITIN5202511065 1595132-PAYPAL PAYME NTS PL-OPGSP COLL AC -P0802LA5WHLR8A6MS2 -0521888008-CITI01" [ref=e985]:
+                          - link "NEFT-CITIN5202511065 1595132-PAYPAL PAYME NTS PL-OPGSP COLL AC -P0802LA5WHLR8A6MS2 -0521888008-CITI01" [ref=e986] [cursor=pointer]:
+                            - /url: FinacleRiaRequest;jsessionid=00003hzM39r41PQNUSnfjgiYJaS:81CIBNXAPPE?bwayparam=0pbaBk8YEDdS1jvTs%2FDYTZAV3Svjw72qLmsxj5xiA4V08ugckz2bUMGI01DWT82gezuF7vQ0HOyFg%2FGk7P5IYSVwh3u4EWhNI%2Fh7tjXxndPWK20V4os9eusF%2BQAWVKks%0D%0Abeujb65V06blVR8Z8XdhysiEBhTw2iDcJXhPk8gMW2Y%3D
+                            - text: NEFT-CITIN5202511065
+                            - text: 1595132-PAYPAL PAYME
+                            - text: NTS PL-OPGSP COLL AC
+                            - text: "-P0802LA5WHLR8A6MS2"
+                            - text: "-0521888008-CITI01"
+                        - cell [ref=e987]
+                        - cell "20,971.90" [ref=e988]
+                        - cell "37,86,583.72" [ref=e989]
+                  - generic [ref=e991]:
+                    - paragraph [ref=e993]: Displaying 1-10 of 55 results
+                    - list [ref=e994]:
+                      - listitem [ref=e995] [cursor=pointer]:
+                        - list [ref=e996]:
+                          - listitem [ref=e997]:
+                            - button "1" [ref=e998]
+                          - listitem [ref=e999]:
+                            - button "2" [ref=e1000]
+                          - listitem [ref=e1001]:
+                            - button "3" [ref=e1002]
+                      - listitem [ref=e1003] [cursor=pointer]:
+                        - generic [ref=e1004]: 
+                        - button "Prev" [disabled] [ref=e1005]
+                      - listitem [ref=e1006] [cursor=pointer]:
+                        - button "Next" [ref=e1007]
+                        - generic [ref=e1008]: 
+                      - listitem [ref=e1009]:
+                        - generic [ref=e1010]: "Go to Page:"
+                      - listitem [ref=e1011] [cursor=pointer]:
+                        - textbox [ref=e1012]
+                      - listitem [ref=e1013]:
+                        - button "Go" [ref=e1014] [cursor=pointer]
+          - paragraph [ref=e1016]:
+            - button "DOWNLOAD PDF" [ref=e1018] [cursor=pointer]
+        - paragraph
+      - paragraph [ref=e310]
+  - status [ref=e312]
+  - status [ref=e313]
+  - status [ref=e314]
+  - status [ref=e315]
+  - tooltip [ref=e319]:
+    - button [ref=e323] [cursor=pointer]:
+      - generic [ref=e324]:
+        - generic:
+          - img
+        - img [ref=e328]
+      - generic [ref=e332]: Guided tour
+  - status [ref=e1019]
+  - status [ref=e1020]
+```

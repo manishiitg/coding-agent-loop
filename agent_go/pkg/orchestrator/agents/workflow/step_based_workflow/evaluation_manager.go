@@ -347,6 +347,7 @@ func (em *EvaluationManager) createEvaluationAgent(ctx context.Context, phase st
 		phase,
 		step,
 		iteration,
+		phase, // stepID (use phase name for phase-only agents)
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewHumanControlledEvaluationAgent(cfg, logger, tracer, eventBridge)
 		},

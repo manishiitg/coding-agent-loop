@@ -3,6 +3,7 @@ package step_based_workflow
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -48,9 +49,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 
 	// Set folder guard paths:
 	// READ: step-specific learnings folder + execution folder (to read previous step results) + knowledgebase folder
-	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + knowledgebase folder to prevent writing to other steps
+	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + knowledgebase folder + execution/Downloads folder to prevent writing to other steps
 	// Use getExecutionFolderPath to support both regular and branch steps
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
 	readPaths = []string{stepLearningsPath, executionWorkspacePath, knowledgebasePath}
 
 	// Check if TARGET_RUN_PATH variable is set (used for evaluation) and add to read paths
@@ -60,7 +62,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 		hcpo.GetLogger().Info(fmt.Sprintf("🔓 Added TARGET_RUN_PATH to read paths for evaluation: %s", targetRunPath))
 	}
 
-	writePaths = []string{stepFolderPath, knowledgebasePath}
+	writePaths = []string{stepFolderPath, knowledgebasePath, downloadsPath}
 	return readPaths, writePaths
 }
 
@@ -724,7 +726,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// 2. Setup folder guard (extracted method) - uses step-specific learnings folder
 	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, stepID)
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for execution-only agent - Read paths: %v, Write paths: %v (can read learnings/%s/ and execution/, can only write to %s)", readPaths, writePaths, stepID, stepPath))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for execution-only agent - Read paths: %v, Write paths: %v (can read learnings/%s/ and execution/, can write to %s and execution/Downloads/)", readPaths, writePaths, stepID, stepPath))
 
 	// 3. Determine settings (extracted methods)
 	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
@@ -743,6 +745,58 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// 4. Create config
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 
+	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	// Only create Downloads folder and configure Playwright if playwright MCP server is available
+	selectedServers := hcpo.GetSelectedServers()
+	isPlaywrightAvailable := false
+	for _, server := range selectedServers {
+		if server == "playwright" {
+			isPlaywrightAvailable = true
+			break
+		}
+	}
+
+	if isPlaywrightAvailable {
+		// Route playwright downloads to execution/Downloads folder in the run directory
+		workspacePath := hcpo.GetWorkspacePath()
+
+		// Build the relative path to Downloads folder
+		// If run folder is selected: "runs/{runFolder}/execution/Downloads"
+		// Otherwise: "execution/Downloads"
+		var downloadsRelativePath string
+		if hcpo.selectedRunFolder != "" {
+			downloadsRelativePath = filepath.Join("runs", hcpo.selectedRunFolder, "execution", "Downloads")
+		} else {
+			downloadsRelativePath = filepath.Join("execution", "Downloads")
+		}
+
+		// Create folder via Workspace API with workspacePath for normalization
+		if err := createFolderViaAPI(ctx, downloadsRelativePath, workspacePath); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create downloads directory via API %s: %v", downloadsRelativePath, err))
+		}
+
+		// Resolve to absolute path for Playwright MCP server configuration
+		fullDownloadsPath := filepath.Join(workspacePath, downloadsRelativePath)
+		absDownloadsPath, absErr := filepath.Abs(fullDownloadsPath)
+		if absErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to resolve absolute path for downloads %s: %v, using relative path", fullDownloadsPath, absErr))
+			absDownloadsPath = fullDownloadsPath
+		}
+
+		// Configure Playwright to use the downloads path
+		if config.RuntimeOverrides == nil {
+			config.RuntimeOverrides = make(mcpclient.RuntimeOverrides)
+		}
+		playwrightOverride := config.RuntimeOverrides["playwright"]
+		if playwrightOverride.ArgsReplace == nil {
+			playwrightOverride.ArgsReplace = make(map[string]string)
+		}
+		playwrightOverride.ArgsReplace["--output-dir"] = absDownloadsPath
+		config.RuntimeOverrides["playwright"] = playwrightOverride
+
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Configured Playwright downloads path to: %s", absDownloadsPath))
+	}
+
 	// Apply step-specific overrides
 	hcpo.applyStepConfigToAgentConfig(config, stepConfig, isCodeExecutionMode)
 
@@ -757,6 +811,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		phase,
 		pathInfo.ParentStepNumber-1, // 0-based step number
 		0,                           // iteration
+		stepID,                      // Step ID (resolved from step path)
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowExecutionOnlyAgent(cfg, logger, tracer, eventBridge)
 		},
@@ -803,7 +858,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 }
 
 // createValidationAgent creates a validation agent for the current iteration
-func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Context, phase string, step int, agentName string, stepConfig *AgentConfigs) (agents.OrchestratorAgent, error) {
+func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Context, phase string, step int, stepID string, agentName string, stepConfig *AgentConfigs) (agents.OrchestratorAgent, error) {
 	// 1. Setup folder guard (read-only for validation agents)
 	readPaths, writePaths := hcpo.setupValidationFolderGuard()
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
@@ -838,7 +893,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Con
 		config,
 		phase,
 		step,
-		0, // iteration
+		0,      // iteration
+		stepID, // Step ID
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowValidationAgent(cfg, logger, tracer, eventBridge)
 		},
@@ -936,7 +992,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 		config,
 		phase,
 		stepNumberForContext,
-		0, // iteration (not used for learning agents)
+		0,      // iteration (not used for learning agents)
+		stepID, // Step ID
 		createAgentFunc,
 		toolsToRegister,
 		executorsToUse,
@@ -1102,6 +1159,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 		phase,
 		step,
 		iteration,
+		stepID, // Step ID
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowConditionalAgent(cfg, logger, tracer, eventBridge)
 		},
@@ -1126,7 +1184,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 // createOrchestrationOrchestratorAgent creates an orchestration orchestrator agent using the standard factory pattern
 // This agent executes the main orchestration step (orchestration and delegation, not direct execution)
 // Note: Folder guard paths should be set by the caller before calling this function (see controller_orchestration.go)
-func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, orchestrationLLMConfig *orchestrator.LLMConfig) (agents.OrchestratorAgent, error) {
+func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(ctx context.Context, phase string, step, iteration int, stepID string, agentName string, stepConfig *AgentConfigs, orchestrationLLMConfig *orchestrator.LLMConfig) (agents.OrchestratorAgent, error) {
 	// Orchestration orchestrator agent needs folder guard (can write files)
 	// Note: Folder guard is set by caller in controller_orchestration.go before agent creation
 	// We apply it to the agent here via post-setup
@@ -1245,6 +1303,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 		phase,
 		step,
 		iteration,
+		stepID, // Step ID
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowOrchestrationOrchestratorAgent(cfg, logger, tracer, eventBridge)
 		},
@@ -1315,8 +1374,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 		ctx,
 		config,
 		phase,
-		0, // step (not used for scoring agents)
-		0, // iteration (not used for scoring agents)
+		0,     // step (not used for scoring agents)
+		0,     // iteration (not used for scoring agents)
+		phase, // stepID (use phase name for phase-only agents)
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowEvaluationScoringAgent(cfg, logger, tracer, eventBridge)
 		},
@@ -1453,6 +1513,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationLearningAgent(ctx 
 		phase,
 		stepIndex, // Use stepIndex for proper token tracking
 		0,         // iteration (not used for learning agents)
+		stepID,    // Step ID
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowOrchestrationLearningAgent(cfg, logger, tracer, eventBridge)
 		},

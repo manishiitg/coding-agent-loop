@@ -152,7 +152,7 @@ func calculatePricingFromModelData(modelData *ModelTokenData) (inputCost, output
 }
 
 // GetStepTokenUsage reads token usage from file for a specific step (aggregated across all models)
-func (bo *BaseOrchestrator) GetStepTokenUsage(phase string, step int) *StepTokenUsage {
+func (bo *BaseOrchestrator) GetStepTokenUsage(phase string, step int, stepID string) *StepTokenUsage {
 	if bo.iterationFolder == "" {
 		return &StepTokenUsage{}
 	}
@@ -171,7 +171,13 @@ func (bo *BaseOrchestrator) GetStepTokenUsage(phase string, step int) *StepToken
 		return &StepTokenUsage{}
 	}
 
-	stepKey := fmt.Sprintf("%s:%d", phase, step)
+	// Use stepID if available (new format), otherwise fall back to numeric index (old format)
+	var stepKey string
+	if stepID != "" {
+		stepKey = fmt.Sprintf("%s:%s", phase, stepID)
+	} else {
+		stepKey = fmt.Sprintf("%s:%d", phase, step)
+	}
 	modelMap, exists := tokenFile.ByStepAndModel[stepKey]
 	if !exists || modelMap == nil {
 		return &StepTokenUsage{}
@@ -204,9 +210,9 @@ func (bo *BaseOrchestrator) GetStepTokenUsage(phase string, step int) *StepToken
 
 // EmitStepTokenUsage reads token usage from file and emits a step token usage summary event
 // Aggregates tokens across all models used in the step
-func (bo *BaseOrchestrator) EmitStepTokenUsage(ctx context.Context, phase string, step int, stepTitle string, clearAfterEmit bool) {
+func (bo *BaseOrchestrator) EmitStepTokenUsage(ctx context.Context, phase string, step int, stepID string, stepTitle string, clearAfterEmit bool) {
 	if bo.iterationFolder == "" {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ No iteration folder, cannot read token usage for step %s:%d", phase, step))
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ No iteration folder, cannot read token usage for step %s:%s", phase, stepID))
 		return
 	}
 
@@ -216,7 +222,7 @@ func (bo *BaseOrchestrator) EmitStepTokenUsage(ctx context.Context, phase string
 
 	existingContent, err := bo.ReadWorkspaceFile(ctx, filePath)
 	if err != nil || existingContent == "" {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ No token usage file found for step %s:%d", phase, step))
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ No token usage file found for step %s:%s", phase, stepID))
 		return
 	}
 
@@ -227,10 +233,16 @@ func (bo *BaseOrchestrator) EmitStepTokenUsage(ctx context.Context, phase string
 	}
 
 	// Find step data and aggregate across all models
-	stepKey := fmt.Sprintf("%s:%d", phase, step)
+	// Use stepID if available (new format), otherwise fall back to numeric index (old format)
+	var stepKey string
+	if stepID != "" {
+		stepKey = fmt.Sprintf("%s:%s", phase, stepID)
+	} else {
+		stepKey = fmt.Sprintf("%s:%d", phase, step)
+	}
 	modelMap, exists := tokenFile.ByStepAndModel[stepKey]
 	if !exists || modelMap == nil || len(modelMap) == 0 {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ No token usage data found for step %s:%d", phase, step))
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ No token usage data found for step %s (key: %s)", stepTitle, stepKey))
 		return
 	}
 
@@ -281,8 +293,8 @@ func (bo *BaseOrchestrator) EmitStepTokenUsage(ctx context.Context, phase string
 
 	bo.emitEvent(ctx, events.StepTokenUsage, stepTokenEvent)
 
-	bo.GetLogger().Info(fmt.Sprintf("📊 Emitted step token usage for %s:%d - Input: %d, Output: %d, Cache: %d, Reasoning: %d, Calls: %d, Cost: $%.4f, Context: %.1f%%",
-		phase, step, inputTokens, outputTokens, cacheTokens, reasoningTokens, llmCallCount, totalCost, maxContextUsagePercent))
+	bo.GetLogger().Info(fmt.Sprintf("📊 Emitted step token usage for %s:%s (%s) - Input: %d, Output: %d, Cache: %d, Reasoning: %d, Calls: %d, Cost: $%.4f, Context: %.1f%%",
+		phase, stepID, stepTitle, inputTokens, outputTokens, cacheTokens, reasoningTokens, llmCallCount, totalCost, maxContextUsagePercent))
 }
 
 // GetModelTokenUsage reads token usage from file for a specific model
@@ -337,7 +349,7 @@ func (bo *BaseOrchestrator) GetAllModelTokenUsage() map[string]*ModelTokenUsage 
 }
 
 // GetStepModelTokenUsage reads token usage from file for a specific step and model
-func (bo *BaseOrchestrator) GetStepModelTokenUsage(phase string, step int, modelID string) *ModelTokenUsage {
+func (bo *BaseOrchestrator) GetStepModelTokenUsage(phase string, step int, stepID string, modelID string) *ModelTokenUsage {
 	if bo.iterationFolder == "" {
 		return &ModelTokenUsage{}
 	}
@@ -356,7 +368,13 @@ func (bo *BaseOrchestrator) GetStepModelTokenUsage(phase string, step int, model
 		return &ModelTokenUsage{}
 	}
 
-	stepKey := fmt.Sprintf("%s:%d", phase, step)
+	// Use stepID if available (new format), otherwise fall back to numeric index (old format)
+	var stepKey string
+	if stepID != "" {
+		stepKey = fmt.Sprintf("%s:%s", phase, stepID)
+	} else {
+		stepKey = fmt.Sprintf("%s:%d", phase, step)
+	}
 	if tokenFile.ByStepAndModel == nil {
 		return &ModelTokenUsage{}
 	}
@@ -375,7 +393,7 @@ func (bo *BaseOrchestrator) GetStepModelTokenUsage(phase string, step int, model
 }
 
 // GetStepModels reads all models used in a specific step from file
-func (bo *BaseOrchestrator) GetStepModels(phase string, step int) map[string]*ModelTokenUsage {
+func (bo *BaseOrchestrator) GetStepModels(phase string, step int, stepID string) map[string]*ModelTokenUsage {
 	if bo.iterationFolder == "" {
 		return make(map[string]*ModelTokenUsage)
 	}
@@ -394,7 +412,13 @@ func (bo *BaseOrchestrator) GetStepModels(phase string, step int) map[string]*Mo
 		return make(map[string]*ModelTokenUsage)
 	}
 
-	stepKey := fmt.Sprintf("%s:%d", phase, step)
+	// Use stepID if available (new format), otherwise fall back to numeric index (old format)
+	var stepKey string
+	if stepID != "" {
+		stepKey = fmt.Sprintf("%s:%s", phase, stepID)
+	} else {
+		stepKey = fmt.Sprintf("%s:%d", phase, step)
+	}
 	if tokenFile.ByStepAndModel == nil {
 		return make(map[string]*ModelTokenUsage)
 	}
@@ -625,7 +649,13 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 
 	// Store step+model token data if both stepTokenData and modelTokenData are provided
 	if stepTokenData != nil && modelTokenData != nil {
-		stepKey := fmt.Sprintf("%s:%d", stepTokenData.Phase, stepTokenData.Step)
+		// Use StepID if available (new format), otherwise fall back to step index (old format)
+		var stepKey string
+		if stepTokenData.StepID != "" {
+			stepKey = fmt.Sprintf("%s:%s", stepTokenData.Phase, stepTokenData.StepID)
+		} else {
+			stepKey = fmt.Sprintf("%s:%d", stepTokenData.Phase, stepTokenData.Step)
+		}
 		modelID := modelTokenData.ModelID
 
 		// Initialize step map if it doesn't exist

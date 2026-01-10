@@ -36,7 +36,12 @@ const getModeName = (category: string) => {
  */
 export const ModePresetBar: React.FC = () => {
   const { selectedModeCategory, setModeCategory, getAgentModeFromCategory } = useModeStore()
-  const enabledServers = useMCPStore(state => state.enabledServers)
+  // Use toolList to get all available servers, not just enabled ones
+  const toolList = useMCPStore(state => state.toolList)
+  const availableServers = React.useMemo(() => 
+    [...new Set(toolList.map(t => t.server).filter(Boolean) as string[])],
+    [toolList]
+  )
   
   // Use the new global preset store
   const { 
@@ -367,7 +372,7 @@ export const ModePresetBar: React.FC = () => {
                       {/* Preset Dropdown */}
                       {showPresetDropdown && (
                         <div className="preset-dropdown absolute top-full left-0 mt-1 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-50">
-                          <div className="p-2 space-y-1">
+                          <div className="p-2 space-y-1 max-h-96 overflow-y-auto">
                             {/* No Preset Option - only show for chat mode */}
                             {selectedModeCategory === 'chat' && (
                               <button
@@ -518,7 +523,7 @@ export const ModePresetBar: React.FC = () => {
         onClose={handleClosePresetModal}
         onSave={handleSavePreset}
         editingPreset={editingPreset}
-        availableServers={enabledServers}
+        availableServers={availableServers}
         hideAgentModeSelection={!!editingPreset}
         fixedAgentMode={editingPreset?.agentMode || (selectedModeCategory ? (getAgentModeFromCategory(selectedModeCategory) as 'simple' | 'workflow') : undefined)}
       />

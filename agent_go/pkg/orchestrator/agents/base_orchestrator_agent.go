@@ -138,9 +138,10 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.EnableContextEditing, // Context editing configuration
 		boa.config.ContextEditingThreshold,
 		boa.config.ContextEditingTurnThreshold,
-		&boa.config.LLMConfig,   // Pass LLMConfig
-		boa.config.APIKeys,      // Pass API keys
-		boa.config.MCPSessionID, // MCP session ID for connection sharing
+		&boa.config.LLMConfig,        // Pass LLMConfig
+		boa.config.APIKeys,          // Pass API keys
+		boa.config.MCPSessionID,     // MCP session ID for connection sharing
+		boa.config.RuntimeOverrides, // Runtime config overrides for MCP servers
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create base agent: %w", err)

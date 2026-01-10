@@ -116,7 +116,9 @@ func ExecuteShellCommand(c *gin.Context) {
 		}
 
 		var err error
-		cmd, cleanup, err = isolator.ExecuteIsolated(ctx, "sh", []string{"-c", fullCommand})
+		// Pass the command directly - generateMountScript already wraps with "exec sh -c '...'"
+		// Do NOT double-wrap with "sh -c" here, as that causes shell argument parsing issues
+		cmd, cleanup, err = isolator.ExecuteIsolated(ctx, fullCommand, nil)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 				Success: false,

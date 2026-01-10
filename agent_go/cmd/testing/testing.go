@@ -78,4 +78,5 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(readSecureAccessTestCmd)
 	TestingCmd.AddCommand(workspaceDiffJSONTestCmd)
 	TestingCmd.AddCommand(shellSecurityTestCmd)
+	TestingCmd.AddCommand(shellOutputTestCmd)
 }

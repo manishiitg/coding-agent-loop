@@ -16,12 +16,10 @@ interface BedrockSectionProps {
   onTestAPIKey: (apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => void
   apiKeyStatus: APIKeyStatusValue
   apiKeyError: string | null
-  isPrimary: boolean
-  onSetPrimary: () => void
   metadata?: ModelMetadata[]
 }
 
-export function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, metadata }: BedrockSectionProps) {
+export function BedrockSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, metadata }: BedrockSectionProps) {
   const [region, setRegion] = useState(config.region || 'us-east-1')
   const [newCustomModel, setNewCustomModel] = useState('')
   const [isPublishing, setIsPublishing] = useState(false)

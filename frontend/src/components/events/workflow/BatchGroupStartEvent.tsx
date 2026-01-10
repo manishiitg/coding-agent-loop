@@ -9,18 +9,16 @@ interface BatchGroupStartEventProps {
 }
 
 export const BatchGroupStartEvent: React.FC<BatchGroupStartEventProps> = ({ event, compact = false }) => {
-  const setCurrentRunningGroupId = useWorkflowStore(state => state.setCurrentRunningGroupId)
+  // Use consolidated handler for batch group switching (single source of truth)
+  const handleBatchGroupStart = useWorkflowStore(state => state.handleBatchGroupStart)
 
   // Update store when this event is displayed
   useEffect(() => {
-    if (event.group_id) {
-      setCurrentRunningGroupId(event.group_id)
+    if (event.group_id && event.run_folder) {
+      // Use consolidated handler - handles currentRunningGroupId, selectedRunFolder, and normalization
+      handleBatchGroupStart(event.group_id, event.run_folder, event.workspace_path)
     }
-    // Clear when component unmounts (event is replaced)
-    return () => {
-      // Don't clear here - let batch_group_end handle it
-    }
-  }, [event.group_id, setCurrentRunningGroupId])
+  }, [event.group_id, event.run_folder, event.workspace_path, handleBatchGroupStart])
   if (compact) {
     return (
       <div className="p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded">

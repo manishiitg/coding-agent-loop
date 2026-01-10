@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Server, ChevronDown, Check, Settings, Info } from 'lucide-react';
+import { Server, ChevronDown, Check, Settings } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Checkbox } from './ui/checkbox';
 import { Card } from './ui/Card';

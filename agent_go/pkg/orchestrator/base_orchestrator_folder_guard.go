@@ -95,12 +95,9 @@ func (bo *BaseOrchestrator) EnhanceToolDescriptionWithFolderGuard(toolName, orig
 			if len(bo.folderGuardWritePaths) > 0 {
 				accessInfo.WriteString("\n\n⚠️ **IMPORTANT:** You can ONLY write to these directories. All file paths in your tool calls must be within these directories:\n")
 				accessInfo.WriteString(strings.Join(bo.folderGuardWritePaths, "\n"))
-				accessInfo.WriteString("\n\n✅ **SPECIAL ACCESS:** The 'Downloads/' folder is always accessible for both read and write operations, regardless of restrictions.")
-				accessInfo.WriteString("\n\nUse ONLY these directories (or Downloads/) when calling this tool. Paths outside these directories will be rejected.")
+				accessInfo.WriteString("\n\nUse ONLY these directories when calling this tool. Paths outside these directories will be rejected.")
 			} else {
 				accessInfo.WriteString("\n\n⚠️ **RESTRICTED:** You have NO write access to restricted directories.")
-				accessInfo.WriteString("\n\n✅ **SPECIAL ACCESS:** The 'Downloads/' folder is always accessible for both read and write operations.")
-				accessInfo.WriteString("\n\nYou can ONLY use the Downloads/ folder when calling this tool.")
 			}
 		} else if isReadOnly {
 			// Read operations can use both readPaths AND writePaths
@@ -120,12 +117,9 @@ func (bo *BaseOrchestrator) EnhanceToolDescriptionWithFolderGuard(toolName, orig
 			if len(allowedPaths) > 0 {
 				accessInfo.WriteString("\n\n⚠️ **IMPORTANT:** You can ONLY read from these directories. All file/folder paths in your tool calls must be within these directories:\n")
 				accessInfo.WriteString(strings.Join(allowedPaths, "\n"))
-				accessInfo.WriteString("\n\n✅ **SPECIAL ACCESS:** The 'Downloads/' folder is always accessible for both read and write operations, regardless of restrictions.")
-				accessInfo.WriteString("\n\nUse ONLY these directories (or Downloads/) when calling this tool. Paths outside these directories will be rejected.")
+				accessInfo.WriteString("\n\nUse ONLY these directories when calling this tool. Paths outside these directories will be rejected.")
 			} else {
 				accessInfo.WriteString("\n\n⚠️ **RESTRICTED:** You have NO read access to restricted directories.")
-				accessInfo.WriteString("\n\n✅ **SPECIAL ACCESS:** The 'Downloads/' folder is always accessible for both read and write operations.")
-				accessInfo.WriteString("\n\nYou can ONLY use the Downloads/ folder when calling this tool.")
 			}
 		} else {
 			// Unknown tool type - show both read and write paths
@@ -139,12 +133,9 @@ func (bo *BaseOrchestrator) EnhanceToolDescriptionWithFolderGuard(toolName, orig
 					accessInfo.WriteString("\n**Write access:**\n")
 					accessInfo.WriteString(strings.Join(bo.folderGuardWritePaths, "\n"))
 				}
-				accessInfo.WriteString("\n\n✅ **SPECIAL ACCESS:** The 'Downloads/' folder is always accessible for both read and write operations, regardless of restrictions.")
-				accessInfo.WriteString("\n\nUse ONLY these directories (or Downloads/) when calling this tool. Paths outside these directories will be rejected.")
+				accessInfo.WriteString("\n\nUse ONLY these directories when calling this tool. Paths outside these directories will be rejected.")
 			} else {
 				accessInfo.WriteString("\n\n⚠️ **RESTRICTED:** You have NO access to restricted directories.")
-				accessInfo.WriteString("\n\n✅ **SPECIAL ACCESS:** The 'Downloads/' folder is always accessible for both read and write operations.")
-				accessInfo.WriteString("\n\nYou can ONLY use the Downloads/ folder when calling this tool.")
 			}
 		}
 	} else {
@@ -152,8 +143,7 @@ func (bo *BaseOrchestrator) EnhanceToolDescriptionWithFolderGuard(toolName, orig
 		if workspacePath != "" {
 			accessInfo.WriteString("\n\n⚠️ **IMPORTANT:** You can ONLY access files within this workspace directory:\n")
 			accessInfo.WriteString(workspacePath)
-			accessInfo.WriteString("\n\n✅ **SPECIAL ACCESS:** The 'Downloads/' folder is always accessible for both read and write operations, regardless of workspace restrictions.")
-			accessInfo.WriteString("\n\nUse ONLY paths within this workspace (or Downloads/) when calling this tool.")
+			accessInfo.WriteString("\n\nUse ONLY paths within this workspace when calling this tool.")
 		} else {
 			// No restrictions - don't add confusing message
 			return originalDescription

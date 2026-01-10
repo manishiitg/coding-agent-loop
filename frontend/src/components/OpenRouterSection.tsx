@@ -14,12 +14,10 @@ interface OpenRouterSectionProps {
   onTestAPIKey: (apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => void
   apiKeyStatus: 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
   apiKeyError: string | null
-  isPrimary: boolean
-  onSetPrimary: () => void
   metadata?: ModelMetadata[]
 }
 
-export function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, metadata }: OpenRouterSectionProps) {
+export function OpenRouterSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, metadata }: OpenRouterSectionProps) {
   const [apiKey, setApiKey] = useState(config.api_key || '')
   const [customModelInput, setCustomModelInput] = useState('')
   const [customModels, setCustomModels] = useState<string[]>(() => {

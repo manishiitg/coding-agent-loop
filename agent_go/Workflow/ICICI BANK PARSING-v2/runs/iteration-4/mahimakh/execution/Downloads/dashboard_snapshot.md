@@ -1,0 +1,150 @@
+### New console messages
+- [LOG] {bankId: ICI, fedId: 4070228708, userId: 525248295} @ https://retailnetbanking.icici.bank.in/8...
+- [LOG] ----Printing Propositions---- @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9...
+- [LOG] [] @ https://assets.adobedtm.com/4a0c5698386a/fe6a6513b964/launch-9a4d3a473b7f.min.js:10
+- [ERROR] Access to font at 'https://www.icicibank.com/content/dam/icicibank/new_rib/font/mulish-v13-l...
+- [ERROR] Failed to load resource: net::ERR_FAILED @ https://www.icicibank.com/content/dam/icicibank/n...
+- [LOG] Dynatrace: Ending action "loadtime measurement - postlogin - overview" @ https://retailnetbank...
+- [LOG] 2026-01-10T10:34:19.375Z time at leave action @ https://retailnetbanking.icici.bank.in/main.63...
+- [LOG] Dynatrace: Ending action ID "48" @ https://retailnetbanking.icici.bank.in/main.63974970287913d...
+- [ERROR] TypeError: Cannot set properties of undefined (setting 'data')
+    at e.updateChart (https:/...
+- [ERROR] TypeError: Cannot set properties of undefined (setting 'activeClass')
+    at Object.next (ht...
+- [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://retailnetban...
+- [LOG] [Records not present in CUSO Table] @ https://retailnetbanking.icici.bank.in/826.9f691274a4463...
+- [LOG] logged in get @ https://retailnetbanking.icici.bank.in/main.63974970287913dc.js:0
+- [LOG] logged in get @ https://retailnetbanking.icici.bank.in/main.63974970287913dc.js:0
+
+### Open tabs
+- 0: [Net Banking] (https://www.icici.bank.in/personal-banking/ways-to-bank/net-banking)
+- 1: (current) [ICICI Bank- Net Banking] (https://retailnetbanking.icici.bank.in/overview)
+
+### Page state
+- Page URL: https://retailnetbanking.icici.bank.in/overview
+- Page Title: ICICI Bank- Net Banking
+- Page Snapshot:
+```yaml
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - generic [ref=e210]:
+      - paragraph [ref=e212] [cursor=pointer]: Call Us 1800 1080
+      - paragraph [ref=e215] [cursor=pointer]: View Demo
+      - generic [ref=e217] [cursor=pointer]:
+        - img [ref=e218]
+        - paragraph [ref=e220]: MAHIMA
+        - img [ref=e221]
+  - generic [ref=e21]:
+    - generic [ref=e225] [cursor=pointer]:
+      - generic [ref=e226]:
+        - img [ref=e227]
+        - generic [ref=e228]: Overview
+      - generic [ref=e229]:
+        - img [ref=e230]
+        - generic [ref=e231]: Accounts
+      - generic [ref=e232]:
+        - img [ref=e233]
+        - generic [ref=e234]: Payment & Transfer
+      - generic [ref=e235]:
+        - img [ref=e236]
+        - generic [ref=e237]: Deposits
+      - generic [ref=e238]:
+        - img [ref=e239]
+        - generic [ref=e240]: Cards
+      - generic [ref=e241]:
+        - img [ref=e242]
+        - generic [ref=e243]: Loans
+      - generic [ref=e244]:
+        - img [ref=e245]
+        - generic [ref=e246]: Investments
+      - generic [ref=e247]:
+        - img [ref=e248]
+        - generic [ref=e249]: Insurance
+      - generic [ref=e250]:
+        - img [ref=e251]
+        - generic [ref=e252]: Customer Service
+    - generic [ref=e118]:
+      - generic [ref=e119]:
+        - generic [ref=e122]:
+          - generic [ref=e124]:
+            - paragraph [ref=e125] [cursor=pointer]: What i have
+            - paragraph [ref=e126] [cursor=pointer]: what I owe
+          - generic [ref=e128]:
+            - generic [ref=e129]:
+              - paragraph [ref=e130]: Portfolio value
+              - img [ref=e132] [cursor=pointer]
+            - generic [ref=e253]:
+              - paragraph [ref=e255]:
+                - generic [ref=e256]:
+                  - generic [ref=e257]: ₹
+                  - text: ••••••••
+              - img [ref=e259] [cursor=pointer]
+            - generic [ref=e263]:
+              - generic:
+                - generic [ref=e264]:
+                  - generic [ref=e268] [cursor=pointer]:
+                    - paragraph [ref=e269]: accounts
+                    - paragraph [ref=e270]: ••••••••
+                  - paragraph [ref=e273] [cursor=pointer]: deposit
+                  - paragraph [ref=e276] [cursor=pointer]: investments
+                - generic "undefined 107001513784-Savings" [ref=e278] [cursor=pointer]:
+                  - generic [ref=e279]:
+                    - generic [ref=e280]:
+                      - paragraph [ref=e281]: MAHIM..
+                      - paragraph [ref=e282]: "-3784"
+                    - paragraph [ref=e283]: ••••••••
+          - generic [ref=e143]:
+            - generic [ref=e144] [cursor=pointer]:
+              - img [ref=e145]
+              - paragraph [ref=e150]: Send Money
+            - generic [ref=e151] [cursor=pointer]:
+              - img [ref=e152]
+              - paragraph [ref=e154]: View Statement
+            - generic [ref=e155] [cursor=pointer]:
+              - img [ref=e156]
+              - paragraph [ref=e159]: iShop
+          - generic [ref=e165] [cursor=pointer]:
+            - paragraph [ref=e166]: recent transactions
+            - img [ref=e167]
+        - generic [ref=e172]:
+          - generic [ref=e284]:
+            - generic [ref=e285]:
+              - paragraph [ref=e286]: "0"
+              - paragraph [ref=e287]: UPCOMING PAYMENTS
+            - img [ref=e288] [cursor=pointer]
+          - generic [ref=e184]:
+            - img [ref=e188]
+            - generic [ref=e193] [cursor=pointer]: Cibil score
+      - generic [ref=e295]:
+        - generic [ref=e296]:
+          - generic:
+            - group "1 / 5" [ref=e297]:
+              - generic [ref=e298] [cursor=pointer]:
+                - paragraph [ref=e300]: Personal Loan
+                - paragraph [ref=e301]: Get a feature-packed ICICI Bank Credit Card on the fly.
+                - paragraph [ref=e302]: APPLY NOW
+            - group "2 / 5" [ref=e303]:
+              - generic [ref=e304] [cursor=pointer]:
+                - paragraph [ref=e306]: Home Loan
+                - paragraph [ref=e307]: Get a feature-packed ICICI Bank Credit Card on the fly.
+                - paragraph [ref=e308]: APPLY NOW
+            - group "3 / 5" [ref=e309]:
+              - generic [ref=e310] [cursor=pointer]:
+                - paragraph [ref=e312]: Auto Loan
+                - paragraph [ref=e313]: Get a feature-packed ICICI Bank Credit Card on the fly.
+                - paragraph [ref=e314]: APPLY NOW
+            - group "4 / 5" [ref=e315]:
+              - generic [ref=e316] [cursor=pointer]:
+                - paragraph [ref=e318]: Credit Card
+                - paragraph [ref=e319]: Get a feature-packed ICICI Bank Credit Card on the fly.
+                - paragraph [ref=e320]: APPLY NOW
+            - group "5 / 5" [ref=e321]:
+              - generic [ref=e322] [cursor=pointer]:
+                - paragraph [ref=e324]: Two Wheeler
+                - paragraph [ref=e325]: Get a feature-packed ICICI Bank Credit Card on the fly.
+                - paragraph [ref=e326]: APPLY NOW
+        - button "Previous slide" [disabled]:
+          - img
+        - button "Next slide" [ref=e327] [cursor=pointer]:
+          - img [ref=e328]
+```

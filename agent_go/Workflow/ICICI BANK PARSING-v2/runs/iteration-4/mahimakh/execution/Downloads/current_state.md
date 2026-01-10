@@ -1,0 +1,545 @@
+### Downloads
+- Downloaded file OpTransactionHistory10-01-2026.xls to /Users/mipl/ai-work/mcp-agent-builder-go/agent_go/Workflow/ICICI BANK PARSING-v2/runs/iteration-4/mahimakh/execution/Downloads/OpTransactionHistory10-01-2026.xls
+- Downloaded file OpTransactionHistory10-01-2026.xls to /Users/mipl/ai-work/mcp-agent-builder-go/agent_go/Workflow/ICICI BANK PARSING-v2/runs/iteration-4/mahimakh/execution/Downloads/OpTransactionHistory10-01-2026.xls
+- Downloaded file OpTransactionHistory10-01-2026.xls to /Users/mipl/ai-work/mcp-agent-builder-go/agent_go/Workflow/ICICI BANK PARSING-v2/runs/iteration-4/mahimakh/execution/Downloads/OpTransactionHistory10-01-2026.xls
+
+### Page state
+- Page URL: https://retailnetbanking.icici.bank.in/bank-account?sts=statement
+- Page Title: ICICI Bank- Net Banking
+- Page Snapshot:
+```yaml
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e146]:
+        - paragraph [ref=e148] [cursor=pointer]: Call Us 1800 1080
+        - generic [ref=e153] [cursor=pointer]:
+          - img [ref=e154]
+          - paragraph [ref=e156]: MAHIMA
+          - img [ref=e157]
+    - generic [ref=e21]:
+      - generic [ref=e161] [cursor=pointer]:
+        - generic [ref=e162]:
+          - img [ref=e163]
+          - generic [ref=e164]: Overview
+        - generic [ref=e165]:
+          - img [ref=e166]
+          - generic [ref=e167]: Accounts
+        - generic [ref=e168]:
+          - img [ref=e169]
+          - generic [ref=e170]: Payment & Transfer
+        - generic [ref=e171]:
+          - img [ref=e172]
+          - generic [ref=e173]: Deposits
+        - generic [ref=e174]:
+          - img [ref=e175]
+          - generic [ref=e176]: Cards
+        - generic [ref=e177]:
+          - img [ref=e178]
+          - generic [ref=e179]: Loans
+        - generic [ref=e180]:
+          - img [ref=e181]
+          - generic [ref=e182]: Investments
+        - generic [ref=e183]:
+          - img [ref=e184]
+          - generic [ref=e185]: Insurance
+        - generic [ref=e186]:
+          - img [ref=e187]
+          - generic [ref=e188]: Customer Service
+      - generic [ref=e373]:
+        - generic [ref=e374]:
+          - generic [ref=e375]:
+            - generic [ref=e377]:
+              - generic [ref=e378]:
+                - generic [ref=e379]:
+                  - generic [ref=e380]: Savings Account
+                  - generic: "1"
+                - generic [ref=e384] [cursor=pointer]:
+                  - paragraph [ref=e385]: MAHIMA KHERA
+                  - paragraph [ref=e386]: "-3784"
+                  - generic [ref=e387]: "- Primary Account"
+                - generic [ref=e389]:
+                  - generic [ref=e390]:
+                    - generic [ref=e391]:
+                      - generic [ref=e392]: ₹
+                      - generic [ref=e393]: 8,61,491.80
+                    - img [ref=e395] [cursor=pointer]
+                  - generic [ref=e399]:
+                    - generic [ref=e400]: All Savings Balance ₹ 8,61,491.80
+                    - generic [ref=e401]: As of Jan 10, 2026 16:32 IST
+              - generic [ref=e402] [cursor=pointer]:
+                - generic [ref=e403]:
+                  - img [ref=e404]
+                  - generic [ref=e405]: Add Funds
+                - generic [ref=e406]:
+                  - img [ref=e407]
+                  - generic [ref=e408]: View Statement
+                - generic [ref=e409]:
+                  - img [ref=e410]
+                  - generic [ref=e411]: Send Money
+            - generic [ref=e413]:
+              - generic [ref=e414]:
+                - generic [ref=e415]:
+                  - generic [ref=e416]:
+                    - paragraph [ref=e417]: Mahima Khera
+                    - generic: Primary
+                  - paragraph [ref=e418]: 1070 0151 3784
+                - button [ref=e420] [cursor=pointer]: View Account Details
+              - generic [ref=e422]:
+                - generic [ref=e423]:
+                  - generic [ref=e424]:
+                    - heading [level=6] [ref=e425]:
+                      - text: Available To Spend
+                      - img [ref=e427] [cursor=pointer]
+                    - paragraph [ref=e430]: ₹ 8,61,491.80
+                  - generic [ref=e431]:
+                    - paragraph [ref=e432]: Cheques In Clearing
+                    - paragraph [ref=e433]: ₹ 0.00
+                - generic [ref=e434]:
+                  - generic [ref=e435]:
+                    - paragraph [ref=e436]: Linked Fixed Deposit
+                    - paragraph [ref=e437]: ₹ 0.00
+                  - generic [ref=e438]:
+                    - heading [level=6] [ref=e439]:
+                      - text: Required MAB
+                      - img [ref=e441]
+                    - paragraph [ref=e444]: ₹ 0.00
+            - button [ref=e446] [cursor=pointer]: View All Accounts
+          - generic [ref=e447]:
+            - generic [ref=e450]:
+              - generic [ref=e455]:
+                - heading [level=3] [ref=e458]: Manage Debit Card
+                - generic [ref=e469]:
+                  - generic [ref=e470]:
+                    - img [ref=e472]
+                    - generic [ref=e473]:
+                      - generic [ref=e474]: 5331 **** **** 4273
+                      - paragraph [ref=e476]: EXP **/**
+                      - img [ref=e478] [cursor=pointer]
+                  - generic [ref=e479]:
+                    - generic [ref=e480]:
+                      - generic [ref=e481]:
+                        - paragraph [ref=e482]: CVV
+                        - paragraph [ref=e483]: "***"
+                      - img [ref=e485] [cursor=pointer]
+                    - generic [ref=e486]: ⁠
+                    - generic [ref=e487] [cursor=pointer]:
+                      - img [ref=e488]
+                      - paragraph [ref=e489]: Set Pin
+                - generic [ref=e490]:
+                  - generic [ref=e491]:
+                    - img [ref=e493]
+                    - paragraph [ref=e494] [cursor=pointer]: Manage Card Limit
+                    - button [ref=e495] [cursor=pointer]:
+                      - img [ref=e496]
+                  - generic [ref=e497]:
+                    - img [ref=e499]
+                    - paragraph [ref=e500] [cursor=pointer]: Re-issue Card
+                    - button [ref=e501] [cursor=pointer]:
+                      - img [ref=e502]
+                  - generic [ref=e503]:
+                    - img [ref=e505]
+                    - paragraph [ref=e506] [cursor=pointer]: Upgrade Debit Card
+                    - button [ref=e507] [cursor=pointer]:
+                      - img [ref=e508]
+                  - generic [ref=e509]:
+                    - img [ref=e511]
+                    - paragraph [ref=e512] [cursor=pointer]: Block Card
+                    - button [ref=e513] [cursor=pointer]:
+                      - img [ref=e514]
+                  - generic [ref=e515]:
+                    - img [ref=e517]
+                    - paragraph [ref=e518] [cursor=pointer]: Manage Your Tokens
+                    - button [ref=e519] [cursor=pointer]:
+                      - img [ref=e520]
+                  - generic [ref=e521]:
+                    - img [ref=e523]
+                    - paragraph [ref=e524] [cursor=pointer]: Manage Subscription
+                    - button [ref=e525] [cursor=pointer]:
+                      - img [ref=e526]
+              - generic [ref=e527] [cursor=pointer]: Service Request
+              - generic [ref=e528] [cursor=pointer]: Reward Points
+            - generic [ref=e532]:
+              - generic [ref=e533]:
+                - group [ref=e534]:
+                  - generic [ref=e535] [cursor=pointer]:
+                    - paragraph [ref=e537]: Home Loan
+                    - paragraph [ref=e538]: Get instant home loan sanction with minimal documentation.
+                    - paragraph [ref=e539]: APPLY NOW
+                - group [ref=e540]:
+                  - generic [ref=e541] [cursor=pointer]:
+                    - paragraph [ref=e543]: Car loan
+                    - paragraph [ref=e544]: Get Car loan in just a few clicks.
+                    - paragraph [ref=e545]: APPLY NOW
+                - group [ref=e546]:
+                  - generic [ref=e547] [cursor=pointer]:
+                    - paragraph [ref=e549]: Credit card
+                    - paragraph [ref=e550]: Get a feature-packed ICICI Bank Credit Card on the fly.
+                    - paragraph [ref=e551]: APPLY NOW
+                - group [ref=e552]:
+                  - generic [ref=e553] [cursor=pointer]:
+                    - paragraph [ref=e555]: Two Wheeler Loan
+                    - paragraph [ref=e556]: Get Two-wheeler loan in just a few clicks.
+                    - paragraph [ref=e557]: APPLY NOW
+              - button [disabled]:
+                - img
+              - button [ref=e558] [cursor=pointer]:
+                - img [ref=e559]
+        - generic [ref=e561]:
+          - paragraph [ref=e562]: ICICI Bank Ltd is registered with DICGC
+          - generic [ref=e563]:
+            - paragraph [ref=e564] [cursor=pointer]: (https://www.dicgc.org.in/)
+            - generic [ref=e565]:
+              - img [ref=e566]
+              - img [ref=e567]
+  - dialog [active] [ref=e569]:
+    - document:
+      - generic [ref=e575]:
+        - button [ref=e576] [cursor=pointer]:
+          - img [ref=e577]
+        - generic [ref=e582]:
+          - heading "Detailed Statement" [level=4] [ref=e836]
+          - listbox [ref=e586] [cursor=pointer]:
+            - generic [ref=e591]:
+              - paragraph [ref=e592]: MAHIMA KHERA
+              - paragraph [ref=e593]: "-3784"
+        - list [ref=e595]:
+          - listitem [ref=e596]
+          - listitem [ref=e597] [cursor=pointer]: Last 10 transactions
+          - listitem [ref=e598] [cursor=pointer]: DETAILED STATEMENT
+          - listitem [ref=e599] [cursor=pointer]: E-STATEMENT
+        - generic [ref=e837]:
+          - generic [ref=e839]:
+            - img [ref=e840]
+            - textbox "Search within statements" [ref=e842]
+          - generic [ref=e844]:
+            - generic [ref=e846]:
+              - generic [ref=e847]:
+                - button "Date" [ref=e848] [cursor=pointer]:
+                  - text: Date
+                  - img [ref=e849]
+                - button "Filter" [ref=e851] [cursor=pointer]:
+                  - text: Filter
+                  - img [ref=e852]
+              - generic [ref=e854]:
+                - button "Send Over e-mail" [ref=e856] [cursor=pointer]
+                - generic [ref=e857] [cursor=pointer]:
+                  - paragraph [ref=e858]: CALENDAR VIEW
+                  - img "calendar-view" [ref=e860]
+            - generic [ref=e861]:
+              - generic [ref=e863]: "Showing Transactions For: Jan 3, 2026 - Jan 10, 2026"
+              - button "Raise a dispute/Report a Fraud" [ref=e866] [cursor=pointer]:
+                - generic [ref=e867]: Raise a dispute/Report a Fraud
+            - generic:
+              - table:
+                - generic:
+                  - generic:
+                    - generic: Transaction Date
+                  - generic:
+                    - generic: Transaction Period
+                - generic:
+                  - generic:
+                    - generic: From
+                    - generic:
+                      - generic:
+                        - textbox: 2026-01-03
+                        - img
+                        - textbox: Jan 03, 2026
+                  - generic:
+                    - generic: To
+                    - generic:
+                      - generic:
+                        - textbox: 2026-01-10
+                        - img
+                        - textbox: Jan 10, 2026
+                - button "APPLY FILTER"
+            - generic:
+              - generic:
+                - generic:
+                  - generic:
+                    - generic: Amount from
+                    - generic:
+                      - spinbutton
+                      - generic: TO
+                      - spinbutton
+                  - generic:
+                    - generic: Cheque number from
+                    - generic:
+                      - textbox
+                      - generic: TO
+                      - textbox
+                - generic:
+                  - generic:
+                    - generic: Transaction type
+                    - listbox:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic: All
+                - button "APPLY FILTER"
+                - button "Clear filters"
+            - generic [ref=e868]:
+              - paragraph [ref=e869]: "OPENING BALANCE: ₹766,014.75"
+              - paragraph [ref=e870]: "CLOSING BALANCE: ₹861,491.80"
+            - generic [ref=e871]:
+              - generic [ref=e872]:
+                - generic [ref=e873]:
+                  - generic [ref=e874]:
+                    - paragraph [ref=e875]: TRANSACTION & VALUE DATE
+                    - generic [ref=e876] [cursor=pointer]:
+                      - img [ref=e877]
+                      - img [ref=e879]
+                  - paragraph [ref=e882]: TrAnsACTION Remark
+                - generic [ref=e883]:
+                  - paragraph [ref=e885]: Cheque no.
+                  - generic [ref=e886]:
+                    - paragraph [ref=e887]: CREDIT
+                    - generic [ref=e888] [cursor=pointer]:
+                      - img [ref=e889]
+                      - img [ref=e891]
+                  - generic [ref=e893]:
+                    - paragraph [ref=e894]: Debit
+                    - generic [ref=e895] [cursor=pointer]:
+                      - img [ref=e896]
+                      - img [ref=e898]
+                  - generic [ref=e900]:
+                    - paragraph [ref=e901]: Balance
+                    - generic [ref=e902] [cursor=pointer]:
+                      - img [ref=e903]
+                      - img [ref=e905]
+              - generic [ref=e908]:
+                - generic [ref=e909]:
+                  - generic [ref=e910]:
+                    - paragraph [ref=e911]: January 2026
+                    - paragraph [ref=e912]: 22 transactions
+                  - generic [ref=e913]:
+                    - generic [ref=e914]:
+                      - paragraph [ref=e915]: "10"
+                      - paragraph [ref=e916]: Jan
+                      - paragraph [ref=e918]: 10 SAT
+                    - table [ref=e920]:
+                      - rowgroup [ref=e921]:
+                        - row "transfer-img RAKHI RAKHI/9560984135@ybl/UPI/CANARA BAN/601001207336/ICI3d28abc263624146a5f4937ca0a164f8/ ₹2,500.00 ₹8,61,491.80" [ref=e922]:
+                          - cell "transfer-img RAKHI RAKHI/9560984135@ybl/UPI/CANARA BAN/601001207336/ICI3d28abc263624146a5f4937ca0a164f8/" [ref=e923]:
+                            - img "transfer-img" [ref=e924]
+                            - generic [ref=e925]:
+                              - paragraph [ref=e926]: RAKHI
+                              - paragraph [ref=e927]: RAKHI/9560984135@ybl/UPI/CANARA BAN/601001207336/ICI3d28abc263624146a5f4937ca0a164f8/
+                          - cell [ref=e928]:
+                            - img [ref=e929]
+                          - cell [ref=e931]:
+                            - img [ref=e932]
+                          - cell "₹2,500.00" [ref=e934]:
+                            - paragraph [ref=e935]: ₹2,500.00
+                          - cell "₹8,61,491.80" [ref=e936]:
+                            - paragraph [ref=e937]: ₹8,61,491.80
+                - generic [ref=e939]:
+                  - generic [ref=e940]:
+                    - paragraph [ref=e941]: "10"
+                    - paragraph [ref=e942]: Jan
+                    - paragraph [ref=e944]: 10 SAT
+                  - table [ref=e946]:
+                    - rowgroup [ref=e947]:
+                      - row "transfer-img RAKHI RAKHI/9560984135@ybl/UPI/CANARA BAN/601023315385/ICI672f437718524fcd8dee31796d5055ed/ ₹6,000.00 ₹8,63,991.80" [ref=e948]:
+                        - cell "transfer-img RAKHI RAKHI/9560984135@ybl/UPI/CANARA BAN/601023315385/ICI672f437718524fcd8dee31796d5055ed/" [ref=e949]:
+                          - img "transfer-img" [ref=e950]
+                          - generic [ref=e951]:
+                            - paragraph [ref=e952]: RAKHI
+                            - paragraph [ref=e953]: RAKHI/9560984135@ybl/UPI/CANARA BAN/601023315385/ICI672f437718524fcd8dee31796d5055ed/
+                        - cell [ref=e954]:
+                          - img [ref=e955]
+                        - cell [ref=e957]:
+                          - img [ref=e958]
+                        - cell "₹6,000.00" [ref=e960]:
+                          - paragraph [ref=e961]: ₹6,000.00
+                        - cell "₹8,63,991.80" [ref=e962]:
+                          - paragraph [ref=e963]: ₹8,63,991.80
+                - generic [ref=e965]:
+                  - generic [ref=e966]:
+                    - paragraph [ref=e967]: "10"
+                    - paragraph [ref=e968]: Jan
+                    - paragraph [ref=e970]: 10 SAT
+                  - table [ref=e972]:
+                    - rowgroup [ref=e973]:
+                      - row "transfer-img RISHAB CAR RISHAB CAR/mswipe.2530072/UPI/SBM BANK I/601020829876/ICIa05b9affcc584f5380cb221acc88103d/ ₹399.00 ₹8,69,991.80" [ref=e974]:
+                        - cell "transfer-img RISHAB CAR RISHAB CAR/mswipe.2530072/UPI/SBM BANK I/601020829876/ICIa05b9affcc584f5380cb221acc88103d/" [ref=e975]:
+                          - img "transfer-img" [ref=e976]
+                          - generic [ref=e977]:
+                            - paragraph [ref=e978]: RISHAB CAR
+                            - paragraph [ref=e979]: RISHAB CAR/mswipe.2530072/UPI/SBM BANK I/601020829876/ICIa05b9affcc584f5380cb221acc88103d/
+                        - cell [ref=e980]:
+                          - img [ref=e981]
+                        - cell [ref=e983]:
+                          - img [ref=e984]
+                        - cell "₹399.00" [ref=e986]:
+                          - paragraph [ref=e987]: ₹399.00
+                        - cell "₹8,69,991.80" [ref=e988]:
+                          - paragraph [ref=e989]: ₹8,69,991.80
+                - generic [ref=e991]:
+                  - generic [ref=e992]:
+                    - paragraph [ref=e993]: "10"
+                    - paragraph [ref=e994]: Jan
+                    - paragraph [ref=e996]: 10 SAT
+                  - table [ref=e998]:
+                    - rowgroup [ref=e999]:
+                      - row "transfer-img ICICI PRUD BIL/BPAY/001143270117/ICICI PRUD/IPDIRECT-386848 ICICI PRUDENTIA ₹20,000.00 ₹8,70,390.80" [ref=e1000]:
+                        - cell "transfer-img ICICI PRUD BIL/BPAY/001143270117/ICICI PRUD/IPDIRECT-386848 ICICI PRUDENTIA" [ref=e1001]:
+                          - img "transfer-img" [ref=e1002]
+                          - generic [ref=e1003]:
+                            - paragraph [ref=e1004]: ICICI PRUD
+                            - paragraph [ref=e1005]: BIL/BPAY/001143270117/ICICI PRUD/IPDIRECT-386848 ICICI PRUDENTIA
+                        - cell [ref=e1006]:
+                          - img [ref=e1007]
+                        - cell [ref=e1009]:
+                          - img [ref=e1010]
+                        - cell "₹20,000.00" [ref=e1012]:
+                          - paragraph [ref=e1013]: ₹20,000.00
+                        - cell "₹8,70,390.80" [ref=e1014]:
+                          - paragraph [ref=e1015]: ₹8,70,390.80
+                - generic [ref=e1017]:
+                  - generic [ref=e1018]:
+                    - paragraph [ref=e1019]: "9"
+                    - paragraph [ref=e1020]: Jan
+                    - paragraph [ref=e1022]: 9 FRI
+                  - table [ref=e1024]:
+                    - rowgroup [ref=e1025]:
+                      - row "transfer-img Mr JAYDEEP Mr JAYDEEP/8126019592@ybl/UPI/CENTRAL BA/637521644006/ICIeb9020cdb4f84765aaa14d49f27ef4e5/ ₹600.00 ₹8,90,390.80" [ref=e1026]:
+                        - cell "transfer-img Mr JAYDEEP Mr JAYDEEP/8126019592@ybl/UPI/CENTRAL BA/637521644006/ICIeb9020cdb4f84765aaa14d49f27ef4e5/" [ref=e1027]:
+                          - img "transfer-img" [ref=e1028]
+                          - generic [ref=e1029]:
+                            - paragraph [ref=e1030]: Mr JAYDEEP
+                            - paragraph [ref=e1031]: Mr JAYDEEP/8126019592@ybl/UPI/CENTRAL BA/637521644006/ICIeb9020cdb4f84765aaa14d49f27ef4e5/
+                        - cell [ref=e1032]:
+                          - img [ref=e1033]
+                        - cell [ref=e1035]:
+                          - img [ref=e1036]
+                        - cell "₹600.00" [ref=e1038]:
+                          - paragraph [ref=e1039]: ₹600.00
+                        - cell "₹8,90,390.80" [ref=e1040]:
+                          - paragraph [ref=e1041]: ₹8,90,390.80
+                - generic [ref=e1043]:
+                  - generic [ref=e1044]:
+                    - paragraph [ref=e1045]: "9"
+                    - paragraph [ref=e1046]: Jan
+                    - paragraph [ref=e1048]: 9 FRI
+                  - table [ref=e1050]:
+                    - rowgroup [ref=e1051]:
+                      - row "transfer-img UPI 9810722662/9810722662@pty/Mishay Man/YES BANK L/637514832795/ICId4c0bd4afb03437981ec1bc32a023b31 ₹33,750.00 ₹8,90,990.80" [ref=e1052]:
+                        - cell "transfer-img UPI 9810722662/9810722662@pty/Mishay Man/YES BANK L/637514832795/ICId4c0bd4afb03437981ec1bc32a023b31" [ref=e1053]:
+                          - img "transfer-img" [ref=e1054]
+                          - generic [ref=e1055]:
+                            - paragraph [ref=e1056]: UPI
+                            - paragraph [ref=e1057]: 9810722662/9810722662@pty/Mishay Man/YES BANK L/637514832795/ICId4c0bd4afb03437981ec1bc32a023b31
+                        - cell [ref=e1058]:
+                          - img [ref=e1059]
+                        - cell [ref=e1061]:
+                          - img [ref=e1062]
+                        - cell "₹33,750.00" [ref=e1064]:
+                          - paragraph [ref=e1065]: ₹33,750.00
+                        - cell "₹8,90,990.80" [ref=e1066]:
+                          - paragraph [ref=e1067]: ₹8,90,990.80
+                - generic [ref=e1069]:
+                  - generic [ref=e1070]:
+                    - paragraph [ref=e1071]: "9"
+                    - paragraph [ref=e1072]: Jan
+                    - paragraph [ref=e1074]: 9 FRI
+                  - table [ref=e1076]:
+                    - rowgroup [ref=e1077]:
+                      - row "transfer-img JATIN SHAR JATIN SHAR/jatins4228s@ok/UPI/State Bank/637501823077/ICI098ffc9b0c96412a8ea0ebeea7851538/ ₹20.00 ₹9,24,740.80" [ref=e1078]:
+                        - cell "transfer-img JATIN SHAR JATIN SHAR/jatins4228s@ok/UPI/State Bank/637501823077/ICI098ffc9b0c96412a8ea0ebeea7851538/" [ref=e1079]:
+                          - img "transfer-img" [ref=e1080]
+                          - generic [ref=e1081]:
+                            - paragraph [ref=e1082]: JATIN SHAR
+                            - paragraph [ref=e1083]: JATIN SHAR/jatins4228s@ok/UPI/State Bank/637501823077/ICI098ffc9b0c96412a8ea0ebeea7851538/
+                        - cell [ref=e1084]:
+                          - img [ref=e1085]
+                        - cell [ref=e1087]:
+                          - img [ref=e1088]
+                        - cell "₹20.00" [ref=e1090]:
+                          - paragraph [ref=e1091]: ₹20.00
+                        - cell "₹9,24,740.80" [ref=e1092]:
+                          - paragraph [ref=e1093]: ₹9,24,740.80
+                - generic [ref=e1095]:
+                  - generic [ref=e1096]:
+                    - paragraph [ref=e1097]: "9"
+                    - paragraph [ref=e1098]: Jan
+                    - paragraph [ref=e1100]: 9 FRI
+                  - table [ref=e1102]:
+                    - rowgroup [ref=e1103]:
+                      - row "transfer-img UTI MF BIL/BPAY/001142908361/UTI MF/UTDIRECT-253587 UTI MUTUAL FUND ₹10,000.00 ₹9,24,760.80" [ref=e1104]:
+                        - cell "transfer-img UTI MF BIL/BPAY/001142908361/UTI MF/UTDIRECT-253587 UTI MUTUAL FUND" [ref=e1105]:
+                          - img "transfer-img" [ref=e1106]
+                          - generic [ref=e1107]:
+                            - paragraph [ref=e1108]: UTI MF
+                            - paragraph [ref=e1109]: BIL/BPAY/001142908361/UTI MF/UTDIRECT-253587 UTI MUTUAL FUND
+                        - cell [ref=e1110]:
+                          - img [ref=e1111]
+                        - cell [ref=e1113]:
+                          - img [ref=e1114]
+                        - cell "₹10,000.00" [ref=e1116]:
+                          - paragraph [ref=e1117]: ₹10,000.00
+                        - cell "₹9,24,760.80" [ref=e1118]:
+                          - paragraph [ref=e1119]: ₹9,24,760.80
+                - generic [ref=e1121]:
+                  - generic [ref=e1122]:
+                    - paragraph [ref=e1123]: "8"
+                    - paragraph [ref=e1124]: Jan
+                    - paragraph [ref=e1126]: 8 THU
+                  - table [ref=e1128]:
+                    - rowgroup [ref=e1129]:
+                      - row "transfer-img GUDDU KUMA GUDDU KUMA/8851068661@pth/UPI/BANK OF IN/600877389685/ICIaf8f6b1f6a0345e7b4d00411cdf605b4/ ₹3,846.00 ₹9,34,760.80" [ref=e1130]:
+                        - cell "transfer-img GUDDU KUMA GUDDU KUMA/8851068661@pth/UPI/BANK OF IN/600877389685/ICIaf8f6b1f6a0345e7b4d00411cdf605b4/" [ref=e1131]:
+                          - img "transfer-img" [ref=e1132]
+                          - generic [ref=e1133]:
+                            - paragraph [ref=e1134]: GUDDU KUMA
+                            - paragraph [ref=e1135]: GUDDU KUMA/8851068661@pth/UPI/BANK OF IN/600877389685/ICIaf8f6b1f6a0345e7b4d00411cdf605b4/
+                        - cell [ref=e1136]:
+                          - img [ref=e1137]
+                        - cell [ref=e1139]:
+                          - img [ref=e1140]
+                        - cell "₹3,846.00" [ref=e1142]:
+                          - paragraph [ref=e1143]: ₹3,846.00
+                        - cell "₹9,34,760.80" [ref=e1144]:
+                          - paragraph [ref=e1145]: ₹9,34,760.80
+                - generic [ref=e1147]:
+                  - generic [ref=e1148]:
+                    - paragraph [ref=e1149]: "8"
+                    - paragraph [ref=e1150]: Jan
+                    - paragraph [ref=e1152]: 8 THU
+                  - table [ref=e1154]:
+                    - rowgroup [ref=e1155]:
+                      - row "transfer-img amazon pay amazon pay/amazonpaygroce/Request fr/YES BANK L/600873911288/APY019b9d2dd9e22edc9568909a160c8489 ₹299.00 ₹9,38,606.80" [ref=e1156]:
+                        - cell "transfer-img amazon pay amazon pay/amazonpaygroce/Request fr/YES BANK L/600873911288/APY019b9d2dd9e22edc9568909a160c8489" [ref=e1157]:
+                          - img "transfer-img" [ref=e1158]
+                          - generic [ref=e1159]:
+                            - paragraph [ref=e1160]: amazon pay
+                            - paragraph [ref=e1161]: amazon pay/amazonpaygroce/Request fr/YES BANK L/600873911288/APY019b9d2dd9e22edc9568909a160c8489
+                        - cell [ref=e1162]:
+                          - img [ref=e1163]
+                        - cell [ref=e1165]:
+                          - img [ref=e1166]
+                        - cell "₹299.00" [ref=e1168]:
+                          - paragraph [ref=e1169]: ₹299.00
+                        - cell "₹9,38,606.80" [ref=e1170]:
+                          - paragraph [ref=e1171]: ₹9,38,606.80
+            - generic [ref=e1172]:
+              - generic [ref=e1173]:
+                - generic [ref=e1174]:
+                  - text: "Legends:"
+                  - listbox [ref=e1175] [cursor=pointer]:
+                    - generic [ref=e1179]: BBPS - Bharat Bill Payment Service
+                - generic [ref=e1181]:
+                  - img [ref=e1182] [cursor=pointer]
+                  - img [ref=e1186] [cursor=pointer]
+                  - generic [ref=e1189]: Page 1 of 3
+                  - img [ref=e1190] [cursor=pointer]
+                  - img [ref=e1193] [cursor=pointer]
+                - generic [ref=e1198]:
+                  - generic [ref=e1201]:
+                    - generic [ref=e1202] [cursor=pointer]: PDF
+                    - generic [ref=e1203] [cursor=pointer]: XLS
+                  - button "Download Details" [ref=e1205] [cursor=pointer]
+              - paragraph [ref=e1206]:
+                - text: To subscribe/unsubscribe from accounts statements by email,
+                - generic [ref=e1207] [cursor=pointer]: click here
+```

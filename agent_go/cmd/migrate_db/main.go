@@ -223,10 +223,10 @@ func migratePresetQueries(src, dst *sql.DB) error {
 }
 
 func migrateChatSessions(src, dst *sql.DB) error {
-	log.Println("📦 Migrating Chat Sessions (Last 7 Days)...")
+	log.Println("📦 Migrating Chat Sessions (Last 1 Day)...")
 
-	// Calculate cutoff date (7 days ago)
-	cutoffDate := time.Now().AddDate(0, 0, -7).Format("2006-01-02 15:04:05")
+	// Calculate cutoff date (1 day ago)
+	cutoffDate := time.Now().AddDate(0, 0, -1).Format("2006-01-02 15:04:05")
 	log.Printf("Filtering sessions created after: %s", cutoffDate)
 
 	// Count records to migrate
@@ -326,10 +326,10 @@ func migrateChatSessions(src, dst *sql.DB) error {
 }
 
 func migrateEvents(src, dst *sql.DB) error {
-	log.Println("📦 Migrating Events (Last 7 Days)...")
+	log.Println("📦 Migrating Events (Last 1 Day)...")
 
-	// Calculate cutoff date (7 days ago)
-	cutoffDate := time.Now().AddDate(0, 0, -7).Format("2006-01-02 15:04:05")
+	// Calculate cutoff date (1 day ago)
+	cutoffDate := time.Now().AddDate(0, 0, -1).Format("2006-01-02 15:04:05")
 	log.Printf("Filtering events created after: %s", cutoffDate)
 
 	// Pre-fetch all valid chat_session_ids from destination to avoid per-row checks

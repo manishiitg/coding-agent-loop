@@ -1,0 +1,267 @@
+### Page state
+- Page URL: https://newmycams.camsonline.com/dashboard/amc-list?index=kesdU6e0ALv7hl503VtHUw%3D%3D
+- Page Title: Buy Mutual Funds Online, Track MF Portfolio, Invest in NFO | myCAMS
+- Page Snapshot:
+```yaml
+- generic [ref=e576]:
+  - generic [ref=e577]:
+    - generic [ref=e579]:
+      - banner [ref=e580]:
+        - generic [ref=e582]:
+          - generic [ref=e584] [cursor=pointer]:
+            - img "myCAMS" [ref=e585]
+            - text: Computer Age Management Services Limited.
+          - button "icon_btn heart" [ref=e587] [cursor=pointer]
+      - generic [ref=e593]:
+        - list [ref=e594]:
+          - listitem [ref=e595] [cursor=pointer]:
+            - generic [ref=e596]: Change Password
+          - listitem [ref=e597] [cursor=pointer]:
+            - generic [ref=e598]: Change Security Questions
+          - listitem [ref=e599] [cursor=pointer]:
+            - generic [ref=e600]: Accessibility
+          - listitem [ref=e601] [cursor=pointer]:
+            - generic [ref=e602]: Help
+          - listitem [ref=e603] [cursor=pointer]:
+            - generic [ref=e604]: About us
+        - button "Sign out" [ref=e607] [cursor=pointer]
+      - list [ref=e614]:
+        - listitem [ref=e615] [cursor=pointer]:
+          - generic [ref=e621]: manish.excel2011@gmail.com
+        - listitem [ref=e622] [cursor=pointer]:
+          - generic [ref=e623]: Portfolio Details
+    - generic [ref=e625]:
+      - generic [ref=e626]:
+        - button "home" [ref=e627] [cursor=pointer]:
+          - generic [ref=e628]: Dashboard
+        - button "search" [ref=e629] [cursor=pointer]:
+          - generic [ref=e630]: Search
+        - button "doc" [ref=e631] [cursor=pointer]:
+          - generic [ref=e632]: Statements
+        - button "widget" [ref=e633] [cursor=pointer]:
+          - generic [ref=e634]: More
+      - generic [ref=e635] [cursor=pointer]:
+        - generic [ref=e636]:
+          - generic [ref=e637]: Welcome
+          - generic [ref=e638]: manish.excel2011@gmail.com
+        - img "user" [ref=e639]
+    - generic [ref=e642]:
+      - generic [ref=e643]:
+        - generic [ref=e644]:
+          - generic [ref=e646]:
+            - generic [ref=e649]:
+              - heading "Portfolio summary (Non-Demat)" [level=6] [ref=e651]
+              - button "SANJAY UBOVEJA (HUF)" [ref=e653]
+            - generic [ref=e654]:
+              - generic [ref=e655]:
+                - generic [ref=e656]: Filters
+                - button "Clear all" [ref=e657] [cursor=pointer]
+              - radiogroup "Select an option" [ref=e661]:
+                - generic [ref=e663] [cursor=pointer]:
+                  - radio "AMC" [ref=e667]
+                  - generic [ref=e669]: AMC
+                - generic [ref=e671] [cursor=pointer]:
+                  - radio "Asset Class" [ref=e675]
+                  - generic [ref=e677]: Asset Class
+                - generic [ref=e679] [cursor=pointer]:
+                  - radio "Scheme Type" [ref=e683]
+                  - generic [ref=e685]: Scheme Type
+                - generic [ref=e687] [cursor=pointer]:
+                  - radio "Direct" [ref=e691]
+                  - generic [ref=e693]: Direct
+                - generic [ref=e695] [cursor=pointer]:
+                  - radio "Regular" [ref=e699]
+                  - generic [ref=e701]: Regular
+          - generic [ref=e702]:
+            - generic [ref=e703]:
+              - heading "Investments" [level=5] [ref=e705]
+              - generic [ref=e706]:
+                - button "back_button_swp" [disabled] [ref=e707]
+                - button "arrow_frd_btn" [disabled] [ref=e708]
+            - generic [ref=e713]:
+              - 'radio "PP PPFAS Mutual Fund SU XIRR 8.02% Mrk.Val ₹81,03,455.13 Wt. Avg Days: 188" [checked] [ref=e714]'
+              - generic [ref=e719] [cursor=pointer]:
+                - generic [ref=e720]:
+                  - img "PP" [ref=e722]
+                  - generic [ref=e723]:
+                    - generic [ref=e725]: PPFAS Mutual Fund
+                    - generic [ref=e727]: SU
+                - generic [ref=e728]:
+                  - generic [ref=e729]:
+                    - generic [ref=e731]: XIRR
+                    - generic [ref=e732]: 8.02%
+                  - generic [ref=e733]:
+                    - generic [ref=e735]: Mrk.Val
+                    - generic [ref=e737]: ₹81,03,455.13
+                  - generic [ref=e738]:
+                    - generic [ref=e740]: "Wt. Avg Days:"
+                    - generic [ref=e742]: "188"
+            - generic [ref=e744]:
+              - generic [ref=e745]:
+                - generic [ref=e746]:
+                  - generic [ref=e747]: Cost value
+                  - generic [ref=e748]: ₹77,99,040.43
+                - generic [ref=e749]:
+                  - generic [ref=e750]: Current value
+                  - generic [ref=e751]: ₹81,03,455.13
+                - generic [ref=e752]:
+                  - generic [ref=e753]: Gain / Loss
+                  - generic [ref=e755]: ₹3,04,414.7
+                - generic [ref=e756]:
+                  - generic [ref=e757]: Today's Gain / Loss
+                  - generic [ref=e758]: "-₹38,291.52"
+              - button "Buy New Schemes" [ref=e761] [cursor=pointer]
+        - generic [ref=e762]:
+          - generic [ref=e763]:
+            - generic "Schemes" [ref=e764]:
+              - heading "Schemes" [level=6] [ref=e769]
+              - generic [ref=e770]:
+                - generic [ref=e771]:
+                  - generic [ref=e772]: Filters
+                  - button "Clear all" [ref=e773] [cursor=pointer]
+                - radiogroup "Select an option" [ref=e777]:
+                  - generic [ref=e779] [cursor=pointer]:
+                    - radio "AMC" [ref=e783]
+                    - generic [ref=e785]: AMC
+                  - generic [ref=e787] [cursor=pointer]:
+                    - radio "Asset Class" [ref=e791]
+                    - generic [ref=e793]: Asset Class
+                  - generic [ref=e795] [cursor=pointer]:
+                    - radio "Scheme Type" [ref=e799]
+                    - generic [ref=e801]: Scheme Type
+                  - generic [ref=e803] [cursor=pointer]:
+                    - radio "Direct" [ref=e807]
+                    - generic [ref=e809]: Direct
+                  - generic [ref=e811] [cursor=pointer]:
+                    - radio "Regular" [ref=e815]
+                    - generic [ref=e817]: Regular
+            - generic [ref=e818]:
+              - generic [ref=e819]: Include zero balance folios
+              - switch "toggle" [ref=e824]
+              - generic [ref=e827]:
+                - generic [ref=e830]:
+                  - heading [level=6] [ref=e832]
+                  - button "Sort" [ref=e834] [cursor=pointer]
+                - generic [ref=e835]:
+                  - generic [ref=e836]:
+                    - generic [ref=e837]: Filters
+                    - button "Clear all" [ref=e838] [cursor=pointer]
+                  - radiogroup "Select an option" [ref=e842]:
+                    - generic [ref=e844] [cursor=pointer]:
+                      - radio "AMC" [ref=e848]
+                      - generic [ref=e850]: AMC
+                    - generic [ref=e852] [cursor=pointer]:
+                      - radio "Asset Class" [ref=e856]
+                      - generic [ref=e858]: Asset Class
+                    - generic [ref=e860] [cursor=pointer]:
+                      - radio "Scheme Type" [ref=e864]
+                      - generic [ref=e866]: Scheme Type
+                    - generic [ref=e868] [cursor=pointer]:
+                      - radio "Direct" [ref=e872]
+                      - generic [ref=e874]: Direct
+                    - generic [ref=e876] [cursor=pointer]:
+                      - radio "Regular" [ref=e880]
+                      - generic [ref=e882]: Regular
+          - generic [ref=e883]:
+            - generic [ref=e887]:
+              - 'button "Folio # 16324960 Units 67069.74 Parag Parikh Flexi Cap Fund - Direct Plan Growth Invested ₹60,73,784 Current ₹63,14,207.27 XIRR 8.51 Today''s G/L -₹38,122.44 Invest" [ref=e888] [cursor=pointer]':
+                - generic [ref=e889]:
+                  - generic [ref=e891]: "Folio # 16324960"
+                  - generic [ref=e892]:
+                    - generic [ref=e893]: Units
+                    - generic [ref=e894]: "67069.74"
+                - generic [ref=e897]: Parag Parikh Flexi Cap Fund - Direct Plan Growth
+                - generic [ref=e898]:
+                  - generic [ref=e899]:
+                    - generic [ref=e900]: Invested
+                    - generic [ref=e901]: ₹60,73,784
+                  - generic [ref=e902]:
+                    - generic [ref=e903]: Current
+                    - generic [ref=e904]: ₹63,14,207.27
+                  - generic [ref=e905]:
+                    - generic [ref=e906]: XIRR
+                    - generic [ref=e908]: "8.51"
+                  - generic [ref=e909]:
+                    - generic [ref=e910]: Today's G/L
+                    - generic [ref=e911]: "-₹38,122.44"
+                  - button "Invest" [ref=e913]
+              - 'generic "Folio # 16324960 Units 67069.74 Parag Parikh Flexi Cap Fund - Direct Plan Growth Invested ₹60,73,784 Current ₹63,14,207.27 XIRR 8.51 Today''s G/L -₹38,122.44 Invest" [ref=e914]':
+                - generic [ref=e915]:
+                  - generic [ref=e917]:
+                    - generic [ref=e918] [cursor=pointer]:
+                      - generic [ref=e920]: NAV
+                      - generic [ref=e922]:
+                        - generic [ref=e923]: ₹94.1439
+                        - generic [ref=e924]: as on 09 Jan 2026
+                    - generic [ref=e925]:
+                      - generic [ref=e926]: G/L
+                      - generic [ref=e927]: ₹2,40,423.27
+                    - generic [ref=e928]:
+                      - generic [ref=e929]: Portfolio wt.
+                      - generic [ref=e930]: 77.92%
+                    - generic [ref=e931]:
+                      - generic [ref=e932]: Wt. Avg Days
+                      - generic [ref=e933]: "179"
+                  - generic [ref=e936]:
+                    - button "SIP" [ref=e937] [cursor=pointer]
+                    - button "Redeem" [ref=e938] [cursor=pointer]
+                    - button "Switch" [ref=e939] [cursor=pointer]
+            - 'button "Folio # 16324960 Units 153708.85 Parag Parikh Arbitrage Fund - Direct Plan Growth Invested ₹17,25,256.43 Current ₹17,89,247.86 XIRR 6.27 Today''s G/L -₹169.08 Invest" [ref=e944] [cursor=pointer]':
+              - generic [ref=e945]:
+                - generic [ref=e947]: "Folio # 16324960"
+                - generic [ref=e948]:
+                  - generic [ref=e949]: Units
+                  - generic [ref=e950]: "153708.85"
+              - generic [ref=e953]: Parag Parikh Arbitrage Fund - Direct Plan Growth
+              - generic [ref=e954]:
+                - generic [ref=e955]:
+                  - generic [ref=e956]: Invested
+                  - generic [ref=e957]: ₹17,25,256.43
+                - generic [ref=e958]:
+                  - generic [ref=e959]: Current
+                  - generic [ref=e960]: ₹17,89,247.86
+                - generic [ref=e961]:
+                  - generic [ref=e962]: XIRR
+                  - generic [ref=e964]: "6.27"
+                - generic [ref=e965]:
+                  - generic [ref=e966]: Today's G/L
+                  - generic [ref=e967]: "-₹169.08"
+                - button "Invest" [ref=e969]
+      - generic [ref=e970]:
+        - generic [ref=e972]:
+          - generic [ref=e973]:
+            - generic [ref=e974]:
+              - generic [ref=e975]: Quick links
+              - generic [ref=e976]:
+                - button "back_button_swp" [disabled] [ref=e977]
+                - button "arrow_frd_btn" [ref=e978] [cursor=pointer]
+            - generic [ref=e980]:
+              - generic [ref=e982] [cursor=pointer]:
+                - img "Transact" [ref=e984]
+                - generic [ref=e986]: Transact
+              - generic [ref=e988] [cursor=pointer]:
+                - img "myFavourites" [ref=e990]
+                - generic [ref=e992]: myFavourites
+              - generic [ref=e994] [cursor=pointer]:
+                - img "Pending Transactions" [ref=e996]
+                - generic [ref=e998]: Pending Transactions
+              - generic [ref=e1000] [cursor=pointer]:
+                - img "Get CAS" [ref=e1002]
+                - generic [ref=e1004]: Get CAS
+              - generic [ref=e1006] [cursor=pointer]:
+                - img "eMandate" [ref=e1008]
+                - generic [ref=e1010]: eMandate
+          - generic "Choose an Investor"
+        - generic [ref=e1015]:
+          - generic [ref=e1016]:
+            - heading "Discover mutual funds" [level=5] [ref=e1017]
+            - text: Browse over 2,000+ mutual fund schemes to invest.
+          - generic [ref=e1018]:
+            - textbox "Search" [ref=e1026]
+            - button "Search" [ref=e1027] [cursor=pointer]
+        - generic [ref=e1029]:
+          - heading "Demat Holdings" [level=5] [ref=e1030]
+          - button "View" [ref=e1032] [cursor=pointer]
+  - generic "Change investor PAN"
+  - generic "Change investor PAN"
+```

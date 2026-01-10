@@ -75,6 +75,11 @@ type LLMAgentConfig struct {
 	EnableContextEditing        bool // Enable context editing (dynamic context reduction)
 	ContextEditingThreshold     int  // Token threshold for context editing (0 = use default: 100)
 	ContextEditingTurnThreshold int  // Turn age threshold for context editing (0 = use default: 5)
+
+	// MCP session management for connection reuse
+	// When set, MCP connections are shared via session registry instead of creating new connections
+	// This enables browser reuse in Playwright and other stateful MCP servers
+	SessionID string
 }
 
 // FallbackModel represents a fallback model configuration
@@ -239,6 +244,12 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if config.UseCodeExecutionMode {
 		agentOptions = append(agentOptions, mcpagent.WithCodeExecutionMode(true))
 		logger.Info("🔧 Code execution mode enabled - MCP tools will be accessed via generated Go code")
+	}
+
+	// Add session ID for MCP connection reuse (e.g., Playwright browser sharing)
+	if config.SessionID != "" {
+		agentOptions = append(agentOptions, mcpagent.WithSessionID(config.SessionID))
+		logger.Info(fmt.Sprintf("🔗 MCP session ID configured for connection reuse: %s", config.SessionID))
 	}
 
 	// Add context summarization options if enabled

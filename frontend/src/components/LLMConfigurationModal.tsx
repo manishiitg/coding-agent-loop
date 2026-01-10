@@ -360,8 +360,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('openrouter', apiKey, modelId, options, temperature)}
                   apiKeyStatus={apiKeyStatus.openrouter}
                   apiKeyError={apiKeyErrors.openrouter}
-                  isPrimary={primaryConfig.provider === 'openrouter'}
-                  onSetPrimary={() => handleSetPrimaryProvider('openrouter')}
                   metadata={metadata}
                 />
               )}
@@ -373,8 +371,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('bedrock', apiKey, modelId, options, temperature)}
                   apiKeyStatus={apiKeyStatus.bedrock}
                   apiKeyError={apiKeyErrors.bedrock}
-                  isPrimary={primaryConfig.provider === 'bedrock'}
-                  onSetPrimary={() => handleSetPrimaryProvider('bedrock')}
                   metadata={metadata}
                 />
               )}
@@ -386,8 +382,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('openai', apiKey, modelId, options, temperature)}
                   apiKeyStatus={apiKeyStatus.openai}
                   apiKeyError={apiKeyErrors.openai}
-                  isPrimary={primaryConfig.provider === 'openai'}
-                  onSetPrimary={() => handleSetPrimaryProvider('openai')}
                   metadata={metadata}
                 />
               )}
@@ -399,8 +393,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('vertex', apiKey, modelId, options, temperature)}
                   apiKeyStatus={apiKeyStatus.vertex}
                   apiKeyError={apiKeyErrors.vertex}
-                  isPrimary={primaryConfig.provider === 'vertex'}
-                  onSetPrimary={() => handleSetPrimaryProvider('vertex')}
                   metadata={metadata}
                 />
               )}
@@ -412,8 +404,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('anthropic', apiKey, modelId, options, temperature)}
                   apiKeyStatus={apiKeyStatus.anthropic}
                   apiKeyError={apiKeyErrors.anthropic}
-                  isPrimary={primaryConfig.provider === 'anthropic'}
-                  onSetPrimary={() => handleSetPrimaryProvider('anthropic')}
                   metadata={metadata}
                 />
               )}

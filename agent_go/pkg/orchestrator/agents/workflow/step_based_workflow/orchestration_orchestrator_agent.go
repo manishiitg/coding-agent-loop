@@ -274,7 +274,7 @@ func (hctpooa *WorkflowOrchestrationOrchestratorAgent) orchestrationOrchestrator
 	}
 
 	if isCodeExecutionMode {
-		templateData["CodeExecutionInstructions"] = prompt.GetCodeExecutionInstructions()
+		templateData["CodeExecutionInstructions"] = prompt.GetCodeExecutionInstructions(templateVars["WorkspacePath"])
 	}
 
 	var result strings.Builder

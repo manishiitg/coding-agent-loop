@@ -18,7 +18,7 @@ import (
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
 // usedTempLLM: Which tempLLM was used during execution ("tempLLM1", "tempLLM2", or "" for original LLM)
-func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.Context, stepIndex int, stepPath string, learningPathIdentifier string, totalSteps int, step PlanStepInterface, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool, usedTempLLM string, turnCount int) error {
+func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.Context, stepIndex int, stepPath string, learningPathIdentifier string, totalSteps int, step PlanStepInterface, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool, usedTempLLM string, turnCount int, executionLLM string) error {
 	// Get agent configs once at the start
 	agentConfigs := getAgentConfigs(step)
 
@@ -74,6 +74,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 			turnCount,
 			step,
 			false, // validationPassed = false (don't increment counters when learning is skipped, even though validation may have passed)
+			executionLLM,
 			learningLLM,
 		)
 		if metadataErr != nil {
@@ -324,6 +325,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		turnCount,
 		step,
 		true, // Validation passed
+		executionLLM,
 		learningLLM,
 	)
 	if metadataErr == nil && shouldAutoLock {
@@ -343,7 +345,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.Context, stepIndex int, stepPath string, learningPathIdentifier string, totalSteps int, step PlanStepInterface, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool, turnCount int) (string, string, error) {
+func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.Context, stepIndex int, stepPath string, learningPathIdentifier string, totalSteps int, step PlanStepInterface, executionHistory []llmtypes.MessageContent, validationResponse *ValidationResponse, isCodeExecutionMode bool, usedTempLLM string, turnCount int, executionLLM string) (string, string, error) {
 	// Ensure the learning folder exists before reading/writing learnings
 	// Use RELATIVE path - workspace functions auto-prepend workspacePath
 	// getLearningsBasePath returns "evaluation/learnings" or "learnings" based on isEvaluationMode
@@ -386,6 +388,30 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 		}
 	}
 
+	// TEMP LLM OVERRIDE: Skip failure learning if tempLLM was used (we should fallback to main LLM instead of learning)
+	// This prevents wasting tokens on failure learning when a cheaper tempLLM failed - we just retry with the better LLM
+	if usedTempLLM != "" {
+		// Check if skip flags are enabled
+		shouldSkipFailureLearningDueToTempOverride := false
+		if hcpo.executionOptions != nil {
+			if usedTempLLM == "tempLLM1" && hcpo.executionOptions.SkipLearningWhenTempLLM1 {
+				shouldSkipFailureLearningDueToTempOverride = true
+				hcpo.GetLogger().Info(fmt.Sprintf("🔧 Temp LLM1 was used and SkipLearningWhenTempLLM1 flag is enabled - skipping failure learning for step %d", stepIndex+1))
+			} else if usedTempLLM == "tempLLM2" && hcpo.executionOptions.SkipLearningWhenTempLLM2 {
+				shouldSkipFailureLearningDueToTempOverride = true
+				hcpo.GetLogger().Info(fmt.Sprintf("🔧 Temp LLM2 was used and SkipLearningWhenTempLLM2 flag is enabled - skipping failure learning for step %d", stepIndex+1))
+			}
+		}
+
+		if shouldSkipFailureLearningDueToTempOverride {
+			// Skip failure learning and just return empty refined description
+			// The system will fallback to the original/main LLM for the next retry
+			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping failure learning for %s/%d (%s failed validation, will retry with main LLM)", learningPathIdentifier, totalSteps, usedTempLLM))
+			// Note: We don't call updateMetadataWhenSkippedFailure here because we want to let the main LLM retry handle metadata updates
+			return "", "", nil
+		}
+	}
+
 	// Helper function to update metadata with turnCount when learning is skipped
 	updateMetadataWhenSkippedFailure := func(skipReason string) error {
 		// Determine which LLM would have been used (for metadata tracking)
@@ -406,6 +432,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 			turnCount,
 			step,
 			false, // validationPassed = false (validation failed, and learning was skipped)
+			executionLLM,
 			learningLLM,
 		)
 		if metadataErr != nil {
@@ -616,7 +643,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Primary.Provider, learningLLMConfig.Primary.ModelID)
 
 	// Update metadata and check if auto-lock should be triggered
-	// Even though we assume new learning, TotalIterations still increments and can trigger lock after 10 tries
+	// Note: validationPassed is false because this is failure learning (validation failed)
 	shouldAutoLock, metadataErr := hcpo.updateLearningMetadataWithTurnCount(
 		ctx,
 		stepIndex,
@@ -627,7 +654,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 		confidence,
 		turnCount,
 		step,
-		false, // Validation failed
+		false, // validationPassed = false (validation failed)
+		executionLLM,
 		learningLLM,
 	)
 	if metadataErr == nil && shouldAutoLock {

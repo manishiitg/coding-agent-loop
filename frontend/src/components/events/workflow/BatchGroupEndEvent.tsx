@@ -9,18 +9,16 @@ interface BatchGroupEndEventProps {
 }
 
 export const BatchGroupEndEvent: React.FC<BatchGroupEndEventProps> = ({ event, compact = false }) => {
-  const setCurrentRunningGroupId = useWorkflowStore(state => state.setCurrentRunningGroupId)
+  // Use consolidated handler for batch group switching (single source of truth)
+  const handleBatchGroupEnd = useWorkflowStore(state => state.handleBatchGroupEnd)
 
   // Clear running group when this event is displayed
   useEffect(() => {
-    // Only clear if this is the currently running group
     if (event.group_id) {
-      const currentGroup = useWorkflowStore.getState().currentRunningGroupId
-      if (currentGroup === event.group_id) {
-        setCurrentRunningGroupId(null)
-      }
+      // Use consolidated handler - safely clears currentRunningGroupId only if it matches
+      handleBatchGroupEnd(event.group_id)
     }
-  }, [event.group_id, setCurrentRunningGroupId])
+  }, [event.group_id, handleBatchGroupEnd])
 
   if (compact) {
     return (

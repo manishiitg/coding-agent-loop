@@ -20,6 +20,7 @@ import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type StepNodeData, type ConditionalNodeData, type LoopNodeData, type DecisionNodeData, type OrchestratorNodeData } from '../hooks/usePlanToFlow'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
+import { useWorkspaceState } from '../hooks/useWorkspaceState'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { useAppStore } from '../../../stores/useAppStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -367,38 +368,42 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Load plan data with change detection
   const { plan, loading, error, changes, updateStep, deleteStep, refresh: loadPlanRefresh, clearChanges, setChanges } = usePlanData(workspacePath)
 
-  // Load variables when workspace changes
+  // *** NEW CONSOLIDATED API ***
+  // Load all workspace state (run folders, variables, phases, progress) in one call
+  // This replaces the old individual API calls and eliminates race conditions
+  const {
+    state: workspaceState,
+    loading: isLoadingWorkspaceState,
+    error: workspaceStateError,
+    refresh: refreshWorkspaceState
+  } = useWorkspaceState(workspacePath, selectedRunFolder)
+
+  // Sync workspace state to local state for backward compatibility
+  // TODO: Eventually migrate all consumers to use workspaceState directly
   React.useEffect(() => {
-    if (!workspacePath) {
+    if (workspaceState) {
+      setVariablesManifest(workspaceState.variables_manifest || null)
+      setIsLoadingVariables(false)
+    } else if (!isLoadingWorkspaceState) {
       setVariablesManifest(null)
-      setVariablesManifestInStore(null)
-      return
+      setIsLoadingVariables(false)
+    } else {
+      setIsLoadingVariables(isLoadingWorkspaceState)
     }
+  }, [workspaceState, isLoadingWorkspaceState])
 
-    const loadVariables = async () => {
-      setIsLoadingVariables(true)
-      try {
-        const response = await agentApi.getVariableGroups(workspacePath)
-        if (response.success && response.manifest) {
-          setVariablesManifest(response.manifest)
-          // Also store in workflow store for buildExecutionOptions to access
-          setVariablesManifestInStore(response.manifest)
-        } else {
-          setVariablesManifest(null)
-          setVariablesManifestInStore(null)
-        }
-      } catch (err) {
-        console.error('[WorkflowCanvas] Failed to load variables:', err)
-        setVariablesManifest(null)
-        setVariablesManifestInStore(null)
-      } finally {
-        setIsLoadingVariables(false)
-      }
+  // Transform run folders for WorkflowToolbar (memoized to avoid repeated transformations)
+  const runFoldersForToolbar = React.useMemo(() => {
+    if (!workspaceState?.run_folders) return []
+    return workspaceState.run_folders.map(f => ({ name: f.name, progress: f.progress || null }))
+  }, [workspaceState?.run_folders])
+
+  // Log workspace state errors
+  React.useEffect(() => {
+    if (workspaceStateError) {
+      console.error('[WorkflowCanvas] Workspace state error:', workspaceStateError)
     }
-
-    loadVariables()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspacePath])
+  }, [workspaceStateError])
 
   // Callback for opening variables sidebar
   const handleOpenVariablesSidebar = useCallback(() => {
@@ -413,39 +418,24 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     setVariablesManifestInStore(manifest)
   }, [setVariablesManifestInStore])
 
-  // Refresh handler - reloads plan, step config, and variables
+  // Refresh handler - reloads plan, step config, and workspace state
   const handleRefresh = useCallback(async () => {
     if (!workspacePath) return
-    
-    console.log('[WorkflowCanvas] Refreshing plan, step config, and variables...')
-    
+
+    console.log('[WorkflowCanvas] Refreshing plan, step config, and workspace state...')
+
     // Save current viewport state before refresh
     // Only save if viewport has been initialized (not on first load)
     const currentViewport = hasInitializedView.current ? viewportStateRef.current : null
     console.log('[WorkflowCanvas] Saving viewport state before refresh:', currentViewport, 'hasInitializedView:', hasInitializedView.current)
-    
+
     // Refresh plan data (this also loads step_config.json)
     await loadPlanRefresh()
-    
-    // Reload variables
-    setIsLoadingVariables(true)
-    try {
-      const response = await agentApi.getVariableGroups(workspacePath)
-      if (response.success && response.manifest) {
-        setVariablesManifest(response.manifest)
-        setVariablesManifestInStore(response.manifest)
-      } else {
-        setVariablesManifest(null)
-        setVariablesManifestInStore(null)
-      }
-    } catch (err) {
-      console.error('[WorkflowCanvas] Failed to reload variables:', err)
-      setVariablesManifest(null)
-      setVariablesManifestInStore(null)
-    } finally {
-      setIsLoadingVariables(false)
-    }
-    
+
+    // *** NEW: Use consolidated workspace state refresh ***
+    // This reloads run folders, variables, phases, and progress in one call
+    await refreshWorkspaceState()
+
     // Restore viewport state after refresh completes
     // Only restore if we had a saved viewport (not on first load)
     // Use a small delay to ensure nodes have been updated
@@ -458,9 +448,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         )
       }, 100)
     }
-    
+
     console.log('[WorkflowCanvas] Refresh completed')
-  }, [workspacePath, loadPlanRefresh, setVariablesManifestInStore, setViewport])
+  }, [workspacePath, loadPlanRefresh, refreshWorkspaceState, setViewport])
 
   // Workflow execution
   const {
@@ -903,15 +893,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       }
       return false
     })
-    
+
     if (nodeToFocus) {
-      // Focus viewport on the node without changing sidebar selection.
-      // This keeps the sidebar closed for execution events (currentStepId)
-      // and simply repositions the view when the sidebar is already open.
+      // Focus viewport on the node but don't select it (don't open sidebar)
+      // User can manually open sidebar if needed
       focusNode(nodeToFocus.id, { topPadding: 150, selectNode: false, delay: 100 })
-      console.log('[WorkflowCanvas] Highlighted step node:', stepId, '-> node ID:', nodeToFocus.id)
-    } else {
-      console.warn('[WorkflowCanvas] Could not find node for stepId:', stepId)
     }
   }, [focusNode])
 
@@ -1921,32 +1907,59 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Handle toggle dependency edges
 
-  // Loading state
-  if (loading) {
+  // Unified loading state - wait for ALL data before showing canvas
+  // This ensures consistent state: plan, step_config, run folders, variables, phases, progress
+  const isFullyLoaded = !loading && !isLoadingWorkspaceState
+  const loadingMessages = []
+  if (loading) loadingMessages.push('plan & step config')
+  if (isLoadingWorkspaceState) loadingMessages.push('workspace state')
+
+  if (!isFullyLoaded) {
     return (
       <div className={`flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900 ${className}`}>
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-2 border-gray-400 dark:border-gray-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm text-gray-500 dark:text-gray-400">Loading plan...</span>
+          <span className="text-sm text-gray-500 dark:text-gray-400">
+            Loading {loadingMessages.join(' & ')}...
+          </span>
+          <span className="text-xs text-gray-400 dark:text-gray-500">
+            Please wait while we load everything
+          </span>
         </div>
       </div>
     )
   }
 
-  // Error state
-  if (error) {
+  // Error state - show errors from plan loading or workspace state loading
+  const hasError = error || workspaceStateError
+
+  if (hasError) {
     return (
       <div className={`flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900 ${className}`}>
-        <div className="flex flex-col items-center gap-3 text-center">
+        <div className="flex flex-col items-center gap-3 text-center max-w-md">
           <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
             <span className="text-2xl">⚠️</span>
           </div>
-          <span className="text-sm text-red-600 dark:text-red-400">{error}</span>
+          <div className="flex flex-col gap-2">
+            {error && (
+              <span className="text-sm text-red-600 dark:text-red-400">
+                <strong>Plan error:</strong> {error}
+              </span>
+            )}
+            {workspaceStateError && (
+              <span className="text-sm text-red-600 dark:text-red-400">
+                <strong>Workspace error:</strong> {workspaceStateError}
+              </span>
+            )}
+          </div>
           <button
-            onClick={loadPlanRefresh}
+            onClick={() => {
+              loadPlanRefresh()
+              refreshWorkspaceState()
+            }}
             className="px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
           >
-            Retry
+            Retry Loading
           </button>
         </div>
       </div>
@@ -1964,6 +1977,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           workspacePath={workspacePath}
           totalSteps={0}
           presetQueryId={presetQueryId}
+          runFolders={runFoldersForToolbar}
+          variablesManifest={variablesManifest}
+          stepProgress={stepProgress}
+          isLoadingWorkspaceState={isLoadingWorkspaceState}
           onStartPhase={handleStartPhase}
           onStop={stopWorkflow}
           onCreatePlan={onCreatePlan || (() => {})}
@@ -2009,11 +2026,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         workspacePath={workspacePath}
         totalSteps={totalSteps}
         presetQueryId={presetQueryId}
-          onStartPhase={handleStartPhase}
-          onStop={stopWorkflow}
-          onBulkUpdateSteps={handleBulkUpdateSteps}
-          onCreatePlan={onCreatePlan || (() => {})}
-          showChatArea={showChatArea}
+        runFolders={runFoldersForToolbar}
+        variablesManifest={variablesManifest}
+        stepProgress={stepProgress}
+        isLoadingWorkspaceState={isLoadingWorkspaceState}
+        onStartPhase={handleStartPhase}
+        onStop={stopWorkflow}
+        onBulkUpdateSteps={handleBulkUpdateSteps}
+        onCreatePlan={onCreatePlan || (() => {})}
+        showChatArea={showChatArea}
         onToggleChatArea={onToggleChatArea}
         onRefresh={handleRefresh}
         onSaveLayout={saveLayout}

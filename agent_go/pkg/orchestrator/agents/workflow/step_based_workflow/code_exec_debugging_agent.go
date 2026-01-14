@@ -175,8 +175,7 @@ func (cdm *CodeExecDebuggingManager) createCodeExecDebuggingAgent(ctx context.Co
 	cdm.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	cdm.GetLogger().Info(fmt.Sprintf("🔍 Setting folder guard for code execution debugging agent - Read paths: %v, Write paths: %v", readPaths, writePaths))
 
-	// Determine LLM config (use phase LLM or orchestrator default)
-	orchestratorLLMConfig := cdm.GetLLMConfig()
+	// Determine LLM config (use preset phase LLM only)
 	var llmConfigToUse *orchestrator.LLMConfig
 	if cdm.presetPhaseLLM != nil && cdm.presetPhaseLLM.Provider != "" && cdm.presetPhaseLLM.ModelID != "" {
 		llmConfigToUse = &orchestrator.LLMConfig{
@@ -188,11 +187,8 @@ func (cdm *CodeExecDebuggingManager) createCodeExecDebuggingAgent(ctx context.Co
 			APIKeys:   cdm.GetAPIKeys(),
 		}
 		cdm.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for debugging: %s/%s", cdm.presetPhaseLLM.Provider, cdm.presetPhaseLLM.ModelID))
-	} else if orchestratorLLMConfig != nil {
-		llmConfigToUse = orchestratorLLMConfig
-		cdm.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default debugging LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
 	} else {
-		return nil, fmt.Errorf("no valid LLM configuration found for debugging agent")
+		return nil, fmt.Errorf("no valid LLM configuration found for debugging agent: presetPhaseLLM is empty or invalid")
 	}
 
 	// Use workspace tools directly
@@ -686,7 +682,6 @@ func (agent *WorkflowCodeExecDebuggingAgent) Execute(ctx context.Context, templa
 				currentResult,
 				sessionID,
 				workflowID,
-				
 			)
 			if err != nil {
 				break

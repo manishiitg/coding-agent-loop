@@ -242,51 +242,43 @@ export const WorkflowChatTabs: React.FC = () => {
         {/* Auto-scroll Toggle and Close Button - only show when there are workflow tabs */}
         {activeWorkflowTabs.length > 0 && (
           <div className="ml-auto flex items-center gap-1 border-l border-gray-200 dark:border-gray-700 pl-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    const newAutoScrollState = !autoScroll
-                    setAutoScroll(newAutoScrollState)
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                const newAutoScrollState = !autoScroll
+                setAutoScroll(newAutoScrollState)
 
-                    // If enabling auto-scroll (switching from Manual to Auto-scroll), scroll to bottom
-                    if (newAutoScrollState) {
-                      // Find the chat content scrollable element and scroll to bottom
-                      setTimeout(() => {
-                        const chatAreaContainer = document.querySelector('[data-testid="chat-area-container"]')
-                        if (chatAreaContainer) {
-                          const scrollableElement = chatAreaContainer.querySelector('.overflow-y-auto')
-                          if (scrollableElement) {
-                            scrollableElement.scrollTo({
-                              top: scrollableElement.scrollHeight,
-                              behavior: 'smooth'
-                            })
-                          }
-                        }
-                      }, 50)
+                // If enabling auto-scroll (switching from Manual to Auto-scroll), scroll to bottom
+                if (newAutoScrollState) {
+                  // Find the chat content scrollable element and scroll to bottom
+                  setTimeout(() => {
+                    const chatAreaContainer = document.querySelector('[data-testid="chat-area-container"]')
+                    if (chatAreaContainer) {
+                      const scrollableElement = chatAreaContainer.querySelector('.overflow-y-auto')
+                      if (scrollableElement) {
+                        scrollableElement.scrollTo({
+                          top: scrollableElement.scrollHeight,
+                          behavior: 'smooth'
+                        })
+                      }
                     }
-                  }}
-                  className={`
-                    flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors
-                    ${autoScroll
-                      ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
-                      : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
-                    }
-                    hover:bg-gray-200 dark:hover:bg-gray-700
-                  `}
-                  title={autoScroll ? 'Auto-scroll enabled (click to disable)' : 'Auto-scroll disabled (click to enable)'}
-                >
-                  <ArrowDown className={`w-3.5 h-3.5 ${autoScroll ? 'opacity-70' : 'opacity-40'}`} />
-                  <span className="hidden sm:inline">
-                    {autoScroll ? 'Auto-scroll' : 'Manual'}
-                  </span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{autoScroll ? 'Auto-scroll enabled (click to disable)' : 'Auto-scroll disabled (click to enable)'}</p>
-              </TooltipContent>
-            </Tooltip>
+                  }, 50)
+                }
+              }}
+              className={`
+                flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors
+                ${autoScroll
+                  ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+                  : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
+                }
+                hover:bg-gray-200 dark:hover:bg-gray-700
+              `}
+            >
+              <ArrowDown className={`w-3.5 h-3.5 ${autoScroll ? 'opacity-70' : 'opacity-40'}`} />
+              <span className="hidden sm:inline">
+                {autoScroll ? 'Auto-scroll' : 'Manual'}
+              </span>
+            </button>
 
             {/* Close Button - closes the entire chat area panel */}
             <Tooltip>

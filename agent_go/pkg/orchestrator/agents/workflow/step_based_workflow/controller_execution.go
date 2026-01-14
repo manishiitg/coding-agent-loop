@@ -971,10 +971,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	updatedContextFiles = make([]string, len(previousContextFiles))
 	copy(updatedContextFiles, previousContextFiles)
 
-	// Emit step_started event
+	// Emit step_started event (also emits step progress with status="start")
 	// Note: Conditional steps emit their own step_started event in executeConditionalStep before calling executeSingleStep for branch steps
 	hcpo.emitStepStartedEvent(ctx, step, stepIndex, stepPath, isBranchStep)
-
 
 	// STEP HASH GUARD: Detect plan changes and reset learnings if needed
 	// This ensures that if the user modifies a step's description, criteria, etc.,
@@ -1025,18 +1024,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		// Get knowledgebase folder path (persistent files across runs, at workspace root)
 		knowledgebasePath := getKnowledgebasePath(hcpo.GetWorkspacePath())
 
+		// Get folder guard paths for template (so agent knows exact paths it can access)
+		// Use step.GetID() as stepID for folder guard setup
+		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID())
+
 		templateVars := map[string]string{
-			"StepTitle":           ResolveVariables(step.GetTitle(), hcpo.variableValues),
-			"StepDescription":     ResolveVariables(step.GetDescription(), hcpo.variableValues),
-			"StepSuccessCriteria": ResolveVariables(step.GetSuccessCriteria(), hcpo.variableValues),
-			"StepContextOutput":   ResolveVariables(step.GetContextOutput().String(), hcpo.variableValues),
-			"WorkspacePath":       executionWorkspacePath,                 // Execution subdirectory (folder guard validates against this)
-			"LearningsPath":       learningsPath,                          // Learnings folder path for reading learning files and scripts/code
-			"KnowledgebasePath":   knowledgebasePath,                      // Knowledgebase folder path (persistent files across runs)
-			"IsCodeExecutionMode": fmt.Sprintf("%v", isCodeExecutionMode), // Code execution mode flag (step-specific or preset)
-			"HumanFeedback":       "",                                     // Human feedback for retry attempts (set after validation failure)
-			"StepNumber":          stepPath,                               // Step identifier (e.g., "step-8" or "step-3-if-true-0")
-			"StepExecutionPath":   stepExecutionPath,                      // Full execution folder path (e.g., "execution/step-8")
+			"StepTitle":             ResolveVariables(step.GetTitle(), hcpo.variableValues),
+			"StepDescription":       ResolveVariables(step.GetDescription(), hcpo.variableValues),
+			"StepSuccessCriteria":   ResolveVariables(step.GetSuccessCriteria(), hcpo.variableValues),
+			"StepContextOutput":     ResolveVariables(step.GetContextOutput().String(), hcpo.variableValues),
+			"WorkspacePath":         executionWorkspacePath,                    // Execution subdirectory (folder guard validates against this)
+			"LearningsPath":         learningsPath,                             // Learnings folder path for reading learning files and scripts/code
+			"KnowledgebasePath":     knowledgebasePath,                         // Knowledgebase folder path (persistent files across runs)
+			"IsCodeExecutionMode":   fmt.Sprintf("%v", isCodeExecutionMode),    // Code execution mode flag (step-specific or preset)
+			"HumanFeedback":         "",                                        // Human feedback for retry attempts (set after validation failure)
+			"StepNumber":            stepPath,                                  // Step identifier (e.g., "step-8" or "step-3-if-true-0")
+			"StepExecutionPath":     stepExecutionPath,                         // Full execution folder path (e.g., "execution/step-8")
+			"FolderGuardReadPaths":  strings.Join(folderGuardReadPaths, ", "),  // Folder guard read paths for agent guidance
+			"FolderGuardWritePaths": strings.Join(folderGuardWritePaths, ", "), // Folder guard write paths for agent guidance
 		}
 
 		// Add context dependencies as a comma-separated string (also resolve variables)
@@ -1703,6 +1708,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// Check if validation is disabled for this step
 				agentConfigs = getAgentConfigs(step)
 				disableValidation := agentConfigs != nil && agentConfigs.DisableValidation != nil && *agentConfigs.DisableValidation
+				// CODE EXECUTION MODE: Force validation enabled regardless of step config
+				// Use step-level code execution mode (already computed above)
+				if isCodeExecutionMode && disableValidation {
+					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing validation for step %d (overriding step config)", stepIndex+1))
+					disableValidation = false
+				}
 				if disableValidation {
 					hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Validation disabled for step %d - auto-approving (learning will still run)", stepIndex+1))
 					// Auto-approve: create a success validation response
@@ -1861,7 +1872,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					} else {
 						// Pre-validation passed - check if we should skip LLM validation
 						agentConfigs := getAgentConfigs(step)
-						
+
 						// Determine validation mode (default: "auto")
 						validationMode := "auto"
 						if agentConfigs != nil {
@@ -2040,6 +2051,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
 								agentConfigs := getAgentConfigs(step)
 								learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
+								if learningLLMConfig == nil {
+									err := fmt.Errorf("no valid LLM configuration found for learning agent")
+									hcpo.GetLogger().Error("❌ No valid LLM configuration found for learning agent, skipping metadata update", err)
+									continue
+								}
 								learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Primary.Provider, learningLLMConfig.Primary.ModelID)
 
 								_, metadataErr := hcpo.updateLearningMetadataWithTurnCount(
@@ -2236,62 +2252,66 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 							if !isFastExecuteStep && !isLearningDisabled && !shouldSkipLearningDueToLock && !shouldSkipLearningDueToTempOverride {
 								learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
-								                                hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running learning analysis after loop iteration %d for %s", loopIterationCount, stepPath))
-								                                // Run learning even though condition not met (for iteration analysis)
-								                                // Populate runtime fields for runSuccessLearningPhase
-								                                stepConfigs, err := hcpo.ReadStepConfigs(ctx)
-								                                if err != nil {
-								                                        hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_config.json: %v (using defaults)", err))
-								                                        stepConfigs = []StepConfig{}
-								                                }
-								                                todoStep, err := populateStepRuntimeFields(step, stepConfigs)
-								                                if err != nil {
-								                                        hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to populate runtime fields for learning: %v", err))
-								                                } else {
-								                                        // For loop iterations, usedTempLLM is in scope but typically empty (loop iterations use original LLM)
-								                                        err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM)
-								                                }
-								                                if err != nil {
-								                                        hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Learning phase failed after loop iteration %d for %s: %v", loopIterationCount, stepPath, err))
-								                                } else {
-								                                        hcpo.GetLogger().Info(fmt.Sprintf("✅ Learning analysis completed after loop iteration %d for step %d", loopIterationCount, stepIndex+1))
-								                                }							} else if shouldSkipLearningDueToTempOverride {
+								hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running learning analysis after loop iteration %d for %s", loopIterationCount, stepPath))
+								// Run learning even though condition not met (for iteration analysis)
+								// Populate runtime fields for runSuccessLearningPhase
+								stepConfigs, err := hcpo.ReadStepConfigs(ctx)
+								if err != nil {
+									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_config.json: %v (using defaults)", err))
+									stepConfigs = []StepConfig{}
+								}
+								todoStep, err := populateStepRuntimeFields(step, stepConfigs)
+								if err != nil {
+									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to populate runtime fields for learning: %v", err))
+								} else {
+									// For loop iterations, usedTempLLM is in scope but typically empty (loop iterations use original LLM)
+									err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM)
+								}
+								if err != nil {
+									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Learning phase failed after loop iteration %d for %s: %v", loopIterationCount, stepPath, err))
+								} else {
+									hcpo.GetLogger().Info(fmt.Sprintf("✅ Learning analysis completed after loop iteration %d for step %d", loopIterationCount, stepIndex+1))
+								}
+							} else if shouldSkipLearningDueToTempOverride {
 								// IMPORTANT: Update metadata even when skipping learning due to tempLLM
 								// We still want to count this success toward the auto-lock threshold (3 successes)
 								learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
 								agentConfigs := getAgentConfigs(step)
 								learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
+								if learningLLMConfig == nil {
+									err := fmt.Errorf("no valid LLM configuration found for learning agent")
+									hcpo.GetLogger().Error("❌ No valid LLM configuration found for learning agent, skipping metadata update", err)
+									continue
+								}
 								learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Primary.Provider, learningLLMConfig.Primary.ModelID)
 
-																	_, metadataErr := hcpo.updateLearningMetadataWithTurnCount(
+								_, metadataErr := hcpo.updateLearningMetadataWithTurnCount(
 
-																		ctx,
+									ctx,
 
-																		stepIndex,
+									stepIndex,
 
-																		stepPath,
+									stepPath,
 
-																		learningPathIdentifier,
+									learningPathIdentifier,
 
-																		false, // hasNewLearning = false (learning was skipped)
+									false, // hasNewLearning = false (learning was skipped)
 
-																		fmt.Sprintf("Success learning skipped (loop iteration %d): %s was used and skip flag enabled. Metadata updated.", loopIterationCount, usedTempLLM),
+									fmt.Sprintf("Success learning skipped (loop iteration %d): %s was used and skip flag enabled. Metadata updated.", loopIterationCount, usedTempLLM),
 
-																		0.0, // confidence = 0 (not applicable when skipped)
+									0.0, // confidence = 0 (not applicable when skipped)
 
-																		turnCount,
+									turnCount,
 
-																		step,
+									step,
 
-																		true, // validationPassed = true (execution succeeded)
+									true, // validationPassed = true (execution succeeded)
 
-																		executionLLM,
+									executionLLM,
 
-																		learningLLM,
+									learningLLM,
+								)
 
-																	)
-
-								
 								if metadataErr != nil {
 									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update learning metadata (tempLLM skip, loop iter) for %s: %v", learningPathIdentifier, metadataErr))
 								} else {
@@ -2449,6 +2469,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// Ensure validationResponse exists - if validation is disabled, assume success
 					agentConfigs := getAgentConfigs(step)
 					disableValidation := agentConfigs != nil && agentConfigs.DisableValidation != nil && *agentConfigs.DisableValidation
+					// CODE EXECUTION MODE: Force validation enabled regardless of step config
+					// Use step-level code execution mode (already computed above)
+					if isCodeExecutionMode && disableValidation {
+						hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing validation for step %d (overriding step config)", stepIndex+1))
+						disableValidation = false
+					}
 					if validationResponse == nil && disableValidation {
 						// Validation is disabled but response is nil - create success response for learning
 						hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Validation disabled for step %d - creating success response for learning", stepIndex+1))
@@ -2819,7 +2845,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		updatedContextFiles = append(updatedContextFiles, contextOutput)
 	}
 
-	// Emit step_finished event
+	// Emit step_finished event (also emits step progress with status="end")
 	// Note: Conditional steps emit their own step_finished event in executeConditionalStep after branch execution completes
 	hcpo.emitStepFinishedEvent(ctx, step, stepIndex, stepPath, isBranchStep)
 
@@ -3043,6 +3069,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 				} else {
 					hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Step %d (%s) has no context_output - skipping", prevIdx+1, breakdownSteps[prevIdx].GetTitle()))
 				}
+			}
+		}
+
+		// Set current step ID on context-aware bridge so ALL events have step info in metadata
+		stepID := step.GetID()
+		if stepID == "" {
+			stepID = fmt.Sprintf("step-%d", i+1) // Fallback to step index if no ID
+		}
+		if bridge := hcpo.GetContextAwareBridge(); bridge != nil {
+			if stepBridge, ok := bridge.(interface {
+				SetCurrentStepID(stepID string)
+			}); ok {
+				stepBridge.SetCurrentStepID(stepID)
 			}
 		}
 
@@ -3695,6 +3734,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 		// Note: Progress tracking is handled inside executeSingleStep
 		// Continue to next step
 		continue
+	}
+
+	// Clear current step ID on context-aware bridge (cleanup after execution ends)
+	if bridge := hcpo.GetContextAwareBridge(); bridge != nil {
+		if stepBridge, ok := bridge.(interface {
+			ClearCurrentStepID()
+		}); ok {
+			stepBridge.ClearCurrentStepID()
+		}
 	}
 
 	// Final save to ensure all completed steps are persisted

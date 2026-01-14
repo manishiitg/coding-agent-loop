@@ -834,8 +834,6 @@ export interface ExecutionOptions {
   save_validation_responses?: boolean;  // If true, save validation responses to workspace validation folder (default: true)
   
   // Tool access control (global configuration)
-  disable_shell_exec_access?: boolean;  // If true, disable execute_shell_command tool access globally
-  disable_read_image_access?: boolean;  // If true, disable read_image tool access globally
   
   // Variable group execution options (for batch execution with multiple groups)
   enabled_group_ids?: string[];  // Group IDs to execute (if empty, uses groups' enabled flags)
@@ -1098,6 +1096,7 @@ export interface EvaluationReportsResponse {
   success: boolean;
   reports: EvaluationReportEntry[];
   aggregate?: EvaluationAggregate;
+  evaluation_plan?: string;
   error?: string;
 }
 

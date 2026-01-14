@@ -41,9 +41,9 @@ type LearningMetadata struct {
 	StepHash                 string                      `json:"step_hash,omitempty"` // SHA256 of step definition
 	TotalIterations          int                         `json:"total_iterations"`
 	ConsecutiveNoNewLearning int                         `json:"consecutive_no_new_learning"` // Legacy - keeping for backward compatibility
-	SuccessfulRunsSimple     int                         `json:"successful_runs_simple"`      // Successful runs for TurnCount < 15
-	SuccessfulRunsMedium     int                         `json:"successful_runs_medium"`      // Successful runs for TurnCount 15-30
-	SuccessfulRunsComplex    int                         `json:"successful_runs_complex"`     // Successful runs for TurnCount > 30
+	SuccessfulRunsSimple     int                         `json:"successful_runs_simple"`      // Successful runs for TurnCount < 100 (TODO: Turn-based classification is unreliable - varies by model, doesn't reflect actual complexity)
+	SuccessfulRunsMedium     int                         `json:"successful_runs_medium"`      // Successful runs for TurnCount 100-200 (TODO: Turn-based classification is unreliable - varies by model, doesn't reflect actual complexity)
+	SuccessfulRunsComplex    int                         `json:"successful_runs_complex"`     // Successful runs for TurnCount > 200 (TODO: Turn-based classification is unreliable - varies by model, doesn't reflect actual complexity)
 	LastTurnCount            int                         `json:"last_turn_count"`             // Last recorded TurnCount
 	LastExecutionLLM         string                      `json:"last_execution_llm,omitempty"` // The LLM used for the last execution (associated with last_turn_count)
 	LastLearningLLM          string                      `json:"last_learning_llm,omitempty"` // The LLM used for the last learning cycle
@@ -185,10 +185,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	// Increment complexity-based counters (ONLY on successful validation/new learning)
 	// Note: In Mode A (Unlocked), we increment counters if validation passed.
 	// Since this is called after success learning extraction, we increment here.
+	//
+	// TODO: Turn-based classification is not reliable - turn count varies significantly based on
+	// the LLM model used (e.g., Claude vs GPT vs cheaper models) and doesn't reflect actual
+	// step complexity. We need to develop a better complexity metric that considers:
+	// - Actual step requirements (dependencies, validation criteria, data transformations)
+	// - Historical success rates and consistency
+	// - Resource usage patterns
+	// - Step interdependencies and workflow context
 	if validationPassed && turnCount > 0 {
-		if turnCount < 15 {
+		if turnCount < 100 {
 			metadata.SuccessfulRunsSimple++
-		} else if turnCount <= 30 {
+		} else if turnCount <= 200 {
 			metadata.SuccessfulRunsMedium++
 		} else {
 			metadata.SuccessfulRunsComplex++
@@ -213,9 +221,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	// Check if auto-lock should be triggered based on TurnCount complexity
 	// Use cumulative runs across all complexity levels, but check against threshold for current complexity
 	// This allows steps that improve over time (complex → medium → simple) to lock faster
-	// Simple (< 15 turns): Lock after 3 successful runs.
-	// Medium (15-30 turns): Lock after 5 successful runs.
-	// Complex (> 30 turns): Lock after 10 successful runs.
+	// Simple (< 100 turns): Lock after 3 successful runs.
+	// Medium (100-200 turns): Lock after 5 successful runs.
+	// Complex (> 200 turns): Lock after 10 successful runs.
+	//
+	// TODO: Turn-based classification is not reliable - turn count varies significantly based on
+	// the LLM model used and doesn't reflect actual step complexity. We need a better complexity metric.
 	shouldAutoLock := false
 	var autoLockReason string
 
@@ -226,10 +237,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	var currentComplexity string
 	var threshold int
 	if turnCount > 0 {
-		if turnCount < 15 {
+		if turnCount < 100 {
 			currentComplexity = "simple"
 			threshold = 3
-		} else if turnCount <= 30 {
+		} else if turnCount <= 200 {
 			currentComplexity = "medium"
 			threshold = 5
 		} else {
@@ -239,10 +250,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	} else {
 		// Fallback: use last_turn_count from metadata if turnCount is 0
 		if metadata.LastTurnCount > 0 {
-			if metadata.LastTurnCount < 15 {
+			if metadata.LastTurnCount < 100 {
 				currentComplexity = "simple"
 				threshold = 3
-			} else if metadata.LastTurnCount <= 30 {
+			} else if metadata.LastTurnCount <= 200 {
 				currentComplexity = "medium"
 				threshold = 5
 			} else {

@@ -278,30 +278,30 @@ type ConsistencyRule struct {
 
 // AgentConfigs represents per-agent configuration for a step
 type AgentConfigs struct {
-	ExecutionLLM                           *AgentLLMConfig    `json:"execution_llm,omitempty"`
-	ValidationLLM                          *AgentLLMConfig    `json:"validation_llm,omitempty"`
-	LearningLLM                            *AgentLLMConfig    `json:"learning_llm,omitempty"`
-	ConditionalLLM                         *AgentLLMConfig    `json:"conditional_llm,omitempty"`                              // Step-specific conditional LLM for conditional step evaluation
-	ExecutionMaxTurns                      *int               `json:"execution_max_turns,omitempty"`                          // default: 100
-	ValidationMaxTurns                     *int               `json:"validation_max_turns,omitempty"`                         // default: 100
-	LearningMaxTurns                       *int               `json:"learning_max_turns,omitempty"`                           // default: 100
-	OrchestrationMaxIterations             *int               `json:"orchestration_max_iterations,omitempty"`                 // default: orchestrator max turns (typically 100)
-	DisableValidation                      *bool              `json:"disable_validation,omitempty"`                           // skip validation entirely (nil = not set/enabled, true = disabled, false = explicitly enabled)
-	LLMValidationMode                      string             `json:"llm_validation_mode,omitempty"`                          // "auto" (default), "always", or "skip". Controls LLM validation behavior when pre-validation passes.
-	DisableLearning                        *bool              `json:"disable_learning,omitempty"`                             // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
-	LockLearnings                          *bool              `json:"lock_learnings,omitempty"`                               // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
-	LearningAfterLoopIteration             bool               `json:"learning_after_loop_iteration,omitempty"`                // run learning after each loop iteration
-	LearningDetailLevel                    string             `json:"learning_detail_level,omitempty"`                        // "exact", "general", or "none" (default: "exact")
-	SelectedServers                        []string           `json:"selected_servers,omitempty"`                             // step-level MCP server selection (subset of preset servers)
-	SelectedTools                          []string           `json:"selected_tools,omitempty"`                               // step-level tool selection (format: "server:tool" or "server:*" for all tools)
-	EnabledCustomToolCategories            []string           `json:"enabled_custom_tool_categories,omitempty"`               // e.g., ["workspace_tools", "human_tools"] - enables all tools in category
-	EnabledCustomTools                     []string           `json:"enabled_custom_tools,omitempty"`                         // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
-	EnableContextOffloading                *bool              `json:"enable_context_offloading,omitempty"`                    // Enable/disable context offloading (default: true if nil)
-	UseCodeExecutionMode                   *bool              `json:"use_code_execution_mode,omitempty"`                      // Step-level code execution mode override (nil = use preset default, true/false = override)
-	EnablePrerequisiteDetection            *bool              `json:"enable_prerequisite_detection,omitempty"`                // Enable prerequisite failure detection for this step (default: false)
-	PrerequisiteRules                      []PrerequisiteRule `json:"prerequisite_rules,omitempty"`                           // Array of prerequisite rules, each with one step dependency and one description
-	KeepLearningFull                       *bool              `json:"keep_learning_full,omitempty"`                           // Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (default: false, can be overridden by KEEP_LEARNING_FULL env var)
-	DisableTempLLM                         *bool              `json:"disable_temp_llm,omitempty"`                             // If true, skip tempLLM override and use step config base LLM (step config > preset > orchestrator default)
+	ExecutionLLM                *AgentLLMConfig    `json:"execution_llm,omitempty"`
+	ValidationLLM               *AgentLLMConfig    `json:"validation_llm,omitempty"`
+	LearningLLM                 *AgentLLMConfig    `json:"learning_llm,omitempty"`
+	ConditionalLLM              *AgentLLMConfig    `json:"conditional_llm,omitempty"`                // Step-specific conditional LLM for conditional step evaluation
+	ExecutionMaxTurns           *int               `json:"execution_max_turns,omitempty"`            // default: 100
+	ValidationMaxTurns          *int               `json:"validation_max_turns,omitempty"`           // default: 100
+	LearningMaxTurns            *int               `json:"learning_max_turns,omitempty"`             // default: 100
+	OrchestrationMaxIterations  *int               `json:"orchestration_max_iterations,omitempty"`   // default: orchestrator max turns (typically 100)
+	DisableValidation           *bool              `json:"disable_validation,omitempty"`             // skip validation entirely (nil = not set/enabled, true = disabled, false = explicitly enabled)
+	LLMValidationMode           string             `json:"llm_validation_mode,omitempty"`            // "auto" (default), "always", or "skip". Controls LLM validation behavior when pre-validation passes.
+	DisableLearning             *bool              `json:"disable_learning,omitempty"`               // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
+	LockLearnings               *bool              `json:"lock_learnings,omitempty"`                 // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
+	LearningAfterLoopIteration  bool               `json:"learning_after_loop_iteration,omitempty"`  // run learning after each loop iteration
+	LearningDetailLevel         string             `json:"learning_detail_level,omitempty"`          // "exact", "general", or "none" (default: "exact")
+	SelectedServers             []string           `json:"selected_servers,omitempty"`               // step-level MCP server selection (subset of preset servers)
+	SelectedTools               []string           `json:"selected_tools,omitempty"`                 // step-level tool selection (format: "server:tool" or "server:*" for all tools)
+	EnabledCustomToolCategories []string           `json:"enabled_custom_tool_categories,omitempty"` // e.g., ["workspace_tools", "human_tools"] - enables all tools in category
+	EnabledCustomTools          []string           `json:"enabled_custom_tools,omitempty"`           // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
+	EnableContextOffloading     *bool              `json:"enable_context_offloading,omitempty"`      // Enable/disable context offloading (default: true if nil)
+	UseCodeExecutionMode        *bool              `json:"use_code_execution_mode,omitempty"`        // Step-level code execution mode override (nil = use preset default, true/false = override)
+	EnablePrerequisiteDetection *bool              `json:"enable_prerequisite_detection,omitempty"`  // Enable prerequisite failure detection for this step (default: false)
+	PrerequisiteRules           []PrerequisiteRule `json:"prerequisite_rules,omitempty"`             // Array of prerequisite rules, each with one step dependency and one description
+	KeepLearningFull            *bool              `json:"keep_learning_full,omitempty"`             // Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (default: false, can be overridden by KEEP_LEARNING_FULL env var)
+	DisableTempLLM              *bool              `json:"disable_temp_llm,omitempty"`               // If true, skip tempLLM override and use step config base LLM (step config > preset > orchestrator default)
 }
 
 // ============================================================================

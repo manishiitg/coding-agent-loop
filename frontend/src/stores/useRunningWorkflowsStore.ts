@@ -3,6 +3,7 @@ import { devtools } from 'zustand/middleware'
 import type { StepProgress, GetEventsResponse } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { useChatStore } from './useChatStore'
+import { getTypedEventData } from '../generated/event-types'
 import {
   POLLING_INTERVALS,
   WORKFLOW_LIMITS,
@@ -441,7 +442,6 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
                 // Check for events that indicate workflow is still running
                 // These events mean the workflow is active, even if it was previously marked as completed
                 const runningEventTypes = [
-                  'step_execution_start',
                   'step_progress_updated',
                   'agent_start',
                   'tool_call_start',
@@ -453,37 +453,17 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
                   hasRunningEvents = true
                 }
 
-                // Handle step_execution_start
-                if (event.type === 'step_execution_start') {
-                  const eventData = event.data?.data as {
-                    step_title?: string
-                  } | undefined
-
-                  if (eventData?.step_title) {
-                    get().updateRunningWorkflowStatus(bg.id, {
-                      currentStepTitle: eventData.step_title
-                    })
-                  }
-                }
-
                 // Handle step_progress_updated
                 if (event.type === 'step_progress_updated') {
-                  const eventData = event.data?.data as {
-                    completed_step_indices?: number[]
-                    total_steps?: number
-                    last_completed_step_title?: string
-                  } | undefined
+                  const eventData = getTypedEventData(event, 'step_progress_updated')
 
                   if (eventData) {
-                    const updatedProgress: StepProgress = {
-                      completed_step_indices: eventData.completed_step_indices || [],
-                      total_steps: eventData.total_steps || 0,
-                      last_updated: new Date().toISOString()
-                    }
-
-                    const updates: Partial<RunningWorkflow> = { progress: updatedProgress }
-                    if (eventData.last_completed_step_title) {
-                      updates.currentStepTitle = eventData.last_completed_step_title
+                    // Note: Progress details (completed_step_indices, total_steps) are no longer in the event
+                    // The frontend should load progress from the API if needed
+                    const updates: Partial<RunningWorkflow> = {}
+                    if (eventData.current_step_id) {
+                      // Update current step ID if available
+                      // Note: We can't update progress here since it's not in the event anymore
                     }
 
                     get().updateRunningWorkflowStatus(bg.id, updates)

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import {
   X,
   Loader2,
@@ -14,7 +14,9 @@ import {
   TrendingDown,
   Award,
   Filter,
-  RefreshCw
+  RefreshCw,
+  Copy,
+  Check
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { EvaluationReportsResponse } from '../../services/api-types'
@@ -58,6 +60,7 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
   workspacePath,
   selectedRunFolder
 }) => {
+  const [activeTab, setActiveTab] = useState<'reports' | 'plan'>('reports')
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<EvaluationReportsResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -65,44 +68,11 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())
   const [filterRunFolder, setFilterRunFolder] = useState<string>('')
   const [viewMode, setViewMode] = useState<'all' | 'single'>(selectedRunFolder ? 'single' : 'all')
+  
+  // Evaluation plan state - now comes from the reports API response
+  const [copied, setCopied] = useState(false)
 
-  // Load evaluation reports when popup opens
-  useEffect(() => {
-    if (isOpen && workspacePath) {
-      // If we have a selected run folder, default to single mode
-      if (selectedRunFolder) {
-        setViewMode('single')
-        setFilterRunFolder(selectedRunFolder)
-      } else {
-        setViewMode('all')
-        setFilterRunFolder('')
-      }
-      loadReports()
-    } else {
-      setData(null)
-      setError(null)
-      setExpandedReports(new Set())
-      setExpandedSteps(new Set())
-    }
-  }, [isOpen, workspacePath, selectedRunFolder])
-
-  // Update filter when view mode changes
-  useEffect(() => {
-    if (viewMode === 'single' && selectedRunFolder) {
-      setFilterRunFolder(selectedRunFolder)
-    } else if (viewMode === 'all') {
-      setFilterRunFolder('')
-    }
-  }, [viewMode, selectedRunFolder])
-
-  // Reload when filter changes
-  useEffect(() => {
-    if (isOpen && workspacePath) {
-      loadReports()
-    }
-  }, [filterRunFolder])
-
-  const loadReports = async () => {
+  const loadReports = useCallback(async () => {
     if (!workspacePath) return
 
     setLoading(true)
@@ -120,6 +90,56 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
       setError('Failed to load evaluation reports')
     } finally {
       setLoading(false)
+    }
+  }, [workspacePath, filterRunFolder])
+
+  // Evaluation plan is now loaded with reports, no separate API call needed
+
+  // Load evaluation reports when popup opens
+  useEffect(() => {
+    if (isOpen && workspacePath) {
+      // If we have a selected run folder, default to single mode
+      if (selectedRunFolder) {
+        setViewMode('single')
+        setFilterRunFolder(selectedRunFolder)
+      } else {
+        setViewMode('all')
+        setFilterRunFolder('')
+      }
+      // Always load reports (which now includes the evaluation plan)
+      loadReports()
+    } else {
+      setData(null)
+      setError(null)
+      setExpandedReports(new Set())
+      setExpandedSteps(new Set())
+    }
+  }, [isOpen, workspacePath, selectedRunFolder, loadReports])
+
+  // Update filter when view mode changes
+  useEffect(() => {
+    if (viewMode === 'single' && selectedRunFolder) {
+      setFilterRunFolder(selectedRunFolder)
+    } else if (viewMode === 'all') {
+      setFilterRunFolder('')
+    }
+  }, [viewMode, selectedRunFolder])
+
+  // Reload when filter changes
+  useEffect(() => {
+    if (isOpen && workspacePath && activeTab === 'reports') {
+      loadReports()
+    }
+  }, [filterRunFolder, isOpen, workspacePath, activeTab, loadReports])
+
+  const copyToClipboard = async () => {
+    if (!data?.evaluation_plan) return
+    try {
+      await navigator.clipboard.writeText(data.evaluation_plan)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy to clipboard:', err)
     }
   }
 
@@ -161,62 +181,117 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <div className="flex-1 min-w-0">
-            <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
-              <BarChart3 className="w-5 h-5 text-primary" />
-              Evaluation Reports
-            </h2>
-            <div className="flex items-center gap-4 mt-1">
-              {/* View Mode Toggle */}
-              <div className="flex items-center gap-2 text-sm">
+            <div className="flex items-center gap-4 mb-2">
+              <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                <BarChart3 className="w-5 h-5 text-primary" />
+                Evaluation
+              </h2>
+              
+              {/* Tab Buttons */}
+              <div className="flex items-center gap-1 bg-muted rounded-md p-1">
                 <button
-                  onClick={() => setViewMode('all')}
-                  className={`px-2.5 py-1 rounded-md transition-colors ${
-                    viewMode === 'all'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted hover:bg-muted/80 text-muted-foreground'
+                  onClick={() => {
+                    setActiveTab('reports')
+                    if (isOpen && workspacePath && !data) {
+                      loadReports()
+                    }
+                  }}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    activeTab === 'reports'
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  All Iterations
+                  <div className="flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4" />
+                    Reports
+                  </div>
                 </button>
                 <button
-                  onClick={() => setViewMode('single')}
-                  className={`px-2.5 py-1 rounded-md transition-colors ${
-                    viewMode === 'single'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted hover:bg-muted/80 text-muted-foreground'
+                  onClick={() => setActiveTab('plan')}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    activeTab === 'plan'
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  Single Iteration
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4" />
+                    Plan
+                  </div>
                 </button>
               </div>
-
-              {/* Run Folder Filter - only show in single mode */}
-              {viewMode === 'single' && availableRunFolders.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <Filter className="w-4 h-4 text-muted-foreground" />
-                  <select
-                    value={filterRunFolder}
-                    onChange={(e) => setFilterRunFolder(e.target.value)}
-                    className="text-xs bg-muted border border-border rounded-md px-2 py-1 text-foreground"
-                  >
-                    <option value="">Select iteration...</option>
-                    {availableRunFolders.map(folder => (
-                      <option key={folder} value={folder}>{folder}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              {/* Refresh Button */}
-              <button
-                onClick={loadReports}
-                disabled={loading}
-                className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-                title="Refresh"
-              >
-                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              </button>
             </div>
+            
+            {/* Controls - only show in Reports tab */}
+            {activeTab === 'reports' && (
+              <div className="flex items-center gap-4 mt-1">
+                {/* View Mode Toggle */}
+                <div className="flex items-center gap-2 text-sm">
+                  <button
+                    onClick={() => setViewMode('all')}
+                    className={`px-2.5 py-1 rounded-md transition-colors ${
+                      viewMode === 'all'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted hover:bg-muted/80 text-muted-foreground'
+                    }`}
+                  >
+                    All Iterations
+                  </button>
+                  <button
+                    onClick={() => setViewMode('single')}
+                    className={`px-2.5 py-1 rounded-md transition-colors ${
+                      viewMode === 'single'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted hover:bg-muted/80 text-muted-foreground'
+                    }`}
+                  >
+                    Single Iteration
+                  </button>
+                </div>
+
+                {/* Run Folder Filter - only show in single mode */}
+                {viewMode === 'single' && availableRunFolders.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <Filter className="w-4 h-4 text-muted-foreground" />
+                    <select
+                      value={filterRunFolder}
+                      onChange={(e) => setFilterRunFolder(e.target.value)}
+                      className="text-xs bg-muted border border-border rounded-md px-2 py-1 text-foreground"
+                    >
+                      <option value="">Select iteration...</option>
+                      {availableRunFolders.map(folder => (
+                        <option key={folder} value={folder}>{folder}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Refresh Button */}
+                <button
+                  onClick={loadReports}
+                  disabled={loading}
+                  className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                  title="Refresh"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+            )}
+            
+            {/* Controls - only show in Plan tab */}
+            {activeTab === 'plan' && (
+              <div className="flex items-center gap-4 mt-1">
+                <button
+                  onClick={loadReports}
+                  disabled={loading}
+                  className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                  title="Refresh"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -228,29 +303,32 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 bg-background">
-          {loading ? (
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <Loader2 className="w-8 h-8 animate-spin mb-3 text-primary" />
-              <p>Loading evaluation reports...</p>
-            </div>
-          ) : error ? (
-            <div className="flex flex-col items-center justify-center py-12 text-destructive">
-              <AlertCircle className="w-12 h-12 mb-3" />
-              <p>{error}</p>
-              <button
-                onClick={loadReports}
-                className="mt-4 px-4 py-2 bg-destructive/10 text-destructive rounded-md hover:bg-destructive/20 transition-colors text-sm font-medium"
-              >
-                Retry
-              </button>
-            </div>
-          ) : !data || !data.reports || data.reports.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <FileText className="w-12 h-12 mb-3 opacity-50" />
-              <p>No evaluation reports found.</p>
-              <p className="text-sm mt-2">Run evaluation on workflow iterations to see results here.</p>
-            </div>
-          ) : (
+          {activeTab === 'reports' ? (
+            // Reports Tab Content
+            <>
+              {loading ? (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <Loader2 className="w-8 h-8 animate-spin mb-3 text-primary" />
+                  <p>Loading evaluation reports...</p>
+                </div>
+              ) : error ? (
+                <div className="flex flex-col items-center justify-center py-12 text-destructive">
+                  <AlertCircle className="w-12 h-12 mb-3" />
+                  <p>{error}</p>
+                  <button
+                    onClick={loadReports}
+                    className="mt-4 px-4 py-2 bg-destructive/10 text-destructive rounded-md hover:bg-destructive/20 transition-colors text-sm font-medium"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : !data || !data.reports || data.reports.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <FileText className="w-12 h-12 mb-3 opacity-50" />
+                  <p>No evaluation reports found.</p>
+                  <p className="text-sm mt-2">Run evaluation on workflow iterations to see results here.</p>
+                </div>
+              ) : (
             <div className="space-y-6">
               {/* Aggregate Summary - only show in "all" mode */}
               {viewMode === 'all' && data.aggregate && (
@@ -496,6 +574,69 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
                 })}
               </div>
             </div>
+              )}
+            </>
+          ) : (
+            // Plan Tab Content
+            <>
+              {loading ? (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <Loader2 className="w-8 h-8 animate-spin mb-3 text-primary" />
+                  <p>Loading evaluation plan...</p>
+                </div>
+              ) : error ? (
+                <div className="flex flex-col items-center justify-center py-12 text-destructive">
+                  <AlertCircle className="w-12 h-12 mb-3" />
+                  <p>{error}</p>
+                  <button
+                    onClick={loadReports}
+                    className="mt-4 px-4 py-2 bg-destructive/10 text-destructive rounded-md hover:bg-destructive/20 transition-colors text-sm font-medium"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : !data?.evaluation_plan ? (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <FileText className="w-12 h-12 mb-3 opacity-50" />
+                  <p>No evaluation plan found.</p>
+                  <p className="text-sm mt-2">Create an evaluation plan to see it here.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Header with Copy Button */}
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-primary" />
+                      Evaluation Plan JSON
+                    </h3>
+                    <button
+                      onClick={copyToClipboard}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground transition-colors text-sm"
+                      title="Copy to clipboard"
+                    >
+                      {copied ? (
+                        <>
+                          <Check className="w-4 h-4 text-green-600" />
+                          <span>Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-4 h-4" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  
+                  {/* JSON Viewer */}
+                  <div className="bg-background border border-border rounded-lg overflow-hidden">
+                    <pre className="p-4 text-xs font-mono overflow-x-auto overflow-y-auto max-h-[calc(90vh-250px)] whitespace-pre-wrap break-words">
+                      {data.evaluation_plan}
+                    </pre>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 

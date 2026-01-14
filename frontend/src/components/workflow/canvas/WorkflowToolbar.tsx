@@ -28,7 +28,7 @@ import {
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
 import { useChatStore } from '../../../stores/useChatStore'
-import type { PlannerFile, WorkflowPhase, StepProgress, VariablesManifest } from '../../../services/api-types'
+import type { WorkflowPhase, StepProgress, VariablesManifest } from '../../../services/api-types'
 import type { PlanningResponse } from '../../../utils/stepConfigMatching'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
@@ -131,7 +131,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     isLoadingPhases,
     phasesInitialized,
     selectedRunFolder,
-    selectedExecutionMode,
     selectedStartPoint,
     selectedBranchStep,
     tempOverrideLLM,
@@ -148,13 +147,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setBranchStep,
     buildExecutionOptions,
     loadSavedSettings,
-    saveSettings,
     setTempOverrideLLMEnabled,
     clearTempOverrideLLM,
     clearTempOverrideLLM2,
     toggleGroupSelection,
     setSelectedGroupIds,
-    clearSelectedGroupIds
+    clearSelectedGroupIds,
+    restoreSelectionFromLocalStorage
   } = useWorkflowStore(useShallow(state => ({
     phases: state.phases,
     isLoadingPhases: state.isLoadingPhases,
@@ -177,13 +176,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setBranchStep: state.setBranchStep,
     buildExecutionOptions: state.buildExecutionOptions,
     loadSavedSettings: state.loadSavedSettings,
-    saveSettings: state.saveSettings,
     setTempOverrideLLMEnabled: state.setTempOverrideLLMEnabled,
     clearTempOverrideLLM: state.clearTempOverrideLLM,
     clearTempOverrideLLM2: state.clearTempOverrideLLM2,
     toggleGroupSelection: state.toggleGroupSelection,
     setSelectedGroupIds: state.setSelectedGroupIds,
-    clearSelectedGroupIds: state.clearSelectedGroupIds
+    clearSelectedGroupIds: state.clearSelectedGroupIds,
+    restoreSelectionFromLocalStorage: state.restoreSelectionFromLocalStorage
   })))
 
   // Calculate the best run folder to use for popups (context-aware)
@@ -195,8 +194,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       selectedGroupIds,
       manifest: variablesManifest
     })
-    return resolved || (selectedRunFolder === 'new' ? null : selectedRunFolder)
+    return resolved || selectedRunFolder
   }, [currentRunningGroupId, selectedRunFolder, selectedGroupIds, variablesManifest])
+  
+  // Memoize runFolders array to prevent unnecessary re-renders in popups
+  const runFoldersNames = useMemo(() => {
+    return folders.map(rf => rf.name)
+  }, [folders])
   
   // LLM Override modal state
   const [showLLMOverrideModal, setShowLLMOverrideModal] = useState(false)
@@ -217,33 +221,25 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Evaluation popup state
   const [showEvaluationPopup, setShowEvaluationPopup] = useState(false)
   
-  // Helper function to find a folder in the file tree
-  const findFolderInTree = (fileList: PlannerFile[], targetPath: string): PlannerFile | null => {
-    for (const file of fileList) {
-      // Check if this is the folder we're looking for
-      if ((file.filepath === targetPath || file.originalFilepath === targetPath) && 
-          file.type === 'folder') {
-        return file
-      }
-      // Also check if targetPath ends with this folder's path (for nested paths)
-      if (file.filepath && (targetPath.endsWith(file.filepath) || file.filepath.endsWith(targetPath))) {
-        if (file.type === 'folder') {
-          return file
-        }
-      }
-      // Recurse into children
-      if (file.children && file.children.length > 0) {
-        const found = findFolderInTree(file.children, targetPath)
-        if (found) return found
-      }
+  // Close popups when workspacePath changes (switching workflows)
+  // Use a ref to track previous workspacePath to avoid closing on initial mount
+  const prevWorkspacePathRef = useRef<string | null | undefined>(workspacePath)
+  useEffect(() => {
+    // Only close if workspacePath actually changed (not on initial mount)
+    if (prevWorkspacePathRef.current !== undefined && prevWorkspacePathRef.current !== workspacePath) {
+      setShowLearningsPopup(false)
+      setShowExecutionLogsPopup(false)
+      setShowCostsPopup(false)
+      setShowEvaluationPopup(false)
     }
-    return null
-  }
+    prevWorkspacePathRef.current = workspacePath
+  }, [workspacePath]) // Only depend on workspacePath - popup states are only read, not dependencies
   
   // Local UI state (dropdowns)
   const [isDropdownOpen, setIsDropdownOpen] = React.useState(false)
   const [isIterationDropdownOpen, setIsIterationDropdownOpen] = React.useState(false)
   const [isStartPointDropdownOpen, setIsStartPointDropdownOpen] = React.useState(false)
+  const [isCreatingIteration, setIsCreatingIteration] = React.useState(false)
   
   // Delete confirmation dialog state
   const [deleteDialog, setDeleteDialog] = React.useState<{
@@ -256,8 +252,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     isLoading: false
   })
   
-  // Loading state for creating new folder
-  const [isCreatingFolder, setIsCreatingFolder] = React.useState(false)
   
   // State for expanded iterations (only show groups when expanded)
   const [expandedIterations, setExpandedIterations] = React.useState<Set<string>>(new Set())
@@ -317,20 +311,63 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
   }, [presetQueryId, loadSavedSettings])
 
+  // Restore selection from localStorage after workspace state finishes loading
+  // This ensures localStorage values are restored AFTER all API data is loaded
+  const hasRestoredRef = useRef(false)
+  useEffect(() => {
+    // Only restore once when workspace loading completes and manifest is available
+    if (!isLoadingWorkspaceState && variablesManifest && !hasRestoredRef.current) {
+      restoreSelectionFromLocalStorage()
+      hasRestoredRef.current = true
+
+      // After restoring, load progress for the restored run folder
+      const restoredRunFolder = useWorkflowStore.getState().selectedRunFolder
+      if (restoredRunFolder && workspacePath) {
+        loadProgress(workspacePath, restoredRunFolder)
+      }
+    }
+    // Reset the flag when workspace starts loading (preset change)
+    if (isLoadingWorkspaceState) {
+      hasRestoredRef.current = false
+    }
+  }, [isLoadingWorkspaceState, variablesManifest, restoreSelectionFromLocalStorage, workspacePath, loadProgress])
+
+  // Restore selectedGroupIds from execution state when page refreshes during execution
+  // This handles the case where execution is running but selectedGroupIds was lost on page refresh
+  useEffect(() => {
+    if (isExecutionRunning && selectedGroupIds.length === 0 && currentRunningGroupId) {
+      // If execution is running but no groups are selected, restore from currentRunningGroupId
+      console.log('[WorkflowToolbar] Restoring selectedGroupIds from currentRunningGroupId:', currentRunningGroupId)
+      setSelectedGroupIds([currentRunningGroupId])
+    } else if (isExecutionRunning && selectedGroupIds.length === 0 && variablesManifest?.groups) {
+      // If we have groups in manifest but none selected, try to infer from selectedRunFolder
+      // Extract group ID from selectedRunFolder if it's a group path
+      if (selectedRunFolder && selectedRunFolder.includes('/')) {
+        const parts = selectedRunFolder.split('/')
+        if (parts.length === 2) {
+          const groupFolderName = parts[1]
+          // Try to find matching group in manifest
+          const matchingGroup = variablesManifest.groups.find(g => {
+            if (g.group_id === groupFolderName) return true
+            if (g.display_name) {
+              const sanitized = groupFolderName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
+              const groupSanitized = g.display_name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
+              return sanitized === groupSanitized
+            }
+            return false
+          })
+          if (matchingGroup) {
+            console.log('[WorkflowToolbar] Restoring selectedGroupIds from selectedRunFolder:', matchingGroup.group_id)
+            setSelectedGroupIds([matchingGroup.group_id])
+          }
+        }
+      }
+    }
+  }, [isExecutionRunning, selectedGroupIds.length, currentRunningGroupId, variablesManifest, selectedRunFolder, setSelectedGroupIds])
+
   // selectedGroupIds is already included in the batched selector above
   
-  // Save settings when they change (including selectedGroupIds)
-  // Use refs to track previous values and only save when they actually change
-  const prevSettingsRef = useRef<string>('')
-  useEffect(() => {
-    const settingsKey = `${presetQueryId}|${selectedRunFolder}|${selectedExecutionMode}|${selectedStartPoint}|${JSON.stringify(selectedGroupIds)}`
-    
-    // Only save if settings actually changed
-    if (prevSettingsRef.current !== settingsKey && presetQueryId) {
-      prevSettingsRef.current = settingsKey
-      saveSettings(presetQueryId)
-    }
-  }, [presetQueryId, selectedRunFolder, selectedExecutionMode, selectedStartPoint, selectedGroupIds, saveSettings])
+  // Settings are no longer persisted to localStorage - removed save logic
 
   // NOTE: loadRunFolders and loadProgress are NOT called here anymore.
   // useWorkspaceState in WorkflowCanvas handles initial load of:
@@ -416,75 +453,94 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // Helper to format the selected run folder display text
   const getSelectedRunFolderDisplay = useMemo(() => {
-    if (selectedRunFolder === 'new') {
-      return 'New Run'
-    }
-    if (!selectedRunFolder) {
-      return 'Select...'
-    }
-    // Check if it's a group path (e.g., "iteration-1/group-1" or "iteration-1/production")
-    const isGroupPath = selectedRunFolder.includes('/') && selectedRunFolder.split('/').length === 2
-    if (isGroupPath) {
-      // Extract iteration and group folder name
-      const parts = selectedRunFolder.split('/')
-      const iteration = parts[0] // e.g., "iteration-14"
-      const groupFolderName = parts[1] // e.g., "group-1" or "siddharth"
-      
-      // Find the group in manifest to get display name
-      if (variablesManifest?.groups) {
-        const group = variablesManifest.groups.find(g => {
-          // Check if group_id matches or if display_name (sanitized) matches
-          if (groupFolderName.startsWith('group-')) {
-            return g.group_id === groupFolderName
-          } else {
-            // Display name - need to match sanitized version
-            const sanitizedDisplayName = groupFolderName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
-            const groupSanitized = g.display_name?.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
-            return groupSanitized === sanitizedDisplayName
-          }
-        })
+    // If no groups are selected via checkboxes, show "--Select--"
+    if (selectedGroupIds.length === 0) {
+      // Only show a specific folder if it's a direct group path (user clicked on a specific group)
+      const isGroupPath = selectedRunFolder && selectedRunFolder.includes('/') && selectedRunFolder.split('/').length === 2
+      if (isGroupPath) {
+        // Extract iteration and group folder name
+        const parts = selectedRunFolder.split('/')
+        const iteration = parts[0] // e.g., "iteration-14"
+        const groupFolderName = parts[1] // e.g., "group-1" or "siddharth"
         
-        if (group && group.display_name) {
-          // Show full path with original display name: "iteration-14/Siddharth"
-          // Use the original display name from manifest, not the sanitized folder name
-          return `${iteration}/${group.display_name}`
-        } else if (group) {
-          // No display name, use group_id: "iteration-14/group-1"
-          return `${iteration}/${group.group_id}`
+        // Find the group in manifest to get display name
+        if (variablesManifest?.groups) {
+          const group = variablesManifest.groups.find(g => {
+            // Check if group_id matches or if display_name (sanitized) matches
+            if (groupFolderName.startsWith('group-')) {
+              return g.group_id === groupFolderName
+            } else {
+              // Display name - need to match sanitized version
+              const sanitizedDisplayName = groupFolderName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
+              const groupSanitized = g.display_name?.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').trim()
+              return groupSanitized === sanitizedDisplayName
+            }
+          })
+          
+          if (group && group.display_name) {
+            // Show full path with original display name: "iteration-14/Siddharth"
+            return `${iteration}/${group.display_name}`
+          } else if (group) {
+            // No display name, use group_id: "iteration-14/group-1"
+            return `${iteration}/${group.group_id}`
+          }
         }
+        
+        // Fallback: show the full path as-is
+        return selectedRunFolder
       }
       
-      // Fallback: show the full path as-is
-      return selectedRunFolder
+      // No groups selected and not a specific group path - show "--Select--"
+      return '--Select--'
     }
     
-    // It's just an iteration folder - check if groups are selected via checkboxes or "All Groups" mode
+    // Groups are selected via checkboxes - show them
     if (selectedGroupIds.length > 0 && variablesManifest?.groups) {
       // Find selected groups from manifest
       const selectedGroups = variablesManifest.groups.filter(g => selectedGroupIds.includes(g.group_id))
       if (selectedGroups.length > 0) {
-        // Show display names or group_ids of selected groups with iteration prefix
+        // Show display names or group_ids of selected groups
         const groupNames = selectedGroups.map(g => g.display_name || g.group_id)
+        
+        // Extract iteration from selectedRunFolder (could be "iteration-5" or "iteration-5/group-1")
+        let iteration: string | null = null
+        if (selectedRunFolder && selectedRunFolder !== 'new') {
+          if (selectedRunFolder.includes('/')) {
+            // It's a group path - extract iteration
+            iteration = selectedRunFolder.split('/')[0]
+          } else {
+            // It's just an iteration folder
+            iteration = selectedRunFolder
+          }
+        }
+        
         if (groupNames.length === 1) {
-          // Show full path for single group: "iteration-5/realtraining-188"
-          return `${selectedRunFolder}/${groupNames[0]}`
+          // Single group selected - show with iteration if available
+          if (iteration) {
+            return `${iteration}/${groupNames[0]}`
+          }
+          return groupNames[0]
         } else if (groupNames.length <= 3) {
+          // Multiple groups - show with iteration prefix if available
+          if (iteration) {
+            return `${iteration}: ${groupNames.join(', ')}`
+          }
           return groupNames.join(', ')
         } else {
+          // Many groups - show with iteration prefix if available
+          if (iteration) {
+            return `${iteration}: ${groupNames.slice(0, 2).join(', ')} +${groupNames.length - 2}`
+          }
           return `${groupNames.slice(0, 2).join(', ')} +${groupNames.length - 2}`
         }
       }
     }
     
-    // Check if it's an iteration without a group path (all groups mode)
-    if (!selectedRunFolder.includes('/group-') && !selectedRunFolder.includes('/') && variablesManifest?.groups) {
-      const enabledGroups = variablesManifest.groups.filter(g => g.enabled)
-      if (enabledGroups.length > 1) {
-        return `${selectedRunFolder} (All Groups)`
-      }
+    // Fallback
+    if (!selectedRunFolder) {
+      return '--Select--'
     }
     
-    // Just show the iteration folder name
     return selectedRunFolder
   }, [selectedRunFolder, selectedGroupIds, variablesManifest])
 
@@ -696,7 +752,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   
   // Auto-expand the iteration containing the selected run folder
   useEffect(() => {
-    if (!selectedRunFolder || selectedRunFolder === 'new' || !iterationGroups.sortedIterations.length) {
+    if (!selectedRunFolder || !iterationGroups.sortedIterations.length) {
       return
     }
     
@@ -984,48 +1040,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
   }, [selectedStartPoint, totalSteps, setStartPoint])
 
-  // Auto-select the latest resume point when there are completed steps
-  // CRITICAL: Only auto-resume if there's no saved value in localStorage
-  // If there's a saved value, it means user explicitly selected it, so preserve it
-  useEffect(() => {
-    // Only auto-select if:
-    // 1. There are completed steps
-    // 2. Current selectedStartPoint is 0 (Start from Beginning)
-    // 3. Total steps is known
-    // 4. No saved start point in localStorage (user hasn't explicitly selected one)
-    if (completedStepIndices.length > 0 && totalSteps > 0 && selectedStartPoint === 0 && presetQueryId) {
-      // Check if there's a saved start point in localStorage
-      // If there is, don't auto-resume - let loadSavedSettings handle it
-      const STORAGE_KEY_PREFIX = 'workflow_settings_'
-      const savedStartPoint = localStorage.getItem(`${STORAGE_KEY_PREFIX}${presetQueryId}_start_point`)
-      
-      if (savedStartPoint) {
-        const parsed = parseInt(savedStartPoint, 10)
-        if (!isNaN(parsed) && parsed > 0) {
-          // There's a saved value - don't auto-resume, let loadSavedSettings handle it
-          console.log('[WorkflowToolbar] Skipping auto-resume - found saved start point in localStorage:', parsed)
-          return
-        }
-      }
-      
-      // No saved value - safe to auto-resume
-      // Calculate the resume point (next step after last completed)
-      const completedStepNumbers = completedStepIndices.map(idx => idx + 1).sort((a, b) => a - b)
-      const lastCompletedStep = completedStepNumbers[completedStepNumbers.length - 1]
-      const nextStep = lastCompletedStep + 1
-
-      // If next step exists, resume from there; otherwise resume from last completed
-      const resumePoint = nextStep <= totalSteps ? nextStep : lastCompletedStep
-
-      console.log('[WorkflowToolbar] Auto-resume triggered:', {
-        completedSteps: completedStepNumbers,
-        lastCompletedStep,
-        resumePoint,
-        totalSteps
-      })
-      setStartPoint(resumePoint)
-    }
-  }, [completedStepIndices, totalSteps, selectedStartPoint, setStartPoint, presetQueryId])
+  // Auto-resume logic removed - start point always defaults to 0
 
   // Get current phase details
   const currentPhaseDetails = phases.find((p: WorkflowPhase) => p.id === currentPhase)
@@ -1094,46 +1109,51 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [setStartPoint, setBranchStep])
 
   // Handle selecting run folder
-  const handleSelectRunFolder = useCallback(async (folder: string) => {
-    // If "new" is selected, create a new iteration folder via API
-    if (folder === 'new' && workspacePath) {
-      setIsCreatingFolder(true)
-      try {
-        // Create new folder via API
-        const response = await agentApi.createRunFolder(workspacePath)
-        
-        if (response.success && response.folder_name) {
-          // Select the newly created folder FIRST (before loading folders)
-          // This ensures the selection is set immediately and won't be reset by validation
-          setSelectedRunFolder(response.folder_name)
-          
-          // Refresh folder list to include the new folder
-          await loadRunFolders(workspacePath)
-          
-          // Load progress for the new folder (will be empty, but ensures consistency)
-          await loadProgress(workspacePath, response.folder_name)
-          
-          // Refresh workspace files to show the new folder
-          await fetchFiles()
-        } else {
-          console.error('[WorkflowToolbar] Failed to create folder:', response)
-          // Fallback: still set to 'new' so user can try again
-          setSelectedRunFolder('new')
-        }
-      } catch (error) {
-        console.error('[WorkflowToolbar] Error creating new folder:', error)
-        // Fallback: still set to 'new' so user can try again
-        setSelectedRunFolder('new')
-      } finally {
-        setIsCreatingFolder(false)
-      }
-    } else {
-      // Regular folder selection
-      setSelectedRunFolder(folder)
-    }
-    
+  const handleSelectRunFolder = useCallback((folder: string) => {
+    setSelectedRunFolder(folder)
     setIsIterationDropdownOpen(false)
-  }, [setSelectedRunFolder, workspacePath, loadRunFolders, loadProgress, fetchFiles])
+  }, [setSelectedRunFolder])
+
+  // Handle creating new iteration
+  const handleCreateIteration = useCallback(async () => {
+    if (!workspacePath || isCreatingIteration) return
+
+    setIsCreatingIteration(true)
+    try {
+      const response = await agentApi.createRunFolder(workspacePath)
+      
+      if (response.success && response.folder_name) {
+        // Refresh workspace files to reflect new folder
+        await fetchFiles()
+        
+        // Refresh folder list in store (for backward compatibility)
+        await loadRunFolders(workspacePath)
+        
+        // Select the newly created iteration
+        setSelectedRunFolder(response.folder_name)
+        
+        // Load progress for the new iteration (will be empty, but ensures consistency)
+        await loadProgress(workspacePath, response.folder_name)
+        
+        // CRITICAL: Refresh workspace state in parent component to update runFolders prop
+        // This ensures the new iteration appears in the dropdown immediately
+        if (onRefresh) {
+          await onRefresh()
+        }
+        
+        // Close dropdown
+        setIsIterationDropdownOpen(false)
+      } else {
+        console.error('[WorkflowToolbar] Failed to create iteration:', response.message)
+        alert(`Failed to create iteration: ${response.message || 'Unknown error'}`)
+      }
+    } catch (error) {
+      console.error('[WorkflowToolbar] Failed to create iteration:', error)
+      alert(`Failed to create iteration: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setIsCreatingIteration(false)
+    }
+  }, [workspacePath, isCreatingIteration, fetchFiles, loadRunFolders, setSelectedRunFolder, loadProgress, onRefresh])
 
   // Handle delete folder confirmation
   const handleDeleteFolderClick = useCallback((e: React.MouseEvent, folderName: string) => {
@@ -1192,46 +1212,19 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const handleExecute = useCallback(async () => {
     // Use isExecutionRunning instead of isRunning to allow execution even when other phases are running
     if (!isExecutionRunning && executionPhase) {
-      // CRITICAL: If "new" is selected, create a new iteration folder first
-      // This ensures we always have a specific iteration selected before execution
-      if (selectedRunFolder === 'new' && workspacePath) {
-        console.log('[WorkflowToolbar] "New Run" selected - creating new iteration folder before execution')
-        setIsCreatingFolder(true)
-        try {
-          // Create new folder via API
-          const response = await agentApi.createRunFolder(workspacePath)
-          
-          if (response.success && response.folder_name) {
-            // Select the newly created folder FIRST (before loading folders)
-            // This ensures the selection is set immediately and won't be reset by validation
-            setSelectedRunFolder(response.folder_name)
-            
-            // Refresh folder list to include the new folder
-            await loadRunFolders(workspacePath)
-            
-            // Load progress for the new folder (will be empty, but ensures consistency)
-            await loadProgress(workspacePath, response.folder_name)
-            
-            // Refresh workspace files to show the new folder
-            await fetchFiles()
-            
-            console.log(`[WorkflowToolbar] Created and selected new iteration folder: ${response.folder_name}`)
-          } else {
-            console.error('[WorkflowToolbar] Failed to create folder before execution:', response)
-            // Don't proceed with execution if folder creation failed
-            setIsCreatingFolder(false)
-            return
-          }
-        } catch (error) {
-          console.error('[WorkflowToolbar] Error creating new folder before execution:', error)
-          // Don't proceed with execution if folder creation failed
-          setIsCreatingFolder(false)
-          return
-        } finally {
-          setIsCreatingFolder(false)
-        }
+      // Check if variablesManifest exists - required for execution
+      if (!variablesManifest) {
+        alert('Error: Variables manifest not found. Please ensure variables are configured before executing the workflow.')
+        console.error('[WorkflowToolbar] Cannot execute: variablesManifest is missing')
+        return
       }
       
+      // Check if groups are available and if at least one is selected
+      const hasGroups = variablesManifest?.groups && variablesManifest.groups.length > 0
+      if (hasGroups && selectedGroupIds.length === 0) {
+        console.warn('[WorkflowToolbar] Cannot execute: No groups selected')
+        return
+      }
       // Find existing execution phase tab
       // Get execution tabs from generalized chat store
       const chatStore = useChatStore.getState()
@@ -1255,20 +1248,30 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         console.log('[WorkflowToolbar] No existing execution tab, creating new one')
       }
       
-      // Build execution options (now with the newly created folder if it was 'new')
+      // Build execution options
+      const workflowStore = useWorkflowStore.getState()
+      console.log('[EXECUTION_OPTIONS_DEBUG] [WorkflowToolbar] Before buildExecutionOptions:', {
+        selectedGroupIds: workflowStore.selectedGroupIds,
+        selectedGroupIdsLength: workflowStore.selectedGroupIds?.length || 0,
+        hasVariablesManifest: !!variablesManifest,
+        groupsCount: variablesManifest?.groups?.length || 0,
+        allGroupIds: variablesManifest?.groups?.map(g => g.group_id) || []
+      })
       const options = buildExecutionOptions()
-      console.log('[RESUME_DEBUG] 🚀 Starting execution with options:', JSON.stringify({
+      console.log('[EXECUTION_OPTIONS_DEBUG] [WorkflowToolbar] 🚀 Starting execution with options:', JSON.stringify({
         execution_strategy: options.execution_strategy,
         resume_from_step: options.resume_from_step,
         resume_from_branch_step: options.resume_from_branch_step,
         selected_run_folder: options.selected_run_folder,
-        run_mode: options.run_mode
+        run_mode: options.run_mode,
+        enabled_group_ids: options.enabled_group_ids,
+        enabled_group_ids_length: options.enabled_group_ids?.length || 0
       }, null, 2))
       
       // Start phase (will create new tab if none exists, or use existing if we switched to it)
       onStartPhase(executionPhase.id, options)
     }
-  }, [isExecutionRunning, executionPhase, buildExecutionOptions, onStartPhase, selectedRunFolder, workspacePath, setSelectedRunFolder, loadRunFolders, loadProgress, fetchFiles])
+  }, [isExecutionRunning, executionPhase, buildExecutionOptions, onStartPhase, selectedGroupIds, variablesManifest])
 
   return (
     <>
@@ -1477,44 +1480,60 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             {executionPhase && (
               <>
                 {/* Execute/Stop Button - Changes to Stop when execution phase is running */}
-                <button
-                  onClick={isExecutionRunning ? onStop : handleExecute}
-                  disabled={isCreatingFolder}
-                  className={`
-                    flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-semibold
-                    ${isExecutionRunning
-                      ? 'bg-red-500 dark:bg-red-600 text-white shadow-md hover:bg-red-600 dark:hover:bg-red-700 hover:shadow-lg'
-                      : isCreatingFolder
-                      ? 'bg-purple-400 dark:bg-purple-500 text-white shadow-md cursor-not-allowed opacity-75'
-                      : 'bg-purple-500 dark:bg-purple-600 text-white shadow-md hover:bg-purple-600 dark:hover:bg-purple-700 hover:shadow-lg'
-                    }
-                  `}
-                  title={isExecutionRunning ? 'Stop execution' : isCreatingFolder ? 'Creating new iteration folder...' : 'Execute workflow'}
-                >
-                  {isExecutionRunning ? (
-                    <>
-                      <Square className="w-3.5 h-3.5" />
-                      <span>Stop</span>
-                    </>
-                  ) : isCreatingFolder ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Creating...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Rocket className="w-3.5 h-3.5" />
-                      <span>Execute</span>
-                    </>
-                  )}
-                </button>
+                {/* Disable if no groups are selected (when groups are available) - but only when NOT running */}
+                {(() => {
+                  const hasGroups = variablesManifest?.groups && variablesManifest.groups.length > 0
+                  const noGroupsSelected = selectedGroupIds.length === 0
+                  // Only disable if execution is NOT running AND no groups are selected
+                  const isDisabled = !isExecutionRunning && hasGroups && noGroupsSelected
+                  
+                  return (
+                    <button
+                      onClick={isExecutionRunning ? onStop : handleExecute}
+                      disabled={isDisabled}
+                      className={`
+                        flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-semibold
+                        ${isExecutionRunning
+                          ? 'bg-red-500 dark:bg-red-600 text-white shadow-md hover:bg-red-600 dark:hover:bg-red-700 hover:shadow-lg'
+                          : isDisabled
+                          ? 'bg-gray-400 dark:bg-gray-600 text-white shadow-md cursor-not-allowed opacity-75'
+                          : 'bg-purple-500 dark:bg-purple-600 text-white shadow-md hover:bg-purple-600 dark:hover:bg-purple-700 hover:shadow-lg'
+                        }
+                      `}
+                      title={
+                        isExecutionRunning 
+                          ? 'Stop execution' 
+                          : hasGroups && noGroupsSelected
+                          ? 'Please select at least one group to execute'
+                          : 'Execute workflow'
+                      }
+                    >
+                      {isExecutionRunning ? (
+                        <>
+                          <Square className="w-3.5 h-3.5" />
+                          <span>Stop</span>
+                        </>
+                      ) : (
+                        <>
+                          <Rocket className="w-3.5 h-3.5" />
+                          <span>Execute</span>
+                        </>
+                      )}
+                    </button>
+                  )
+                })()}
                 
                 <div className="w-px h-5 bg-border" />
                 
                 {/* Iteration Selector */}
                 <div className="relative" ref={iterationDropdownRef}>
                   <button
-                    onClick={() => !isRunning && !isLoadingWorkspaceState && setIsIterationDropdownOpen(!isIterationDropdownOpen)}
+                    onClick={(e) => {
+                      e.stopPropagation() // Prevok ent event bubbling
+                      if (!isRunning && !isLoadingWorkspaceState) {
+                        setIsIterationDropdownOpen(!isIterationDropdownOpen)
+                      }
+                    }}
                     disabled={isRunning || isLoadingWorkspaceState}
                     className={`
                       flex items-center gap-1.5 px-2 py-1.5 rounded-md transition-all text-xs font-medium
@@ -1540,28 +1559,30 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   {isIterationDropdownOpen && !isRunning && (
                     <div className="absolute top-full left-0 mt-1 w-56 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 max-h-[300px] overflow-y-auto">
                       <div className="p-1">
-                        {/* New Run option */}
+                        {/* Create New Iteration Button */}
                         <button
-                          onClick={() => handleSelectRunFolder('new')}
-                          disabled={isCreatingFolder}
+                          onClick={handleCreateIteration}
+                          disabled={isCreatingIteration || !workspacePath}
                           className={`
-                            w-full text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
-                            ${selectedRunFolder === 'new' 
-                              ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' 
-                              : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                            w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors mb-1
+                            ${isCreatingIteration || !workspacePath
+                              ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                              : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50'
                             }
-                            ${isCreatingFolder ? 'opacity-50 cursor-not-allowed' : ''}
                           `}
+                          title={isCreatingIteration ? 'Creating iteration...' : 'Create a new iteration folder'}
                         >
-                          {isCreatingFolder ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
+                          {isCreatingIteration ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <span>Creating...</span>
+                            </>
                           ) : (
-                            <Plus className="w-4 h-4" />
+                            <>
+                              <Plus className="w-4 h-4" />
+                              <span>Create New Iteration</span>
+                            </>
                           )}
-                          <span className="font-medium">
-                            {isCreatingFolder ? 'Creating...' : 'New Run'}
-                          </span>
-                          {selectedRunFolder === 'new' && !isCreatingFolder && <Check className="w-4 h-4 ml-auto" />}
                         </button>
                         
                         {(iterationGroups.sortedIterations.length > 0 || folders.length > 0) ? (
@@ -1716,7 +1737,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                             />
                                           )}
                                           <button
-                                            onClick={() => {
+                                            onClick={(e) => {
+                                              e.stopPropagation() // Prevent event from bubbling to parent
                                               // Select only this group when clicking the button (not checkbox)
                                               if (group.groupId) {
                                                 setSelectedGroupIds([group.groupId])
@@ -2256,7 +2278,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       isOpen={showCostsPopup}
       onClose={() => setShowCostsPopup(false)}
       workspacePath={workspacePath || null}
-      runFolders={folders.map(rf => rf.name)}
+      runFolders={runFoldersNames}
       selectedRunFolder={contextRunFolder}
     />
 
@@ -2266,7 +2288,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       onClose={() => setShowExecutionLogsPopup(false)}
       workspacePath={workspacePath || null}
       runFolder={contextRunFolder}
-      runFolders={folders.map(rf => rf.name)}
+      runFolders={runFoldersNames}
     />
 
     {/* Evaluation Reports Popup */}

@@ -56,6 +56,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	updateMetadataWhenSkipped := func(skipReason string) error {
 		// Determine which LLM would have been used (for metadata tracking)
 		learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
+		if learningLLMConfig == nil {
+			err := fmt.Errorf("no valid LLM configuration found for learning agent")
+			hcpo.GetLogger().Error("❌ No valid LLM configuration found for learning agent, skipping metadata update", err)
+			return err
+		}
 		learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Primary.Provider, learningLLMConfig.Primary.ModelID)
 
 		// Update metadata with turnCount but don't increment counters (learning was skipped)
@@ -195,7 +200,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	// Prepare template variables for success learning agent
 	// Use interface methods instead of direct field access to support all step types (RegularPlanStep, EvaluationStep, etc.)
 	stepContextOutput := step.GetContextOutput().String()
-	formattedHistory := shared.FormatHistoryForLearning(executionHistory)
+
+	// COST OPTIMIZATION: Use aggressive truncation to reduce learning agent input costs
+	// Execution history can be 50K-200K+ tokens for complex steps with many tool calls.
+	// FormatHistoryForLearningAggressive limits to last 15 messages (~15K tokens max),
+	// reducing costs by 70-90% while preserving essential patterns (write operations, recent messages).
+	formattedHistory := shared.FormatHistoryForLearningAggressive(executionHistory)
 
 	successLearningTemplateVars := map[string]string{
 		"StepTitle":           step.GetTitle(),
@@ -218,6 +228,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	// All steps (regular, branch, sub-agent) use learnings/{step_id}/ where step_id is the step's own unique ID
 	successLearningTemplateVars["StepExecutionPath"] = runWorkspacePath
 	successLearningTemplateVars["StepNumber"] = learningPathIdentifier // Use learning path identifier instead of numeric step number
+
+	// Add execution logs folder path so learning agents can read execution logs if needed
+	// Execution logs contain actual tool usage, conversation history, and execution results
+	// Calculate validation workspace path (reused later in the function)
+	var validationWorkspacePathForLogs string
+	if hcpo.selectedRunFolder != "" {
+		validationWorkspacePathForLogs = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	} else {
+		validationWorkspacePathForLogs = hcpo.GetWorkspacePath()
+	}
+	executionLogsPath := getExecutionFolderPathForLogs(validationWorkspacePathForLogs, stepPath)
+	successLearningTemplateVars["ExecutionLogsPath"] = executionLogsPath
 
 	// Add context dependencies as a comma-separated string
 	contextDeps := step.GetContextDependencies()
@@ -311,6 +333,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 
 	// Determine which LLM was used for learning (for metadata tracking)
 	learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
+	if learningLLMConfig == nil {
+		err := fmt.Errorf("no valid LLM configuration found for learning agent")
+		hcpo.GetLogger().Error("❌ No valid LLM configuration found for learning agent, skipping metadata update", err)
+		return err
+	}
 	learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Primary.Provider, learningLLMConfig.Primary.ModelID)
 
 	// Update metadata and check if auto-lock should be triggered
@@ -416,6 +443,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	updateMetadataWhenSkippedFailure := func(skipReason string) error {
 		// Determine which LLM would have been used (for metadata tracking)
 		learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
+		if learningLLMConfig == nil {
+			err := fmt.Errorf("no valid LLM configuration found for learning agent")
+			hcpo.GetLogger().Error("❌ No valid LLM configuration found for learning agent, skipping metadata update", err)
+			return err
+		}
 		learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Primary.Provider, learningLLMConfig.Primary.ModelID)
 
 		// Update metadata with turnCount but don't increment counters (learning was skipped)
@@ -536,7 +568,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 		"StepSuccessCriteria": step.GetSuccessCriteria(),
 		"StepContextOutput":   step.GetContextOutput().String(),
 		"WorkspacePath":       hcpo.GetWorkspacePath(),
-		"ExecutionHistory":    shared.FormatHistoryForLearning(executionHistory),
+		// COST OPTIMIZATION: Use aggressive truncation to reduce learning agent input costs
+		// Execution history can be 50K-200K+ tokens for complex steps with many tool calls.
+		// FormatHistoryForLearningAggressive limits to last 15 messages (~15K tokens max),
+		// reducing costs by 70-90% while preserving essential patterns (write operations, recent messages).
+		"ExecutionHistory":    shared.FormatHistoryForLearningAggressive(executionHistory),
 		"ValidationResult":    string(validationResultJSON),
 		"CurrentObjective":    hcpo.GetObjective(),
 		"LearningDetailLevel": learningDetailLevel, // Pass learning detail preference
@@ -550,6 +586,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	// All steps (regular, branch, sub-agent) use learnings/{step_id}/ where step_id is the step's own unique ID
 	failureLearningTemplateVars["StepExecutionPath"] = runWorkspacePath
 	failureLearningTemplateVars["StepNumber"] = learningPathIdentifier // Use learning path identifier instead of numeric step number
+
+	// Add execution logs folder path so learning agents can read execution logs if needed
+	// Execution logs contain actual tool usage, conversation history, and execution results
+	// Calculate validation workspace path (reused later in the function)
+	var validationWorkspacePathForLogs string
+	if hcpo.selectedRunFolder != "" {
+		validationWorkspacePathForLogs = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	} else {
+		validationWorkspacePathForLogs = hcpo.GetWorkspacePath()
+	}
+	executionLogsPath := getExecutionFolderPathForLogs(validationWorkspacePathForLogs, stepPath)
+	failureLearningTemplateVars["ExecutionLogsPath"] = executionLogsPath
 
 	// Add context dependencies as a comma-separated string
 	contextDeps := step.GetContextDependencies()
@@ -640,6 +688,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 
 	// Determine which LLM was used for learning (for metadata tracking)
 	learningLLMConfig := hcpo.selectLearningLLM(ctx, agentConfigs, step.GetID(), stepPath)
+	if learningLLMConfig == nil {
+		err := fmt.Errorf("no valid LLM configuration found for learning agent")
+		hcpo.GetLogger().Error("❌ No valid LLM configuration found for learning agent, skipping metadata update", err)
+		return "", "", err
+	}
 	learningLLM := fmt.Sprintf("%s/%s", learningLLMConfig.Primary.Provider, learningLLMConfig.Primary.ModelID)
 
 	// Update metadata and check if auto-lock should be triggered
@@ -785,7 +838,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) formatStepLearningFilesAsHistory(lear
 	}
 
 	var result strings.Builder
-	result.WriteString("## Learning Context\n\n")
+	result.WriteString("## Learning Context (Pre-loaded - DO NOT re-read these files)\n\n")
+	result.WriteString("**Note**: The following learning content has been pre-loaded from the learnings folder. ")
+	result.WriteString("You do NOT need to read these files again - the full content is included below.\n\n")
 	filePaths := make([]string, 0, len(learningFiles))
 
 	// Sort filenames for consistent output
@@ -795,13 +850,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) formatStepLearningFilesAsHistory(lear
 	}
 	sort.Strings(filenames)
 
-	// Format each file
+	// Format each file with clear source attribution
 	for i, filename := range filenames {
 		content := learningFiles[filename]
 		if i > 0 {
 			result.WriteString("\n---\n\n")
 		}
-		result.WriteString(fmt.Sprintf("### %s\n\n", filename))
+		// Make it very clear this is the file content, already loaded
+		result.WriteString(fmt.Sprintf("### 📄 File: `%s` (content already loaded below)\n\n", filename))
 		result.WriteString(content)
 		result.WriteString("\n")
 		filePaths = append(filePaths, filename)

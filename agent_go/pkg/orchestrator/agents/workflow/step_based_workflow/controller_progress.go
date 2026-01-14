@@ -77,7 +77,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveStepProgress(ctx context.Context,
 	}
 
 	// Emit step progress updated event for frontend dynamic updates
-	hcpo.emitStepProgressUpdatedEvent(ctx, progress)
+	hcpo.emitStepProgressUpdatedEvent(ctx, progress, "", "")
 
 	return nil
 }
@@ -123,6 +123,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitStepStartedEvent(ctx context.Cont
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_started event for step %d: %s", stepIndex+1, stepTitle))
 	}
+
+	// Also emit progress event with "start" status for focus feature
+	progress, err := hcpo.loadStepProgress(ctx)
+	if err == nil && progress != nil {
+		hcpo.emitStepProgressUpdatedEvent(ctx, progress, "start", stepId)
+	}
 }
 
 // emitStepFinishedEvent emits a step finished event
@@ -163,6 +169,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitStepFinishedEvent(ctx context.Con
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit step finished event: %v", err))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_finished event for step %d: %s", stepIndex+1, stepTitle))
+	}
+
+	// Also emit progress event with "end" status for focus feature
+	progress, err := hcpo.loadStepProgress(ctx)
+	if err == nil && progress != nil {
+		hcpo.emitStepProgressUpdatedEvent(ctx, progress, "end", stepId)
 	}
 }
 
@@ -224,47 +236,45 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitDecisionEvaluatedEvent(ctx contex
 }
 
 // emitStepProgressUpdatedEvent emits an event when step progress is updated
-func (hcpo *StepBasedWorkflowOrchestrator) emitStepProgressUpdatedEvent(ctx context.Context, progress *StepProgress) {
+// status can be "start" (step started), "stop" (step stopped), "end" (step ended), or empty (regular progress update)
+func (hcpo *StepBasedWorkflowOrchestrator) emitStepProgressUpdatedEvent(ctx context.Context, progress *StepProgress, status string, stepId string) {
 	bridge := hcpo.GetContextAwareBridge()
 	if bridge == nil {
 		return
 	}
 
-	// Determine the last completed step (highest index in the completed list)
-	lastCompletedStep := -1
-	if len(progress.CompletedStepIndices) > 0 {
+	// Determine the current step ID
+	var currentStepId string
+	if stepId != "" {
+		// Use provided step ID (for start/stop/end events)
+		currentStepId = stepId
+	} else if len(progress.CompletedStepIndices) > 0 {
+		// Determine the last completed step (highest index in the completed list)
+		lastCompletedStep := -1
 		for _, idx := range progress.CompletedStepIndices {
 			if idx > lastCompletedStep {
 				lastCompletedStep = idx
 			}
 		}
+		// Get step ID from the approved plan if available
+		if lastCompletedStep >= 0 && hcpo.approvedPlan != nil && lastCompletedStep < len(hcpo.approvedPlan.Steps) {
+			step := hcpo.approvedPlan.Steps[lastCompletedStep]
+			currentStepId = step.GetID()
+		}
 	}
-
-	// Get step ID and title from the approved plan if available
-	var lastCompletedStepId string
-	var lastCompletedStepTitle string
-	if lastCompletedStep >= 0 && hcpo.approvedPlan != nil && lastCompletedStep < len(hcpo.approvedPlan.Steps) {
-		step := hcpo.approvedPlan.Steps[lastCompletedStep]
-		lastCompletedStepId = step.GetID()
-		lastCompletedStepTitle = step.GetTitle()
-	}
-
-	// Use local BranchStepProgress (already in same package)
-	branchSteps := progress.BranchSteps
 
 	eventData := &StepProgressUpdatedEvent{
 		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		CompletedStepIndices:   progress.CompletedStepIndices,
-		TotalSteps:             progress.TotalSteps,
-		WorkspacePath:          hcpo.GetWorkspacePath(),
-		RunFolder:              hcpo.selectedRunFolder,
-		LastCompletedStep:      lastCompletedStep,
-		LastCompletedStepId:    lastCompletedStepId,
-		LastCompletedStepTitle: lastCompletedStepTitle,
-		BranchSteps:            branchSteps,
-		ValidationFailures:     progress.ValidationFailures,
+		WorkspacePath: hcpo.GetWorkspacePath(),
+		RunFolder:     hcpo.selectedRunFolder,
+		CurrentStepId: currentStepId,
+		Status:        status,
+		// Include batch context for frontend batch progress tracking
+		GroupId:     hcpo.currentGroupId,
+		GroupIndex:  hcpo.currentGroupIdx,
+		TotalGroups: hcpo.totalGroups,
 	}
 
 	// Create unified event wrapper
@@ -277,7 +287,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitStepProgressUpdatedEvent(ctx cont
 	if err := bridge.HandleEvent(ctx, unifiedEvent); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit step progress updated event: %v", err))
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("📊 Emitted step progress updated event: %d/%d steps completed", len(progress.CompletedStepIndices), progress.TotalSteps))
+		if status != "" {
+			hcpo.GetLogger().Info(fmt.Sprintf("📊 Emitted step progress updated event: status=%s, current_step_id=%s", status, currentStepId))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("📊 Emitted step progress updated event: current_step_id=%s", currentStepId))
+		}
 	}
 }
 

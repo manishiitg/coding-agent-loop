@@ -77,12 +77,13 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 {{end}}
 {{end}}
 
-## 📁 File System Access
-- **READ**: 'learnings/', 'execution/' (previous steps), 'knowledgebase/'.
-- **WRITE/CLEANUP**:
+## 📁 File System Access (Folder Guard Enforced)
+**Allowed READ paths**: {{.FolderGuardReadPaths}}
+**Allowed WRITE paths**: {{.FolderGuardWritePaths}}
+
 - **Step Folder**: '{{.StepExecutionPath}}/' - **VOLATILE**. Deleted on re-execution/restart. Only write your primary results here.
-- **Knowledgebase**: '{{.KnowledgebasePath}}/' - **PERSISTENT**. Shared across all runs. Use for templates, reference data, or global configs that must survive across execution attempts. Path validation is enforced.
-- **Rule**: Read from any allowed folder (learnings, execution, knowledgebase), but only write to your specific step folder or the persistent knowledgebase.
+- **Knowledgebase**: '{{.KnowledgebasePath}}/' - **PERSISTENT**. Shared across all runs. Use for templates, reference data, or global configs that must survive across execution attempts.
+- **Rule**: Use the EXACT paths above. Read from any allowed read path, write only to allowed write paths. Path validation is strictly enforced.
 
 {{if .HasLoop}}
 ## 🔄 Loop Execution
@@ -266,6 +267,8 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	prerequisiteRulesInfo := templateVars["PrerequisiteRulesInfo"]
 	decisionEvaluationQuestion := templateVars["DecisionEvaluationQuestion"]
 	validationSchema := templateVars["ValidationSchema"] // Validation schema JSON string
+	folderGuardReadPaths := templateVars["FolderGuardReadPaths"]
+	folderGuardWritePaths := templateVars["FolderGuardWritePaths"]
 
 	// Execute the pre-parsed template
 	var result strings.Builder
@@ -287,8 +290,10 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"OtherAgentsCapabilities":    otherAgentsCapabilities,
 		"PrerequisiteRulesInfo":      prerequisiteRulesInfo,
 		"DecisionEvaluationQuestion": decisionEvaluationQuestion,
-		"ValidationSchema":           validationSchema,  // Validation schema JSON string
-		"KnowledgebasePath":          knowledgebasePath, // Knowledgebase folder path
+		"ValidationSchema":           validationSchema,       // Validation schema JSON string
+		"KnowledgebasePath":          knowledgebasePath,      // Knowledgebase folder path
+		"FolderGuardReadPaths":       folderGuardReadPaths,   // Folder guard read paths for agent guidance
+		"FolderGuardWritePaths":      folderGuardWritePaths,  // Folder guard write paths for agent guidance
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution-only system prompt template: %v", err)

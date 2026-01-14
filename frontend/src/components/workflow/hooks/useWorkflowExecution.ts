@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { agentApi, getSessionId } from '../../../services/api'
 import type { PollingEvent } from '../../../services/api-types'
 import { useLLMStore, useMCPStore, useChatStore } from '../../../stores'
@@ -19,8 +19,6 @@ export type StepStatus = 'pending' | 'running' | 'completed' | 'failed'
 
 export interface UseWorkflowExecutionReturn {
   status: WorkflowExecutionStatus
-  currentStepId: string | null
-  stepStatusMap: Map<string, StepStatus> // Map of stepId -> status
   events: PollingEvent[]
   sessionId: string
   error: string | null
@@ -69,21 +67,13 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     console.warn(`[useWorkflowExecution] No active tab - this should not happen in chat mode`)
   }
   
-  // Workflow store actions
-  const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
-  const loadRunFolders = useWorkflowStore(state => state.loadRunFolders)
-  const loadProgress = useWorkflowStore(state => state.loadProgress)
+  // Chat store actions
   const setTabStreaming = useChatStore(state => state.setTabStreaming)
   const updateTabSessionId = useChatStore(state => state.updateTabSessionId)
 
   // Local state for workflow-specific tracking
-  const [currentStepId, setCurrentStepId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [manualStatus, setManualStatus] = useState<WorkflowExecutionStatus | null>(null)
-  const [stepStatusMap, setStepStatusMap] = useState<Map<string, StepStatus>>(new Map())
-
-  // Ref for tracking processed events (for step tracking only)
-  const lastProcessedEventIndexRef = useRef<number>(-1)
 
   // Store subscriptions
   const { primaryConfig: llmConfig } = useLLMStore()
@@ -131,224 +121,10 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     return 'idle'
   }, [isStreaming, isCompleted, events, manualStatus])
 
-  // Track current step and step status from events
-  useEffect(() => {
-    if (events.length === 0) return
-
-    // Only process new events for step tracking and status updates
-    for (let i = lastProcessedEventIndexRef.current + 1; i < events.length; i++) {
-      const event = events[i]
-
-      // Debug: Log all step execution events (only in development)
-      if (process.env.NODE_ENV === 'development' && (event.type?.includes('step_execution') || event.type?.includes('step_'))) {
-        console.log('[useWorkflowExecution] Received step event:', {
-          type: event.type,
-          data: event.data,
-          dataType: typeof event.data,
-          dataKeys: event.data && typeof event.data === 'object' ? Object.keys(event.data) : 'not an object',
-          hasStepId: event.data && typeof event.data === 'object' ? 'step_id' in (event.data as Record<string, unknown>) : false,
-          stepIdValue: event.data && typeof event.data === 'object' ? (event.data as Record<string, unknown>).step_id : undefined
-        })
-      }
-
-      // Handle step_started event
-      if (event.type === 'step_execution_start') {
-        // Access step_id - event.data might be the actual event data object directly
-        // or it might be wrapped in EventData type (which doesn't include step execution events)
-        const rawData = event.data as Record<string, unknown> | undefined
-        let stepId: string | undefined
-        let runFolder: string | undefined
-        let workspacePath: string | undefined
-
-        if (rawData && typeof rawData === 'object') {
-          // Try direct access first (most common case - step_id is directly in event.data)
-          stepId = rawData.step_id as string | undefined
-          runFolder = rawData.run_folder as string | undefined
-          workspacePath = rawData.workspace_path as string | undefined
-
-          // If not found, try accessing through 'data' property (nested structure)
-          if (!stepId && rawData.data && typeof rawData.data === 'object') {
-            const nestedData = rawData.data as Record<string, unknown>
-            stepId = nestedData.step_id as string | undefined
-            if (!runFolder) {
-              runFolder = nestedData.run_folder as string | undefined
-            }
-            if (!workspacePath) {
-              workspacePath = nestedData.workspace_path as string | undefined
-            }
-          }
-        }
-
-        if (stepId) {
-          setCurrentStepId(stepId)
-          setStepStatusMap(prev => {
-            const newMap = new Map(prev)
-            newMap.set(stepId!, 'running')
-            return newMap
-          })
-        } else {
-          console.warn('[useWorkflowExecution] step_execution_start event missing step_id:', {
-            rawData,
-            dataType: typeof rawData,
-            keys: rawData && typeof rawData === 'object' ? Object.keys(rawData) : []
-          })
-        }
-
-        // Update selected run folder if provided in event
-        if (runFolder && runFolder !== 'new') {
-          setSelectedRunFolder(runFolder)
-          
-          // Reload run folders to ensure the folder is in the list
-          if (workspacePath) {
-            loadRunFolders(workspacePath).catch(err => {
-              console.warn('[useWorkflowExecution] Failed to reload run folders:', err)
-            })
-            
-            // Note: loadProgress will automatically skip during execution (isStreaming=true)
-            // and trust step_progress_updated events instead to avoid race conditions.
-            // This is safe to call - it won't overwrite progress during active execution.
-            loadProgress(workspacePath, runFolder).catch(err => {
-              console.warn('[useWorkflowExecution] Failed to load progress:', err)
-            })
-          }
-        }
-      }
-
-      // Handle step_finished event
-      if (event.type === 'step_execution_end') {
-        // Access step_id - event.data is the actual event data object
-        const rawData = event.data as Record<string, unknown> | undefined
-        let stepId: string | undefined
-
-        if (rawData && typeof rawData === 'object') {
-          // Try direct access first
-          stepId = rawData.step_id as string | undefined
-
-          // If not found, try accessing through 'data' property
-          if (!stepId && rawData.data && typeof rawData.data === 'object') {
-            const nestedData = rawData.data as Record<string, unknown>
-            stepId = nestedData.step_id as string | undefined
-          }
-        }
-
-        if (stepId) {
-          setStepStatusMap(prev => {
-            const newMap = new Map(prev)
-            newMap.set(stepId!, 'completed')
-            return newMap
-          })
-        } else {
-          console.warn('[useWorkflowExecution] step_execution_end event missing step_id:', rawData)
-        }
-      }
-
-      // Handle step_failed event
-      if (event.type === 'step_execution_failed') {
-        // Access step_id - event.data is the actual event data object
-        const rawData = event.data as Record<string, unknown> | undefined
-        let stepId: string | undefined
-        let errorMessage: string | undefined
-
-        if (rawData && typeof rawData === 'object') {
-          // Try direct access first
-          stepId = rawData.step_id as string | undefined
-          errorMessage = rawData.error as string | undefined
-
-          // If not found, try accessing through 'data' property
-          if (!stepId && rawData.data && typeof rawData.data === 'object') {
-            const nestedData = rawData.data as Record<string, unknown>
-            stepId = nestedData.step_id as string | undefined
-            errorMessage = nestedData.error as string | undefined
-          }
-        }
-
-        if (stepId) {
-          setStepStatusMap(prev => {
-            const newMap = new Map(prev)
-            newMap.set(stepId!, 'failed')
-            return newMap
-          })
-          // Log error message for debugging
-          if (errorMessage) {
-            console.error(`[useWorkflowExecution] Step ${stepId} failed:`, errorMessage)
-          }
-        } else {
-          console.warn('[useWorkflowExecution] step_execution_failed event missing step_id:', rawData)
-        }
-      }
-
-      // Handle batch_group_start event - when a new group starts during batch execution
-      // NOTE: The actual state update is handled by BatchGroupStartEvent component
-      // This hook just processes the event for other purposes (if needed)
-      // The consolidated handler in the store ensures proper normalization and state updates
-      if (event.type === 'batch_group_start') {
-        // State updates are handled by BatchGroupStartEvent component via handleBatchGroupStart
-        // This ensures single source of truth and proper normalization
-        const rawData = event.data as Record<string, unknown> | undefined
-        if (rawData && typeof rawData === 'object') {
-          const groupId = rawData.group_id as string | undefined
-          const runFolder = rawData.run_folder as string | undefined
-          const workspacePath = rawData.workspace_path as string | undefined
-          
-          if (groupId && runFolder) {
-            console.log('[useWorkflowExecution] Batch group start event received:', {
-              groupId,
-              runFolder,
-              workspacePath
-            })
-            // Note: State update handled by BatchGroupStartEvent component
-          }
-        }
-      }
-
-      // Handle prerequisite_navigation event
-      if (event.type === 'prerequisite_navigation') {
-        const rawData = event.data as Record<string, unknown> | undefined
-        let fromStepIndex: number | undefined
-        let toStepIndex: number | undefined
-        let reason: string | undefined
-        let failureType: string | undefined
-
-        if (rawData && typeof rawData === 'object') {
-          // Try direct access first
-          fromStepIndex = rawData.from_step_index as number | undefined
-          toStepIndex = rawData.to_step_index as number | undefined
-          reason = rawData.reason as string | undefined
-          failureType = rawData.failure_type as string | undefined
-
-          // If not found, try accessing through 'data' property
-          if (fromStepIndex === undefined && rawData.data && typeof rawData.data === 'object') {
-            const nestedData = rawData.data as Record<string, unknown>
-            fromStepIndex = nestedData.from_step_index as number | undefined
-            toStepIndex = nestedData.to_step_index as number | undefined
-            if (!reason) {
-              reason = nestedData.reason as string | undefined
-            }
-            if (!failureType) {
-              failureType = nestedData.failure_type as string | undefined
-            }
-          }
-        }
-
-        if (fromStepIndex !== undefined && toStepIndex !== undefined) {
-          console.log('[useWorkflowExecution] Prerequisite navigation detected:', {
-            fromStep: fromStepIndex + 1,
-            toStep: toStepIndex + 1,
-            reason,
-            failureType
-          })
-          
-          // Update step status to show navigation
-          // Mark from step as having prerequisite failure
-          // The navigation will restart execution from toStepIndex
-          // Note: The backend handles the actual navigation, this is just for UI feedback
-        }
-      }
-
-    }
-
-    lastProcessedEventIndexRef.current = events.length - 1
-  }, [events, setSelectedRunFolder, loadRunFolders, loadProgress])
+  // NOTE: Step status events (step_progress_updated, step_execution_end, step_execution_failed)
+  // are now handled in ChatArea.tsx polling layer which updates useWorkflowStore directly.
+  // This is more reliable than useEffect here because the events array from useMemo
+  // doesn't update when new events arrive (the getTabEvents function reference doesn't change).
 
   // Start workflow - CRITICAL: Always use tab's observer ID, never fall back to global
   const startWorkflow = useCallback(async (presetQueryId: string) => {
@@ -368,7 +144,6 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
 
     setError(null)
     setManualStatus(null) // Clear any manual status
-    lastProcessedEventIndexRef.current = events.length - 1 // Start processing from current position
 
     try {
       // Get active preset for LLM config
@@ -432,8 +207,6 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
 
     setError(null)
     setManualStatus(null)
-    setCurrentStepId(stepId)
-    lastProcessedEventIndexRef.current = events.length - 1
 
     try {
       // Get active preset for LLM config
@@ -529,8 +302,8 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     useChatStore.getState().setLastEventIndex(-1)
     // Deprecated: setLastEventCount removed
 
-    // Clear current step tracking
-    setCurrentStepId(null)
+    // Clear current step tracking in store
+    useWorkflowStore.getState().setCurrentStepId(null)
 
     // Call backend to stop the session using session ID
     let sessionId: string | null = null
@@ -573,14 +346,11 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     } else {
       console.warn(`[useWorkflowExecution] No active tab - cannot clear events`)
     }
-    lastProcessedEventIndexRef.current = -1
     setManualStatus(null)
   }, [])
 
   return {
     status: derivedStatus,
-    currentStepId,
-    stepStatusMap,
     events,
     sessionId: sessionId || '',
     error,

@@ -34,14 +34,18 @@ var learningCodeSystemTemplate = MustRegisterTemplate("learningCodeSystem", `# C
 ## 🔄 FILE MANAGEMENT ALGORITHM (MANDATORY)
 1. **Discover**: Call 'list_workspace_files' on '{{.WritePath}}'. Identify all '*_learning.md' and '*.go' files.
 2. **Retrieve**: Read all identified files.
-3. **Consolidate**:
+3. **Optional - Check Execution Logs**: If you need more context about actual code execution, you can read execution logs from '{{.ExecutionLogsPath}}' (if available). Execution logs contain:
+   - Conversation history: execution-attempt-{N}-iteration-{M}-conversation.json
+   - Execution results: execution-attempt-{N}-iteration-{M}.json
+   - These show the actual code execution, errors, and tool calls
+4. **Consolidate**:
    - Merge new execution patterns with history.
    - **Prune**: Delete old/inefficient code files. **Keep ONLY the latest/best Go file.**
    - **Update Scores**: Format: '[Runs: X | Success: Y%]'.
-4. **Persist**:
+5. **Persist**:
    - Write ONE consolidated learning file to '{{.WritePath}}/{{.StepTitle}}_learning.md'.
    - Save the best code to '{{.CodePath}}/{{.StepTitle}}_code.go'.
-5. **Clean Up**: Delete all other learning/code files in these folders.
+6. **Clean Up**: Delete all other learning/code files in these folders.
 
 ## 📤 OUTPUT FORMAT
 ### ✅ BEST CODE PATTERNS

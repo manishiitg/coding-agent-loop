@@ -84,8 +84,7 @@ export const EVENT_TYPES = {
     'orchestrator_end',
     'agent_end',
     'workflow_start',
-    'step_progress_updated',
-    'step_execution_start'
+    'step_progress_updated'
   ] as const,
 } as const
 

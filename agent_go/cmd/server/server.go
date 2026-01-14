@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	_ "net/http/pprof" // Register pprof handlers
 	"os"
 	"os/signal"
 	"strings"
@@ -797,6 +798,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/plan/delete-step", api.handleDeleteStep).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/add-step", api.handleAddStep).Methods("POST", "OPTIONS")
 
+	// pprof routes for profiling (must be before static file serving)
+	router.PathPrefix("/debug/pprof/").Handler(http.DefaultServeMux)
+
 	// Static file serving (for frontend)
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("./static/")))
 
@@ -998,31 +1002,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		"query_id":   queryID,
 	})
 
-	// Set agent execution LLM defaults: API request takes precedence, then environment variables, then server config, then fallback to Bedrock
-	agentProvider := req.Provider // API request takes highest priority
-	if agentProvider == "" {
-		agentProvider = os.Getenv("AGENT_PROVIDER") // Environment variable as fallback
-	}
-	if agentProvider == "" {
-		agentProvider = api.config.Provider // Server config as fallback
-	}
-	if agentProvider == "" {
-		agentProvider = "bedrock" // Default fallback
-	}
-
-	// Set agent model: API request takes precedence, then environment variables, then server config
-	agentModel := req.ModelID // API request takes highest priority
-	if agentModel == "" {
-		agentModel = os.Getenv("AGENT_MODEL") // Environment variable as fallback
-	}
-	if agentModel == "" {
-		agentModel = api.config.ModelID // Server config as fallback
-	}
-	if agentModel == "" && agentProvider == "bedrock" {
-		agentModel = os.Getenv("BEDROCK_PRIMARY_MODEL") // Use .env configuration
-	}
-	req.Provider = agentProvider
-	req.ModelID = agentModel
+	// NOTE: For workflow mode, LLM selection follows priority: temp override → step config → preset LLM
+	// No orchestrator default fallback. req.Provider and req.ModelID are not used for workflow agents.
+	// For non-workflow agents (simple/chat mode), req.Provider and req.ModelID come from the frontend request.
+	// Environment variable fallbacks have been removed - frontend always sends these values.
 
 	// Default maxTurns from environment variable or 100 if not provided or 0 (applies to both workflow and simple agent modes)
 	if req.MaxTurns <= 0 {
@@ -1317,9 +1300,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Create workflow orchestrator for this request
 		// Note: req.MaxTurns is already defaulted to 100 earlier in the handler
+		// Note: provider and model parameters removed - LLM selection uses temp override → step config → preset LLM
 		workflowOrchestrator, err := orchtypes.NewWorkflowOrchestrator(
-			req.Provider,         // provider
-			req.ModelID,          // model
 			api.mcpConfigPath,    // mcpConfigPath
 			api.temperature,      // temperature
 			"workflow",           // agentMode
@@ -1486,7 +1468,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Pass execution options from frontend if provided
+			log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Received request - req.ExecutionOptions is nil: %v", req.ExecutionOptions == nil)
 			if req.ExecutionOptions != nil {
+				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Execution options received: %+v", req.ExecutionOptions)
 				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s, resume_from_step=%d, enabled_group_ids=%v, skip_learning_temp_llm1=%v, skip_learning_temp_llm2=%v, save_validation_responses=%v",
 					req.ExecutionOptions.RunMode, req.ExecutionOptions.ExecutionStrategy, req.ExecutionOptions.SelectedRunFolder, req.ExecutionOptions.ResumeFromStep, req.ExecutionOptions.EnabledGroupIDs, req.ExecutionOptions.SkipLearningWhenTempLLM1, req.ExecutionOptions.SkipLearningWhenTempLLM2, req.ExecutionOptions.SaveValidationResponses)
 
@@ -1504,8 +1488,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					SkipLearningWhenTempLLM2:       req.ExecutionOptions.SkipLearningWhenTempLLM2,
 					EnabledGroupIDs:                req.ExecutionOptions.EnabledGroupIDs,
 					SaveValidationResponses:        req.ExecutionOptions.SaveValidationResponses,
-					DisableShellExecAccess:         req.ExecutionOptions.DisableShellExecAccess,
-					DisableReadImageAccess:         req.ExecutionOptions.DisableReadImageAccess,
 				}
 
 				// Convert TempOverrideLLM if present
@@ -1543,7 +1525,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Set execution options on the workflow orchestrator
+				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Setting execution options on orchestrator: %+v", controllerOpts)
 				workflowOrchestrator.SetExecutionOptions(controllerOpts)
+				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Execution options set on orchestrator successfully")
+			} else {
+				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] No execution options provided in request - req.ExecutionOptions is nil")
 			}
 
 			// Execute workflow with the preset objective (not the phase query)
@@ -2497,18 +2483,20 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 // State management functions removed - orchestrator is now stateless
 
 // createServerLogger creates a logger instance for the server
-// This logger writes to logs/server_debug.log (or the file specified via --log-file flag)
+// This logger writes to stdout only to avoid duplication with shell redirection
 func createServerLogger() loggerv2.Logger {
-	// Check for log file from flag or environment variable, default to server_debug.log
-	logFile := viper.GetString("log-file")
-	if logFile == "" {
-		logFile = os.Getenv("LOG_FILE")
-	}
-	if logFile == "" {
-		logFile = "logs/server_debug.log"
+	// Force stdout logging by passing empty log file and enableStdout=true
+	// This prevents the application from writing to the file directly,
+	// allowing the shell script's redirection to handle file logging without duplicates.
+	logFile := ""
+
+	// Check for log level from environment variable
+	logLevel := os.Getenv("LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "info"
 	}
 
-	serverLogger, err := logger.CreateLogger(logFile, "info", "text", false)
+	serverLogger, err := logger.CreateLogger(logFile, logLevel, "text", true)
 	if err != nil {
 		log.Fatalf("Failed to create server logger: %w", err)
 	}

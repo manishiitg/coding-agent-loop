@@ -48,6 +48,14 @@ export interface WorkflowEventInfo {
   modelId?: string
   /** Final result text from the last unified_completion event */
   finalResult?: string
+  /** Current batch group ID (from batch_group_start events) */
+  currentGroupId?: string
+  /** Current batch group index (from batch_group_start events) */
+  currentGroupIndex?: number
+  /** Total batch groups (from batch_group_start events) */
+  totalGroups?: number
+  /** Current batch run folder (from batch_group_start events) */
+  currentRunFolder?: string
 }
 
 /**
@@ -81,28 +89,17 @@ export function extractWorkflowInfo(events: PollingEvent[]): WorkflowEventInfo {
     // Extract step progress data
     const progressData = getTypedEventData(pollingEvent, 'step_progress_updated')
     if (progressData) {
-      info.progress = {
-        completed_step_indices: progressData.completed_step_indices || [],
-        total_steps: progressData.total_steps || 0
-      }
-      if (progressData.last_completed_step_title) {
-        info.stepTitle = progressData.last_completed_step_title
+      // Note: step_progress_updated event no longer includes progress details
+      // Progress should be loaded from the API separately if needed
+      // We can still track the current step ID if available
+      if (progressData.current_step_id) {
+        // Current step ID is available but we don't store it in info.progress
+        // as progress details are not in the event anymore
       }
     }
 
-    // Extract step title, ID, and index from step execution start
-    const stepStartData = getTypedEventData(pollingEvent, 'step_execution_start')
-    if (stepStartData) {
-      if (stepStartData.step_title) {
-        info.stepTitle = stepStartData.step_title
-      }
-      if (stepStartData.step_id) {
-        info.currentStepId = stepStartData.step_id
-      }
-      if (stepStartData.step_index !== undefined) {
-        info.currentStepIndex = stepStartData.step_index
-      }
-    }
+    // Note: step_execution_start event handling removed
+    // Step information should come from step_progress_updated or other events
 
     // Extract agent name from agent_start events
     const agentStartData = getTypedEventData(pollingEvent, 'agent_start')
@@ -142,6 +139,33 @@ export function extractWorkflowInfo(events: PollingEvent[]): WorkflowEventInfo {
     const unifiedCompletionData = getTypedEventData(pollingEvent, 'unified_completion')
     if (unifiedCompletionData?.final_result) {
       info.finalResult = unifiedCompletionData.final_result
+    }
+
+    // Extract batch group info from batch_group_start events
+    const batchGroupStartData = getTypedEventData(pollingEvent, 'batch_group_start')
+    if (batchGroupStartData) {
+      if (batchGroupStartData.group_id) {
+        info.currentGroupId = batchGroupStartData.group_id
+      }
+      if (batchGroupStartData.group_index !== undefined) {
+        info.currentGroupIndex = batchGroupStartData.group_index
+      }
+      if (batchGroupStartData.total_groups !== undefined) {
+        info.totalGroups = batchGroupStartData.total_groups
+      }
+      if (batchGroupStartData.run_folder) {
+        info.currentRunFolder = batchGroupStartData.run_folder
+      }
+    }
+
+    // Clear batch group info when batch_group_end is received
+    const batchGroupEndData = getTypedEventData(pollingEvent, 'batch_group_end')
+    if (batchGroupEndData?.group_id === info.currentGroupId) {
+      // Only clear if this is the currently tracked group
+      info.currentGroupId = undefined
+      info.currentGroupIndex = undefined
+      info.totalGroups = undefined
+      info.currentRunFolder = undefined
     }
   }
 

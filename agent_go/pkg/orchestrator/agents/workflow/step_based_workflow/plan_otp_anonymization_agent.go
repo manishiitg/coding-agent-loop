@@ -90,9 +90,8 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 	am.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	am.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for anonymization agent - Read paths: %v, Write paths: %v (learnings folder)", readPaths, writePaths))
 
-	// Use preset learning LLM if available, otherwise fall back to orchestrator default
+	// Use preset phase LLM only
 	var llmConfigToUse *orchestrator.LLMConfig
-	orchestratorLLMConfig := am.GetLLMConfig()
 	if am.presetPhaseLLM != nil && am.presetPhaseLLM.Provider != "" && am.presetPhaseLLM.ModelID != "" {
 		// Use preset phase LLM
 		llmConfigToUse = &orchestrator.LLMConfig{
@@ -104,11 +103,8 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 			APIKeys:   am.GetAPIKeys(),   // Safe: returns nil if orchestratorLLMConfig is nil
 		}
 		am.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for anonymization: %s/%s", am.presetPhaseLLM.Provider, am.presetPhaseLLM.ModelID))
-	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
-		llmConfigToUse = orchestratorLLMConfig
-		am.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default anonymization LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
 	} else {
-		return nil, fmt.Errorf("no valid LLM configuration found for anonymization agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
+		return nil, fmt.Errorf("no valid LLM configuration found for anonymization agent: presetPhaseLLM is empty or invalid")
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)

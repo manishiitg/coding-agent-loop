@@ -1264,6 +1264,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) getOrchestrationOrchestratorAgentForS
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	var llmConfig *orchestrator.LLMConfig
 
+	// Debug: Log presetExecutionLLM availability
+	if hcpo.presetExecutionLLM != nil {
+		hcpo.GetLogger().Info(fmt.Sprintf("[PRESET_EXECUTION_LLM_DEBUG] [getOrchestrationOrchestratorAgentForStep] presetExecutionLLM available: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
+	} else {
+		hcpo.GetLogger().Info("[PRESET_EXECUTION_LLM_DEBUG] [getOrchestrationOrchestratorAgentForStep] presetExecutionLLM is nil")
+	}
+
 	// Try step ExecutionLLM first (includes merged preset config)
 	if orchestrationStepConfig != nil && orchestrationStepConfig.ExecutionLLM != nil &&
 		orchestrationStepConfig.ExecutionLLM.Provider != "" && orchestrationStepConfig.ExecutionLLM.ModelID != "" {
@@ -1276,29 +1283,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) getOrchestrationOrchestratorAgentForS
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step/preset ExecutionLLM for orchestration orchestrator: %s/%s",
 			orchestrationStepConfig.ExecutionLLM.Provider, orchestrationStepConfig.ExecutionLLM.ModelID))
-	} else {
-		// Fall back to orchestrator default LLM
-		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Info("🔧 Using orchestrator default LLM for orchestration orchestrator (no step/preset ExecutionLLM)")
-	}
-
-	// Additional fallback for orchestration orchestrator: if no ExecutionLLM found, try ConditionalLLM
-	// This is specific to orchestration orchestrator (similar purpose - structured decision making)
-	// Only use ConditionalLLM if we got orchestrator default (meaning no step/preset ExecutionLLM was found)
-	if orchestrationStepConfig != nil && orchestrationStepConfig.ExecutionLLM == nil && orchestrationStepConfig.ConditionalLLM != nil && orchestrationStepConfig.ConditionalLLM.Provider != "" && orchestrationStepConfig.ConditionalLLM.ModelID != "" {
-		// Check if we got orchestrator default (no step/preset ExecutionLLM)
-		// If so, use ConditionalLLM as an additional fallback before orchestrator default
-		if llmConfig.Primary.Provider == orchestratorLLMConfig.Primary.Provider && llmConfig.Primary.ModelID == orchestratorLLMConfig.Primary.ModelID {
-			conditionalLLMConfig := orchestrationStepConfig.ConditionalLLM
-			llmConfig = &orchestrator.LLMConfig{
-				Primary: orchestrator.LLMModel{
-					Provider: conditionalLLMConfig.Provider,
-					ModelID:  conditionalLLMConfig.ModelID,
-				},
-				APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys
-			}
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional LLM for orchestration orchestrator (fallback when ExecutionLLM not available): %s/%s", conditionalLLMConfig.Provider, conditionalLLMConfig.ModelID))
+	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
+		// Use preset default if available and step config didn't specify one
+		llmConfig = &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: hcpo.presetExecutionLLM.Provider,
+				ModelID:  hcpo.presetExecutionLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys,
 		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default ExecutionLLM for orchestration orchestrator: %s/%s",
+			hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
+	} else {
+		err := fmt.Errorf("no valid LLM configuration found for orchestration orchestrator: step config and preset execution LLM are both empty or invalid")
+		hcpo.GetLogger().Error("❌ No valid LLM configuration found for orchestration orchestrator: step config and preset execution LLM are both empty or invalid", err)
+		return nil, err
 	}
 
 	// Create agent name with step ID

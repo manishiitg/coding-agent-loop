@@ -6,6 +6,8 @@ import { useChatStore } from '../../stores/useChatStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { cn } from '@/lib/utils'
 import { extractWorkflowInfo } from '../../utils/workflowEventProcessor'
+import { EventDispatcher } from '../events'
+import type { PollingEvent } from '../../services/api-types'
 
 // Unified workflow item for display
 interface WorkflowItem {
@@ -34,7 +36,12 @@ interface WorkflowItem {
   inputTokens?: number     // From tool_call_end events
   totalTokens?: number      // From tool_call_end events
   modelId?: string          // From tool_call_end events
-  finalResult?: string      // From last unified_completion event
+  latestEvent?: PollingEvent // Latest event from the session
+  // Batch group info
+  currentGroupId?: string    // From batch_group_start events
+  currentGroupIndex?: number // From batch_group_start events
+  totalGroups?: number       // From batch_group_start events
+  currentRunFolder?: string  // From batch_group_start events
   timestamp: number
   lastEventTime?: number    // Timestamp of the last event received (ms)
   source: 'tracked' | 'active-tab'
@@ -81,7 +88,7 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
   const { customPresets, predefinedPresets } = useGlobalPresetStore()
 
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set())
+  const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set())
   const isSwitchingRef = useRef(false)
 
   // Helper to extract progress and orchestrator info from events for a session
@@ -101,20 +108,26 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
         inputTokens: undefined,
         totalTokens: undefined,
         modelId: undefined,
-        lastEventTime: undefined
+        lastEventTime: undefined,
+        latestEvent: undefined,
+        currentGroupId: undefined,
+        currentGroupIndex: undefined,
+        totalGroups: undefined,
+        currentRunFolder: undefined
       }
     }
 
     const events = tabEvents[sessionId] || []
     const info = extractWorkflowInfo(events)
     
-    // Get the last event timestamp
+    // Get the last event and its timestamp
     let lastEventTime: number | undefined = undefined
+    let latestEvent: PollingEvent | undefined = undefined
     if (events.length > 0) {
       // Events are typically sorted, so get the last one
-      const lastEvent = events[events.length - 1]
+      latestEvent = events[events.length - 1]
       // PollingEvent has timestamp at top level (from PollingEventSchema)
-      const eventTimestamp = lastEvent?.timestamp
+      const eventTimestamp = latestEvent?.timestamp
       if (eventTimestamp) {
         // Convert ISO string to timestamp
         if (typeof eventTimestamp === 'string') {
@@ -127,12 +140,17 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
     
     return {
       ...info,
-      lastEventTime
+      lastEventTime,
+      latestEvent
     }
   }
 
   // Combine tracked workflows with active workflow tabs
+  // Only compute when drawer is visible to avoid performance impact on main UI
   const allWorkflows = useMemo(() => {
+    // Early exit when drawer is closed - avoid expensive computation
+    if (!showRunningDrawer) return []
+
     const items: WorkflowItem[] = []
     const seenSessionIds = new Set<string>()
 
@@ -154,7 +172,11 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
       let inputTokens: number | undefined = undefined
       let totalTokens: number | undefined = undefined
       let modelId: string | undefined = undefined
-      let finalResult: string | undefined = undefined
+      let latestEvent: PollingEvent | undefined = undefined
+      let currentGroupId: string | undefined = undefined
+      let currentGroupIndex: number | undefined = undefined
+      let totalGroups: number | undefined = undefined
+      let currentRunFolder: string | undefined = undefined
 
       if (wf.sessionId) {
         const fromEvents = getInfoFromEvents(wf.sessionId)
@@ -165,7 +187,8 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
             last_updated: new Date().toISOString()
           }
         }
-        if (!stepTitle && fromEvents.stepTitle) stepTitle = fromEvents.stepTitle
+        // Always prefer stepTitle from events (more up-to-date)
+        if (fromEvents.stepTitle) stepTitle = fromEvents.stepTitle
         if (fromEvents.currentStepId) currentStepId = fromEvents.currentStepId
         if (fromEvents.currentStepIndex !== undefined) currentStepIndex = fromEvents.currentStepIndex
         agentName = fromEvents.agentName
@@ -179,7 +202,11 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
         inputTokens = fromEvents.inputTokens
         totalTokens = fromEvents.totalTokens
         modelId = fromEvents.modelId
-        finalResult = fromEvents.finalResult
+        latestEvent = fromEvents.latestEvent
+        currentGroupId = fromEvents.currentGroupId
+        currentGroupIndex = fromEvents.currentGroupIndex
+        totalGroups = fromEvents.totalGroups
+        currentRunFolder = fromEvents.currentRunFolder
       }
       
       // Get last event time
@@ -211,7 +238,11 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
         inputTokens,
         totalTokens,
         modelId,
-        finalResult,
+        latestEvent,
+        currentGroupId,
+        currentGroupIndex,
+        totalGroups,
+        currentRunFolder,
         timestamp: wf.minimizedAt,
         lastEventTime,
         source: 'tracked'
@@ -249,7 +280,11 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
       let inputTokens: number | undefined = undefined
       let totalTokens: number | undefined = undefined
       let modelId: string | undefined = undefined
-      let finalResult: string | undefined = undefined
+      let latestEvent: PollingEvent | undefined = undefined
+      let currentGroupId: string | undefined = undefined
+      let currentGroupIndex: number | undefined = undefined
+      let totalGroups: number | undefined = undefined
+      let currentRunFolder: string | undefined = undefined
 
       if (presetId === activePresetId && stepProgress) {
         // Use global stepProgress for current preset
@@ -261,7 +296,8 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
       if (tab.sessionId) {
         const fromEvents = getInfoFromEvents(tab.sessionId)
         if (!progress && fromEvents.progress) progress = fromEvents.progress
-        if (!stepTitle && fromEvents.stepTitle) stepTitle = fromEvents.stepTitle
+        // Always prefer stepTitle from events (more up-to-date)
+        if (fromEvents.stepTitle) stepTitle = fromEvents.stepTitle
         if (fromEvents.currentStepId) currentStepId = fromEvents.currentStepId
         if (fromEvents.currentStepIndex !== undefined) currentStepIndex = fromEvents.currentStepIndex
         agentName = fromEvents.agentName
@@ -275,7 +311,11 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
         inputTokens = fromEvents.inputTokens
         totalTokens = fromEvents.totalTokens
         modelId = fromEvents.modelId
-        finalResult = fromEvents.finalResult
+        latestEvent = fromEvents.latestEvent
+        currentGroupId = fromEvents.currentGroupId
+        currentGroupIndex = fromEvents.currentGroupIndex
+        totalGroups = fromEvents.totalGroups
+        currentRunFolder = fromEvents.currentRunFolder
       }
       
       // Get last event time
@@ -307,7 +347,11 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
         inputTokens,
         totalTokens,
         modelId,
-        finalResult,
+        latestEvent,
+        currentGroupId,
+        currentGroupIndex,
+        totalGroups,
+        currentRunFolder,
         timestamp: tab.createdAt,
         lastEventTime,
         source: 'active-tab'
@@ -330,10 +374,12 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
       // Stale workflows go to bottom
       return aIsStale ? 1 : -1
     })
-  }, [runningWorkflows, chatTabs, tabEvents, getTabStreamingStatus, customPresets, predefinedPresets, activePresetId, stepProgress])
+  }, [showRunningDrawer, runningWorkflows, chatTabs, tabEvents, getTabStreamingStatus, customPresets, predefinedPresets, activePresetId, stepProgress])
 
   // Get set of session IDs that are already active in tabs
+  // Only compute when drawer is visible
   const activeSessionIds = useMemo(() => {
+    if (!showRunningDrawer) return new Set<string>()
     const ids = new Set<string>()
     Object.values(chatTabs).forEach(tab => {
       if (tab.sessionId && tab.metadata?.mode === 'workflow') {
@@ -341,7 +387,29 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
       }
     })
     return ids
-  }, [chatTabs])
+  }, [showRunningDrawer, chatTabs])
+
+  // Auto-expand latest events by default - update when workflows change
+  useEffect(() => {
+    // Skip when drawer is closed
+    if (!showRunningDrawer) return
+
+    // Get all workflow IDs that have latest events
+    const workflowsWithEvents = allWorkflows
+      .filter(wf => wf.latestEvent)
+      .map(wf => wf.id)
+
+    // Add them to expanded events if not already there
+    setExpandedEvents(prev => {
+      const newSet = new Set(prev)
+      workflowsWithEvents.forEach(id => {
+        if (!newSet.has(id)) {
+          newSet.add(id)
+        }
+      })
+      return newSet
+    })
+  }, [showRunningDrawer, allWorkflows])
 
   const handleRefresh = async () => {
     setIsRefreshing(true)
@@ -508,7 +576,7 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
       />
 
       {/* Drawer */}
-      <div className="absolute right-0 top-0 bottom-0 w-[450px] max-w-[90vw] bg-background border-l border-border shadow-2xl z-[51] flex flex-col animate-in slide-in-from-right duration-200">
+      <div className="absolute right-0 top-0 bottom-0 w-[600px] max-w-[90vw] bg-background border-l border-border shadow-2xl z-[51] flex flex-col animate-in slide-in-from-right duration-200">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/50 flex-shrink-0">
           <div className="flex items-center gap-2">
@@ -588,7 +656,7 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
                         ? 'border-primary/50 bg-primary/5'
                         : isAlreadyActive
                           ? 'border-green-500/30 bg-green-500/5'
-                          : 'border-border bg-card hover:bg-accent/50'
+                          : 'border-border bg-card'
                   )}
                 >
                   {/* Header: Name + Status */}
@@ -607,6 +675,29 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
                     {/* Status badge removed - just show events */}
                   </div>
 
+                  {/* Batch Group Info */}
+                  {workflow.currentGroupId && (
+                    <div className="mt-2 px-2 py-1.5 bg-purple-500/5 border border-purple-500/20 rounded-md">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-medium text-purple-600 dark:text-purple-400">
+                            Group {workflow.currentGroupId.toUpperCase()}
+                            {workflow.currentGroupIndex !== undefined && workflow.totalGroups !== undefined && (
+                              <span className="text-purple-500/70 ml-1">
+                                ({workflow.currentGroupIndex + 1}/{workflow.totalGroups})
+                              </span>
+                            )}
+                          </div>
+                          {workflow.currentRunFolder && (
+                            <div className="text-xs text-muted-foreground/70 mt-0.5 font-mono truncate" title={workflow.currentRunFolder}>
+                              {workflow.currentRunFolder}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Current Step Name - prominently displayed */}
                   {(workflow.currentStepTitle || workflow.currentStepId || workflow.currentStepIndex !== undefined) && (
                     <div className="mt-2 px-2 py-1.5 bg-blue-500/5 border border-blue-500/20 rounded-md">
@@ -618,13 +709,8 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
                               {workflow.currentStepTitle}
                             </span>
                           )}
-                          {(workflow.currentStepId || workflow.currentStepIndex !== undefined || workflow.currentAgentName) && (
+                          {(workflow.currentStepId || workflow.currentStepIndex !== undefined) && (
                             <div className="text-xs text-muted-foreground/70 mt-0.5">
-                              {workflow.currentAgentName && (
-                                <div className="font-mono text-muted-foreground/80 break-words mb-0.5" title="Agent Name">
-                                  {workflow.currentAgentName}
-                                </div>
-                              )}
                               {workflow.currentStepId && (
                                 <span className="font-mono" title="Step ID">
                                   ID: {workflow.currentStepId}
@@ -716,13 +802,13 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
                     </div>
                   )}
 
-                  {/* Final Result - Collapsible */}
-                  {workflow.finalResult && (
-                    <div className="mt-2">
+                  {/* Latest Event Display - Collapsible */}
+                  {workflow.latestEvent && (
+                    <div className="mt-2" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
-                          setExpandedResults(prev => {
+                          setExpandedEvents(prev => {
                             const newSet = new Set(prev)
                             if (newSet.has(workflow.id)) {
                               newSet.delete(workflow.id)
@@ -732,18 +818,21 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
                             return newSet
                           })
                         }}
-                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors w-full"
+                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors w-full mb-1.5"
                       >
-                        {expandedResults.has(workflow.id) ? (
+                        {expandedEvents.has(workflow.id) ? (
                           <ChevronUp className="w-3 h-3" />
                         ) : (
                           <ChevronDown className="w-3 h-3" />
                         )}
-                        <span>Final Result</span>
+                        <span>Latest Event</span>
                       </button>
-                      {expandedResults.has(workflow.id) && (
-                        <div className="mt-1.5 p-2 bg-muted/50 rounded-md border border-border/50 text-xs text-muted-foreground whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
-                          {workflow.finalResult}
+                      {expandedEvents.has(workflow.id) && (
+                        <div className="p-2 bg-muted/30 rounded-md border border-border/50 max-h-96 overflow-y-auto">
+                          <EventDispatcher 
+                            event={workflow.latestEvent}
+                            compact={true}
+                          />
                         </div>
                       )}
                     </div>

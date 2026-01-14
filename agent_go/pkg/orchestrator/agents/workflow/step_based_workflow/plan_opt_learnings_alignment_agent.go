@@ -152,8 +152,7 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 	plam.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	plam.GetLogger().Info(fmt.Sprintf("🔍 Setting folder guard for plan learnings alignment agent - Read paths: %v, Write paths: %v (read-only access to planning/ and planning/changelog/, write access to %s folder only)", readPaths, writePaths, selectedFolder))
 
-	// Use preset phase LLM if available, otherwise fall back to orchestrator default
-	orchestratorLLMConfig := plam.GetLLMConfig()
+	// Use preset phase LLM only
 	var llmConfigToUse *orchestrator.LLMConfig
 	if plam.presetPhaseLLM != nil && plam.presetPhaseLLM.Provider != "" && plam.presetPhaseLLM.ModelID != "" {
 		// Use preset phase LLM
@@ -166,12 +165,8 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 			APIKeys:   plam.GetAPIKeys(),   // Safe: returns nil if orchestratorLLMConfig is nil
 		}
 		plam.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for plan learnings alignment: %s/%s", plam.presetPhaseLLM.Provider, plam.presetPhaseLLM.ModelID))
-	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
-		// Fall back to orchestrator default
-		llmConfigToUse = orchestratorLLMConfig
-		plam.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default alignment LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
 	} else {
-		return nil, fmt.Errorf("no valid LLM configuration found for plan learnings alignment agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
+		return nil, fmt.Errorf("no valid LLM configuration found for plan learnings alignment agent: presetPhaseLLM is empty or invalid")
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)

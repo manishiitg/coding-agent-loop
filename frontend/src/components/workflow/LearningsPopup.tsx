@@ -5,6 +5,7 @@ import type { PlanningResponse, PlanStep } from '../../utils/stepConfigMatching'
 import { isConditionalStep, isDecisionStep, isOrchestrationStep } from '../../utils/stepConfigMatching'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
+import type { PlannerFile } from '../../services/api-types'
 
 interface LearningsPopupProps {
   isOpen: boolean
@@ -22,52 +23,52 @@ interface LearningMetadata {
   auto_locked_at?: string
   auto_lock_reason?: string
   total_iterations?: number
+  lock_threshold?: number  // Calculated by backend based on last_turn_count
   // Fields from step_config.json (merged by backend API)
   use_code_execution_mode?: boolean
   learning_detail_level?: string
   lock_learnings?: boolean
 }
 
-// Determine complexity based on last_turn_count and successful runs counters
+// Determine complexity based on successful runs counters and last_turn_count
+// TODO: Turn-based classification is not reliable - turn count varies significantly based on
+// the LLM model used and doesn't reflect actual step complexity. We need a better complexity metric.
+// PRIORITY: Check successful runs counters FIRST (they reflect actual complexity category where runs were recorded)
+// Then fall back to turn count if no successful runs exist
 function getComplexity(metadata: LearningMetadata | null): 'simple' | 'medium' | 'complex' | 'unknown' {
   if (!metadata) return 'unknown'
   
-  // First, try to determine from last_turn_count
-  const turnCount = metadata.last_turn_count
-  if (turnCount !== undefined && turnCount > 0) {
-    if (turnCount < 15) return 'simple'
-    if (turnCount <= 30) return 'medium'
-    return 'complex'
-  }
-  
-  // Fallback: infer from successful runs counters
+  // PRIORITY 1: Infer from successful runs counters (most reliable - reflects actual complexity category)
   // If any counter has a value > 0, use that to determine complexity
   if ((metadata.successful_runs_simple || 0) > 0) return 'simple'
   if ((metadata.successful_runs_medium || 0) > 0) return 'medium'
   if ((metadata.successful_runs_complex || 0) > 0) return 'complex'
   
+  // PRIORITY 2: Fallback to last_turn_count (less reliable, but better than nothing)
+  const turnCount = metadata.last_turn_count
+  if (turnCount !== undefined && turnCount > 0) {
+    if (turnCount < 100) return 'simple'
+    if (turnCount <= 200) return 'medium'
+    return 'complex'
+  }
+  
   return 'unknown'
 }
 
-// Get lock threshold based on complexity
-function getLockThreshold(complexity: 'simple' | 'medium' | 'complex' | 'unknown'): number {
-  switch (complexity) {
-    case 'simple': return 3
-    case 'medium': return 5
-    case 'complex': return 10
-    default: return 0
-  }
+// Get lock threshold from metadata (calculated by backend - single source of truth)
+// Backend calculates threshold based on last_turn_count and includes it in metadata.lock_threshold
+function getLockThreshold(metadata: LearningMetadata | null): number {
+  return metadata?.lock_threshold ?? 0
 }
 
-// Get current successful runs count based on complexity
-function getSuccessfulRuns(metadata: LearningMetadata | null, complexity: 'simple' | 'medium' | 'complex' | 'unknown'): number {
+// Get total successful runs count (sum of all complexity categories)
+// The threshold is still based on the determined complexity, but the count is the total across all categories
+function getSuccessfulRuns(metadata: LearningMetadata | null): number {
   if (!metadata) return 0
-  switch (complexity) {
-    case 'simple': return metadata.successful_runs_simple || 0
-    case 'medium': return metadata.successful_runs_medium || 0
-    case 'complex': return metadata.successful_runs_complex || 0
-    default: return 0
-  }
+  // Sum all successful runs across all complexity categories
+  return (metadata.successful_runs_simple || 0) + 
+         (metadata.successful_runs_medium || 0) + 
+         (metadata.successful_runs_complex || 0)
 }
 
 // Parse learnings API response into typed Record
@@ -126,6 +127,9 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
   const [loadingStepIds, setLoadingStepIds] = useState<Set<string>>(new Set())
 
   const [updatingLockStepIds, setUpdatingLockStepIds] = useState<Set<string>>(new Set())
+  
+  // Filter state - show only unlocked steps
+  const [showOnlyUnlocked, setShowOnlyUnlocked] = useState(false)
 
   // Get preset default for code execution mode (fallback when step doesn't have explicit setting)
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -180,9 +184,10 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
       if (response.success) {
         setLearnings(parseLearningsResponse(response.learnings || {}))
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[LearningsPopup] Error toggling lock:', err)
-      setError('Failed to update lock status: ' + (err.message || 'Unknown error'))
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+      setError('Failed to update lock status: ' + errorMessage)
     } finally {
       setUpdatingLockStepIds(prev => {
         const newSet = new Set(prev)
@@ -227,12 +232,12 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
 
       // List files in the learnings folder to find the markdown file
       const filesResponse = await agentApi.getPlannerFiles(learningsPath, 100)
-      const files = Array.isArray(filesResponse)
+      const files: Array<PlannerFile & { name?: string }> = Array.isArray(filesResponse)
         ? filesResponse
         : (filesResponse?.data && Array.isArray(filesResponse.data) ? filesResponse.data : [])
 
       // Find the first .md file (excluding metadata files)
-      const mdFile = files.find((file: any) => {
+      const mdFile = files.find((file) => {
         const fileName = file.filepath || file.name || ''
         return fileName.endsWith('.md') && !fileName.includes('.learning_metadata')
       })
@@ -258,13 +263,13 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
         console.log('[LearningsPopup] Checking code path:', codePath)
         const codeFilesResponse = await agentApi.getPlannerFiles(codePath, 100)
         console.log('[LearningsPopup] Code files response:', codeFilesResponse)
-        const codeFiles = Array.isArray(codeFilesResponse)
+        const codeFiles: Array<PlannerFile & { name?: string }> = Array.isArray(codeFilesResponse)
           ? codeFilesResponse
           : (codeFilesResponse?.data && Array.isArray(codeFilesResponse.data) ? codeFilesResponse.data : [])
         console.log('[LearningsPopup] Code files found:', codeFiles)
 
         // Find the first .go file
-        const codeFile = codeFiles.find((file: any) => {
+        const codeFile = codeFiles.find((file) => {
           const fileName = file.filepath || file.name || ''
           return fileName.endsWith('.go')
         })
@@ -299,11 +304,12 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
         ...prev,
         [stepId]: { content: mdContent, codeContent, codeFileName, error }
       }))
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[LearningsPopup] Error fetching learning content:', err)
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error'
       setLearningContentCache(prev => ({
         ...prev,
-        [stepId]: { content: '', error: 'Failed to load learning content: ' + (err.message || 'Unknown error') }
+        [stepId]: { content: '', error: 'Failed to load learning content: ' + errorMessage }
       }))
     } finally {
       setLoadingStepIds(prev => {
@@ -411,7 +417,18 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
 
   // Get steps in execution order and filter to only those with learnings
   const allStepsInOrder = getStepsInExecutionOrder()
-  const stepsWithLearnings = allStepsInOrder.filter(step => step.stepId in learnings)
+  let stepsWithLearnings = allStepsInOrder.filter(step => step.stepId in learnings)
+  
+  // Apply unlocked filter if enabled
+  if (showOnlyUnlocked) {
+    stepsWithLearnings = stepsWithLearnings.filter(step => {
+      const metadata = learnings[step.stepId]
+      const isAutoLocked = metadata?.auto_locked_at !== undefined && metadata.auto_locked_at !== ''
+      const isManuallyLocked = metadata?.lock_learnings === true
+      const isLocked = isAutoLocked || isManuallyLocked
+      return !isLocked // Show only unlocked steps
+    })
+  }
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" style={{ zIndex: 50 }}>
@@ -422,13 +439,28 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
             <BookOpen className="w-5 h-5 text-primary" />
             <h2 className="text-lg font-semibold">Step Learnings</h2>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-md hover:bg-muted transition-colors"
-            title="Close (Esc)"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Filter: Show only unlocked steps */}
+            <button
+              onClick={() => setShowOnlyUnlocked(!showOnlyUnlocked)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                showOnlyUnlocked
+                  ? 'bg-yellow-100 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:hover:bg-yellow-900/50 text-yellow-700 dark:text-yellow-400'
+                  : 'bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+              }`}
+              title={showOnlyUnlocked ? 'Show all steps' : 'Show only unlocked steps'}
+            >
+              <Unlock className="w-4 h-4" />
+              <span>Unlocked Only</span>
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1 rounded-md hover:bg-muted transition-colors"
+              title="Close (Esc)"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Content */}
@@ -461,9 +493,9 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                 const isAutoLocked = metadata?.auto_locked_at !== undefined && metadata.auto_locked_at !== ''
                 const isManuallyLocked = metadata?.lock_learnings === true
                 const isLocked = isAutoLocked || isManuallyLocked
-                const complexity = getComplexity(metadata)
-                const threshold = getLockThreshold(complexity)
-                const successfulRuns = getSuccessfulRuns(metadata, complexity)
+                const complexity = getComplexity(metadata) // Used only for display (complexity label/color)
+                const threshold = getLockThreshold(metadata) // Backend-calculated threshold
+                const successfulRuns = getSuccessfulRuns(metadata)
                 const progress = threshold > 0 ? (successfulRuns / threshold) * 100 : 0
                 const stepTitle = getStepTitle(plan, stepId)
 

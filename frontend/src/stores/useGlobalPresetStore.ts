@@ -792,7 +792,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             // Save current preset's settings before switching away
             const currentPresetId = get().activePresetIds.workflow
             if (currentPresetId && currentPresetId !== preset.id) {
-              workflowStore.saveSettings(currentPresetId)
+              workflowStore.saveSettings()
             }
 
             // Switch to new preset - resets context and loads saved settings in one update

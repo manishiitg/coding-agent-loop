@@ -569,9 +569,6 @@ type ExecutionOptions struct {
 	// Logging options
 	SaveValidationResponses bool `json:"save_validation_responses,omitempty"` // If true, save validation responses and execution logs to workspace (default: true)
 
-	// Tool access control (global configuration)
-	DisableShellExecAccess bool `json:"disable_shell_exec_access,omitempty"` // If true, disable execute_shell_command tool access globally
-	DisableReadImageAccess bool `json:"disable_read_image_access,omitempty"` // If true, disable read_image tool access globally
 }
 
 // AgentLLMConfig represents LLM configuration for an agent (matches controller type)
@@ -4043,9 +4040,22 @@ func (api *StreamingAPI) handleGetCosts(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// Also try to read evaluation token_usage.json
+	var evaluationTokenUsage interface{} = nil
+	if runFolder != "" && runFolder != "new" {
+		evalTokenUsagePath := fmt.Sprintf("%s/evaluation/runs/%s/token_usage.json", cleanedWorkspacePath, runFolder)
+		content, exists, _ := readFileFromWorkspace(r.Context(), evalTokenUsagePath)
+		if exists {
+			if err := json.Unmarshal([]byte(content), &evaluationTokenUsage); err != nil {
+				fmt.Printf("Error unmarshalling evaluation token usage from %s: %v\n", evalTokenUsagePath, err)
+			}
+		}
+	}
+
 	response := map[string]interface{}{
-		"success":     true,
-		"token_usage": tokenUsage,
+		"success":                true,
+		"token_usage":            tokenUsage,
+		"evaluation_token_usage": evaluationTokenUsage,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -4184,10 +4194,11 @@ func (api *StreamingAPI) handleGetEvaluationReports(w http.ResponseWriter, r *ht
 	}
 
 	type Response struct {
-		Success   bool                    `json:"success"`
-		Reports   []EvaluationReportEntry `json:"reports"`
-		Aggregate *EvaluationAggregate    `json:"aggregate,omitempty"`
-		Error     string                  `json:"error,omitempty"`
+		Success        bool                    `json:"success"`
+		Reports        []EvaluationReportEntry `json:"reports"`
+		Aggregate      *EvaluationAggregate    `json:"aggregate,omitempty"`
+		EvaluationPlan *string                 `json:"evaluation_plan,omitempty"`
+		Error          string                  `json:"error,omitempty"`
 	}
 
 	// List evaluation run folders
@@ -4214,9 +4225,34 @@ func (api *StreamingAPI) handleGetEvaluationReports(w http.ResponseWriter, r *ht
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		// No evaluation runs folder exists yet - return empty response
+		// No evaluation runs folder exists yet - still try to read evaluation plan
+		var evaluationPlan *string
+		evaluationPlanPath := fmt.Sprintf("%s/evaluation/evaluation_plan.json", cleanedWorkspacePath)
+		planContent, exists, err := readFileFromWorkspace(r.Context(), evaluationPlanPath)
+		if err == nil && exists {
+			// Try to format the JSON if it's valid JSON
+			var planJSON interface{}
+			if err := json.Unmarshal([]byte(planContent), &planJSON); err == nil {
+				// Re-marshal with indentation for pretty printing
+				if formatted, err := json.MarshalIndent(planJSON, "", "  "); err == nil {
+					formattedStr := string(formatted)
+					evaluationPlan = &formattedStr
+				} else {
+					// If formatting fails, use original content
+					evaluationPlan = &planContent
+				}
+			} else {
+				// If not valid JSON, use as-is
+				evaluationPlan = &planContent
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Response{Success: true, Reports: []EvaluationReportEntry{}})
+		json.NewEncoder(w).Encode(Response{
+			Success:        true,
+			Reports:        []EvaluationReportEntry{},
+			EvaluationPlan: evaluationPlan,
+		})
 		return
 	}
 
@@ -4360,10 +4396,33 @@ func (api *StreamingAPI) handleGetEvaluationReports(w http.ResponseWriter, r *ht
 		}
 	}
 
+	// Read evaluation plan if it exists
+	var evaluationPlan *string
+	evaluationPlanPath := fmt.Sprintf("%s/evaluation/evaluation_plan.json", cleanedWorkspacePath)
+	planContent, exists, err := readFileFromWorkspace(r.Context(), evaluationPlanPath)
+	if err == nil && exists {
+		// Try to format the JSON if it's valid JSON
+		var planJSON interface{}
+		if err := json.Unmarshal([]byte(planContent), &planJSON); err == nil {
+			// Re-marshal with indentation for pretty printing
+			if formatted, err := json.MarshalIndent(planJSON, "", "  "); err == nil {
+				formattedStr := string(formatted)
+				evaluationPlan = &formattedStr
+			} else {
+				// If formatting fails, use original content
+				evaluationPlan = &planContent
+			}
+		} else {
+			// If not valid JSON, use as-is
+			evaluationPlan = &planContent
+		}
+	}
+
 	response := Response{
-		Success:   true,
-		Reports:   reports,
-		Aggregate: aggregate,
+		Success:        true,
+		Reports:        reports,
+		Aggregate:      aggregate,
+		EvaluationPlan: evaluationPlan,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

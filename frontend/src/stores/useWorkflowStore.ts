@@ -84,6 +84,9 @@ interface WorkflowStore {
   // Variables manifest (for batch execution with multiple groups)
   variablesManifest: VariablesManifest | null
 
+  // Track current preset ID to detect page reload vs preset switch
+  _currentPresetId: string | null
+
   // Selected group IDs for execution (multi-select)
   selectedGroupIds: string[] // Array of group IDs to execute
 

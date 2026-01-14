@@ -222,7 +222,7 @@ content, err := json.MarshalIndent(file, "", "  ")
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `disable_temp_llm` | `boolean` | `false` | If true, skip tempLLM override and use step's base LLM (step config > preset > orchestrator default) |
+| `disable_temp_llm` | `boolean` | `false` | If true, skip tempLLM override and use step's base LLM (step config > preset) |
 
 ---
 

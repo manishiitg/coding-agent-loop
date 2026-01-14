@@ -20,9 +20,9 @@ This document outlines the workflow for learning stabilization, model optimizati
 - **Existing Learnings:** **ALWAYS LOADED** into system prompt if they exist (via `LoadStepLearningHistory()`).
 - **Locking Decision (TurnCount-Based):**
     - Based on `TurnCount` (complexity) of successful executions:
-        - **Simple (< 15 turns):** Lock after **3** successful runs.
-        - **Medium (15-30 turns):** Lock after **5** successful runs.
-        - **Complex (> 30 turns):** Lock after **10** successful runs.
+        - **Simple (< 100 turns):** Lock after **3** successful runs.
+        - **Medium (100-200 turns):** Lock after **5** successful runs.
+        - **Complex (> 200 turns):** Lock after **10** successful runs.
     - *Successful run* means validation passed (success criteria met).
     - Locking is automatic after reaching the threshold for the complexity level.
 
@@ -69,6 +69,12 @@ The system supports flexible validation strategies to balance reliability and sp
 
 The system uses a simple, reliable approach: count successful executions and lock based on complexity.
 
+**⚠️ TODO: Turn-based classification limitation:** The current turn-count-based complexity classification has a significant limitation: turn count varies significantly depending on the LLM model used (e.g., Claude vs GPT vs cheaper models) and doesn't reflect actual step complexity. A better complexity metric should consider:
+- Actual step requirements (dependencies, validation criteria, data transformations)
+- Historical success rates and consistency
+- Resource usage patterns
+- Step interdependencies and workflow context
+
 ### How It Works:
 
 1. **After each successful execution** (validation passed):
@@ -101,9 +107,9 @@ The system uses a simple, reliable approach: count successful executions and loc
      - **Rationale:** tempLLM failures don't need learning - just retry with better model to save costs
 
 3. **Complexity Classification:**
-   - **Simple:** `< 15 turns` → Lock after **3** successful runs
-   - **Medium:** `15-30 turns` → Lock after **5** successful runs  
-   - **Complex:** `> 30 turns` → Lock after **10** successful runs
+   - **Simple:** `< 100 turns` → Lock after **3** successful runs
+   - **Medium:** `100-200 turns` → Lock after **5** successful runs  
+   - **Complex:** `> 200 turns` → Lock after **10** successful runs
 
 4. **Locking Behavior:**
    - Once threshold reached, `LockLearnings = true` is set automatically
@@ -137,7 +143,7 @@ The system uses a simple, reliable approach: count successful executions and loc
 2. **tempLLM2** (if learnings exist AND retryAttempt == 2)
 3. **Step Config LLM** (if configured)
 4. **Preset Default LLM** (if configured)
-5. **Orchestrator Default LLM** (fallback)
+5. **Preset LLM** (final fallback - no orchestrator default)
 
 #### LLM Fallback Rules:
 - **Only used when:** Step has existing learnings (learnings folder has files)
@@ -391,9 +397,9 @@ learnings/
 - `step_id`: Step identifier
 - `step_hash`: SHA256 of step definition (for change detection)
 - `total_iterations`: Total number of learning attempts
-- `successful_runs_simple`: Counter for simple steps (< 15 turns)
-- `successful_runs_medium`: Counter for medium steps (15-30 turns)
-- `successful_runs_complex`: Counter for complex steps (> 30 turns)
+- `successful_runs_simple`: Counter for simple steps (< 100 turns)
+- `successful_runs_medium`: Counter for medium steps (100-200 turns)
+- `successful_runs_complex`: Counter for complex steps (> 200 turns)
 - `last_turn_count`: Last recorded TurnCount
 - `last_execution_llm`: The LLM used for the last execution (associated with last_turn_count)
 - `last_learning_llm`: The LLM used for the last learning cycle
@@ -416,7 +422,7 @@ learnings/
 3. **TurnCount-Based Auto-Locking**
    - Locking is based on successful execution count, not learning detection
    - Complexity is determined by `TurnCount` (number of LLM turns in execution)
-   - Simple steps (< 15 turns) lock faster (3 runs), complex steps (> 30 turns) need more runs (10 runs)
+   - Simple steps (< 100 turns) lock faster (3 runs), complex steps (> 200 turns) need more runs (10 runs)
    - Each successful run (validation passed) increments the counter
 
 4. **Existing Learnings Usage (Explore vs. Exploit)**

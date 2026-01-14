@@ -60,8 +60,6 @@ type BaseOrchestrator struct {
 	startTime        time.Time
 
 	// Common configuration shared between orchestrators
-	provider             string
-	model                string
 	mcpConfigPath        string
 	temperature          float64
 	agentMode            string
@@ -101,12 +99,11 @@ type BaseOrchestrator struct {
 }
 
 // NewBaseOrchestrator creates a new unified base orchestrator
+// Note: provider and model parameters removed - LLM selection uses temp override → step config → preset LLM priority
 func NewBaseOrchestrator(
 	logger loggerv2.Logger,
 	eventBridge mcpagent.AgentEventListener,
 	orchestratorType OrchestratorType,
-	provider string,
-	model string,
 	mcpConfigPath string,
 	temperature float64,
 	agentMode string,
@@ -183,8 +180,6 @@ func NewBaseOrchestrator(
 		orchestratorType:       orchestratorType,
 		startTime:              time.Now(),
 		// Common configuration
-		provider:             provider,
-		model:                model,
 		mcpConfigPath:        mcpConfigPath,
 		temperature:          temperature,
 		agentMode:            agentMode,
@@ -206,15 +201,8 @@ func NewBaseOrchestrator(
 		contextEditingTurnThreshold: contextEditingTurnThreshold,
 	}
 
-	// Ensure llmConfig.Primary is populated if llmConfig is provided
-	if orchestrator.llmConfig != nil {
-		if orchestrator.llmConfig.Primary.Provider == "" {
-			orchestrator.llmConfig.Primary.Provider = provider
-		}
-		if orchestrator.llmConfig.Primary.ModelID == "" {
-			orchestrator.llmConfig.Primary.ModelID = model
-		}
-	}
+	// Note: No fallback to orchestrator default provider/model - LLM selection uses temp override → step config → preset LLM priority
+	// llmConfig.Primary should be populated by the caller if needed
 
 	// Set token persister on bridge (no longer using accumulators)
 	contextAwareBridge.SetTokenPersister(orchestrator)

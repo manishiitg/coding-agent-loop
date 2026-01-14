@@ -22,97 +22,74 @@ import (
 
 // Pre-parsed templates for plan improvement - panics at startup if invalid
 var improvementSystemTemplate = MustRegisterTemplate("improvementSystem", `# Plan Improvement Agent
-**Context**: Analyzing run path '{{.RunPathRelative}}'
+
+You are a plan improvement assistant. Help the user with their questions about the plan and make improvements when requested.
 
 ## 🤖 ROLE
-Post-execution analyst. Identify and fix plan issues by analyzing ACTUAL tool calls and failures.
+Answer user questions directly. Only analyze logs/files when the user specifically asks about execution results, failures, or debugging.
 
-## ⚠️ CRITICAL RULES
-1. **Confirm First**: Use 'human_feedback' BEFORE any plan changes.
-2. **Focus on User's Request**: The user has already told you what they want to improve - address their specific request.
-3. **Gather Evidence**: Read files (plan, logs, learnings) before proposing fixes.
-4. **Concrete Criteria**: Success criteria MUST be file-verifiable (counts, samples) and hard to fake.
+## ⚠️ RULES
+1. **Answer Directly**: For general questions, answer from the plan context provided below - don't read files unless needed.
+2. **Confirm Before Changes**: Use 'human_feedback' BEFORE any plan modifications.
+3. **Read Files Only When Needed**: Only read execution logs/files if user asks about failures, debugging, or "why did X happen".
+4. **Concrete Criteria**: When updating success criteria, make them file-verifiable (counts, samples).
 
-
-## 📋 EVIDENCE SOURCES
-- **Default (Fast)**: 'planning/plan.json', 'learnings/', '{{.RunPathRelative}}/execution/', 'knowledgebase/'.
-- **Knowledgebase**: Read 'knowledgebase/' for persistent templates, reference data, or global configs shared across all runs.
-- **Logs (Slow/Requested)**: Only read '{{.RunPathRelative}}/logs/' if user asks about specific failures or "why" a step failed.
-- **Evaluation Reports**: Read 'evaluation/runs/{targetRunFolder}/evaluation_report.json' for LLM-scored assessments of execution quality.
-
----
-
-## 🧩 ANALYSIS CHECKLISTS
-
-### 1. Orchestration Steps (Main + Sub-Agents)
-Orchestration involves a Main Orchestrator looping over Sub-Agents.
-- **Main Orchestrator**: Read 'orchestration-evaluation.json'. Is it looping forever? Are route conditions clear?
-- **Sub-Agents**: Read 'logs/step-X-sub-agent-{i}/'. Are sub-agent success criteria file-verifiable? Did they receive correct instructions?
-- **Root Cause**: If a sub-agent fails, check if the main orchestrator provided the right context.
-
-### 2. Validation Failures
-- **Pre-Validation (Structural)**: If this fails, update the 'validation_schema' (file exists, JSON format).
-- **LLM Validation (Authenticity)**: If this fails, update 'success_criteria' to focus on execution history (proving work was done).
-
-### 3. Anti-Gaming Principle
-Avoid status-only criteria like 'status: "success"'. Require concrete evidence:
-- ✅ "File 'X' contains array 'Y' with length 'Z'".
-- ❌ "Step shows as success in verification file".
-
-### 4. JSON File Size Issues
-If JSON context output files are too large (> 100KB), they will fail to load during pre-validation:
-- **Problem**: Large JSON files cause parsing failures ("invalid character 'd' after object key:value pair", file loading failures)
-- **Solution**: Update step's context_output structure to reference markdown files for large content
-- **Recommendation**: Suggest splitting large JSON into structured data (JSON) + large text (markdown file reference)
-- **Example Fix**: Change {"large_content": "very long text..."} to {"summary": "brief", "details_file": "step_X_details.md"}
-
-### 5. Evaluation Reports (LLM-Scored Quality Assessment)
-Evaluation reports provide independent LLM-scored assessments of execution quality:
-- **Location**: 'evaluation/{{.RunPathRelative}}/evaluation_report.json' (scoped to THIS iteration only)
-- **Structure**: Contains 'total_score', 'max_possible_score', 'score_percentage', and 'step_scores[]' with per-step details
-- **Per-Step Scores**: Each 'step_scores' entry has 'step_id', 'score', 'max_score', 'reasoning', 'evidence', 'success_criteria'
-- **How to Use**:
-  - Low scores (< 50%) indicate steps that need better success criteria or clearer instructions
-  - Read 'reasoning' and 'evidence' fields to understand WHY a step scored poorly
-  - Use insights to update 'success_criteria' in plan steps to be more specific and verifiable
-  - Cross-reference with 'evaluation/evaluation_plan.json' to see what criteria were used for scoring
-- **Evaluation Plan**: 'evaluation/evaluation_plan.json' defines the evaluation steps used for scoring
-- **Evaluation Learnings**: 'evaluation/learnings/{stepID}/' contains learnings from evaluation runs (separate from workflow learnings)
-- **Access Scope**: You can ONLY read evaluation data for the selected iteration ({{.RunPathRelative}}), not other iterations
-
----
-
-## 🔄 WORKFLOW
-1. **Understand**: Read the user's improvement request carefully - they've already told you what they need.
-2. **Read**: Inspect logs/outputs/learnings relevant to their request.
-3. **Propose**: Describe what/why/how to the user via 'human_feedback'.
-4. **Update**: After approval ("yes", "ok"), use plan modification tools.
-
-## 🛠️ PLAN MODIFICATION TOOLS
-Use 'update_*', 'add_*', 'delete_plan_steps', 'convert_step_to_conditional', etc., ONLY after user approval.
-
-{{if .AllowedPaths}}**Allowed Paths**: {{.AllowedPaths}}{{end}}`)
-
-var improvementUserTemplate = MustRegisterTemplate("improvementUser", `# Plan Improvement Task
 ## 📋 CONTEXT
+
+### Workspace Information
 - **Workspace**: {{.WorkspacePath}}
 - **Selected Run**: {{.RunPathRelative}}
+{{if .AllowedPaths}}- **Allowed Paths**: {{.AllowedPaths}}{{end}}
 
-## 🎯 USER'S IMPROVEMENT REQUEST
-{{if .UserImprovementRequest}}{{.UserImprovementRequest}}{{else}}Analyze the plan and execution results for potential improvements.{{end}}
+### Current Plan
+{{if .PlanJSON}}` + "```json\n{{.PlanJSON}}\n```" + `{{else}}No plan provided.{{end}}
 
-## 📊 DATA
-**Execution Summary**:
+### Execution Summary
 {{.ExecutionResultsSummary}}
 
+---
 
-**Current Plan**:
-{{if .PlanJSON}}{{.PlanJSON}}{{else}}No plan provided.{{end}}
+## 📁 FILE LOCATIONS (read only when needed)
+- **Plan file**: 'planning/plan.json'
+- **Learnings**: 'learnings/' and 'learnings/{step_id}/'
+- **Execution outputs**: '{{.RunPathRelative}}/execution/'
+- **Logs (for debugging)**: '{{.RunPathRelative}}/logs/' - only read if user asks about failures
+- **Knowledgebase**: 'knowledgebase/' - persistent files across runs
+- **Evaluation reports**: 'evaluation/runs/{runFolder}/evaluation_report.json'
 
-## 🧠 TASK
-1. **Focus on the user's improvement request above** - prioritize addressing what the user specifically asked about.
-2. Analyze the plan vs. execution results relevant to the request.
-3. Propose specific fixes and get approval via 'human_feedback' before updating the plan.`)
+## 🛠️ PLAN MODIFICATION TOOLS
+Use 'update_*', 'add_*', 'delete_plan_steps', etc. ONLY after user approval via 'human_feedback'.
+
+---
+
+## 📖 REFERENCE: Analysis Checklists (use when debugging)
+
+<details>
+<summary>Orchestration Steps</summary>
+- Main Orchestrator: Check 'orchestration-evaluation.json' for infinite loops
+- Sub-Agents: Check 'logs/step-X-sub-agent-{i}/' for sub-agent issues
+</details>
+
+<details>
+<summary>Validation Failures</summary>
+- Pre-Validation (Structural): Update 'validation_schema' (file exists, JSON format)
+- LLM Validation (Authenticity): Update 'success_criteria' to focus on execution history
+</details>
+
+<details>
+<summary>JSON File Size Issues</summary>
+If JSON > 100KB causes parsing failures, split into: structured JSON + markdown file reference
+Example: {"summary": "brief", "details_file": "step_X_details.md"}
+</details>
+
+<details>
+<summary>Evaluation Reports</summary>
+- Location: 'evaluation/{{.RunPathRelative}}/evaluation_report.json'
+- Contains: total_score, score_percentage, step_scores[] with reasoning
+- Use low scores (< 50%) to identify steps needing better success criteria
+</details>`)
+
+var improvementUserTemplate = MustRegisterTemplate("improvementUser", `{{if .UserImprovementRequest}}{{.UserImprovementRequest}}{{else}}What would you like help with regarding the plan?{{end}}`)
 
 // WorkflowPlanImprovementTemplate holds template variables for plan improvement prompts
 type WorkflowPlanImprovementTemplate struct {
@@ -287,11 +264,8 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 			APIKeys:   apiKeys,
 		}
 		pim.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM as fallback for plan improvement: %s/%s", pim.presetPhaseLLM.Provider, pim.presetPhaseLLM.ModelID))
-	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
-		llmConfigToUse = orchestratorLLMConfig
-		pim.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default plan improvement LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
 	} else {
-		return nil, fmt.Errorf("no valid LLM configuration found for plan improvement agent: presetPlanImprovementLLM, presetPhaseLLM, and orchestrator default LLM are all empty or invalid")
+		return nil, fmt.Errorf("no valid LLM configuration found for plan improvement agent: presetPlanImprovementLLM and presetPhaseLLM are both empty or invalid")
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)
@@ -302,12 +276,30 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 	// Create agent config with the selected LLM config
 	config := pim.CreateStandardAgentConfigWithLLM("plan-improvement-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
 
-	// Plan improvement agent doesn't need MCP servers - uses workspace tools only
-	config.ServerNames = []string{mcpclient.NoServers}
+	// Enable MCP tools from preset if available
+	// Plan improvement agent can now access MCP servers configured in the preset
+	selectedServers := pim.GetSelectedServers()
+	selectedTools := pim.GetSelectedTools()
+	mcpConfigPath := pim.GetMCPConfigPath()
 
-	// Code execution mode only applies to execution agents, not plan improvement agents
+	// Plan improvement agent uses simple agent mode (no code execution)
+	// Even with MCP tools, we don't need code execution for plan debugging
 	config.UseCodeExecutionMode = false
-	pim.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for plan improvement agent (only execution agents use MCP tools)"))
+
+	if len(selectedServers) > 0 && mcpConfigPath != "" {
+		// Use preset's MCP configuration (simple agent mode)
+		config.ServerNames = selectedServers
+		config.SelectedTools = selectedTools
+		config.MCPConfigPath = mcpConfigPath
+		config.MCPSessionID = pim.GetMCPSessionID() // Share MCP connections with other agents
+		pim.GetLogger().Info("🔧 Enabling MCP tools for plan improvement agent (simple agent mode):")
+		pim.GetLogger().Info(fmt.Sprintf("   📡 Servers: %v", selectedServers))
+		pim.GetLogger().Info(fmt.Sprintf("   🔧 Tools: %v", selectedTools))
+	} else {
+		// Fall back to no MCP servers (workspace tools only)
+		config.ServerNames = []string{mcpclient.NoServers}
+		pim.GetLogger().Info("🔧 No MCP servers configured in preset - plan improvement agent using workspace tools only")
+	}
 
 	// Large output virtual tools are enabled for plan improvement (agent may generate large feedback reports)
 

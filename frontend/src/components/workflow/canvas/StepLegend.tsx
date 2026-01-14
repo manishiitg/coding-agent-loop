@@ -12,6 +12,7 @@ interface StepLegendProps {
   selectedNodeId: string | null
   onStepClick: (nodeId: string) => void
   workspacePath?: string | null
+  currentStepId?: string | null  // Currently running step ID from workflow store
 }
 
 /**
@@ -24,7 +25,8 @@ export const StepLegend: React.FC<StepLegendProps> = ({
   nodes,
   selectedNodeId,
   onStepClick,
-  workspacePath
+  workspacePath,
+  currentStepId
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(true)
   // Cache for learnings existence checks: stepId -> boolean | null (null = checking/unknown)
@@ -312,6 +314,34 @@ export const StepLegend: React.FC<StepLegendProps> = ({
     setIsCollapsed(true) // Minimize after navigating to step
   }, [onStepClick])
 
+  // Find the currently running step name to display in collapsed header
+  const runningStepInfo = useMemo(() => {
+    if (!currentStepId || allSteps.length === 0) return null
+
+    // Find step by matching step.id
+    const runningStep = allSteps.find(({ step, node }) => {
+      // Match by step.id
+      if (step.id === currentStepId) return true
+      // For orchestration steps, also check orchestration_step.id
+      if (isOrchestrationStep(step) && step.orchestration_step?.id === currentStepId) return true
+      // Match by node.data.step.id
+      if (node && hasStepData(node)) {
+        const nodeStepId = (node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData).step?.id
+        if (nodeStepId === currentStepId) return true
+      }
+      return false
+    })
+
+    if (!runningStep) return null
+
+    const { step, stepIndex } = runningStep
+    const title = isOrchestrationStep(step) && step.orchestration_step?.title
+      ? step.orchestration_step.title
+      : step.title || `Step ${stepIndex + 1}`
+
+    return { title, stepIndex }
+  }, [currentStepId, allSteps])
+
   if (!plan || allSteps.length === 0) {
     return null
   }
@@ -342,14 +372,25 @@ export const StepLegend: React.FC<StepLegendProps> = ({
           onClick={() => setIsCollapsed(!isCollapsed)}
           className="w-full px-3 py-1.5 flex items-center justify-between text-xs font-semibold text-foreground hover:bg-muted/50 rounded-t-lg transition-colors border-b border-border"
         >
-          <span className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
-            Steps ({allSteps.length})
+          <span className="flex items-center gap-1.5 min-w-0 flex-1">
+            {runningStepInfo ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin flex-shrink-0" />
+                <span className="truncate" title={runningStepInfo.title}>
+                  {runningStepInfo.title}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0"></span>
+                <span>Steps ({allSteps.length})</span>
+              </>
+            )}
           </span>
           {isCollapsed ? (
-            <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+            <ChevronUp className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 ml-2" />
           ) : (
-            <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+            <ChevronDown className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 ml-2" />
           )}
         </button>
 

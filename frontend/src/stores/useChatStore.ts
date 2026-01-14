@@ -382,7 +382,7 @@ export const useChatStore = create<ChatState>()(
           onPoll().catch(error => {
             console.error('[ChatStore] Error in polling callback:', error)
           })
-        }, 1000)
+        }, 2000)  // 2 seconds - reduced from 1s to improve performance
         
         set({ pollingInterval: interval })
       },
@@ -453,34 +453,33 @@ export const useChatStore = create<ChatState>()(
       addTabEvents: (sessionId: string, events: PollingEvent[]) => {
         set((state) => {
           const currentEvents = state.tabEvents[sessionId] || []
-          
-          // Deduplicate events by ID to prevent React key warnings
+
+          // Deduplicate events by ID to prevent React key warnings and performance issues
           // Create a Set of existing event IDs for fast lookup
-          // const existingEventIds = new Set(currentEvents.map(e => e.id))
-          
+          const existingEventIds = new Set(currentEvents.map(e => e.id))
+
           // Filter out events that already exist
-          // const uniqueNewEvents = events.filter(event => {
-          //   if (!event.id) {
-          //     // If event has no ID, allow it (shouldn't happen, but be safe)
-          //     console.warn(`[addTabEvents] Event without ID detected:`, event)
-          //     return true
-          //   }
-          //   if (existingEventIds.has(event.id)) {
-          //     // Event already exists, skip it
-          //     return false
-          //   }
-          //   // New event, add its ID to the set and include it
-          //   existingEventIds.add(event.id)
-          //   return true
-          // })
-          
-          // Only log if duplicates were found
-          // if (uniqueNewEvents.length < events.length) {
-          //   console.log(`[addTabEvents] Deduplicated ${events.length - uniqueNewEvents.length} duplicate events for session ${sessionId}`)
-          // }
-          
-          // TEMPORARILY DISABLED: Show all events including duplicates
-          const newEvents = [...currentEvents, ...events]
+          const uniqueNewEvents = events.filter(event => {
+            if (!event.id) {
+              // If event has no ID, allow it (shouldn't happen, but be safe)
+              console.warn(`[addTabEvents] Event without ID detected:`, event)
+              return true
+            }
+            if (existingEventIds.has(event.id)) {
+              // Event already exists, skip it
+              return false
+            }
+            // New event, add its ID to the set and include it
+            existingEventIds.add(event.id)
+            return true
+          })
+
+          // Only log if duplicates were found (helps debug)
+          if (uniqueNewEvents.length < events.length) {
+            console.log(`[addTabEvents] Deduplicated ${events.length - uniqueNewEvents.length} duplicate events for session ${sessionId}`)
+          }
+
+          const newEvents = [...currentEvents, ...uniqueNewEvents]
           
           // Trigger cleanup if threshold exceeded
           let finalEvents = newEvents

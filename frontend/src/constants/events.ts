@@ -3,8 +3,9 @@
 
 // Maximum number of events to process/display in the frontend
 // This prevents browser freeze when dealing with large event lists
-export const MAX_EVENTS_TO_PROCESS = 1000
+export const MAX_EVENTS_TO_PROCESS = 100
 
 // Cleanup threshold: start cleanup when events exceed this count
-export const CLEANUP_THRESHOLD = MAX_EVENTS_TO_PROCESS + 200
+// Keep buffer small to avoid memory buildup
+export const CLEANUP_THRESHOLD = MAX_EVENTS_TO_PROCESS + 50
 

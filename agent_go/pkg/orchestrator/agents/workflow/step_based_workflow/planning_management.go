@@ -418,9 +418,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createPlanningAgent(ctx context.Conte
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (read access to runs/ for execution logs, write access to learnings/ for folder syncing)", readPaths, writePaths))
 
-	// Determine LLM config: Priority: presetPhaseLLM > orchestrator default
+	// Determine LLM config: Priority: presetPhaseLLM only
 	var llmConfigToUse *orchestrator.LLMConfig
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	if hcpo.presetPhaseLLM != nil && hcpo.presetPhaseLLM.Provider != "" && hcpo.presetPhaseLLM.ModelID != "" {
 		// Use phase LLM for planning agent
 		llmConfigToUse = &orchestrator.LLMConfig{
@@ -431,11 +430,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createPlanningAgent(ctx context.Conte
 			APIKeys: hcpo.GetAPIKeys(), // Safe: returns nil if orchestratorLLMConfig is nil
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for planning: %s/%s", hcpo.presetPhaseLLM.Provider, hcpo.presetPhaseLLM.ModelID))
-	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
-		llmConfigToUse = orchestratorLLMConfig
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default planning LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
 	} else {
-		return nil, fmt.Errorf("no valid LLM configuration found for planning agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
+		return nil, fmt.Errorf("no valid LLM configuration found for planning agent: presetPhaseLLM is empty or invalid")
 	}
 
 	// Create agent config with custom LLM

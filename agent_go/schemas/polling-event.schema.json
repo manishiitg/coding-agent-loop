@@ -404,6 +404,11 @@
         },
         "workspace_path": {
           "type": "string"
+        },
+        "execution_options": {
+          "type": "object",
+          "description": "Execution options (run_mode, execution_strategy, etc.)",
+          "additionalProperties": true
         }
       },
       "additionalProperties": false,
@@ -4882,44 +4887,18 @@
         "metadata": {
           "type": "object"
         },
-        "completed_step_indices": {
-          "items": {
-            "type": "integer"
-          },
-          "type": "array"
-        },
-        "total_steps": {
-          "type": "integer"
-        },
         "workspace_path": {
           "type": "string"
         },
         "run_folder": {
           "type": "string"
         },
-        "last_completed_step": {
-          "type": "integer"
-        },
-        "last_completed_step_id": {
+        "current_step_id": {
           "type": "string"
         },
-        "last_completed_step_title": {
-          "type": "string"
-        },
-        "branch_steps": {
-          "patternProperties": {
-            "^[0-9]+$": {
-              "$ref": "#/$defs/BranchStepProgress"
-            }
-          },
-          "additionalProperties": false,
-          "type": "object"
-        },
-        "validation_failures": {
-          "additionalProperties": {
-            "type": "integer"
-          },
-          "type": "object"
+        "status": {
+          "type": "string",
+          "description": "Status: 'start' (step started), 'stop' (step stopped), 'end' (step ended), or empty (regular progress update)"
         }
       },
       "additionalProperties": false,

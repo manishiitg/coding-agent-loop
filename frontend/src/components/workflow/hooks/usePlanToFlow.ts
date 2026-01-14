@@ -449,7 +449,6 @@ function fixOverlappingBranches(nodes: WorkflowNode[]): WorkflowNode[] {
 function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
   const MIN_SEPARATION = 100 // Minimum gap between nodes (increased from 80 for markdown rendering)
   const adjustedNodes = [...nodes]
-  let collisionCount = 0
 
   // Get bounding box for a node (using estimated height based on content)
   const getBounds = (node: WorkflowNode): { left: number; right: number; top: number; bottom: number } => {
@@ -593,18 +592,10 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
 
       // Check for overlap
       if (boxesOverlap(adjustedCurrentBounds, adjustedOtherBounds)) {
-        collisionCount++
         const shift = calculateShift(adjustedCurrentBounds, adjustedOtherBounds)
 
         if (shift.dx !== 0 || shift.dy !== 0) {
-          // Log collision details for debugging
-          if (collisionCount <= 5) { // Log first 5 collisions to avoid spam
-            console.log(`[CollisionDetection] Collision ${collisionCount}: ${currentNode.id} (${currentNode.type}) overlaps ${otherNode.id} (${otherNode.type})`, {
-              currentPos: { x: currentNode.position.x, y: currentNode.position.y },
-              otherPos: { x: otherNode.position.x, y: otherNode.position.y },
-              shift: { dx: shift.dx, dy: shift.dy }
-            })
-          }
+          // Log collision details for debugging (removed to reduce console noise)
 
           // Update shift for current node
           const currentShiftValue = shifts.get(currentNode.id) || { dx: 0, dy: 0 }
@@ -625,10 +616,7 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
     }
   }
 
-  // Log collision detection results
-  if (collisionCount > 0) {
-    console.log(`[CollisionDetection] Detected ${collisionCount} collisions, applying shifts to ${Array.from(shifts.values()).filter(s => s.dx !== 0 || s.dy !== 0).length} nodes`)
-  }
+  // Log collision detection results (removed to reduce console noise)
 
   // Apply all shifts to nodes
   const shiftedNodes = adjustedNodes.map(node => {
@@ -2820,7 +2808,7 @@ export function usePlanToFlow(
     layoutedResult.nodes = detectAndResolveCollisions(layoutedResult.nodes)
     const nodesAfterCollision = layoutedResult.nodes.length
     if (nodesBeforeCollision !== nodesAfterCollision) {
-      console.warn('[CollisionDetection] Node count changed during collision detection!', { before: nodesBeforeCollision, after: nodesAfterCollision })
+      // Node count changed during collision detection (log removed to reduce console noise)
     }
 
     // Helper to determine if a step can run

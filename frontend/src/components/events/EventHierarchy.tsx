@@ -47,13 +47,19 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     // Combine: older events (loaded from backend) + current events (from props/store)
     const allEvents = [...loadedOlderEvents, ...events];
     
-    // Limit to prevent browser freeze
-    if (allEvents.length <= MAX_EVENTS_TO_PROCESS) {
-      return allEvents;
+    // Ensure events are sorted chronologically by timestamp (oldest first)
+    // This ensures proper ordering even if events come from different sources
+    const sortedEvents = allEvents.sort((a, b) => {
+      const timeA = a.timestamp ? (Date.parse(a.timestamp) || 0) : 0;
+      const timeB = b.timestamp ? (Date.parse(b.timestamp) || 0) : 0;
+      return timeA - timeB;
+    });
+    
+    // Limit to prevent browser freeze - take most recent events
+    if (sortedEvents.length > MAX_EVENTS_TO_PROCESS) {
+      return sortedEvents.slice(-MAX_EVENTS_TO_PROCESS);
     }
-    // Only process the most recent MAX_EVENTS_TO_PROCESS events
-    console.warn(`[PERF] Limiting events from ${allEvents.length} to ${MAX_EVENTS_TO_PROCESS} to prevent freeze`);
-    return allEvents.slice(-MAX_EVENTS_TO_PROCESS);
+    return sortedEvents;
   }, [events, loadedOlderEvents]);
   
   // Reset loaded older events when session or event mode changes
@@ -267,7 +273,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
   }, []);
 
   // Memoized event node renderer to prevent unnecessary re-renders
-  const renderEventNode = React.useCallback((node: EventNode): React.ReactNode => {
+  const renderEventNode = React.useCallback((node: EventNode, uniqueKey?: string): React.ReactNode => {
     const { event, children, level, isExpanded } = node;
     const hasChildren = children.length > 0;
     // Support up to L10: L0 = 10px, L1 = 20px, ..., L10 = 110px
@@ -282,8 +288,11 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
       : undefined;
     const onToggleCollapse = sessionKey ? () => toggleAgentSession(sessionKey) : undefined;
     
+    // Use provided uniqueKey or fall back to event.id (for backward compatibility)
+    const nodeKey = uniqueKey || event.id;
+    
     return (
-      <div key={event.id} className="event-tree-node" data-event-type={event.type}>
+      <div key={nodeKey} className="event-tree-node" data-event-type={event.type}>
         <div 
           className="event-tree-item"
           style={{ marginLeft: `${indent}px` }}
@@ -324,7 +333,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
         {/* Render children if expanded */}
         {isExpanded && hasChildren && (
           <div className="event-children">
-            {children.map(child => renderEventNode(child))}
+            {children.map((child, childIndex) => renderEventNode(child, `${nodeKey}-child-${childIndex}`))}
           </div>
         )}
       </div>
@@ -334,12 +343,17 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
   // Build event tree from flat list - memoized to react to collapsedSessions changes
   // OPTIMIZATION: Filter collapsed events early to reduce processing
   const eventTree = React.useMemo(() => {
+    const startTime = performance.now()
+
     // Early return: if no collapsed sessions, use all visible events (skip filtering overhead)
     if (collapsedSessions.size === 0) {
       const filteredEvents = visibleEvents;
-      
+
+      // Build event ID set for O(1) parent lookup
+      const eventIds = new Set(filteredEvents.map(e => e.id));
+
       const childrenMap = new Map<string, PollingEvent[]>();
-      
+
       // Build parent-child map
       filteredEvents.forEach(event => {
         const parentId = getParentId(event);
@@ -350,12 +364,12 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
           childrenMap.get(parentId)!.push(event);
         }
       });
-      
+
       // Build trees recursively
       const buildTreeRecursive = (event: PollingEvent): EventNode => {
         const children = childrenMap.get(event.id) || [];
         const childNodes = children.map(child => buildTreeRecursive(child));
-        
+
         return {
           event,
           children: childNodes,
@@ -363,8 +377,20 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
           isExpanded: expandedNodes.has(event.id)
         };
       };
-      
-      return filteredEvents.map(event => buildTreeRecursive(event));
+
+      // CRITICAL FIX: Only process ROOT events (no parent or parent not in list)
+      // This prevents O(n²) processing where every event was treated as a root
+      const rootEvents = filteredEvents.filter(event => {
+        const parentId = getParentId(event);
+        return !parentId || !eventIds.has(parentId);
+      });
+
+      const result = rootEvents.map(event => buildTreeRecursive(event));
+      const duration = performance.now() - startTime
+      if (duration > 10) { // Only log if took more than 10ms
+        console.log(`[EventHierarchy] Tree build took ${duration.toFixed(1)}ms (${filteredEvents.length} events, ${rootEvents.length} roots)`)
+      }
+      return result;
     }
 
     // Step 1: Build a map of event ID -> event for O(1) lookup (instead of O(n) find)
@@ -394,8 +420,11 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     // This reduces the number of events processed in tree building significantly
     const filteredEvents = visibleEvents.filter(event => !eventsToFilter.has(event.id));
 
+    // Build event ID set for O(1) parent lookup
+    const filteredEventIds = new Set(filteredEvents.map(e => e.id));
+
     const childrenMap = new Map<string, PollingEvent[]>();
-    
+
     // Build parent-child map (only for filtered events)
     filteredEvents.forEach(event => {
       const parentId = getParentId(event);
@@ -406,12 +435,12 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
         childrenMap.get(parentId)!.push(event);
       }
     });
-    
+
     // Build trees recursively
     const buildTreeRecursive = (event: PollingEvent): EventNode => {
       const children = childrenMap.get(event.id) || [];
       const childNodes = children.map(child => buildTreeRecursive(child));
-      
+
       return {
         event,
         children: childNodes,
@@ -419,8 +448,20 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
         isExpanded: expandedNodes.has(event.id)
       };
     };
-    
-    return filteredEvents.map(event => buildTreeRecursive(event));
+
+    // CRITICAL FIX: Only process ROOT events (no parent or parent not in filtered list)
+    // This prevents O(n²) processing where every event was treated as a root
+    const rootEvents = filteredEvents.filter(event => {
+      const parentId = getParentId(event);
+      return !parentId || !filteredEventIds.has(parentId);
+    });
+
+    const result = rootEvents.map(event => buildTreeRecursive(event));
+    const duration = performance.now() - startTime
+    if (duration > 10) { // Only log if took more than 10ms
+      console.log(`[EventHierarchy] Tree build (collapsed) took ${duration.toFixed(1)}ms (${filteredEvents.length} events, ${rootEvents.length} roots)`)
+    }
+    return result;
   }, [visibleEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId, getHierarchyLevel]);
 
   // Load more events handler - fetches older events from backend
@@ -488,9 +529,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
         
         {/* Render events in chronological order (oldest first, latest at bottom) */}
         {/* Performance: Only render top-level nodes initially to prevent freeze */}
-        {eventTree.map((node) => (
-          <div key={node.event.id}>
-            {renderEventNode(node)}
+        {eventTree.map((node, index) => (
+          <div key={`${node.event.id}-root-${index}`}>
+            {renderEventNode(node, `${node.event.id}-root-${index}`)}
           </div>
         ))}
       </div>

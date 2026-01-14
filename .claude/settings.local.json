@@ -10,7 +10,8 @@
       "Bash(go vet:*)",
       "Bash(gofmt:*)",
       "Bash(grep:*)",
-      "Bash(git -C mcp-agent-builder-go diff agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go)"
+      "Bash(git -C mcp-agent-builder-go diff agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []

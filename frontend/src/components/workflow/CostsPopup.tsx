@@ -50,6 +50,7 @@ const formatTokens = (count?: number) => {
 interface IterationCosts {
   runFolder: string
   tokenUsage: TokenUsageFile | null
+  evaluationTokenUsage?: TokenUsageFile | null
   steps?: Record<string, StepExecutionLogs> // Store steps for title lookup
   costSummary: {
     totalCost: number
@@ -64,6 +65,7 @@ interface IterationCosts {
       execution: number
       validation: number
       learning: number
+      evaluation: number
       other: number
     }
     stepCosts: Array<{
@@ -73,6 +75,7 @@ interface IterationCosts {
       execution: number
       validation: number
       learning: number
+      evaluation: number
       totalCost: number
       inputTokens: number
       outputTokens: number
@@ -96,8 +99,8 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
   const [costViewMode, setCostViewMode] = useState<Record<string, 'step' | 'model'>>({})
 
   // Calculate cost summary from token usage
-  const calculateCostSummary = (tokenUsage: TokenUsageFile | null, steps?: Record<string, StepExecutionLogs>): IterationCosts['costSummary'] => {
-    if (!tokenUsage?.by_model) return null
+  const calculateCostSummary = (tokenUsage: TokenUsageFile | null, evaluationTokenUsage: TokenUsageFile | null | undefined, steps?: Record<string, StepExecutionLogs>): IterationCosts['costSummary'] => {
+    if (!tokenUsage?.by_model && !evaluationTokenUsage?.by_model) return null
 
     let totalCost = 0
     let totalInputTokens = 0
@@ -106,11 +109,12 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
     let totalCacheReadTokens = 0
     let totalCacheWriteTokens = 0
     let totalReasoningTokens = 0
-    
+
     const stageCosts = {
       execution: 0,
       validation: 0,
       learning: 0,
+      evaluation: 0,
       other: 0
     }
 
@@ -121,6 +125,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
       execution: number
       validation: number
       learning: number
+      evaluation: number
       totalCost: number
       inputTokens: number
       outputTokens: number
@@ -128,7 +133,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
     }> = {}
 
     // Calculate totals from by_model
-    if (tokenUsage.by_model) {
+    if (tokenUsage?.by_model) {
       Object.values(tokenUsage.by_model).forEach(usage => {
         totalCost += usage.total_cost_usd || 0
         totalInputTokens += usage.input_tokens || 0
@@ -158,7 +163,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
     }
 
     // Calculate stage costs and step-wise costs from by_step_and_model
-    if (tokenUsage.by_step_and_model) {
+    if (tokenUsage?.by_step_and_model) {
       Object.entries(tokenUsage.by_step_and_model).forEach(([key, modelMap]) => {
         const parts = key.split(':')
         const phase = parts[0]
@@ -198,6 +203,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
             execution: 0,
             validation: 0,
             learning: 0,
+            evaluation: 0,
             totalCost: 0,
             inputTokens: 0,
             outputTokens: 0,
@@ -216,6 +222,65 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
         } else if (phase.includes('learning')) {
           stepCosts[stepKey].learning += cost
         }
+      })
+    }
+
+    // Process evaluation token usage
+    if (evaluationTokenUsage?.by_model) {
+      Object.values(evaluationTokenUsage.by_model).forEach(usage => {
+        totalCost += usage.total_cost_usd || 0
+        totalInputTokens += usage.input_tokens || 0
+        totalOutputTokens += usage.output_tokens || 0
+        totalLLMCalls += usage.llm_call_count || 0
+        totalCacheReadTokens += usage.cache_read_tokens || usage.cache_tokens || 0
+        totalCacheWriteTokens += usage.cache_write_tokens || 0
+        totalReasoningTokens += usage.reasoning_tokens || 0
+        // All evaluation by_model costs go to evaluation stage
+        stageCosts.evaluation += usage.total_cost_usd || 0
+      })
+    }
+
+    // Process evaluation step-wise costs
+    if (evaluationTokenUsage?.by_step_and_model) {
+      Object.entries(evaluationTokenUsage.by_step_and_model).forEach(([key, modelMap]) => {
+        const parts = key.split(':')
+        const stepID = parts[1] || parts[0]  // Use stepID from phase:stepID format
+
+        let cost = 0
+        let inputTokens = 0
+        let outputTokens = 0
+        let llmCalls = 0
+        Object.values(modelMap).forEach(u => {
+          cost += u.total_cost_usd || 0
+          inputTokens += u.input_tokens || 0
+          outputTokens += u.output_tokens || 0
+          llmCalls += u.llm_call_count || 0
+        })
+
+        // Step-wise costs - group by stepID with "eval-" prefix
+        const { stepNum, stepTitle } = findStepInfo(stepID)
+        const stepKey = `eval-${stepID}`  // Prefix with eval- to distinguish from regular steps
+
+        if (!stepCosts[stepKey]) {
+          stepCosts[stepKey] = {
+            stepID: stepKey,
+            stepNum: stepNum > 0 ? stepNum + 1000 : 0, // Put eval steps after regular steps
+            stepTitle: `[Eval] ${stepTitle}`,
+            execution: 0,
+            validation: 0,
+            learning: 0,
+            evaluation: 0,
+            totalCost: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            llmCalls: 0
+          }
+        }
+        stepCosts[stepKey].totalCost += cost
+        stepCosts[stepKey].inputTokens += inputTokens
+        stepCosts[stepKey].outputTokens += outputTokens
+        stepCosts[stepKey].llmCalls += llmCalls
+        stepCosts[stepKey].evaluation += cost
       })
     }
 
@@ -251,7 +316,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
       setCostViewMode({})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, workspacePath, runFolders.length])
+  }, [isOpen, workspacePath, runFolders])
 
   // Auto-expand selected run folder when it changes
   useEffect(() => {
@@ -277,7 +342,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
       for (const runFolder of runFolders) {
         try {
           const data = await agentApi.getCosts(workspacePath, runFolder)
-          if (data.token_usage) {
+          if (data.token_usage || data.evaluation_token_usage) {
             // Also fetch steps to get step titles for cost breakdown
             let steps: Record<string, StepExecutionLogs> | undefined
             try {
@@ -287,10 +352,11 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
               // If we can't get steps, continue without them (costs will still work)
               console.warn(`Failed to load steps for ${runFolder}:`, err)
             }
-            const costSummary = calculateCostSummary(data.token_usage, steps)
+            const costSummary = calculateCostSummary(data.token_usage ?? null, data.evaluation_token_usage, steps)
             costs.push({
               runFolder,
-              tokenUsage: data.token_usage,
+              tokenUsage: data.token_usage ?? null,
+              evaluationTokenUsage: data.evaluation_token_usage,
               steps, // Store steps for later use in model breakdown
               costSummary
             })
@@ -373,6 +439,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
       execution: 0,
       validation: 0,
       learning: 0,
+      evaluation: 0,
       other: 0
     }
     let highestCost = 0
@@ -390,6 +457,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
         stageCosts.execution += iter.costSummary.stageCosts.execution
         stageCosts.validation += iter.costSummary.stageCosts.validation
         stageCosts.learning += iter.costSummary.stageCosts.learning
+        stageCosts.evaluation += iter.costSummary.stageCosts.evaluation
         stageCosts.other += iter.costSummary.stageCosts.other
         
         if (iter.costSummary.totalCost > highestCost) {
@@ -540,7 +608,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                   </div>
 
                   {/* Stage Costs Summary */}
-                  <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="mt-4 grid grid-cols-2 md:grid-cols-5 gap-3">
                     <div className="bg-card border border-border rounded-lg p-3">
                       <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Execution</div>
                       <div className="text-lg font-bold text-foreground">{formatUSD(aggregateSummary.stageCosts.execution)}</div>
@@ -552,6 +620,10 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                     <div className="bg-card border border-border rounded-lg p-3">
                       <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Learning</div>
                       <div className="text-lg font-bold text-foreground">{formatUSD(aggregateSummary.stageCosts.learning)}</div>
+                    </div>
+                    <div className="bg-card border border-border rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Evaluation</div>
+                      <div className="text-lg font-bold text-foreground">{formatUSD(aggregateSummary.stageCosts.evaluation)}</div>
                     </div>
                     <div className="bg-card border border-border rounded-lg p-3">
                       <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Other</div>
@@ -627,7 +699,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                       {isExpanded && (
                         <div className="border-t border-border p-4 space-y-4">
                           {/* Stage Summary Cards */}
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                             <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
                               <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Execution</div>
                               <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.execution)}</div>
@@ -641,13 +713,17 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                               <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.learning)}</div>
                             </div>
                             <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
+                              <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Evaluation</div>
+                              <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.evaluation)}</div>
+                            </div>
+                            <div className="bg-card border border-border rounded-lg p-3 shadow-sm">
                               <div className="text-xs text-muted-foreground font-medium mb-1 uppercase tracking-wider">Other</div>
                               <div className="text-lg font-bold text-foreground">{formatUSD(costSummary.stageCosts.other)}</div>
                             </div>
                           </div>
 
                           {/* Cost Breakdown Table with View Toggle */}
-                          {iter.tokenUsage && iter.tokenUsage.by_model && (
+                          {(iter.tokenUsage?.by_model || iter.evaluationTokenUsage?.by_model) && (
                             <div className="bg-card border border-border rounded-lg overflow-hidden shadow-sm">
                               <div className="px-4 py-3 bg-muted/30 border-b border-border flex items-center justify-between">
                                 <h3 className="text-sm font-semibold flex items-center gap-2">
@@ -691,6 +767,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                         <th className="text-right font-medium pb-2 text-blue-500">Execution</th>
                                         <th className="text-right font-medium pb-2 text-green-500">Validation</th>
                                         <th className="text-right font-medium pb-2 text-purple-500">Learning</th>
+                                        <th className="text-right font-medium pb-2 text-amber-500">Evaluation</th>
                                         <th className="text-right font-medium pb-2">Total Cost</th>
                                       </tr>
                                     </thead>
@@ -699,7 +776,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                         <tr key={step.stepID} className="hover:bg-accent/50 transition-colors">
                                           <td className="py-2">
                                             <div className="font-medium text-foreground">
-                                              {step.stepNum === 0
+                                              {step.stepNum === 0 || step.stepNum > 1000
                                                 ? (
                                                     <span className="flex items-center gap-1.5">
                                                       {step.stepTitle}
@@ -734,6 +811,9 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                           <td className="py-2 text-right font-mono text-purple-600 dark:text-purple-400">
                                             {formatUSD(step.learning)}
                                           </td>
+                                          <td className="py-2 text-right font-mono text-amber-600 dark:text-amber-400">
+                                            {formatUSD(step.evaluation)}
+                                          </td>
                                           <td className="py-2 text-right font-bold text-foreground">
                                             {formatUSD(step.totalCost)}
                                           </td>
@@ -757,6 +837,9 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                         <td className="py-2 text-right font-mono text-purple-600 dark:text-purple-400">
                                           {formatUSD(costSummary.stageCosts.learning)}
                                         </td>
+                                        <td className="py-2 text-right font-mono text-amber-600 dark:text-amber-400">
+                                          {formatUSD(costSummary.stageCosts.evaluation)}
+                                        </td>
                                         <td className="py-2 text-right font-bold text-green-600 dark:text-green-400">
                                           {formatUSD(costSummary.totalCost)}
                                         </td>
@@ -767,7 +850,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                               )}
 
                               {/* Model-wise Cost Breakdown View */}
-                              {viewMode === 'model' && iter.tokenUsage && (
+                              {viewMode === 'model' && (iter.tokenUsage || iter.evaluationTokenUsage) && (
                                 <div className="p-4 overflow-x-auto">
                                   <table className="w-full text-xs">
                                     <thead>

@@ -53,7 +53,7 @@ export const RunningWorkflowsIndicator: React.FC = () => {
     <button
       onClick={() => setShowRunningDrawer(true)}
       className={cn(
-        "absolute bottom-4 right-4 z-[40]",
+        "absolute bottom-12 right-4 z-[40]",
         "flex items-center gap-2 px-3 py-2",
         "bg-background border rounded-full shadow-md",
         "hover:shadow-lg hover:scale-105 transition-all duration-200",

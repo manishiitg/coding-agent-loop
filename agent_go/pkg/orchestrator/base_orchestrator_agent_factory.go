@@ -37,19 +37,10 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 
 	// Populate LLMConfig from orchestrator.LLMConfig (unified structure)
 	if llmConfig != nil {
-		// Copy Primary with fallbacks if partially empty
-		primaryProvider := llmConfig.Primary.Provider
-		if primaryProvider == "" {
-			primaryProvider = bo.GetProvider()
-		}
-		primaryModel := llmConfig.Primary.ModelID
-		if primaryModel == "" {
-			primaryModel = bo.GetModel()
-		}
-
+		// Copy Primary directly - no fallback to orchestrator default (LLM selection uses temp override → step config → preset LLM)
 		config.LLMConfig.Primary = agents.LLMModel{
-			Provider: primaryProvider,
-			ModelID:  primaryModel,
+			Provider: llmConfig.Primary.Provider,
+			ModelID:  llmConfig.Primary.ModelID,
 			APIKey:   llmConfig.Primary.APIKey,
 			Region:   llmConfig.Primary.Region,
 		}
@@ -77,11 +68,9 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 			}
 		}
 	} else {
-		// Fallback to orchestrator defaults
-		config.LLMConfig.Primary = agents.LLMModel{
-			Provider: bo.GetProvider(),
-			ModelID:  bo.GetModel(),
-		}
+		// No fallback to orchestrator defaults - llmConfig must be provided
+		// LLM selection uses temp override → step config → preset LLM priority
+		panic(fmt.Sprintf("CRITICAL: llmConfig is nil in createAgentConfigWithLLM() for agent %s - LLM config must be provided. LLM selection uses temp override → step config → preset LLM priority, no orchestrator default fallback.", agentName))
 	}
 
 	config.Temperature = llmTemp
@@ -99,9 +88,13 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 
 	// Inject MCP session ID for connection sharing across agents in the same workflow
 	// When set, connections are stored in a session registry and reused
-	if bo.mcpSessionID != "" {
-		config.MCPSessionID = bo.mcpSessionID
+	// DEBUG: Panic if sessionID is empty to catch cases where it wasn't set properly
+	if bo.mcpSessionID == "" {
+		// PANIC for debugging: sessionID should always be set before creating agents
+		// This helps catch cases where sessionID is not properly initialized before agent creation
+		panic(fmt.Sprintf("CRITICAL: mcpSessionID is empty in BaseOrchestrator.createAgentConfigWithLLM() - cannot create agent without sessionID. SessionID must be set via SetMCPSessionID() before creating agents."))
 	}
+	config.MCPSessionID = bo.mcpSessionID
 
 	// Context summarization configuration from orchestrator
 	config.EnableContextSummarization = bo.GetEnableContextSummarization()

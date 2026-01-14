@@ -315,17 +315,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           console.warn(`[ChatArea] WARNING: Multiple tabs sharing session IDs:`, duplicateSessionIds)
         }
         
-        // Debug: Log event counts per session
-        console.log(`[ChatArea] Event filtering - Looking for sessionId: ${currentSessionId}`)
+        // Check if the current sessionId matches any in the store (only warn on issues)
         const sessionDetails = sessionIdToTabs.map(item => ({
           sessionId: item.sessionId,
           eventCount: item.eventCount,
           tabs: item.tabsUsingThisId
         }))
-        console.log(`[ChatArea] Available sessionIds in store:`, JSON.stringify(sessionDetails, null, 2))
-        console.log(`[ChatArea] Found ${eventsForTab.length} events for sessionId: ${currentSessionId}`)
-        
-        // Check if the current sessionId matches any in the store
         const matchingSession = sessionDetails.find(item => item.sessionId === currentSessionId)
         if (!matchingSession) {
           console.warn(`[ChatArea] ⚠️ SessionId ${currentSessionId} NOT FOUND in store! Available sessionIds:`, sessionDetails.map(item => item.sessionId))
@@ -337,7 +332,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
     
     // No session ID - return empty array (allows header to render for mode/preset selection)
-    console.log(`[ChatArea] No sessionId provided, returning empty events array`)
     return []
   }, [activeTab?.sessionId, tabEventsStore])
   
@@ -357,9 +351,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   }, [tabEvents, activeTab?.eventMode])
   
   // Debug: Log when displayEvents changes
-  useEffect(() => {
-    console.log(`[ChatArea] displayEvents changed - sessionId: ${activeTab?.sessionId}, eventCount: ${displayEvents.length}`)
-  }, [displayEvents.length, activeTab?.sessionId])
 
   // Computed values
   const isRequiredFolderSelected = useMemo(() => {
@@ -489,6 +480,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   // Deprecated: totalEventsRef removed
   const previousEventCountRef = useRef<number>(0)
 
+  // Ref to track if we're currently performing programmatic scrolling
+  const isProgrammaticScrollRef = useRef<boolean>(false)
+  const programmaticScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
   // Ref to track currentWorkflowPhase without causing callback re-renders
   const currentWorkflowPhaseRef = useRef<string>(currentWorkflowPhase)
   useEffect(() => {
@@ -500,6 +495,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   // Immediate scroll handler for better responsiveness
   const handleScroll = useCallback(() => {
     if (!chatContentRef.current) return;
+    
+    // If this is a programmatic scroll, ignore it (don't disable auto-scroll)
+    if (isProgrammaticScrollRef.current) {
+      // Still update last scroll position to track movement
+      const element = chatContentRef.current;
+      setLastScrollTop(element.scrollTop);
+      return;
+    }
     
     const element = chatContentRef.current;
     const currentScrollTop = element.scrollTop;
@@ -543,7 +546,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     setLastScrollTop(element.scrollTop);
 
     element.addEventListener('scroll', handleScroll);
-    return () => element.removeEventListener('scroll', handleScroll);
+    return () => {
+      element.removeEventListener('scroll', handleScroll);
+      // Cleanup programmatic scroll timeout on unmount
+      if (programmaticScrollTimeoutRef.current) {
+        clearTimeout(programmaticScrollTimeoutRef.current);
+        programmaticScrollTimeoutRef.current = null;
+      }
+    };
   }, [handleScroll, setLastScrollTop]);
 
   // Reset auto-scroll when starting new conversation (events go from 0 to > 0)
@@ -568,12 +578,28 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     const element = chatContentRef.current;
     const targetScrollTop = element.scrollHeight - element.clientHeight;
     
+    // Mark that we're performing programmatic scrolling
+    isProgrammaticScrollRef.current = true
+    
+    // Clear any existing timeout
+    if (programmaticScrollTimeoutRef.current) {
+      clearTimeout(programmaticScrollTimeoutRef.current)
+    }
+    
     // Use requestAnimationFrame for smoother scrolling
     requestAnimationFrame(() => {
       element.scrollTo({
         top: targetScrollTop,
         behavior
       });
+      
+      // Clear the programmatic scroll flag after scroll completes
+      // For smooth scroll, wait longer; for instant, clear immediately
+      const timeoutDuration = behavior === 'smooth' ? 600 : 100
+      programmaticScrollTimeoutRef.current = setTimeout(() => {
+        isProgrammaticScrollRef.current = false
+        programmaticScrollTimeoutRef.current = null
+      }, timeoutDuration)
     });
   }, [])
 
@@ -623,12 +649,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   }, [lastEventIndex, activeTab])
   
   // Update displayEvents when active tab changes
-  useEffect(() => {
-    if (activeTab?.sessionId) {
-      const tabEvents = getTabEvents(activeTab.sessionId)
-      console.log(`[ChatArea] Switched to tab ${activeTab.tabId}, loading ${tabEvents.length} events`)
-    }
-  }, [activeTab?.tabId, activeTab?.sessionId, getTabEvents])
+  // Tab events are automatically loaded via tabEvents useMemo
   
   // Deprecated: totalEventsRef useEffect removed
 
@@ -896,9 +917,33 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       const freshTab = currentTab ? chatStore.getTab(currentTab.tabId) : null
       const effectiveSessionId = freshTab?.sessionId || currentTab?.sessionId || sessionId
       
-      const rawLastEventIndex = currentTab 
+      let rawLastEventIndex = currentTab 
         ? getTabLastEventIndex(effectiveSessionId)
         : lastEventIndexRef.current
+      
+      // CRITICAL: Detect and fix sentinel value (9999) which means "all events processed" but not an actual index
+      // If lastEventIndex is 9999 or higher, check stored events to get the actual last index
+      if (rawLastEventIndex >= 9999) {
+        const storedEvents = getTabEvents(effectiveSessionId)
+        if (storedEvents && storedEvents.length > 0) {
+          const actualLastIndex = storedEvents.length - 1
+          rawLastEventIndex = actualLastIndex
+          // Update the stored index to the correct value
+          if (currentTab) {
+            setTabLastEventIndex(effectiveSessionId, actualLastIndex)
+          } else {
+            setLastEventIndex(actualLastIndex)
+          }
+        } else {
+          // No stored events, but sentinel value - reset to 0 to start fresh
+          rawLastEventIndex = 0
+          if (currentTab) {
+            setTabLastEventIndex(effectiveSessionId, 0)
+          } else {
+            setLastEventIndex(0)
+          }
+        }
+      }
       
       // Ensure lastEventIndex is >= 0 (API requirement)
       // -1 means "no events yet", which should be treated as 0
@@ -909,6 +954,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       try {
         // Get event mode from current tab (defaults to 'basic')
         const eventMode: 'basic' | 'advanced' | 'tiny' = (currentTab?.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny'
+        
         const response = await agentApi.getSessionEvents(effectiveSessionId, currentLastEventIndex, { eventMode })
         
         // Use session ID from response if available (it's the source of truth)
@@ -930,6 +976,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           // Handle different session statuses - update UI state (isStreaming) for user feedback
           if (sessionStatus === 'completed' || sessionStatus === 'error') {
             // Session is done - update UI state
+            const workflowStore = useWorkflowStore.getState()
+            console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Execution completed/error - checking selectedGroupIds:', {
+              sessionStatus,
+              tabId: currentTab.tabId,
+              phaseId: currentTab.metadata?.phaseId,
+              selectedGroupIds: workflowStore.selectedGroupIds,
+              selectedGroupIdsLength: workflowStore.selectedGroupIds?.length || 0,
+              hasVariablesManifest: !!workflowStore.variablesManifest,
+              groupsCount: workflowStore.variablesManifest?.groups?.length || 0
+            })
             chatStore.setTabCompleted(currentTab.tabId, true)
             chatStore.setTabStreaming(currentTab.tabId, false) // UI: Hide stop button, show send button
           } else if (sessionStatus === 'running') {
@@ -944,6 +1000,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         } else {
           // No tab - update global UI state
           if (sessionStatus === 'completed' || sessionStatus === 'error') {
+            const workflowStore = useWorkflowStore.getState()
+            console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Execution completed/error (no tab) - checking selectedGroupIds:', {
+              sessionStatus,
+              selectedGroupIds: workflowStore.selectedGroupIds,
+              selectedGroupIdsLength: workflowStore.selectedGroupIds?.length || 0,
+              hasVariablesManifest: !!workflowStore.variablesManifest,
+              groupsCount: workflowStore.variablesManifest?.groups?.length || 0
+            })
             setIsStreaming(false) // UI: Hide stop button
             setIsCompleted(true)
             setHasActiveChat(false)
@@ -957,14 +1021,32 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         }
 
         if (response.events.length > 0) {
+          
           // Update last event index for this session
           // CRITICAL: Use last_processed_index from backend (tracks unfiltered array position)
           // This ensures correct tracking even when filtering reduces the number of events returned
           // Require last_processed_index from backend (new system - no fallback)
           if (response.last_processed_index === undefined) {
+            console.warn(`[ChatArea] ⚠️ Backend didn't provide last_processed_index, skipping event processing for sessionId: ${effectiveSessionId}`)
             return // Skip processing if backend doesn't provide required field
           }
-          const newLastEventIndex = response.last_processed_index
+          
+          // CRITICAL: Detect sentinel value (9999) which means "all events processed" but not an actual index
+          // If API returns 0 events with last_processed_index=9999, use the actual last index from stored events
+          let newLastEventIndex = response.last_processed_index
+          if (response.events.length === 0 && response.last_processed_index >= 9999) {
+            // This is likely a sentinel value - check stored events to get the actual last index
+            const storedEvents = getTabEvents(actualSessionId)
+            if (storedEvents && storedEvents.length > 0) {
+              // Use the actual last event index from stored events (0-indexed)
+              const actualLastIndex = storedEvents.length - 1
+              newLastEventIndex = actualLastIndex
+            } else {
+              // No stored events, but sentinel value - keep current index to avoid going backwards
+              newLastEventIndex = currentLastEventIndex
+            }
+          }
+          
           if (currentTab) {
             setTabLastEventIndex(actualSessionId, newLastEventIndex)
             // If this is an initial fetch (sinceIndex=0), store has_more flag for older events
@@ -977,7 +1059,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           
           // Filter events first (synchronous)
           // Type assertion: response.events is PollingEvent[] from GetEventsResponse
-          const newEvents = (response.events as PollingEvent[]).filter(event => {
+          const eventsBeforeFilter = response.events as PollingEvent[]
+          const newEvents = eventsBeforeFilter.filter(event => {
             // Detect request human feedback event and stop streaming for this tab
             if (event.type === 'request_human_feedback' && currentTab) {
               const chatStore = useChatStore.getState()
@@ -996,11 +1079,116 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           })
           
           // Process workflow-specific events (after filtering)
-          if (selectedModeCategory === 'workflow' && currentTab?.metadata?.phaseId) {
-            const phases = useWorkflowStore.getState().phases
+          if (selectedModeCategory === 'workflow') {
+            const workflowStore = useWorkflowStore.getState()
+            const phases = workflowStore.phases
+
             for (const event of response.events as PollingEvent[]) {
+              // Handle batch progress updates from polling layer (more reliable than component useEffect)
+              // Note: Batch events have data directly in event.data, not event.data.data
+              if (event.type === 'batch_group_start') {
+                // Extract data - try event.data.data first (standard format), then event.data (direct format)
+                const eventData = event.data as Record<string, unknown> | undefined
+                const batchGroupStartData = (eventData?.data as Record<string, unknown>) || eventData
+
+                const groupId = batchGroupStartData?.group_id as string | undefined
+                const runFolder = batchGroupStartData?.run_folder as string | undefined
+                const workspacePath = batchGroupStartData?.workspace_path as string | undefined
+                const groupIndex = batchGroupStartData?.group_index as number | undefined
+                const totalGroups = batchGroupStartData?.total_groups as number | undefined
+
+                console.log('[ChatArea] batch_group_start event:', { groupId, runFolder, groupIndex, totalGroups })
+
+                if (groupId && runFolder) {
+                  workflowStore.handleBatchGroupStart(
+                    groupId,
+                    runFolder,
+                    workspacePath,
+                    groupIndex,
+                    totalGroups
+                  )
+                }
+              }
+
+              if (event.type === 'batch_group_end') {
+                // Extract data - try event.data.data first (standard format), then event.data (direct format)
+                const eventData = event.data as Record<string, unknown> | undefined
+                const batchGroupEndData = (eventData?.data as Record<string, unknown>) || eventData
+
+                const groupId = batchGroupEndData?.group_id as string | undefined
+                const success = batchGroupEndData?.success as boolean | undefined
+                const remainingGroups = batchGroupEndData?.remaining_groups as number | undefined
+
+                if (groupId) {
+                  workflowStore.handleBatchGroupEnd(
+                    groupId,
+                    success,
+                    remainingGroups
+                  )
+                }
+              }
+
+              // Handle step progress updates for auto-focus and status on canvas
+              if (event.type === 'step_progress_updated') {
+                // Extract data - try event.data.data first (standard format), then event.data (direct format)
+                const eventData = event.data as Record<string, unknown> | undefined
+                const stepProgressData = (eventData?.data as Record<string, unknown>) || eventData
+
+                const stepId = stepProgressData?.current_step_id as string | undefined
+                const status = stepProgressData?.status as string | undefined
+
+                if (stepId && status) {
+                  // Update step status in store
+                  if (status === 'start') {
+                    workflowStore.setCurrentStepId(stepId)
+                    workflowStore.setStepStatus(stepId, 'running')
+                  } else if (status === 'end') {
+                    workflowStore.setStepStatus(stepId, 'completed')
+                  }
+                }
+
+                // Update batch progress from step_progress_updated event (batch info is always included)
+                const groupId = stepProgressData?.group_id as string | undefined
+                const groupIndex = stepProgressData?.group_index as number | undefined
+                const totalGroups = stepProgressData?.total_groups as number | undefined
+                const runFolder = stepProgressData?.run_folder as string | undefined
+
+                if (groupId && totalGroups !== undefined && totalGroups > 0) {
+                  console.log('[ChatArea] Updating batch progress from step_progress_updated:', { groupId, groupIndex, totalGroups })
+                  workflowStore.handleBatchGroupStart(
+                    groupId,
+                    runFolder || '',
+                    undefined,
+                    groupIndex,
+                    totalGroups
+                  )
+                }
+              }
+
+              // Handle step execution end (backup for step_progress_updated)
+              if (event.type === 'step_execution_end') {
+                const eventData = event.data as Record<string, unknown> | undefined
+                const stepData = (eventData?.data as Record<string, unknown>) || eventData
+                const stepId = stepData?.step_id as string | undefined
+
+                if (stepId) {
+                  workflowStore.setStepStatus(stepId, 'completed')
+                }
+              }
+
+              // Handle step execution failed
+              if (event.type === 'step_execution_failed') {
+                const eventData = event.data as Record<string, unknown> | undefined
+                const stepData = (eventData?.data as Record<string, unknown>) || eventData
+                const stepId = stepData?.step_id as string | undefined
+
+                if (stepId) {
+                  workflowStore.setStepStatus(stepId, 'failed')
+                }
+              }
+
               // Handle todo list generation from workflow agent
-              if (event.type === 'agent_end') {
+              if (currentTab?.metadata?.phaseId && event.type === 'agent_end') {
                 const agentEventData = event.data as { data?: { agent_type?: string; result?: string } }
                 const agentEvent = agentEventData?.data
                 if (agentEvent && agentEvent.agent_type === 'todo_planner') {
@@ -1016,7 +1204,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               }
 
               // Handle workflow completion events (for phase transitions, not completion detection)
-              if (event.type === 'workflow_end') {
+              if (currentTab?.metadata?.phaseId && event.type === 'workflow_end') {
                 const completionPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
                 setCurrentWorkflowPhase(completionPhase)
               }
@@ -1054,7 +1242,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         // Continue polling other observers even if one fails
       }
     }
-  }, [selectedModeCategory, getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, pollingInterval, setIsStreaming, setIsCompleted, setHasActiveChat, setCurrentWorkflowPhase, processedCompletionEventsRef, stopPolling, activeSessionIds])
+  }, [selectedModeCategory, getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, getTabEvents, pollingInterval, setIsStreaming, setIsCompleted, setHasActiveChat, setCurrentWorkflowPhase, processedCompletionEventsRef, stopPolling, activeSessionIds])
 
 
   // Track if we're already processing to prevent infinite loops
@@ -1204,12 +1392,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               const eventMode: 'basic' | 'advanced' | 'tiny' = (newTab.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny'
               const response = await agentApi.getSessionEvents(sessionId, 0, { eventMode })
               const pollingEvents: PollingEvent[] = response.events
-              
+
               // CRITICAL: Use setTabEvents instead of addTabEvents to ensure correct chronological order
               // When restoring historical events, we want to replace any existing events to maintain order
               setTabEvents(sessionId, pollingEvents)
-              setTabLastEventIndex(sessionId, pollingEvents.length > 0 ? pollingEvents.length - 1 : -1)
-              console.log(`[AutoRestore] Loaded ${pollingEvents.length} events for active session ${sessionId}`)
+              // CRITICAL: Use last_processed_index from backend (not events.length - 1)
+              // Backend tracks the actual event index which may be higher due to filtering/cleanup
+              const lastIndex = response.last_processed_index ?? (pollingEvents.length > 0 ? pollingEvents.length - 1 : -1)
+              setTabLastEventIndex(sessionId, lastIndex)
+              console.log(`[AutoRestore] Loaded ${pollingEvents.length} events for session ${sessionId}, last_processed_index=${lastIndex}`)
               
               // Set streaming status if session is active
               chatStore.setTabStreaming(newTabId, true)
@@ -1249,12 +1440,17 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   const tabsWithActiveSessions = useMemo(() => {
     const activeIds = activeSessionIds // Capture in closure
     const chatStore = useChatStore.getState() // Get fresh store state to check streaming status
-    return tabsWithSessions.filter(tab => {
+    
+    const filtered = tabsWithSessions.filter(tab => {
       // Must have session ID
-      if (!tab.sessionId) return false
+      if (!tab.sessionId) {
+        return false
+      }
       
       // Skip completed sessions (definitely done)
-      if (tab.isCompleted) return false
+      if (tab.isCompleted) {
+        return false
+      }
       
       // CRITICAL: Check streaming status directly from store (not from tab object)
       // This ensures we get the latest streaming status even if tabsWithSessions is stale
@@ -1277,9 +1473,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       
       // If backend status is unknown (empty), allow polling (backend check might be in progress)
       // Backend will mark it inactive if no events for 10 minutes
-      
       return true
     })
+    
+    return filtered
   }, [tabsWithSessions, activeSessionIds, chatTabs])
   
   // Start/stop polling based on active sessions using store actions
@@ -1287,15 +1484,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   useEffect(() => {
     // If there are active sessions and no polling interval, start polling
     if (tabsWithActiveSessions.length > 0 && !pollingInterval) {
-      console.log(`[ChatArea] Starting polling via store - found ${tabsWithActiveSessions.length} active tab(s):`, tabsWithActiveSessions.map(t => ({ tabId: t.tabId, sessionId: t.sessionId })))
       startPolling(pollEvents)
     }
     // If there are no active sessions but polling is running, stop it
     else if (tabsWithActiveSessions.length === 0 && pollingInterval) {
-      console.log(`[ChatArea] Stopping polling via store - no active sessions`)
       stopPolling()
     }
-  }, [pollingInterval, startPolling, stopPolling, pollEvents, tabsWithActiveSessions])
+  }, [pollingInterval, startPolling, stopPolling, pollEvents, tabsWithActiveSessions, activeSessionIds, activeTab])
 
   // Trigger immediate reload when event mode changes
   // This ensures events are reloaded with the new filter when user switches modes
@@ -1307,7 +1502,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     
     // Only trigger if event mode actually changed and we have a session
     if (currentEventMode && currentEventMode !== prevEventMode && activeTab?.sessionId) {
-      console.log(`[ChatArea] Event mode changed from ${prevEventMode} to ${currentEventMode}, fetching events from beginning`)
       // Update ref to current value
       prevEventModeRef.current = currentEventMode
       
@@ -1321,7 +1515,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         
         try {
           // Explicitly fetch from beginning (sinceIndex=0) with new event mode
-          console.log(`[ChatArea] Fetching events from beginning with eventMode=${eventMode} for sessionId=${sessionId}`)
           const response = await agentApi.getSessionEvents(sessionId, 0, { eventMode })
           
           if (response.events.length > 0) {
@@ -1335,9 +1528,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             if (response.has_more !== undefined) {
               chatStore.setTabHasMoreOlderEvents(sessionId, response.has_more)
             }
-            console.log(`[ChatArea] Loaded ${response.events.length} events with ${eventMode} filter`)
-          } else {
-            console.log(`[ChatArea] No events found with ${eventMode} filter`)
           }
         } catch (error) {
           console.error(`[ChatArea] Failed to fetch events from beginning:`, error)
@@ -1602,12 +1792,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               // Convert and set historical events
               // response.events is already PollingEvent[] from GetEventsResponse
               const pollingEvents: PollingEvent[] = response.events
-              
+
               // CRITICAL: Use setTabEvents instead of addTabEvents to ensure correct chronological order
               // When restoring historical events, we want to replace any existing events to maintain order
               setTabEvents(sessionIdForHistory, pollingEvents)
-              setTabLastEventIndex(sessionIdForHistory, pollingEvents.length > 0 ? pollingEvents.length - 1 : -1)
-              console.log(`[History] Loaded ${pollingEvents.length} events for active session ${sessionIdForHistory}`)
+              // CRITICAL: Use last_processed_index from backend (not events.length - 1)
+              // Backend tracks the actual event index which may be higher due to filtering/cleanup
+              const lastIndex = response.last_processed_index ?? (pollingEvents.length > 0 ? pollingEvents.length - 1 : -1)
+              setTabLastEventIndex(sessionIdForHistory, lastIndex)
+              console.log(`[History] Loaded ${pollingEvents.length} events for session ${sessionIdForHistory}, last_processed_index=${lastIndex}`)
               setIsLoadingHistory(false)
             } catch (error) {
               console.error('[SESSION_STATE] Failed to load historical events:', error)
@@ -1986,7 +2179,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     })
     
     // Store execution options for inclusion in the request
+    console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Received executionOptions:', executionOptions ? JSON.stringify(executionOptions, null, 2) : 'undefined')
     executionOptionsRef.current = executionOptions
+    console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Stored executionOptionsRef.current:', executionOptionsRef.current ? JSON.stringify(executionOptionsRef.current, null, 2) : 'undefined')
     
     // Early validation
     if (!query?.trim()) {
@@ -2276,13 +2471,62 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         // Backend will automatically load history from conversation_turn events if session exists
       }
       
+      console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Including execution_options in request payload:', requestPayload.execution_options ? JSON.stringify(requestPayload.execution_options, null, 2) : 'undefined')
+      
       console.log('[code_execution] [ChatArea] API Request payload:', {
         use_code_execution_mode: requestPayload.use_code_execution_mode,
         type: typeof requestPayload.use_code_execution_mode,
         preset_query_id: requestPayload.preset_query_id,
+        has_execution_options: Boolean(requestPayload.execution_options),
         enabled_servers: requestPayload.enabled_servers,
         enabled_servers_count: requestPayload.enabled_servers?.length || 0
       })
+      
+      // Validate execution options: Check if enabled_group_ids is required but missing/empty
+      if (correctAgentMode === 'workflow' && requestPayload.execution_options) {
+        const workflowStore = useWorkflowStore.getState()
+        const variablesManifest = workflowStore.variablesManifest
+        
+        console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Validating execution options before API call:', {
+          hasExecutionOptions: !!requestPayload.execution_options,
+          executionOptions: JSON.stringify(requestPayload.execution_options, null, 2),
+          hasVariablesManifest: !!variablesManifest,
+          groupsCount: variablesManifest?.groups?.length || 0,
+          selectedGroupIds: workflowStore.selectedGroupIds,
+          selectedGroupIdsLength: workflowStore.selectedGroupIds?.length || 0,
+          enabledGroupIds: requestPayload.execution_options.enabled_group_ids,
+          enabledGroupIdsLength: requestPayload.execution_options.enabled_group_ids?.length || 0
+        })
+        
+        // If variables manifest has groups, ensure enabled_group_ids is set and not empty
+        if (variablesManifest?.groups && variablesManifest.groups.length > 0) {
+          const enabledGroupIds = requestPayload.execution_options.enabled_group_ids
+          if (!enabledGroupIds || enabledGroupIds.length === 0) {
+            console.error('[EXECUTION_OPTIONS_DEBUG] [ChatArea] ❌ Validation failed: Groups are available but enabled_group_ids is empty or missing', {
+              groupsAvailable: variablesManifest.groups.length,
+              groupIds: variablesManifest.groups.map(g => g.group_id),
+              selectedGroupIdsInStore: workflowStore.selectedGroupIds,
+              executionOptions: JSON.stringify(requestPayload.execution_options, null, 2)
+            })
+            alert('Please select at least one group to execute. Groups are available but no groups are selected.')
+            setIsStreaming(false)
+            setHasActiveChat(false)
+            // Reset tab's streaming status on validation failure
+            if (currentTab) {
+              const chatStore = useChatStore.getState()
+              chatStore.setTabStreaming(currentTab.tabId, false)
+            }
+            return
+          } else {
+            console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] ✅ Validation passed: enabled_group_ids is set', {
+              enabledGroupIds,
+              count: enabledGroupIds.length
+            })
+          }
+        } else {
+          console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] ℹ️ No groups in manifest (single-group mode or no groups)')
+        }
+      }
       
       // Ensure API module uses the tab's session ID
       setSessionId(tabSessionId)
@@ -2394,6 +2638,21 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   useEffect(() => {
     const currentIsCompleted = activeTab?.isCompleted ?? false
     const prevIsCompleted = prevIsCompletedRef.current
+    
+    // Log when execution completes or stops
+    if (prevIsCompleted !== currentIsCompleted) {
+      const workflowStore = useWorkflowStore.getState()
+      console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Execution completion state changed:', {
+        prevIsCompleted,
+        currentIsCompleted,
+        tabId: activeTab?.tabId,
+        phaseId: activeTab?.metadata?.phaseId,
+        selectedGroupIds: workflowStore.selectedGroupIds,
+        selectedGroupIdsLength: workflowStore.selectedGroupIds?.length || 0,
+        hasVariablesManifest: !!workflowStore.variablesManifest,
+        groupsCount: workflowStore.variablesManifest?.groups?.length || 0
+      })
+    }
     
     // Check if chat just completed (transitioned from false to true)
     if (!prevIsCompleted && currentIsCompleted && activeTab && !isProcessingQueueRef.current) {
@@ -2577,7 +2836,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               </div>
             </div>
           )}
-          
 
           {/* Show workflow explanation when in workflow mode but no preset selected */}
           {selectedModeCategory === 'workflow' && (

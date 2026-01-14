@@ -177,15 +177,15 @@ export function normalizeStartPoint(input: number | string | undefined | null): 
 export function normalizeRunFolder(
   folderPath: string | null | undefined,
   manifest: VariablesManifest | null
-): string {
-  if (!folderPath || folderPath === 'new') {
-    return 'new'
+): string | null {
+  if (!folderPath) {
+    return null
   }
 
   // Validate format: should be "iteration-X" or "iteration-X/group-name"
   if (!folderPath.startsWith('iteration-')) {
     console.warn('[normalizeRunFolder] Invalid folder path format:', folderPath)
-    return 'new'
+    return null
   }
 
   // If it's a group folder, validate the group exists in manifest

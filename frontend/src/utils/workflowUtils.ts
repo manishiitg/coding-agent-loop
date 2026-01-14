@@ -169,14 +169,39 @@ export function resolveGroupFolderPath(options: {
     manifest
   } = options
 
-  // If no manifest or groups, return selectedRunFolder as-is
+  // If no manifest or groups, return selectedRunFolder as-is (if valid)
+  // This is normal - don't log errors for this case
   if (!manifest?.groups || manifest.groups.length === 0) {
-    return selectedRunFolder === 'new' ? undefined : selectedRunFolder || undefined
+    // Only return if selectedRunFolder is a valid string (not null/undefined/empty)
+    return (selectedRunFolder && selectedRunFolder !== 'new') ? selectedRunFolder : undefined
   }
 
+  // Try to extract iteration folder from selectedRunFolder
   const iterationFolder = extractIterationFolder(selectedRunFolder)
+  
+  // If we couldn't extract iteration from selectedRunFolder, try to find it from selectedGroupIds
+  // This handles the case where page refreshes and selectedRunFolder is invalid but we have selectedGroupIds
+  if (!iterationFolder && selectedGroupIds.length > 0 && manifest.groups) {
+    // Try to find a group that matches one of the selectedGroupIds and extract its iteration
+    // We can't directly get iteration from groupId, but we can check if any run folders exist
+    // For now, if we have selectedGroupIds but no valid selectedRunFolder, return undefined
+    // The caller should handle this case
+    // This is normal during page refresh - don't log errors
+    return undefined
+  }
+  
+  // If still no iteration folder, return selectedRunFolder as-is (if valid) or undefined
+  // This is normal when data isn't ready yet (e.g., during initial load or page refresh)
+  // Only log if we have all the data but still can't extract (which would be unusual)
   if (!iterationFolder) {
-    return selectedRunFolder === 'new' ? undefined : selectedRunFolder || undefined
+    // Only log if we have a selectedRunFolder but it's in an unexpected format
+    // This helps debug actual issues without spamming logs during normal operation
+    if (selectedRunFolder && selectedRunFolder !== 'new' && !selectedRunFolder.startsWith('iteration-')) {
+      // This is unusual - selectedRunFolder exists but doesn't match expected format
+      // But don't log repeatedly - this might be called many times during renders
+      // The caller can handle undefined gracefully
+    }
+    return (selectedRunFolder && selectedRunFolder !== 'new') ? selectedRunFolder : undefined
   }
 
   // Priority 1: Use currently running group (during batch execution)
@@ -190,11 +215,9 @@ export function resolveGroupFolderPath(options: {
   // This represents the user's explicit selection for context
   if (selectedGroupIds.length > 0) {
     const groupPath = buildGroupFolderPath(selectedGroupIds[0], iterationFolder, manifest)
-
     if (selectedGroupIds.length > 1) {
       console.warn('[workflowUtils] Multiple groups selected, using first group for context:', selectedGroupIds[0])
     }
-
     return groupPath || iterationFolder
   }
 

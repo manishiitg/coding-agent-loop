@@ -397,11 +397,11 @@ workspace/
 
 ### Agent LLM Configuration
 
-**Priority**: Step config > Preset default > Orchestrator default
+**Priority**: Step config > Preset default (no orchestrator default fallback)
 
 | Level | Configuration | Example |
 |-------|---------------|---------|
-| **Orchestrator** | `presetExecutionLLM`, `presetValidationLLM`, `presetLearningLLM`, `presetPhaseLLM` | Default LLM for all steps |
+| **Preset** | `presetExecutionLLM`, `presetValidationLLM`, `presetLearningLLM`, `presetPhaseLLM` | Default LLM for all steps |
 | **Step** | `step_config.json` → `execution_llm`, `validation_llm`, `learning_llm` | Per-step override |
 
 **Preset LLM Configurations:**
@@ -409,12 +409,11 @@ workspace/
 - **`validation_llm`**: Default for validation agents
 - **`learning_llm`**: Default for learning agents
 - **`phase_llm`**: Default for all phase agents (planning, anonymization, plan improvement, plan tool optimization, learning consolidation, plan learnings alignment)
-  - Priority: `phase_llm` > orchestrator default
-  - All phase agents use this unified configuration instead of individual configs
+  - All phase agents use this unified configuration
 
 ### Temporary LLM Override (tempLLM)
 
-**Flow**: `tempLLM1` (attempt 1) → if FAILED → `tempLLM2` (attempt 2) → if FAILED → original LLM (attempt 3+)
+**Flow**: `tempLLM1` (attempt 1) → if FAILED → `tempLLM2` (attempt 2) → if FAILED → step LLM → preset LLM (attempt 3+)
 
 | Setting | Behavior |
 |---------|----------|

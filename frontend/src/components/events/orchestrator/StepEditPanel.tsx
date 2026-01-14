@@ -62,6 +62,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 
   // Initialize state from step's agent_configs
   // Ensure validation is enabled for loop steps (required to check loop conditions)
+  // Ensure validation and learning are enabled for code execution mode
   const [agentConfigs, setAgentConfigs] = useState<AgentConfigs>(() => {
     const configs = step.agent_configs || {};
     console.log('[StepConfigDebug] Initializing agentConfigs from step:', {
@@ -72,14 +73,34 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       disable_validation: configs.disable_validation,
       configs,
     });
+    
+    // Determine effective code execution mode (step config > preset default)
+    const effectiveCodeExecMode = configs.use_code_execution_mode !== undefined 
+      ? configs.use_code_execution_mode 
+      : presetUseCodeExecutionMode;
+    
+    const updatedConfigs = { ...configs };
+    let needsUpdate = false;
+    
     // Force enable validation for loop steps
     if (step.has_loop && configs.disable_validation) {
-      return {
-        ...configs,
-        disable_validation: false,
-      };
+      updatedConfigs.disable_validation = false;
+      needsUpdate = true;
     }
-    return configs;
+    
+    // Force enable validation and learning for code execution mode
+    if (effectiveCodeExecMode) {
+      if (configs.disable_validation) {
+        updatedConfigs.disable_validation = false;
+        needsUpdate = true;
+      }
+      if (configs.disable_learning) {
+        updatedConfigs.disable_learning = false;
+        needsUpdate = true;
+      }
+    }
+    
+    return needsUpdate ? updatedConfigs : configs;
   });
 
   // Initialize step-level server/tool selection
@@ -203,9 +224,28 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       
       // Reset agentConfigs state from step's config
       // Force enable validation for loop steps
-      const newAgentConfigs: AgentConfigs = step.has_loop && currentConfigs.disable_validation
-        ? { ...currentConfigs, disable_validation: false }
-        : currentConfigs;
+      // Force enable validation and learning for code execution mode
+      const effectiveCodeExecMode = currentConfigs.use_code_execution_mode !== undefined 
+        ? currentConfigs.use_code_execution_mode 
+        : presetUseCodeExecutionMode;
+      
+      const newAgentConfigs: AgentConfigs = { ...currentConfigs };
+      
+      // Force enable validation for loop steps
+      if (step.has_loop && currentConfigs.disable_validation) {
+        newAgentConfigs.disable_validation = false;
+      }
+      
+      // Force enable validation and learning for code execution mode
+      if (effectiveCodeExecMode) {
+        if (currentConfigs.disable_validation) {
+          newAgentConfigs.disable_validation = false;
+        }
+        if (currentConfigs.disable_learning) {
+          newAgentConfigs.disable_learning = false;
+        }
+      }
+      
       setAgentConfigs(newAgentConfigs);
       
       // Update servers: use step config if available, otherwise preset defaults

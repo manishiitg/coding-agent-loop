@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -102,78 +103,79 @@ func GetWorkflowConstants() WorkflowConstants {
 				Description: "Analyze alignment between plan.json and learnings folders to identify and categorize learning files. Checks if files match steps, are in correct folders, and identifies orphaned or mismatched files.",
 				Options:     []WorkflowPhaseOption{}, // No options for alignment phase
 			},
-			            {
-			                ID:          "learning-consolidation",
-			                Title:       "Learning Consolidation",
-			                Description: "Analyze and consolidate learning files to identify duplicate patterns, similar patterns, and outdated patterns. Merges redundant patterns and optimizes learning structure for better future execution efficiency.",
-			                Options:     []WorkflowPhaseOption{}, // No options for consolidation phase
-			            },
-			            {
-			                ID:          "code-exec-debugging",
-			                Title:       "Code Debugger",
-			                Description: "Analyze execution logs and conversation history for code execution steps. Identifies common errors like hardcoded paths, incorrect CLI arguments, and workspace tool misuse, providing specific fixes to the plan.",
-			                Options:     []WorkflowPhaseOption{}, // No options for code debugger phase
-			            },
-			        },
-			    }
-			}
-			
-			// GetWorkflowPhaseByID returns a workflow phase by its ID
-			func GetWorkflowPhaseByID(id string) *WorkflowPhase {
-			    constants := GetWorkflowConstants()
-			    for _, phase := range constants.Phases {
-			        if phase.ID == id {
-			            return &phase
-			        }
-			    }
-			    return nil
-			}
-			
-			// HandleWorkflowConstants returns the current workflow constants via HTTP
-			func HandleWorkflowConstants(w http.ResponseWriter, r *http.Request) {
-			    if r.Method != http.MethodGet {
-			        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			        return
-			    }
-			
-			    // Get workflow constants
-			    workflowConstants := GetWorkflowConstants()
-			
-			    // Create response
-			    response := map[string]interface{}{
-			        "success":   true,
-			        "constants": workflowConstants,
-			        "message":   "Workflow constants retrieved successfully",
-			    }
-			
-			    w.Header().Set("Content-Type", "application/json")
-			    if err := json.NewEncoder(w).Encode(response); err != nil {
-			        http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
-			        return
-			    }
-			}
-			
-			// WorkflowOrchestrator handles todo-list-based workflow execution
-			type WorkflowOrchestrator struct {
-			    // Base orchestrator for common functionality
-			    *orchestrator.BaseOrchestrator
-			
-			    // Preset-level agent defaults (used when step config doesn't specify)
-			    presetExecutionLLM            *step_based_workflow.AgentLLMConfig // Default for execution agents
-			    presetValidationLLM           *step_based_workflow.AgentLLMConfig // Default for validation agents
-			    presetLearningLLM             *step_based_workflow.AgentLLMConfig // Default for learning agents
-			    presetPhaseLLM                *step_based_workflow.AgentLLMConfig // Default for all phase agents (planning, anonymization, plan improvement, etc.)
-			    presetPlanImprovementLLM      *step_based_workflow.AgentLLMConfig // Default for plan improvement agent
-			    presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig // Default for plan tool optimization agent
-			    presetCodeExecDebuggingLLM    *step_based_workflow.AgentLLMConfig // Default for code exec debugging agent
-			
-			    // Frontend-provided execution options (when provided, skips interactive prompts)
-			    executionOptions *step_based_workflow.ExecutionOptions
-			
-			    // Session ID for MCP connection management
-			    // Generated once when workflow starts, used by all agents to share MCP connections
-			    sessionID string
-			}
+			{
+				ID:          "learning-consolidation",
+				Title:       "Learning Consolidation",
+				Description: "Analyze and consolidate learning files to identify duplicate patterns, similar patterns, and outdated patterns. Merges redundant patterns and optimizes learning structure for better future execution efficiency.",
+				Options:     []WorkflowPhaseOption{}, // No options for consolidation phase
+			},
+			{
+				ID:          "code-exec-debugging",
+				Title:       "Code Debugger",
+				Description: "Analyze execution logs and conversation history for code execution steps. Identifies common errors like hardcoded paths, incorrect CLI arguments, and workspace tool misuse, providing specific fixes to the plan.",
+				Options:     []WorkflowPhaseOption{}, // No options for code debugger phase
+			},
+		},
+	}
+}
+
+// GetWorkflowPhaseByID returns a workflow phase by its ID
+func GetWorkflowPhaseByID(id string) *WorkflowPhase {
+	constants := GetWorkflowConstants()
+	for _, phase := range constants.Phases {
+		if phase.ID == id {
+			return &phase
+		}
+	}
+	return nil
+}
+
+// HandleWorkflowConstants returns the current workflow constants via HTTP
+func HandleWorkflowConstants(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get workflow constants
+	workflowConstants := GetWorkflowConstants()
+
+	// Create response
+	response := map[string]interface{}{
+		"success":   true,
+		"constants": workflowConstants,
+		"message":   "Workflow constants retrieved successfully",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+		return
+	}
+}
+
+// WorkflowOrchestrator handles todo-list-based workflow execution
+type WorkflowOrchestrator struct {
+	// Base orchestrator for common functionality
+	*orchestrator.BaseOrchestrator
+
+	// Preset-level agent defaults (used when step config doesn't specify)
+	presetExecutionLLM            *step_based_workflow.AgentLLMConfig // Default for execution agents
+	presetValidationLLM           *step_based_workflow.AgentLLMConfig // Default for validation agents
+	presetLearningLLM             *step_based_workflow.AgentLLMConfig // Default for learning agents
+	presetPhaseLLM                *step_based_workflow.AgentLLMConfig // Default for all phase agents (planning, anonymization, plan improvement, etc.)
+	presetPlanImprovementLLM      *step_based_workflow.AgentLLMConfig // Default for plan improvement agent
+	presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig // Default for plan tool optimization agent
+	presetCodeExecDebuggingLLM    *step_based_workflow.AgentLLMConfig // Default for code exec debugging agent
+
+	// Frontend-provided execution options (when provided, skips interactive prompts)
+	executionOptions *step_based_workflow.ExecutionOptions
+
+	// Session ID for MCP connection management
+	// Generated once when workflow starts, used by all agents to share MCP connections
+	sessionID string
+}
+
 // SetExecutionOptions sets the execution options from frontend
 // When set, backend will use these options instead of asking interactively
 func (wo *WorkflowOrchestrator) SetExecutionOptions(options *step_based_workflow.ExecutionOptions) {
@@ -225,9 +227,8 @@ type TodoVerificationResponse struct {
 }
 
 // NewWorkflowOrchestrator creates a new workflow orchestrator
+// Note: provider and model parameters removed - LLM selection uses temp override → step config → preset LLM priority
 func NewWorkflowOrchestrator(
-	provider string,
-	model string,
 	mcpConfigPath string,
 	temperature float64,
 	agentMode string,
@@ -246,12 +247,11 @@ func NewWorkflowOrchestrator(
 ) (*WorkflowOrchestrator, error) {
 
 	// Create base orchestrator
+	// Note: provider and model parameters removed - not used for workflow orchestrator (LLM comes from temp override/step config/preset)
 	baseOrchestrator, err := orchestrator.NewBaseOrchestrator(
 		logger,
 		eventBridge,
 		orchestrator.OrchestratorTypeWorkflow,
-		provider,
-		model,
 		mcpConfigPath,
 		temperature,
 		agentMode,
@@ -277,12 +277,16 @@ func NewWorkflowOrchestrator(
 				Provider: presetLLMConfig.ExecutionLLM.Provider,
 				ModelID:  presetLLMConfig.ExecutionLLM.ModelID,
 			}
+			log.Printf("[PRESET_EXECUTION_LLM_DEBUG] Extracted presetExecutionLLM from ExecutionLLM: %s/%s", presetExecutionLLM.Provider, presetExecutionLLM.ModelID)
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
 			// Fall back to legacy single default for execution
 			presetExecutionLLM = &step_based_workflow.AgentLLMConfig{
 				Provider: presetLLMConfig.Provider,
 				ModelID:  presetLLMConfig.ModelID,
 			}
+			log.Printf("[PRESET_EXECUTION_LLM_DEBUG] Extracted presetExecutionLLM from legacy Provider/ModelID: %s/%s", presetExecutionLLM.Provider, presetExecutionLLM.ModelID)
+		} else {
+			log.Printf("[PRESET_EXECUTION_LLM_DEBUG] No presetExecutionLLM found - presetLLMConfig.ExecutionLLM is nil and legacy Provider/ModelID are empty")
 		}
 		if presetLLMConfig.ValidationLLM != nil && presetLLMConfig.ValidationLLM.Provider != "" && presetLLMConfig.ValidationLLM.ModelID != "" {
 			presetValidationLLM = &step_based_workflow.AgentLLMConfig{
@@ -327,6 +331,8 @@ func NewWorkflowOrchestrator(
 			presetPlanToolOptimizationLLM = presetLearningLLM
 			// Note: presetAnonymizationLLM and presetLearningConsolidationLLM are deprecated and removed
 		}
+	} else {
+		log.Printf("[PRESET_EXECUTION_LLM_DEBUG] presetLLMConfig is nil - no preset LLM config provided")
 	}
 
 	// Create workflow orchestrator instance
@@ -452,10 +458,15 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 
 	// Create human controlled planner orchestrator (needed for planning)
 	llmConfig := wo.GetLLMConfig()
+	if wo.presetExecutionLLM != nil {
+		wo.GetLogger().Info(fmt.Sprintf("[PRESET_EXECUTION_LLM_DEBUG] [runPlanningOnly] presetExecutionLLM: %s/%s", wo.presetExecutionLLM.Provider, wo.presetExecutionLLM.ModelID))
+	} else {
+		wo.GetLogger().Info("[PRESET_EXECUTION_LLM_DEBUG] [runPlanningOnly] presetExecutionLLM is nil")
+	}
 	todoPlannerAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
 		ctx,
-		wo.GetProvider(),
-		wo.GetModel(),
+		"", // provider (not used - LLM comes from temp override/step config/preset)
+		"", // model (not used - LLM comes from temp override/step config/preset)
 		wo.GetTemperature(),
 		wo.GetAgentMode(),
 		wo.GetSelectedServers(),
@@ -546,8 +557,8 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 	llmConfig := wo.GetLLMConfig()
 	todoPlannerAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
 		ctx,
-		wo.GetProvider(),
-		wo.GetModel(),
+		"", // provider (not used - LLM comes from temp override/step config/preset)
+		"", // model (not used - LLM comes from temp override/step config/preset)
 		wo.GetTemperature(),
 		wo.GetAgentMode(),
 		wo.GetSelectedServers(),
@@ -749,10 +760,15 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 
 	// Create human controlled planner orchestrator directly
 	llmConfig := wo.GetLLMConfig()
+	if wo.presetExecutionLLM != nil {
+		wo.GetLogger().Info(fmt.Sprintf("[PRESET_EXECUTION_LLM_DEBUG] [runHumanControlledPlanning] presetExecutionLLM: %s/%s", wo.presetExecutionLLM.Provider, wo.presetExecutionLLM.ModelID))
+	} else {
+		wo.GetLogger().Info("[PRESET_EXECUTION_LLM_DEBUG] [runHumanControlledPlanning] presetExecutionLLM is nil")
+	}
 	todoPlannerAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
 		ctx,
-		wo.GetProvider(),
-		wo.GetModel(),
+		"", // provider (not used - LLM comes from temp override/step config/preset)
+		"", // model (not used - LLM comes from temp override/step config/preset)
 		wo.GetTemperature(),
 		wo.GetAgentMode(),
 		wo.GetSelectedServers(),

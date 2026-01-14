@@ -778,7 +778,7 @@ export const agentApi = {
   },
 
   // Get cost data (token usage) for a workflow run
-  getCosts: async (workspacePath: string, runFolder: string): Promise<{ success: boolean; token_usage?: TokenUsageFile }> => {
+  getCosts: async (workspacePath: string, runFolder: string): Promise<{ success: boolean; token_usage?: TokenUsageFile; evaluation_token_usage?: TokenUsageFile }> => {
     const response = await api.get('/api/workflow/costs', {
       params: { workspace_path: workspacePath, run_folder: runFolder }
     })

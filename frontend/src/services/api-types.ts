@@ -1149,5 +1149,5 @@ export interface WorkflowPhase {
   id: string;
   title: string;
   description: string;
-  options?: unknown[];
+  options?: WorkflowPhaseOption[];
 }

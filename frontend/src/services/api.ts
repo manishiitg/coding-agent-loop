@@ -40,7 +40,6 @@ import type {
   EvaluationReportsResponse,
   TokenUsageFile,
   WorkspaceStateResponse,
-  WorkspaceState,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 

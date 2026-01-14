@@ -867,7 +867,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                       </tr>
                                     </thead>
                                     <tbody className="divide-y divide-border">
-                                      {Object.entries(iter.tokenUsage.by_model).map(([modelId, usage]) => {
+                                      {iter.tokenUsage && Object.entries(iter.tokenUsage.by_model).map(([modelId, usage]) => {
                                         const cacheRead = usage.cache_read_tokens || usage.cache_tokens || 0
                                         const cacheWrite = usage.cache_write_tokens || 0
                                         const reasoning = usage.reasoning_tokens || 0

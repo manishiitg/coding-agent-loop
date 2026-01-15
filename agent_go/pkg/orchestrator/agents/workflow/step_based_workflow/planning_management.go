@@ -572,12 +572,19 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 			}
 		}
 
-		// Validation is required for loop steps
-		if step.HasLoop && agentConfigs != nil && agentConfigs.DisableValidation != nil && *agentConfigs.DisableValidation {
-			enabledConfigs := *agentConfigs
-			val := false
-			enabledConfigs.DisableValidation = &val
-			agentConfigs = &enabledConfigs
+		// LLM validation is required for loop steps (to evaluate loop condition)
+		// Since LLM validation is disabled by default (nil = disabled), always force it on for loop steps
+		if step.HasLoop {
+			val := false // false = validation enabled
+			if agentConfigs == nil {
+				agentConfigs = &AgentConfigs{
+					DisableValidation: &val,
+				}
+			} else if agentConfigs.DisableValidation == nil || *agentConfigs.DisableValidation {
+				enabledConfigs := *agentConfigs
+				enabledConfigs.DisableValidation = &val
+				agentConfigs = &enabledConfigs
+			}
 		}
 
 		// Populate runtime field directly on plan step

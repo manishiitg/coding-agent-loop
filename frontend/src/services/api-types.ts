@@ -645,6 +645,9 @@ export interface PresetLLMConfig {
   validation_llm?: AgentLLMConfig       // Default for validation agents
   learning_llm?: AgentLLMConfig         // Default for learning agents
   phase_llm?: AgentLLMConfig            // Default for all phase agents (planning, anonymization, plan improvement, etc.)
+
+  // Feature toggles
+  use_knowledgebase?: boolean           // nil/true = enabled (default), false = disabled
 }
 
 // Preset Query API types

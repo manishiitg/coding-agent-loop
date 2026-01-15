@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { X, Settings, Layers } from 'lucide-react'
 import { Button } from './ui/Button'
 import { TooltipProvider } from './ui/tooltip'
-import { useLLMStore } from '../stores'
+import { useLLMStore, useAppStore } from '../stores'
 import type { LLMConfiguration, ExtendedLLMConfiguration, AgentLLMConfiguration, SavedLLM } from '../services/api-types'
 import { AnthropicSection } from './AnthropicSection'
 import { OpenRouterSection } from './OpenRouterSection'
@@ -31,16 +31,29 @@ type APIKeyStatus = Record<ProviderType, APIKeyStatusValue>
 type APIKeyError = Record<ProviderType, string | null>
 
 export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurationModalProps) {
+  // Get current mode from app store
+  const agentMode = useAppStore(state => state.agentMode)
+  // Map 'simple' to 'chat' for our mode-specific configs
+  const currentMode: 'chat' | 'workflow' = agentMode === 'workflow' ? 'workflow' : 'chat'
+
   const {
-    primaryConfig,
-    agentConfig,
+    // Legacy configs (kept for backward compatibility)
+    primaryConfig: _primaryConfig,
+    agentConfig: _agentConfig,
     setAgentConfig,
+    setPrimaryConfig,
+    // Mode-specific configs
+    getConfigForMode,
+    setChatPrimaryConfig,
+    setChatAgentConfig,
+    setWorkflowPrimaryConfig,
+    setWorkflowAgentConfig,
+    // Provider configs (shared across modes)
     openrouterConfig,
     bedrockConfig,
     openaiConfig,
     vertexConfig,
     anthropicConfig,
-    setPrimaryConfig,
     setOpenrouterConfig,
     setBedrockConfig,
     setOpenaiConfig,
@@ -51,6 +64,32 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     loadDefaultsFromBackend,
     refreshAvailableLLMs
   } = useLLMStore()
+
+  // Get mode-specific configs
+  const modeConfig = getConfigForMode(currentMode)
+  const modePrimaryConfig = modeConfig.primaryConfig
+  const modeAgentConfig = modeConfig.agentConfig
+
+  // Mode-specific setters
+  const setModePrimaryConfig = useCallback((config: LLMConfiguration) => {
+    if (currentMode === 'workflow') {
+      setWorkflowPrimaryConfig(config)
+    } else {
+      setChatPrimaryConfig(config)
+    }
+    // Also update legacy config for backward compatibility
+    setPrimaryConfig(config)
+  }, [currentMode, setChatPrimaryConfig, setWorkflowPrimaryConfig, setPrimaryConfig])
+
+  const setModeAgentConfig = useCallback((config: AgentLLMConfiguration | null) => {
+    if (currentMode === 'workflow') {
+      setWorkflowAgentConfig(config)
+    } else {
+      setChatAgentConfig(config)
+    }
+    // Also update legacy config for backward compatibility
+    setAgentConfig(config)
+  }, [currentMode, setChatAgentConfig, setWorkflowAgentConfig, setAgentConfig])
 
   // Provider config map for reducing duplication
   const providerConfigMap = useMemo(() => ({
@@ -86,39 +125,39 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     }
   }, [isOpen])
 
-  // Initialize/Migrate agentConfig
+  // Initialize/Migrate agentConfig for current mode
   useEffect(() => {
-    if (isOpen && !agentConfig && primaryConfig.provider && primaryConfig.model_id) {
+    if (isOpen && !modeAgentConfig && modePrimaryConfig.provider && modePrimaryConfig.model_id) {
       const newConfig: AgentLLMConfiguration = {
         primary: {
-          provider: primaryConfig.provider,
-          model_id: primaryConfig.model_id,
+          provider: modePrimaryConfig.provider,
+          model_id: modePrimaryConfig.model_id,
         },
         fallbacks: []
       }
 
       // Migrate legacy fallbacks
-      if (primaryConfig.fallback_models) {
-        primaryConfig.fallback_models.forEach(modelId => {
+      if (modePrimaryConfig.fallback_models) {
+        modePrimaryConfig.fallback_models.forEach(modelId => {
           newConfig.fallbacks.push({
-            provider: primaryConfig.provider,
+            provider: modePrimaryConfig.provider,
             model_id: modelId
           })
         })
       }
 
-      if (primaryConfig.cross_provider_fallback) {
-        primaryConfig.cross_provider_fallback.models.forEach(modelId => {
+      if (modePrimaryConfig.cross_provider_fallback) {
+        modePrimaryConfig.cross_provider_fallback.models.forEach(modelId => {
           newConfig.fallbacks.push({
-            provider: primaryConfig.cross_provider_fallback!.provider,
+            provider: modePrimaryConfig.cross_provider_fallback!.provider,
             model_id: modelId
           })
         })
       }
-      
-      setAgentConfig(newConfig)
+
+      setModeAgentConfig(newConfig)
     }
-  }, [isOpen, agentConfig, primaryConfig, setAgentConfig])
+  }, [isOpen, modeAgentConfig, modePrimaryConfig, setModeAgentConfig])
 
   // Models are now accessed directly from metadata or store in each provider section
 
@@ -194,30 +233,30 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, onClose])
 
-  // Sync primary config when provider config changes
+  // Sync primary config when provider config changes (mode-specific)
   const syncPrimaryConfig = useCallback((provider: ProviderType, config: ExtendedLLMConfiguration) => {
-    // Also sync agentConfig primary
-    if (agentConfig && agentConfig.primary.provider === provider) {
-      setAgentConfig({
-        ...agentConfig,
+    // Also sync agentConfig primary (mode-specific)
+    if (modeAgentConfig && modeAgentConfig.primary.provider === provider) {
+      setModeAgentConfig({
+        ...modeAgentConfig,
         primary: {
-          ...agentConfig.primary,
+          ...modeAgentConfig.primary,
           model_id: config.model_id,
           options: config.options
         }
       })
     }
 
-    if (primaryConfig.provider === provider) {
+    if (modePrimaryConfig.provider === provider) {
       const updatedPrimaryConfig: LLMConfiguration = {
         provider: provider,
         model_id: config.model_id,
         fallback_models: config.fallback_models,
         cross_provider_fallback: config.cross_provider_fallback
       }
-      setPrimaryConfig(updatedPrimaryConfig)
+      setModePrimaryConfig(updatedPrimaryConfig)
     }
-  }, [agentConfig, primaryConfig.provider, setAgentConfig, setPrimaryConfig])
+  }, [modeAgentConfig, modePrimaryConfig.provider, setModeAgentConfig, setModePrimaryConfig])
 
   // Generic handler for provider config updates
   const handleProviderConfigUpdate = useCallback((provider: ProviderType, config: ExtendedLLMConfiguration) => {
@@ -225,23 +264,23 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     syncPrimaryConfig(provider, config)
   }, [providerConfigMap, syncPrimaryConfig])
 
-  // Handle setting primary provider
+  // Handle setting primary provider (mode-specific)
   const handleSetPrimaryProvider = useCallback((provider: ProviderType) => {
     const configToUse = providerConfigMap[provider].config
 
-    // Update Legacy Config
+    // Update mode-specific primary config
     const newPrimaryConfig: LLMConfiguration = {
       provider: provider,
       model_id: configToUse.model_id,
       fallback_models: configToUse.fallback_models,
       cross_provider_fallback: configToUse.cross_provider_fallback
     }
-    setPrimaryConfig(newPrimaryConfig)
+    setModePrimaryConfig(newPrimaryConfig)
 
-    // Update New Config
-    if (agentConfig) {
-      setAgentConfig({
-        ...agentConfig,
+    // Update mode-specific agent config
+    if (modeAgentConfig) {
+      setModeAgentConfig({
+        ...modeAgentConfig,
         primary: {
           provider: provider,
           model_id: configToUse.model_id,
@@ -251,7 +290,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     }
 
     refreshAvailableLLMs()
-  }, [providerConfigMap, agentConfig, setAgentConfig, setPrimaryConfig, refreshAvailableLLMs])
+  }, [providerConfigMap, modeAgentConfig, setModeAgentConfig, setModePrimaryConfig, refreshAvailableLLMs])
 
   // Handle library selection
   const handleLibrarySelect = useCallback((llm: SavedLLM) => {
@@ -279,6 +318,13 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
             <div className="flex items-center gap-3">
               <Settings className="w-6 h-6 text-primary" />
               <h2 className="text-xl font-semibold text-foreground">LLM Configuration</h2>
+              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                currentMode === 'workflow'
+                  ? 'bg-purple-500/20 text-purple-400'
+                  : 'bg-blue-500/20 text-blue-400'
+              }`}>
+                {currentMode === 'workflow' ? 'Workflow' : 'Chat'}
+              </span>
             </div>
             <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0 hover:bg-secondary">
               <X className="w-4 h-4" />
@@ -340,10 +386,10 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
 
             {/* Right Content */}
             <div className="flex-1 p-3 sm:p-6 overflow-y-auto min-h-0">
-              {activeTab === 'fallbacks' && agentConfig && (
+              {activeTab === 'fallbacks' && modeAgentConfig && (
                 <FallbacksTab
-                  config={agentConfig}
-                  onUpdate={setAgentConfig}
+                  config={modeAgentConfig}
+                  onUpdate={setModeAgentConfig}
                   metadata={metadata}
                   isLoadingMetadata={isLoadingMetadata}
                 />

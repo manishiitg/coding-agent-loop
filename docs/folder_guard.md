@@ -200,9 +200,18 @@ readPaths := []string{learningsPath}
 // Write paths: execution (read + write)
 writePaths := []string{executionPath}
 
+// Conditionally add knowledgebase folder (if enabled in preset)
+if hcpo.UseKnowledgebase() {
+    knowledgebasePath := fmt.Sprintf("%s/knowledgebase", baseWorkspacePath)
+    readPaths = append(readPaths, knowledgebasePath)
+    writePaths = append(writePaths, knowledgebasePath)
+}
+
 // Configure folder guard (applies to simple, code-exec, and shell)
 hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 ```
+
+**Note:** The `knowledgebase/` folder is conditionally included based on the preset's `use_knowledgebase` setting. When disabled, agents cannot access this folder as it won't be in the allowed paths.
 
 ### Docker Configuration for Shell Isolation (Linux)
 To support `unshare -m` in Docker, the container requires:

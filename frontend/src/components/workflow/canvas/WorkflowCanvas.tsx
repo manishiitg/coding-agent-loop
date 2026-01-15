@@ -74,11 +74,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const pendingFocusStepIdRef = React.useRef<string | null>(null)
   // Store current viewport state (x, y, zoom) to preserve it during refresh
   const viewportStateRef = React.useRef<{ x: number; y: number; zoom: number } | null>(null)
-  
+
   // Generate localStorage key for viewport state (workspace-specific)
   const getViewportStorageKey = React.useCallback(() => {
-    return workspacePath 
-      ? `workflow-viewport-${workspacePath}` 
+    return workspacePath
+      ? `workflow-viewport-${workspacePath}`
       : 'workflow-viewport-default'
   }, [workspacePath])
 
@@ -645,15 +645,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     if (parentPositionChanges.size > 0) {
       setNodes((nds) => {
         // First pass: update direct children
-        // Note: Sub-agents, validation, learning, and evaluation nodes are now independent
-        // They don't move when their parent moves (they can be manually positioned)
+        // Note: Sub-agents SHOULD move with their parent orchestrator
+        // Validation, learning, and evaluation nodes remain independent
         let updatedNodes = nds.map(node => {
           const parentId = childToParentRef.current.get(node.id)
-          // Skip if this is a sub-agent, validation, learning, or evaluation node
+          
+          // Skip if this is a validation, learning, or evaluation node
           // These are independent and can be manually positioned
-          const isSubAgent = node.id.includes('-sub-agent-')
           const isValidationLearningEval = node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation'
-          if (isSubAgent || isValidationLearningEval) {
+          if (isValidationLearningEval) {
             return node // These nodes are independent, don't update them here
           }
           
@@ -1105,8 +1105,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         // First try to load saved layout from file
         loadSavedLayout().then(savedLayout => {
           // Use saved layout if available, otherwise use current positions (captured before refresh)
-          const positionsToUse = savedLayout?.positions && savedLayout.positions.size > 0 
-            ? savedLayout.positions 
+          const positionsToUse = savedLayout?.positions && savedLayout.positions.size > 0
+            ? savedLayout.positions
             : currentPositionsRef.current
           const offsetsToUse = savedLayout?.offsets && savedLayout.offsets.size > 0
             ? savedLayout.offsets
@@ -1396,7 +1396,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [nodes, selectedNode, focusNode]) // Include focusNode in dependencies
 
-  // Load saved viewport state from localStorage on mount
+  // Load saved viewport from localStorage
   const savedViewportRef = React.useRef<{ x: number; y: number; zoom: number } | null>(null)
   React.useEffect(() => {
     try {
@@ -1406,7 +1406,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         const parsed = JSON.parse(saved)
         if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number' && typeof parsed.zoom === 'number') {
           savedViewportRef.current = { x: parsed.x, y: parsed.y, zoom: parsed.zoom }
-          console.log('[WorkflowCanvas] Loaded saved viewport from localStorage:', savedViewportRef.current)
         }
       }
     } catch (error) {
@@ -1427,7 +1426,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           })
           viewportStateRef.current = savedViewportRef.current
           hasInitializedView.current = true
-          console.log('[WorkflowCanvas] Restored saved viewport from localStorage:', savedViewportRef.current)
         }, 200)
         return
       }
@@ -2024,7 +2022,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
               zoom: viewport.zoom
             }
             viewportStateRef.current = viewportState
-            
+
             // Save to localStorage (only after initial view has been set)
             if (hasInitializedView.current) {
               try {

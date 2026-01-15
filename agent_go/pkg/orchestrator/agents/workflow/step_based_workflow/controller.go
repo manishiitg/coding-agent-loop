@@ -89,6 +89,9 @@ type StepBasedWorkflowOrchestrator struct {
 	// Save validation responses to workspace (from ExecutionOptions)
 	// If true, save validation responses to workspace validation folder
 	saveValidationResponses bool
+
+	// Preset-level feature toggles
+	useKnowledgebase bool // Whether to create and reference knowledgebase folder (default: true)
 }
 
 // NewStepBasedWorkflowOrchestrator creates a new human-controlled todo planner orchestrator
@@ -116,6 +119,7 @@ func NewStepBasedWorkflowOrchestrator(
 	presetPhaseLLM *AgentLLMConfig, // Optional preset default for all phase agents
 	presetAnonymizationLLM *AgentLLMConfig, // Optional preset default for anonymization agent
 	presetPlanImprovementLLM *AgentLLMConfig, // Optional preset default for plan improvement agent
+	useKnowledgebase bool, // Whether to create and reference knowledgebase folder (default: true)
 ) (*StepBasedWorkflowOrchestrator, error) {
 
 	// Create base workflow orchestrator
@@ -165,6 +169,7 @@ func NewStepBasedWorkflowOrchestrator(
 		presetAnonymizationLLM:   presetAnonymizationLLM,
 		presetPlanImprovementLLM: presetPlanImprovementLLM,
 		saveValidationResponses:  true, // Default to true (save validation responses by default)
+		useKnowledgebase:         useKnowledgebase,
 	}
 
 	// Create VariableManager for variable extraction operations (independent from controller)
@@ -1080,6 +1085,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) Execute(ctx context.Context, objectiv
 // GetType returns the orchestrator type
 func (hcpo *StepBasedWorkflowOrchestrator) GetType() string {
 	return "human_controlled_todo_planner"
+}
+
+// UseKnowledgebase returns whether the knowledgebase feature is enabled
+func (hcpo *StepBasedWorkflowOrchestrator) UseKnowledgebase() bool {
+	return hcpo.useKnowledgebase
 }
 
 // Helper methods for human feedback tracking

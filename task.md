@@ -56,3 +56,5 @@ i) prompt tempaltes, need to check variables on compile time
 3. all workflows don't require a knowledgebase
 
 4. typing in chatinput is very slow
+
+5. make large tool output optional in chat agent

@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useMemo, useState, useEffect } from 'react'
+import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
 import { Send, Square, Code2, Sparkles, Loader2, FolderOpen } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
@@ -24,6 +24,9 @@ interface ChatInputProps {
   onSubmit: (query: string) => void
   onStopStreaming: () => void
 }
+
+// Stable empty array reference to avoid infinite loops in selectors
+const EMPTY_EVENTS: never[] = []
 
 // Completely isolated input component that doesn't re-render when events change
 const ChatInputComponent: React.FC<ChatInputProps> = ({
@@ -55,120 +58,89 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const isStreaming = activeTab?.isStreaming ?? false
   const tabSessionId = activeTab?.sessionId ?? null
   
-  // Warn if no active tab (tabs should always exist)
-  if (!activeTab) {
-    console.warn(`[ChatInput] No active tab - this should not happen in tab mode`)
-  }
+  // Note: activeTab may be undefined during initial render before tabs are created
+  // This is expected and will resolve once the tab store initializes
   
-  // Get events for the active tab's sessionId to extract context usage percentage
-  // Subscribe directly to tabEvents store to ensure reactivity when events change
-  const tabEventsStore = useChatStore(state => state.tabEvents)
+  // Get all tab events from the store (stable selector)
+  const allTabEvents = useChatStore(state => state.tabEvents)
+
+  // Derive tab-specific events with useMemo (avoids selector closure issues)
   const tabEvents = useMemo(() => {
-    if (!tabSessionId) return []
-    return tabEventsStore[tabSessionId] || []
-  }, [tabSessionId, tabEventsStore])
-  
-  // Find the latest token_usage event and extract context_usage_percent and token usage data
+    if (!tabSessionId) return EMPTY_EVENTS
+    return allTabEvents[tabSessionId] ?? EMPTY_EVENTS
+  }, [tabSessionId, allTabEvents])
+
+  // Throttle recalculation - only update when event count changes by 5+
+  const eventCountBatch = Math.floor(tabEvents.length / 5)
+
+  // Find the latest token usage (optimized with backward iteration)
   const { contextUsagePercent, latestTokenUsage } = useMemo(() => {
-    if (!tabEvents || tabEvents.length === 0) return { contextUsagePercent: null, latestTokenUsage: null }
-    
-    // First, try to find token_usage events (prioritize conversation_total events)
-    const tokenUsageEvents = tabEvents
-      .filter(event => event.type === 'token_usage')
-      .sort((a, b) => {
-        // Prioritize conversation_total events, then sort by timestamp
-        const aTokenUsage = a.data?.data?.token_usage
-        const bTokenUsage = b.data?.data?.token_usage
-        const aIsTotal = aTokenUsage?.context === 'conversation_total'
-        const bIsTotal = bTokenUsage?.context === 'conversation_total'
-        
-        if (aIsTotal && !bIsTotal) return -1 // a comes first
-        if (!aIsTotal && bIsTotal) return 1  // b comes first
-        
-        // Both same type, sort by timestamp
-        const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
-        const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
-        return bTime - aTime // Newest first
-      })
-    
-    if (tokenUsageEvents.length > 0) {
-      const latestEvent = tokenUsageEvents[0]
-      
-      // Use type-safe event data extraction
+    if (tabEvents.length === 0) return { contextUsagePercent: null, latestTokenUsage: null }
+
+    // Iterate backwards (newest first) to find the latest quickly
+    let latestTokenUsageEvent = null
+    let latestTotalEvent = null
+
+    for (let i = tabEvents.length - 1; i >= 0 && !latestTotalEvent; i--) {
+      const event = tabEvents[i]
+      if (event.type === 'token_usage') {
+        const tokenUsageData = event.data?.data?.token_usage
+        if (tokenUsageData?.context === 'conversation_total') {
+          latestTotalEvent = event
+          break
+        }
+        if (!latestTokenUsageEvent) {
+          latestTokenUsageEvent = event
+        }
+      }
+    }
+
+    const latestEvent = latestTotalEvent || latestTokenUsageEvent
+
+    if (latestEvent) {
       let tokenUsage: TokenUsageEvent | null = null
       if (isEventType(latestEvent, 'token_usage')) {
         tokenUsage = getEventData(latestEvent) as TokenUsageEvent
       } else {
-        // Fallback: try direct access
         tokenUsage = latestEvent.data?.data?.token_usage as TokenUsageEvent | undefined || null
       }
-      
+
       if (tokenUsage) {
         const isTotalEvent = tokenUsage.context === 'conversation_total'
-        // For total events, check generation_info first, then fall back to direct property
-        // For non-total events, check direct property first, then generation_info
         const contextPercent = isTotalEvent
           ? (tokenUsage.generation_info?.context_usage_percent as number | undefined) ?? tokenUsage.context_usage_percent
           : tokenUsage.context_usage_percent ?? (tokenUsage.generation_info?.context_usage_percent as number | undefined)
-        
-        // Debug: log to help diagnose
-        if (isTotalEvent) {
-          console.log('[ChatInput] Total token usage event found:', {
-            eventType: latestEvent.type,
-            contextPercent,
-            hasGenerationInfo: !!tokenUsage.generation_info,
-            generationInfoContextPercent: tokenUsage.generation_info?.context_usage_percent,
-            directContextPercent: tokenUsage.context_usage_percent,
-            tokenUsageKeys: Object.keys(tokenUsage),
-            fullTokenUsage: tokenUsage
-          })
-        }
-        
-        // Return token usage data - show indicator if contextPercent exists (even if 0)
-        // Only hide if contextPercent is null/undefined
+
         return {
           contextUsagePercent: contextPercent !== undefined && contextPercent !== null ? contextPercent : null,
           latestTokenUsage: tokenUsage
         }
-      } else {
-        console.warn('[ChatInput] token_usage event found but could not extract tokenUsage data:', {
-          eventType: latestEvent.type,
-          eventData: latestEvent.data,
-          eventDataData: latestEvent.data?.data
-        })
       }
     }
-    
-    // Fallback: Check LLM generation end events for context usage in metadata
-    const llmEndEvents = tabEvents
-      .filter(event => event.type === 'llm_generation_end')
-      .sort((a, b) => {
-        const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
-        const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
-        return bTime - aTime
-      })
-    
-    if (llmEndEvents.length > 0) {
-      const latestLLMEvent = llmEndEvents[0]
-      const llmData = latestLLMEvent.data?.data?.llm_generation_end
-      const contextPercent = llmData?.metadata?.context_usage_percent as number | undefined
-      
-      if (contextPercent && contextPercent > 0) {
-        // Create a minimal token usage object from LLM event metadata
-        const minimalTokenUsage = {
-          context_usage_percent: contextPercent,
-          model_context_window: llmData?.metadata?.model_context_window as number | undefined,
-          context_window_usage: llmData?.metadata?.current_context_window_usage as number | undefined,
-        }
-        return {
-          contextUsagePercent: contextPercent,
-          latestTokenUsage: minimalTokenUsage
+
+    // Fallback: Check LLM generation end events (iterate backwards)
+    for (let i = tabEvents.length - 1; i >= 0; i--) {
+      const event = tabEvents[i]
+      if (event.type === 'llm_generation_end') {
+        const llmData = event.data?.data?.llm_generation_end
+        const contextPercent = llmData?.metadata?.context_usage_percent as number | undefined
+
+        if (contextPercent && contextPercent > 0) {
+          const minimalTokenUsage = {
+            context_usage_percent: contextPercent,
+            model_context_window: llmData?.metadata?.model_context_window as number | undefined,
+            context_window_usage: llmData?.metadata?.current_context_window_usage as number | undefined,
+          }
+          return {
+            contextUsagePercent: contextPercent,
+            latestTokenUsage: minimalTokenUsage
+          }
         }
       }
     }
-    
+
     return { contextUsagePercent: null, latestTokenUsage: null }
-  }, [tabEvents])
+  }, [tabEvents, eventCountBatch])
   
   // Always use tab-specific config (ChatInput is only in chat mode)
   // Memoize to prevent unnecessary re-renders when other config values change
@@ -218,9 +190,33 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Get preset info for chat mode
   const { getActivePreset, activePresetIds, customPresets, predefinedPresets } = usePresetApplication()
   
-  // Get current input text directly from tab config (single source of truth)
-  const inputText = tabConfig?.inputText || ''
-  
+  // Get input text from tab config (source of truth for persistence)
+  const storedInputText = tabConfig?.inputText || ''
+
+  // Local state for immediate UI updates (prevents Zustand updates on every keystroke)
+  const [localInputText, setLocalInputText] = useState(storedInputText)
+  const inputText = localInputText
+
+  // Debounce ref for syncing to store
+  const syncToStoreTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Sync local state FROM store when store changes externally (preset sync, etc.)
+  useLayoutEffect(() => {
+    // Only sync if store value differs and we're not in the middle of typing
+    if (storedInputText !== localInputText && !syncToStoreTimeoutRef.current) {
+      setLocalInputText(storedInputText)
+    }
+  }, [storedInputText]) // Intentionally exclude localInputText to avoid loops
+
+  // Cleanup timeout refs on unmount
+  useEffect(() => {
+    return () => {
+      if (syncToStoreTimeoutRef.current) {
+        clearTimeout(syncToStoreTimeoutRef.current)
+      }
+    }
+  }, [])
+
   // Get queued messages from tab config
   const queuedMessages = useMemo(() => tabConfig?.queuedMessages || [], [tabConfig?.queuedMessages])
   
@@ -229,42 +225,42 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   
   const {
     enabledServers: availableServers,
-    setSelectedServers: setGlobalSelectedServers
+    setChatSelectedServers
   } = useMCPStore()
   
   // Use tab-specific servers - memoize to prevent re-renders
   const manualSelectedServers = useMemo(() => tabConfig?.selectedServers || [], [tabConfig?.selectedServers])
   
-  // Server operations (always update tab config AND sync to global MCP store for chat mode)
-  // This ensures new tabs inherit the user's manual server selection
+  // Server operations (always update tab config AND sync to chat-specific MCP store)
+  // This ensures new chat tabs inherit the user's manual server selection
   const onManualServerToggle = useCallback((server: string) => {
     if (activeTabId) {
       const newServers = manualSelectedServers.includes(server)
         ? manualSelectedServers.filter(s => s !== server)
         : [...manualSelectedServers, server]
       setTabConfig(activeTabId, { selectedServers: newServers })
-      // Sync to global MCP store so new tabs inherit this selection
-      setGlobalSelectedServers(newServers)
+      // Sync to chat-specific MCP store so new chat tabs inherit this selection
+      setChatSelectedServers(newServers)
     }
-  }, [activeTabId, manualSelectedServers, setTabConfig, setGlobalSelectedServers])
+  }, [activeTabId, manualSelectedServers, setTabConfig, setChatSelectedServers])
   
   const onSelectAllServers = useCallback(() => {
     if (activeTabId) {
       // availableServers is already an array of server names (strings)
       const allServers = [...availableServers]
       setTabConfig(activeTabId, { selectedServers: allServers })
-      // Sync to global MCP store so new tabs inherit this selection
-      setGlobalSelectedServers(allServers)
+      // Sync to chat-specific MCP store so new chat tabs inherit this selection
+      setChatSelectedServers(allServers)
     }
-  }, [activeTabId, availableServers, setTabConfig, setGlobalSelectedServers])
-  
+  }, [activeTabId, availableServers, setTabConfig, setChatSelectedServers])
+
   const onClearAllServers = useCallback(() => {
     if (activeTabId) {
       setTabConfig(activeTabId, { selectedServers: ["NO_SERVERS"] })
-      // Sync to global MCP store so new tabs inherit this selection
-      setGlobalSelectedServers(["NO_SERVERS"])
+      // Sync to chat-specific MCP store so new chat tabs inherit this selection
+      setChatSelectedServers(["NO_SERVERS"])
     }
-  }, [activeTabId, setTabConfig, setGlobalSelectedServers])
+  }, [activeTabId, setTabConfig, setChatSelectedServers])
   
   const {
     availableLLMs,
@@ -298,12 +294,23 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Computed values - get LLM option from tab config
   const primaryLLM = useMemo(() => {
     if (tabConfig?.llmConfig) {
-      // Convert tab's LLM config to LLMOption format
       const config = tabConfig.llmConfig
-      const allLLMs = availableLLMs
-      return allLLMs.find(llm => 
+      // Try to find matching LLM in available list for richer metadata
+      const foundLLM = availableLLMs.find(llm =>
         llm.provider === config.provider && llm.model === config.model_id
-      ) || getCurrentLLMOption()
+      )
+      if (foundLLM) return foundLLM
+
+      // If not found in available list, create option from tab config
+      // This preserves user's selection even if model list hasn't loaded
+      if (config.provider && config.model_id) {
+        return {
+          provider: config.provider,
+          model: config.model_id,
+          label: `${config.provider} - ${config.model_id}`,
+          description: 'Selected model'
+        }
+      }
     }
     return getCurrentLLMOption()
   }, [tabConfig?.llmConfig, availableLLMs, getCurrentLLMOption])
@@ -417,19 +424,31 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return queryToSubmit?.trim() && !isStreaming && tabSessionId
   }, [queryToSubmit, isStreaming, tabSessionId])
 
+  // Ref for debounced file removal check
+  const fileRemovalTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value
     const previousValue = prevInputTextRef.current
-    
-    // Update tab config directly - Zustand is optimized for frequent updates
-    if (activeTabId) {
-      setTabConfig(activeTabId, { inputText: newValue })
+
+    // Update local state immediately for fast UI response
+    setLocalInputText(newValue)
+
+    // Debounce sync to Zustand store (300ms delay)
+    if (syncToStoreTimeoutRef.current) {
+      clearTimeout(syncToStoreTimeoutRef.current)
     }
-    
+    syncToStoreTimeoutRef.current = setTimeout(() => {
+      if (activeTabId) {
+        setTabConfig(activeTabId, { inputText: newValue })
+      }
+      syncToStoreTimeoutRef.current = null
+    }, 300)
+
     // Update ref for next comparison
     prevInputTextRef.current = newValue
-    
+
     // Auto-resize textarea
     adjustTextareaHeight()
 
@@ -516,31 +535,34 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       setCommandSearchQuery('')
     }
 
-    // Check if any @file references were removed and remove them from context
-    // Only remove if:
-    // 1. The file reference existed in the previous input
-    // 2. The file reference is missing in the new input
-    // 3. The new input is shorter than the previous (user deleted it, not cleared programmatically)
-    // This prevents removing files when input is cleared after submission
-    const removedFiles: string[] = []
-    if (previousValue.length > newValue.length) {
-      // Only check for removed files if the input got shorter (user deletion, not programmatic clearing)
-      chatFileContext.forEach((file: { path: string }) => {
-        const fileReference = '@' + file.path
-        const wasInPrevious = previousValue.includes(fileReference)
-        const isInNew = newValue.includes(fileReference)
-        
-        // Only remove if it was in previous but not in new (user explicitly deleted it)
-        if (wasInPrevious && !isInNew) {
-          removedFiles.push(file.path)
-        }
-      })
+    // Debounce file reference removal check (500ms delay)
+    // This prevents expensive iteration on every keystroke
+    if (fileRemovalTimeoutRef.current) {
+      clearTimeout(fileRemovalTimeoutRef.current)
     }
+    fileRemovalTimeoutRef.current = setTimeout(() => {
+      // Check if any @file references were removed and remove them from context
+      // Only remove if:
+      // 1. The file reference existed in the previous input
+      // 2. The file reference is missing in the new input
+      // 3. The new input is shorter than the previous (user deleted it, not cleared programmatically)
+      if (previousValue.length > newValue.length) {
+        const removedFiles: string[] = []
+        chatFileContext.forEach((file: { path: string }) => {
+          const fileReference = '@' + file.path
+          const wasInPrevious = previousValue.includes(fileReference)
+          const isInNew = newValue.includes(fileReference)
 
-    // Remove files that are no longer referenced
-    removedFiles.forEach(filePath => {
-      removeFileFromContext(filePath)
-    })
+          if (wasInPrevious && !isInNew) {
+            removedFiles.push(file.path)
+          }
+        })
+        removedFiles.forEach(filePath => {
+          removeFileFromContext(filePath)
+        })
+      }
+      fileRemovalTimeoutRef.current = null
+    }, 500)
   }, [chatFileContext, removeFileFromContext, showCommandDialog, activeTabId, setTabConfig, enableWorkspaceAccess, adjustTextareaHeight])
 
   // Handle manual summarization
@@ -622,18 +644,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // Handle normal Enter to submit
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       e.preventDefault()
-      console.log('[ChatInput] Enter key pressed, handleKeyDown:', JSON.stringify({
-        queryToSubmit: queryToSubmit?.substring(0, 50),
-        queryToSubmitLength: queryToSubmit?.length,
-        canSubmit,
-        sessionId: tabSessionId,
-        isStreaming,
-        activeTab: activeTab?.tabId,
-        tabSessionId: activeTab?.sessionId,
-        inputText: inputText?.substring(0, 50),
-        inputTextLength: inputText?.length
-      }, null, 2))
-      
+
       // Check for slash commands
       const trimmedQuery = queryToSubmit?.trim() || ''
       const summarizeIndex = trimmedQuery.indexOf('/summarize')
@@ -648,76 +659,58 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           // If there's text before /summarize, send it after summarization
           // Otherwise, just summarize
           handleSummarize(textBeforeSummarize || undefined)
+          // Clear input after command (both local and store)
+          setLocalInputText('')
           if (activeTabId) {
-            setTabConfig(activeTabId, { inputText: '' }) // Clear input after command
+            setTabConfig(activeTabId, { inputText: '' })
           }
         }
         return
       }
-      
+
       if (compactIndex >= 0) {
         // Handle compact command
         if (sessionId && !isSummarizing && !isStreaming) {
-          // Extract text before /compact
           const textBeforeCompact = trimmedQuery.substring(0, compactIndex).trim()
-          
-          // If there's text before /compact, send it after compaction
-          // Otherwise, just compact
           handleCompact(textBeforeCompact || undefined)
+          // Clear input after command (both local and store)
+          setLocalInputText('')
           if (activeTabId) {
-            setTabConfig(activeTabId, { inputText: '' }) // Clear input after command
+            setTabConfig(activeTabId, { inputText: '' })
           }
         }
         return
       }
       
       if (canSubmitImmediately) {
-        console.log('[ChatInput] canSubmitImmediately is true, calling onSubmit:', queryToSubmit)
-        // Clear input text immediately
+        // Clear input text immediately (both local and store)
+        setLocalInputText('')
         if (activeTabId) {
           setTabConfig(activeTabId, { inputText: '' })
         }
-        // Call onSubmit with the query directly
         onSubmit(queryToSubmit)
       } else if (canSubmit && isStreaming) {
-        // Queue message when streaming
-        console.log('[ChatInput] Chat is streaming, queuing message:', queryToSubmit)
+        // Queue message when streaming - clear input (both local and store)
+        setLocalInputText('')
         if (activeTabId) {
           const currentQueued = tabConfig?.queuedMessages || []
-          setTabConfig(activeTabId, { 
-            inputText: '', // Clear input text
-            queuedMessages: [...currentQueued, queryToSubmit.trim()] // Add to queue
+          setTabConfig(activeTabId, {
+            inputText: '',
+            queuedMessages: [...currentQueued, queryToSubmit.trim()]
           })
         }
-      } else {
-        console.warn('[ChatInput] Cannot submit:', JSON.stringify({
-          hasQuery: Boolean(queryToSubmit?.trim()),
-          queryLength: queryToSubmit?.length,
-          isStreaming,
-          hasSessionId: Boolean(tabSessionId),
-          sessionIdValue: tabSessionId,
-          tabSessionId: activeTab?.sessionId,
-          canSubmit,
-          canSubmitImmediately,
-          activeTab: activeTab?.tabId,
-          inputText: inputText?.substring(0, 50),
-          inputTextLength: inputText?.length
-        }, null, 2))
       }
     }
     // Handle CTRL+Enter (Windows/Linux) or CMD+Enter (Mac) to add new line
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
-      // Insert newline at cursor position
       const textarea = e.target as HTMLTextAreaElement
       const start = textarea.selectionStart
       const end = textarea.selectionEnd
-      const value = inputText
-      const newValue = value.substring(0, start) + '\n' + value.substring(end)
-      if (activeTabId) {
-        setTabConfig(activeTabId, { inputText: newValue })
-      }
-      
+      const newValue = inputText.substring(0, start) + '\n' + inputText.substring(end)
+      // Update local state immediately for fast UI
+      setLocalInputText(newValue)
+
       // Set cursor position after the newline
       setTimeout(() => {
         textarea.selectionStart = textarea.selectionEnd = start + 1
@@ -727,145 +720,113 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
-    
-    console.log('[ChatInput] handleSubmit called:', {
-      queryToSubmit,
-      canSubmit,
-      sessionId: tabSessionId,
-      isStreaming,
-      activeTab: activeTab?.tabId
-    })
-    
+
     // Check for slash commands
     const trimmedQuery = queryToSubmit?.trim() || ''
     const summarizeIndex = trimmedQuery.indexOf('/summarize')
     const compactIndex = trimmedQuery.indexOf('/compact')
-    
+
     if (summarizeIndex >= 0) {
-      // Handle summarize command
       if (sessionId && !isSummarizing && !isStreaming) {
-        // Extract text before /summarize
         const textBeforeSummarize = trimmedQuery.substring(0, summarizeIndex).trim()
-        
-        // If there's text before /summarize, send it after summarization
-        // Otherwise, just summarize
         handleSummarize(textBeforeSummarize || undefined)
+        setLocalInputText('')
         if (activeTabId) {
-          setTabConfig(activeTabId, { inputText: '' }) // Clear input after command
+          setTabConfig(activeTabId, { inputText: '' })
         }
       }
       return
     }
-    
+
     if (compactIndex >= 0) {
-      // Handle compact command
       if (sessionId && !isSummarizing && !isStreaming) {
-        // Extract text before /compact
         const textBeforeCompact = trimmedQuery.substring(0, compactIndex).trim()
-        
-        // If there's text before /compact, send it after compaction
-        // Otherwise, just compact
         handleCompact(textBeforeCompact || undefined)
+        setLocalInputText('')
         if (activeTabId) {
-          setTabConfig(activeTabId, { inputText: '' }) // Clear input after command
+          setTabConfig(activeTabId, { inputText: '' })
         }
       }
       return
     }
-    
+
     if (canSubmitImmediately) {
-      console.log('[ChatInput] Calling onSubmit with query:', queryToSubmit)
-      // Clear input text immediately
+      setLocalInputText('')
       if (activeTabId) {
         setTabConfig(activeTabId, { inputText: '' })
       }
-      // Call onSubmit with the query directly
       onSubmit(queryToSubmit)
     } else if (canSubmit && isStreaming) {
-      // Queue message when streaming
-      console.log('[ChatInput] Chat is streaming, queuing message:', queryToSubmit)
+      setLocalInputText('')
       if (activeTabId) {
         const currentQueued = tabConfig?.queuedMessages || []
-        setTabConfig(activeTabId, { 
-          inputText: '', // Clear input text
-          queuedMessages: [...currentQueued, queryToSubmit.trim()] // Add to queue
+        setTabConfig(activeTabId, {
+          inputText: '',
+          queuedMessages: [...currentQueued, queryToSubmit.trim()]
         })
       }
-    } else {
-      console.warn('[ChatInput] Cannot submit:', {
-        hasQuery: Boolean(queryToSubmit?.trim()),
-        isStreaming,
-        hasSessionId: Boolean(tabSessionId),
-        canSubmit,
-        canSubmitImmediately
-      })
     }
-  }, [canSubmit, canSubmitImmediately, activeTabId, activeTab?.tabId, tabSessionId, queryToSubmit, onSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, setTabConfig, sessionId, tabConfig?.queuedMessages])
+  }, [canSubmit, canSubmitImmediately, activeTabId, tabSessionId, queryToSubmit, onSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, setTabConfig, sessionId, tabConfig?.queuedMessages])
 
   // File selection handlers
   const handleCommandSelect = useCallback((command: string) => {
     if (!textareaRef.current || slashPosition === -1 || !activeTabId) return
-    
-    // Replace / and search text with /command + space
+
     const beforeSlash = inputText.substring(0, slashPosition)
     const afterSearch = inputText.substring(slashPosition + 1 + commandSearchQuery.length)
     const newQuery = beforeSlash + '/' + command + ' ' + afterSearch
-    
-    setTabConfig(activeTabId, { inputText: newQuery })
+
+    // Update local state immediately for fast UI
+    setLocalInputText(newQuery)
     setShowCommandDialog(false)
     setSlashPosition(-1)
     setCommandSearchQuery('')
-    
+
     // Focus back to textarea and position cursor after the space
     setTimeout(() => {
       if (textareaRef.current) {
         textareaRef.current.focus()
-        // Position cursor after the command and space
         const cursorPosition = beforeSlash.length + '/'.length + command.length + ' '.length
         textareaRef.current.setSelectionRange(cursorPosition, cursorPosition)
       }
     }, 0)
-  }, [inputText, slashPosition, commandSearchQuery, activeTabId, setTabConfig])
+  }, [inputText, slashPosition, commandSearchQuery, activeTabId])
 
   const handleFileSelect = useCallback((file: PlannerFile) => {
     if (!textareaRef.current || atPosition === -1 || !activeTabId) return
-    
-    // Replace @ and search text with @filepath + space
+
     const beforeAt = inputText.substring(0, atPosition)
     const afterSearch = inputText.substring(atPosition + 1 + fileSearchQuery.length)
     const newQuery = beforeAt + '@' + file.filepath + ' ' + afterSearch
-    
-    setTabConfig(activeTabId, { inputText: newQuery })
+
+    // Update local state immediately for fast UI
+    setLocalInputText(newQuery)
     setShowFileDialog(false)
     setAtPosition(-1)
     setFileSearchQuery('')
-    
+
     // Add file/folder to context
     const fileContextItem = {
       name: file.filepath.split('/').pop() || file.filepath,
       path: file.filepath,
       type: file.type || 'file' as const
     }
-    
-    // Check if file is already in context (avoid duplicates)
+
     const isAlreadyInContext = chatFileContext.some((item: { path: string }) => item.path === file.filepath)
     if (!isAlreadyInContext) {
       addFileToContext(fileContextItem)
-      
-      // Auto-scroll to the file in workspace
       scrollToFile(file.filepath)
     }
-    
+
     // Focus back to textarea and position cursor after the space
     setTimeout(() => {
       if (textareaRef.current) {
         textareaRef.current.focus()
-        // Position cursor after the file path and space
         const cursorPosition = beforeAt.length + '@'.length + file.filepath.length + ' '.length
         textareaRef.current.setSelectionRange(cursorPosition, cursorPosition)
       }
     }, 0)
-  }, [inputText, atPosition, fileSearchQuery, chatFileContext, addFileToContext, scrollToFile, activeTabId, setTabConfig])
+  }, [inputText, atPosition, fileSearchQuery, chatFileContext, addFileToContext, scrollToFile, activeTabId])
 
   const handleCommandDialogClose = useCallback(() => {
     setShowCommandDialog(false)

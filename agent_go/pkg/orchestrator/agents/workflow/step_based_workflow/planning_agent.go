@@ -43,9 +43,10 @@ var planningUpdateSystemTemplate = MustRegisterTemplate("planningUpdateSystem", 
 - **Orchestration**: Iterative routing between sub-agents until success.
 - **Loop**: Repeat until criteria met (polled progress).
 
-### 📁 Persistent Storage (Knowledgebase)
+{{if eq .UseKnowledgebase "true"}}### 📁 Persistent Storage (Knowledgebase)
 - **knowledgebase/**: Persistent folder at workspace root. Never deleted across runs.
 - **How to Use**: Use for global templates, reference data, or configurations shared across ALL runs. Design steps to read from here for persistent context. Use 'knowledgebase/file.ext' in descriptions.
+{{end}}
 
 ### 📄 JSON FILE STRUCTURE BEST PRACTICES
 **CRITICAL**: Keep JSON context output files SMALL (< 100KB). Large JSON files cause parsing failures and performance issues.
@@ -286,7 +287,7 @@ type AgentConfigs struct {
 	ValidationMaxTurns          *int               `json:"validation_max_turns,omitempty"`           // default: 100
 	LearningMaxTurns            *int               `json:"learning_max_turns,omitempty"`             // default: 100
 	OrchestrationMaxIterations  *int               `json:"orchestration_max_iterations,omitempty"`   // default: orchestrator max turns (typically 100)
-	DisableValidation           *bool              `json:"disable_validation,omitempty"`             // skip validation entirely (nil = not set/enabled, true = disabled, false = explicitly enabled)
+	DisableValidation           *bool              `json:"disable_validation,omitempty"`             // LLM validation: nil = disabled by default, false = explicitly enabled, true = disabled (pre-validation always runs if schema exists)
 	LLMValidationMode           string             `json:"llm_validation_mode,omitempty"`            // "auto" (default), "always", or "skip". Controls LLM validation behavior when pre-validation passes.
 	DisableLearning             *bool              `json:"disable_learning,omitempty"`               // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
 	LockLearnings               *bool              `json:"lock_learnings,omitempty"`                 // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)

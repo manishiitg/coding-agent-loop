@@ -305,6 +305,8 @@ workspace/
 │   ├── planning/
 │   │   ├── plan.json               # Phase 1: Execution plan
 │   │   └── step_config.json        # Per-step agent configurations
+│   ├── knowledgebase/               # Persistent shared storage (optional, enabled by default)
+│   │   └── *.md, *.json, etc.      # Templates, reference data, global configs
 │   ├── learnings/                   # Learning patterns
 │   │   ├── success_patterns.md     # What worked (shared)
 │   │   ├── failure_analysis.md     # What failed (shared)
@@ -446,9 +448,26 @@ workspace/
 
 | Setting | Description |
 |---------|-------------|
-| **disable_validation** | Auto-approve steps without validation |
-| **Loop Validation** | Checks both success criteria AND loop condition |
+| **disable_validation** | LLM validation: `nil`/`true` = disabled by default (auto-approve), `false` = enabled. Pre-validation always runs if schema exists. |
+| **Loop Validation** | Checks both success criteria AND loop condition (LLM validation forced on for loop steps) |
 | **Prerequisite Failure Detection** | Per-step config to detect missing prerequisites and navigate back |
+
+### Preset-Level Feature Toggles
+
+These settings are configured at the preset level in `PresetLLMConfig`:
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| **use_knowledgebase** | `boolean` | `true` (enabled) | Enable/disable the `knowledgebase/` folder. When enabled, creates a persistent folder for templates, reference data, and global configs shared across all runs. When disabled, knowledgebase is not created and excluded from agent prompts and folder guards. |
+
+**Knowledgebase Folder Behavior:**
+- **Enabled (default)**: `knowledgebase/` folder is created at workspace root, included in agent prompts, and has read/write access in folder guards
+- **Disabled**: No folder creation, knowledgebase references removed from all agent prompts, no folder guard paths added
+- **Use Cases**: Disable for simple workflows that don't need persistent shared storage, or to reduce agent prompt complexity
+
+**Files:**
+- Backend: [`models.go`](../agent_go/pkg/database/models.go) - `PresetLLMConfig.UseKnowledgebase`
+- Frontend: [`PresetModal.tsx`](../frontend/src/components/PresetModal.tsx) - Knowledgebase toggle in workflow mode
 
 ### Retry Limits
 

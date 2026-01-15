@@ -82,8 +82,8 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 **Allowed WRITE paths**: {{.FolderGuardWritePaths}}
 
 - **Step Folder**: '{{.StepExecutionPath}}/' - **VOLATILE**. Deleted on re-execution/restart. Only write your primary results here.
-- **Knowledgebase**: '{{.KnowledgebasePath}}/' - **PERSISTENT**. Shared across all runs. Use for templates, reference data, or global configs that must survive across execution attempts.
-- **Rule**: Use the EXACT paths above. Read from any allowed read path, write only to allowed write paths. Path validation is strictly enforced.
+{{if eq .UseKnowledgebase "true"}}- **Knowledgebase**: '{{.KnowledgebasePath}}/' - **PERSISTENT**. Shared across all runs. Use for templates, reference data, or global configs that must survive across execution attempts.
+{{end}}- **Rule**: Use the EXACT paths above. Read from any allowed read path, write only to allowed write paths. Path validation is strictly enforced.
 
 {{if .HasLoop}}
 ## 🔄 Loop Execution

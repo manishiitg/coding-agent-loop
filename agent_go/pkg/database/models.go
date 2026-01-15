@@ -199,6 +199,9 @@ type PresetLLMConfig struct {
 	ValidationLLM *AgentLLMConfig `json:"validation_llm,omitempty"` // Default for validation agents
 	LearningLLM   *AgentLLMConfig `json:"learning_llm,omitempty"`   // Default for learning agents
 	PhaseLLM      *AgentLLMConfig `json:"phase_llm,omitempty"`      // Default for all phase agents (planning, anonymization, plan improvement, etc.)
+
+	// Feature toggles
+	UseKnowledgebase *bool `json:"use_knowledgebase,omitempty"` // nil/true = enabled (default), false = disabled - controls knowledgebase folder creation and prompt references
 }
 
 // AgentLLMConfig represents LLM configuration for a specific agent type

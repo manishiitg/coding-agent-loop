@@ -251,16 +251,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	} else {
 		stepLearningsPath = fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
 	}
-	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
-	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
-
 	// Set folder guard paths:
-	// READ: step-specific learnings folder + execution folder (to read previous step results) + knowledgebase folder
-	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + knowledgebase folder + execution/Downloads folder to prevent writing to other steps
+	// READ: step-specific learnings folder + execution folder (to read previous step results) + knowledgebase folder (if enabled)
+	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + knowledgebase folder (if enabled) + execution/Downloads folder to prevent writing to other steps
 	// Use getExecutionFolderPath to support both regular and branch steps
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
-	readPaths = []string{stepLearningsPath, executionWorkspacePath, knowledgebasePath}
+	readPaths = []string{stepLearningsPath, executionWorkspacePath}
+	writePaths = []string{stepFolderPath, downloadsPath}
+
+	// Add knowledgebase folder paths only if enabled
+	if hcpo.UseKnowledgebase() {
+		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
+		readPaths = append(readPaths, knowledgebasePath)
+		writePaths = append(writePaths, knowledgebasePath)
+	}
 
 	// Check if TARGET_RUN_PATH variable is set (used for evaluation) and add to read paths
 	// This allows evaluation agents to read the artifacts of the run they are evaluating
@@ -269,7 +274,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 		hcpo.GetLogger().Info(fmt.Sprintf("🔓 Added TARGET_RUN_PATH to read paths for evaluation: %s", targetRunPath))
 	}
 
-	writePaths = []string{stepFolderPath, knowledgebasePath, downloadsPath}
 	return readPaths, writePaths
 }
 
@@ -682,12 +686,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupValidationFolderGuard() (readPat
 		runWorkspacePath = baseWorkspacePath
 	}
 	executionPath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
-	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 
 	// Validation agent only reads - no write permissions needed
-	// Read access to execution folder (for step outputs) and knowledgebase folder (for reference data)
-	readPaths = []string{executionPath, knowledgebasePath}
+	// Read access to execution folder (for step outputs) and knowledgebase folder (for reference data) if enabled
+	readPaths = []string{executionPath}
+	if hcpo.UseKnowledgebase() {
+		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
+		readPaths = append(readPaths, knowledgebasePath)
+	}
 	writePaths = []string{} // No write permissions - validation agent only reads and returns structured JSON
 	return readPaths, writePaths
 }
@@ -716,14 +722,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupConditionalFolderGuard(stepPath 
 	}
 	// Step-specific execution folder: execution/step-{X}/ or execution/step-{X}-{branch}/ (for writing evaluation results)
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
-	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
-	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 
 	// Set folder guard paths:
-	// READ: step-specific learnings folder + entire execution folder (to read all previous step results and verify conditions) + knowledgebase folder
-	// WRITE: step-specific execution folder (to write evaluation results and intermediate files) + knowledgebase folder
-	readPaths = []string{stepLearningsPath, executionWorkspacePath, knowledgebasePath}
-	writePaths = []string{stepFolderPath, knowledgebasePath}
+	// READ: step-specific learnings folder + entire execution folder (to read all previous step results and verify conditions) + knowledgebase folder (if enabled)
+	// WRITE: step-specific execution folder (to write evaluation results and intermediate files) + knowledgebase folder (if enabled)
+	readPaths = []string{stepLearningsPath, executionWorkspacePath}
+	writePaths = []string{stepFolderPath}
+
+	// Add knowledgebase folder paths only if enabled
+	if hcpo.UseKnowledgebase() {
+		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
+		readPaths = append(readPaths, knowledgebasePath)
+		writePaths = append(writePaths, knowledgebasePath)
+	}
 	return readPaths, writePaths
 }
 

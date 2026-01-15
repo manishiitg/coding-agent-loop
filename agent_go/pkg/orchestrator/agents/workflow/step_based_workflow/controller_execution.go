@@ -1021,8 +1021,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			// Non-blocking: log warning but continue execution (folder will be created when files are written)
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure step execution folder exists: %v (continuing - folder will be created when files are written)", err))
 		}
-		// Get knowledgebase folder path (persistent files across runs, at workspace root)
-		knowledgebasePath := getKnowledgebasePath(hcpo.GetWorkspacePath())
+		// Get knowledgebase folder path (persistent files across runs, at workspace root) - only if enabled
+		knowledgebasePath := ""
+		useKnowledgebase := hcpo.UseKnowledgebase()
+		if useKnowledgebase {
+			knowledgebasePath = getKnowledgebasePath(hcpo.GetWorkspacePath())
+		}
 
 		// Get folder guard paths for template (so agent knows exact paths it can access)
 		// Use step.GetID() as stepID for folder guard setup
@@ -1035,7 +1039,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"StepContextOutput":     ResolveVariables(step.GetContextOutput().String(), hcpo.variableValues),
 			"WorkspacePath":         executionWorkspacePath,                    // Execution subdirectory (folder guard validates against this)
 			"LearningsPath":         learningsPath,                             // Learnings folder path for reading learning files and scripts/code
-			"KnowledgebasePath":     knowledgebasePath,                         // Knowledgebase folder path (persistent files across runs)
+			"KnowledgebasePath":     knowledgebasePath,                         // Knowledgebase folder path (persistent files across runs) - empty if disabled
+			"UseKnowledgebase":      fmt.Sprintf("%v", useKnowledgebase),       // Whether knowledgebase is enabled
 			"IsCodeExecutionMode":   fmt.Sprintf("%v", isCodeExecutionMode),    // Code execution mode flag (step-specific or preset)
 			"HumanFeedback":         "",                                        // Human feedback for retry attempts (set after validation failure)
 			"StepNumber":            stepPath,                                  // Step identifier (e.g., "step-8" or "step-3-if-true-0")
@@ -1705,26 +1710,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					}
 				}
 
-				// Check if validation is disabled for this step
+				// Check if LLM validation is enabled for this step (disabled by default)
 				agentConfigs = getAgentConfigs(step)
-				disableValidation := agentConfigs != nil && agentConfigs.DisableValidation != nil && *agentConfigs.DisableValidation
-				// CODE EXECUTION MODE: Force validation enabled regardless of step config
-				// Use step-level code execution mode (already computed above)
-				if isCodeExecutionMode && disableValidation {
-					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing validation for step %d (overriding step config)", stepIndex+1))
-					disableValidation = false
-				}
-				if disableValidation {
-					hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Validation disabled for step %d - auto-approving (learning will still run)", stepIndex+1))
+				// LLM validation disabled by default (nil = disabled). Only enabled when explicitly set to false.
+				enableLLMValidation := agentConfigs != nil && agentConfigs.DisableValidation != nil && !*agentConfigs.DisableValidation
+				if !enableLLMValidation {
+					hcpo.GetLogger().Info(fmt.Sprintf("⏭️ LLM validation disabled for step %d - auto-approving (pre-validation and learning will still run)", stepIndex+1))
 					// Auto-approve: create a success validation response
-					// NOTE: Validation being disabled does NOT prevent learning from running
+					// NOTE: LLM validation being disabled does NOT prevent pre-validation or learning from running
 					validationResponse = &ValidationResponse{
 						IsSuccessCriteriaMet: true,
 						ExecutionStatus:      "COMPLETED",
-						Reasoning:            "Validation disabled - step auto-approved",
+						Reasoning:            "LLM validation disabled - step auto-approved",
 					}
 					if hasLoop(step) {
-						// For loop steps, mark condition as met when validation is disabled
+						// For loop steps, mark condition as met when LLM validation is disabled
 						validationResponse.LoopConditionMet = true
 						loopConditionMet = true
 					}
@@ -2468,20 +2468,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				} else {
 					// Ensure validationResponse exists - if validation is disabled, assume success
 					agentConfigs := getAgentConfigs(step)
-					disableValidation := agentConfigs != nil && agentConfigs.DisableValidation != nil && *agentConfigs.DisableValidation
-					// CODE EXECUTION MODE: Force validation enabled regardless of step config
-					// Use step-level code execution mode (already computed above)
-					if isCodeExecutionMode && disableValidation {
-						hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled - forcing validation for step %d (overriding step config)", stepIndex+1))
-						disableValidation = false
-					}
-					if validationResponse == nil && disableValidation {
-						// Validation is disabled but response is nil - create success response for learning
-						hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Validation disabled for step %d - creating success response for learning", stepIndex+1))
+					// LLM validation disabled by default (nil = disabled). Only enabled when explicitly set to false.
+					enableLLMValidation := agentConfigs != nil && agentConfigs.DisableValidation != nil && !*agentConfigs.DisableValidation
+					if validationResponse == nil && !enableLLMValidation {
+						// LLM validation is disabled but response is nil - create success response for learning
+						hcpo.GetLogger().Info(fmt.Sprintf("⏭️ LLM validation disabled for step %d - creating success response for learning", stepIndex+1))
 						validationResponse = &ValidationResponse{
 							IsSuccessCriteriaMet: true,
 							ExecutionStatus:      "COMPLETED",
-							Reasoning:            "Validation disabled - step auto-approved for learning",
+							Reasoning:            "LLM validation disabled - step auto-approved for learning",
 						}
 					}
 

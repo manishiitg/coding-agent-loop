@@ -437,10 +437,10 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                 ? orchestrationStepConfigs?.llm_validation_mode === 'skip'
                 : stepConfigs?.llm_validation_mode === 'skip'
               
-              // Check if validation is disabled (only pre-validation runs)
+              // Check if LLM validation is disabled (disabled by default, only enabled when false)
               const isValidationDisabled = isOrchestrationStep(step)
-                ? orchestrationStepConfigs?.disable_validation === true
-                : stepConfigs?.disable_validation === true
+                ? orchestrationStepConfigs?.disable_validation !== false
+                : stepConfigs?.disable_validation !== false
 
               // Check if this is a sub-agent (node ID contains '-sub-agent-')
               const isSubAgent = nodeId.includes('-sub-agent-')

@@ -757,10 +757,12 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         : llmConfigToOption(agentConfigs?.learning_llm) || getPresetDefaultLLM('learning')
     
     // Check if disabled (only relevant if not in code exec mode)
-    const isDisabled = isAlwaysEnabled 
-      ? false 
+    // LLM validation is disabled by default (undefined/null/true = disabled, false = enabled)
+    // Learning follows the old pattern (undefined/null = enabled, true = disabled)
+    const isDisabled = isAlwaysEnabled
+      ? false
       : (isValidation
-          ? agentConfigs?.disable_validation === true
+          ? agentConfigs?.disable_validation !== false  // LLM validation disabled by default
           : agentConfigs?.disable_learning === true)
     
     // Handle LLM change
@@ -1697,6 +1699,69 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                   <p className="text-xs text-red-600 dark:text-red-400 mt-1">
                     ✗ False → {step.if_false_next_step_id === 'end' ? 'End workflow' : step.if_false_next_step_id}
                   </p>
+                )}
+              </div>
+              <StepEditPanel
+                step={stepWithConfigs}
+                stepIndex={stepIndex}
+                onSave={handleSave}
+                onCancel={() => {}}
+                isSaving={isSaving}
+                presetServers={presetServers}
+                presetLLMConfig={presetLLMConfig}
+                presetUseCodeExecutionMode={presetUseCodeExecutionMode}
+                isExpanded={true}
+                onToggleExpanded={() => {}}
+                planSteps={plan?.steps || []}
+              />
+            </div>
+          ) : isOrchestrationStep(step) && node.type === 'orchestrator' ? (
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+              {/* Orchestrator Step Info */}
+              <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                <p className="text-xs text-blue-700 dark:text-blue-300">
+                  <strong>Orchestrator Step:</strong> Evaluates the input and routes to a specific sub-agent or ends the workflow.
+                </p>
+                {/* Routes Display */}
+                {step.orchestration_routes && step.orchestration_routes.length > 0 && (
+                  <div className="mt-3">
+                    <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 uppercase tracking-wide mb-2">
+                      Available Routes:
+                    </p>
+                    <div className="space-y-2">
+                      {step.orchestration_routes.map((route) => {
+                        const isEndRoute = route.route_id?.toLowerCase() === "end"
+                        return (
+                          <div key={route.route_id || 'unknown'} className="p-2 bg-white dark:bg-gray-800 rounded border border-blue-100 dark:border-blue-900">
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                                isEndRoute 
+                                  ? "bg-red-500 dark:bg-red-400" 
+                                  : "bg-blue-500 dark:bg-blue-400"
+                              }`} />
+                              <span className={`text-xs font-medium ${
+                                isEndRoute
+                                  ? "text-red-700 dark:text-red-300"
+                                  : "text-blue-700 dark:text-blue-300"
+                              }`}>
+                                {route.route_name || route.route_id}
+                              </span>
+                            </div>
+                            {route.condition && (
+                              <p className="text-xs text-gray-600 dark:text-gray-400 ml-4">
+                                Condition: {route.condition}
+                              </p>
+                            )}
+                            {route.context_to_pass && (
+                              <p className="text-xs text-gray-500 dark:text-gray-500 ml-4 mt-1 italic">
+                                Context: {route.context_to_pass}
+                              </p>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
                 )}
               </div>
               <StepEditPanel

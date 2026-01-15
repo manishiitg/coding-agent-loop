@@ -137,6 +137,9 @@ type PlanImprovementManager struct {
 	// Session and workflow IDs for human feedback
 	sessionID  string
 	workflowID string
+
+	// Whether to reference knowledgebase folder in prompts (default: true)
+	useKnowledgebase bool
 }
 
 // NewPlanImprovementManager creates a new PlanImprovementManager
@@ -146,6 +149,7 @@ func NewPlanImprovementManager(
 	presetPhaseLLM *AgentLLMConfig,
 	sessionID string,
 	workflowID string,
+	useKnowledgebase bool,
 ) *PlanImprovementManager {
 	return &PlanImprovementManager{
 		BaseOrchestrator:         baseOrchestrator,
@@ -153,6 +157,7 @@ func NewPlanImprovementManager(
 		presetPhaseLLM:           presetPhaseLLM,
 		sessionID:                sessionID,
 		workflowID:               workflowID,
+		useKnowledgebase:         useKnowledgebase,
 	}
 }
 
@@ -424,6 +429,18 @@ func (pim *PlanImprovementManager) PlanImprovementOnly(ctx context.Context, orig
 
 	// Create execution results summary based on the selected run folder.
 	// Execution/logs live under runs/<run>/..., while plan/learnings are at workspace root.
+	// Conditionally include knowledgebase folder information based on preset setting.
+	knowledgebaseSection := ""
+	knowledgebaseExploreItem := ""
+	if pim.useKnowledgebase {
+		knowledgebaseSection = fmt.Sprintf(`
+Knowledgebase folder (shared across all runs):
+- %s/knowledgebase/ - persistent files across all runs (templates, reference data, configurations - NEVER deleted during cleanup)
+`, originalWorkspacePath)
+		knowledgebaseExploreItem = fmt.Sprintf(`
+- Knowledgebase files in %s/knowledgebase/ (persistent across all runs, at workspace root)`, originalWorkspacePath)
+	}
+
 	executionResultsSummary := fmt.Sprintf(
 		`Workspace root: %s
 Selected run folder: %s
@@ -431,13 +448,9 @@ Selected run folder: %s
 Run folder contains:
 - %s/execution/ - step execution outputs
 - %s/logs/ - validation and execution logs
-
-Knowledgebase folder (shared across all runs):
-- %s/knowledgebase/ - persistent files across all runs (templates, reference data, configurations - NEVER deleted during cleanup)
-
+%s
 Use list_workspace_files to explore:
-- Execution result files in %s/execution/
-- Knowledgebase files in %s/knowledgebase/ (persistent across all runs, at workspace root)
+- Execution result files in %s/execution/%s
 - Detailed logs in %s/logs/step-X/ including:
   * validation-{N}.json - validation responses for each validation attempt
   * execution/execution-attempt-{N}-iteration-{M}.json - execution results with retry/loop information
@@ -465,9 +478,9 @@ Evaluation data (LLM-scored quality assessments) - ACCESS SCOPED TO THIS ITERATI
 		validatedRunPath,
 		validatedRunPath,
 		validatedRunPath,
-		originalWorkspacePath,
+		knowledgebaseSection,
 		validatedRunPath,
-		originalWorkspacePath,
+		knowledgebaseExploreItem,
 		validatedRunPath,
 		validatedRunPath, // For evaluation path
 	)

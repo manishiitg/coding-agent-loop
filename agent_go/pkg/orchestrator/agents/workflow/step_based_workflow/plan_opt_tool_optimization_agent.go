@@ -72,6 +72,9 @@ type PlanToolOptimizationManager struct {
 
 	// Phase LLM config (primary LLM for plan tool optimization agent)
 	presetPhaseLLM *AgentLLMConfig
+
+	// Whether to reference knowledgebase folder in prompts (default: true)
+	useKnowledgebase bool
 }
 
 // NewPlanToolOptimizationManager creates a new PlanToolOptimizationManager
@@ -80,12 +83,14 @@ func NewPlanToolOptimizationManager(
 	sessionID string,
 	workflowID string,
 	presetPhaseLLM *AgentLLMConfig,
+	useKnowledgebase bool,
 ) *PlanToolOptimizationManager {
 	return &PlanToolOptimizationManager{
 		BaseOrchestrator: baseOrchestrator,
 		sessionID:        sessionID,
 		workflowID:       workflowID,
 		presetPhaseLLM:   presetPhaseLLM,
+		useKnowledgebase: useKnowledgebase,
 	}
 }
 
@@ -656,6 +661,7 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 		"AllowedPaths":                   allowedPaths,
 		"SessionID":                      ptom.sessionID,
 		"WorkflowID":                     ptom.workflowID,
+		"UseKnowledgebase":               fmt.Sprintf("%v", ptom.useKnowledgebase),
 	}
 
 	// Add variable names if available (for context about variables in plan)
@@ -1549,11 +1555,17 @@ Execution output files are stored in logs folders. Use search_large_output tool 
 - Or use read_workspace_file to read the entire file
 `
 
+	// Conditionally include knowledgebase section based on preset setting
+	knowledgebaseNote := ""
+	if templateVars["UseKnowledgebase"] == "true" {
+		knowledgebaseNote = `
+You also have access to the 'knowledgebase/' folder for persistent templates and global configurations. Check it if the step mentions shared assets.`
+	}
+
 	return `# Plan Tool Optimization Agent
 
 ## PURPOSE
-Analyze tool usage from learnings and step descriptions to optimize step_config.json. Be CONSERVATIVE - only suggest tools that were used successfully in learnings or are clearly needed based on step requirements. Execution logs are OPTIONAL and only checked if the user explicitly requests it.
-You also have access to the 'knowledgebase/' folder for persistent templates and global configurations. Check it if the step mentions shared assets.
+Analyze tool usage from learnings and step descriptions to optimize step_config.json. Be CONSERVATIVE - only suggest tools that were used successfully in learnings or are clearly needed based on step requirements. Execution logs are OPTIONAL and only checked if the user explicitly requests it.` + knowledgebaseNote + `
 
 ` + variablesSection + learningsLocationNote + `## WORKFLOW
 

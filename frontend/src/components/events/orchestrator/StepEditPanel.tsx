@@ -717,13 +717,13 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       const codeExecLabel = effectiveCodeExecMode ? 'Code Exec' : 'Simple';
       parts.push(`Exec: ${execLLM.label} (${codeExecLabel})`);
     }
-    if (valLLM && !agentConfigs.disable_validation) parts.push(`Val: ${valLLM.label}`);
+    if (valLLM && agentConfigs.disable_validation === false) parts.push(`Val: ${valLLM.label}`);
     if (learnLLM && !agentConfigs.disable_learning) {
       const detailLevel = agentConfigs.learning_detail_level || 'exact';
       const detailLabel = detailLevel === 'exact' ? 'Exact' : 'General';
       parts.push(`Learn: ${learnLLM.label} (${detailLabel})`);
     }
-    if (agentConfigs.disable_validation) parts.push('Val: Disabled');
+    if (agentConfigs.disable_validation !== false) parts.push('Val: Disabled');
     if (agentConfigs.disable_learning) parts.push('Learn: Disabled');
     
     return parts.length > 0 ? parts.join(' • ') : 'Default config';
@@ -1265,7 +1265,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     >
                       <input
                         type="checkbox"
-                        checked={agentConfigs.disable_validation || false}
+                        checked={agentConfigs.disable_validation !== false}
                         onChange={(e) => {
                           if (!isDisabled) {
                             handleToggleChange('disable_validation', e.target.checked);
@@ -1275,13 +1275,13 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                         className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                       />
                       <span className="text-xs text-gray-600 dark:text-gray-400">
-                        Disable{step.has_loop && ' (Required for loops)'}{effectiveCodeExecMode && !step.has_loop && ' (Auto-enabled)'}
+                        Disable{step.has_loop && ' (Required for loops)'}
                       </span>
                     </label>
                   );
                 })()}
               </div>
-              {!agentConfigs.disable_validation ? (
+              {agentConfigs.disable_validation === false ? (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <div className="flex-1 min-w-0">

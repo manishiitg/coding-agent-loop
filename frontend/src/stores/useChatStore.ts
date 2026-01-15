@@ -78,16 +78,27 @@ export interface ChatTab {
 }
 
 // Helper function to get default tab config from current global state
-const getDefaultTabConfig = (): ChatTabConfig => {
+// Uses mode-specific configs for LLM and server selections
+const getDefaultTabConfig = (mode: 'chat' | 'workflow' = 'chat'): ChatTabConfig => {
   const mcpStore = useMCPStore?.getState?.()
   const llmStore = useLLMStore?.getState?.()
-  
+
+  // Get mode-specific server selection
+  const selectedServers = mode === 'workflow'
+    ? (mcpStore?.workflowSelectedServers || mcpStore?.selectedServers || [])
+    : (mcpStore?.chatSelectedServers || mcpStore?.selectedServers || [])
+
+  // Get mode-specific LLM config
+  const llmConfig = mode === 'workflow'
+    ? (llmStore?.workflowPrimaryConfig || llmStore?.primaryConfig)
+    : (llmStore?.chatPrimaryConfig || llmStore?.primaryConfig)
+
   return {
     inputText: '',
     // Default to false (simple mode) - user can toggle to true (code exec mode) via ChatInput
     useCodeExecutionMode: false,
-    selectedServers: mcpStore?.selectedServers || [],
-    llmConfig: llmStore?.primaryConfig || {
+    selectedServers,
+    llmConfig: llmConfig || {
       provider: 'openrouter',
       model_id: '',
       fallback_models: [],
@@ -758,8 +769,8 @@ export const useChatStore = create<ChatState>()(
           console.log(`[ChatStore] Generated new session ID for tab ${tabId}: ${sessionIdForTab}`)
         }
         
-        // Get default config from current global state
-        const defaultConfig = getDefaultTabConfig()
+        // Get default config from current global state (mode-specific)
+        const defaultConfig = getDefaultTabConfig(mode)
         
         // Validate session ID before creating tab
         if (!sessionIdForTab || sessionIdForTab.trim() === '') {

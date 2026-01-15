@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle, Lock, ShieldCheck, SkipForward } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle, Lock, SkipForward } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -11,7 +11,6 @@ import type { StepNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 import { getToolsByCategory } from '../../../utils/customToolNames'
 import { NodeConfigFooter } from './NodeConfigFooter'
-import { NodeMarkdown } from './NodeMarkdown'
 
 interface StepNodeProps {
   data: StepNodeData
@@ -76,19 +75,7 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
 }
 
 export const StepNode = memo(({ data, selected }: StepNodeProps) => {
-  const { id, title, description, success_criteria, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder, validation_schema, parentOrchestratorTitle, routeName, routeCondition } = data
-
-  // Process text to convert escaped newlines to actual newlines
-  const processText = (text: string | undefined): string | undefined => {
-    if (!text) return undefined
-    return text
-      .replace(/\\n/g, '\n')  // Convert \n to actual newlines
-      .replace(/\\t/g, '\t')  // Convert \t to actual tabs
-      .replace(/\\r/g, '\r')  // Convert \r to actual carriage returns
-  }
-
-  const processedDescription = processText(description)
-  const processedSuccessCriteria = processText(success_criteria)
+  const { id, title, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder, parentOrchestratorTitle, routeName, routeCondition } = data
   
   const { availableLLMs } = useLLMStore()
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
@@ -419,7 +406,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
 
   return (
     <div className={`
-      relative w-[340px] rounded-xl border-2 bg-white dark:bg-gray-900 shadow-lg
+      relative w-[280px] rounded-xl border-2 bg-white dark:bg-gray-900 shadow-lg
       ${isSubAgent ? 'overflow-visible' : 'overflow-hidden'}
       ${statusBorderColors[status]}
       ${isSubAgent ? 'border-dashed border-cyan-400 dark:border-cyan-500' : ''}
@@ -562,44 +549,6 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
 
       {/* Content */}
       <div className="px-4 py-3 space-y-3">
-        {processedDescription && (
-          <div>
-            <NodeMarkdown content={processedDescription} textSize="xs" />
-          </div>
-        )}
-        
-        {processedSuccessCriteria && (
-          <div className="flex gap-2 p-2.5 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50">
-            <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
-            <div className="flex-1 text-green-700 dark:text-green-300">
-              <NodeMarkdown content={processedSuccessCriteria} textSize="xs" />
-            </div>
-          </div>
-        )}
-
-        {/* Validation Schema */}
-        {validation_schema && validation_schema.files && validation_schema.files.length > 0 && (
-          <div className="flex gap-2 p-2.5 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50">
-            <ShieldCheck className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <div className="text-xs font-semibold text-blue-700 dark:text-blue-300">
-                Validation Schema
-              </div>
-              <div className="text-[10px] mt-0.5 text-blue-600 dark:text-blue-400">
-                {validation_schema.files.length} file{validation_schema.files.length !== 1 ? 's' : ''} to validate
-                {validation_schema.files.map((file, idx) => {
-                  const checkCount = file.json_checks?.length || 0
-                  return (
-                    <div key={idx} className="mt-1">
-                      • {file.file_name} {checkCount > 0 && `(${checkCount} check${checkCount !== 1 ? 's' : ''})`}
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Prerequisite Rules */}
         {prerequisiteEnabled && prerequisiteRules && prerequisiteRules.length > 0 && (
           <div className="space-y-2">

@@ -11,7 +11,10 @@
       "Bash(gofmt:*)",
       "Bash(grep:*)",
       "Bash(git -C mcp-agent-builder-go diff agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx tsc:*)",
+      "Bash(xargs -I{} sh -c 'echo \"\"=== {} ===\"\" && head -5 {}')"
     ],
     "deny": [],
     "ask": []

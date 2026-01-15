@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Settings, ChevronDown, ChevronRight } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
-import { useLLMStore } from '../../stores'
+import { useLLMStore, useAppStore } from '../../stores'
 
 interface LLMConfigurationSummaryProps {
   minimized?: boolean
@@ -10,7 +10,16 @@ interface LLMConfigurationSummaryProps {
 export default function LLMConfigurationSummary({
   minimized = false,
 }: LLMConfigurationSummaryProps) {
-  const { primaryConfig: llmConfig, setShowLLMModal } = useLLMStore()
+  // Get current mode from app store
+  const agentMode = useAppStore(state => state.agentMode)
+  const currentMode: 'chat' | 'workflow' = agentMode === 'workflow' ? 'workflow' : 'chat'
+
+  const { getConfigForMode, setShowLLMModal } = useLLMStore()
+
+  // Get mode-specific config
+  const modeConfig = getConfigForMode(currentMode)
+  const llmConfig = modeConfig.primaryConfig
+
   const [isExpanded, setIsExpanded] = useState(false)
 
   // Get provider display info
@@ -61,6 +70,13 @@ export default function LLMConfigurationSummary({
           <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
             <Settings className="w-4 h-4" />
             LLM Configuration
+            <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+              currentMode === 'workflow'
+                ? 'bg-purple-500/20 text-purple-400'
+                : 'bg-blue-500/20 text-blue-400'
+            }`}>
+              {currentMode === 'workflow' ? 'Workflow' : 'Chat'}
+            </span>
           </h3>
           <button
             onClick={() => setIsExpanded(!isExpanded)}

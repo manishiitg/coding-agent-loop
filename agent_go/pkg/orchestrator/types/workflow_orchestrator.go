@@ -168,6 +168,9 @@ type WorkflowOrchestrator struct {
 	presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig // Default for plan tool optimization agent
 	presetCodeExecDebuggingLLM    *step_based_workflow.AgentLLMConfig // Default for code exec debugging agent
 
+	// Preset-level feature toggles
+	useKnowledgebase bool // Whether to create and reference knowledgebase folder (default: true)
+
 	// Frontend-provided execution options (when provided, skips interactive prompts)
 	executionOptions *step_based_workflow.ExecutionOptions
 
@@ -189,6 +192,11 @@ func (wo *WorkflowOrchestrator) SetExecutionOptions(options *step_based_workflow
 // GetExecutionOptions returns the current execution options
 func (wo *WorkflowOrchestrator) GetExecutionOptions() *step_based_workflow.ExecutionOptions {
 	return wo.executionOptions
+}
+
+// UseKnowledgebase returns whether the knowledgebase feature is enabled
+func (wo *WorkflowOrchestrator) UseKnowledgebase() bool {
+	return wo.useKnowledgebase
 }
 
 // Human verification types
@@ -335,6 +343,12 @@ func NewWorkflowOrchestrator(
 		log.Printf("[PRESET_EXECUTION_LLM_DEBUG] presetLLMConfig is nil - no preset LLM config provided")
 	}
 
+	// Extract feature toggles from preset config
+	useKnowledgebase := true // Default to enabled
+	if presetLLMConfig != nil && presetLLMConfig.UseKnowledgebase != nil {
+		useKnowledgebase = *presetLLMConfig.UseKnowledgebase
+	}
+
 	// Create workflow orchestrator instance
 	wo := &WorkflowOrchestrator{
 		BaseOrchestrator:              baseOrchestrator,
@@ -344,6 +358,7 @@ func NewWorkflowOrchestrator(
 		presetPhaseLLM:                presetPhaseLLM,
 		presetPlanImprovementLLM:      presetPlanImprovementLLM,
 		presetPlanToolOptimizationLLM: presetPlanToolOptimizationLLM,
+		useKnowledgebase:              useKnowledgebase,
 	}
 
 	return wo, nil
@@ -487,6 +502,7 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 		wo.presetPhaseLLM,
 		nil, // presetAnonymizationLLM (deprecated, no longer used)
 		wo.presetPlanImprovementLLM,
+		wo.useKnowledgebase, // Feature toggle for knowledgebase
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
@@ -579,6 +595,7 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		wo.presetPhaseLLM,
 		nil,
 		wo.presetPlanImprovementLLM,
+		wo.useKnowledgebase, // Feature toggle for knowledgebase
 	)
 	if err != nil {
 		wo.GetLogger().Error(fmt.Sprintf("❌ Failed to create orchestrator: %v", err), nil)
@@ -633,6 +650,7 @@ func (wo *WorkflowOrchestrator) runPlanImprovement(ctx context.Context, objectiv
 		wo.presetPhaseLLM, // Pass phase LLM for fallback
 		wo.getSessionID(),
 		wo.getWorkflowID(),
+		wo.useKnowledgebase,
 	)
 
 	// Extract selected_run_folder from execution options if available
@@ -667,6 +685,7 @@ func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, obj
 		wo.getSessionID(),
 		wo.getWorkflowID(),
 		wo.presetPhaseLLM, // Pass phase LLM (primary LLM for plan tool optimization)
+		wo.useKnowledgebase,
 	)
 
 	// Run only tool optimization (with optional step ID for step-specific execution)
@@ -789,6 +808,7 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.presetPhaseLLM,
 		nil, // presetAnonymizationLLM (deprecated, no longer used)
 		wo.presetPlanImprovementLLM,
+		wo.useKnowledgebase, // Feature toggle for knowledgebase
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)

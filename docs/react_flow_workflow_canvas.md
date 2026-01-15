@@ -58,6 +58,9 @@ This document describes the React Flow-based workflow canvas implementation that
 - ✅ **Variables node** - Visual representation of variable extraction phase
 - ✅ **Viewport persistence** - Saves zoom/pan state to localStorage per workspace
 - ✅ **Layout persistence** - Saves node positions to `workflow_layout.json` in workspace
+- ✅ **Topology-aware layout** - Dynamically adjusts spacing based on workflow complexity (e.g., orchestrators)
+- ✅ **Grouped node movement** - Sub-agents automatically follow their parent orchestrator when dragged
+- ✅ **Intelligent horizontal clearance** - Uses `minlen` to prevent overlaps after wide sub-agent rows
 - ✅ **Temporary LLM overrides** - Cascading fallback system (tempLLM1 → tempLLM2 → step LLM)
 - ✅ **Validation response saving** - Optional saving of validation responses to workspace
 
@@ -270,12 +273,17 @@ interface ExecutionOptions {
 ```typescript
 const DAGRE_CONFIG = {
   rankdir: 'LR',      // Left-to-Right flow
-  nodesep: 150,       // Horizontal spacing between nodes
-  ranksep: 180,       // Vertical spacing between ranks
-  marginx: 50,
-  marginy: 50
+  nodesep: 500,       // Vertical spacing between nodes in same rank (increased for general spacing)
+  ranksep: 200,       // Horizontal spacing between ranks (columns)
+  marginx: 80,
+  marginy: 80
 }
 ```
+
+**Intelligent Clearance:**
+- **minlen property**: Automatically applied to edges originating from Orchestrator nodes.
+- **Calculation**: Clearance distance is dynamically calculated based on the width of that specific orchestrator's sub-agent row.
+- **Benefit**: Ensures complex branches don't overlap with subsequent steps while maintaining compact spacing for simple paths.
 
 **Handle Positions Updated:**
 - Input handles: `Position.Left`
@@ -318,6 +326,8 @@ const DAGRE_CONFIG = {
 
 **OrchestratorNode:**
 - Displays all orchestration routes including sub-agent routes
+- **Optimized Height**: Routes list moved to sidebar to reduce base node height (120px)
+- **Clean Titles**: Sub-agent nodes display titles without redundant "Step X: " prefixes
 - Shows "End Workflow" as a special route option (always available)
 - Routes displayed in a blue info box with route names and conditions
 - "End" route shown with red indicator to distinguish from sub-agent routes
@@ -338,6 +348,14 @@ const DAGRE_CONFIG = {
 - **Clickable file names** - Same file opening functionality as StepNode
   - Context input/output files are clickable
   - Opens files in workspace with same processing as workspace sidebar
+
+### 3.1 Grouped Node Movement (WorkflowCanvas.tsx)
+
+**Synchronized Interaction:**
+- **Parent-Child Locking**: Sub-agents are logically grouped with their parent Orchestrator node.
+- **Grouped Dragging**: When a user drags an Orchestrator node, all its associated sub-agent nodes move automatically, maintaining their relative horizontal and vertical offsets.
+- **Independent Flexibility**: Sub-agents can still be dragged independently to fine-tune the layout; the new position will then be preserved relative to the parent during subsequent group moves.
+- **Cascading Updates**: This logic extends through the hierarchy (Orchestrator -> Sub-Agents -> Validation/Learning nodes).
 
 **VariablesNode:**
 - Displays variable extraction phase visualization
@@ -854,3 +872,6 @@ All components use CSS variables for theme-aware colors:
 | Branch step resumption | ✅ |
 | Granular change detection | ✅ |
 | Validation response saving | ✅ |
+| Topology-aware layout (Dynamic Clearance) | ✅ |
+| Grouped node movement | ✅ |
+| Optimized orchestrator height & clean titles | ✅ |

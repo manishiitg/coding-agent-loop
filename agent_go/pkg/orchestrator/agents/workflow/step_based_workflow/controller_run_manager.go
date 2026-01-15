@@ -281,14 +281,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) createRunFolderStructure(ctx context.
 		return fmt.Errorf("failed to create run folder: %w", err)
 	}
 
-	// Create knowledgebase folder at workspace root (shared across all runs)
-	// Use workspacePath parameter to normalize the relative path "knowledgebase"
-	workspacePath := hcpo.GetWorkspacePath()
-	if err := createFolderViaAPI(ctx, KnowledgebaseFolderName, workspacePath); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create knowledgebase folder via API: %v (continuing)", err))
-		// Don't fail - knowledgebase folder will be created when first file is written
+	// Create knowledgebase folder at workspace root (shared across all runs) - only if enabled
+	if hcpo.UseKnowledgebase() {
+		workspacePath := hcpo.GetWorkspacePath()
+		if err := createFolderViaAPI(ctx, KnowledgebaseFolderName, workspacePath); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create knowledgebase folder via API: %v (continuing)", err))
+			// Don't fail - knowledgebase folder will be created when first file is written
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Created knowledgebase folder: %s/%s", workspacePath, KnowledgebaseFolderName))
+		}
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Created knowledgebase folder: %s/%s", workspacePath, KnowledgebaseFolderName))
+		hcpo.GetLogger().Info("⏭️ Skipping knowledgebase folder creation (disabled in preset)")
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created run folder structure: %s", runPath))

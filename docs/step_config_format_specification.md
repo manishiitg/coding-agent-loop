@@ -191,7 +191,7 @@ content, err := json.MarshalIndent(file, "", "  ")
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `disable_validation` | `boolean` | `false` (nil = enabled) | Skip validation entirely for this step |
+| `disable_validation` | `boolean` | `true` (nil = disabled) | LLM validation control: `nil`/`true` = disabled (auto-approve), `false` = enabled. Pre-validation always runs if schema exists. |
 | `llm_validation_mode` | `"auto"\|"always"\|"skip"` | `"auto"` | Validation strategy: `"auto"` (skip after 3 successes), `"always"` (standard), `"skip"` (trust pre-validation) |
 
 ### Learning Configuration

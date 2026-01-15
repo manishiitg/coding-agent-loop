@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Play, Settings, Code, Terminal, AlertTriangle, Zap, Lock, ArrowDownToLine, ArrowUpFromLine, ShieldCheck, SkipForward } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Play, Settings, Code, Terminal, AlertTriangle, Zap, Lock, ArrowDownToLine, ArrowUpFromLine, SkipForward } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -9,7 +9,6 @@ import { agentApi } from '../../../services/api'
 import { isValidJSON } from '../../../utils/event-helpers'
 import { getToolsByCategory } from '../../../utils/customToolNames'
 import { NodeConfigFooter } from './NodeConfigFooter'
-import { NodeMarkdown } from './NodeMarkdown'
 import type { DecisionNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 
@@ -75,27 +74,9 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
-  const { id, title, decision_evaluation_question, decision_step, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder, validation_schema } = data
+  const { id, title, decision_evaluation_question, decision_step, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder } = data
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
-  
-  // Extract description and success criteria from step and decision_step
-  const decisionDescription = step?.description
-  const innerStepDescription = decision_step?.description
-  const innerStepSuccessCriteria = decision_step?.success_criteria
-
-  // Process text to convert escaped newlines to actual newlines
-  const processText = (text: string | undefined): string | undefined => {
-    if (!text) return undefined
-    return text
-      .replace(/\\n/g, '\n')  // Convert \n to actual newlines
-      .replace(/\\t/g, '\t')  // Convert \t to actual tabs
-      .replace(/\\r/g, '\r')  // Convert \r to actual carriage returns
-  }
-
-  const processedDecisionDescription = processText(decisionDescription)
-  const processedInnerStepDescription = processText(innerStepDescription)
-  const processedInnerStepSuccessCriteria = processText(innerStepSuccessCriteria)
 
   // Context inputs and outputs from the INNER STEP (decision_step) - this is what actually executes
   // The inner step is what reads context dependencies and produces context output
@@ -417,7 +398,7 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
   }, [workspacePath, selectedRunFolder, highlightFile, setShowFileContent, fetchFiles, setWorkspaceMinimized, setSelectedFile, setFileContent, setLoadingFileContent, setError])
 
   return (
-    <div className={`relative w-[300px] ${changeType ? changeHighlightStyles[changeType] : ''}`}>
+    <div className={`relative w-[260px] ${changeType ? changeHighlightStyles[changeType] : ''}`}>
       {/* Header with buttons - above the diamond */}
       <div className="absolute -top-12 left-0 right-0 flex items-center justify-center gap-2 z-20">
         {/* Run from this step button */}
@@ -524,8 +505,8 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
           ${status === 'executing' || status === 'evaluating' ? 'animate-pulse' : ''}
         `}
         style={{
-          minHeight: decision_step || decisionDescription ? '180px' : '120px',
-          width: '300px'
+          minHeight: decision_step ? '140px' : '100px',
+          width: '260px'
         }}
       >
         {/* Input handle */}
@@ -545,34 +526,12 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
             {title || `Decision ${stepIndex + 1}`}
           </h3>
           
-          {/* Decision step description */}
-          {processedDecisionDescription && (
-            <div className="mb-2 text-center px-1">
-              <NodeMarkdown content={processedDecisionDescription} textSize="xs" />
-            </div>
-          )}
-          
-          {/* Inner step info - always show if decision_step exists */}
+          {/* Inner step info - show title only */}
           {decision_step && (
             <div className="mt-1.5 p-2 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/50">
-              <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold mb-1">
+              <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold">
                 Executes: {decision_step.title || 'Untitled Step'}
               </p>
-              {/* Inner step description */}
-              {processedInnerStepDescription && (
-                <div className="text-indigo-600 dark:text-indigo-400 mt-1">
-                  <NodeMarkdown content={processedInnerStepDescription} textSize="tiny" />
-                </div>
-              )}
-              {/* Inner step success criteria */}
-              {processedInnerStepSuccessCriteria && (
-                <div className="flex gap-1.5 mt-1.5 p-1.5 rounded bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50">
-                  <CheckCircle className="w-3 h-3 text-green-500 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 text-green-700 dark:text-green-300">
-                    <NodeMarkdown content={processedInnerStepSuccessCriteria} textSize="tiny" />
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
@@ -665,31 +624,6 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
           <p className="text-[11px] text-gray-600 dark:text-gray-400 text-center leading-relaxed p-2.5 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/50">
             {decision_evaluation_question}
           </p>
-        </div>
-      )}
-
-      {/* Validation Schema */}
-      {validation_schema && validation_schema.files && validation_schema.files.length > 0 && (
-        <div className="mt-3 mx-4">
-          <div className="flex gap-2 p-2.5 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50">
-            <ShieldCheck className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <div className="text-xs font-semibold text-blue-700 dark:text-blue-300">
-                Validation Schema
-              </div>
-              <div className="text-[10px] mt-0.5 text-blue-600 dark:text-blue-400">
-                {validation_schema.files.length} file{validation_schema.files.length !== 1 ? 's' : ''} to validate
-                {validation_schema.files.map((file, idx) => {
-                  const checkCount = file.json_checks?.length || 0
-                  return (
-                    <div key={idx} className="mt-1">
-                      • {file.file_name} {checkCount > 0 && `(${checkCount} check${checkCount !== 1 ? 's' : ''})`}
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          </div>
         </div>
       )}
 

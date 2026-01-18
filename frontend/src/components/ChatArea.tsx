@@ -2376,6 +2376,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         'hasAllToolsMarkers': presetTools.some(t => t.endsWith(':*')) ? 'YES' : 'NO'
       });
       const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode
+      const presetUseToolSearchMode = activePreset?.useToolSearchMode
       
       // Get preset IDs for the current mode only
       const chatPresetId = chatPreset?.id || null
@@ -2405,14 +2406,42 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       } else {
         useCodeExecutionMode = undefined
       }
+
+      // Determine final tool search mode value
+      // For chat mode: Use preset value if preset exists, otherwise use tab's config value
+      // For workflow mode: Use preset value if available, otherwise undefined
+      let useToolSearchMode: boolean | undefined
+      if (correctAgentMode === 'simple') {
+        // In chat mode: If preset exists, use preset value; otherwise use tab's config
+        if (presetUseToolSearchMode !== undefined) {
+          useToolSearchMode = presetUseToolSearchMode
+        } else {
+          // No preset, use tab's config value (user's manual control via ChatInput toggle)
+          // Default to false if not set (explicitly send false to API)
+          if (selectedModeCategory === 'chat' && currentTab?.config) {
+            useToolSearchMode = currentTab.config.useToolSearchMode ?? false
+          } else {
+            // Fallback to false if no tab config available
+            useToolSearchMode = false
+          }
+        }
+      } else if (correctAgentMode === 'workflow') {
+        // For workflow mode, use preset value if available
+        useToolSearchMode = presetUseToolSearchMode
+      } else {
+        useToolSearchMode = undefined
+      }
       
       console.log('[code_execution] [ChatArea] Mode determination:', {
         activePreset: activePreset?.label,
         presetUseCodeExecutionMode,
+        presetUseToolSearchMode,
         tabConfigUseCodeExecutionMode: currentTab?.config?.useCodeExecutionMode,
+        tabConfigUseToolSearchMode: currentTab?.config?.useToolSearchMode,
         selectedModeCategory,
         correctAgentMode,
         finalUseCodeExecutionMode: useCodeExecutionMode,
+        finalUseToolSearchMode: useToolSearchMode,
         finalType: typeof useCodeExecutionMode
       })
       
@@ -2457,6 +2486,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         // Always send use_code_execution_mode explicitly for chat mode (simple agent)
         // This ensures the backend receives the correct value (false for simple mode, true for code exec mode)
         use_code_execution_mode: correctAgentMode === 'simple' ? (useCodeExecutionMode ?? false) : useCodeExecutionMode,
+        // Always send use_tool_search_mode explicitly for chat mode (simple agent)
+        // This ensures the backend receives the correct value (false for simple mode, true for tool search mode)
+        use_tool_search_mode: correctAgentMode === 'simple' ? (useToolSearchMode ?? false) : useToolSearchMode,
         // Execution options from frontend (for workflow execution phase)
         execution_options: executionOptionsRef.current,
         // Context summarization: Enable by default for chat mode
@@ -2475,6 +2507,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       
       console.log('[code_execution] [ChatArea] API Request payload:', {
         use_code_execution_mode: requestPayload.use_code_execution_mode,
+        use_tool_search_mode: requestPayload.use_tool_search_mode,
         type: typeof requestPayload.use_code_execution_mode,
         preset_query_id: requestPayload.preset_query_id,
         has_execution_options: Boolean(requestPayload.execution_options),

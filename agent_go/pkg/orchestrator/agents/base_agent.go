@@ -117,6 +117,8 @@ func NewBaseAgent(
 	serverNames []string,
 	selectedTools []string, // NEW parameter
 	useCodeExecutionMode bool, // NEW parameter
+	useToolSearchMode bool, // Enable tool search mode
+	preDiscoveredTools []string, // Tools always available without searching
 	mode AgentMode,
 	tracer observability.Tracer,
 	traceID observability.TraceID,
@@ -209,6 +211,14 @@ func NewBaseAgent(
 	if useCodeExecutionMode {
 		agentOptions = append(agentOptions, mcpagent.WithCodeExecutionMode(true))
 		// Removed verbose logging
+	}
+
+	// Add tool search mode if enabled
+	if useToolSearchMode {
+		agentOptions = append(agentOptions, mcpagent.WithToolSearchMode(true))
+	}
+	if len(preDiscoveredTools) > 0 {
+		agentOptions = append(agentOptions, mcpagent.WithPreDiscoveredTools(preDiscoveredTools))
 	}
 
 	// Enable smart routing for all agents

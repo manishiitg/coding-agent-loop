@@ -37,9 +37,9 @@ interface GlobalPresetState {
   
   // Actions for database management
   refreshPresets: () => Promise<void>
-  addPreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean) => Promise<CustomPreset | null>
-  updatePreset: (id: string, label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean) => Promise<void>
-  savePreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean) => Promise<CustomPreset | null>
+  addPreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean) => Promise<CustomPreset | null>
+  updatePreset: (id: string, label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean) => Promise<void>
+  savePreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, useToolSearchMode?: boolean) => Promise<CustomPreset | null>
   deletePreset: (id: string) => Promise<void>
   duplicatePreset: (presetId: string) => Promise<CustomPreset | null>
   updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
@@ -151,6 +151,16 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               console.error('[PRESET] Error parsing LLM config:', error)
               llmConfig = undefined
             }
+
+            // Parse pre-discovered tools safely
+            let preDiscoveredTools: string[] = []
+            try {
+              if (preset.pre_discovered_tools) {
+                preDiscoveredTools = JSON.parse(preset.pre_discovered_tools)
+              }
+            } catch (error) {
+              console.error('[PRESET] Error parsing pre-discovered tools:', error)
+            }
             
             return {
               id: preset.id,
@@ -163,6 +173,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               selectedFolder,
               llmConfig,
               useCodeExecutionMode: preset.use_code_execution_mode,
+              useToolSearchMode: preset.use_tool_search_mode,
+              preDiscoveredTools,
               enableContextSummarization: preset.enable_context_summarization !== undefined ? preset.enable_context_summarization : true
             }
           })
@@ -226,16 +238,30 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      addPreset: async (label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization) => {
+      addPreset: async (label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, useToolSearchMode) => {
         try {
-          // Filter out "*" markers - these indicate "all tools" mode
-          // For "all tools", we send empty array to backend (which means use all tools from server)
-          const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
-          
+          // Logic for Tool Search Mode:
+          // If enabled, the tools selected in the UI become "pre-discovered tools" (always available).
+          // We clear selected_tools to allow the agent to search ALL tools from the selected servers.
+          let toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
+          let preDiscoveredTools: string[] = []
+
+          if (useToolSearchMode) {
+            // Extract tool names from "server:tool" format
+            preDiscoveredTools = toolsForBackend.map(t => {
+              const parts = t.split(':')
+              return parts.length > 1 ? parts[1] : t
+            })
+            // Clear selected_tools to allow searching all tools
+            toolsForBackend = []
+          }
+
           console.log('[PRESET_SAVE] Before filtering:', {
             selectedServers,
             selectedTools,
             toolsForBackend,
+            preDiscoveredTools,
+            useToolSearchMode,
             label
           });
           
@@ -243,9 +269,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             label,
             query,
             selected_servers: selectedServers,
-            selected_tools: toolsForBackend, // Filtered tools without "*" markers
+            selected_tools: toolsForBackend, // Filtered tools (empty if tool search mode)
             agent_mode: agentMode,
-            selected_folder: selectedFolder?.filepath
+            selected_folder: selectedFolder?.filepath,
+            use_tool_search_mode: useToolSearchMode,
+            pre_discovered_tools: preDiscoveredTools
           }
           
           // Include LLM config if provided
@@ -280,11 +308,13 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             query: response.query,
             createdAt: new Date(response.created_at).getTime(),
             selectedServers,
-            selectedTools, // NEW
+            selectedTools, // Keep original selection for UI
             agentMode,
             selectedFolder,
             llmConfig,
             useCodeExecutionMode,
+            useToolSearchMode,
+            preDiscoveredTools,
             enableContextSummarization
           }
           
@@ -299,7 +329,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      updatePreset: async (id, label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization) => {
+      updatePreset: async (id, label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, useToolSearchMode) => {
         // CRITICAL: Log ALL arguments using rest parameters to see what's actually passed
         console.error('[code_execution] [PRESET_STORE] ========== updatePreset CALLED ==========')
         console.error('[code_execution] [PRESET_STORE] Arguments received:', {
@@ -312,13 +342,15 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           'arg7-selectedFolder': selectedFolder ? 'defined' : 'undefined',
           'arg8-llmConfig': llmConfig ? 'defined' : 'undefined',
           'arg9-useCodeExecutionMode': useCodeExecutionMode,
-          'arg9-type': typeof useCodeExecutionMode
+          'arg9-type': typeof useCodeExecutionMode,
+          'arg10-useToolSearchMode': useToolSearchMode
         })
         
         console.log('[code_execution] [PRESET_STORE] updatePreset called')
         console.log('[code_execution] [PRESET_STORE] id:', id)
         console.log('[code_execution] [PRESET_STORE] label:', label)
         console.log('[code_execution] [PRESET_STORE] param8 (useCodeExecutionMode):', useCodeExecutionMode, 'type:', typeof useCodeExecutionMode)
+        console.log('[code_execution] [PRESET_STORE] param10 (useToolSearchMode):', useToolSearchMode)
         console.log('[code_execution] [PRESET_STORE] All params:', {
           'param1-id': id,
           'param2-label': label,
@@ -329,11 +361,12 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           'param7-selectedFolder': selectedFolder ? 'defined' : 'undefined',
           'param8-llmConfig': llmConfig ? 'defined' : 'undefined',
           'param9-useCodeExecutionMode': useCodeExecutionMode,
-          'param9-type': typeof useCodeExecutionMode
+          'param9-type': typeof useCodeExecutionMode,
+          'param10-useToolSearchMode': useToolSearchMode
         })
         
         // Check if maybe parameters are shifted
-        console.log('[code_execution] [PRESET_STORE] Parameter count check - function expects 9 params, checking each:')
+        console.log('[code_execution] [PRESET_STORE] Parameter count check - function expects 10 params, checking each:')
         console.log('[code_execution] [PRESET_STORE] 1. id:', id)
         console.log('[code_execution] [PRESET_STORE] 2. label:', label)
         console.log('[code_execution] [PRESET_STORE] 3. query:', query?.substring(0, 30))
@@ -343,19 +376,34 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         console.log('[code_execution] [PRESET_STORE] 7. selectedFolder:', selectedFolder ? 'defined' : 'undefined')
         console.log('[code_execution] [PRESET_STORE] 8. llmConfig:', llmConfig ? 'defined' : 'undefined')
         console.log('[code_execution] [PRESET_STORE] 9. useCodeExecutionMode:', useCodeExecutionMode, 'type:', typeof useCodeExecutionMode)
+        console.log('[code_execution] [PRESET_STORE] 10. useToolSearchMode:', useToolSearchMode)
         
         try {
-          // Filter out "*" markers - these indicate "all tools" mode
-          // For "all tools", we send empty array to backend (which means use all tools from server)
-          const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
+          // Logic for Tool Search Mode:
+          // If enabled, the tools selected in the UI become "pre-discovered tools" (always available).
+          // We clear selected_tools to allow the agent to search ALL tools from the selected servers.
+          let toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
+          let preDiscoveredTools: string[] = []
+
+          if (useToolSearchMode) {
+            // Extract tool names from "server:tool" format
+            preDiscoveredTools = toolsForBackend.map(t => {
+              const parts = t.split(':')
+              return parts.length > 1 ? parts[1] : t
+            })
+            // Clear selected_tools to allow searching all tools
+            toolsForBackend = []
+          }
           
           const request: UpdatePresetQueryRequest = {
             label,
             query,
             selected_servers: selectedServers,
-            selected_tools: toolsForBackend, // Filtered tools without "*" markers
+            selected_tools: toolsForBackend, // Filtered tools (empty if tool search mode)
             agent_mode: agentMode,
-            selected_folder: selectedFolder?.filepath
+            selected_folder: selectedFolder?.filepath,
+            use_tool_search_mode: useToolSearchMode,
+            pre_discovered_tools: preDiscoveredTools
           }
           
           // Include LLM config if provided
@@ -389,11 +437,13 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                     label,
                     query,
                     selectedServers,
-                    selectedTools, // NEW
+                    selectedTools, // Keep original UI selection
                     agentMode,
                     selectedFolder,
                     llmConfig,
                     useCodeExecutionMode,
+                    useToolSearchMode,
+                    preDiscoveredTools,
                     enableContextSummarization
                   }
                 : preset
@@ -405,7 +455,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      savePreset: async (label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization) => {
+      savePreset: async (label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, useToolSearchMode) => {
         // CRITICAL: Log ALL arguments to trace parameter flow
         console.error('[code_execution] [PRESET_STORE] ========== savePreset CALLED ==========')
         console.error('[code_execution] [PRESET_STORE] Arguments received:', {
@@ -419,25 +469,41 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           'arg8-useCodeExecutionMode': useCodeExecutionMode,
           'arg8-type': typeof useCodeExecutionMode,
           'arg9-id': id,
+          'arg10-enableContextSummarization': enableContextSummarization,
+          'arg11-useToolSearchMode': useToolSearchMode,
           'operation': id ? 'UPDATE' : 'CREATE'
         })
         
-        
+        // Logic for Tool Search Mode (shared):
+        // If enabled, the tools selected in the UI become "pre-discovered tools" (always available).
+        // We clear selected_tools to allow the agent to search ALL tools from the selected servers.
+        let toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
+        let preDiscoveredTools: string[] = []
+
+        if (useToolSearchMode) {
+          // Extract tool names from "server:tool" format
+          preDiscoveredTools = toolsForBackend.map(t => {
+            const parts = t.split(':')
+            return parts.length > 1 ? parts[1] : t
+          })
+          // Clear selected_tools to allow searching all tools
+          toolsForBackend = []
+        }
+
         if (id) {
           // Update existing preset
           console.log('[code_execution] [PRESET_STORE] Updating existing preset:', id)
           
           try {
-            // Filter out "*" markers - these indicate "all tools" mode
-            const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
-            
             const request: UpdatePresetQueryRequest = {
               label,
               query,
               selected_servers: selectedServers,
               selected_tools: toolsForBackend,
               agent_mode: agentMode,
-              selected_folder: selectedFolder?.filepath
+              selected_folder: selectedFolder?.filepath,
+              use_tool_search_mode: useToolSearchMode,
+              pre_discovered_tools: preDiscoveredTools
             }
             
             // Include LLM config if provided
@@ -471,11 +537,13 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                       label,
                       query,
                       selectedServers,
-                      selectedTools,
+                      selectedTools, // Keep original UI selection
                       agentMode,
                       selectedFolder,
                       llmConfig,
                       useCodeExecutionMode,
+                      useToolSearchMode,
+                      preDiscoveredTools,
                       enableContextSummarization
                     }
                   : preset
@@ -494,16 +562,15 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           console.log('[code_execution] [PRESET_STORE] Creating new preset')
           
           try {
-            // Filter out "*" markers - these indicate "all tools" mode
-            const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
-            
             const request: CreatePresetQueryRequest = {
               label,
               query,
               selected_servers: selectedServers,
               selected_tools: toolsForBackend,
               agent_mode: agentMode,
-              selected_folder: selectedFolder?.filepath
+              selected_folder: selectedFolder?.filepath,
+              use_tool_search_mode: useToolSearchMode,
+              pre_discovered_tools: preDiscoveredTools
             }
             
             // Include LLM config if provided
@@ -535,11 +602,13 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               query: response.query,
               createdAt: new Date(response.created_at).getTime(),
               selectedServers,
-              selectedTools,
+              selectedTools, // Keep original UI selection
               agentMode,
               selectedFolder,
               llmConfig,
               useCodeExecutionMode,
+              useToolSearchMode,
+              preDiscoveredTools,
               enableContextSummarization
             }
             

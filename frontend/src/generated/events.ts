@@ -114,6 +114,7 @@ export interface AgentStartEvent {
   timestamp?: string;
   trace_id?: string;
   use_code_execution_mode?: boolean;
+  use_tool_search_mode?: boolean;
 }
 export interface CacheEvent {
   age?: string;
@@ -1134,18 +1135,14 @@ export interface StepStartedEvent {
   workspace_path?: string;
 }
 export interface StepProgressUpdatedEvent {
-  branch_steps?: {
-    [k: string]: BranchStepProgress;
-  };
-  completed_step_indices?: number[];
   component?: string;
   correlation_id?: string;
+  current_step_id?: string;
   event_id?: string;
+  group_id?: string;
+  group_index?: number;
   hierarchy_level?: number;
   is_end_event?: boolean;
-  last_completed_step?: number;
-  last_completed_step_id?: string;
-  last_completed_step_title?: string;
   metadata?: {
     [k: string]: unknown;
   };
@@ -1153,21 +1150,11 @@ export interface StepProgressUpdatedEvent {
   run_folder?: string;
   session_id?: string;
   span_id?: string;
+  status?: string;
   timestamp?: string;
-  total_steps?: number;
+  total_groups?: number;
   trace_id?: string;
-  validation_failures?: {
-    [k: string]: number;
-  };
   workspace_path?: string;
-}
-/**
- * This interface was referenced by `undefined`'s JSON-Schema definition
- * via the `patternProperty` "^[0-9]+$".
- */
-export interface BranchStepProgress {
-  branch_executed?: string;
-  completed_steps?: string[];
 }
 export interface StepTokenUsageEvent {
   cache_cost_usd?: number;
@@ -1351,6 +1338,7 @@ export interface TokenLimitExceededEvent {
   turn?: number;
 }
 export interface TokenUsageEvent {
+  agent_mode?: string;
   cache_cost_usd?: number;
   cache_discount?: number;
   completion_tokens?: number;
@@ -1387,6 +1375,8 @@ export interface TokenUsageEvent {
   total_tokens?: number;
   trace_id?: string;
   turn?: number;
+  use_code_execution_mode?: boolean;
+  use_tool_search_mode?: boolean;
 }
 export interface ToolCallEndEvent {
   component?: string;

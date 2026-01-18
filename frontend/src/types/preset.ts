@@ -12,6 +12,8 @@ export interface CustomPreset {
   selectedFolder?: PlannerFile; // Single folder
   llmConfig?: PresetLLMConfig; // LLM configuration for this preset
   useCodeExecutionMode?: boolean; // MCP code execution mode
+  useToolSearchMode?: boolean; // Tool search mode
+  preDiscoveredTools?: string[]; // Tools always available without searching
   enableContextSummarization?: boolean; // Enable context summarization
 }
 
@@ -25,5 +27,7 @@ export interface PredefinedPreset {
   selectedFolder?: PlannerFile;
   llmConfig?: PresetLLMConfig; // LLM configuration for this preset
   useCodeExecutionMode?: boolean; // MCP code execution mode
+  useToolSearchMode?: boolean; // Tool search mode
+  preDiscoveredTools?: string[]; // Tools always available without searching
   enableContextSummarization?: boolean; // Enable context summarization
 }

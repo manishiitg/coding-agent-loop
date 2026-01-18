@@ -25,12 +25,12 @@ export function AgentStartEventComponent({ event }: AgentStartEventProps) {
               🤖 Agent Started{' '}
               <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
                 | Type: {event.agent_type || 'Unknown'}
-                {(event as unknown as { use_code_execution_mode?: boolean }).use_code_execution_mode && ' | Execution: Code Exec'}
+                {event.use_code_execution_mode && ' | Mode: Code Exec'}
+                {event.use_tool_search_mode && ' | Mode: Tool Search'}
                 {' | Model: '}{event.model_id || 'Unknown'}
                 {' | Provider: '}{event.provider || 'Unknown'}
-                {((event as unknown as { max_turns?: number }).max_turns !== undefined || 
-                  (event.metadata?.max_turns as number | undefined) !== undefined) && 
-                  ` | Max Turns: ${(event as unknown as { max_turns?: number }).max_turns ?? (event.metadata?.max_turns as number)}`}
+                {(event.metadata?.max_turns !== undefined) && 
+                  ` | Max Turns: ${event.metadata.max_turns as number}`}
               </span>
             </div>
           </div>

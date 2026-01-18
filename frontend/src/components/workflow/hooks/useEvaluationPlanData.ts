@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { agentApi } from '../../../services/api'
-import type { EvaluationPlan, EvaluationStep, AgentConfigs } from '../../../services/api-types'
+import type { EvaluationPlan, EvaluationStep } from '../../../services/api-types'
+import type { AgentConfigs } from '../../../utils/stepConfigMatching'
 
 // Module-level cache
 interface EvalPlanCache {

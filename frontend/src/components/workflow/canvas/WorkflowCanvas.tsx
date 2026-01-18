@@ -20,7 +20,7 @@ import { BatchProgressHeader } from '../BatchProgressHeader'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
 import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type StepNodeData, type ConditionalNodeData, type LoopNodeData, type DecisionNodeData, type OrchestratorNodeData } from '../hooks/usePlanToFlow'
-import { useEvaluationPlanToFlow, type EvaluationStepNodeData } from '../hooks/useEvaluationPlanToFlow'
+import { useEvaluationPlanToFlow } from '../hooks/useEvaluationPlanToFlow'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
 import { useWorkspaceState } from '../hooks/useWorkspaceState'
@@ -735,8 +735,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
         return updatedNodes
       })
+    }
 
-      // Mark as unsaved
+    // Mark as unsaved if ANY node moved (including standalone nodes)
+    // We already filtered out invalid moves in filteredChanges
+    const hasPositionChanges = filteredChanges.some(c => c.type === 'position')
+    if (hasPositionChanges) {
       setHasUnsavedLayoutChanges(true)
       
       // Debounce save (will be saved manually via button, but track changes)

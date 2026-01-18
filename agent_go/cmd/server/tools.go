@@ -69,7 +69,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 	// Load merged config to get server details
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
+		api.logger.Error(fmt.Sprintf("Failed to load merged config: %v", err), err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger)
 		cfg = api.mcpConfig
@@ -84,7 +84,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 	// Create temporary merged config file for mcpcache
 	tmpConfigPath, err := api.createTempMergedConfig()
 	if err != nil {
-		api.logger.Error(fmt.Sprintf("Failed to create temp merged config: %w", err), err)
+		api.logger.Error(fmt.Sprintf("Failed to create temp merged config: %v", err), err)
 		// Fallback to base config path
 		tmpConfigPath = api.mcpConfigPath
 	} else {
@@ -208,7 +208,7 @@ func (api *StreamingAPI) handleGetTools(w http.ResponseWriter, r *http.Request) 
 	// Load merged config (base + user additions)
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
+		api.logger.Error(fmt.Sprintf("Failed to load merged config: %v", err), err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger)
 		cfg = api.mcpConfig
@@ -403,7 +403,7 @@ func (api *StreamingAPI) initializeToolCache() {
 	// Load merged config (base + user additions)
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
+		api.logger.Error(fmt.Sprintf("Failed to load merged config: %v", err), err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger)
 		cfg = api.mcpConfig
@@ -531,7 +531,7 @@ func (api *StreamingAPI) convertToolStatusToCacheEntry(toolStatus *ToolStatus, s
 	// Convert ToolDetail to llmtypes.Tool format using the centralized conversion function
 	llmTools, err := mcpclient.ToolDetailsAsLLM(toolStatus.Tools)
 	if err != nil {
-		api.logger.Error(fmt.Sprintf("Failed to convert tool details to LLM tools: %w", err), err)
+		api.logger.Error(fmt.Sprintf("Failed to convert tool details to LLM tools: %v", err), err)
 		// Return empty cache entry on error
 		return &mcpcache.CacheEntry{
 			ServerName:   serverName,
@@ -545,7 +545,7 @@ func (api *StreamingAPI) convertToolStatusToCacheEntry(toolStatus *ToolStatus, s
 			Protocol:     "unknown",
 			ServerInfo:   make(map[string]interface{}),
 			IsValid:      false,
-			ErrorMessage: fmt.Sprintf("Tool conversion error: %w", err),
+			ErrorMessage: fmt.Sprintf("Tool conversion error: %v", err),
 		}
 	}
 
@@ -617,7 +617,7 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 	// Load merged config (base + user additions)
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
-		api.logger.Error(fmt.Sprintf("Failed to load merged config: %w", err), err)
+		api.logger.Error(fmt.Sprintf("Failed to load merged config: %v", err), err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger)
 		cfg = api.mcpConfig

@@ -14,7 +14,15 @@
       "Bash(find:*)",
       "Bash(npm run build:*)",
       "Bash(npx tsc:*)",
-      "Bash(xargs -I{} sh -c 'echo \"\"=== {} ===\"\" && head -5 {}')"
+      "Bash(xargs -I{} sh -c 'echo \"\"=== {} ===\"\" && head -5 {}')",
+      "Bash(golangci-lint run:*)",
+      "Bash(golangci-lint help:*)",
+      "Bash(golangci-lint version:*)",
+      "Bash(golangci-lint config:*)",
+      "WebFetch(domain:golangci-lint.run)",
+      "Bash(golangci-lint linters:*)",
+      "WebSearch",
+      "Bash(golangci-lint migrate:*)"
     ],
     "deny": [],
     "ask": []

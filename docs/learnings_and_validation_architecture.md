@@ -42,19 +42,20 @@ The system supports flexible validation strategies to balance reliability and sp
 
 ### Validation Modes
 
-1. **Auto (Default)**: Smart validation based on stability.
+1. **Skip (Default)**: Trust pre-validation.
+   - **Logic:** Skips LLM validation if code-based pre-validation passes.
+   - **Benefit:** Fast validation - pre-validation handles structural checks, no LLM token cost.
+   - **Use Case:** Most steps where file existence/structure checks via `validation_schema` are sufficient.
+
+2. **Auto**: Smart validation based on stability.
    - **Logic:** Runs LLM validation for the first **3 successful executions**.
    - **Optimization:** Once a step has 3 successful runs (sum of `successful_runs_simple` + `successful_runs_medium` + `successful_runs_complex`), LLM validation is automatically skipped if pre-validation passes.
    - **Benefit:** Ensures reliability during the learning/unstable phase, then optimizes for speed and cost once the step is proven stable.
    - **Reset:** If the step definition changes (hash mismatch), counters reset to 0, and "Auto" mode will resume validation until 3 successes are reached again.
 
-2. **Always**: Strict validation.
+3. **Always**: Strict validation.
    - **Logic:** Always runs LLM validation, regardless of execution history.
    - **Use Case:** Critical steps where verification is mandatory every time (e.g., deployments, financial transactions).
-
-3. **Skip**: Trust pre-validation.
-   - **Logic:** Skips LLM validation if code-based pre-validation passes.
-   - **Use Case:** Simple steps where file existence/structure checks are sufficient (e.g., "Check if file exists").
 
 ### Pre-Validation Layer
 - **Timing:** Runs immediately after execution and before LLM validation.

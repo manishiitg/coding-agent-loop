@@ -185,8 +185,8 @@ func (em *ExecutionManager) PrepareExecution(
 				}
 
 				if !approved {
-					orch.GetLogger().Info("❌ User rejected proceeding with invalid resume step - cancelling execution")
-					return nil, fmt.Errorf("execution cancelled: user rejected proceeding with invalid resume_from_step=%d", resumeStep)
+					orch.GetLogger().Info("❌ User rejected proceeding with invalid resume step - canceling execution")
+					return nil, fmt.Errorf("execution canceled: user rejected proceeding with invalid resume_from_step=%d", resumeStep)
 				}
 
 				// User approved - proceed with fallback logic
@@ -295,8 +295,8 @@ func (em *ExecutionManager) PrepareExecution(
 				}
 
 				if !approved {
-					orch.GetLogger().Info("❌ User rejected proceeding with invalid resume step - cancelling execution")
-					return nil, fmt.Errorf("execution cancelled: user rejected proceeding with invalid resume_from_step=%d", resumeStep)
+					orch.GetLogger().Info("❌ User rejected proceeding with invalid resume step - canceling execution")
+					return nil, fmt.Errorf("execution canceled: user rejected proceeding with invalid resume_from_step=%d", resumeStep)
 				}
 
 				// User approved - proceed with fallback logic
@@ -410,8 +410,8 @@ func (em *ExecutionManager) PrepareExecution(
 				}
 
 				if !approved {
-					orch.GetLogger().Info("❌ User rejected proceeding with invalid resume step - cancelling execution")
-					return nil, fmt.Errorf("execution cancelled: user rejected proceeding with invalid resume_from_step=%d", resumeStep)
+					orch.GetLogger().Info("❌ User rejected proceeding with invalid resume step - canceling execution")
+					return nil, fmt.Errorf("execution canceled: user rejected proceeding with invalid resume_from_step=%d", resumeStep)
 				}
 
 				// User approved - proceed with fallback logic

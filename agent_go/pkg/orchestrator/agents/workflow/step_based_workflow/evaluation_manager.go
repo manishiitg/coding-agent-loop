@@ -64,28 +64,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) checkExistingEvaluationPlan(ctx conte
 	return true, &plan, nil
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) loadEvaluationPlan(ctx context.Context) (*EvaluationPlan, error) {
-	// Note: evaluation_plan.json is stored in evaluation/ directory (not planning/) per documentation
-	content, err := hcpo.ReadWorkspaceFile(ctx, "evaluation/evaluation_plan.json")
-	if err != nil {
-		return nil, err
-	}
-	var plan EvaluationPlan
-	if err := json.Unmarshal([]byte(content), &plan); err != nil {
-		return nil, err
-	}
-	return &plan, nil
-}
-
-func (hcpo *StepBasedWorkflowOrchestrator) saveEvaluationPlan(ctx context.Context, plan *EvaluationPlan) error {
-	data, err := json.MarshalIndent(plan, "", "  ")
-	if err != nil {
-		return err
-	}
-	// Note: evaluation_plan.json is stored in evaluation/ directory (not planning/) per documentation
-	return hcpo.WriteWorkspaceFile(ctx, "evaluation/evaluation_plan.json", string(data))
-}
-
 // Methods for EvaluationManager
 
 // deleteStepLearnings deletes the entire learnings folder for a specific evaluation step ID.

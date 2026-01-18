@@ -568,15 +568,6 @@ func (boa *BaseOrchestratorAgent) emitAgentEndEventWithStructuredResponse(ctx co
 	boa.emitEvent(ctx, events.OrchestratorAgentEnd, eventData)
 }
 
-// getMapKeys returns the keys of a map for debugging
-func getMapKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
 // createLLM creates an LLM instance based on the agent configuration
 // Uses the unified LLMConfig (Primary + Fallbacks) as the source of truth
 func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {

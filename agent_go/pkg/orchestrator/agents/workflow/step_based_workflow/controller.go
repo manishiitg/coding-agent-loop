@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
-	orchestratorllm "mcp-agent-builder-go/agent_go/pkg/orchestrator/llm"
 	mcpagent "mcpagent/agent"
 	loggerv2 "mcpagent/logger/v2"
 	"mcpagent/observability"
@@ -352,90 +350,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 	return defaultConditionalAgent
 }
 
-// getConditionalLLMForStep returns the ConditionalLLM to use for a specific step
-// Priority: step config conditional_llm > default LLM config
-// Uses simpler ConditionalLLM instead of full agent (no MCP tools needed for decision evaluation)
-func (hcpo *StepBasedWorkflowOrchestrator) getConditionalLLMForStep(step PlanStepInterface, stepIndex int) (*orchestratorllm.ConditionalLLM, error) {
-	eventBridge := hcpo.GetContextAwareBridge()
-	if eventBridge == nil {
-		return nil, fmt.Errorf("event bridge is required for conditional LLM")
-	}
-
-	logger := hcpo.GetLogger()
-	tracer := hcpo.GetTracer()
-
-	// For conditional LLM, skip tempLLM and use step/preset ExecutionLLM directly
-	// Fallback order: ExecutionLLM → preset ExecutionLLM
-	// Determine LLM config: Priority: step execution_llm > preset execution_llm
-	var llmConfig *orchestrator.LLMConfig
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
-	agentConfigs := getAgentConfigs(step)
-
-	if agentConfigs != nil && agentConfigs.ExecutionLLM != nil && agentConfigs.ExecutionLLM.Provider != "" && agentConfigs.ExecutionLLM.ModelID != "" {
-		// Use step-specific execution LLM config
-		executionLLMConfig := agentConfigs.ExecutionLLM
-		llmConfig = &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: executionLLMConfig.Provider,
-				ModelID:  executionLLMConfig.ModelID,
-			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution LLM for conditional LLM: %s/%s", executionLLMConfig.Provider, executionLLMConfig.ModelID))
-	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
-		// Use preset execution LLM as fallback
-		llmConfig = &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: hcpo.presetExecutionLLM.Provider,
-				ModelID:  hcpo.presetExecutionLLM.ModelID,
-			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution LLM for conditional LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
-	} else {
-		return nil, fmt.Errorf("no valid LLM configuration found for conditional LLM: step config and preset execution LLM are both empty or invalid")
-	}
-
-	// Convert to OrchestratorAgentConfig
-	agentConfig := &agents.OrchestratorAgentConfig{
-		LLMConfig: agents.LLMConfig{
-			Primary: agents.LLMModel{
-				Provider: llmConfig.Primary.Provider,
-				ModelID:  llmConfig.Primary.ModelID,
-			},
-		},
-		Temperature: 0.0, // Use deterministic temperature for conditional decisions
-		MaxRetries:  3,
-	}
-	// Convert APIKeys from orchestrator.APIKeys to agents.AgentAPIKeys
-	if llmConfig.APIKeys != nil {
-		agentConfig.APIKeys = &agents.AgentAPIKeys{
-			OpenRouter: llmConfig.APIKeys.OpenRouter,
-			OpenAI:     llmConfig.APIKeys.OpenAI,
-			Anthropic:  llmConfig.APIKeys.Anthropic,
-			Vertex:     llmConfig.APIKeys.Vertex,
-		}
-		if llmConfig.APIKeys.Bedrock != nil {
-			agentConfig.APIKeys.Bedrock = &agents.BedrockAgentConfig{
-				Region: llmConfig.APIKeys.Bedrock.Region,
-			}
-		}
-	}
-
-	// Create ConditionalLLM using helper function
-	conditionalLLM, err := orchestratorllm.CreateConditionalLLMWithEventBridge(
-		agentConfig,
-		eventBridge,
-		logger,
-		tracer,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create conditional LLM: %w", err)
-	}
-
-	return conditionalLLM, nil
-}
-
 // CreateTodoList orchestrates the human-controlled todo planning process
 // - Single execution (no iterations)
 // - Includes validation phase (runs later in the workflow)
@@ -769,7 +683,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	// Use earlyProgress if available, otherwise load it
 	if earlyProgress != nil {
 		existingProgress = earlyProgress
-		err = nil // Reset err since earlyProgress was successfully loaded earlier
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Using early progress (avoided reload)"))
 	} else {
 		// Check if there's existing progress (only if we haven't already handled plan change)
@@ -779,13 +692,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 				// File doesn't exist - this is normal for first run, log and continue
 				hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ No existing progress file found (this is normal for first run), will start fresh execution"))
 				existingProgress = nil
-				err = nil // Reset err to allow execution to proceed
 			}
 		} else {
 			// Plan change was already handled, don't reload to avoid duplicate prompts
 			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Plan change already handled, skipping reload to avoid duplicate prompts"))
 			existingProgress = nil
-			err = nil
 		}
 	}
 
@@ -806,7 +717,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 		// Reset progress to nil to ensure fresh initialization (this will reset DecisionEvaluationCounts)
 		existingProgress = nil
 		earlyProgress = nil // Also clear earlyProgress to ensure old counts don't persist
-		startFromStep = 0
+		// startFromStep is already 0 from initialization
 	} else {
 		// Case 2: Resume from step X
 		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Resuming from step"))
@@ -817,7 +728,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 			if err != nil {
 				hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ No existing progress file found, will start from step specified by frontend"))
 				existingProgress = nil
-				err = nil
 			}
 		}
 
@@ -915,15 +825,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 					}
 				}
 			} else {
-				// No execOpts - use next incomplete step as fallback
-				if nextIncompleteStep > 0 {
-					startFromStep = nextIncompleteStep - 1
-				}
+				// No execOpts - next incomplete step would be used as fallback
+				// but startFromStep will be set by PrepareExecution if needed
 			}
 		} else {
-			// No existing progress - use resume_from_step from frontend if available
+			// No existing progress - startFromStep will be set by PrepareExecution if needed
 			if execOpts != nil && execOpts.ResumeFromStep > 0 {
-				startFromStep = execOpts.ResumeFromStep - 1
 				hcpo.GetLogger().Info(fmt.Sprintf("🎯 Resuming from step %d (no existing progress)", execOpts.ResumeFromStep))
 			}
 		}

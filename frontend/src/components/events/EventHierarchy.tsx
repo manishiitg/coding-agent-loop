@@ -260,7 +260,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     }
   }, [sessionId, paginationOffset, eventMode, isLoadingOlder]);
 
-  const renderItem = useCallback((index: number, item: FlattenedItem) => {
+  const renderItem = useCallback((_index: number, item: FlattenedItem) => {
     const { node, uniqueKey } = item;
     const { event, children, level, isExpanded } = node;
     const hasChildren = children.length > 0;

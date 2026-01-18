@@ -172,7 +172,6 @@ type WorkflowOrchestrator struct {
 	presetPhaseLLM                *step_based_workflow.AgentLLMConfig // Default for all phase agents (planning, anonymization, plan improvement, etc.)
 	presetPlanImprovementLLM      *step_based_workflow.AgentLLMConfig // Default for plan improvement agent
 	presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig // Default for plan tool optimization agent
-	presetCodeExecDebuggingLLM    *step_based_workflow.AgentLLMConfig // Default for code exec debugging agent
 
 	// Preset-level feature toggles
 	useKnowledgebase bool // Whether to create and reference knowledgebase folder (default: true)

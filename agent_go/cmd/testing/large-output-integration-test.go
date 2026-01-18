@@ -189,7 +189,7 @@ func testVirtualToolsForLargeOutput(testDir string) error {
 		"raw":      true,
 	})
 	if err != nil {
-		logger.Info(fmt.Sprintf("⚠️ query_large_output failed: %w", err))
+		logger.Info(fmt.Sprintf("⚠️ query_large_output failed: %v", err))
 		logger.Info(fmt.Sprintf("⚠️ This is expected if jq is not available or if there are permission issues"))
 		logger.Info("✅ Skipping query_large_output test (not critical for core functionality)")
 	} else {

@@ -1297,7 +1297,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                   <div className="flex items-center gap-2 pt-1">
                     <label className="text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">Mode:</label>
                     <select
-                      value={agentConfigs.llm_validation_mode || 'auto'}
+                      value={agentConfigs.llm_validation_mode || 'skip'}
                       onChange={(e) => {
                         const mode = e.target.value as 'auto' | 'always' | 'skip';
                         setAgentConfigs((prev) => ({

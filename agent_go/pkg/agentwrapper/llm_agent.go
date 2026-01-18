@@ -499,8 +499,8 @@ func (w *LLMAgentWrapper) InvokeWithHistory(ctx context.Context, messages []llmt
 
 	// Check for context cancellation before executing the request
 	if ctx.Err() != nil {
-		w.logger.Info(fmt.Sprintf("Context cancelled before agent execution: %s", ctx.Err().Error()))
-		return "", fmt.Errorf("agent execution cancelled: %w", ctx.Err())
+		w.logger.Info(fmt.Sprintf("Context canceled before agent execution: %s", ctx.Err().Error()))
+		return "", fmt.Errorf("agent execution canceled: %w", ctx.Err())
 	}
 
 	// Execute the request with message history
@@ -631,13 +631,6 @@ func (w *LLMAgentWrapper) updateFailureMetrics(duration time.Duration, err error
 	if w.metrics.TotalRequests > 0 {
 		w.metrics.AverageLatency = w.metrics.TotalLatency / time.Duration(w.metrics.TotalRequests)
 	}
-}
-
-func (w *LLMAgentWrapper) getLastErrorString() string {
-	if w.metrics.LastError == nil {
-		return ""
-	}
-	return w.metrics.LastError.Error()
 }
 
 // initializeLLMWithConfig initializes an LLM using detailed configuration from frontend

@@ -67,7 +67,7 @@ Both frontend and backend **read and write** only the object format with `steps`
         },
         "use_code_execution_mode": true,
         "disable_validation": false,
-        "llm_validation_mode": "auto",
+        "llm_validation_mode": "skip",
         "disable_learning": false,
         "lock_learnings": false,
         "learning_after_loop_iteration": false,
@@ -192,7 +192,7 @@ content, err := json.MarshalIndent(file, "", "  ")
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `disable_validation` | `boolean` | `true` (nil = disabled) | LLM validation control: `nil`/`true` = disabled (auto-approve), `false` = enabled. Pre-validation always runs if schema exists. |
-| `llm_validation_mode` | `"auto"\|"always"\|"skip"` | `"auto"` | Validation strategy: `"auto"` (skip after 3 successes), `"always"` (standard), `"skip"` (trust pre-validation) |
+| `llm_validation_mode` | `"skip"\|"auto"\|"always"` | `"skip"` | Validation strategy: `"skip"` (trust pre-validation), `"auto"` (skip after 3 successes), `"always"` (standard) |
 
 ### Learning Configuration
 

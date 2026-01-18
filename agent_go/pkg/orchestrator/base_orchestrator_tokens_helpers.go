@@ -109,13 +109,6 @@ func extractCacheTokensSeparate(tokenEvent *events.TokenUsageEvent) CacheTokens 
 	return result
 }
 
-// extractCacheTokens extracts total cache tokens from a TokenUsageEvent's GenerationInfo
-// Returns 0 if not available or cannot be extracted
-// DEPRECATED: Use extractCacheTokensSeparate for accurate pricing (separates read vs write)
-func extractCacheTokens(tokenEvent *events.TokenUsageEvent) int {
-	return extractCacheTokensSeparate(tokenEvent).Total
-}
-
 // extractLLMCallCount extracts LLM call count from a TokenUsageEvent's GenerationInfo
 // Returns 1 if not available (fallback for single-call events like smart routing)
 // For conversation end events, this returns the cumulative call count

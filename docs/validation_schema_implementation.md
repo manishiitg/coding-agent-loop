@@ -15,7 +15,7 @@ The Structured Validation Schema enables code-based validation of step outputs, 
 - ✅ Integration with execution and orchestration controllers
 - ✅ Pre-validation blocks LLM validation when it fails
 - ✅ Validation schema is **OPTIONAL** (pre-validation skips if schema is nil)
-- ✅ **3-mode LLM validation control**: `llm_validation_mode` ("auto", "always", "skip")
+- ✅ **3-mode LLM validation control**: `llm_validation_mode` ("skip" default, "auto", "always")
 - ✅ LLM-only schema generation (no code-based auto-generation)
 - ✅ Success criteria guidance updated to focus on execution-based validation
 - ✅ Frontend TypeScript types updated
@@ -26,7 +26,7 @@ The Structured Validation Schema enables code-based validation of step outputs, 
 - When updating steps via `update_regular_step` tool, `validation_schema` is required
 - Success criteria focuses on execution history verification, not file structure
 - Pre-validation errors properly block LLM validation (OverallPass: false)
-- Validation behavior is controlled by `llm_validation_mode` (Auto/Always/Skip)
+- Validation behavior is controlled by `llm_validation_mode` (Skip/Auto/Always, default: Skip)
 
 **Key Problem**: Current validation relies entirely on LLM to check files and keys, which is:
 - **Slow**: LLM must read files and analyze content
@@ -372,7 +372,7 @@ validationTemplateVars := map[string]string{
 
 **LLM Validation Control**:
 
-Validation behavior is determined based on `llm_validation_mode` (default: "auto"). Legacy boolean `skip_llm_validation_if_pre_validation_passes` has been removed.
+Validation behavior is determined based on `llm_validation_mode` (default: "skip"). Legacy boolean `skip_llm_validation_if_pre_validation_passes` has been removed.
 
 ```go
 // Mode logic is handled in the execution loop

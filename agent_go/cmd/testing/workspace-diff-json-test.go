@@ -518,7 +518,7 @@ func runEdgeCaseTests(logger loggerv2.Logger) error {
 			expectedCheck: func(result string) error {
 				var js map[string]interface{}
 				if err := json.Unmarshal([]byte(result), &js); err != nil {
-					return fmt.Errorf("invalid JSON produced: %v", err)
+					return fmt.Errorf("invalid JSON produced: %w", err)
 				}
 				if js["b"] != "value2" {
 					return fmt.Errorf("field 'b' not added correctly")
@@ -543,7 +543,7 @@ func runEdgeCaseTests(logger loggerv2.Logger) error {
 			expectedCheck: func(result string) error {
 				var js map[string]interface{}
 				if err := json.Unmarshal([]byte(result), &js); err != nil {
-					return fmt.Errorf("invalid JSON produced: %v", err)
+					return fmt.Errorf("invalid JSON produced: %w", err)
 				}
 				if js["new"] != "val" {
 					return fmt.Errorf("field 'new' not added")
@@ -633,7 +633,7 @@ lineC`,
 			expectedCheck: func(result string) error {
 				var js []map[string]interface{}
 				if err := json.Unmarshal([]byte(result), &js); err != nil {
-					return fmt.Errorf("invalid JSON produced: %v", err)
+					return fmt.Errorf("invalid JSON produced: %w", err)
 				}
 				if len(js) != 3 {
 					return fmt.Errorf("expected 3 elements, got %d", len(js))

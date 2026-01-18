@@ -32,19 +32,19 @@ func runConnect(cmd *cobra.Command, args []string) {
 	// Load merged configuration (base + user)
 	config, err := mcpclient.LoadMergedConfig(configFile, nil)
 	if err != nil {
-		log.Fatalf("Failed to load merged config: %w", err)
+		log.Fatalf("Failed to load merged config: %v", err)
 	}
 
 	// Get server configuration
 	serverConfig, err := config.GetServer(serverName)
 	if err != nil {
-		log.Fatalf("Server error: %w", err)
+		log.Fatalf("Server error: %v", err)
 	}
 
 	// Use direct connection instead of pooling
 	v2Logger, err := logger.CreateLogger("", "info", "text", true)
 	if err != nil {
-		log.Fatalf("Failed to create logger: %w", err)
+		log.Fatalf("Failed to create logger: %v", err)
 	}
 	defer v2Logger.Close()
 
@@ -55,7 +55,7 @@ func runConnect(cmd *cobra.Command, args []string) {
 	defer cancel()
 
 	if err := client.ConnectWithRetry(ctx); err != nil {
-		log.Fatalf("Failed to connect: %w", err)
+		log.Fatalf("Failed to connect: %v", err)
 	}
 
 	// Show server info

@@ -414,8 +414,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 
 			var validationResponse *ValidationResponse
 
-			// Check validation mode (default: "auto")
-			validationMode := "auto"
+			// Check validation mode (default: "skip")
+			validationMode := "skip"
 			stepConfigs := getAgentConfigs(orchestrationStepPlan)
 			if stepConfigs != nil && stepConfigs.LLMValidationMode != "" {
 				validationMode = stepConfigs.LLMValidationMode
@@ -1237,7 +1237,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getOrchestrationOrchestratorAgentForS
 
 	// Get step config - every step has its own config by its own ID
 	orchestrationStepConfig := getAgentConfigs(step)
-	stepID := step.GetID()
+	var stepID string
 
 	// Get step ID for orchestration learnings (use step's own ID)
 	// For OrchestrationPlanStep, learnings are stored using the inner step's ID (for folder organization)

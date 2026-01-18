@@ -507,22 +507,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	}
 }
 
-// hasEffectiveServers checks if the servers list is effectively empty
-// Returns false if servers is empty or only contains NO_SERVERS (should fall back to orchestrator defaults)
-// Returns true if servers contains at least one valid server name
-func hasEffectiveServers(servers []string) bool {
-	if len(servers) == 0 {
-		return false
-	}
-	// Check if all servers are NO_SERVERS (effectively empty)
-	for _, server := range servers {
-		if server != mcpclient.NoServers {
-			return true // Found at least one valid server
-		}
-	}
-	return false // All servers are NO_SERVERS or empty
-}
-
 // applyStepConfigToAgentConfig applies step-specific configuration overrides to agent config
 func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *agents.OrchestratorAgentConfig, stepConfig *AgentConfigs, isCodeExecutionMode bool) {
 	// Use step-specific servers if provided, otherwise use orchestrator defaults
@@ -1213,12 +1197,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 // createLearningAgent creates a unified learning agent for analyzing executions (both successful and failed)
 // The agent handles both success and failure patterns automatically based on validation results
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
-// isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent
-// stepIndex: 0-based step index for token tracking
-func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool, stepID string, stepPath string, stepIndex int) (agents.OrchestratorAgent, error) {
-	return hcpo.createLearningAgentInternal(ctx, phase, learningPathIdentifier, agentName, stepConfig, isCodeExecutionMode, stepID, stepPath, stepIndex)
-}
-
 // Note: Learning integration functions removed - execution agent now auto-discovers learning files and scripts
 
 // createSuccessLearningAgent is a backward compatibility wrapper for createLearningAgent
@@ -1676,14 +1654,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 	})
 
 	// Execute the scoring agent with the cancellable context
-	// The context will be cancelled when submit_score is called, breaking the conversation loop
+	// The context will be canceled when submit_score is called, breaking the conversation loop
 	_, _, err = scoringAgent.Execute(toolCalledCtx, nil, nil)
 
 	// Check if score was captured - if so, context cancellation is expected and not an error
 	if capturedScore != nil {
 		// Score was captured successfully - context cancellation is expected behavior
 		// Ignore cancellation errors since we got what we needed
-		if err != nil && (toolCalledCtx.Err() == context.Canceled || strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context cancelled")) {
+		if err != nil && (toolCalledCtx.Err() == context.Canceled || strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context canceled")) {
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Score captured successfully (context cancellation expected): %d/10 for step %s", capturedScore.Score, capturedScore.StepID))
 			err = nil // Clear the cancellation error since we got the score
 		}

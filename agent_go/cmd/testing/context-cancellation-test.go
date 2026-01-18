@@ -18,13 +18,13 @@ import (
 
 var contextCancellationTestCmd = &cobra.Command{
 	Use:   "context-cancellation",
-	Short: "Test context cancellation behavior in external package - verify LLM calls get cancelled",
+	Short: "Test context cancellation behavior in external package - verify LLM calls get canceled",
 	Long: `Test context cancellation behavior in external package.
 
-This test verifies that when a context is cancelled:
+This test verifies that when a context is canceled:
 1. External package methods return context cancellation errors
-2. LLM calls get cancelled and don't complete
-3. Tool executions are properly cancelled
+2. LLM calls get canceled and don't complete
+3. Tool executions are properly canceled
 4. Resources are cleaned up correctly
 
 The test uses a long-running LLM operation to ensure cancellation can be observed.`,
@@ -38,7 +38,7 @@ The test uses a long-running LLM operation to ensure cancellation can be observe
 		logger := GetTestLogger()
 
 		logger.Info("=== Context Cancellation Test ===")
-		logger.Info("Testing whether LLM calls get cancelled when context is cancelled")
+		logger.Info("Testing whether LLM calls get canceled when context is canceled")
 		logger.Info("⚠️  NOTE: This test may not definitively prove cancellation vs timeout")
 		logger.Info("    We need to verify the LLM request was actually interrupted")
 
@@ -61,7 +61,7 @@ The test uses a long-running LLM operation to ensure cancellation can be observe
 	},
 }
 
-// testContextCancellationDuringLLMGeneration tests that LLM calls get cancelled when context is cancelled
+// testContextCancellationDuringLLMGeneration tests that LLM calls get canceled when context is canceled
 func testContextCancellationDuringLLMGeneration(provider string, logger loggerv2.Logger) error {
 	logger.Info("Creating external agent for LLM cancellation test...")
 
@@ -123,7 +123,7 @@ func testContextCancellationDuringLLMGeneration(provider string, logger loggerv2
 
 	logger.Info("Starting LLM generation with context cancellation...")
 
-	// Create a context that will be cancelled after a short delay
+	// Create a context that will be canceled after a short delay
 	// Use a longer timeout to ensure we're testing cancellation, not just timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -131,7 +131,7 @@ func testContextCancellationDuringLLMGeneration(provider string, logger loggerv2
 	// Cancel the context after 2 seconds to test actual cancellation
 	go func() {
 		time.Sleep(2 * time.Second)
-		logger.Info("🔄 Manually cancelling context after 2 seconds...")
+		logger.Info("🔄 Manually canceling context after 2 seconds...")
 		cancel()
 	}()
 
@@ -158,16 +158,16 @@ func testContextCancellationDuringLLMGeneration(provider string, logger loggerv2
 	select {
 	case result := <-resultChan:
 		logger.Warn(fmt.Sprintf("⚠️ Unexpected: LLM generation completed before cancellation: %s", result[:100]))
-		return fmt.Errorf("LLM generation should have been cancelled")
+		return fmt.Errorf("LLM generation should have been canceled")
 	case err := <-errChan:
 		if isContextCancelledError(err) {
-			logger.Info(fmt.Sprintf("✅ LLM generation was properly cancelled: %w", err))
+			logger.Info(fmt.Sprintf("✅ LLM generation was properly canceled: %v", err))
 			return nil
 		}
 		return fmt.Errorf("unexpected error during LLM generation: %w", err)
 	case <-time.After(5 * time.Second):
-		logger.Warn(fmt.Sprintf("⚠️ Test timeout - LLM generation may not have been cancelled properly"))
-		return fmt.Errorf("test timeout - LLM generation should have been cancelled within 5 seconds")
+		logger.Warn(fmt.Sprintf("⚠️ Test timeout - LLM generation may not have been canceled properly"))
+		return fmt.Errorf("test timeout - LLM generation should have been canceled within 5 seconds")
 	}
 }
 
@@ -181,14 +181,13 @@ func isContextCancelledError(err error) bool {
 	errStr := err.Error()
 
 	// These indicate actual context cancellation
-	if errStr == "context canceled" || errStr == "context cancelled" {
+	if errStr == "context canceled" {
 		return true
 	}
 
 	// These could be either cancellation or timeout - need to investigate further
 	if errStr == "context deadline exceeded" ||
-		errStr == "operation canceled" ||
-		errStr == "operation cancelled" {
+		errStr == "operation canceled" {
 		// Log this for investigation
 		return true // Assume it's cancellation for now, but this needs verification
 	}

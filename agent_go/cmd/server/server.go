@@ -533,7 +533,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Validate provider
 	llmProvider, err := llm.ValidateProvider(config.Provider)
 	if err != nil {
-		log.Fatalf("Invalid provider: %w", err)
+		log.Fatalf("Invalid provider: %v", err)
 	}
 
 	// Set default model if not specified
@@ -579,7 +579,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	configPath := config.MCPConfigPath
 	mcpConfig, err := mcpclient.LoadConfig(configPath, nil) // Logger not yet available, will be created later
 	if err != nil {
-		log.Fatalf("Failed to load MCP config: %w", err)
+		log.Fatalf("Failed to load MCP config: %v", err)
 	}
 
 	// Initialize polling system (activity callback will be set after api is created)
@@ -611,7 +611,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 
 	if err != nil {
-		log.Fatalf("Failed to initialize chat history database: %w", err)
+		log.Fatalf("Failed to initialize chat history database: %v", err)
 	}
 	defer chatDB.Close()
 
@@ -816,7 +816,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Start server in a goroutine
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server failed to start: %w", err)
+			log.Fatalf("Server failed to start: %v", err)
 		}
 	}()
 
@@ -846,7 +846,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Shutdown server
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %w", err)
+		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 
 	fmt.Println("✅ Server shutdown complete")
@@ -939,7 +939,7 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 func (api *StreamingAPI) handleValidateAPIKey(w http.ResponseWriter, r *http.Request) {
 	var req llm.APIKeyValidationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("Failed to decode API key validation request: %w", err)
+		log.Printf("Failed to decode API key validation request: %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -964,7 +964,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Parse request body first
 	var req QueryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		errorMsg := fmt.Sprintf("Invalid request body: %w", err)
+		errorMsg := fmt.Sprintf("Invalid request body: %v", err)
 		http.Error(w, errorMsg, http.StatusBadRequest)
 		return
 	}
@@ -1111,7 +1111,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			Config:        configJSON,
 		})
 		if err != nil {
-			log.Printf("[DATABASE DEBUG] Failed to create chat session: %w", err)
+			log.Printf("[DATABASE DEBUG] Failed to create chat session: %v", err)
 			// Continue without chat session - events won't be stored but query can proceed
 		}
 	} else {
@@ -1258,7 +1258,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Load selected tools
 				if preset.SelectedTools != "" {
 					if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
-						log.Printf("[TOOLS] Failed to parse selected tools from preset: %w", err)
+						log.Printf("[TOOLS] Failed to parse selected tools from preset: %v", err)
 					} else {
 						if len(selectedTools) > 0 {
 							log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
@@ -1345,8 +1345,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			presetLLMConfig,      // preset LLM config for agent defaults
 		)
 		if err != nil {
-			log.Printf("[WORKFLOW ERROR] Failed to create workflow orchestrator: %w", err)
-			http.Error(w, fmt.Sprintf("Failed to create workflow orchestrator: %w", err), http.StatusInternalServerError)
+			log.Printf("[WORKFLOW ERROR] Failed to create workflow orchestrator: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to create workflow orchestrator: %v", err), http.StatusInternalServerError)
 			return
 		}
 
@@ -1354,7 +1354,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.storeWorkflowOrchestrator(sessionID, workflowOrchestrator)
 
 		// Create a cancellable context for workflow execution using background context
-		// This prevents the workflow from being cancelled when the HTTP request ends
+		// This prevents the workflow from being canceled when the HTTP request ends
 		workflowCtx, workflowCancel := context.WithCancel(context.Background())
 
 		// Store the cancel function for potential cancellation (keyed by queryID for independent executions)
@@ -1376,7 +1376,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 			return
 		}
 
@@ -1430,7 +1430,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW CHECK] No selected options found")
 					}
 				} else {
-					log.Printf("[WORKFLOW CHECK] Could not check database: %w", err)
+					log.Printf("[WORKFLOW CHECK] Could not check database: %v", err)
 				}
 
 				// Retrieve step_id if it was stored for this preset
@@ -1641,7 +1641,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					_, err := api.chatDB.UpdateChatSession(ctx, sessionID, updateReq)
 					cancel()
 					if err != nil {
-						log.Printf("[DATABASE DEBUG] Failed to update chat session status to error (workflow): %w", err)
+						log.Printf("[DATABASE DEBUG] Failed to update chat session status to error (workflow): %v", err)
 					} else {
 						log.Printf("[DATABASE DEBUG] Successfully updated chat session %s to error status (workflow)", sessionID)
 					}
@@ -1670,7 +1670,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					_, err := api.chatDB.UpdateChatSession(ctx, sessionID, updateReq)
 					cancel()
 					if err != nil {
-						log.Printf("[DATABASE DEBUG] Failed to update chat session status to completed (workflow): %w", err)
+						log.Printf("[DATABASE DEBUG] Failed to update chat session status to completed (workflow): %v", err)
 					} else {
 						log.Printf("[DATABASE DEBUG] Successfully updated chat session %s to completed status (workflow)", sessionID)
 					}
@@ -1694,7 +1694,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %w", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -1719,7 +1719,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					_, err := api.chatDB.UpdateChatSession(r.Context(), sessionID, updateReq)
 					if err != nil {
-						log.Printf("[DATABASE DEBUG] Failed to update chat session status to error: %w", err)
+						log.Printf("[DATABASE DEBUG] Failed to update chat session status to error: %v", err)
 					} else {
 						log.Printf("[DATABASE DEBUG] Successfully updated chat session %s to error status", sessionID)
 					}
@@ -1754,7 +1754,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Validate provider
 		llmProvider, err := llm.ValidateProvider(req.Provider)
 		if err != nil {
-			sendError(fmt.Sprintf("Invalid provider: %w", err), true)
+			sendError(fmt.Sprintf("Invalid provider: %v", err), true)
 			return
 		}
 
@@ -1776,7 +1776,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if err == nil {
 				if preset.SelectedTools != "" {
 					if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
-						log.Printf("[TOOLS] Failed to parse selected tools from preset: %w", err)
+						log.Printf("[TOOLS] Failed to parse selected tools from preset: %v", err)
 					} else {
 						if len(selectedTools) > 0 {
 							log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
@@ -2015,8 +2015,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Create LLM agent wrapper with trace using streamCtx
 		llmAgent, err := agent.NewLLMAgentWrapperWithTrace(streamCtx, agentConfig, tracer, traceID, api.logger)
 		if err != nil {
-			log.Printf("[AGENT DEBUG] Failed to create LLM agent wrapper: %w", err)
-			sendError(fmt.Sprintf("Failed to create agent: %w", err), true)
+			log.Printf("[AGENT DEBUG] Failed to create LLM agent wrapper: %v", err)
+			sendError(fmt.Sprintf("Failed to create agent: %v", err), true)
 			return
 		}
 
@@ -2294,7 +2294,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[AGENT DEBUG] Starting agent processing for query %s", queryID)
 
 		// Create a cancellable context for agent execution using background context
-		// This prevents the agent from being cancelled when the HTTP request ends
+		// This prevents the agent from being canceled when the HTTP request ends
 		agentCtx, agentCancel := context.WithCancel(context.Background())
 
 		// Store the cancel function for potential cancellation
@@ -2305,8 +2305,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Use the enhanced wrapper to get text chunks - events are handled via EventObserver and polling API
 		textChan, err := llmAgent.StreamWithEvents(agentCtx, req.Query)
 		if err != nil {
-			log.Printf("[AGENT DEBUG] llmAgent.StreamWithEvents() error: %w", err)
-			sendError(fmt.Sprintf("Failed to start streaming: %w", err), true)
+			log.Printf("[AGENT DEBUG] llmAgent.StreamWithEvents() error: %v", err)
+			sendError(fmt.Sprintf("Failed to start streaming: %v", err), true)
 			return
 		}
 		log.Printf("[AGENT DEBUG] llmAgent.StreamWithEvents() started successfully for query %s", queryID)
@@ -2344,7 +2344,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					_, err := api.chatDB.UpdateChatSession(streamCtx, sessionID, updateReq)
 					if err != nil {
-						log.Printf("[DATABASE DEBUG] Failed to update chat session status to error (timeout): %w", err)
+						log.Printf("[DATABASE DEBUG] Failed to update chat session status to error (timeout): %v", err)
 					} else {
 						log.Printf("[DATABASE DEBUG] Successfully updated chat session %s to error status (timeout)", sessionID)
 					}
@@ -2406,7 +2406,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			_, err := api.chatDB.UpdateChatSession(streamCtx, sessionID, updateReq)
 			if err != nil {
-				log.Printf("[DATABASE DEBUG] Failed to update chat session status to completed: %w", err)
+				log.Printf("[DATABASE DEBUG] Failed to update chat session status to completed: %v", err)
 			} else {
 				log.Printf("[DATABASE DEBUG] Successfully updated chat session %s to completed status", sessionID)
 			}
@@ -2441,7 +2441,7 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	if cancelFunc, exists := api.agentCancelFuncs[sessionID]; exists {
 		cancelFunc() // Cancel the agent execution
 		delete(api.agentCancelFuncs, sessionID)
-		log.Printf("[SESSION DEBUG] Cancelled agent execution context for session %s", sessionID)
+		log.Printf("[SESSION DEBUG] Canceled agent execution context for session %s", sessionID)
 	}
 	api.agentCancelMux.Unlock()
 
@@ -2463,11 +2463,11 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 			if cancelFunc, exists := api.workflowOrchestratorContexts[qid]; exists {
 				cancelFunc() // Cancel this workflow execution
 				delete(api.workflowOrchestratorContexts, qid)
-				log.Printf("[SESSION DEBUG] Cancelled workflow execution %s for session %s", qid, sessionID)
+				log.Printf("[SESSION DEBUG] Canceled workflow execution %s for session %s", qid, sessionID)
 			}
 		}
 		api.workflowOrchestratorContextMux.Unlock()
-		log.Printf("[SESSION DEBUG] Cancelled %d workflow execution(s) for session %s", len(queryIDs), sessionID)
+		log.Printf("[SESSION DEBUG] Canceled %d workflow execution(s) for session %s", len(queryIDs), sessionID)
 	}
 
 	// Clear workflow objective
@@ -2535,7 +2535,7 @@ func createServerLogger() loggerv2.Logger {
 
 	serverLogger, err := logger.CreateLogger(logFile, logLevel, "text", true)
 	if err != nil {
-		log.Fatalf("Failed to create server logger: %w", err)
+		log.Fatalf("Failed to create server logger: %v", err)
 	}
 	return serverLogger
 }
@@ -2545,7 +2545,7 @@ func createServerLogger() loggerv2.Logger {
 func createLLMLogger() loggerv2.Logger {
 	llmLogger, err := logger.CreateLogger("logs/llm_debug.log", "debug", "text", false)
 	if err != nil {
-		log.Fatalf("Failed to create LLM logger: %w", err)
+		log.Fatalf("Failed to create LLM logger: %v", err)
 	}
 	return llmLogger
 }
@@ -3197,7 +3197,7 @@ func (api *StreamingAPI) handleSetLLMGuidance(w http.ResponseWriter, r *http.Req
 
 	var req LLMGuidanceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %w", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 		return
 	}
 
@@ -3239,7 +3239,7 @@ func (api *StreamingAPI) handleSubmitHumanFeedback(w http.ResponseWriter, r *htt
 
 	var req HumanFeedbackRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %w", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 		return
 	}
 

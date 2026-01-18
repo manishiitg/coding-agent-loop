@@ -47,6 +47,7 @@ import { sanitizeDisplayNameForFolder, resolveGroupFolderPath } from '../../../u
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
+const EVAL_EXECUTION_PHASE_ID = 'evaluation-execution'
 
 
 // Start Point options - where to start execution
@@ -136,6 +137,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     tempOverrideLLM,
     tempOverrideLLM2,
     tempOverrideLLMEnabled,
+    tempLearningLLM,
     selectedGroupIds,
     currentRunningGroupId,
     loadPhases,
@@ -150,10 +152,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setTempOverrideLLMEnabled,
     clearTempOverrideLLM,
     clearTempOverrideLLM2,
+    clearTempLearningLLM,
     toggleGroupSelection,
     setSelectedGroupIds,
     clearSelectedGroupIds,
-    restoreSelectionFromLocalStorage
+    restoreSelectionFromLocalStorage,
+    workflowMode,
+    setWorkflowMode
   } = useWorkflowStore(useShallow(state => ({
     phases: state.phases,
     isLoadingPhases: state.isLoadingPhases,
@@ -165,6 +170,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     tempOverrideLLM: state.tempOverrideLLM,
     tempOverrideLLM2: state.tempOverrideLLM2,
     tempOverrideLLMEnabled: state.tempOverrideLLMEnabled,
+    tempLearningLLM: state.tempLearningLLM,
     selectedGroupIds: state.selectedGroupIds,
     currentRunningGroupId: state.currentRunningGroupId,
     loadPhases: state.loadPhases,
@@ -179,11 +185,21 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setTempOverrideLLMEnabled: state.setTempOverrideLLMEnabled,
     clearTempOverrideLLM: state.clearTempOverrideLLM,
     clearTempOverrideLLM2: state.clearTempOverrideLLM2,
+    clearTempLearningLLM: state.clearTempLearningLLM,
     toggleGroupSelection: state.toggleGroupSelection,
     setSelectedGroupIds: state.setSelectedGroupIds,
     clearSelectedGroupIds: state.clearSelectedGroupIds,
-    restoreSelectionFromLocalStorage: state.restoreSelectionFromLocalStorage
+    restoreSelectionFromLocalStorage: state.restoreSelectionFromLocalStorage,
+    workflowMode: state.workflowMode,
+    setWorkflowMode: state.setWorkflowMode
   })))
+
+  // Reset start point when switching to eval mode
+  useEffect(() => {
+    if (workflowMode === 'eval' && selectedStartPoint !== 0) {
+      setStartPoint(0)
+    }
+  }, [workflowMode, selectedStartPoint, setStartPoint])
 
   // Calculate the best run folder to use for popups (context-aware)
   // Priority: currentRunningGroupId > selectedRunFolder (if group path) > first selectedGroupIds
@@ -264,6 +280,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Keep isRunning for other uses (like dropdown disabled state)
   const isRunning = status === 'running'
   
+  // Determine target execution phase ID based on mode
+  const targetExecutionPhaseId = workflowMode === 'eval' ? EVAL_EXECUTION_PHASE_ID : EXECUTION_PHASE_ID
+  
   // Check if execution phase specifically is running (not just any phase)
   // Use a selector that only recalculates when chatTabs or pollingInterval actually change
   const isExecutionRunning = useChatStore(state => {
@@ -274,7 +293,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     try {
       // Filter for execution phase tabs
       const executionTabs = allTabs.filter(tab => 
-        tab.metadata?.mode === 'workflow' && tab.metadata?.phaseId === EXECUTION_PHASE_ID
+        tab.metadata?.mode === 'workflow' && tab.metadata?.phaseId === targetExecutionPhaseId
       )
       
       // Check if any execution tab is streaming
@@ -393,30 +412,60 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // Separate execution phase from other phases
+  // Separate phases based on mode
   // Only calculate when phases are actually loaded (not empty and not loading)
-  const { executionPhase, otherPhases } = useMemo(() => {
+  const { otherPhases, visiblePhases } = useMemo(() => {
     // Don't calculate if phases aren't loaded yet
     if (isLoadingPhases || phases.length === 0) {
       return {
         executionPhase: undefined,
-        otherPhases: []
+        evalPhases: [],
+        planPhases: [],
+        otherPhases: [],
+        visiblePhases: []
       }
     }
-    const execPhase = phases.find((p: WorkflowPhase) => p.id === EXECUTION_PHASE_ID)
-    const others = phases.filter((p: WorkflowPhase) => p.id !== EXECUTION_PHASE_ID)
-    return {
-      executionPhase: execPhase,
-      otherPhases: others
+
+    const evalPhaseIds = ['evaluation-designer', 'evaluation-execution', 'evaluation-debugger']
+    // Planning and execution are always available in plan mode, but execution is handled separately in UI
+    const planPhaseIds = ['planning'] 
+
+    const executionPhase = phases.find((p: WorkflowPhase) => p.id === EXECUTION_PHASE_ID)
+    const evalPhases = phases.filter((p: WorkflowPhase) => evalPhaseIds.includes(p.id))
+    const planPhases = phases.filter((p: WorkflowPhase) => planPhaseIds.includes(p.id))
+    
+    // Other phases are those not in eval list and not execution
+    const otherPhases = phases.filter((p: WorkflowPhase) => 
+      !evalPhaseIds.includes(p.id) && 
+      p.id !== EXECUTION_PHASE_ID
+    )
+
+    // Determine which phases to show in dropdown based on mode
+    let visiblePhases: WorkflowPhase[] = []
+    if (workflowMode === 'eval') {
+      // In Eval mode: Show Eval phases
+      visiblePhases = evalPhases
+    } else {
+      // In Plan mode: Show Planning phases + Others (excluding execution which has its own button)
+      // Filter out eval phases from plan mode dropdown to keep it clean
+      visiblePhases = otherPhases.filter(p => !evalPhaseIds.includes(p.id))
     }
-  }, [phases, isLoadingPhases])
+
+    return {
+      executionPhase,
+      evalPhases,
+      planPhases,
+      otherPhases,
+      visiblePhases
+    }
+  }, [phases, isLoadingPhases, workflowMode])
 
   // Close dropdown if phases become unavailable
   useEffect(() => {
-    if (isDropdownOpen && (isLoadingPhases || otherPhases.length === 0)) {
+    if (isDropdownOpen && (isLoadingPhases || visiblePhases.length === 0)) {
       setIsDropdownOpen(false)
     }
-  }, [isDropdownOpen, isLoadingPhases, otherPhases.length])
+  }, [isDropdownOpen, isLoadingPhases, visiblePhases.length])
 
   // Calculate progress info - use ref to track previous value and prevent infinite loops
   const completedStepIndicesRef = useRef<number[]>([])
@@ -811,6 +860,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       { id: 'from_beginning', label: 'Start from Beginning', icon: Play, description: 'Execute all steps from start' }
     ]
     
+    // In Eval mode, only "Start from Beginning" is allowed
+    if (workflowMode === 'eval') {
+      return options
+    }
+    
     // Extract specific data inside useMemo to avoid dependency issues
     const stepProgressBranchSteps = stepProgress?.branch_steps
     const planSteps = plan?.steps
@@ -1077,7 +1131,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       // evaluation-execution, and code-exec-debugging
       if (phaseId === 'plan-improvement' || phaseId === 'plan-tool-optimization' ||
           phaseId === 'plan-learnings-alignment' || phaseId === 'evaluation-execution' ||
-          phaseId === 'code-exec-debugging') {
+          phaseId === 'code-exec-debugging' || phaseId === 'evaluation-debugger') {
         // Build execution options to include selected_run_folder
         const executionOptions = buildExecutionOptions()
         console.log('[WorkflowToolbar] Starting', phaseId, 'with execution options:', executionOptions)
@@ -1210,8 +1264,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // Handle execution button click - finds/reuses execution tab
   const handleExecute = useCallback(async () => {
+    // Determine target execution phase based on mode
+    const targetExecutionPhaseId = workflowMode === 'eval' ? EVAL_EXECUTION_PHASE_ID : EXECUTION_PHASE_ID
+    const targetPhase = phases.find(p => p.id === targetExecutionPhaseId)
+
     // Use isExecutionRunning instead of isRunning to allow execution even when other phases are running
-    if (!isExecutionRunning && executionPhase) {
+    if (!isExecutionRunning && targetPhase) {
       // Check if variablesManifest exists - required for execution
       if (!variablesManifest) {
         alert('Error: Variables manifest not found. Please ensure variables are configured before executing the workflow.')
@@ -1230,7 +1288,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       const chatStore = useChatStore.getState()
       const allTabs = Object.values(chatStore.chatTabs)
       const executionTabs = allTabs.filter(tab => 
-        tab.metadata?.mode === 'workflow' && tab.metadata?.phaseId === EXECUTION_PHASE_ID
+        tab.metadata?.mode === 'workflow' && tab.metadata?.phaseId === targetExecutionPhaseId
       )
       const existingExecutionTab = executionTabs.length > 0 ? executionTabs[0] : null
       
@@ -1269,9 +1327,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       }, null, 2))
       
       // Start phase (will create new tab if none exists, or use existing if we switched to it)
-      onStartPhase(executionPhase.id, options)
+      onStartPhase(targetExecutionPhaseId, options)
     }
-  }, [isExecutionRunning, executionPhase, buildExecutionOptions, onStartPhase, selectedGroupIds, variablesManifest])
+  }, [isExecutionRunning, phases, workflowMode, buildExecutionOptions, onStartPhase, selectedGroupIds, variablesManifest])
+
+  // Determine target execution phase for rendering
+  const targetExecutionPhase = phases.find(p => p.id === targetExecutionPhaseId)
 
   return (
     <>
@@ -1294,17 +1355,41 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </button>
         ) : (
           <>
+            {/* Mode Toggle */}
+            <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-md p-1 mr-2 border border-gray-200 dark:border-gray-700">
+              <button
+                onClick={() => setWorkflowMode('plan')}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  workflowMode === 'plan'
+                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                }`}
+              >
+                Plan+Exec
+              </button>
+              <button
+                onClick={() => setWorkflowMode('eval')}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  workflowMode === 'eval'
+                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                }`}
+              >
+                Eval
+              </button>
+            </div>
+
             {/* Regular Phases Dropdown Selector - moved before execution button */}
             <div className="relative" ref={dropdownRef}>
               <button
                 onClick={() => {
-                  console.log('[WorkflowToolbar] Phase dropdown button clicked:', { isLoadingPhases, otherPhasesLength: otherPhases.length, isDropdownOpen })
+                  console.log('[WorkflowToolbar] Phase dropdown button clicked:', { isLoadingPhases, visiblePhasesLength: visiblePhases.length, isDropdownOpen })
                   // Allow dropdown to open even when phases are running - enables parallel execution
                   // Only block if phases are loading or there are no phases available
-                  if (!isLoadingPhases && otherPhases.length > 0) {
+                  if (!isLoadingPhases && visiblePhases.length > 0) {
                     setIsDropdownOpen(!isDropdownOpen)
                   } else {
-                    console.warn('[WorkflowToolbar] Dropdown blocked:', { isLoadingPhases, otherPhasesLength: otherPhases.length })
+                    console.warn('[WorkflowToolbar] Dropdown blocked:', { isLoadingPhases, visiblePhasesLength: visiblePhases.length })
                   }
                 }}
                 disabled={dropdownDisabled}
@@ -1352,19 +1437,19 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 })()}
               </button>
 
-              {/* Dropdown Menu - Only show non-execution phases */}
-              {isDropdownOpen && !isLoadingPhases && otherPhases.length > 0 && (
+              {/* Dropdown Menu - Only show visible phases based on mode */}
+              {isDropdownOpen && !isLoadingPhases && visiblePhases.length > 0 && (
                 <div className="absolute top-full left-0 mt-1 w-80 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 max-h-[400px] overflow-y-auto">
                   <div className="p-2">
                     <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">
-                      Workflow Phases
+                      {workflowMode === 'eval' ? 'Evaluation Phases' : 'Workflow Phases'}
                     </div>
-                    {otherPhases.length === 0 ? (
+                    {visiblePhases.length === 0 ? (
                       <div className="px-3 py-4 text-sm text-gray-500 dark:text-gray-400 text-center">
                         {isLoadingPhases ? 'Loading phases...' : 'No phases available'}
                       </div>
                     ) : (
-                      otherPhases.map((phase: WorkflowPhase) => {
+                      visiblePhases.map((phase: WorkflowPhase) => {
                       const isActive = currentPhase === phase.id
                       // Check if THIS specific phase is running or completed
                       const getTabsByPhaseId = useChatStore.getState().getTabsByPhaseId
@@ -1413,7 +1498,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                 <Check className="w-3 h-3" />
                               ) : (
                                 <span className="text-xs font-medium">
-                                  {otherPhases.indexOf(phase) + 1}
+                                  {visiblePhases.indexOf(phase) + 1}
                                 </span>
                               )}
                             </div>
@@ -1472,12 +1557,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
-                {executionPhase && <div className="w-px h-5 bg-border" />}
+                {targetExecutionPhase && <div className="w-px h-5 bg-border" />}
               </>
             )}
 
             {/* Execution Controls - Execute button and configuration dropdowns */}
-            {executionPhase && (
+            {targetExecutionPhase && (
               <>
                 {/* Execute/Stop Button - Changes to Stop when execution phase is running */}
                 {/* Disable if no groups are selected (when groups are available) - but only when NOT running */}
@@ -1505,7 +1590,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                           ? 'Stop execution' 
                           : hasGroups && noGroupsSelected
                           ? 'Please select at least one group to execute'
-                          : 'Execute workflow'
+                          : workflowMode === 'eval' ? 'Execute evaluation plan' : 'Execute workflow'
                       }
                     >
                       {isExecutionRunning ? (
@@ -1620,8 +1705,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                           )}
                                           <span>{iteration}</span>
                                         </div>
-                                        {/* Select All / Unselect All buttons - only show if multiple groups */}
-                                        {hasMultipleGroups && isExpanded && (
+                                        {/* Select All / Unselect All buttons - only show if multiple groups and not in eval mode */}
+                                        {hasMultipleGroups && isExpanded && workflowMode !== 'eval' && (
                                           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                                             <button
                                               onClick={(e) => {
@@ -1689,8 +1774,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                             }
                                           }}
                                         >
-                                          {/* Checkbox for group selection (only show if group has an ID and multiple groups exist) */}
-                                          {group.groupId && hasMultipleGroups && (
+                                          {/* Checkbox for group selection (only show if group has an ID, multiple groups exist, and not in eval mode) */}
+                                          {group.groupId && hasMultipleGroups && workflowMode !== 'eval' && (
                                             <input
                                               type="checkbox"
                                               checked={isGroupChecked}
@@ -1760,11 +1845,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                             {/* Only show folder icon if folder exists - checkbox is the primary indicator for selection */}
                                             {group.exists ? (
                                               <FolderOpen className="w-4 h-4" />
-                                            ) : hasMultipleGroups ? (
-                                              // When checkboxes are present, don't show circle icon (checkbox is the indicator)
+                                            ) : (hasMultipleGroups && workflowMode !== 'eval') ? (
+                                              // When checkboxes are present and not in eval mode, don't show circle icon (checkbox is the indicator)
                                               null
                                             ) : (
-                                              // Only show circle if no checkboxes (single group mode)
+                                              // Show circle if no checkboxes or in eval mode
                                               <Circle className="w-4 h-4" />
                                             )}
                                             <span className="flex-1 text-xs flex items-center gap-1.5">
@@ -2006,7 +2091,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       <div className="flex items-center gap-1">
         {/* Toggle dependency edges - icon only */}
         {/* LLM Override Button and Banner */}
-        {tempOverrideLLM || tempOverrideLLM2 ? (
+        {tempOverrideLLM || tempOverrideLLM2 || tempLearningLLM ? (
           // Active override indicator with toggle and clear button
           <TooltipProvider>
             <div className={`flex items-center gap-1 px-2 py-1 bg-secondary border border-border rounded-md shadow-sm ${!tempOverrideLLMEnabled ? 'opacity-60' : ''}`}>
@@ -2034,6 +2119,22 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                     {!tempOverrideLLMEnabled && <p className="text-xs mt-1 text-muted-foreground">(Disabled)</p>}
                   </TooltipContent>
                 </Tooltip>
+                {tempLearningLLM && (
+                  <>
+                    <span className="text-xs text-muted-foreground">|</span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="cursor-help">
+                          <Brain className="w-3.5 h-3.5 text-primary fill-primary/20" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Temp Learning LLM: {tempLearningLLM.provider}/{tempLearningLLM.model_id}</p>
+                        <p className="text-xs mt-1 text-muted-foreground">(Used when learnings exist)</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </>
+                )}
               </div>
               <button
                 onClick={() => setTempOverrideLLMEnabled(!tempOverrideLLMEnabled)}
@@ -2050,6 +2151,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 onClick={() => {
                   clearTempOverrideLLM()
                   clearTempOverrideLLM2()
+                  clearTempLearningLLM()
                 }}
                 className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
                 title="Clear LLM overrides (removes configs)"

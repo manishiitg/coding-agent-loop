@@ -563,6 +563,11 @@ type ExecutionOptions struct {
 	SkipLearningWhenTempLLM1 bool `json:"skip_learning_when_temp_llm1,omitempty"` // If true, skip learning phases when tempLLM1 is used (default: false, learning runs)
 	SkipLearningWhenTempLLM2 bool `json:"skip_learning_when_temp_llm2,omitempty"` // If true, skip learning phases when tempLLM2 is used (default: false, learning runs)
 
+	// Temporary LLM for learning agents (optional, used when learnings already exist for a step)
+	// If learnings exist for a step_id, use TempLearningLLM if configured
+	// If no learnings exist (new learning), always use default LLM (step config → preset)
+	TempLearningLLM *AgentLLMConfig `json:"temp_learning_llm,omitempty"`
+
 	// Variable group execution options (for batch execution with multiple groups)
 	EnabledGroupIDs []string `json:"enabled_group_ids,omitempty"` // Group IDs to execute (if empty, uses groups' enabled flags)
 
@@ -1706,21 +1711,14 @@ func (api *StreamingAPI) handleDeleteStepLearnings(w http.ResponseWriter, r *htt
 		return
 	}
 
-	stepNumberStr := r.URL.Query().Get("step_number")
-	if stepNumberStr == "" {
-		http.Error(w, "step_number parameter is required", http.StatusBadRequest)
+	stepID := r.URL.Query().Get("step_id")
+	if stepID == "" {
+		http.Error(w, "step_id parameter is required", http.StatusBadRequest)
 		return
 	}
 
-	// Validate step number (must be a positive integer)
-	var stepNumber int
-	if _, err := fmt.Sscanf(stepNumberStr, "%d", &stepNumber); err != nil || stepNumber < 1 {
-		http.Error(w, "step_number must be a positive integer", http.StatusBadRequest)
-		return
-	}
-
-	// Construct learnings folder path: {workspacePath}/learnings/step-{stepNumber}
-	learningsPath := fmt.Sprintf("%s/learnings/step-%d", workspacePath, stepNumber)
+	// Construct learnings folder path: {workspacePath}/learnings/{stepID}
+	learningsPath := fmt.Sprintf("%s/learnings/%s", workspacePath, stepID)
 
 	// URL-encode the folder path segments
 	pathSegments := strings.Split(learningsPath, "/")
@@ -1756,7 +1754,7 @@ func (api *StreamingAPI) handleDeleteStepLearnings(w http.ResponseWriter, r *htt
 		// Folder doesn't exist - return success (idempotent)
 		response := map[string]interface{}{
 			"success": true,
-			"message": fmt.Sprintf("Learnings folder for step %d does not exist (already deleted)", stepNumber),
+			"message": fmt.Sprintf("Learnings folder for step %s does not exist (already deleted)", stepID),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -1784,7 +1782,7 @@ func (api *StreamingAPI) handleDeleteStepLearnings(w http.ResponseWriter, r *htt
 	// Success response
 	response := map[string]interface{}{
 		"success": true,
-		"message": fmt.Sprintf("Successfully deleted learnings for step %d", stepNumber),
+		"message": fmt.Sprintf("Successfully deleted learnings for step %s", stepID),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

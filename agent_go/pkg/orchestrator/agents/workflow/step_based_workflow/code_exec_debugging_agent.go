@@ -472,11 +472,12 @@ type CodeExecStepInfo struct {
 // Uses existing isStepCodeExecutionModeEnabled function from plan_opt_tool_optimization_agent.go
 // Returns a list of code execution step info and the total count of steps
 func (cdm *CodeExecDebuggingManager) filterCodeExecutionSteps(ctx context.Context, plan *PlanningResponse, originalWorkspacePath string, runWorkspacePath string) ([]CodeExecStepInfo, int, error) {
-	// Read step configs from step_config.json
-	stepConfigs, err := ReadStepConfigs(ctx, cdm.BaseOrchestrator, originalWorkspacePath, runWorkspacePath)
+	// Load step configurations to get original agent configs (e.g. LLM settings)
+	// We pass "planning" as the configSubdir since step_config.json is always in planning/ folder for execution
+	stepConfigs, err := ReadStepConfigs(ctx, cdm.BaseOrchestrator, originalWorkspacePath, runWorkspacePath, "planning")
 	if err != nil {
-		cdm.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_config.json, using preset defaults: %v", err))
-		stepConfigs = []StepConfig{} // Empty config, will use preset defaults
+		cdm.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_config.json: %v (using defaults)", err))
+		stepConfigs = []StepConfig{}
 	}
 
 	// Get preset code execution mode from orchestrator

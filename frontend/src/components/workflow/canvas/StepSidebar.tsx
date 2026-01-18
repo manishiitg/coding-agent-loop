@@ -108,6 +108,11 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   }, [])
 
 
+  // Check if evaluation step
+  const isEvaluationStep = useMemo(() => {
+    return (node?.data as any)?.isEvaluationStep === true
+  }, [node])
+
   // Handle phase selection
   const handleSelectPhase = async (phaseId: string) => {
     if (!presetQueryId || !node) return
@@ -178,11 +183,24 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       return
     }
 
+    // Get step ID
+    let stepId: string | undefined
+    if (node?.type === 'orchestrator') {
+      const orchestratorData = node.data as OrchestratorNodeData
+      stepId = orchestratorData.orchestration_step?.id ?? orchestratorData.step?.id
+    } else if (node?.data) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
+      stepId = stepData.step?.id
+    }
+
+    if (!stepId) {
+      console.error('[StepSidebar] Cannot delete learnings: step ID not available')
+      return
+    }
+
     setIsDeletingLearnings(true)
     try {
-      // stepIndex is 0-based, but step numbers are 1-based
-      const stepNumber = stepIndex + 1
-      const result = await agentApi.deleteStepLearnings(workspacePath, stepNumber)
+      const result = await agentApi.deleteStepLearnings(workspacePath, stepId)
       
       if (result.success) {
         console.log('[StepSidebar] Successfully deleted learnings:', result.message)
@@ -198,7 +216,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       setIsDeletingLearnings(false)
       setShowDeleteLearningsConfirm(false)
     }
-  }, [workspacePath, stepIndex])
+  }, [workspacePath, node])
 
   // Handle view learnings for this step
   const handleViewLearnings = useCallback(async () => {
@@ -972,8 +990,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         <div className="flex items-center gap-1.5">
           {!isEditing && (
             <>
-              {/* Phase Dropdown */}
-              {phases.length > 0 && (
+              {/* Phase Dropdown - Hide for evaluation steps */}
+              {!isEvaluationStep && phases.length > 0 && (
                 <div className="relative" ref={phaseDropdownRef}>
                   <button
                     onClick={() => !isRunning && setIsPhaseDropdownOpen(!isPhaseDropdownOpen)}
@@ -1012,8 +1030,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 </div>
               )}
               
-              {/* Run Step Button */}
-              {onStartPhase && (
+              {/* Run Step Button - Hide for evaluation steps */}
+              {!isEvaluationStep && onStartPhase && (
                 <button
                   onClick={handleRunStep}
                   disabled={isRunning || node.id.includes('-sub-agent-')}
@@ -1031,8 +1049,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 </button>
               )}
               
-              {/* View Learnings Button */}
-              {workspacePath && node && (() => {
+              {/* View Learnings Button - Hide for evaluation steps */}
+              {!isEvaluationStep && workspacePath && node && (() => {
                 const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
                 return stepData.step?.id ? (
                   <button
@@ -1056,7 +1074,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 <Edit2 className="w-4 h-4" />
               </button>
               
-              {/* Actions Dropdown Menu */}
+              {/* Actions Dropdown Menu - Hide for evaluation steps */}
+              {!isEvaluationStep && (
               <div className="relative" ref={actionsDropdownRef}>
                 <button
                   onClick={() => setIsActionsDropdownOpen(!isActionsDropdownOpen)}
@@ -1100,6 +1119,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                   </div>
                 )}
               </div>
+              )}
             </>
           )}
           {isEditing && (
@@ -1785,6 +1805,13 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 <div className="mb-3 p-3 bg-cyan-50 dark:bg-cyan-900/20 rounded-lg border border-cyan-200 dark:border-cyan-800">
                   <p className="text-xs text-cyan-700 dark:text-cyan-300">
                     <strong>Sub-Agent:</strong> This configuration applies to the sub-agent step within an orchestration route.
+                  </p>
+                </div>
+              )}
+              {isEvaluationStep && (
+                <div className="mb-3 p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800">
+                  <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                    <strong>Evaluation Step:</strong> This step evaluates the performance of the workflow against specific criteria.
                   </p>
                 </div>
               )}

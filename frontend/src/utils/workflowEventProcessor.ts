@@ -61,111 +61,153 @@ export interface WorkflowEventInfo {
 /**
  * Extract workflow information from events for a session.
  *
- * Processes events in order and returns the latest state. This function
- * consolidates logic for extracting progress, step titles, agent info,
- * and tool call information from event streams.
+ * Processes events in REVERSE order (newest first) to quickly find the latest state.
+ * This is an optimization for handling large event lists (1000+ events) where we only
+ * care about the most recent status updates.
  *
  * @param events - Array of polling events to process
  * @returns Extracted workflow information
  */
 export function extractWorkflowInfo(events: PollingEvent[]): WorkflowEventInfo {
   const info: WorkflowEventInfo = {}
+  
+  // Track what we've found to avoid redundant checks
+  const found = {
+    agentName: false,
+    orchestratorPhase: false,
+    stepInfo: false,
+    agentTurns: false,
+    contextTokens: false,
+    toolInfo: false,
+    finalResult: false,
+    batchInfo: false
+  }
 
-  for (const event of events) {
-    const pollingEvent = event as PollingEvent
+  // Iterate backwards to find latest info first
+  for (let i = events.length - 1; i >= 0; i--) {
+    const pollingEvent = events[i] as PollingEvent
 
-    // Extract orchestrator metadata from event (added by context_aware_bridge)
-    const eventData = pollingEvent.data as { metadata?: Record<string, string> } | undefined
-    const metadata = eventData?.metadata
-    if (metadata) {
-      if (metadata.orchestrator_agent_name) {
-        info.agentName = metadata.orchestrator_agent_name
-      }
-      if (metadata.orchestrator_phase) {
-        info.orchestratorPhase = metadata.orchestrator_phase
+    // 1. Extract orchestrator metadata (if not already found)
+    if (!found.agentName || !found.orchestratorPhase) {
+      const eventData = pollingEvent.data as { metadata?: Record<string, string> } | undefined
+      const metadata = eventData?.metadata
+      if (metadata) {
+        if (!found.agentName && metadata.orchestrator_agent_name) {
+          info.agentName = metadata.orchestrator_agent_name
+          found.agentName = true
+        }
+        if (!found.orchestratorPhase && metadata.orchestrator_phase) {
+          info.orchestratorPhase = metadata.orchestrator_phase
+          found.orchestratorPhase = true
+        }
       }
     }
 
-    // Extract step progress data
-    const progressData = getTypedEventData(pollingEvent, 'step_progress_updated')
-    if (progressData) {
-      // Note: step_progress_updated event no longer includes progress details
-      // Progress should be loaded from the API separately if needed
-      // We can still track the current step ID if available
-      if (progressData.current_step_id) {
-        // Current step ID is available but we don't store it in info.progress
-        // as progress details are not in the event anymore
+    // 2. Extract step progress data (if not already found)
+    if (!found.stepInfo) {
+      const progressData = getTypedEventData(pollingEvent, 'step_progress_updated')
+      if (progressData) {
+        // Note: step_progress_updated event no longer includes progress details
+        // Progress should be loaded from the API separately if needed
+        // We can still track the current step ID if available
+        if (progressData.current_step_id) {
+          // Current step ID is available but we don't store it in info.progress
+          // as progress details are not in the event anymore
+          // We mark as found since this is the latest update
+          found.stepInfo = true
+        }
       }
     }
 
-    // Note: step_execution_start event handling removed
-    // Step information should come from step_progress_updated or other events
-
-    // Extract agent name from agent_start events
-    const agentStartData = getTypedEventData(pollingEvent, 'agent_start')
-    if (agentStartData?.agent_type) {
-      info.agentName = agentStartData.agent_type
-    }
-
-    // Extract turns and context from agent_end events
-    const agentEndData = getTypedEventData(pollingEvent, 'agent_end')
-    if (agentEndData) {
-      if (agentEndData.total_tokens !== undefined) {
-        info.contextTokens = agentEndData.total_tokens
+    // 3. Extract agent name from agent_start (fallback if not found in metadata)
+    if (!found.agentName) {
+      const agentStartData = getTypedEventData(pollingEvent, 'agent_start')
+      if (agentStartData?.agent_type) {
+        info.agentName = agentStartData.agent_type
+        found.agentName = true
       }
     }
 
-    // Extract tool call info from tool_call_end events
-    const toolCallEndData = getTypedEventData(pollingEvent, 'tool_call_end')
-    if (toolCallEndData) {
-      if (toolCallEndData.tool_name) info.lastToolName = toolCallEndData.tool_name
-      if (toolCallEndData.server_name) info.lastToolServerName = toolCallEndData.server_name
-      if (toolCallEndData.turn !== undefined) info.lastToolTurn = toolCallEndData.turn
-      if (toolCallEndData.context_usage_percent !== undefined) {
-        info.contextUsagePercent = toolCallEndData.context_usage_percent
-      }
-      if (toolCallEndData.context_window_usage !== undefined) {
-        info.inputTokens = toolCallEndData.context_window_usage
-      }
-      if (toolCallEndData.model_context_window !== undefined) {
-        info.totalTokens = toolCallEndData.model_context_window
-      }
-      if (toolCallEndData.model_id) {
-        info.modelId = toolCallEndData.model_id
+    // 4. Extract turns and context from agent_end (latest one)
+    if (!found.contextTokens) {
+      const agentEndData = getTypedEventData(pollingEvent, 'agent_end')
+      if (agentEndData) {
+        if (agentEndData.total_tokens !== undefined) {
+          info.contextTokens = agentEndData.total_tokens
+          found.contextTokens = true
+        }
       }
     }
 
-    // Extract final result from unified_completion events (keep the last one)
-    const unifiedCompletionData = getTypedEventData(pollingEvent, 'unified_completion')
-    if (unifiedCompletionData?.final_result) {
-      info.finalResult = unifiedCompletionData.final_result
+    // 5. Extract tool call info from tool_call_end (latest one)
+    if (!found.toolInfo) {
+      const toolCallEndData = getTypedEventData(pollingEvent, 'tool_call_end')
+      if (toolCallEndData) {
+        if (toolCallEndData.tool_name) info.lastToolName = toolCallEndData.tool_name
+        if (toolCallEndData.server_name) info.lastToolServerName = toolCallEndData.server_name
+        if (toolCallEndData.turn !== undefined) info.lastToolTurn = toolCallEndData.turn
+        if (toolCallEndData.context_usage_percent !== undefined) {
+          info.contextUsagePercent = toolCallEndData.context_usage_percent
+        }
+        if (toolCallEndData.context_window_usage !== undefined) {
+          info.inputTokens = toolCallEndData.context_window_usage
+        }
+        if (toolCallEndData.model_context_window !== undefined) {
+          info.totalTokens = toolCallEndData.model_context_window
+        }
+        if (toolCallEndData.model_id) {
+          info.modelId = toolCallEndData.model_id
+        }
+        found.toolInfo = true
+      }
     }
 
-    // Extract batch group info from batch_group_start events
-    const batchGroupStartData = getTypedEventData(pollingEvent, 'batch_group_start')
-    if (batchGroupStartData) {
-      if (batchGroupStartData.group_id) {
-        info.currentGroupId = batchGroupStartData.group_id
-      }
-      if (batchGroupStartData.group_index !== undefined) {
-        info.currentGroupIndex = batchGroupStartData.group_index
-      }
-      if (batchGroupStartData.total_groups !== undefined) {
-        info.totalGroups = batchGroupStartData.total_groups
-      }
-      if (batchGroupStartData.run_folder) {
-        info.currentRunFolder = batchGroupStartData.run_folder
+    // 6. Extract final result from unified_completion (latest one)
+    if (!found.finalResult) {
+      const unifiedCompletionData = getTypedEventData(pollingEvent, 'unified_completion')
+      if (unifiedCompletionData?.final_result) {
+        info.finalResult = unifiedCompletionData.final_result
+        found.finalResult = true
       }
     }
 
-    // Clear batch group info when batch_group_end is received
-    const batchGroupEndData = getTypedEventData(pollingEvent, 'batch_group_end')
-    if (batchGroupEndData?.group_id === info.currentGroupId) {
-      // Only clear if this is the currently tracked group
-      info.currentGroupId = undefined
-      info.currentGroupIndex = undefined
-      info.totalGroups = undefined
-      info.currentRunFolder = undefined
+    // 7. Extract batch group info (latest one)
+    // Note: We need to be careful here because batch_group_end might have cleared it in the original logic
+    // But since we want the *current* state, finding a batch_group_start *after* a batch_group_end (in chronological order)
+    // means we are inside a group. 
+    // In reverse order:
+    // - If we find batch_group_start first, we are inside that group.
+    // - If we find batch_group_end first, the group is finished, so we shouldn't show it as current.
+    if (!found.batchInfo) {
+      const batchGroupEndData = getTypedEventData(pollingEvent, 'batch_group_end')
+      if (batchGroupEndData) {
+        // We found an end event first, meaning the latest state is "group finished"
+        // So we explicitly don't set current group info
+        found.batchInfo = true 
+      } else {
+        const batchGroupStartData = getTypedEventData(pollingEvent, 'batch_group_start')
+        if (batchGroupStartData) {
+          if (batchGroupStartData.group_id) {
+            info.currentGroupId = batchGroupStartData.group_id
+          }
+          if (batchGroupStartData.group_index !== undefined) {
+            info.currentGroupIndex = batchGroupStartData.group_index
+          }
+          if (batchGroupStartData.total_groups !== undefined) {
+            info.totalGroups = batchGroupStartData.total_groups
+          }
+          if (batchGroupStartData.run_folder) {
+            info.currentRunFolder = batchGroupStartData.run_folder
+          }
+          found.batchInfo = true
+        }
+      }
+    }
+    
+    // If we found everything we need, stop iterating
+    if (found.agentName && found.orchestratorPhase && found.stepInfo && 
+        found.contextTokens && found.toolInfo && found.finalResult && found.batchInfo) {
+      break
     }
   }
 

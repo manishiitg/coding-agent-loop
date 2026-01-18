@@ -833,6 +833,11 @@ export interface ExecutionOptions {
   skip_learning_when_temp_llm1?: boolean;  // If true, skip learning phases when tempLLM1 is used (default: false, learning runs)
   skip_learning_when_temp_llm2?: boolean;  // If true, skip learning phases when tempLLM2 is used (default: false, learning runs)
   
+  // Temporary LLM for learning agents (optional, used when learnings already exist for a step)
+  // If learnings exist for a step_id, use temp_learning_llm if configured
+  // If no learnings exist (new learning), always use default LLM (step config → preset)
+  temp_learning_llm?: AgentLLMConfig;
+  
   // Validation response persistence
   save_validation_responses?: boolean;  // If true, save validation responses to workspace validation folder (default: true)
   
@@ -857,7 +862,27 @@ export const ExecutionStrategy = {
   RUN_SINGLE_STEP: 'run_single_step',
 } as const;
 
+// Execution strategies
 export type ExecutionStrategyType = typeof ExecutionStrategy[keyof typeof ExecutionStrategy];
+
+// Evaluation types
+export interface EvaluationStep {
+  id: string
+  title: string
+  description: string
+  pre_validation?: ValidationSchema
+  success_criteria: string
+  agent_configs?: AgentConfigs
+}
+
+export interface EvaluationPlan {
+  steps: EvaluationStep[]
+}
+
+export interface EvaluationStepConfig {
+  id: string
+  agent_configs: AgentConfigs
+}
 
 // Variable Groups API types
 export interface Variable {

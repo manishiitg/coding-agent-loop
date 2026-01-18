@@ -1,11 +1,12 @@
 import { useEffect, useState, useCallback } from 'react'
-import { X, BookOpen, Lock, Unlock, Loader2, AlertCircle, ChevronDown, ChevronRight, Code, FileText } from 'lucide-react'
+import { X, BookOpen, Lock, Unlock, Loader2, AlertCircle, ChevronDown, ChevronRight, Code, FileText, Trash2 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { PlanningResponse, PlanStep } from '../../utils/stepConfigMatching'
 import { isConditionalStep, isDecisionStep, isOrchestrationStep } from '../../utils/stepConfigMatching'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import type { PlannerFile } from '../../services/api-types'
+import ConfirmationDialog from '../ui/ConfirmationDialog'
 
 interface LearningsPopupProps {
   isOpen: boolean
@@ -128,6 +129,10 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
 
   const [updatingLockStepIds, setUpdatingLockStepIds] = useState<Set<string>>(new Set())
   
+  // Delete state
+  const [deletingStepIds, setDeletingStepIds] = useState<Set<string>>(new Set())
+  const [deleteConfirmStepId, setDeleteConfirmStepId] = useState<string | null>(null)
+  
   // Filter state - show only unlocked steps
   const [showOnlyUnlocked, setShowOnlyUnlocked] = useState(false)
 
@@ -190,6 +195,60 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
       setError('Failed to update lock status: ' + errorMessage)
     } finally {
       setUpdatingLockStepIds(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(stepId)
+        return newSet
+      })
+    }
+  }
+
+  const handleDeleteLearning = async (stepId: string) => {
+    if (!workspacePath || deletingStepIds.has(stepId)) return
+
+    setDeletingStepIds(prev => new Set(prev).add(stepId))
+    setDeleteConfirmStepId(null)
+
+    try {
+      // Delete learnings folder
+      const deleteResult = await agentApi.deleteStepLearnings(workspacePath, stepId)
+      
+      if (!deleteResult.success) {
+        throw new Error(deleteResult.message || 'Failed to delete learnings')
+      }
+
+      // Unlock learnings after deletion
+      const step = plan?.steps?.find(s => s.id === stepId)
+      const metadata = learnings[stepId]
+      const currentConfigs = step?.agent_configs || (metadata ? { lock_learnings: metadata.lock_learnings } : {})
+
+      try {
+        await agentApi.updateStepConfig(workspacePath, stepId, {
+          ...currentConfigs,
+          lock_learnings: false
+        })
+      } catch (unlockErr) {
+        console.warn('[LearningsPopup] Failed to unlock learnings after deletion:', unlockErr)
+        // Continue even if unlock fails - deletion was successful
+      }
+
+      // Remove from cache
+      setLearningContentCache(prev => {
+        const newCache = { ...prev }
+        delete newCache[stepId]
+        return newCache
+      })
+
+      // Refresh learnings list
+      const response = await agentApi.getAllStepLearnings(workspacePath)
+      if (response.success) {
+        setLearnings(parseLearningsResponse(response.learnings || {}))
+      }
+    } catch (err: unknown) {
+      console.error('[LearningsPopup] Error deleting learnings:', err)
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+      setError('Failed to delete learnings: ' + errorMessage)
+    } finally {
+      setDeletingStepIds(prev => {
         const newSet = new Set(prev)
         newSet.delete(stepId)
         return newSet
@@ -611,6 +670,27 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                                 </>
                               )}
                             </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setDeleteConfirmStepId(stepId)
+                              }}
+                              disabled={deletingStepIds.has(stepId)}
+                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-red-100 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-400"
+                              title="Delete learnings"
+                            >
+                              {deletingStepIds.has(stepId) ? (
+                                <>
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  <span>Deleting...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>Delete</span>
+                                </>
+                              )}
+                            </button>
                             {metadata && (
                               <div className="flex flex-col gap-1">
                                 <div className="flex items-center gap-2">
@@ -782,6 +862,29 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
           )}
         </div>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmationDialog
+        isOpen={deleteConfirmStepId !== null}
+        onClose={() => setDeleteConfirmStepId(null)}
+        onConfirm={() => {
+          if (deleteConfirmStepId) {
+            handleDeleteLearning(deleteConfirmStepId)
+          }
+        }}
+        title="Delete Learnings"
+        message={
+          deleteConfirmStepId
+            ? (() => {
+                const stepTitle = getStepTitle(plan, deleteConfirmStepId)
+                return `Are you sure you want to delete all learnings for "${stepTitle}"? This will permanently delete the learnings folder at \`learnings/${deleteConfirmStepId}/\` and all its contents. The learnings will also be unlocked. This action cannot be undone.`
+              })()
+            : ''
+        }
+        confirmText="Delete Learnings"
+        cancelText="Cancel"
+        type="danger"
+      />
     </div>
   )
 }

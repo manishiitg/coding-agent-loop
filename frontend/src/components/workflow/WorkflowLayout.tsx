@@ -590,6 +590,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         const { getPhaseById } = useWorkflowStore.getState()
 
         // Check each active session
+        console.log(`[DUPLICATE_DEBUG] Checking ${activeSessions.length} active sessions for reconnection (Active Preset: ${activePresetId})`)
         for (const activeSession of activeSessions) {
           try {
             if (activeSession.agent_mode !== 'workflow') {
@@ -599,19 +600,25 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             // Fetch chat session to get preset_query_id
             let chatSession
             let presetQueryId: string | undefined
+            let source = 'unknown'
             try {
               chatSession = await agentApi.getChatSession(activeSession.session_id)
               presetQueryId = chatSession.preset_query_id
+              source = 'api'
             } catch {
               const existingTabsForSession = Object.values(useChatStore.getState().chatTabs)
                 .filter(tab => tab.sessionId === activeSession.session_id && tab.metadata?.mode === 'workflow')
               
               if (existingTabsForSession.length > 0) {
                 presetQueryId = existingTabsForSession[0].metadata?.presetQueryId
+                source = 'existing-tab'
               } else {
+                source = 'failed-lookup'
                 continue
               }
             }
+            
+            console.log(`[DUPLICATE_DEBUG] Session ${activeSession.session_id}: presetQueryId=${presetQueryId} (source: ${source}), activePresetId=${activePresetId}`)
             
             // Extract phase ID from query
             let phaseId: string | null = null
@@ -631,8 +638,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               continue
             }
 
+            // STRICT RESTORATION: Only reconnect if the session explicitly belongs to this preset
+            // OR if the session is an orphan (no preset ID) and we have an active preset (adopt it)
             const shouldReconnect = presetQueryId === activePresetId || (!presetQueryId && activePresetId)
+            console.log(`[DUPLICATE_DEBUG] Session ${activeSession.session_id} reconnection check: ${shouldReconnect} (presetQueryId: '${presetQueryId}' === activePresetId: '${activePresetId}' OR orphan adoption)`)
+            
             if (!shouldReconnect) {
+              // Log why we skipped this session for debugging
+              // console.log(`[DUPLICATE_DEBUG] Skipping session ${activeSession.session_id} (presetQueryId: ${presetQueryId} !== activePresetId: ${activePresetId})`)
               continue
             }
 
@@ -713,16 +726,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               // Restore batch progress from events (shows batch box immediately after refresh)
               await restoreWorkflowStateFromEvents(activeSession.session_id)
 
-              if (!presetQueryId && activePresetId) {
-                try {
-                  await agentApi.updateChatSession(activeSession.session_id, {
-                    preset_query_id: activePresetId
-                  })
-                } catch (error) {
-                  console.error(`[DUPLICATE_DEBUG] Failed to update chat session:`, error)
-                }
-              }
-
               continue
             }
 
@@ -769,16 +772,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
             // Restore batch progress from events (shows batch box immediately after refresh)
             await restoreWorkflowStateFromEvents(activeSession.session_id)
-
-            if (!presetQueryId && activePresetId) {
-              try {
-                await agentApi.updateChatSession(activeSession.session_id, {
-                  preset_query_id: activePresetId
-                })
-              } catch (error) {
-                console.error(`[DUPLICATE_DEBUG] Failed to update chat session:`, error)
-              }
-            }
           } catch (error) {
             console.error(`[DUPLICATE_DEBUG] Error reconnecting session ${activeSession.session_id}:`, error)
           }

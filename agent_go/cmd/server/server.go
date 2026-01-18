@@ -1115,18 +1115,44 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Continue without chat session - events won't be stored but query can proceed
 		}
 	} else {
-		// Reactivate session if it was stopped/completed/error - update status to "active" for new query
-		if chatSession.Status == "stopped" || chatSession.Status == "completed" || chatSession.Status == "error" {
-			updateReq := &database.UpdateChatSessionRequest{
-				Status:      "active",
-				CompletedAt: nil, // Clear completion timestamp when reactivating
+		// Prepare update request
+		updateReq := &database.UpdateChatSessionRequest{}
+		shouldUpdate := false
+
+		// 1. Update PresetQueryID if provided and currently missing or different
+		// This fixes "orphan" sessions by associating them with the current preset
+		if req.PresetQueryID != "" {
+			currentID := ""
+			if chatSession.PresetQueryID != nil {
+				currentID = *chatSession.PresetQueryID
 			}
+			if currentID != req.PresetQueryID {
+				updateReq.PresetQueryID = req.PresetQueryID
+				shouldUpdate = true
+				log.Printf("[SESSION UPDATE] Updating session %s PresetQueryID from '%s' to '%s'", sessionID, currentID, req.PresetQueryID)
+			}
+		}
+
+		// 2. Reactivate session if it was stopped/completed/error
+		if chatSession.Status == "stopped" || chatSession.Status == "completed" || chatSession.Status == "error" {
+			updateReq.Status = "active"
+			updateReq.CompletedAt = nil // Clear completion timestamp when reactivating
+			shouldUpdate = true
+			log.Printf("[SESSION REACTIVATION] Reactivating session %s (old status: %s)", sessionID, chatSession.Status)
+		}
+
+		// Apply updates if needed
+		if shouldUpdate {
 			_, err := api.chatDB.UpdateChatSession(r.Context(), sessionID, updateReq)
 			if err != nil {
-				// Continue with existing session status
+				log.Printf("[DATABASE ERROR] Failed to update chat session %s: %v", sessionID, err)
+				// Continue with existing session state - critical path should not fail
 			}
+		}
 
-			// Initialize EventStore for reactivated session to ensure new events are stored correctly
+		// Initialize EventStore for reactivated session to ensure new events are stored correctly
+		// Only needed if we actually reactivated (status changed)
+		if chatSession.Status == "stopped" || chatSession.Status == "completed" || chatSession.Status == "error" {
 			// Calculate existing event count to use as baseIndex for polling
 			var baseIndex int
 			existingEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 1000000, 0)
@@ -1524,6 +1550,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
+				// Convert TempLearningLLM if present
+				if req.ExecutionOptions.TempLearningLLM != nil {
+					controllerOpts.TempLearningLLM = &todo_creation_human.AgentLLMConfig{
+						Provider: req.ExecutionOptions.TempLearningLLM.Provider,
+						ModelID:  req.ExecutionOptions.TempLearningLLM.ModelID,
+					}
+					log.Printf("[WORKFLOW EXECUTION] Temp learning LLM included: %s/%s", controllerOpts.TempLearningLLM.Provider, controllerOpts.TempLearningLLM.ModelID)
+				} else {
+					// Explicitly set to nil to ensure backend clears any existing override
+					controllerOpts.TempLearningLLM = nil
+					log.Printf("[WORKFLOW EXECUTION] Temp learning LLM not provided - will clear existing override")
+				}
+
 				// Set execution options on the workflow orchestrator
 				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Setting execution options on orchestrator: %+v", controllerOpts)
 				workflowOrchestrator.SetExecutionOptions(controllerOpts)
@@ -1626,7 +1665,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					updateReq := &database.UpdateChatSessionRequest{
 						Status:        "completed",
 						CompletedAt:   &completedAt,
-						PresetQueryID: "", // Explicitly set to empty string to trigger NULL in database
 					}
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					_, err := api.chatDB.UpdateChatSession(ctx, sessionID, updateReq)
@@ -2365,7 +2403,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			updateReq := &database.UpdateChatSessionRequest{
 				Status:        "completed",
 				CompletedAt:   &completedAt,
-				PresetQueryID: "", // Explicitly set to empty string to trigger NULL in database
 			}
 			_, err := api.chatDB.UpdateChatSession(streamCtx, sessionID, updateReq)
 			if err != nil {
@@ -2991,9 +3028,8 @@ func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
 
 		log.Printf("[ACTIVE_SESSION] Updating database for session %s status to: %s", sessionID, status)
 		_, err := api.chatDB.UpdateChatSession(ctx, sessionID, &database.UpdateChatSessionRequest{
-			Status:        status,
-			CompletedAt:   completedAt,
-			PresetQueryID: "", // Explicitly set to empty string to trigger NULL in database
+			Status:      status,
+			CompletedAt: completedAt,
 		})
 		if err != nil {
 			log.Printf("[ACTIVE_SESSION] Failed to update database for session %s: %v", sessionID, err)

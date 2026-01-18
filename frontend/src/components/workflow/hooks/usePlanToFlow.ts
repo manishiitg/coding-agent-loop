@@ -4,7 +4,7 @@ import dagre from 'dagre'
 import type { PlanStep, PlanningResponse, AgentConfigs, AgentLLMConfig, PrerequisiteRule, ValidationSchema } from '../../../utils/stepConfigMatching'
 import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep, isHumanInputStep } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
-import type { VariablesManifest } from '../../../services/api-types'
+import type { VariablesManifest, EvaluationStep } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import type { ExecutionSettingsNodeData } from '../nodes/ExecutionSettingsNode'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
@@ -157,7 +157,23 @@ export interface EvaluationNodeData extends Record<string, unknown> {
   llmModel?: string  // LLM model name
 }
 
-export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | HumanInputNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData
+export interface EvaluationStepNodeData extends Record<string, unknown> {
+  id: string
+  title: string
+  description?: string
+  success_criteria?: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  stepIndex: number
+  step: EvaluationStep
+  onRunFromStep?: OnRunFromStepCallback
+  onOpenSidebar?: OnOpenSidebarCallback
+  isExecuting?: boolean
+  workspacePath?: string | null
+  selectedRunFolder?: string
+  isEvaluationStep: boolean
+}
+
+export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | HumanInputNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData | EvaluationStepNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -2240,6 +2256,15 @@ export function usePlanToFlow(
         id: 'variables-to-first',
         source: 'variables',
         target: processedNodes[0].id,
+        type: 'smoothstep',
+        style: { stroke: '#6b7280', strokeWidth: 2 }
+      })
+    } else {
+      // Connect Variables to End if no steps
+      edges.push({
+        id: 'variables-to-end',
+        source: 'variables',
+        target: 'end',
         type: 'smoothstep',
         style: { stroke: '#6b7280', strokeWidth: 2 }
       })

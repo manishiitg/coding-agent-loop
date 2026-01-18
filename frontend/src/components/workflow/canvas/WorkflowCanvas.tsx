@@ -18,7 +18,9 @@ import { VariablesSidebar } from './VariablesSidebar'
 import { StepLegend } from './StepLegend'
 import { BatchProgressHeader } from '../BatchProgressHeader'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
+import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
 import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type StepNodeData, type ConditionalNodeData, type LoopNodeData, type DecisionNodeData, type OrchestratorNodeData } from '../hooks/usePlanToFlow'
+import { useEvaluationPlanToFlow, type EvaluationStepNodeData } from '../hooks/useEvaluationPlanToFlow'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
 import { useWorkspaceState } from '../hooks/useWorkspaceState'
@@ -75,19 +77,23 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Store current viewport state (x, y, zoom) to preserve it during refresh
   const viewportStateRef = React.useRef<{ x: number; y: number; zoom: number } | null>(null)
 
+  // Get workflow mode
+  const workflowMode = useWorkflowStore(state => state.workflowMode)
+
   // Generate localStorage key for viewport state (workspace-specific)
   const getViewportStorageKey = React.useCallback(() => {
     return workspacePath
-      ? `workflow-viewport-${workspacePath}`
-      : 'workflow-viewport-default'
-  }, [workspacePath])
+      ? `workflow-viewport-${workspacePath}-${workflowMode}`
+      : `workflow-viewport-default-${workflowMode}`
+  }, [workspacePath, workflowMode])
 
   // Get workflow layout file path
   const getLayoutFilePath = React.useCallback(() => {
-    return workspacePath 
+    if (!workspacePath) return null
+    return workflowMode === 'plan'
       ? `${workspacePath}/planning/workflow_layout.json`
-      : null
-  }, [workspacePath])
+      : `${workspacePath}/evaluation/eval_layout.json`
+  }, [workspacePath, workflowMode])
 
   // Load saved node positions and offsets from workspace
   const loadSavedLayout = React.useCallback(async (): Promise<{
@@ -349,8 +355,23 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [selectedRunFolder, workspacePath, highlightFile, fetchFiles])
 
-  // Load plan data with change detection
-  const { plan, loading, error, changes, updateStep, deleteStep, refresh: loadPlanRefresh, clearChanges, setChanges } = usePlanData(workspacePath)
+  // Load plan data (Plan Mode)
+  const planData = usePlanData(workflowMode === 'plan' ? workspacePath : null)
+  
+  // Load evaluation plan data (Eval Mode)
+  const evalData = useEvaluationPlanData(workflowMode === 'eval' ? workspacePath : null)
+
+  // Unify state based on mode
+  const plan = workflowMode === 'plan' ? planData.plan : null
+  const evaluationPlan = workflowMode === 'eval' ? evalData.evaluationPlan : null
+  
+  const loading = workflowMode === 'plan' ? planData.loading : evalData.loading
+  const error = workflowMode === 'plan' ? planData.error : evalData.error
+  const changes = workflowMode === 'plan' ? planData.changes : null
+  
+  const loadPlanRefresh = workflowMode === 'plan' ? planData.refresh : evalData.refresh
+  const clearChanges = workflowMode === 'plan' ? planData.clearChanges : () => {}
+  const setChanges = workflowMode === 'plan' ? planData.setChanges : () => {}
 
   // *** NEW CONSOLIDATED API ***
   // Load all workspace state (run folders, variables, phases, progress) in one call
@@ -857,7 +878,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [stepStatusMap])
 
   // Convert plan to React Flow nodes and edges (with change highlights and run callback)
-  const { nodes: initialNodes, edges: initialEdges } = usePlanToFlow(plan, { 
+  const planFlow = usePlanToFlow(plan, { 
     // Prerequisite edges are always shown (default: true in usePlanToFlow)
     changes,  // Pass changes to highlight modified nodes
     onRunFromStep: handleRunFromStepCallback,
@@ -871,6 +892,19 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     onOpenVariablesSidebar: handleOpenVariablesSidebar,  // Callback for opening variables sidebar
     isLoadingVariables  // Whether variables are loading
   })
+
+  // Convert evaluation plan to flow (Eval Mode)
+  const evalFlow = useEvaluationPlanToFlow(evaluationPlan, {
+    onRunFromStep: handleRunFromStepCallback,
+    onOpenSidebar: handleOpenSidebarCallback,
+    isExecuting,
+    completedStepIndices: [], // Evaluation steps don't have progress tracking yet
+    workspacePath,
+    selectedRunFolder: selectedRunFolder ?? undefined
+  })
+
+  // Select flow based on mode
+  const { nodes: initialNodes, edges: initialEdges } = workflowMode === 'plan' ? planFlow : evalFlow
 
   // Helper function to highlight and position a specific step node
   const highlightStepNode = useCallback((stepId: string) => {
@@ -1687,11 +1721,23 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [onStartPhase, highlightStepNode, selectedNode])
 
   // Get total step count
-  const totalSteps = plan?.steps?.length || 0
+  const totalSteps = workflowMode === 'plan' ? (plan?.steps?.length || 0) : (evaluationPlan?.steps?.length || 0)
 
 
   // Handle edit step
   const handleEditStep = useCallback(async (stepId: string, updates: Partial<PlanStep>) => {
+    // Eval Mode
+    if (workflowMode === 'eval') {
+      if (!evaluationPlan) return
+      const stepIndex = evaluationPlan.steps.findIndex(s => s.id === stepId)
+      if (stepIndex >= 0) {
+        await evalData.updateEvaluationStep(stepIndex, updates as any) // Type cast needed as EvaluationStep is similar to PlanStep
+        highlightStepNode(stepId)
+      }
+      return
+    }
+
+    // Plan Mode
     if (!plan) return
     
     // Capture current node positions before refresh to preserve layout
@@ -1746,7 +1792,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         throw new Error(`Step ID mismatch: requested ${stepId} but found ${foundStep.id} at index ${stepIndex}`)
       }
       
-      await updateStep(stepIndex, updates)
+      await planData.updateStep(stepIndex, updates)
       
       // Highlight the step node after saving config
       highlightStepNode(stepId)
@@ -1785,18 +1831,25 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       // Highlight the step node after saving
       highlightStepNode(stepId)
     }
-  }, [plan, workspacePath, updateStep, highlightStepNode, loadPlanRefresh])
+  }, [plan, evaluationPlan, workflowMode, workspacePath, planData, evalData, highlightStepNode, loadPlanRefresh])
 
   // Handle delete step
   const handleDeleteStep = useCallback(async (stepId: string) => {
+    // Eval Mode
+    if (workflowMode === 'eval') {
+      console.warn('[WorkflowCanvas] Delete not yet implemented for evaluation steps')
+      return
+    }
+
+    // Plan Mode
     if (!plan) return
     
     const stepIndex = plan.steps.findIndex(s => s.id === stepId)
     if (stepIndex >= 0) {
-      await deleteStep(stepIndex)
+      await planData.deleteStep(stepIndex)
       setSelectedNode(null)
     }
-  }, [plan, deleteStep])
+  }, [plan, workflowMode, planData])
 
   // Handle bulk update steps
   const handleBulkUpdateSteps = useCallback(async (updates: Array<{ stepId: string; updates: Partial<PlanStep> }>) => {
@@ -1921,7 +1974,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }
 
   // No plan state
-  if (!plan || !plan.steps || plan.steps.length === 0) {
+  const hasPlan = workflowMode === 'plan' ? (plan && plan.steps && plan.steps.length > 0) : (evaluationPlan && evaluationPlan.steps && evaluationPlan.steps.length > 0)
+  if (!hasPlan) {
     return (
       <div className={`flex flex-col h-full bg-gray-50 dark:bg-gray-900 ${className}`}>
         <WorkflowToolbar
@@ -1949,13 +2003,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             </div>
             <div>
               <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                No Plan Yet
+                {workflowMode === 'plan' ? 'No Plan Yet' : 'No Evaluation Plan Yet'}
               </h3>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                Create a plan to visualize your workflow
+                {workflowMode === 'plan' 
+                  ? 'Create a plan to visualize your workflow' 
+                  : 'Run Evaluation Designer to create an evaluation plan'}
               </p>
             </div>
-            {onCreatePlan && (
+            {onCreatePlan && workflowMode === 'plan' && (
               <button
                 onClick={onCreatePlan}
                 className="px-6 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 font-medium"
@@ -1975,7 +2031,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       <WorkflowToolbar
         status={status}
         hasPlan={true}
-        plan={plan}
+        plan={workflowMode === 'plan' ? plan : undefined} // Only pass plan in plan mode (for start point calculation)
         currentPhase={currentPhase}
         workspacePath={workspacePath}
         totalSteps={totalSteps}

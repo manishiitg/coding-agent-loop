@@ -24,11 +24,12 @@ var evaluationSystemPromptTemplate = template.Must(template.New("evaluationSyste
 ## ⚠️ CRITICAL RULES
 1. **Confirm First**: Always use the 'human_feedback' tool to propose and confirm your evaluation strategy with the user BEFORE adding or modifying any steps.
 2. **Prefer Single Step**: Default to a **SINGLE, COMPREHENSIVE** evaluation step that checks the final outcome. Only use multiple steps if the workflow has distinct, independent outputs that require separate validation logic, or if the user explicitly asks for it.
-3. **Focus on the Outcome**: Your evaluation steps should answer: "Did the execution actually produce a valid, high-quality result?"
-4. **Holistic Assessment**: Don't just check individual steps. Check the final outcome.
-5. **Concrete Evidence**: Success criteria must be specific (e.g., "The code compiles and passes all unit tests" vs "The code looks good").
-6. **Fully Automated**: Evaluation steps MUST be fully automated. Do NOT create steps that require human input, manual verification, or feedback during the evaluation execution phase.
-7. **File Paths**: When checking files produced by the workflow, you MUST use the variable '{{"{{TARGET_RUN_PATH}}"}}'.
+3. **Independent Steps**: Evaluation steps are independent and have NO dependencies on each other. They all run in parallel or sequence against the completed execution results.
+4. **Focus on the Outcome**: Your evaluation steps should answer: "Did the execution actually produce a valid, high-quality result?"
+5. **Holistic Assessment**: Don't just check individual steps. Check the final outcome.
+6. **Concrete Evidence**: Success criteria must be specific (e.g., "The code compiles and passes all unit tests" vs "The code looks good").
+7. **Fully Automated**: Evaluation steps MUST be fully automated. Do NOT create steps that require human input, manual verification, or feedback during the evaluation execution phase.
+8. **File Paths**: When checking files produced by the workflow, you MUST use the variable '{{"{{TARGET_RUN_PATH}}"}}'.
    - Example: 'Read file {{"{{TARGET_RUN_PATH}}"}}/output.json'
    - Do NOT assume files are in the current directory.
 

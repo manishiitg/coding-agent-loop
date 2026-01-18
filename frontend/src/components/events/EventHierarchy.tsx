@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import type { PollingEvent } from '../../services/api-types';
 import { EventDispatcher } from './EventDispatcher';
 import { agentApi } from '../../services/api';
 import { useChatStore } from '../../stores/useChatStore';
 import { MAX_EVENTS_TO_PROCESS } from '../../constants/events';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import './EventHierarchy.css';
 
 interface EventHierarchyProps {
@@ -23,39 +24,60 @@ interface EventNode {
   isExpanded: boolean;
 }
 
-export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact = false, flatHierarchy = false }) => {
+interface FlattenedItem {
+  node: EventNode;
+  uniqueKey: string;
+}
+
+export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ 
+  events, 
+  onApproveWorkflow, 
+  onSubmitFeedback, 
+  onFeedbackSubmitted, 
+  isApproving, 
+  compact = false, 
+  flatHierarchy = false 
+}) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
-  // Track loaded older events from backend (prepended to props events)
   const [loadedOlderEvents, setLoadedOlderEvents] = useState<PollingEvent[]>([]);
-  // Track pagination offset for loading older events
   const [paginationOffset, setPaginationOffset] = useState<number>(0);
-  // Track loading state
   const [isLoadingOlder, setIsLoadingOlder] = useState<boolean>(false);
-  // Track if there are more events to load
   const [hasMoreOlderEvents, setHasMoreOlderEvents] = useState<boolean>(false);
-  // Track last event count to detect new events
-  const lastEventCountRef = React.useRef<number>(0);
   
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scrollParent, setScrollParent] = useState<HTMLElement | null>(null);
+  
+  // Find the scrollable parent on mount
+  useEffect(() => {
+    if (containerRef.current) {
+      let parent = containerRef.current.parentElement;
+      while (parent) {
+        const overflow = window.getComputedStyle(parent).overflowY;
+        if (overflow === 'auto' || overflow === 'scroll') {
+          setScrollParent(parent);
+          break;
+        }
+        parent = parent.parentElement;
+      }
+    }
+  }, []);
+
   // Get active tab for sessionId and eventMode
   const activeTab = useChatStore(state => state.getActiveTab())
   const sessionId = activeTab?.sessionId
   const eventMode: 'basic' | 'advanced' | 'tiny' = (activeTab?.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny'
   
-  // Merge loaded older events with current events (older events first, then current events)
-  const displayEvents = React.useMemo(() => {
-    // Combine: older events (loaded from backend) + current events (from props/store)
+  // Merge loaded older events with current events
+  const displayEvents = useMemo(() => {
     const allEvents = [...loadedOlderEvents, ...events];
-    
-    // Ensure events are sorted chronologically by timestamp (oldest first)
-    // This ensures proper ordering even if events come from different sources
     const sortedEvents = allEvents.sort((a, b) => {
       const timeA = a.timestamp ? (Date.parse(a.timestamp) || 0) : 0;
       const timeB = b.timestamp ? (Date.parse(b.timestamp) || 0) : 0;
       return timeA - timeB;
     });
     
-    // Limit to prevent browser freeze - take most recent events
     if (sortedEvents.length > MAX_EVENTS_TO_PROCESS) {
       return sortedEvents.slice(-MAX_EVENTS_TO_PROCESS);
     }
@@ -63,32 +85,17 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
   }, [events, loadedOlderEvents]);
   
   // Reset loaded older events when session or event mode changes
-  // (since filtering happens on backend, we need to reload when mode changes)
-  React.useEffect(() => {
+  useEffect(() => {
     setLoadedOlderEvents([])
     setPaginationOffset(0)
-    // Get hasMoreOlderEvents from store (set by ChatArea when initial fetch completes)
     const chatStore = useChatStore.getState()
     const hasMore = sessionId ? chatStore.getTabHasMoreOlderEvents(sessionId) : false
     setHasMoreOlderEvents(hasMore)
   }, [sessionId, eventMode])
   
-  // Track event count changes
-  React.useEffect(() => {
-    lastEventCountRef.current = displayEvents.length;
-  }, [displayEvents.length]);
-  
-  // All events are visible (no startIndex needed - we use pagination instead)
-  const visibleEvents = displayEvents;
-
-  // Extract parent_id from event data
-  const getParentId = React.useCallback((event: PollingEvent): string | undefined => {
-    // First check top-level parent_id
-    if ('parent_id' in event && event.parent_id) {
-      return event.parent_id;
-    }
-    
-    // Fallback: check nested data
+  // Helpers to extract hierarchy info
+  const getParentId = useCallback((event: PollingEvent): string | undefined => {
+    if ('parent_id' in event && event.parent_id) return event.parent_id;
     if (event.data && typeof event.data === 'object') {
       for (const [, value] of Object.entries(event.data)) {
         if (value && typeof value === 'object' && 'parent_id' in value) {
@@ -99,210 +106,197 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
     return undefined;
   }, []);
 
-  // Extract hierarchy_level from event data
-  const getHierarchyLevel = React.useCallback((event: PollingEvent): number => {
-    // Debug: Log the event structure to see what fields are available
-    
-    // First check top-level hierarchy_level
-    if ('hierarchy_level' in event && typeof event.hierarchy_level === 'number') {
-      // Found hierarchy_level at top level
-      return event.hierarchy_level;
-    }
-    
-    // Fallback: check nested data
+  const getHierarchyLevel = useCallback((event: PollingEvent): number => {
+    if ('hierarchy_level' in event && typeof event.hierarchy_level === 'number') return event.hierarchy_level;
     if (event.data && typeof event.data === 'object') {
       for (const [, value] of Object.entries(event.data)) {
         if (value && typeof value === 'object' && 'hierarchy_level' in value) {
-          const level = (value as { hierarchy_level: number }).hierarchy_level;
-          // Found hierarchy_level in nested data
-          return level;
+          return (value as { hierarchy_level: number }).hierarchy_level;
         }
       }
     }
-    
-    // Always default to L-1 if hierarchy_level not found - ensures events are always visible
     return -1;
   }, []);
 
-  // Extract agent session key from orchestrator_agent_start/end events for matching
-  const getAgentSessionKey = React.useCallback((event: PollingEvent): string | null => {
-    // Only process orchestrator_agent_start and orchestrator_agent_end events
-    if (event.type !== 'orchestrator_agent_start' && event.type !== 'orchestrator_agent_end') {
-      return null;
-    }
-
-    // Extract correlation_id and agent_type from event data
-    // The data structure can be:
-    // 1. event.data.data (nested data field)
-    // 2. event.data.orchestrator_agent_start or event.data.orchestrator_agent_end (nested by type)
-    // 3. event.data (direct - data itself is the event)
+  const getAgentSessionKey = useCallback((event: PollingEvent): string | null => {
+    if (event.type !== 'orchestrator_agent_start' && event.type !== 'orchestrator_agent_end') return null;
     let correlationId: string | undefined;
     let agentType: string | undefined;
-
     if (event.data && typeof event.data === 'object') {
       const data = event.data as Record<string, unknown>;
-      
-      // Try nested data field first (matches extractEventData pattern)
-      let eventData = (data.data && typeof data.data === 'object') 
-        ? (data.data as Record<string, unknown>)
-        : undefined;
-      
-      // If not found, try nested structure by type
-      if (!eventData || typeof eventData !== 'object') {
-        eventData = (data.orchestrator_agent_start || data.orchestrator_agent_end) as Record<string, unknown> | undefined;
-      }
-      
-      // If still not found, try direct structure
-      if (!eventData || typeof eventData !== 'object') {
-        eventData = data;
-      }
-      
-      if (eventData && typeof eventData === 'object') {
+      let eventData = (data.data && typeof data.data === 'object') ? (data.data as Record<string, unknown>) : undefined;
+      if (!eventData) eventData = (data.orchestrator_agent_start || data.orchestrator_agent_end) as Record<string, unknown> | undefined;
+      if (!eventData) eventData = data;
+      if (eventData) {
         correlationId = eventData.correlation_id as string | undefined;
         agentType = eventData.agent_type as string | undefined;
       }
     }
-
-    // Generate session key: correlation_id + agent_type
-    if (correlationId && agentType) {
-      return `agent_session:${correlationId}:${agentType}`;
-    }
-
-    // Fallback: use trace_id + agent_type
-    let traceId: string | undefined;
-    if (event.data && typeof event.data === 'object') {
-      const data = event.data as Record<string, unknown>;
-      
-      // Try nested data field first
-      let eventData = (data.data && typeof data.data === 'object') 
-        ? (data.data as Record<string, unknown>)
-        : undefined;
-      
-      // If not found, try nested structure by type
-      if (!eventData || typeof eventData !== 'object') {
-        eventData = (data.orchestrator_agent_start || data.orchestrator_agent_end) as Record<string, unknown> | undefined;
-      }
-      
-      // If still not found, try direct structure
-      if (!eventData || typeof eventData !== 'object') {
-        eventData = data;
-      }
-      
-      if (eventData && typeof eventData === 'object') {
-        traceId = eventData.trace_id as string | undefined;
-        if (!agentType) {
-          agentType = eventData.agent_type as string | undefined;
-        }
-      }
-    }
-
-    if (traceId && agentType) {
-      return `agent_session:${traceId}:${agentType}`;
-    }
-
-    return null;
+    return (correlationId && agentType) ? `agent_session:${correlationId}:${agentType}` : null;
   }, []);
 
-  // Find all events between orchestrator_agent_start and orchestrator_agent_end
-  // OPTIMIZATION: Only process visibleEvents to reduce computation
-  const findEventsBetweenStartEnd = React.useMemo(() => {
-    const sessionEvents = new Map<string, Set<string>>(); // sessionKey -> Set of event IDs
-    
-    // First pass: identify all orchestrator_agent_start and orchestrator_agent_end events and their session keys
-    const startEvents = new Map<string, { event: PollingEvent; index: number }>(); // sessionKey -> start event
-    const endEvents = new Map<string, { event: PollingEvent; index: number }>(); // sessionKey -> end event
+  const findEventsBetweenStartEnd = useMemo(() => {
+    const sessionEvents = new Map<string, Set<string>>();
+    const startEvents = new Map<string, { event: PollingEvent; index: number }>();
+    const endEvents = new Map<string, { event: PollingEvent; index: number }>();
 
-    visibleEvents.forEach((event, index) => {
+    displayEvents.forEach((event, index) => {
       const sessionKey = getAgentSessionKey(event);
       if (!sessionKey) return;
-
-      if (event.type === 'orchestrator_agent_start') {
-        startEvents.set(sessionKey, { event, index });
-      } else if (event.type === 'orchestrator_agent_end') {
-        endEvents.set(sessionKey, { event, index });
-      }
+      if (event.type === 'orchestrator_agent_start') startEvents.set(sessionKey, { event, index });
+      else if (event.type === 'orchestrator_agent_end') endEvents.set(sessionKey, { event, index });
     });
 
-    // Second pass: for each matched start/end pair, collect all events between them
     startEvents.forEach((startInfo, sessionKey) => {
       const endInfo = endEvents.get(sessionKey);
-      if (!endInfo) {
-        return; // No matching end event found
-      }
-
+      if (!endInfo) return;
       const eventIds = new Set<string>();
-      // Include start event
       eventIds.add(startInfo.event.id);
-      
-      // Include all events between start and end (exclusive of end)
-      for (let i = startInfo.index + 1; i < endInfo.index; i++) {
-        eventIds.add(visibleEvents[i].id);
-      }
-      
-      // Include end event
+      for (let i = startInfo.index + 1; i < endInfo.index; i++) eventIds.add(displayEvents[i].id);
       eventIds.add(endInfo.event.id);
-
       sessionEvents.set(sessionKey, eventIds);
     });
-
     return sessionEvents;
-  }, [visibleEvents, getAgentSessionKey]);
+  }, [displayEvents, getAgentSessionKey]);
 
-  const toggleNode = React.useCallback((eventId: string) => {
+  const toggleNode = useCallback((eventId: string) => {
     setExpandedNodes(prev => {
       const newExpanded = new Set(prev);
-      if (newExpanded.has(eventId)) {
-        newExpanded.delete(eventId);
-      } else {
-        newExpanded.add(eventId);
-      }
+      if (newExpanded.has(eventId)) newExpanded.delete(eventId);
+      else newExpanded.add(eventId);
       return newExpanded;
     });
   }, []);
 
-  const toggleAgentSession = React.useCallback((sessionKey: string) => {
+  const toggleAgentSession = useCallback((sessionKey: string) => {
     setCollapsedSessions(prevCollapsed => {
       const newCollapsed = new Set(prevCollapsed);
-      if (newCollapsed.has(sessionKey)) {
-        newCollapsed.delete(sessionKey);
-      } else {
-        newCollapsed.add(sessionKey);
-      }
+      if (newCollapsed.has(sessionKey)) newCollapsed.delete(sessionKey);
+      else newCollapsed.add(sessionKey);
       return newCollapsed;
     });
   }, []);
 
-  // Memoized event node renderer to prevent unnecessary re-renders
-  const renderEventNode = React.useCallback((node: EventNode, uniqueKey?: string): React.ReactNode => {
+  const eventTree = useMemo(() => {
+    const eventById = new Map<string, PollingEvent>();
+    displayEvents.forEach(event => eventById.set(event.id, event));
+
+    const eventsToFilter = new Set<string>();
+    findEventsBetweenStartEnd.forEach((eventIds, sessionKey) => {
+      if (collapsedSessions.has(sessionKey)) {
+        eventIds.forEach(eventId => {
+          const event = eventById.get(eventId);
+          if (event && event.type !== 'orchestrator_agent_start' && event.type !== 'orchestrator_agent_end') {
+            eventsToFilter.add(eventId);
+          }
+        });
+      }
+    });
+
+    const filteredEvents = displayEvents.filter(event => !eventsToFilter.has(event.id));
+    const filteredEventIds = new Set(filteredEvents.map(e => e.id));
+    const childrenMap = new Map<string, PollingEvent[]>();
+
+    filteredEvents.forEach(event => {
+      const parentId = getParentId(event);
+      if (parentId) {
+        if (!childrenMap.has(parentId)) childrenMap.set(parentId, []);
+        childrenMap.get(parentId)!.push(event);
+      }
+    });
+
+    const buildTreeRecursive = (event: PollingEvent): EventNode => {
+      const children = childrenMap.get(event.id) || [];
+      const childNodes = children.map(child => buildTreeRecursive(child));
+      return {
+        event,
+        children: childNodes,
+        level: getHierarchyLevel(event),
+        isExpanded: expandedNodes.has(event.id)
+      };
+    };
+
+    const rootEvents = filteredEvents.filter(event => {
+      const parentId = getParentId(event);
+      return !parentId || !filteredEventIds.has(parentId);
+    });
+
+    return rootEvents.map(event => buildTreeRecursive(event));
+  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId, getHierarchyLevel]);
+
+  const flattenedItems = useMemo(() => {
+    const list: FlattenedItem[] = [];
+    const flatten = (node: EventNode, key: string) => {
+      list.push({ node, uniqueKey: key });
+      if (node.isExpanded && node.children.length > 0) {
+        node.children.forEach((child, index) => {
+          flatten(child, `${key}-child-${index}`);
+        });
+      }
+    };
+    eventTree.forEach((node, index) => flatten(node, `${node.event.id}-root-${index}`));
+    return list;
+  }, [eventTree]);
+
+  const handleLoadMore = useCallback(async () => {
+    if (!sessionId || isLoadingOlder) return;
+    setIsLoadingOlder(true);
+    try {
+      const response = await agentApi.getSessionEvents(sessionId, undefined, {
+        limit: 50,
+        offset: paginationOffset,
+        eventMode
+      });
+      if (response.events.length > 0) {
+        setLoadedOlderEvents(prev => [...response.events, ...prev]);
+        setPaginationOffset(prev => prev + response.events.length);
+        setHasMoreOlderEvents(response.has_more);
+      } else setHasMoreOlderEvents(false);
+    } catch (error) {
+      console.error('[EventHierarchy] Failed to load older events:', error);
+      setHasMoreOlderEvents(false);
+    } finally {
+      setIsLoadingOlder(false);
+    }
+  }, [sessionId, paginationOffset, eventMode, isLoadingOlder]);
+
+  const renderItem = useCallback((index: number, item: FlattenedItem) => {
+    const { node, uniqueKey } = item;
     const { event, children, level, isExpanded } = node;
     const hasChildren = children.length > 0;
-    // Support up to L10: L0 = 10px, L1 = 20px, ..., L10 = 110px
-    // If flatHierarchy is true, no indentation is applied
-    const indent = flatHierarchy ? 0 : Math.min((level + 1) * 10, 110); // Cap at L10 (110px)
     
-    // Get session info for orchestrator_agent_start events
+    // Base indentation
+    const indentLevel = Math.max(0, level + 1);
+    const indentSize = flatHierarchy ? 0 : 20;
+    const indent = indentLevel * indentSize;
+    
     const sessionKey = getAgentSessionKey(event);
     const isCollapsed = sessionKey ? collapsedSessions.has(sessionKey) : false;
     const eventCount = sessionKey && findEventsBetweenStartEnd.has(sessionKey)
-      ? findEventsBetweenStartEnd.get(sessionKey)!.size - 2 // Subtract start and end events
-      : undefined;
+      ? findEventsBetweenStartEnd.get(sessionKey)!.size - 2 : undefined;
     const onToggleCollapse = sessionKey ? () => toggleAgentSession(sessionKey) : undefined;
     
-    // Use provided uniqueKey or fall back to event.id (for backward compatibility)
-    const nodeKey = uniqueKey || event.id;
-    
     return (
-      <div key={nodeKey} className="event-tree-node" data-event-type={event.type}>
+      <div key={uniqueKey} className="event-tree-node relative" data-event-type={event.type}>
+        {/* Hierarchy Guide Lines */}
+        {!flatHierarchy && level >= 0 && Array.from({ length: level + 1 }).map((_, i) => (
+          <div 
+            key={i} 
+            className="absolute top-0 bottom-0 border-l-2 border-gray-200 dark:border-gray-800"
+            style={{ left: `${(i + 1) * indentSize - 10}px` }}
+          />
+        ))}
+
         <div 
-          className="event-tree-item"
-          style={{ marginLeft: `${indent}px` }}
+          className="event-tree-item relative z-10"
+          style={{ paddingLeft: `${indent}px` }}
         >
-          {/* Expand/Collapse Button */}
           {hasChildren && (
             <button
               onClick={() => toggleNode(event.id)}
               className="expand-button"
               aria-label={isExpanded ? 'Collapse' : 'Expand'}
+              style={{ position: 'absolute', left: `${indent - 25}px`, top: '10px' }}
             >
               <span className={`expand-icon ${isExpanded ? 'expanded' : ''}`}>
                 {isExpanded ? '▼' : '▶'}
@@ -310,10 +304,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
             </button>
           )}
           
-          
-          {/* Event Content */}
           <div className="event-content">
-            {/* Full Event Details */}
             <div className="event-details">
               <EventDispatcher 
                 event={event} 
@@ -329,212 +320,40 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ event
             </div>
           </div>
         </div>
-        
-        {/* Render children if expanded */}
-        {isExpanded && hasChildren && (
-          <div className="event-children">
-            {children.map((child, childIndex) => renderEventNode(child, `${nodeKey}-child-${childIndex}`))}
-          </div>
-        )}
       </div>
     );
   }, [collapsedSessions, findEventsBetweenStartEnd, getAgentSessionKey, toggleAgentSession, toggleNode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact, flatHierarchy]);
 
-  // Build event tree from flat list - memoized to react to collapsedSessions changes
-  // OPTIMIZATION: Filter collapsed events early to reduce processing
-  const eventTree = React.useMemo(() => {
-    const startTime = performance.now()
-
-    // Early return: if no collapsed sessions, use all visible events (skip filtering overhead)
-    if (collapsedSessions.size === 0) {
-      const filteredEvents = visibleEvents;
-
-      // Build event ID set for O(1) parent lookup
-      const eventIds = new Set(filteredEvents.map(e => e.id));
-
-      const childrenMap = new Map<string, PollingEvent[]>();
-
-      // Build parent-child map
-      filteredEvents.forEach(event => {
-        const parentId = getParentId(event);
-        if (parentId) {
-          if (!childrenMap.has(parentId)) {
-            childrenMap.set(parentId, []);
-          }
-          childrenMap.get(parentId)!.push(event);
-        }
-      });
-
-      // Build trees recursively
-      const buildTreeRecursive = (event: PollingEvent): EventNode => {
-        const children = childrenMap.get(event.id) || [];
-        const childNodes = children.map(child => buildTreeRecursive(child));
-
-        return {
-          event,
-          children: childNodes,
-          level: getHierarchyLevel(event),
-          isExpanded: expandedNodes.has(event.id)
-        };
-      };
-
-      // CRITICAL FIX: Only process ROOT events (no parent or parent not in list)
-      // This prevents O(n²) processing where every event was treated as a root
-      const rootEvents = filteredEvents.filter(event => {
-        const parentId = getParentId(event);
-        return !parentId || !eventIds.has(parentId);
-      });
-
-      const result = rootEvents.map(event => buildTreeRecursive(event));
-      const duration = performance.now() - startTime
-      if (duration > 10) { // Only log if took more than 10ms
-        console.log(`[EventHierarchy] Tree build took ${duration.toFixed(1)}ms (${filteredEvents.length} events, ${rootEvents.length} roots)`)
-      }
-      return result;
-    }
-
-    // Step 1: Build a map of event ID -> event for O(1) lookup (instead of O(n) find)
-    const eventById = new Map<string, PollingEvent>();
-    visibleEvents.forEach(event => {
-      eventById.set(event.id, event);
-    });
-
-    // Step 2: Determine which events should be filtered out (collapsed sessions)
-    // Use Set for O(1) lookup instead of array.find() which is O(n)
-    const eventsToFilter = new Set<string>();
-    findEventsBetweenStartEnd.forEach((eventIds, sessionKey) => {
-      const isCollapsed = collapsedSessions.has(sessionKey);
-
-      if (isCollapsed) {
-        // Filter out all events in this session except the start and end events
-        eventIds.forEach(eventId => {
-          const event = eventById.get(eventId);
-          if (event && event.type !== 'orchestrator_agent_start' && event.type !== 'orchestrator_agent_end') {
-            eventsToFilter.add(eventId);
-          }
-        });
-      }
-    });
-
-    // Step 3: Filter events: remove collapsed events but keep start/end events
-    // This reduces the number of events processed in tree building significantly
-    const filteredEvents = visibleEvents.filter(event => !eventsToFilter.has(event.id));
-
-    // Build event ID set for O(1) parent lookup
-    const filteredEventIds = new Set(filteredEvents.map(e => e.id));
-
-    const childrenMap = new Map<string, PollingEvent[]>();
-
-    // Build parent-child map (only for filtered events)
-    filteredEvents.forEach(event => {
-      const parentId = getParentId(event);
-      if (parentId) {
-        if (!childrenMap.has(parentId)) {
-          childrenMap.set(parentId, []);
-        }
-        childrenMap.get(parentId)!.push(event);
-      }
-    });
-
-    // Build trees recursively
-    const buildTreeRecursive = (event: PollingEvent): EventNode => {
-      const children = childrenMap.get(event.id) || [];
-      const childNodes = children.map(child => buildTreeRecursive(child));
-
-      return {
-        event,
-        children: childNodes,
-        level: getHierarchyLevel(event), // Use actual hierarchy level from event data
-        isExpanded: expandedNodes.has(event.id)
-      };
-    };
-
-    // CRITICAL FIX: Only process ROOT events (no parent or parent not in filtered list)
-    // This prevents O(n²) processing where every event was treated as a root
-    const rootEvents = filteredEvents.filter(event => {
-      const parentId = getParentId(event);
-      return !parentId || !filteredEventIds.has(parentId);
-    });
-
-    const result = rootEvents.map(event => buildTreeRecursive(event));
-    const duration = performance.now() - startTime
-    if (duration > 10) { // Only log if took more than 10ms
-      console.log(`[EventHierarchy] Tree build (collapsed) took ${duration.toFixed(1)}ms (${filteredEvents.length} events, ${rootEvents.length} roots)`)
-    }
-    return result;
-  }, [visibleEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId, getHierarchyLevel]);
-
-  // Load more events handler - fetches older events from backend
-  const handleLoadMore = React.useCallback(async () => {
-    if (!sessionId || isLoadingOlder) {
-      return;
-    }
-    
-    setIsLoadingOlder(true);
-    try {
-      // Fetch older events using pagination (limit=50, offset=current offset)
-      const response = await agentApi.getSessionEvents(sessionId, undefined, {
-        limit: 50,
-        offset: paginationOffset,
-        eventMode
-      });
-      
-      if (response.events.length > 0) {
-        // Events come from backend in chronological order (oldest first) already
-        // Prepend older events to the beginning of our loaded events
-        setLoadedOlderEvents(prev => [...response.events, ...prev]);
-        // Update offset: add the number of events we just loaded
-        setPaginationOffset(prev => prev + response.events.length);
-        setHasMoreOlderEvents(response.has_more);
-      } else {
-        setHasMoreOlderEvents(false);
-      }
-    } catch (error) {
-      console.error('[EventHierarchy] Failed to load older events:', error);
-      setHasMoreOlderEvents(false);
-    } finally {
-      setIsLoadingOlder(false);
-    }
-  }, [sessionId, paginationOffset, eventMode, isLoadingOlder]);
-
-  // Check if there are more events to load from backend
-  const hasMoreEvents = hasMoreOlderEvents;
-
-  if (eventTree.length === 0) {
-    return (
-      <div className="text-gray-500 text-center py-4">
-        No hierarchical events to display
-      </div>
-    );
+  if (flattenedItems.length === 0) {
+    return <div className="text-gray-500 text-center py-4">No hierarchical events to display</div>;
   }
 
   return (
-    <div className="event-hierarchy">
-      {/* Event tree */}
-      <div
-        className="event-tree-container"
-      >
-        {/* Load older events button at TOP (to load events that appear above current view) */}
-        {hasMoreEvents && (
-          <div className="flex justify-center py-4">
-            <button
-              onClick={handleLoadMore}
-              disabled={isLoadingOlder}
-              className="px-4 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isLoadingOlder ? 'Loading...' : 'Load Older Events'}
-            </button>
-          </div>
-        )}
-        
-        {/* Render events in chronological order (oldest first, latest at bottom) */}
-        {/* Performance: Only render top-level nodes initially to prevent freeze */}
-        {eventTree.map((node, index) => (
-          <div key={`${node.event.id}-root-${index}`}>
-            {renderEventNode(node, `${node.event.id}-root-${index}`)}
-          </div>
-        ))}
-      </div>
+    <div ref={containerRef} className="event-hierarchy w-full">
+      <Virtuoso
+        ref={virtuosoRef}
+        data={flattenedItems}
+        customScrollParent={scrollParent || undefined}
+        useWindowScroll={!scrollParent}
+        increaseViewportBy={300}
+        followOutput="smooth"
+        itemContent={renderItem}
+        components={{
+          Header: () => hasMoreOlderEvents ? (
+            <div className="flex justify-center py-4">
+              <button
+                onClick={handleLoadMore}
+                disabled={isLoadingOlder}
+                className="px-4 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isLoadingOlder ? 'Loading...' : 'Load Older Events'}
+              </button>
+            </div>
+          ) : null
+        }}
+      />
     </div>
   );
 });
+
+EventHierarchy.displayName = 'EventHierarchy';

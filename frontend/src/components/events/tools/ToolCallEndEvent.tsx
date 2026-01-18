@@ -1,7 +1,7 @@
 import React from 'react'
 import type { ToolCallEndEvent } from '../../../generated/events'
 import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer'
-import { WorkspaceToolCallEndDisplay, CodeExecutionToolCallEndDisplay } from './ToolCallSpecialRender'
+import { WorkspaceToolCallEndDisplay, CodeExecutionToolCallEndDisplay, ToolSearchToolCallEndDisplay } from './ToolCallSpecialRender'
 import { CircularProgress, type ContextOnlyTokenUsage } from '../../ui/CircularProgress'
 import { TooltipProvider } from '../../ui/tooltip'
 
@@ -30,6 +30,11 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
     return toolName === 'discover_code_structure' || toolName === 'discover_code_files' || toolName === 'write_code'
   }
 
+  // Check if this is a tool search tool
+  const isToolSearchTool = (toolName: string): boolean => {
+    return toolName === 'search_tools' || toolName === 'add_tool'
+  }
+
   // If it's a workspace tool, use the specialized component
   if (event.tool_name && isWorkspaceTool(event.tool_name)) {
     const specializedDisplay = <WorkspaceToolCallEndDisplay event={event} />
@@ -42,6 +47,15 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
   // If it's a code execution tool, use the specialized component
   if (event.tool_name && isCodeExecutionTool(event.tool_name)) {
     const specializedDisplay = <CodeExecutionToolCallEndDisplay event={event} />
+    // If the specialized renderer returns null, fall back to default
+    if (specializedDisplay) {
+      return specializedDisplay
+    }
+  }
+
+  // If it's a tool search tool, use the specialized component
+  if (event.tool_name && isToolSearchTool(event.tool_name)) {
+    const specializedDisplay = <ToolSearchToolCallEndDisplay event={event} />
     // If the specialized renderer returns null, fall back to default
     if (specializedDisplay) {
       return specializedDisplay

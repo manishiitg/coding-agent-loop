@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS preset_queries (
     agent_mode TEXT DEFAULT 'ReAct',
     llm_config JSONB DEFAULT NULL, -- LLM configuration
     use_code_execution_mode BOOLEAN DEFAULT FALSE,
+    use_tool_search_mode BOOLEAN DEFAULT FALSE,
+    pre_discovered_tools TEXT DEFAULT '[]', -- JSON array of pre-discovered tools
     is_predefined BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

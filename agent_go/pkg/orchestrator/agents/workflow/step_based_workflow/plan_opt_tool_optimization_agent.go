@@ -215,7 +215,7 @@ func getUpdateStepConfigToolsSchema() string {
 						"selected_tools": {
 							"type": "array",
 							"items": {"type": "string"},
-							"description": "OPTIONAL: Updated MCP tool selection. Format: ['server:tool'] for specific tools, or ['server:*'] for all tools from a server. If omitted, existing value is preserved."
+							"description": "OPTIONAL: Updated MCP tool selection. Format: ['server:tool'] for specific tools, or ['server:*'] for all tools from a server. If omitted, existing value is preserved. NOTE: If switching to tool search mode, consider setting this to ['server:*'] to allow searching all tools from the selected servers."
 						},
 						"enabled_custom_tools": {
 							"type": "array",
@@ -225,6 +225,15 @@ func getUpdateStepConfigToolsSchema() string {
 						"enable_context_offloading": {
 							"type": "boolean",
 							"description": "OPTIONAL: Enable or disable context offloading virtual tools (read_large_output, search_large_output, query_large_output) for this step. Set to true to enable, false to disable. If omitted, existing value is preserved (default: true if not set)."
+						},
+						"use_tool_search_mode": {
+							"type": "boolean",
+							"description": "OPTIONAL: Enable or disable Tool Search Mode. If set to true, the step will use dynamic tool discovery. This allows the agent to search for tools it needs, while 'pre_discovered_tools' are made immediately available. This is the RECOMMENDED optimization strategy for most steps."
+						},
+						"pre_discovered_tools": {
+							"type": "array",
+							"items": {"type": "string"},
+							"description": "OPTIONAL: List of tool names (e.g. ['read_file', 'get_weather']) that should be immediately available in Tool Search Mode without searching. Use this to 'lock in' known necessary tools found in learnings, while allowing the agent to search for others if needed. NOTE: Provide ONLY tool names, NOT 'server:tool' format."
 						}
 					},
 					"required": ["step_id"]
@@ -293,6 +302,8 @@ type PartialStepConfigUpdate struct {
 	SelectedTools           []string `json:"selected_tools,omitempty"`            // Optional: Updated tool selection
 	EnabledCustomTools      []string `json:"enabled_custom_tools,omitempty"`      // Optional: Updated custom tool selection
 	EnableContextOffloading *bool    `json:"enable_context_offloading,omitempty"` // Optional: Enable/disable context offloading
+	UseToolSearchMode       *bool    `json:"use_tool_search_mode,omitempty"`      // Optional: Enable/disable tool search mode
+	PreDiscoveredTools      []string `json:"pre_discovered_tools,omitempty"`      // Optional: Updated pre-discovered tools
 }
 
 // mergePartialStepConfigUpdate merges a PartialStepConfigUpdate into an existing StepConfig
@@ -314,6 +325,12 @@ func mergePartialStepConfigUpdate(existingConfig *StepConfig, partialUpdate Part
 	}
 	if partialUpdate.EnableContextOffloading != nil {
 		existingConfig.AgentConfigs.EnableContextOffloading = partialUpdate.EnableContextOffloading
+	}
+	if partialUpdate.UseToolSearchMode != nil {
+		existingConfig.AgentConfigs.UseToolSearchMode = partialUpdate.UseToolSearchMode
+	}
+	if partialUpdate.PreDiscoveredTools != nil {
+		existingConfig.AgentConfigs.PreDiscoveredTools = partialUpdate.PreDiscoveredTools
 	}
 }
 
@@ -388,6 +405,12 @@ func createUpdateStepConfigToolsExecutor(workspacePath string, logger loggerv2.L
 			}
 			if update.EnableContextOffloading != nil {
 				changes = append(changes, fmt.Sprintf("context_offloading: %v", *update.EnableContextOffloading))
+			}
+			if update.UseToolSearchMode != nil {
+				changes = append(changes, fmt.Sprintf("tool_search_mode: %v", *update.UseToolSearchMode))
+			}
+			if update.PreDiscoveredTools != nil {
+				changes = append(changes, fmt.Sprintf("pre_discovered_tools: %v", update.PreDiscoveredTools))
 			}
 			if len(changes) > 0 {
 				changeDescriptions = append(changeDescriptions, fmt.Sprintf("%s: %s", update.StepID, strings.Join(changes, ", ")))
@@ -1622,7 +1645,7 @@ Analyze tool usage from learnings and step descriptions to optimize step_config.
 - Skip log checking entirely
 - Base decisions solely on learnings and step description
 
-### Step 5: Apply Tool Inclusion Rules
+### Step 5: Apply Tool Inclusion Rules & Optimization Strategy
 **Priority order**: Learnings > Step Description Inference > Current Config > Execution Logs (only if user requested)
 
 **IMPORTANT**: Determine if step needs MCP servers:
@@ -1631,7 +1654,13 @@ Analyze tool usage from learnings and step descriptions to optimize step_config.
 - If step only uses workspace/human tools → set selected_servers to ['NO_SERVERS']
 - If user requested logs and logs show different MCP usage → update based on logs
 
-For each tool category, apply the following rules:
+#### Optimization Strategy: Convert to Tool Search Mode (RECOMMENDED)
+If you identify a clear set of used tools from learnings (especially MCP tools), convert the step to **Tool Search Mode**:
+1.  Set ` + "`use_tool_search_mode`" + ` to ` + "`true`" + `.
+2.  Set ` + "`pre_discovered_tools`" + ` to the list of successfully used tools (tool names only, no server prefix).
+3.  Set ` + "`selected_tools`" + ` to ` + "`['server:*']`" + ` (where server matches the used tools' servers) to allow searching other tools if needed.
+    - Example: If ` + "`aws-s3:list_buckets`" + ` was used, set ` + "`selected_servers=['aws-s3']`" + `, ` + "`pre_discovered_tools=['list_buckets']`" + `, and ` + "`selected_tools=['aws-s3:*']`" + `.
+This strategy combines efficiency (known tools are ready) with flexibility (agent can search if needed).
 
 #### Basic Workspace Tools (ALWAYS INCLUDE)
 - **Tools**: list_workspace_files, read_workspace_file, update_workspace_file, delete_workspace_file
@@ -1685,6 +1714,7 @@ For each tool in your proposal, provide explicit reasoning:
 - **"Inferred from step description: [specific phrase]"** - for conditional tools based on step title/description
 - **"Found in execution logs: [file path]"** - only if user requested log checking, cite specific log file
 - **"Currently configured (preserving)"** - keep existing if no evidence to remove
+- **"Switching to Tool Search Mode"** - explain that known tools are pre-discovered for efficiency
 
 **Be CONSERVATIVE**: Prefer keeping existing tools unless learnings clearly show they weren't used.
 
@@ -1692,7 +1722,7 @@ For each tool in your proposal, provide explicit reasoning:
 1. Present your proposal with clear reasoning for each tool
 2. Use human_feedback to request approval
 3. After approval, use update_step_config_tools to apply changes
-4. Only update fields that changed (selected_servers, selected_tools, enabled_custom_tools, enable_context_offloading)
+4. Only update fields that changed (selected_servers, selected_tools, enabled_custom_tools, enable_context_offloading, use_tool_search_mode, pre_discovered_tools)
 
 ## TOOL REFERENCE QUICK GUIDE
 
@@ -1713,6 +1743,7 @@ For each tool in your proposal, provide explicit reasoning:
 - **Execution logs are optional** - only check if user explicitly requests it
 - **Never infer MCP tools** - only include MCP tools found in learnings (or logs if user requested)
 - **Be conservative** - prefer keeping existing tools unless learnings clearly show removal is needed
+- **Prefer Tool Search Mode** - convert steps with known tools to use Tool Search Mode + Pre-discovered tools
 
 ## CRITICAL RULES
 
@@ -1722,7 +1753,7 @@ For each tool in your proposal, provide explicit reasoning:
 - **Request approval** before updating step_config.json (use human_feedback tool)
 
 ### Update Constraints
-- **Update only these fields**: selected_servers, selected_tools, enabled_custom_tools, enable_context_offloading
+- **Update only these fields**: selected_servers, selected_tools, enabled_custom_tools, enable_context_offloading, use_tool_search_mode, pre_discovered_tools
 - **Do NOT modify**: Other step configuration fields (agent configs, LLM settings, etc.)
 - **NO_SERVERS handling**: If step requires no MCP servers, explicitly set selected_servers to ['NO_SERVERS'] to disable all MCP servers
 
@@ -1732,7 +1763,7 @@ For each tool in your proposal, provide explicit reasoning:
 |---------|-------|
 | **No learnings available** | Use step description/title to infer tools, preserve existing config, ALWAYS include basic workspace tools (list/read/update/delete) |
 | **Only failures in learnings** | Preserve existing config (don't use failed execution data), rely on step description |
-| **Learnings show tool used successfully** | Include it (primary source) |
+| **Learnings show tool used successfully** | Convert to Tool Search Mode, set pre_discovered_tools = [used tools] |
 | **Learnings show tool never used** | Consider removing, but be VERY conservative (especially for basic tools) |
 | **Tool in step description but not in learnings** | Include if it's a workspace/human tool (never for MCP tools) |
 | **Tool in current config but not in learnings/description** | Preserve if no evidence to remove |

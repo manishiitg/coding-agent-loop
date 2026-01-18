@@ -290,6 +290,30 @@ func (hcpo *StepBasedWorkflowOrchestrator) getCodeExecutionMode(stepConfig *Agen
 	return isCodeExecutionMode
 }
 
+// getToolSearchMode determines tool search mode with priority: step config > preset default
+func (hcpo *StepBasedWorkflowOrchestrator) getToolSearchMode(stepConfig *AgentConfigs) bool {
+	var isToolSearchMode bool
+	if stepConfig != nil && stepConfig.UseToolSearchMode != nil {
+		isToolSearchMode = *stepConfig.UseToolSearchMode
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific tool search mode: %v", isToolSearchMode))
+	} else {
+		isToolSearchMode = hcpo.GetUseToolSearchMode()
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset tool search mode: %v", isToolSearchMode))
+	}
+	return isToolSearchMode
+}
+
+// getPreDiscoveredTools determines pre-discovered tools with priority: step config > preset default
+func (hcpo *StepBasedWorkflowOrchestrator) getPreDiscoveredTools(stepConfig *AgentConfigs) []string {
+	if stepConfig != nil && len(stepConfig.PreDiscoveredTools) > 0 {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific pre-discovered tools: %v", stepConfig.PreDiscoveredTools))
+		return stepConfig.PreDiscoveredTools
+	}
+	preDiscoveredTools := hcpo.GetPreDiscoveredTools()
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset pre-discovered tools: %v", preDiscoveredTools))
+	return preDiscoveredTools
+}
+
 // getExecutionMaxTurns determines max turns with priority: step config > orchestrator default
 func (hcpo *StepBasedWorkflowOrchestrator) getExecutionMaxTurns(stepConfig *AgentConfigs) int {
 	maxTurns := hcpo.GetMaxTurns()
@@ -560,6 +584,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled for execution-only agent - MCP tools will be accessed via generated Go code"))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode disabled for execution-only agent - MCP tools will be exposed directly"))
+	}
+
+	// Tool search mode: Priority: step config > preset default
+	isToolSearchMode := hcpo.getToolSearchMode(stepConfig)
+	config.UseToolSearchMode = isToolSearchMode
+	config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
+	if isToolSearchMode {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Tool search mode enabled for execution-only agent - tools discovered on-demand via search_tools"))
 	}
 
 	// Set EnableContextOffloading if specified
@@ -1444,6 +1476,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 	// Use helper method for consistency
 	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
 	config.UseCodeExecutionMode = isCodeExecutionMode
+
+	// Tool search mode: Priority: step config > orchestrator default
+	isToolSearchMode := hcpo.getToolSearchMode(stepConfig)
+	config.UseToolSearchMode = isToolSearchMode
+	config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
 
 	// Set EnableContextOffloading if specified
 	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {

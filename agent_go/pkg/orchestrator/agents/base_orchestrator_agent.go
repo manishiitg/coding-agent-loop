@@ -117,6 +117,8 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.ServerNames,
 		boa.config.SelectedTools,
 		boa.config.UseCodeExecutionMode,
+		boa.config.UseToolSearchMode,
+		boa.config.PreDiscoveredTools,
 		boa.config.Mode,
 		boa.tracer,
 		traceID,

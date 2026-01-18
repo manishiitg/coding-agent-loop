@@ -368,6 +368,8 @@ type QueryRequest struct {
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed via generated Go code using discover_code_files and write_code
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
+	// Tool search mode: When enabled, LLM discovers tools on-demand via search_tools
+	UseToolSearchMode bool `json:"use_tool_search_mode,omitempty"`
 	// Execution options from frontend (for workflow execution phase)
 	ExecutionOptions *ExecutionOptions `json:"execution_options,omitempty"`
 	// Context summarization configuration
@@ -1247,9 +1249,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
 		allTools, allExecutors, toolCategories := createCustomTools(true) // Include human tools for workflow mode
 
-		// Load selected tools, code execution mode, and preset LLM config from preset if available (for workflow agents)
+		// Load selected tools, code execution mode, tool search mode, and preset LLM config from preset if available (for workflow agents)
 		var selectedTools []string
 		var useCodeExecutionMode bool
+		var useToolSearchMode bool
+		var preDiscoveredTools []string
 		var presetLLMConfig *database.PresetLLMConfig
 		if req.PresetQueryID != "" {
 			ctx := context.Background()
@@ -1303,6 +1307,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if useCodeExecutionMode {
 					log.Printf("[CODE_EXECUTION] Code execution mode enabled from preset")
 				}
+				// Load tool search mode from preset
+				useToolSearchMode = preset.UseToolSearchMode
+				if useToolSearchMode {
+					log.Printf("[TOOL_SEARCH] Tool search mode enabled from preset")
+				}
+				// Load pre-discovered tools from preset
+				if preset.PreDiscoveredTools != "" {
+					if err := json.Unmarshal([]byte(preset.PreDiscoveredTools), &preDiscoveredTools); err != nil {
+						log.Printf("[TOOL_SEARCH] Failed to parse pre-discovered tools from preset: %v", err)
+					} else if len(preDiscoveredTools) > 0 {
+						log.Printf("[TOOL_SEARCH] Loaded %d pre-discovered tools from preset", len(preDiscoveredTools))
+					}
+				}
 			}
 		}
 
@@ -1324,6 +1341,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[CODE_EXECUTION] Code execution mode enabled from request")
 		}
 
+		// Use tool search mode from request if preset didn't provide any
+		if !useToolSearchMode && req.UseToolSearchMode {
+			useToolSearchMode = req.UseToolSearchMode
+			log.Printf("[TOOL_SEARCH] Tool search mode enabled from request")
+		}
+
 		// Create workflow orchestrator for this request
 		// Note: req.MaxTurns is already defaulted to 100 earlier in the handler
 		// Note: provider and model parameters removed - LLM selection uses temp override → step config → preset LLM
@@ -1337,6 +1360,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			selectedServers,      // selectedServers
 			selectedTools,        // NEW: selectedTools
 			useCodeExecutionMode, // NEW: code execution mode
+			useToolSearchMode,    // NEW: tool search mode
+			preDiscoveredTools,   // NEW: pre-discovered tools
 			allTools,             // customTools
 			allExecutors,         // customToolExecutors
 			req.LLMConfig,        // llmConfig
@@ -1663,8 +1688,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					// Update session status to completed with completion timestamp
 					completedAt := time.Now()
 					updateReq := &database.UpdateChatSessionRequest{
-						Status:        "completed",
-						CompletedAt:   &completedAt,
+						Status:      "completed",
+						CompletedAt: &completedAt,
 					}
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					_, err := api.chatDB.UpdateChatSession(ctx, sessionID, updateReq)
@@ -1768,6 +1793,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Load selected tools and code execution mode from preset if available (for simple/ReAct agents)
 		var selectedTools []string
 		var useCodeExecutionMode bool
+		var useToolSearchMode bool
 		var presetSetCodeExecutionMode bool // Track if preset explicitly set the value
 
 		if req.PresetQueryID != "" {
@@ -1792,6 +1818,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[CODE_EXECUTION] Code execution mode enabled from preset")
 				} else {
 					log.Printf("[CODE_EXECUTION] Code execution mode disabled from preset")
+				}
+				// Load tool search mode from preset
+				useToolSearchMode = preset.UseToolSearchMode
+				if useToolSearchMode {
+					log.Printf("[TOOL_SEARCH] Tool search mode enabled from preset")
 				}
 			}
 		}
@@ -1822,8 +1853,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// CRITICAL: Always respect request value for tool search mode when explicitly set
+		// The frontend explicitly sends use_tool_search_mode (true or false), so we should use it
+		useToolSearchMode = req.UseToolSearchMode
+		if useToolSearchMode {
+			log.Printf("[TOOL_SEARCH] Tool search mode enabled from request")
+		}
+
 		// Create new agent with streamCtx instead of r.Context()
-		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v", serverList, useCodeExecutionMode)
+		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v, UseToolSearchMode: %v", serverList, useCodeExecutionMode, useToolSearchMode)
 		agentConfig := agent.LLMAgentConfig{
 			Name:               sessionID,
 			ServerName:         serverList, // Use full server list, not just first one
@@ -1857,6 +1895,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Code execution mode: When enabled, only virtual tools are added to LLM
 			// MCP tools are accessed via generated Go code using discover_code_files and write_code
 			UseCodeExecutionMode: useCodeExecutionMode,
+			// Tool search mode: When enabled, LLM discovers tools on-demand via search_tools
+			UseToolSearchMode: useToolSearchMode,
 			// Convert API keys from request to LLM format
 			APIKeys: func() *llm.ProviderAPIKeys {
 				if req.LLMConfig != nil && req.LLMConfig.APIKeys != nil {
@@ -2401,8 +2441,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Only update status and completed_at to avoid foreign key constraint issues
 			completedAt := time.Now()
 			updateReq := &database.UpdateChatSessionRequest{
-				Status:        "completed",
-				CompletedAt:   &completedAt,
+				Status:      "completed",
+				CompletedAt: &completedAt,
 			}
 			_, err := api.chatDB.UpdateChatSession(streamCtx, sessionID, updateReq)
 			if err != nil {

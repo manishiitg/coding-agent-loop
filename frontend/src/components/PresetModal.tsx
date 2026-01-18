@@ -3,7 +3,7 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
 import { Card } from './ui/Card';
-import { Folder, Plus, X, Settings, Sparkles, Code2, Info } from 'lucide-react';
+import { Folder, Plus, X, Settings, Sparkles, Code2, Info, Search } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
 import { ToolSelectionSection } from './ToolSelectionSection';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip';
@@ -17,7 +17,7 @@ import type { LLMOption } from '../types/llm';
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean) => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean) => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
@@ -43,6 +43,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
   const [llmConfig, setLlmConfig] = useState<PresetLLMConfig | null>(null);
   const [useCodeExecutionMode, setUseCodeExecutionMode] = useState(false);
+  const [useToolSearchMode, setUseToolSearchMode] = useState(false);
   const [enableContextSummarization, setEnableContextSummarization] = useState(true);
   const [useKnowledgebase, setUseKnowledgebase] = useState(true); // Default true (enabled)
   // Agent-specific LLM configs (for workflow mode)
@@ -61,6 +62,21 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   // Calculate effective agent mode that always honors fixedAgentMode when provided
   // This ensures workflow presets only show Workflow/ folders in the folder selection dialog
   const effectiveAgentMode = fixedAgentMode || agentMode;
+
+  // Helper to manage execution modes (mutually exclusive in UI for simplicity)
+  const setExecutionMode = useCallback((mode: 'simple' | 'code' | 'search') => {
+    if (mode === 'code') {
+      setUseCodeExecutionMode(true);
+      setUseToolSearchMode(false);
+    } else if (mode === 'search') {
+      setUseCodeExecutionMode(false);
+      setUseToolSearchMode(true);
+    } else {
+      // simple
+      setUseCodeExecutionMode(false);
+      setUseToolSearchMode(false);
+    }
+  }, []);
 
   // LLM selection handler - updates local preset LLM config
   const handleLLMSelect = useCallback((llm: LLMOption) => {
@@ -98,6 +114,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       };
       setLlmConfig(presetLLM);
       setUseCodeExecutionMode(editingPreset.useCodeExecutionMode || false);
+      setUseToolSearchMode(editingPreset.useToolSearchMode || false);
       setEnableContextSummarization(editingPreset.enableContextSummarization !== undefined ? editingPreset.enableContextSummarization : true);
       setUseKnowledgebase(presetLLM.use_knowledgebase !== false); // Default true unless explicitly false
       // Load agent-specific configs if available
@@ -121,6 +138,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       };
       setLlmConfig(defaultLLM);
       setUseCodeExecutionMode(false);
+      setUseToolSearchMode(false);
       setEnableContextSummarization(true);
       setUseKnowledgebase(true); // Default true
       // Initialize agent-specific configs to null (will use legacy default)
@@ -207,6 +225,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       });
       console.log('[code_execution] [PRESET_MODAL] Saving preset with code execution mode:', {
         useCodeExecutionMode,
+        useToolSearchMode,
         type: typeof useCodeExecutionMode,
         label: label.trim(),
         finalLLMConfig: finalLLMConfig ? 'defined' : 'undefined',
@@ -221,12 +240,14 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         param5: effectiveAgentMode,
         param6: selectedFolder || undefined,
         param7: finalLLMConfig,
-        param8: useCodeExecutionMode
+        param8: useCodeExecutionMode,
+        param10: useToolSearchMode
       })
       
       // CRITICAL FIX: Always pass useCodeExecutionMode explicitly, even if it's undefined
       // JavaScript can drop trailing undefined parameters, so we ensure it's always a boolean
       const codeExecutionModeToPass = useCodeExecutionMode === undefined ? false : useCodeExecutionMode
+      const toolSearchModeToPass = useToolSearchMode === undefined ? false : useToolSearchMode
       
       console.log('[code_execution] [PRESET_MODAL] Final onSave call - param8:', codeExecutionModeToPass, 'original:', useCodeExecutionMode)
       
@@ -239,11 +260,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         selectedFolder || undefined, 
         finalLLMConfig, 
         codeExecutionModeToPass,  // Always pass explicit boolean, never undefined
-        enableContextSummarization
+        enableContextSummarization,
+        toolSearchModeToPass // Always pass explicit boolean
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, enableContextSummarization, useKnowledgebase, onSave, onClose]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, enableContextSummarization, useKnowledgebase, onSave, onClose]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -370,18 +392,19 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                                 </Tooltip>
                               </TooltipProvider>
                             </div>
-                            {/* Code Execution Mode Toggle - Only for Execution Agent */}
+                            {/* Execution Mode Toggle - Only for Execution Agent */}
                             <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
                               <TooltipProvider>
+                                {/* Simple Mode */}
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <button
                                       type="button"
-                                      onClick={() => setUseCodeExecutionMode(false)}
+                                      onClick={() => setExecutionMode('simple')}
                                       className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
-                                        !useCodeExecutionMode
-                                          ? 'agent-mode-selected rounded-l-md rounded-r-none'
-                                          : 'agent-mode-unselected rounded-none'
+                                        !useCodeExecutionMode && !useToolSearchMode
+                                          ? 'agent-mode-selected'
+                                          : 'agent-mode-unselected'
                                       }`}
                                     >
                                       <Sparkles className="w-3 h-3 inline mr-1" />
@@ -392,15 +415,17 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                                     <p>Simple mode - Direct MCP tool access</p>
                                   </TooltipContent>
                                 </Tooltip>
+                                
+                                {/* Code Execution Mode */}
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <button
                                       type="button"
-                                      onClick={() => setUseCodeExecutionMode(true)}
-                                      className={`px-2 py-1 text-xs font-medium transition-colors ${
+                                      onClick={() => setExecutionMode('code')}
+                                      className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
                                         useCodeExecutionMode
-                                          ? 'agent-mode-selected rounded-r-md rounded-l-none'
-                                          : 'agent-mode-unselected rounded-none'
+                                          ? 'agent-mode-selected'
+                                          : 'agent-mode-unselected'
                                       }`}
                                     >
                                       <Code2 className="w-3 h-3 inline mr-1" />
@@ -409,6 +434,27 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                                   </TooltipTrigger>
                                   <TooltipContent>
                                     <p>Code Exec mode - MCP tools accessed via generated Go code</p>
+                                  </TooltipContent>
+                                </Tooltip>
+
+                                {/* Tool Search Mode */}
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      onClick={() => setExecutionMode('search')}
+                                      className={`px-2 py-1 text-xs font-medium transition-colors ${
+                                        useToolSearchMode
+                                          ? 'agent-mode-selected'
+                                          : 'agent-mode-unselected'
+                                      }`}
+                                    >
+                                      <Search className="w-3 h-3 inline mr-1" />
+                                      Tool Search
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>Tool Search mode - Dynamic tool discovery. Selected tools become pre-discovered.</p>
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>

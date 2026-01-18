@@ -111,7 +111,8 @@ export const ModePresetBar: React.FC = () => {
     selectedFolder?: PlannerFile,
     llmConfig?: PresetLLMConfig,
     useCodeExecutionMode?: boolean,
-    enableContextSummarization?: boolean
+    enableContextSummarization?: boolean,
+    useToolSearchMode?: boolean
   ) => {
     try {
       // Use consolidated savePreset function - pass id if editing, undefined if creating
@@ -125,7 +126,8 @@ export const ModePresetBar: React.FC = () => {
         llmConfig,
         useCodeExecutionMode,
         editingPreset?.id,
-        enableContextSummarization
+        enableContextSummarization,
+        useToolSearchMode
       )
       
       // Apply the preset immediately if it's a new one

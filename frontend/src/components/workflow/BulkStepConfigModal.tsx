@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { X, Settings, AlertCircle, CheckCircle2, Loader2, Code2, Sparkles, Brain, Shield, BookOpen, Wrench, Info } from "lucide-react";
+import { X, Settings, AlertCircle, CheckCircle2, Loader2, Code2, Sparkles, Brain, Shield, BookOpen, Wrench, Info, Book, FileStack } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "../ui/accordion";
 import { useLLMStore } from "../../stores";
@@ -34,9 +34,8 @@ export default function BulkStepConfigModal({
   const { availableLLMs } = useLLMStore();
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  
 
-  // Get preset for default LLMs
+  // Get preset for default LLMs and feature toggles
   const activePresetId = useGlobalPresetStore(
     (state) => state.activePresetIds.workflow
   );
@@ -44,6 +43,7 @@ export default function BulkStepConfigModal({
   const predefinedPresets = useGlobalPresetStore(
     (state) => state.predefinedPresets
   );
+  const updatePreset = useGlobalPresetStore((state) => state.updatePreset);
 
   const activePreset = useMemo(() => {
     return activePresetId
@@ -54,6 +54,44 @@ export default function BulkStepConfigModal({
 
   // Get preset LLM configs
   const presetLLMConfig = activePreset?.llmConfig;
+
+  // Feature toggles from preset (default to true if not set)
+  const enableKnowledgebase = presetLLMConfig?.use_knowledgebase !== false;
+  const enableContextSummarization = presetLLMConfig?.enable_context_summarization !== false;
+
+  // Function to update feature toggles in the preset
+  const handleToggleFeature = useCallback(async (
+    feature: 'use_knowledgebase' | 'enable_context_summarization',
+    enabled: boolean
+  ) => {
+    if (!activePreset || !activePresetId) return;
+
+    const updatedLLMConfig = {
+      ...presetLLMConfig,
+      [feature]: enabled,
+    };
+
+    try {
+      await updatePreset(
+        activePresetId,
+        activePreset.label,
+        activePreset.query,
+        activePreset.selectedServers,
+        activePreset.selectedTools,
+        activePreset.agentMode,
+        activePreset.selectedFolder,
+        updatedLLMConfig,
+        activePreset.useCodeExecutionMode,
+        feature === 'enable_context_summarization' ? enabled : activePreset.enableContextSummarization
+      );
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+    } catch (error) {
+      console.error('[BulkStepConfigModal] Error updating feature toggle:', error);
+      setSaveError(error instanceof Error ? error.message : 'Failed to update setting');
+    }
+  }, [activePreset, activePresetId, presetLLMConfig, updatePreset]);
+
   const presetExecutionLLM = useMemo(() => {
     const llmConfig =
       presetLLMConfig?.execution_llm ||
@@ -602,7 +640,7 @@ export default function BulkStepConfigModal({
 
         {/* Content */}
         <div className="flex-1 p-6 space-y-3 min-h-[400px] overflow-y-auto">
-          <Accordion type="multiple" defaultValue={["llm", "validation", "learning", "agent-mode", "tools-advanced"]} className="w-full space-y-3">
+          <Accordion type="multiple" defaultValue={["llm", "validation", "learning", "agent-mode", "runtime-config", "tools-advanced"]} className="w-full space-y-3">
             {/* LLM Configuration Section */}
             <AccordionItem value="llm" className="border border-border rounded-xl bg-muted/10 hover:bg-muted/20 transition-colors shadow-sm">
               <AccordionTrigger className="hover:no-underline px-5 py-4">
@@ -1140,6 +1178,78 @@ export default function BulkStepConfigModal({
                     </Button>
                     <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
                       Disables code execution. Agents use only tools and natural language. Faster and simpler execution, suitable for straightforward tasks.
+                    </p>
+                  </div>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            {/* Runtime Configuration Section */}
+            <AccordionItem value="runtime-config" className="border border-border rounded-xl bg-muted/10 hover:bg-muted/20 transition-colors shadow-sm">
+              <AccordionTrigger className="hover:no-underline px-5 py-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-1.5 rounded-md bg-teal-500/10">
+                    <Settings className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                  </div>
+                  <span className="font-semibold text-base">Runtime Configuration</span>
+                </div>
+              </AccordionTrigger>
+              <AccordionContent className="px-5 pt-2 pb-6">
+                <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
+                  Configure runtime features that affect execution behavior. These settings persist across sessions.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Enable Knowledgebase Toggle */}
+                  <div className="space-y-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => handleToggleFeature('use_knowledgebase', !enableKnowledgebase)}
+                      disabled={applyingAction !== null || !activePreset}
+                      className={`w-full justify-start h-auto py-3 px-4 transition-all ${
+                        enableKnowledgebase
+                          ? "bg-green-50 dark:bg-green-950/20 border-green-300 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-950/30"
+                          : "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 w-full">
+                        <Book className={`w-4 h-4 ${enableKnowledgebase ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`} />
+                        <div className="flex-1 text-left">
+                          <div className="font-medium text-sm">Knowledgebase</div>
+                          <div className={`text-xs mt-0.5 ${enableKnowledgebase ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+                            {enableKnowledgebase ? 'Enabled' : 'Disabled'}
+                          </div>
+                        </div>
+                      </div>
+                    </Button>
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Enables access to learnings and knowledge during execution. When disabled, agents won't use stored learnings from previous runs.
+                    </p>
+                  </div>
+
+                  {/* Enable Context Summarization Toggle */}
+                  <div className="space-y-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => handleToggleFeature('enable_context_summarization', !enableContextSummarization)}
+                      disabled={applyingAction !== null || !activePreset}
+                      className={`w-full justify-start h-auto py-3 px-4 transition-all ${
+                        enableContextSummarization
+                          ? "bg-blue-50 dark:bg-blue-950/20 border-blue-300 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-950/30"
+                          : "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 w-full">
+                        <FileStack className={`w-4 h-4 ${enableContextSummarization ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground'}`} />
+                        <div className="flex-1 text-left">
+                          <div className="font-medium text-sm">Context Summarization</div>
+                          <div className={`text-xs mt-0.5 ${enableContextSummarization ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground'}`}>
+                            {enableContextSummarization ? 'Enabled' : 'Disabled'}
+                          </div>
+                        </div>
+                      </div>
+                    </Button>
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Enables automatic context summarization during execution. When disabled, full conversation context is maintained without compression.
                     </p>
                   </div>
                 </div>

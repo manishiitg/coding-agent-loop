@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -94,22 +93,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetLearningMetadata(
 	}
 
 	return &metadata, nil
-}
-
-// updateLearningMetadata updates the learning metadata file with detection results
-// Returns true if auto-lock should be triggered (consecutive_no_new_learning >= 2 OR total_iterations >= 10)
-func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadata(
-	ctx context.Context,
-	stepIndex int,
-	stepPath string,
-	learningPathIdentifier string,
-	hasNewLearning bool,
-	reasoning string,
-	confidence float64,
-) (bool, error) {
-	// Re-route to the new complexity-based logic with a default turn count of 0 (unknown)
-	// and no plan step (will skip hash check). validationPassed is false (safe default).
-	return hcpo.updateLearningMetadataWithTurnCount(ctx, stepIndex, stepPath, learningPathIdentifier, hasNewLearning, reasoning, confidence, 0, nil, false, "", "")
 }
 
 // updateLearningMetadataWithTurnCount updates the learning metadata with TurnCount-based complexity tracking.
@@ -297,120 +280,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	}
 
 	return shouldAutoLock, nil
-}
-
-// updateConsolidationMetadata updates the learning metadata file with consolidation results
-func (hcpo *StepBasedWorkflowOrchestrator) updateConsolidationMetadata(
-	ctx context.Context,
-	stepIndex int,
-	stepPath string,
-	learningPathIdentifier string,
-	consolidationOutput string,
-	newLearningContent string,
-) error {
-	// Use relative path - ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath
-	learningsBase := hcpo.getLearningsBasePath()
-	metadataPath := filepath.Join(learningsBase, learningPathIdentifier, ".learning_metadata.json")
-
-	// Read existing metadata or create new
-	var metadata LearningMetadata
-	content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, metadataPath)
-	if err != nil {
-		// Metadata doesn't exist - create new
-		metadata = LearningMetadata{
-			StepID:               fmt.Sprintf("step-%d", stepIndex+1),
-			StepPath:             stepPath,
-			TotalIterations:      0,
-			ConsolidationHistory: []ConsolidationHistoryEntry{},
-		}
-	} else {
-		// Parse existing metadata
-		if err := json.Unmarshal([]byte(content), &metadata); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse learning metadata: %v (creating new)", err))
-			metadata = LearningMetadata{
-				StepID:               fmt.Sprintf("step-%d", stepIndex+1),
-				StepPath:             stepPath,
-				TotalIterations:      0,
-				ConsolidationHistory: []ConsolidationHistoryEntry{},
-			}
-		}
-	}
-
-	// Initialize DetectionHistory if nil (for backward compatibility with old metadata)
-	if metadata.DetectionHistory == nil {
-		metadata.DetectionHistory = []DetectionHistoryEntry{}
-	}
-
-	// Initialize ConsolidationHistory if nil (for backward compatibility with old metadata)
-	if metadata.ConsolidationHistory == nil {
-		metadata.ConsolidationHistory = []ConsolidationHistoryEntry{}
-	}
-
-	// Use TotalIterations for consolidation entry iteration number
-	// If TotalIterations is 0, this is the first consolidation
-	iteration := metadata.TotalIterations
-	if iteration == 0 {
-		iteration = 1
-	}
-
-	// Create consolidation entry (without learning content - stored in files, not metadata)
-	consolidationEntry := ConsolidationHistoryEntry{
-		Iteration:        iteration,
-		Timestamp:        time.Now().Format(time.RFC3339),
-		ConsolidatedFile: extractConsolidatedFilePath(consolidationOutput),
-		// Note: Output and NewLearningContent removed - learning content is stored in files, not metadata
-	}
-
-	// Add consolidation result to history
-	metadata.ConsolidationHistory = append(metadata.ConsolidationHistory, consolidationEntry)
-
-	// Update last consolidation timestamp (output removed - learning content stored in files)
-	metadata.LastConsolidationAt = time.Now().Format(time.RFC3339)
-
-	// Limit history to last 50 entries to prevent unbounded growth
-	const maxHistoryEntries = 50
-	if len(metadata.ConsolidationHistory) > maxHistoryEntries {
-		// Keep only the last maxHistoryEntries entries
-		metadata.ConsolidationHistory = metadata.ConsolidationHistory[len(metadata.ConsolidationHistory)-maxHistoryEntries:]
-	}
-
-	// Write updated metadata
-	metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal learning metadata: %w", err)
-	}
-
-	if err := hcpo.BaseOrchestrator.WriteWorkspaceFile(ctx, metadataPath, string(metadataJSON)); err != nil {
-		return fmt.Errorf("failed to write learning metadata: %w", err)
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("📝 Updated consolidation metadata for %s", learningPathIdentifier))
-
-	return nil
-}
-
-// extractConsolidatedFilePath extracts the consolidated file path from consolidation output
-// The output format is typically: "Updated: /path/to/file.md"
-func extractConsolidatedFilePath(output string) string {
-	// Look for "Updated: " prefix
-	if strings.HasPrefix(output, "Updated: ") {
-		path := strings.TrimPrefix(output, "Updated: ")
-		// Remove any trailing whitespace or newlines
-		path = strings.TrimSpace(path)
-		return path
-	}
-	// If no "Updated: " prefix, try to find a file path pattern
-	// Look for common patterns like "learnings/{step_id}/..._learning.md"
-	if strings.Contains(output, "_learning.md") {
-		// Try to extract the path
-		parts := strings.Fields(output)
-		for _, part := range parts {
-			if strings.Contains(part, "_learning.md") {
-				return strings.TrimSpace(part)
-			}
-		}
-	}
-	return ""
 }
 
 // autoLockStepLearningsInConfig updates step_config.json to set LockLearnings = true

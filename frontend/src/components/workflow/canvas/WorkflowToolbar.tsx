@@ -2089,7 +2089,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
       {/* Right side - View controls */}
       <div className="flex items-center gap-1">
-        {/* Toggle dependency edges - icon only */}
         {/* LLM Override Button and Banner */}
         {tempOverrideLLM || tempOverrideLLM2 || tempLearningLLM ? (
           // Active override indicator with toggle and clear button

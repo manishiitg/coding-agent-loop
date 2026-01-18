@@ -45,12 +45,7 @@
     },
     "chrome-devtools": {
       "command": "npx",
-      "args": [
-        "chrome-devtools-mcp@latest",
-        "--channel=canary",
-        "--headless=true",
-        "--isolated=true"
-      ]
+      "args": ["chrome-devtools-mcp@latest", "--autoConnect", "--channel=beta"]
     }
   }
 }

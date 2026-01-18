@@ -644,9 +644,14 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[]): { nodes:
   // Add all edges except those involving sub-agents
   edges.forEach(edge => {
     if (!excludedNodeIds.has(edge.source) && !excludedNodeIds.has(edge.target)) {
-      // Find if source is an orchestrator to apply dynamic horizontal spacing
+      // Find if source is an orchestrator to apply dynamic horizontal spacing (AFTER orchestrator)
       const sourceNode = nodes.find(n => n.id === edge.source)
+      // Find if target is an orchestrator to apply dynamic horizontal spacing (BEFORE orchestrator)
+      const targetNode = nodes.find(n => n.id === edge.target)
       
+      let minlen = 1
+
+      // Case 1: Source is Orchestrator (Space AFTER)
       if (sourceNode?.type === 'orchestrator') {
         const data = sourceNode.data as OrchestratorNodeData
         const numSubAgents = data.orchestration_routes?.length || 0
@@ -660,16 +665,45 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[]): { nodes:
           const halfWidth = totalRowWidth / 2
           
           // Calculate minlen: number of rank separations needed to clear the sub-agents
-          // We want at least halfWidth + 100px of clearance.
+          // We want at least halfWidth + 200px of clearance (symmetric with BEFORE).
           // Total horizontal distance = ranksep * minlen
-          const requiredClearance = halfWidth + 100
-          const minlen = Math.ceil(requiredClearance / dynamicConfig.ranksep)
+          const requiredClearance = halfWidth + 200
+          const sourceMinLen = Math.ceil(requiredClearance / dynamicConfig.ranksep)
           
-          console.log(`[Layout Debug] Edge ${edge.source} -> ${edge.target}: Orchestrator has ${numSubAgents} sub-agents. Setting minlen=${minlen} for clearance.`)
-          g.setEdge(edge.source, edge.target, { minlen })
-        } else {
-          g.setEdge(edge.source, edge.target)
+          minlen = Math.max(minlen, sourceMinLen)
+          console.log(`[Layout Debug] Edge ${edge.source} -> ${edge.target}: Source Orchestrator has ${numSubAgents} sub-agents. Increasing minlen to ${minlen} for clearance AFTER.`)
         }
+      }
+
+      // Case 2: Target is Orchestrator (Space BEFORE)
+      if (targetNode?.type === 'orchestrator') {
+        const data = targetNode.data as OrchestratorNodeData
+        const numSubAgents = data.orchestration_routes?.length || 0
+        
+        if (numSubAgents > 0) {
+          const SUB_AGENT_WIDTH = 280
+          const GAP = 40
+          // Total width of sub-agent row
+          const totalRowWidth = (numSubAgents * SUB_AGENT_WIDTH) + ((numSubAgents - 1) * GAP)
+          // Half width (extension to the left from orchestrator center)
+          const halfWidth = totalRowWidth / 2
+          
+          // Calculate minlen needed before the orchestrator
+          // We need to account for the sub-agents extending to the left.
+          // halfWidth is the extension to the left.
+          // We also need to clear the previous node's width and have some margin.
+          // Using symmetric buffer of 200px.
+          const requiredClearance = halfWidth + 200
+          const targetMinLen = Math.ceil(requiredClearance / dynamicConfig.ranksep)
+          
+          minlen = Math.max(minlen, targetMinLen)
+          console.log(`[Layout Debug] Edge ${edge.source} -> ${edge.target}: Target Orchestrator has ${numSubAgents} sub-agents (halfWidth=${halfWidth}). Increasing minlen to ${minlen} for clearance BEFORE.`)
+        }
+      }
+
+      // Apply the calculated minlen (if > 1)
+      if (minlen > 1) {
+        g.setEdge(edge.source, edge.target, { minlen })
       } else {
         g.setEdge(edge.source, edge.target)
       }
@@ -2443,7 +2477,7 @@ export function usePlanToFlow(
 
       if (subAgentIndices.length === 0) return
 
-      const VERTICAL_GAP = 120  // Gap between orchestrator and sub-agents row
+      const VERTICAL_GAP = 200  // Gap between orchestrator and sub-agents row
       const HORIZONTAL_GAP = 40 // Gap between sub-agents
 
       // Calculate total width needed for all sub-agents

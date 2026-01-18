@@ -182,12 +182,12 @@ Example:
 		logger.Info(fmt.Sprintf("Response length: %d characters", len(response)))
 
 		// Show response
-		fmt.Printf("\n" + strings.Repeat("=", 80) + "\n")
+		fmt.Print("\n" + strings.Repeat("=", 80) + "\n")
 		fmt.Printf("🖼️  Image: %s\n", imagePath)
 		fmt.Printf("📝 LLM Response:\n")
-		fmt.Printf(strings.Repeat("-", 80) + "\n")
+		fmt.Print(strings.Repeat("-", 80) + "\n")
 		fmt.Printf("%s\n", response)
-		fmt.Printf(strings.Repeat("=", 80) + "\n")
+		fmt.Print(strings.Repeat("=", 80) + "\n")
 
 		// Show agent capabilities
 		servers := agent.GetServerNames()

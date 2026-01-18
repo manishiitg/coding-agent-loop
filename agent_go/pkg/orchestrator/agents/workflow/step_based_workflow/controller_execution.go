@@ -377,34 +377,6 @@ func getExecutionFolderPathForLogs(validationWorkspacePath string, stepPath stri
 	return fmt.Sprintf("%s/logs/step-%d/execution", validationWorkspacePath, pathInfo.ParentStepNumber)
 }
 
-// getLearningFolderPath returns the learning folder path based on stepPath (OLD FORMAT - for backward compatibility only)
-// This function is kept for migration purposes only. New code should use getLearningFolderPathByStepID.
-// For regular steps: "learnings/step-{X}/" (old format)
-// For branch steps: "learnings/step-{parentStep}-{true/false}-{branchIdx}/" (old format)
-// For sub-agent steps: "learnings/step-{N}-sub-agent-{index}/" (old format)
-func getLearningFolderPath(baseWorkspacePath string, stepPath string) string {
-	// Check if this is a sub-agent step (pattern: step-{N}-sub-agent-{index})
-	if strings.Contains(stepPath, "-sub-agent-") {
-		// Return learnings path for sub-agents (old format, e.g., "learnings/step-2-sub-agent-1/")
-		return fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepPath)
-	}
-	pathInfo := parseStepPath(stepPath)
-	if pathInfo.IsBranchStep {
-		// Check if this is actually a sub-agent (BranchType empty and BranchIndex -1 indicates sub-agent)
-		// This is a safeguard in case the string check above didn't catch it
-		if pathInfo.BranchType == "" && pathInfo.BranchIndex == -1 && strings.Contains(stepPath, "-sub-agent-") {
-			return fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepPath)
-		}
-		// Only format as branch step if it's a real branch step (has BranchType)
-		if pathInfo.BranchType != "" {
-			return fmt.Sprintf("%s/learnings/step-%d-%s-%d", baseWorkspacePath, pathInfo.ParentStepNumber, pathInfo.BranchType, pathInfo.BranchIndex)
-		}
-		// If it's a branch step but no BranchType, it's likely a sub-agent - use stepPath as-is
-		return fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepPath)
-	}
-	return fmt.Sprintf("%s/learnings/step-%d", baseWorkspacePath, pathInfo.ParentStepNumber)
-}
-
 // getLearningFolderPathByStepID returns the RELATIVE learning folder path using step ID (NEW FORMAT)
 // For all steps (regular, branch, sub-agent): "learnings/{stepID}/"
 // For evaluation steps (when isEvaluationMode=true): "evaluation/learnings/{stepID}/"
@@ -462,23 +434,6 @@ func getLearningPathIdentifier(stepID string, stepPath string) string {
 	// All steps (regular, branch, sub-agent) have their own unique step IDs
 	// Just use the stepID directly without any suffix
 	return stepID
-}
-
-// getLearningPathIdentifierOld returns a unique identifier for learning folder based on stepPath (OLD FORMAT - for backward compatibility)
-// For regular steps: "step-{X}"
-// For branch steps: "step-{parentStep}-{true/false}-{branchIdx}"
-// For sub-agent steps: "step-{N}-sub-agent-{index}"
-func getLearningPathIdentifierOld(stepPath string) string {
-	// Check if this is a sub-agent step (pattern: step-{N}-sub-agent-{index})
-	if strings.Contains(stepPath, "-sub-agent-") {
-		// Return the stepPath as-is for sub-agents (e.g., "step-2-sub-agent-1")
-		return stepPath
-	}
-	pathInfo := parseStepPath(stepPath)
-	if pathInfo.IsBranchStep {
-		return fmt.Sprintf("step-%d-%s-%d", pathInfo.ParentStepNumber, pathInfo.BranchType, pathInfo.BranchIndex)
-	}
-	return fmt.Sprintf("step-%d", pathInfo.ParentStepNumber)
 }
 
 // executeConditionalStep is now in controller_conditional.go
@@ -993,7 +948,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		select {
 		case <-ctx.Done():
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled during retry loop for step %d", stepIndex+1))
-			return "", updatedContextFiles, fmt.Errorf("step execution canceled: %v", ctx.Err())
+			return "", updatedContextFiles, fmt.Errorf("step execution canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -1171,7 +1126,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			select {
 			case <-ctx.Done():
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled during loop iteration %d for step %d", loopIteration, stepIndex+1))
-				return "", updatedContextFiles, fmt.Errorf("step execution canceled: %v", ctx.Err())
+				return "", updatedContextFiles, fmt.Errorf("step execution canceled: %w", ctx.Err())
 			default:
 			}
 
@@ -1283,7 +1238,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			// Priority: step config > environment variable > dynamic logic (based on successful runs)
 			agentConfigs := getAgentConfigs(step)
 			var keepLearningFull bool
-			keepLearningFullSource := "default (dynamic)"
+			var keepLearningFullSource string
 
 			if agentConfigs != nil && agentConfigs.KeepLearningFull != nil {
 				keepLearningFull = *agentConfigs.KeepLearningFull
@@ -1388,7 +1343,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				select {
 				case <-ctx.Done():
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled during retry attempt %d for step %d", retryAttempt, stepIndex+1))
-					return "", updatedContextFiles, fmt.Errorf("step execution canceled: %v", ctx.Err())
+					return "", updatedContextFiles, fmt.Errorf("step execution canceled: %w", ctx.Err())
 				default:
 				}
 
@@ -1458,7 +1413,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				select {
 				case <-ctx.Done():
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled before creating execution agent for step %d", stepIndex+1))
-					return "", updatedContextFiles, fmt.Errorf("step execution canceled: %v", ctx.Err())
+					return "", updatedContextFiles, fmt.Errorf("step execution canceled: %w", ctx.Err())
 				default:
 				}
 
@@ -1535,7 +1490,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				select {
 				case <-ctx.Done():
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled before agent execution for step %d", stepIndex+1))
-					return "", updatedContextFiles, fmt.Errorf("step execution canceled: %v", ctx.Err())
+					return "", updatedContextFiles, fmt.Errorf("step execution canceled: %w", ctx.Err())
 				default:
 				}
 
@@ -1558,7 +1513,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				var prereqErr *PrerequisiteFailureError
 				select {
 				case prereqErr = <-prereqErrChan:
-					// Prerequisite failure detected - tool called and context was cancelled
+					// Prerequisite failure detected - tool called and context was canceled
 					hcpo.GetLogger().Info(fmt.Sprintf("🔄 Prerequisite failure detected via tool call for step %d: %s (target step: %d)", stepIndex+1, prereqErr.Reason, prereqErr.StepIndex+1))
 				default:
 					// No prerequisite failure - check for other errors
@@ -1873,8 +1828,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						// Pre-validation passed - check if we should skip LLM validation
 						agentConfigs := getAgentConfigs(step)
 
-						// Determine validation mode (default: "auto")
-						validationMode := "auto"
+						// Determine validation mode (default: "skip")
+						validationMode := "skip"
 						if agentConfigs != nil {
 							if agentConfigs.LLMValidationMode != "" {
 								validationMode = agentConfigs.LLMValidationMode
@@ -1925,7 +1880,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							select {
 							case <-ctx.Done():
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled before validation for step %d", stepIndex+1))
-								return "", updatedContextFiles, fmt.Errorf("step execution canceled: %v", ctx.Err())
+								return "", updatedContextFiles, fmt.Errorf("step execution canceled: %w", ctx.Err())
 							default:
 							}
 
@@ -2523,14 +2478,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								stepConfigs = []StepConfig{}
 							}
 							// Populate runtime fields before learning
+							var learningErr error
 							if err := populateRuntimeFields(step, stepConfigs); err != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to populate runtime fields for learning: %v", err))
 								refinedTaskDescription = ""
 							} else {
-								refinedTaskDescription, _, err = hcpo.runFailureLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM)
+								refinedTaskDescription, _, learningErr = hcpo.runFailureLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM)
 							}
-							if err != nil {
-								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for %s: %v", stepPath, err))
+							if learningErr != nil {
+								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for %s: %v", stepPath, learningErr))
 							} else {
 								hcpo.GetLogger().Info(fmt.Sprintf("✅ Failure learning analysis completed for %s", stepPath))
 
@@ -2872,12 +2828,6 @@ func isOrchestrationStep(step PlanStepInterface) bool {
 	return ok
 }
 
-// isRegularStep returns true if the step is a regular step (not conditional, decision, or orchestration)
-func isRegularStep(step PlanStepInterface) bool {
-	_, ok := step.(*RegularPlanStep)
-	return ok
-}
-
 // isHumanInputStep returns true if the step is a human input step (asks question and blocks for input)
 func isHumanInputStep(step PlanStepInterface) bool {
 	_, ok := step.(*HumanInputPlanStep)
@@ -2983,7 +2933,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 		select {
 		case <-ctx.Done():
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Workflow execution canceled before step %d/%d: %s", i+1, len(breakdownSteps), step.GetTitle()))
-			return fmt.Errorf("workflow execution canceled: %v", ctx.Err())
+			return fmt.Errorf("workflow execution canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -3484,7 +3434,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Human input step %d execution failed: %v", i+1, err), nil)
 				// Emit error event using centralized method
 				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "human-input-step-execution", fmt.Sprintf("Execute human input step: %s", step.GetTitle()), err.Error(), i, iteration)
-				return fmt.Errorf("human input step %d execution failed: %v", i+1, err)
+				return fmt.Errorf("human input step %d execution failed: %w", i+1, err)
 			}
 
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Human input step %d completed successfully: %s", i+1, step.GetTitle()))

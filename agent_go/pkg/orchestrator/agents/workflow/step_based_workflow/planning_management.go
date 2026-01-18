@@ -235,7 +235,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runPlanningPhase(ctx context.Context,
 
 	// Store initial plan state BEFORE agent execution for changelog comparison
 	var initialPlan *PlanningResponse
-	if isUpdateMode && existingPlan != nil {
+	if isUpdateMode {
 		// Deep copy the existing plan to avoid mutations
 		planJSON, err := json.Marshal(existingPlan)
 		if err == nil {
@@ -522,27 +522,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) requestPlanApproval(
 	)
 }
 
-// populateStepRuntimeFieldsForSteps populates runtime fields for a slice of PlanStepInterface
-// Merges agent configs from step_config.json by step index matching
-// convertBranchSteps populates runtime fields for branch steps (helper for recursive population)
-// stepConfigs: step configs array for matching branch step configs by ID
-// Uses type-safe conversion with PlanStepInterface and type switches
-func convertBranchSteps(planSteps []PlanStepInterface, stepConfigs []StepConfig) ([]PlanStepInterface, error) {
-	if len(planSteps) == 0 {
-		return nil, nil
-	}
-	todoSteps := make([]PlanStepInterface, len(planSteps))
-	for i, step := range planSteps {
-		// Use type switch to handle different step types
-		todoStep, err := populateStepRuntimeFields(step, stepConfigs)
-		if err != nil {
-			return nil, fmt.Errorf("failed to populate runtime fields for step %d: %w", i, err)
-		}
-		todoSteps[i] = todoStep
-	}
-	return todoSteps, nil
-}
-
 // populateRuntimeFields populates runtime fields (AgentConfigs, etc.) on plan steps in-place
 // This maintains type safety by working directly with plan step types
 func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig) error {
@@ -651,7 +630,7 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 			route := &step.OrchestrationRoutes[i]
 			if route.SubAgentStep != nil {
 				if err := populateRuntimeFields(route.SubAgentStep, stepConfigs); err != nil {
-					return fmt.Errorf("failed to populate sub-agent step for route '%s': %v", route.RouteID, err)
+					return fmt.Errorf("failed to populate sub-agent step for route '%s': %w", route.RouteID, err)
 				}
 				// Sub-agents should have validation disabled
 				// Get the populated config from the sub-agent step
@@ -961,12 +940,6 @@ func getMetadataKeys(metadata map[string]interface{}) []string {
 		keys = append(keys, k)
 	}
 	return keys
-}
-
-// emitTodoStepsExtractedEvent is a private wrapper that uses receiver fields (for backward compatibility)
-func (hcpo *StepBasedWorkflowOrchestrator) emitTodoStepsExtractedEvent(ctx context.Context, extractedSteps []PlanStepInterface, planSource string) {
-	// Use default extraction method and workspace path from orchestrator
-	EmitTodoStepsExtractedEvent(ctx, hcpo.BaseOrchestrator, extractedSteps, planSource, "structured_breakdown_agent", "", hcpo.GetWorkspacePath())
 }
 
 // IsPlanModificationTool checks if a tool name is a plan modification tool
@@ -1426,7 +1399,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreatePlanOnly(ctx context.Context, o
 	}
 
 	// Run planning phase if plan doesn't exist (CREATE mode) or if existing plan needs update (UPDATE mode)
-	if !planExists && approvedPlan == nil {
+	if !planExists {
 		if existingPlanForFirstUpdate != nil {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔄 Updating existing plan (UPDATE mode)"))
 		} else {

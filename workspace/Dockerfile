@@ -23,8 +23,8 @@ RUN go build -o planner .
 # Final stage
 FROM alpine:latest
 
-# Install ripgrep, git, patch, python3 for GitHub integration, diff patching, script execution, and util-linux for filesystem isolation (unshare)
-RUN apk add --no-cache ripgrep git patch python3 py3-pip util-linux
+# Install ripgrep, git, patch, python3 for GitHub integration, diff patching, script execution, util-linux for filesystem isolation (unshare), and jq for JSON processing
+RUN apk add --no-cache ripgrep git patch python3 py3-pip util-linux jq
 
 # Configure pip to allow system-wide packages (safe in containerized environment)
 RUN mkdir -p /root/.config/pip && \

@@ -55,14 +55,14 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 	readResult, err := readExecutor(ctx, readArgs)
 	if err != nil {
 		bo.GetLogger().Warn(fmt.Sprintf("ReadWorkspaceFile(%s) failed: %v", filePath, err))
-		return "", fmt.Errorf(fmt.Sprintf("failed to read file %s: %w", filePath, err), nil)
+		return "", fmt.Errorf(fmt.Sprintf("failed to read file %s: %v", filePath, err), nil)
 	}
 
 	// Parse the response using proper type from virtualtools
 	var fileData virtualtools.WorkspaceFileContent
 	if err := json.Unmarshal([]byte(readResult), &fileData); err != nil {
 		bo.GetLogger().Warn(fmt.Sprintf("ReadWorkspaceFile(%s) failed: parse error %v", filePath, err))
-		return "", fmt.Errorf(fmt.Sprintf("failed to parse workspace response: %w", err), nil)
+		return "", fmt.Errorf(fmt.Sprintf("failed to parse workspace response: %v", err), nil)
 	}
 
 	// Extract content directly from the parsed data
@@ -146,7 +146,7 @@ func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath str
 	if err != nil {
 		duration := time.Since(startTime)
 		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] WriteWorkspaceFile(%s, %d bytes) failed: %v (took %v)", filePath, contentSize, err, duration))
-		return fmt.Errorf(fmt.Sprintf("failed to write file %s: %w", filePath, err), nil)
+		return fmt.Errorf(fmt.Sprintf("failed to write file %s: %v", filePath, err), nil)
 	}
 
 	duration := time.Since(startTime)
@@ -186,7 +186,7 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 	if err != nil {
 		duration := time.Since(startTime)
 		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] DeleteWorkspaceFile(%s) failed: %v (took %v)", filePath, err, duration))
-		return fmt.Errorf(fmt.Sprintf("failed to delete file %s: %w", filePath, err), nil)
+		return fmt.Errorf(fmt.Sprintf("failed to delete file %s: %v", filePath, err), nil)
 	}
 
 	duration := time.Since(startTime)
@@ -227,7 +227,7 @@ func (bo *BaseOrchestrator) MoveWorkspaceFile(ctx context.Context, sourcePath st
 	if err != nil {
 		duration := time.Since(startTime)
 		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] MoveWorkspaceFile(%s -> %s) failed: %v (took %v)", sourcePath, destinationPath, err, duration))
-		return fmt.Errorf(fmt.Sprintf("failed to move %s to %s: %w", sourcePath, destinationPath, err), nil)
+		return fmt.Errorf(fmt.Sprintf("failed to move %s to %s: %v", sourcePath, destinationPath, err), nil)
 	}
 
 	duration := time.Since(startTime)

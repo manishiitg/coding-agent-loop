@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -867,12 +866,4 @@ func executeShellCommandWithDebug(apiURL string, requestBody map[string]interfac
 	}
 
 	return &apiResp, nil
-}
-
-// Helper function to sort strings (for consistent output)
-func sortStrings(s []string) []string {
-	sorted := make([]string, len(s))
-	copy(sorted, s)
-	sort.Strings(sorted)
-	return sorted
 }

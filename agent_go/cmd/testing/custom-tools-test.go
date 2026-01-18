@@ -165,7 +165,7 @@ This test demonstrates:
 
 		response, err := agent.Ask(ctx, weatherQuestion)
 		if err != nil {
-			logger.Error(fmt.Sprintf("❌ Weather tool test failed: %w", err), nil)
+			logger.Error(fmt.Sprintf("❌ Weather tool test failed: %v", err), nil)
 			return fmt.Errorf("weather tool test failed: %w", err)
 		}
 

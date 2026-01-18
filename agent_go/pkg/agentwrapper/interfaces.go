@@ -72,5 +72,5 @@ type Agent interface {
 // ErrNotInitialized is returned when Invoke/Stream is called on an uninitialized agent.
 var ErrNotInitialized = errors.New("agent not initialized")
 
-// ErrStreamCancelled is sent as a chunk error when the context is cancelled during streaming.
-var ErrStreamCancelled = errors.New("stream cancelled")
+// ErrStreamCanceled is sent as a chunk error when the context is canceled during streaming.
+var ErrStreamCanceled = errors.New("stream canceled")

@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -247,80 +245,6 @@ func writeVariableChangelogEntry(ctx context.Context, workspacePath string, entr
 	return nil
 }
 
-// resetVariableChangelogSession resets the variable changelog session (call this at the start of a new variable management session)
-func resetVariableChangelogSession() {
-	variableChangelogSessionMutex.Lock()
-	defer variableChangelogSessionMutex.Unlock()
-	variableChangelogSessionFile = ""
-	variableChangelogSessionStartTime = time.Time{}
-}
-
-// readVariableChangelog reads all changelog files from variables/changelog/ directory and combines them
-// Returns all entries sorted by timestamp (oldest first)
-func readVariableChangelog(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error), listFiles func(context.Context, string) ([]string, error)) (*VariableChangeLog, error) {
-	// Use relative path only - ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath
-	changelogDir := filepath.Join("variables", "changelog")
-
-	// List all files in changelog directory
-	files, err := listFiles(ctx, changelogDir)
-	if err != nil {
-		// Directory doesn't exist or can't be read, return empty changelog
-		return &VariableChangeLog{Entries: []VariableChangeLogEntry{}}, nil
-	}
-
-	// Filter to only changelog-*.json files
-	changelogFiles := make([]string, 0)
-	for _, file := range files {
-		if strings.HasPrefix(file, "changelog-") && strings.HasSuffix(file, ".json") {
-			changelogFiles = append(changelogFiles, file)
-		}
-	}
-
-	if len(changelogFiles) == 0 {
-		// No changelog files found
-		return &VariableChangeLog{Entries: []VariableChangeLogEntry{}}, nil
-	}
-
-	// Read all changelog files and combine entries
-	// Each file now contains a VariableChangeLog with multiple entries (session-based)
-	allEntries := make([]VariableChangeLogEntry, 0)
-	for _, filename := range changelogFiles {
-		filePath := filepath.Join(changelogDir, filename)
-		content, err := readFile(ctx, filePath)
-		if err != nil {
-			// Skip files that can't be read
-			continue
-		}
-
-		// Try to unmarshal as VariableChangeLog (new format - session file with multiple entries)
-		var changelog VariableChangeLog
-		if err := json.Unmarshal([]byte(content), &changelog); err == nil {
-			// Successfully parsed as VariableChangeLog - add all entries
-			allEntries = append(allEntries, changelog.Entries...)
-		} else {
-			// Try old format (single entry per file) for backward compatibility
-			var entry VariableChangeLogEntry
-			if err := json.Unmarshal([]byte(content), &entry); err == nil {
-				allEntries = append(allEntries, entry)
-			}
-			// If both fail, skip the file
-		}
-	}
-
-	// Sort entries by timestamp (oldest first)
-	sort.Slice(allEntries, func(i, j int) bool {
-		timeI, errI := time.Parse(time.RFC3339, allEntries[i].Timestamp)
-		timeJ, errJ := time.Parse(time.RFC3339, allEntries[j].Timestamp)
-		if errI != nil || errJ != nil {
-			// If parsing fails, keep original order
-			return i < j
-		}
-		return timeI.Before(timeJ)
-	})
-
-	return &VariableChangeLog{Entries: allEntries}, nil
-}
-
 // readVariablesFromFile reads variables.json from the workspace using BaseOrchestrator's ReadWorkspaceFile
 func readVariablesFromFile(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error)) (*VariablesManifest, error) {
 	// Use relative path only - ReadWorkspaceFile auto-prepends workspacePath
@@ -390,20 +314,6 @@ func getUpdateVariableSchema() string {
 			}
 		},
 		"required": ["action"]
-	}`
-}
-
-// getUpdateObjectiveSchema returns the JSON schema for update_objective tool
-func getUpdateObjectiveSchema() string {
-	return `{
-		"type": "object",
-		"properties": {
-			"objective": {
-				"type": "string",
-				"description": "Updated templated objective with {{VARIABLE}} placeholders"
-			}
-		},
-		"required": ["objective"]
 	}`
 }
 
@@ -621,57 +531,3 @@ func createUpdateVariableExecutor(workspacePath string, logger loggerv2.Logger, 
 	}
 }
 
-// createUpdateObjectiveExecutor creates an executor function for update_objective tool
-func createUpdateObjectiveExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		// Extract objective
-		objectiveRaw, ok := args["objective"].(string)
-		if !ok || objectiveRaw == "" {
-			return "", fmt.Errorf(fmt.Sprintf("invalid objective argument"), nil)
-		}
-		objective := objectiveRaw
-
-		// Read current variables
-		manifest, err := readVariablesFromFile(ctx, workspacePath, readFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to read variables: %w", err)
-		}
-
-		// Capture old objective before updating
-		oldObjective := manifest.Objective
-
-		// Update objective
-		manifest.Objective = objective
-
-		// Preserve extraction_date
-		if manifest.ExtractionDate == "" {
-			manifest.ExtractionDate = time.Now().Format(time.RFC3339)
-		}
-
-		// Write updated variables
-		if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write variables: %w", err)
-		}
-
-		// Write changelog entry
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"old_objective": oldObjective,
-			"new_objective": objective,
-		})
-		changelogEntry := VariableChangeLogEntry{
-			Timestamp:    time.Now().Format(time.RFC3339),
-			ChangeType:   "objective_update",
-			Description:  "Updated objective in variables.json",
-			Details:      string(detailsJSON),
-			OldObjective: oldObjective,
-			NewObjective: objective,
-			Changes:      []VariableFieldChange{},
-		}
-		if err := writeVariableChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write variable changelog entry: %v", err))
-		}
-
-		logger.Info(fmt.Sprintf("✅ Updated objective in variables.json"))
-		return "Successfully updated objective", nil
-	}
-}

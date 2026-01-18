@@ -17,7 +17,7 @@ export interface AgentConfigs {
   learning_max_turns?: number;
   orchestration_max_iterations?: number;
   disable_validation?: boolean;
-  llm_validation_mode?: string; // "auto", "always", or "skip". Controls LLM validation behavior when pre-validation passes.
+  llm_validation_mode?: string; // "skip" (default), "auto", or "always". Controls LLM validation behavior when pre-validation passes.
   disable_learning?: boolean;
   lock_learnings?: boolean;
   learning_after_loop_iteration?: boolean;

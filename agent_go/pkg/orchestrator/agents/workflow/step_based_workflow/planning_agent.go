@@ -288,7 +288,7 @@ type AgentConfigs struct {
 	LearningMaxTurns            *int               `json:"learning_max_turns,omitempty"`             // default: 100
 	OrchestrationMaxIterations  *int               `json:"orchestration_max_iterations,omitempty"`   // default: orchestrator max turns (typically 100)
 	DisableValidation           *bool              `json:"disable_validation,omitempty"`             // LLM validation: nil = disabled by default, false = explicitly enabled, true = disabled (pre-validation always runs if schema exists)
-	LLMValidationMode           string             `json:"llm_validation_mode,omitempty"`            // "auto" (default), "always", or "skip". Controls LLM validation behavior when pre-validation passes.
+	LLMValidationMode           string             `json:"llm_validation_mode,omitempty"`            // "skip" (default), "auto", or "always". Controls LLM validation behavior when pre-validation passes.
 	DisableLearning             *bool              `json:"disable_learning,omitempty"`               // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
 	LockLearnings               *bool              `json:"lock_learnings,omitempty"`                 // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
 	LearningAfterLoopIteration  bool               `json:"learning_after_loop_iteration,omitempty"`  // run learning after each loop iteration
@@ -943,11 +943,6 @@ func (pr *PlanningResponse) UnmarshalJSON(data []byte) error {
 
 // MarshalJSON implements custom marshaling for typed steps
 func (pr PlanningResponse) MarshalJSON() ([]byte, error) {
-	type stepWrapper struct {
-		Type string          `json:"type"`
-		Data json.RawMessage `json:"-"`
-	}
-
 	wrappedSteps := make([]json.RawMessage, len(pr.Steps))
 	for i, step := range pr.Steps {
 		// Marshal the step (which already has type field)
@@ -1274,72 +1269,6 @@ func generateChangelogFromPlanDiff(ctx context.Context, workspacePath string, ol
 
 	logger.Info(fmt.Sprintf("📝 Generated changelog entry: %s - %d diff changes across %d step(s)", changeType, len(diffChangelog), len(stepIDsList)))
 	return nil
-}
-
-// readChangelog reads all changelog files from planning/changelog/ directory and combines them
-// Returns all entries sorted by timestamp (oldest first)
-func readChangelog(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error), listFiles func(context.Context, string) ([]string, error)) (*PlanChangeLog, error) {
-	// Use relative path only - ReadWorkspaceFile/ListWorkspaceFiles auto-prepend workspacePath
-	changelogDir := filepath.Join("planning", "changelog")
-
-	// List all files in changelog directory
-	files, err := listFiles(ctx, changelogDir)
-	if err != nil {
-		// Directory doesn't exist or can't be read, return empty changelog
-		return &PlanChangeLog{Entries: []PlanChangeLogEntry{}}, nil
-	}
-
-	// Filter to only changelog-*.json files
-	changelogFiles := make([]string, 0)
-	for _, file := range files {
-		if strings.HasPrefix(file, "changelog-") && strings.HasSuffix(file, ".json") {
-			changelogFiles = append(changelogFiles, file)
-		}
-	}
-
-	if len(changelogFiles) == 0 {
-		// No changelog files found
-		return &PlanChangeLog{Entries: []PlanChangeLogEntry{}}, nil
-	}
-
-	// Read all changelog files and combine entries
-	// Each file now contains a PlanChangeLog with multiple entries (session-based)
-	allEntries := make([]PlanChangeLogEntry, 0)
-	for _, filename := range changelogFiles {
-		filePath := filepath.Join(changelogDir, filename)
-		content, err := readFile(ctx, filePath)
-		if err != nil {
-			// Skip files that can't be read
-			continue
-		}
-
-		// Try to unmarshal as PlanChangeLog (new format - session file with multiple entries)
-		var changelog PlanChangeLog
-		if err := json.Unmarshal([]byte(content), &changelog); err == nil {
-			// Successfully parsed as PlanChangeLog - add all entries
-			allEntries = append(allEntries, changelog.Entries...)
-		} else {
-			// Try old format (single entry per file) for backward compatibility
-			var entry PlanChangeLogEntry
-			if err := json.Unmarshal([]byte(content), &entry); err == nil {
-				allEntries = append(allEntries, entry)
-			}
-			// If both fail, skip the file
-		}
-	}
-
-	// Sort entries by timestamp (oldest first)
-	sort.Slice(allEntries, func(i, j int) bool {
-		timeI, errI := time.Parse(time.RFC3339, allEntries[i].Timestamp)
-		timeJ, errJ := time.Parse(time.RFC3339, allEntries[j].Timestamp)
-		if errI != nil || errJ != nil {
-			// If parsing fails, keep original order
-			return i < j
-		}
-		return timeI.Before(timeJ)
-	})
-
-	return &PlanChangeLog{Entries: allEntries}, nil
 }
 
 // getUpdateRegularStepSchema returns the JSON schema for update_regular_step tool
@@ -2950,43 +2879,6 @@ func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningRe
 	}
 
 	return nil
-}
-
-// countSubAgentsInPlan counts all sub-agents in orchestration steps (recursively)
-// This is a helper function for debugging marshaling issues
-func countSubAgentsInPlan(plan *PlanningResponse) int {
-	if plan == nil {
-		return 0
-	}
-	count := 0
-	for _, step := range plan.Steps {
-		if orchestrationStep, ok := step.(*OrchestrationPlanStep); ok {
-			count += len(orchestrationStep.OrchestrationRoutes)
-			// Recursively count sub-agents in nested structures
-			for _, route := range orchestrationStep.OrchestrationRoutes {
-				if route.SubAgentStep != nil {
-					// Check if sub-agent itself has nested orchestration steps
-					if subOrchestration, ok := route.SubAgentStep.(*OrchestrationPlanStep); ok {
-						count += countSubAgentsInPlan(&PlanningResponse{Steps: []PlanStepInterface{subOrchestration}})
-					}
-				}
-			}
-		}
-		// Also check conditional steps for nested orchestration
-		if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
-			for _, branchStep := range conditionalStep.IfTrueSteps {
-				if branchOrchestration, ok := branchStep.(*OrchestrationPlanStep); ok {
-					count += countSubAgentsInPlan(&PlanningResponse{Steps: []PlanStepInterface{branchOrchestration}})
-				}
-			}
-			for _, branchStep := range conditionalStep.IfFalseSteps {
-				if branchOrchestration, ok := branchStep.(*OrchestrationPlanStep); ok {
-					count += countSubAgentsInPlan(&PlanningResponse{Steps: []PlanStepInterface{branchOrchestration}})
-				}
-			}
-		}
-	}
-	return count
 }
 
 // validateNestingDepth checks if the maximum nesting depth (2 levels) is exceeded
@@ -4691,7 +4583,6 @@ func createUpdateConditionalStepExecutor(workspacePath string, logger loggerv2.L
 
 		// Track changes for changelog
 		fieldChanges := make([]PlanFieldChange, 0)
-		changedFields := []string{}
 
 		// Handle condition_question and condition_context with explicit empty string support
 		_, conditionQuestionProvided := args["condition_question"]
@@ -4701,7 +4592,6 @@ func createUpdateConditionalStepExecutor(workspacePath string, logger loggerv2.L
 			oldValue := conditionalStep.ConditionQuestion
 			newValue, _ := args["condition_question"].(string)
 			if newValue != "" || oldValue != newValue {
-				changedFields = append(changedFields, "condition_question")
 				fieldChanges = append(fieldChanges, PlanFieldChange{
 					StepID:   partialUpdate.ExistingStepID,
 					Field:    "condition_question",
@@ -4715,7 +4605,6 @@ func createUpdateConditionalStepExecutor(workspacePath string, logger loggerv2.L
 		if conditionContextProvided {
 			oldValue := conditionalStep.ConditionContext
 			newValue, _ := args["condition_context"].(string)
-			changedFields = append(changedFields, "condition_context")
 			fieldChanges = append(fieldChanges, PlanFieldChange{
 				StepID:   partialUpdate.ExistingStepID,
 				Field:    "condition_context",
@@ -4727,11 +4616,10 @@ func createUpdateConditionalStepExecutor(workspacePath string, logger loggerv2.L
 
 		// Update other conditional fields using the helper
 		if partialUpdate.IfTrueSteps != nil || partialUpdate.IfFalseSteps != nil || partialUpdate.IfTrueNextStepID != "" || partialUpdate.IfFalseNextStepID != "" {
-			_, additionalChangedFields, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
+			_, _, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
 			if err != nil {
 				return "", err
 			}
-			changedFields = append(changedFields, additionalChangedFields...)
 		}
 
 		// Validate all steps after update
@@ -4782,11 +4670,9 @@ func createUpdateDecisionStepExecutor(workspacePath string, logger loggerv2.Logg
 
 		// Find the decision step
 		var existingStep PlanStepInterface
-		stepIndex := -1
-		for i, step := range plan.Steps {
+		for _, step := range plan.Steps {
 			if step.GetID() == partialUpdate.ExistingStepID {
 				existingStep = step
-				stepIndex = i
 				break
 			}
 		}
@@ -4809,6 +4695,7 @@ func createUpdateDecisionStepExecutor(workspacePath string, logger loggerv2.Logg
 
 		// Update the step
 		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
+		var stepIndex int
 		stepIndex, _, err = updateSingleStep(plan, partialUpdate, &fieldChanges)
 		if err != nil {
 			return "", err
@@ -4875,11 +4762,9 @@ func createUpdateOrchestrationStepExecutor(workspacePath string, logger loggerv2
 
 		// Find the orchestration step
 		var existingStep PlanStepInterface
-		stepIndex := -1
-		for i, step := range plan.Steps {
+		for _, step := range plan.Steps {
 			if step.GetID() == partialUpdate.ExistingStepID {
 				existingStep = step
-				stepIndex = i
 				break
 			}
 		}
@@ -4910,6 +4795,7 @@ func createUpdateOrchestrationStepExecutor(workspacePath string, logger loggerv2
 
 		// Update the step
 		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
+		var stepIndex int
 		stepIndex, _, err = updateSingleStep(plan, partialUpdate, &fieldChanges)
 		if err != nil {
 			return "", err
@@ -5080,11 +4966,9 @@ func createUpdateHumanInputStepExecutor(workspacePath string, logger loggerv2.Lo
 
 		// Find the human input step
 		var existingStep PlanStepInterface
-		stepIndex := -1
-		for i, step := range plan.Steps {
+		for _, step := range plan.Steps {
 			if step.GetID() == partialUpdate.ExistingStepID {
 				existingStep = step
-				stepIndex = i
 				break
 			}
 		}
@@ -5107,6 +4991,7 @@ func createUpdateHumanInputStepExecutor(workspacePath string, logger loggerv2.Lo
 
 		// Update the step
 		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
+		var stepIndex int
 		stepIndex, _, err = updateSingleStep(plan, partialUpdate, &fieldChanges)
 		if err != nil {
 			return "", err
@@ -5300,7 +5185,6 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		if insertAfterStepID == "" {
 			// Insert at beginning
 			afterIndex = -1
-			found = true
 		} else {
 			// Find the step to insert after
 			afterIndex, found = idToIndex[insertAfterStepID]
@@ -5820,14 +5704,6 @@ func createExtractVariablesExecutor(workspacePath string, logger loggerv2.Logger
 	}
 }
 
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // registerVariableExtractionTools registers variable extraction and management tools
 // This allows the planning agent to extract and manage variables based on human input
 func registerVariableExtractionTools(
@@ -5973,18 +5849,6 @@ func createConvertStepToConditionalExecutor(workspacePath string, logger loggerv
 			}
 		}
 
-		// Capture old values BEFORE converting (for changelog)
-		oldConditionQuestion := ""
-		oldConditionContext := ""
-		oldIfTrueSteps := []PlanStepInterface{}
-		oldIfFalseSteps := []PlanStepInterface{}
-		if conditionalStep, ok := stepToConvert.(*ConditionalPlanStep); ok {
-			oldConditionQuestion = conditionalStep.ConditionQuestion
-			oldConditionContext = conditionalStep.ConditionContext
-			oldIfTrueSteps = conditionalStep.IfTrueSteps
-			oldIfFalseSteps = conditionalStep.IfFalseSteps
-		}
-
 		// Convert step to conditional (create new ConditionalPlanStep)
 		conditionalStep := &ConditionalPlanStep{
 			Type: StepTypeConditional,
@@ -6003,51 +5867,6 @@ func createConvertStepToConditionalExecutor(workspacePath string, logger loggerv
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
 			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
-
-		// Write changelog entry with old/new values
-		branchStepIDs := make([]string, 0)
-		for _, step := range ifTrueSteps {
-			branchStepIDs = append(branchStepIDs, step.GetID())
-		}
-		for _, step := range ifFalseSteps {
-			branchStepIDs = append(branchStepIDs, step.GetID())
-		}
-		fieldChanges := make([]PlanFieldChange, 0)
-		// Check if step was already conditional
-		wasConditional := false
-		if _, ok := stepToConvert.(*ConditionalPlanStep); ok {
-			wasConditional = true
-		}
-		fieldChanges = append(fieldChanges, PlanFieldChange{
-			StepID:   stepID,
-			Field:    "has_condition",
-			OldValue: wasConditional,
-			NewValue: true,
-		})
-		fieldChanges = append(fieldChanges, PlanFieldChange{
-			StepID:   stepID,
-			Field:    "condition_question",
-			OldValue: oldConditionQuestion,
-			NewValue: conditionQuestion,
-		})
-		fieldChanges = append(fieldChanges, PlanFieldChange{
-			StepID:   stepID,
-			Field:    "condition_context",
-			OldValue: oldConditionContext,
-			NewValue: conditionContext,
-		})
-		fieldChanges = append(fieldChanges, PlanFieldChange{
-			StepID:   stepID,
-			Field:    "if_true_steps",
-			OldValue: oldIfTrueSteps,
-			NewValue: ifTrueSteps,
-		})
-		fieldChanges = append(fieldChanges, PlanFieldChange{
-			StepID:   stepID,
-			Field:    "if_false_steps",
-			OldValue: oldIfFalseSteps,
-			NewValue: ifFalseSteps,
-		})
 		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		logger.Info(fmt.Sprintf("✅ Converted step '%s' to conditional with %d true branch steps and %d false branch steps", stepToConvert.GetTitle(), len(ifTrueSteps), len(ifFalseSteps)))
@@ -6487,16 +6306,6 @@ func createDeleteBranchStepsExecutor(workspacePath string, logger loggerv2.Logge
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
 			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
-
-		// Write changelog entry with old/new values
-		fieldChanges := make([]PlanFieldChange, 0)
-		fieldName := fmt.Sprintf("%s_steps", branchType) // "if_true_steps" or "if_false_steps"
-		fieldChanges = append(fieldChanges, PlanFieldChange{
-			StepID:   parentStepID,
-			Field:    fieldName,
-			OldValue: fmt.Sprintf("%d steps", len(oldBranchStepsJSON)),
-			NewValue: fmt.Sprintf("%d steps", len(filteredSteps)),
-		})
 		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		logger.Info(fmt.Sprintf("✅ Deleted %d steps from %s branch of conditional step '%s'", len(deletedIDs), branchType, conditionalStep.Title))
@@ -6637,11 +6446,9 @@ func createUpdateOrchestrationRouteExecutor(workspacePath string, logger loggerv
 
 		// Find the route to update
 		var routeToUpdate *PlanOrchestrationRoute
-		routeIndex := -1
 		for i := range orchestrationStep.OrchestrationRoutes {
 			if orchestrationStep.OrchestrationRoutes[i].RouteID == existingRouteID {
 				routeToUpdate = &orchestrationStep.OrchestrationRoutes[i]
-				routeIndex = i
 				break
 			}
 		}
@@ -6653,37 +6460,16 @@ func createUpdateOrchestrationRouteExecutor(workspacePath string, logger loggerv
 			return "", fmt.Errorf("route with route_id '%s' not found in orchestration step '%s'. Available route IDs: %v", existingRouteID, parentStepID, availableRouteIDs)
 		}
 
-		// Track field changes for changelog
-		fieldChanges := make([]PlanFieldChange, 0)
-
 		// Update fields if provided
 		if routeName, ok := args["route_name"].(string); ok && routeName != "" {
-			fieldChanges = append(fieldChanges, PlanFieldChange{
-				StepID:   parentStepID,
-				Field:    fmt.Sprintf("orchestration_routes[%d].route_name", routeIndex),
-				OldValue: routeToUpdate.RouteName,
-				NewValue: routeName,
-			})
 			routeToUpdate.RouteName = routeName
 		}
 
 		if condition, ok := args["condition"].(string); ok && condition != "" {
-			fieldChanges = append(fieldChanges, PlanFieldChange{
-				StepID:   parentStepID,
-				Field:    fmt.Sprintf("orchestration_routes[%d].condition", routeIndex),
-				OldValue: routeToUpdate.Condition,
-				NewValue: condition,
-			})
 			routeToUpdate.Condition = condition
 		}
 
 		if contextToPass, ok := args["context_to_pass"].(string); ok {
-			fieldChanges = append(fieldChanges, PlanFieldChange{
-				StepID:   parentStepID,
-				Field:    fmt.Sprintf("orchestration_routes[%d].context_to_pass", routeIndex),
-				OldValue: routeToUpdate.ContextToPass,
-				NewValue: contextToPass,
-			})
 			routeToUpdate.ContextToPass = contextToPass
 		}
 
@@ -6697,17 +6483,6 @@ func createUpdateOrchestrationRouteExecutor(workspacePath string, logger loggerv
 			if err != nil {
 				return "", fmt.Errorf("failed to parse sub_agent_step: %w", err)
 			}
-
-			oldSubAgentStepID := ""
-			if routeToUpdate.SubAgentStep != nil {
-				oldSubAgentStepID = routeToUpdate.SubAgentStep.GetID()
-			}
-			fieldChanges = append(fieldChanges, PlanFieldChange{
-				StepID:   parentStepID,
-				Field:    fmt.Sprintf("orchestration_routes[%d].sub_agent_step", routeIndex),
-				OldValue: oldSubAgentStepID,
-				NewValue: updatedSubAgentStep.GetID(),
-			})
 			routeToUpdate.SubAgentStep = updatedSubAgentStep
 		}
 
@@ -6852,12 +6627,6 @@ func createConvertConditionalToRegularExecutor(workspacePath string, logger logg
 			return "", fmt.Errorf("step with ID '%s' is not a conditional step", stepID)
 		}
 
-		// Capture old values BEFORE converting (for changelog)
-		oldConditionQuestion := conditionalStep.ConditionQuestion
-		oldConditionContext := conditionalStep.ConditionContext
-		oldIfTrueStepsCount := len(conditionalStep.IfTrueSteps)
-		oldIfFalseStepsCount := len(conditionalStep.IfFalseSteps)
-
 		// Convert to regular step (create new RegularPlanStep)
 		regularStep := &RegularPlanStep{
 			Type: StepTypeRegular,
@@ -6874,39 +6643,6 @@ func createConvertConditionalToRegularExecutor(workspacePath string, logger logg
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
 			return "", fmt.Errorf("failed to write plan: %w", err)
 		}
-
-		// Write changelog entry with old/new values
-		fieldChanges := make([]PlanFieldChange, 0)
-		fieldChanges = append(fieldChanges, PlanFieldChange{
-			StepID:   stepID,
-			Field:    "type",
-			OldValue: "conditional",
-			NewValue: "regular",
-		})
-		fieldChanges = append(fieldChanges, PlanFieldChange{
-			StepID:   stepID,
-			Field:    "condition_question",
-			OldValue: oldConditionQuestion,
-			NewValue: "",
-		})
-		fieldChanges = append(fieldChanges, PlanFieldChange{
-			StepID:   stepID,
-			Field:    "condition_context",
-			OldValue: oldConditionContext,
-			NewValue: "",
-		})
-		fieldChanges = append(fieldChanges, PlanFieldChange{
-			StepID:   stepID,
-			Field:    "if_true_steps",
-			OldValue: fmt.Sprintf("%d steps", oldIfTrueStepsCount),
-			NewValue: "0 steps",
-		})
-		fieldChanges = append(fieldChanges, PlanFieldChange{
-			StepID:   stepID,
-			Field:    "if_false_steps",
-			OldValue: fmt.Sprintf("%d steps", oldIfFalseStepsCount),
-			NewValue: "0 steps",
-		})
 		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
 
 		logger.Info(fmt.Sprintf("✅ Converted conditional step '%s' back to regular step", regularStep.Title))

@@ -1,6 +1,7 @@
 // API-specific types (separate from event types)
 import type { PollingEventSchema } from '../generated/events-bridge'
 import type { EventTypeString } from '../generated/event-types'
+import type { ValidationSchema, AgentConfigs } from '../utils/stepConfigMatching'
 
 // New LLM Configuration types (Tiered Fallback System)
 export interface LLMModel {
@@ -648,6 +649,7 @@ export interface PresetLLMConfig {
 
   // Feature toggles
   use_knowledgebase?: boolean           // nil/true = enabled (default), false = disabled
+  enable_context_summarization?: boolean // nil/true = enabled (default), false = disabled
 }
 
 // Preset Query API types
@@ -840,11 +842,15 @@ export interface ExecutionOptions {
   
   // Validation response persistence
   save_validation_responses?: boolean;  // If true, save validation responses to workspace validation folder (default: true)
-  
+
   // Tool access control (global configuration)
-  
+
   // Variable group execution options (for batch execution with multiple groups)
   enabled_group_ids?: string[];  // Group IDs to execute (if empty, uses groups' enabled flags)
+
+  // Feature toggles (runtime configuration)
+  enable_knowledgebase?: boolean;  // Enable knowledgebase (default: true)
+  enable_context_summarization?: boolean;  // Enable context summarization (default: true)
 }
 
 // Execution strategy constants (matching backend)

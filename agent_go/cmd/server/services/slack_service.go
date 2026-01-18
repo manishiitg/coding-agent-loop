@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -466,7 +467,8 @@ func (s *SlackService) TestConnectionWithConfig(ctx context.Context, config *Sla
 
 	if err != nil {
 		// Provide more helpful error messages based on Slack API errors
-		if slackErr, ok := err.(slack.SlackErrorResponse); ok {
+		var slackErr slack.SlackErrorResponse
+		if errors.As(err, &slackErr) {
 			switch slackErr.Err {
 			case "invalid_auth":
 				return "", fmt.Errorf("invalid bot token: please check that your bot token is correct and starts with 'xoxb-'. Make sure you copied the 'Bot User OAuth Token' from OAuth & Permissions, not the App-Level Token")
@@ -554,7 +556,8 @@ func (s *SlackService) TestConnection(ctx context.Context) error {
 
 	if err != nil {
 		// Provide more helpful error messages based on Slack API errors
-		if slackErr, ok := err.(slack.SlackErrorResponse); ok {
+		var slackErr slack.SlackErrorResponse
+		if errors.As(err, &slackErr) {
 			switch slackErr.Err {
 			case "invalid_auth":
 				return fmt.Errorf("invalid bot token: please check that your bot token is correct and starts with 'xoxb-'. Make sure you copied the 'Bot User OAuth Token' from OAuth & Permissions, not the App-Level Token")
@@ -582,7 +585,8 @@ func (s *SlackService) TestConnection(ctx context.Context) error {
 	_, _, err = s.client.PostMessage(s.channelID, slack.MsgOptionBlocks(testBlocks...))
 	if err != nil {
 		// Provide helpful error messages for message sending errors too
-		if slackErr, ok := err.(slack.SlackErrorResponse); ok {
+		var slackErr slack.SlackErrorResponse
+		if errors.As(err, &slackErr) {
 			switch slackErr.Err {
 			case "invalid_auth":
 				return fmt.Errorf("invalid bot token: please check that your bot token is correct and starts with 'xoxb-'. Make sure you copied the 'Bot User OAuth Token' from OAuth & Permissions")
@@ -690,7 +694,7 @@ func (s *SlackService) runSocketModeWithReconnect() {
 	retryCount := 0
 
 	for {
-		// Check if we should stop (context cancelled or service disabled)
+		// Check if we should stop (context canceled or service disabled)
 		select {
 		case <-s.socketCtx.Done():
 			return
@@ -737,7 +741,7 @@ func (s *SlackService) runSocketModeWithReconnect() {
 		// Connection error occurred
 		log.Printf("[SLACK_SOCKET] ❌ Socket Mode Run() error: %v", err)
 
-		// Check if we should stop (context cancelled)
+		// Check if we should stop (context canceled)
 		select {
 		case <-s.socketCtx.Done():
 			return

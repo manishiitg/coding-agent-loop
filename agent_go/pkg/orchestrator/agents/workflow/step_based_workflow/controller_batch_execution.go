@@ -96,14 +96,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) getEnabledGroupsForExecution() []Vari
 	return enabledGroups
 }
 
-// shouldUseBatchExecution determines if batch execution mode should be used
-// Always use batch execution when we have at least 1 group (even for single group)
-// This ensures proper session ID management (with actual groupID), consistent folder structure, and better isolation
-func (hcpo *StepBasedWorkflowOrchestrator) shouldUseBatchExecution() bool {
-	enabledGroups := hcpo.getEnabledGroupsForExecution()
-	return len(enabledGroups) >= 1
-}
-
 // runBatchExecution executes the workflow for multiple variable groups sequentially
 // Uses ExecutionManager for centralized cleanup and progress management
 func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(

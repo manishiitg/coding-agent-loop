@@ -4,6 +4,7 @@ import type { WorkflowPhase, StepProgress, ExecutionOptions, AgentLLMConfig, Var
 import { ExecutionStrategy } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { useChatStore } from './useChatStore'
+import { useGlobalPresetStore } from './useGlobalPresetStore'
 import { resolveGroupFolderPath } from '../utils/workflowUtils'
 import { normalizeStartPoint, normalizeRunFolder } from '../utils/workflowStateNormalization'
 
@@ -1130,6 +1131,22 @@ export const useWorkflowStore = create<WorkflowStore>()(
         } else {
           // Single-group mode or no groups - backend handles it automatically
           console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] No groups selected and no groups in manifest (single-group mode) - backend will handle')
+        }
+
+        // Read feature toggles from preset and include when disabled (backend defaults to enabled)
+        const presetStore = useGlobalPresetStore.getState()
+        const activePresetId = presetStore.activePresetIds.workflow
+        const activePreset = activePresetId
+          ? presetStore.customPresets.find(p => p.id === activePresetId) ||
+            presetStore.predefinedPresets.find(p => p.id === activePresetId)
+          : null
+        const presetLLMConfig = activePreset?.llmConfig
+
+        if (presetLLMConfig?.use_knowledgebase === false) {
+          options.enable_knowledgebase = false
+        }
+        if (presetLLMConfig?.enable_context_summarization === false) {
+          options.enable_context_summarization = false
         }
 
         console.log('[RESUME_DEBUG] ✅ Final execution options:', JSON.stringify({

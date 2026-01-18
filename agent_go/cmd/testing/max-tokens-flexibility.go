@@ -41,7 +41,7 @@ func runMaxTokensFlexibilityTest(cmd *cobra.Command, args []string) {
 	if logFile != "" {
 		file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		if err != nil {
-			log.Fatal(fmt.Sprintf("Failed to open log file: %w", err), nil)
+			log.Fatal(fmt.Sprintf("Failed to open log file: %v", err), nil)
 		}
 		defer file.Close()
 		log.SetOutput(file)
@@ -72,7 +72,7 @@ func runMaxTokensFlexibilityTest(cmd *cobra.Command, args []string) {
 	// Test 1: Test without max_tokens (flexible handling)
 	log.Printf("\n🧪 Test 1: Testing without explicit max_tokens")
 	if err := testWithoutMaxTokens(provider, servers, verbose); err != nil {
-		log.Printf("❌ Test 1 failed: %w", err)
+		log.Printf("❌ Test 1 failed: %v", err)
 	} else {
 		log.Printf("✅ Test 1 passed: APIs work without explicit max_tokens")
 	}
@@ -80,7 +80,7 @@ func runMaxTokensFlexibilityTest(cmd *cobra.Command, args []string) {
 	// Test 2: Test with reasonable defaults
 	log.Printf("\n🧪 Test 2: Testing with reasonable default max_tokens")
 	if err := testWithReasonableDefaults(provider, servers, verbose); err != nil {
-		log.Printf("❌ Test 2 failed: %w", err)
+		log.Printf("❌ Test 2 failed: %v", err)
 	} else {
 		log.Printf("✅ Test 2 passed: APIs work with reasonable defaults")
 	}
@@ -88,7 +88,7 @@ func runMaxTokensFlexibilityTest(cmd *cobra.Command, args []string) {
 	// Test 3: Test with flexible token handling
 	log.Printf("\n🧪 Test 3: Testing with flexible token handling")
 	if err := testFlexibleTokenHandling(provider, servers, verbose); err != nil {
-		log.Printf("❌ Test 3 failed: %w", err)
+		log.Printf("❌ Test 3 failed: %v", err)
 	} else {
 		log.Printf("✅ Test 3 passed: Flexible token handling works")
 	}
@@ -96,7 +96,7 @@ func runMaxTokensFlexibilityTest(cmd *cobra.Command, args []string) {
 	// Test 4: Test provider-specific token handling
 	log.Printf("\n🧪 Test 4: Testing provider-specific token handling")
 	if err := testProviderSpecificTokenHandling(provider, servers, verbose); err != nil {
-		log.Printf("❌ Test 4 failed: %w", err)
+		log.Printf("❌ Test 4 failed: %v", err)
 	} else {
 		log.Printf("✅ Test 4 passed: Provider-specific token handling works")
 	}
@@ -104,7 +104,7 @@ func runMaxTokensFlexibilityTest(cmd *cobra.Command, args []string) {
 	// Test 5: Test with very large prompts
 	log.Printf("\n🧪 Test 5: Testing with very large prompts")
 	if err := testLargePromptHandling(provider, servers, verbose); err != nil {
-		log.Printf("❌ Test 5 failed: %w", err)
+		log.Printf("❌ Test 5 failed: %v", err)
 	} else {
 		log.Printf("✅ Test 5 passed: Large prompt handling works")
 	}

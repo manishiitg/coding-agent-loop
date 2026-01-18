@@ -28,15 +28,6 @@ func getWorkspaceAPIURL() string {
 	return "http://localhost:8081"
 }
 
-// getMapKeys returns all keys from a map for debugging
-func getMapKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
 // readFileFromWorkspace reads a file from the workspace API and returns its content as a string
 // Returns (content, true, nil) if file exists, (empty, false, nil) if file doesn't exist (404), or (empty, false, error) on error
 func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, error) {
@@ -622,7 +613,7 @@ func (api *StreamingAPI) handleCreateWorkflow(w http.ResponseWriter, r *http.Req
 
 	var req WorkflowRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %w", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 		return
 	}
 
@@ -635,7 +626,7 @@ func (api *StreamingAPI) handleCreateWorkflow(w http.ResponseWriter, r *http.Req
 	// Check if workflow already exists for this preset
 	existingWorkflow, err := api.chatDB.GetWorkflowByPresetQueryID(r.Context(), req.PresetQueryID)
 	if err != nil && !strings.Contains(err.Error(), "workflow not found for preset query") {
-		http.Error(w, fmt.Sprintf("Failed to check existing workflow: %w", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to check existing workflow: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -657,7 +648,7 @@ func (api *StreamingAPI) handleCreateWorkflow(w http.ResponseWriter, r *http.Req
 
 	workflow, err := api.chatDB.CreateWorkflow(r.Context(), createReq)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create workflow: %w", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to create workflow: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -714,7 +705,7 @@ func (api *StreamingAPI) handleGetWorkflowStatus(w http.ResponseWriter, r *http.
 			json.NewEncoder(w).Encode(response)
 			return
 		}
-		http.Error(w, fmt.Sprintf("Failed to get workflow: %w", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to get workflow: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -760,7 +751,7 @@ func (api *StreamingAPI) handleUpdateWorkflow(w http.ResponseWriter, r *http.Req
 
 	var req WorkflowUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %w", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 		return
 	}
 
@@ -803,7 +794,7 @@ func (api *StreamingAPI) handleUpdateWorkflow(w http.ResponseWriter, r *http.Req
 	// Update workflow in database
 	workflow, err := api.chatDB.UpdateWorkflow(r.Context(), req.PresetQueryID, updateReq)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to update workflow: %w", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to update workflow: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -2412,15 +2403,6 @@ func findStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string) (
 	}
 
 	return findInSteps(plan.Steps, stepID, []int{})
-}
-
-// stripAgentConfigsFromStep removes agent_configs field from a step (defensive validation)
-func stripAgentConfigsFromStep(step todo_creation_human.PlanStepInterface) {
-	// This is a defensive function - since we're working with typed steps,
-	// agent_configs shouldn't be in plan.json anyway, but we'll handle it
-	// by ensuring it's not present when marshaling
-	// The actual stripping happens during JSON marshaling/unmarshaling
-	// since typed steps don't have agent_configs field
 }
 
 // updateStepInPlan applies partial updates to a step in the plan

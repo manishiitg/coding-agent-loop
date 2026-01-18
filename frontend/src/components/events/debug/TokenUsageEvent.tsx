@@ -109,6 +109,12 @@ export const TokenUsageEventDisplay: React.FC<TokenUsageEventDisplayProps> = ({ 
           {event.provider && (
             <span className={textSecondaryColor}>• {event.provider}</span>
           )}
+          {event.use_code_execution_mode && (
+            <span className="text-orange-600 dark:text-orange-400">• Mode: Code Exec</span>
+          )}
+          {event.use_tool_search_mode && (
+            <span className="text-cyan-600 dark:text-cyan-400">• Mode: Tool Search</span>
+          )}
         </div>
         {event.timestamp && (
           <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">

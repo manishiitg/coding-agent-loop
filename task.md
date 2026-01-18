@@ -64,3 +64,9 @@ i) prompt tempaltes, need to check variables on compile time
 7. can orchestrator decide if need to use tempLLM or normal LLM
 
 8. can orchestrator decide if need to leanr or not skills
+
+9. if we have a tool for slack notification
+
+10. have a too to fetch via web
+
+11. if sheel tool is enabled in workspace/ do we need other list tools etc

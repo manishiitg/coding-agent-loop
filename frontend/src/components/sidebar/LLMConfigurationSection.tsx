@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { OPENROUTER_MODELS, getAvailableModels, getFallbackProviders } from "../../utils/llmConfig";
+import { Loader2 } from "lucide-react";
+import { getAvailableModels, getFallbackProviders } from "../../utils/llmConfig";
 import { useLLMStore } from "../../stores";
 
 interface LLMConfigurationSectionProps {
@@ -16,6 +17,7 @@ export default function LLMConfigurationSection({
   const [isExpanded, setIsExpanded] = useState(false);
   const [showCrossProvider, setShowCrossProvider] = useState(false);
   const [customModelInput, setCustomModelInput] = useState("");
+  const [isValidating, setIsValidating] = useState(false);
   const [customModels, setCustomModels] = useState<string[]>(() => {
     const saved = localStorage.getItem('openrouter_custom_models');
     return saved ? JSON.parse(saved) : [];
@@ -24,32 +26,15 @@ export default function LLMConfigurationSection({
 
   // Handle provider change
   const handleProviderChange = (provider: "openrouter" | "bedrock") => {
-    const baseModels = getAvailableModels(provider);
-    const availableModels = provider === "openrouter" ? [...baseModels, ...customModels] : baseModels;
-    let fallbackModels: string[] = [];
-
-    // Set appropriate fallback models based on provider
-    if (provider === "openrouter") {
-      fallbackModels = ["z-ai/glm-4.5", "openai/gpt-4o-mini"];
-    } else if (provider === "bedrock") {
-      fallbackModels = ["us.anthropic.claude-sonnet-4-20250514-v1:0","us.anthropic.claude-3-7-sonnet-20250219-v1:0"];
-    }
+    const availableModels = getAvailableModels(provider);
+    const fallbackModels: string[] = [];
 
     const newConfig = {
       ...llmConfig,
       provider,
       model_id: availableModels[0] || "", // Select first available model
       fallback_models: fallbackModels,
-       cross_provider_fallback:
-         provider === "openrouter"
-           ? {
-               provider: "openai" as const,
-               models: ["gpt-5-mini"],
-             }
-           : {
-               provider: "openrouter" as const,
-               models: ["x-ai/grok-code-fast-1", "openai/gpt-5-mini"],
-             },
+       cross_provider_fallback: undefined,
     };
     setLlmConfig(newConfig);
     setShowCrossProvider(false);
@@ -115,14 +100,14 @@ export default function LLMConfigurationSection({
   };
 
   // Handle adding custom model
-  const handleAddCustomModel = () => {
+  const handleAddCustomModel = async () => {
     const model = customModelInput.trim();
     if (!model) return;
 
     // Check if model already exists
-    const allModels = [...OPENROUTER_MODELS, ...customModels];
-    if (allModels.includes(model)) {
-      alert("Model already exists!");
+    const availableModels = getAvailableModels("openrouter");
+    if (availableModels.includes(model)) {
+      alert("Model already exists in the list!");
       return;
     }
 
@@ -132,14 +117,39 @@ export default function LLMConfigurationSection({
       return;
     }
 
-    const newCustomModels = [...customModels, model];
-    setCustomModels(newCustomModels);
-    localStorage.setItem('openrouter_custom_models', JSON.stringify(newCustomModels));
-    setCustomModelInput("");
-    
-    // Refresh available LLMs in the store to sync with ChatInput
-    const { refreshAvailableLLMs } = useLLMStore.getState()
-    refreshAvailableLLMs()
+    setIsValidating(true);
+    try {
+      // Create a promise for the minimum delay (e.g., 800ms for better visibility)
+      const delayPromise = new Promise(resolve => setTimeout(resolve, 800));
+      
+      // Validate against backend metadata for OpenRouter
+      const { checkModelExists } = useLLMStore.getState();
+      
+      // Run validation and delay in parallel
+      const [exists] = await Promise.all([
+        checkModelExists(model),
+        delayPromise
+      ]);
+      
+      if (llmConfig.provider === "openrouter" && !exists) {
+        alert("Model not found in OpenRouter catalog! Please check the model ID.\nValid format: provider/model-name (e.g., anthropic/claude-3.5-sonnet)");
+        return;
+      }
+
+      const newCustomModels = [...customModels, model];
+      setCustomModels(newCustomModels);
+      localStorage.setItem('openrouter_custom_models', JSON.stringify(newCustomModels));
+      setCustomModelInput("");
+      
+      // Refresh available LLMs in the store to sync with ChatInput
+      const { refreshAvailableLLMs } = useLLMStore.getState()
+      await refreshAvailableLLMs()
+    } catch (error) {
+      console.error("Validation error:", error);
+      alert("Failed to validate model. Please try again.");
+    } finally {
+      setIsValidating(false);
+    }
   };
 
   // Handle removing custom model
@@ -154,7 +164,7 @@ export default function LLMConfigurationSection({
     
     // If the removed model was selected, reset to first available model
     if (llmConfig.model_id === model) {
-      const availableModels = [...OPENROUTER_MODELS, ...newCustomModels];
+      const availableModels = getAvailableModels(llmConfig.provider);
       setLlmConfig({
         ...llmConfig,
         model_id: availableModels[0] || "",
@@ -373,12 +383,14 @@ export default function LLMConfigurationSection({
                     placeholder="provider/model-name"
                     className="flex-1 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                     onKeyPress={(e) => e.key === 'Enter' && handleAddCustomModel()}
+                    disabled={isValidating}
                   />
                   <button
                     onClick={handleAddCustomModel}
-                    className="px-3 py-1 bg-black text-white text-xs rounded hover:bg-gray-800 transition-colors focus:ring-1 focus:ring-gray-500 focus:ring-offset-1"
+                    className="px-3 py-1 bg-black text-white text-xs rounded hover:bg-gray-800 transition-colors focus:ring-1 focus:ring-gray-500 focus:ring-offset-1 min-w-[60px] flex items-center justify-center"
+                    disabled={isValidating}
                   >
-                    Add
+                    {isValidating ? <Loader2 className="w-3 h-3 animate-spin" /> : "Add"}
                   </button>
                 </div>
                 

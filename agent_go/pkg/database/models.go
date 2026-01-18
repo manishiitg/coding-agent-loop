@@ -221,6 +221,8 @@ type PresetQuery struct {
 	AgentMode            string          `json:"agent_mode" db:"agent_mode"`                           // Agent mode: simple, ReAct, orchestrator, workflow
 	LLMConfig            json.RawMessage `json:"llm_config" db:"llm_config"`                           // JSON configuration for LLM settings
 	UseCodeExecutionMode bool            `json:"use_code_execution_mode" db:"use_code_execution_mode"` // MCP code execution mode
+	UseToolSearchMode    bool            `json:"use_tool_search_mode" db:"use_tool_search_mode"`       // Tool search mode
+	PreDiscoveredTools   string          `json:"pre_discovered_tools" db:"pre_discovered_tools"`       // JSON array of pre-discovered tools
 	IsPredefined         bool            `json:"is_predefined" db:"is_predefined"`
 	CreatedAt            time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt            time.Time       `json:"updated_at" db:"updated_at"`
@@ -239,6 +241,8 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 		AgentMode            string          `json:"agent_mode"`
 		LLMConfig            json.RawMessage `json:"llm_config"`
 		UseCodeExecutionMode bool            `json:"use_code_execution_mode"`
+		UseToolSearchMode    bool            `json:"use_tool_search_mode"`
+		PreDiscoveredTools   string          `json:"pre_discovered_tools"`
 		IsPredefined         bool            `json:"is_predefined"`
 		CreatedAt            time.Time       `json:"created_at"`
 		UpdatedAt            time.Time       `json:"updated_at"`
@@ -252,6 +256,8 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 		AgentMode:            p.AgentMode,
 		LLMConfig:            p.LLMConfig,
 		UseCodeExecutionMode: p.UseCodeExecutionMode,
+		UseToolSearchMode:    p.UseToolSearchMode,
+		PreDiscoveredTools:   p.PreDiscoveredTools,
 		IsPredefined:         p.IsPredefined,
 		CreatedAt:            p.CreatedAt,
 		UpdatedAt:            p.UpdatedAt,
@@ -276,6 +282,8 @@ type CreatePresetQueryRequest struct {
 	AgentMode            string           `json:"agent_mode,omitempty"`              // Agent mode: simple, ReAct, orchestrator, workflow
 	LLMConfig            *PresetLLMConfig `json:"llm_config,omitempty"`              // LLM configuration for this preset
 	UseCodeExecutionMode bool             `json:"use_code_execution_mode,omitempty"` // MCP code execution mode
+	UseToolSearchMode    bool             `json:"use_tool_search_mode,omitempty"`    // Tool search mode
+	PreDiscoveredTools   []string         `json:"pre_discovered_tools,omitempty"`    // Tools always available without searching
 	IsPredefined         bool             `json:"is_predefined,omitempty"`
 }
 
@@ -396,6 +404,8 @@ type UpdatePresetQueryRequest struct {
 	AgentMode            string           `json:"agent_mode,omitempty"`              // Agent mode: simple, ReAct, orchestrator, workflow
 	LLMConfig            *PresetLLMConfig `json:"llm_config,omitempty"`              // LLM configuration for this preset
 	UseCodeExecutionMode *bool            `json:"use_code_execution_mode,omitempty"` // MCP code execution mode (pointer to allow false value)
+	UseToolSearchMode    *bool            `json:"use_tool_search_mode,omitempty"`    // Tool search mode (pointer to allow false value)
+	PreDiscoveredTools   []string         `json:"pre_discovered_tools,omitempty"`    // Tools always available without searching
 }
 
 // Validate validates the UpdatePresetQueryRequest

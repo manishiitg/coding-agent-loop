@@ -66,6 +66,8 @@ type BaseOrchestrator struct {
 	selectedServers      []string
 	selectedTools        []string   // Selected tools in "server:tool" format
 	useCodeExecutionMode bool       // MCP code execution mode
+	useToolSearchMode    bool       // Enable tool search mode (discover tools on-demand)
+	preDiscoveredTools   []string   // Tools always available without searching
 	llmConfig            *LLMConfig // LLM configuration
 	maxTurns             int        // Maximum turns for the orchestrator
 
@@ -110,6 +112,8 @@ func NewBaseOrchestrator(
 	selectedServers []string,
 	selectedTools []string, // NEW parameter
 	useCodeExecutionMode bool, // NEW parameter
+	useToolSearchMode bool, // Enable tool search mode
+	preDiscoveredTools []string, // Tools always available without searching
 	llmConfig *LLMConfig,
 	maxTurns int,
 	customTools []llmtypes.Tool,
@@ -186,6 +190,8 @@ func NewBaseOrchestrator(
 		selectedServers:      selectedServers,
 		selectedTools:        selectedTools,        // NEW field
 		useCodeExecutionMode: useCodeExecutionMode, // NEW field
+		useToolSearchMode:    useToolSearchMode,    // NEW field
+		preDiscoveredTools:   preDiscoveredTools,   // NEW field
 		llmConfig:            llmConfig,
 		maxTurns:             maxTurns,
 		// Context summarization configuration

@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
-import { Send, Square, Code2, Sparkles, Loader2, FolderOpen } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import { Checkbox } from './ui/checkbox'
@@ -148,6 +148,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Use ?? instead of || to preserve false values (user's selection)
   // Only default to false if the value is undefined/null (not explicitly set)
   const useCodeExecutionMode = useMemo(() => tabConfig?.useCodeExecutionMode ?? false, [tabConfig?.useCodeExecutionMode])
+  const useToolSearchMode = useMemo(() => tabConfig?.useToolSearchMode ?? false, [tabConfig?.useToolSearchMode])
   const enableWorkspaceAccess = useMemo(() => tabConfig?.enableWorkspaceAccess ?? true, [tabConfig?.enableWorkspaceAccess])
   
   // File context operations (always update tab config)
@@ -174,6 +175,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const setUseCodeExecutionMode = useCallback((enabled: boolean) => {
     if (activeTabId) {
       setTabConfig(activeTabId, { useCodeExecutionMode: enabled })
+    }
+  }, [activeTabId, setTabConfig])
+
+  const setUseToolSearchMode = useCallback((enabled: boolean) => {
+    if (activeTabId) {
+      setTabConfig(activeTabId, { useToolSearchMode: enabled })
     }
   }, [activeTabId, setTabConfig])
 
@@ -372,6 +379,23 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   useEffect(() => {
     prevInputTextRef.current = inputText || ''
   }, [inputText])
+
+  // Handle auto-run from tab config
+  useEffect(() => {
+    // Check if autoRun is enabled and we have input text and a session
+    if (tabConfig?.autoRun && inputText?.trim() && tabSessionId && !isStreaming) {
+      console.log('[ChatInput] Auto-running chat with prompt:', inputText)
+      
+      // 1. First disable autoRun to prevent loops
+      // 2. Clear input text as we're submitting it
+      if (activeTabId) {
+        setTabConfig(activeTabId, { autoRun: false, inputText: '' })
+      }
+      
+      // 3. Submit the query
+      onSubmit(inputText)
+    }
+  }, [tabConfig?.autoRun, inputText, tabSessionId, isStreaming, activeTabId, setTabConfig, onSubmit])
 
   // Set initial height and auto-resize textarea when inputText changes
   useEffect(() => {
@@ -659,8 +683,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           // If there's text before /summarize, send it after summarization
           // Otherwise, just summarize
           handleSummarize(textBeforeSummarize || undefined)
+          
           // Clear input after command (both local and store)
           setLocalInputText('')
+          
+          // Clear any pending store sync to prevent overwriting the empty state
+          if (syncToStoreTimeoutRef.current) {
+            clearTimeout(syncToStoreTimeoutRef.current)
+            syncToStoreTimeoutRef.current = null
+          }
+
           if (activeTabId) {
             setTabConfig(activeTabId, { inputText: '' })
           }
@@ -673,8 +705,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         if (sessionId && !isSummarizing && !isStreaming) {
           const textBeforeCompact = trimmedQuery.substring(0, compactIndex).trim()
           handleCompact(textBeforeCompact || undefined)
+          
           // Clear input after command (both local and store)
           setLocalInputText('')
+
+          // Clear any pending store sync to prevent overwriting the empty state
+          if (syncToStoreTimeoutRef.current) {
+            clearTimeout(syncToStoreTimeoutRef.current)
+            syncToStoreTimeoutRef.current = null
+          }
+
           if (activeTabId) {
             setTabConfig(activeTabId, { inputText: '' })
           }
@@ -685,6 +725,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       if (canSubmitImmediately) {
         // Clear input text immediately (both local and store)
         setLocalInputText('')
+        
+        // Clear any pending store sync to prevent overwriting the empty state
+        if (syncToStoreTimeoutRef.current) {
+          clearTimeout(syncToStoreTimeoutRef.current)
+          syncToStoreTimeoutRef.current = null
+        }
+        
         if (activeTabId) {
           setTabConfig(activeTabId, { inputText: '' })
         }
@@ -692,6 +739,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       } else if (canSubmit && isStreaming) {
         // Queue message when streaming - clear input (both local and store)
         setLocalInputText('')
+        
+        // Clear any pending store sync to prevent overwriting the empty state
+        if (syncToStoreTimeoutRef.current) {
+          clearTimeout(syncToStoreTimeoutRef.current)
+          syncToStoreTimeoutRef.current = null
+        }
+
         if (activeTabId) {
           const currentQueued = tabConfig?.queuedMessages || []
           setTabConfig(activeTabId, {
@@ -730,7 +784,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       if (sessionId && !isSummarizing && !isStreaming) {
         const textBeforeSummarize = trimmedQuery.substring(0, summarizeIndex).trim()
         handleSummarize(textBeforeSummarize || undefined)
+        
+        // Clear input after command (both local and store)
         setLocalInputText('')
+        
+        // Clear any pending store sync to prevent overwriting the empty state
+        if (syncToStoreTimeoutRef.current) {
+          clearTimeout(syncToStoreTimeoutRef.current)
+          syncToStoreTimeoutRef.current = null
+        }
+
         if (activeTabId) {
           setTabConfig(activeTabId, { inputText: '' })
         }
@@ -742,7 +805,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       if (sessionId && !isSummarizing && !isStreaming) {
         const textBeforeCompact = trimmedQuery.substring(0, compactIndex).trim()
         handleCompact(textBeforeCompact || undefined)
+        
+        // Clear input after command (both local and store)
         setLocalInputText('')
+        
+        // Clear any pending store sync to prevent overwriting the empty state
+        if (syncToStoreTimeoutRef.current) {
+          clearTimeout(syncToStoreTimeoutRef.current)
+          syncToStoreTimeoutRef.current = null
+        }
+
         if (activeTabId) {
           setTabConfig(activeTabId, { inputText: '' })
         }
@@ -752,12 +824,26 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     if (canSubmitImmediately) {
       setLocalInputText('')
+      
+      // Clear any pending store sync to prevent overwriting the empty state
+      if (syncToStoreTimeoutRef.current) {
+        clearTimeout(syncToStoreTimeoutRef.current)
+        syncToStoreTimeoutRef.current = null
+      }
+
       if (activeTabId) {
         setTabConfig(activeTabId, { inputText: '' })
       }
       onSubmit(queryToSubmit)
     } else if (canSubmit && isStreaming) {
       setLocalInputText('')
+      
+      // Clear any pending store sync to prevent overwriting the empty state
+      if (syncToStoreTimeoutRef.current) {
+        clearTimeout(syncToStoreTimeoutRef.current)
+        syncToStoreTimeoutRef.current = null
+      }
+
       if (activeTabId) {
         const currentQueued = tabConfig?.queuedMessages || []
         setTabConfig(activeTabId, {
@@ -930,17 +1016,20 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 {/* Agent Mode Selector - Only show when no preset is active */}
                 {!chatActivePreset && (
                   <div className="flex items-center gap-2">
-                    {/* Code Execution Mode Toggle */}
+                    {/* Agent Mode Toggle - Simple / Code Exec / Tool Search (mutually exclusive) */}
                     <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <button
                             type="button"
-                            onClick={() => setUseCodeExecutionMode(false)}
+                            onClick={() => {
+                              setUseCodeExecutionMode(false)
+                              setUseToolSearchMode(false)
+                            }}
                             disabled={isStreaming || isSummarizing}
                             data-testid="agent-mode-simple"
                             className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
-                              !useCodeExecutionMode
+                              !useCodeExecutionMode && !useToolSearchMode
                                 ? 'agent-mode-selected rounded-l-md rounded-r-none'
                                 : 'agent-mode-unselected rounded-none'
                             }`}
@@ -957,12 +1046,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         <TooltipTrigger asChild>
                           <button
                             type="button"
-                            onClick={() => setUseCodeExecutionMode(true)}
+                            onClick={() => {
+                              setUseCodeExecutionMode(true)
+                              setUseToolSearchMode(false)
+                            }}
                             disabled={isStreaming || isSummarizing}
                             data-testid="agent-mode-code-exec"
-                            className={`px-2 py-1 text-xs font-medium transition-colors ${
-                              useCodeExecutionMode
-                                ? 'agent-mode-selected rounded-r-md rounded-l-none'
+                            className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
+                              useCodeExecutionMode && !useToolSearchMode
+                                ? 'agent-mode-selected rounded-none'
                                 : 'agent-mode-unselected rounded-none'
                             }`}
                           >
@@ -972,6 +1064,30 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </TooltipTrigger>
                         <TooltipContent>
                           <p>Code Exec mode - MCP tools accessed via generated Go code</p>
+                        </TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setUseCodeExecutionMode(false)
+                              setUseToolSearchMode(true)
+                            }}
+                            disabled={isStreaming || isSummarizing}
+                            data-testid="agent-mode-tool-search"
+                            className={`px-2 py-1 text-xs font-medium transition-colors ${
+                              useToolSearchMode
+                                ? 'agent-mode-selected rounded-r-md rounded-l-none'
+                                : 'agent-mode-unselected rounded-none'
+                            }`}
+                          >
+                            <Search className="w-3 h-3 inline mr-1" />
+                            Tool Search
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Tool Search mode - Discover tools on-demand via search</p>
                         </TooltipContent>
                       </Tooltip>
                     </div>

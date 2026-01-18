@@ -49,12 +49,14 @@ export interface TabSessionStatus {
 export interface ChatTabConfig {
   inputText: string  // Chat input text
   useCodeExecutionMode: boolean  // Code execution mode toggle
+  useToolSearchMode: boolean  // Tool search mode toggle (discover tools on-demand)
   selectedServers: string[]  // Selected MCP servers
   llmConfig: ExtendedLLMConfiguration  // LLM configuration (provider, model, etc.)
   fileContext: FileContextItem[]  // Files/folders in context
   enableContextSummarization?: boolean  // Context summarization setting
   enableWorkspaceAccess?: boolean  // Enable/disable workspace file access tools
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
+  autoRun?: boolean  // Automatically run the chat when tab is loaded
 }
 
 // Generalized ChatTab interface (works for both chat and workflow modes)
@@ -97,6 +99,8 @@ const getDefaultTabConfig = (mode: 'chat' | 'workflow' = 'chat'): ChatTabConfig 
     inputText: '',
     // Default to false (simple mode) - user can toggle to true (code exec mode) via ChatInput
     useCodeExecutionMode: false,
+    // Default to false - user can toggle to true (tool search mode) via ChatInput
+    useToolSearchMode: false,
     selectedServers,
     llmConfig: llmConfig || {
       provider: 'openrouter',
@@ -109,7 +113,8 @@ const getDefaultTabConfig = (mode: 'chat' | 'workflow' = 'chat'): ChatTabConfig 
     fileContext: [],
     enableContextSummarization: false,
     enableWorkspaceAccess: true,  // Enable workspace access by default
-    queuedMessages: []  // No queued messages by default
+    queuedMessages: [],  // No queued messages by default
+    autoRun: false  // Do not auto-run by default
   }
 }
 

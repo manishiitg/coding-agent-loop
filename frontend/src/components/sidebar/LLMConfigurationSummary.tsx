@@ -14,13 +14,19 @@ export default function LLMConfigurationSummary({
   const agentMode = useAppStore(state => state.agentMode)
   const currentMode: 'chat' | 'workflow' = agentMode === 'workflow' ? 'workflow' : 'chat'
 
-  const { getConfigForMode, setShowLLMModal } = useLLMStore()
+  const { getConfigForMode, setShowLLMModal, savedLLMs } = useLLMStore()
 
   // Get mode-specific config
   const modeConfig = getConfigForMode(currentMode)
-  const llmConfig = modeConfig.primaryConfig
+  const agentConfig = modeConfig.agentConfig
+  const primaryConfig = modeConfig.primaryConfig
 
   const [isExpanded, setIsExpanded] = useState(false)
+
+  // Use agentConfig if available, otherwise fallback to primaryConfig
+  // agentConfig.primary is LLMModel, primaryConfig is LLMConfiguration
+  // Both have provider and model_id, so we can use either
+  const currentLLM = agentConfig?.primary || primaryConfig
 
   // Get provider display info
   const getProviderInfo = (provider: string) => {
@@ -31,12 +37,22 @@ export default function LLMConfigurationSummary({
         return { name: 'AWS Bedrock', color: 'text-orange-600 dark:text-orange-400' }
       case 'openai':
         return { name: 'OpenAI', color: 'text-green-600 dark:text-green-400' }
+      case 'vertex':
+        return { name: 'Google Vertex', color: 'text-purple-600 dark:text-purple-400' }
+      case 'anthropic':
+        return { name: 'Anthropic', color: 'text-red-600 dark:text-red-400' }
       default:
         return { name: provider, color: 'text-gray-600 dark:text-gray-400' }
     }
   }
 
-  const providerInfo = getProviderInfo(llmConfig.provider)
+  const providerInfo = getProviderInfo(currentLLM.provider)
+
+  // Find matching published LLM for better label
+  const publishedLLM = savedLLMs.find(
+    (llm) => llm.provider === currentLLM.provider && llm.model_id === currentLLM.model_id
+  )
+  const modelDisplayName = publishedLLM?.name || currentLLM.model_id
 
   if (minimized) {
     return (
@@ -106,16 +122,16 @@ export default function LLMConfigurationSummary({
                 <span className="text-xs font-medium text-muted-foreground">Model:</span>
                 <span 
                   className="text-sm font-mono text-foreground truncate max-w-32"
-                  title={llmConfig.model_id}
+                  title={currentLLM.model_id}
                 >
-                  {llmConfig.model_id}
+                  {modelDisplayName}
                 </span>
               </div>
               
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground">Fallbacks:</span>
                 <span className="text-sm font-mono text-foreground">
-                  {llmConfig.fallback_models.length}
+                  {agentConfig?.fallbacks?.length || primaryConfig.fallback_models?.length || 0}
                 </span>
               </div>
             </div>
@@ -155,7 +171,7 @@ export default function LLMConfigurationSummary({
                   {providerInfo.name}
                 </div>
                 <div className="text-xs text-muted-foreground truncate max-w-24">
-                  {llmConfig.model_id}
+                  {modelDisplayName}
                 </div>
               </div>
               <Settings className="w-4 h-4 text-muted-foreground" />

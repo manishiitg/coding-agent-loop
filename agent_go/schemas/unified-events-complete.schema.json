@@ -170,21 +170,9 @@
         },
         "use_code_execution_mode": {
           "type": "boolean"
-        }
-      },
-      "type": "object"
-    },
-    "BranchStepProgress": {
-      "additionalProperties": false,
-      "properties": {
-        "branch_executed": {
-          "type": "string"
         },
-        "completed_steps": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+        "use_tool_search_mode": {
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -2852,44 +2840,29 @@
     "StepProgressUpdatedEvent": {
       "additionalProperties": false,
       "properties": {
-        "branch_steps": {
-          "additionalProperties": false,
-          "patternProperties": {
-            "^[0-9]+$": {
-              "$ref": "#/$defs/BranchStepProgress"
-            }
-          },
-          "type": "object"
-        },
-        "completed_step_indices": {
-          "items": {
-            "type": "integer"
-          },
-          "type": "array"
-        },
         "component": {
           "type": "string"
         },
         "correlation_id": {
           "type": "string"
         },
+        "current_step_id": {
+          "type": "string"
+        },
         "event_id": {
           "type": "string"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "group_index": {
+          "type": "integer"
         },
         "hierarchy_level": {
           "type": "integer"
         },
         "is_end_event": {
           "type": "boolean"
-        },
-        "last_completed_step": {
-          "type": "integer"
-        },
-        "last_completed_step_id": {
-          "type": "string"
-        },
-        "last_completed_step_title": {
-          "type": "string"
         },
         "metadata": {
           "type": "object"
@@ -2906,21 +2879,18 @@
         "span_id": {
           "type": "string"
         },
+        "status": {
+          "type": "string"
+        },
         "timestamp": {
           "format": "date-time",
           "type": "string"
         },
-        "total_steps": {
+        "total_groups": {
           "type": "integer"
         },
         "trace_id": {
           "type": "string"
-        },
-        "validation_failures": {
-          "additionalProperties": {
-            "type": "integer"
-          },
-          "type": "object"
         },
         "workspace_path": {
           "type": "string"
@@ -3505,6 +3475,9 @@
     "TokenUsageEvent": {
       "additionalProperties": false,
       "properties": {
+        "agent_mode": {
+          "type": "string"
+        },
         "cache_cost_usd": {
           "type": "number"
         },
@@ -3601,6 +3574,12 @@
         },
         "turn": {
           "type": "integer"
+        },
+        "use_code_execution_mode": {
+          "type": "boolean"
+        },
+        "use_tool_search_mode": {
+          "type": "boolean"
         }
       },
       "type": "object"

@@ -100,6 +100,16 @@ func (bo *BaseOrchestrator) GetUseCodeExecutionMode() bool {
 	return bo.useCodeExecutionMode
 }
 
+// GetUseToolSearchMode returns the tool search mode setting
+func (bo *BaseOrchestrator) GetUseToolSearchMode() bool {
+	return bo.useToolSearchMode
+}
+
+// GetPreDiscoveredTools returns the pre-discovered tools list
+func (bo *BaseOrchestrator) GetPreDiscoveredTools() []string {
+	return bo.preDiscoveredTools
+}
+
 // GetLLMConfig returns the LLM configuration
 func (bo *BaseOrchestrator) GetLLMConfig() *LLMConfig {
 	return bo.llmConfig

@@ -273,6 +273,9 @@
         },
         "use_code_execution_mode": {
           "type": "boolean"
+        },
+        "use_tool_search_mode": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
@@ -406,9 +409,7 @@
           "type": "string"
         },
         "execution_options": {
-          "type": "object",
-          "description": "Execution options (run_mode, execution_strategy, etc.)",
-          "additionalProperties": true
+          "type": "object"
         }
       },
       "additionalProperties": false,
@@ -609,21 +610,6 @@
           "type": "string"
         },
         "options": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "BranchStepProgress": {
-      "properties": {
-        "branch_executed": {
-          "type": "string"
-        },
-        "completed_steps": {
           "items": {
             "type": "string"
           },
@@ -2271,103 +2257,103 @@
     "EventType": {
       "type": "string",
       "enum": [
-        "agent_end",
-        "llm_generation_with_retry",
-        "comprehensive_cache",
-        "step_execution_end",
+        "context_summarization_completed",
+        "context_summarization_error",
         "step_progress_updated",
-        "pre_validation_completed",
-        "cache_error",
-        "performance",
-        "conversation_start",
-        "mcp_server_selection",
-        "max_turns_reached",
-        "fallback_model_used",
-        "streaming_connection_lost",
-        "batch_group_end",
-        "token_usage",
-        "unified_completion",
-        "orchestrator_agent_start",
-        "todo_steps_extracted",
-        "request_human_feedback",
-        "large_tool_output_server_unavailable",
-        "cache_miss",
-        "conversation_end",
-        "tool_call_error",
-        "tool_output",
-        "system_prompt",
-        "orchestrator_agent_end",
-        "step_token_usage",
-        "human_verification_response",
-        "mcp_server_connection_start",
-        "llm_generation_end",
-        "tool_response",
-        "mcp_server_connection",
-        "user_message",
-        "context_editing_error",
-        "fallback_attempt",
-        "throttling_detected",
+        "variables_extracted",
         "independent_steps_selected",
-        "tool_call_start",
-        "workspace_file_operation",
-        "error_detail",
-        "large_tool_output_detected",
+        "cache_operation_start",
+        "tool_output",
+        "context_summarization_started",
         "large_tool_output_file_written",
+        "fallback_attempt",
+        "orchestrator_agent_error",
         "structured_output_end",
         "mcp_server_connection_error",
-        "json_validation_start",
-        "llm_generation_start",
-        "context_summarization_error",
-        "orchestrator_agent_error",
-        "streaming_error",
-        "llm_messages",
-        "debug",
-        "agent_processing",
-        "batch_execution_start",
-        "mcp_server_discovery",
-        "large_tool_output_file_write_error",
-        "prerequisite_navigation",
-        "mcp_server_connection_end",
-        "tool_call_progress",
-        "context_cancelled",
-        "model_change",
-        "variables_extracted",
-        "streaming_start",
-        "json_validation_end",
-        "batch_execution_end",
-        "agent_error",
-        "llm_generation_error",
-        "context_summarization_completed",
-        "orchestrator_start",
-        "step_execution_failed",
-        "cache_hit",
-        "cache_expired",
-        "batch_group_start",
+        "performance",
         "tool_call_end",
-        "cache_cleanup",
-        "smart_routing_end",
-        "blocking_human_feedback",
-        "streaming_chunk",
-        "streaming_end",
+        "large_tool_output_server_unavailable",
+        "orchestrator_start",
+        "cache_miss",
+        "batch_group_start",
+        "agent_end",
+        "mcp_server_connection",
+        "request_human_feedback",
+        "streaming_progress",
         "cache_write",
-        "cache_operation_start",
-        "smart_routing_start",
-        "orchestrator_end",
-        "structured_output_start",
-        "conversation_thinking",
-        "context_summarization_started",
-        "context_editing_completed",
-        "token_limit_exceeded",
-        "step_execution_start",
-        "decision_evaluated",
+        "llm_messages",
+        "system_prompt",
+        "user_message",
+        "unified_completion",
+        "orchestrator_error",
+        "orchestrator_agent_end",
+        "prerequisite_navigation",
         "structured_output_error",
+        "llm_generation_end",
+        "orchestrator_agent_start",
+        "step_execution_failed",
+        "step_token_usage",
+        "agent_processing",
+        "llm_generation_error",
+        "mcp_server_selection",
+        "context_cancelled",
+        "json_validation_start",
+        "llm_token_usage",
+        "tool_call_start",
+        "tool_call_error",
+        "mcp_server_discovery",
+        "context_editing_error",
+        "step_execution_end",
+        "cache_error",
+        "batch_execution_start",
+        "pre_validation_completed",
+        "streaming_error",
+        "cache_hit",
+        "conversation_thinking",
+        "tool_response",
+        "large_tool_output_file_write_error",
+        "fallback_model_used",
+        "orchestrator_end",
+        "blocking_human_feedback",
+        "streaming_end",
+        "cache_expired",
+        "model_change",
+        "structured_output_start",
+        "streaming_connection_lost",
+        "mcp_server_connection_start",
+        "json_validation_end",
+        "tool_call_progress",
         "agent_start",
+        "agent_error",
+        "conversation_start",
+        "tool_execution",
+        "token_usage",
+        "throttling_detected",
+        "streaming_start",
+        "mcp_server_connection_end",
+        "conversation_end",
+        "context_editing_completed",
+        "large_tool_output_detected",
+        "token_limit_exceeded",
+        "smart_routing_start",
+        "step_execution_start",
+        "todo_steps_extracted",
+        "cache_cleanup",
+        "llm_generation_start",
+        "llm_generation_with_retry",
+        "error_detail",
+        "smart_routing_end",
+        "human_verification_response",
+        "batch_group_end",
+        "batch_execution_end",
         "conversation_error",
         "conversation_turn",
-        "tool_execution",
-        "orchestrator_error",
-        "streaming_progress",
-        "llm_token_usage"
+        "workspace_file_operation",
+        "max_turns_reached",
+        "comprehensive_cache",
+        "decision_evaluated",
+        "streaming_chunk",
+        "debug"
       ]
     },
     "FallbackAttemptEvent": {
@@ -4897,8 +4883,16 @@
           "type": "string"
         },
         "status": {
-          "type": "string",
-          "description": "Status: 'start' (step started), 'stop' (step stopped), 'end' (step ended), or empty (regular progress update)"
+          "type": "string"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "group_index": {
+          "type": "integer"
+        },
+        "total_groups": {
+          "type": "integer"
         }
       },
       "additionalProperties": false,
@@ -5804,6 +5798,15 @@
         },
         "context": {
           "type": "string"
+        },
+        "agent_mode": {
+          "type": "string"
+        },
+        "use_code_execution_mode": {
+          "type": "boolean"
+        },
+        "use_tool_search_mode": {
+          "type": "boolean"
         },
         "cache_discount": {
           "type": "number"

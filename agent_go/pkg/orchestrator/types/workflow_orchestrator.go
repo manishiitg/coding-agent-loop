@@ -252,6 +252,8 @@ func NewWorkflowOrchestrator(
 	selectedServers []string,
 	selectedTools []string, // NEW parameter
 	useCodeExecutionMode bool, // NEW parameter
+	useToolSearchMode bool, // Enable tool search mode
+	preDiscoveredTools []string, // Tools always available without searching
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 	llmConfig *orchestrator.LLMConfig,
@@ -272,6 +274,8 @@ func NewWorkflowOrchestrator(
 		selectedServers,
 		selectedTools,        // NEW: Pass through
 		useCodeExecutionMode, // NEW: Pass through
+		useToolSearchMode,    // NEW: Pass through
+		preDiscoveredTools,   // NEW: Pass through
 		llmConfig,            // LLM configuration
 		maxTurns,
 		customTools,
@@ -497,6 +501,8 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 		wo.GetSelectedServers(),
 		wo.GetSelectedTools(),
 		wo.GetUseCodeExecutionMode(), // NEW: Pass code execution mode
+		wo.GetUseToolSearchMode(),    // NEW: Pass tool search mode
+		wo.GetPreDiscoveredTools(),   // NEW: Pass pre-discovered tools
 		wo.GetMCPConfigPath(),
 		llmConfig,
 		wo.GetMaxTurns(),
@@ -621,6 +627,8 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		wo.GetSelectedServers(),
 		wo.GetSelectedTools(),
 		wo.GetUseCodeExecutionMode(),
+		wo.GetUseToolSearchMode(),    // NEW: Pass tool search mode
+		wo.GetPreDiscoveredTools(),   // NEW: Pass pre-discovered tools
 		wo.GetMCPConfigPath(),
 		llmConfig,
 		wo.GetMaxTurns(),
@@ -834,6 +842,8 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.GetSelectedServers(),
 		wo.GetSelectedTools(),        // NEW: Pass selected tools
 		wo.GetUseCodeExecutionMode(), // NEW: Pass code execution mode
+		wo.GetUseToolSearchMode(),    // NEW: Pass tool search mode
+		wo.GetPreDiscoveredTools(),   // NEW: Pass pre-discovered tools
 		wo.GetMCPConfigPath(),
 		llmConfig,
 		wo.GetMaxTurns(),

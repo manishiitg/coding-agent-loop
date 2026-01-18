@@ -66,6 +66,8 @@ Both frontend and backend **read and write** only the object format with `steps`
           "model_id": "gpt-4o-mini"
         },
         "use_code_execution_mode": true,
+        "use_tool_search_mode": false,
+        "pre_discovered_tools": ["read_workspace_file", "write_workspace_file"],
         "disable_validation": false,
         "llm_validation_mode": "auto",
         "disable_learning": false,
@@ -209,6 +211,8 @@ content, err := json.MarshalIndent(file, "", "  ")
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `use_code_execution_mode` | `boolean` | Preset default (nil = use preset) | Step-level code execution mode override (nil = use preset default, true/false = override) |
+| `use_tool_search_mode` | `boolean` | Preset default (nil = use preset) | Enable tool search mode - agents discover tools on-demand via `search_tools` instead of loading all tools upfront |
+| `pre_discovered_tools` | `string[]` | Preset default | Tools always available without searching (e.g., `["read_workspace_file", "write_workspace_file"]`) |
 | `enable_context_offloading` | `boolean` | `true` (nil = enabled) | Enable/disable context offloading virtual tools |
 
 ### Prerequisite Detection Configuration

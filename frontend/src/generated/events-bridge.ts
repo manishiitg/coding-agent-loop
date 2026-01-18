@@ -195,6 +195,7 @@ export interface AgentStartEvent {
   model_id?: string;
   provider?: string;
   use_code_execution_mode?: boolean;
+  use_tool_search_mode?: boolean;
 }
 export interface AgentEndEvent {
   timestamp?: string;
@@ -715,6 +716,9 @@ export interface TokenUsageEvent {
   cost_estimate?: number;
   duration?: number;
   context?: string;
+  agent_mode?: string;
+  use_code_execution_mode?: boolean;
+  use_tool_search_mode?: boolean;
   cache_discount?: number;
   reasoning_tokens?: number;
   input_cost_usd?: number;
@@ -1519,10 +1523,10 @@ export interface StepProgressUpdatedEvent {
   workspace_path?: string;
   run_folder?: string;
   current_step_id?: string;
-  /**
-   * Status: 'start' (step started), 'stop' (step stopped), 'end' (step ended), or empty (regular progress update)
-   */
   status?: string;
+  group_id?: string;
+  group_index?: number;
+  total_groups?: number;
 }
 export interface DecisionEvaluatedEvent {
   timestamp?: string;
@@ -2281,9 +2285,6 @@ export interface BatchExecutionStartEvent {
   enabled_group_ids?: string[];
   iteration_number?: number;
   workspace_path?: string;
-  /**
-   * Execution options (run_mode, execution_strategy, etc.)
-   */
   execution_options?: {
     [k: string]: unknown;
   };

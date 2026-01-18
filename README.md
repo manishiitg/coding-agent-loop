@@ -31,6 +31,8 @@ MCP Agent provides sophisticated workflow orchestration capabilities for complex
 
 - **[Code Execution Mode](docs/code_execution_mode.md)**: Specialized agent for executing Go code with security sandboxing and comprehensive error handling.
 
+- **[Tool Search Mode](docs/tool_search_mode.md)**: On-demand tool discovery that reduces token usage when working with large tool catalogs. Agents use `search_tools` to find relevant tools dynamically instead of loading all tools upfront.
+
 - **Standard Tool-Use Agent**: The default agent mode where the LLM interacts with the system by invoking tools directly through the LLM provider's native tool calling capability.
 
 - **Smart Routing**: Advanced optimization that dynamically filters tools based on conversation context to reduce token usage.

@@ -61,7 +61,9 @@ type LLMAgentConfig struct {
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed via generated Go code using discover_code_files and write_code
 	UseCodeExecutionMode bool
-	APIKeys              *llm.ProviderAPIKeys // API keys for providers
+	// Tool search mode: When enabled, LLM discovers tools on-demand via search_tools
+	UseToolSearchMode bool
+	APIKeys           *llm.ProviderAPIKeys // API keys for providers
 
 	// Context summarization configuration
 	EnableContextSummarization     bool    // Enable context summarization feature
@@ -244,6 +246,12 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if config.UseCodeExecutionMode {
 		agentOptions = append(agentOptions, mcpagent.WithCodeExecutionMode(true))
 		logger.Info("🔧 Code execution mode enabled - MCP tools will be accessed via generated Go code")
+	}
+
+	// Add tool search mode if enabled
+	if config.UseToolSearchMode {
+		agentOptions = append(agentOptions, mcpagent.WithToolSearchMode(true))
+		logger.Info("🔍 Tool search mode enabled - LLM will discover tools on-demand via search_tools and add them via add_tool")
 	}
 
 	// Add session ID for MCP connection reuse (e.g., Playwright browser sharing)

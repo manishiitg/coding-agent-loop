@@ -104,6 +104,8 @@ func NewStepBasedWorkflowOrchestrator(
 	selectedServers []string,
 	selectedTools []string, // NEW parameter
 	useCodeExecutionMode bool, // NEW parameter
+	useToolSearchMode bool, // Enable tool search mode
+	preDiscoveredTools []string, // Tools always available without searching
 	mcpConfigPath string,
 	llmConfig *orchestrator.LLMConfig,
 	maxTurns int,
@@ -134,6 +136,8 @@ func NewStepBasedWorkflowOrchestrator(
 		selectedServers,
 		selectedTools,        // Pass through actual selected tools
 		useCodeExecutionMode, // NEW: Pass code execution mode
+		useToolSearchMode,    // NEW: Pass tool search mode
+		preDiscoveredTools,   // NEW: Pass pre-discovered tools
 		llmConfig,
 		maxTurns,
 		customTools,

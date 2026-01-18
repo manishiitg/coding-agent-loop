@@ -85,6 +85,7 @@ interface LLMState extends StoreActions {
   // Helper methods
   getCurrentLLMOption: () => LLMOption | null
   isConfigValid: () => boolean
+  checkModelExists: (modelId: string) => Promise<boolean>
 }
 
 export const useLLMStore = create<LLMState>()(
@@ -545,6 +546,26 @@ export const useLLMStore = create<LLMState>()(
         isConfigValid: () => {
           const state = get()
           return !!(state.primaryConfig.provider && state.primaryConfig.model_id)
+        },
+
+        checkModelExists: async (modelId: string) => {
+          // Fetch latest metadata from backend to ensure we have the most current info
+          // and specifically to get costs/tokens for the new model
+          try {
+            const metadataResponse = await llmConfigService.getModelMetadata()
+            const exists = metadataResponse.models.some(m => m.model_id === modelId)
+            
+            // Also refresh available LLMs to ensure the new model (if added) will have metadata
+            if (exists) {
+               await get().refreshAvailableLLMs()
+            }
+            
+            return exists
+          } catch (error) {
+            console.error('Failed to validate model existence:', error)
+            // Fallback to local state check if API call fails
+            return get().availableOpenRouterModels.includes(modelId)
+          }
         },
 
         // Generic actions

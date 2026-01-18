@@ -366,6 +366,23 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     prevInputTextRef.current = inputText || ''
   }, [inputText])
 
+  // Handle auto-run from tab config
+  useEffect(() => {
+    // Check if autoRun is enabled and we have input text and a session
+    if (tabConfig?.autoRun && inputText?.trim() && tabSessionId && !isStreaming) {
+      console.log('[ChatInput] Auto-running chat with prompt:', inputText)
+      
+      // 1. First disable autoRun to prevent loops
+      // 2. Clear input text as we're submitting it
+      if (activeTabId) {
+        setTabConfig(activeTabId, { autoRun: false, inputText: '' })
+      }
+      
+      // 3. Submit the query
+      onSubmit(inputText)
+    }
+  }, [tabConfig?.autoRun, inputText, tabSessionId, isStreaming, activeTabId, setTabConfig, onSubmit])
+
   // Set initial height and auto-resize textarea when inputText changes
   useEffect(() => {
     if (textareaRef.current) {

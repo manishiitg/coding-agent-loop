@@ -55,6 +55,7 @@ export interface ChatTabConfig {
   enableContextSummarization?: boolean  // Context summarization setting
   enableWorkspaceAccess?: boolean  // Enable/disable workspace file access tools
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
+  autoRun?: boolean  // Automatically run the chat when tab is loaded
 }
 
 // Generalized ChatTab interface (works for both chat and workflow modes)
@@ -98,7 +99,8 @@ const getDefaultTabConfig = (): ChatTabConfig => {
     fileContext: [],
     enableContextSummarization: false,
     enableWorkspaceAccess: true,  // Enable workspace access by default
-    queuedMessages: []  // No queued messages by default
+    queuedMessages: [],  // No queued messages by default
+    autoRun: false  // Do not auto-run by default
   }
 }
 

@@ -4,7 +4,6 @@ import { Button } from "../ui/Button";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "../ui/accordion";
 import { useLLMStore } from "../../stores";
 import { useGlobalPresetStore } from "../../stores/useGlobalPresetStore";
-import { useWorkflowStore } from "../../stores/useWorkflowStore";
 import type {
   AgentLLMConfig,
   AgentConfigs,
@@ -36,11 +35,6 @@ export default function BulkStepConfigModal({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   
-  // Tool Access Control from workflow store
-  const disableShellExecAccess = useWorkflowStore(state => state.disableShellExecAccess);
-  const setDisableShellExecAccess = useWorkflowStore(state => state.setDisableShellExecAccess);
-  const disableReadImageAccess = useWorkflowStore(state => state.disableReadImageAccess);
-  const setDisableReadImageAccess = useWorkflowStore(state => state.setDisableReadImageAccess);
 
   // Get preset for default LLMs
   const activePresetId = useGlobalPresetStore(
@@ -212,6 +206,53 @@ export default function BulkStepConfigModal({
     return allSteps;
   }, [plan]);
 
+  // Helper function to check if a tool is enabled in enabled_custom_tools
+  const isToolEnabled = (enabledTools: string[], toolName: string, category: "workspace_tools" | "human_tools"): boolean => {
+    // Empty array means all tools are enabled (default)
+    if (enabledTools.length === 0) {
+      return true;
+    }
+    
+    // Check for wildcard (all tools in category enabled)
+    if (enabledTools.includes(`${category}:*`)) {
+      return true;
+    }
+    
+    // Check for specific tool
+    return enabledTools.includes(`${category}:${toolName}`);
+  };
+
+  // Check if tools are currently disabled by examining step configs
+  const toolAccessState = useMemo(() => {
+    if (!plan) {
+      return { shellExecDisabled: false, readImageDisabled: false };
+    }
+    
+    const allSteps = getAllSteps();
+    let shellExecDisabledCount = 0;
+    let readImageDisabledCount = 0;
+    let totalSteps = 0;
+    
+    allSteps.forEach(({ step }) => {
+      const enabledTools = step.agent_configs?.enabled_custom_tools || [];
+      totalSteps++;
+      
+      // Check if tools are disabled (not enabled)
+      if (!isToolEnabled(enabledTools, "execute_shell_command", "workspace_tools")) {
+        shellExecDisabledCount++;
+      }
+      if (!isToolEnabled(enabledTools, "read_image", "workspace_tools")) {
+        readImageDisabledCount++;
+      }
+    });
+    
+    // Tool is considered disabled if it's disabled in all steps
+    return {
+      shellExecDisabled: totalSteps > 0 && shellExecDisabledCount === totalSteps,
+      readImageDisabled: totalSteps > 0 && readImageDisabledCount === totalSteps,
+    };
+  }, [plan, getAllSteps]);
+
   // Handle immediate action (disable/enable validation, learning, lock learnings, LLM updates, disable human tools, set max turns, learning detail level, agent mode)
   const handleImmediateAction = async (
     action:
@@ -228,6 +269,11 @@ export default function BulkStepConfigModal({
       | "set_validation_llm"
       | "set_learning_llm"
       | "disable_human_tools"
+      | "enable_human_tools"
+      | "disable_shell_exec_access"
+      | "enable_shell_exec_access"
+      | "disable_read_image_access"
+      | "enable_read_image_access"
       | "set_execution_max_turns"
       | "set_learning_detail_level_exact"
       | "set_learning_detail_level_general"
@@ -307,12 +353,16 @@ export default function BulkStepConfigModal({
             }
             break;
            case "disable_human_tools": {
-             // Remove all human_tools entries from enabled_custom_tools
-             const currentEnabledTools =
-               newAgentConfigs.enabled_custom_tools || [];
-             // If array is empty (default = all enabled), explicitly enable workspace_tools only
-             if (currentEnabledTools.length === 0) {
-               // Get all workspace tools and add them explicitly
+             const currentEnabledTools = newAgentConfigs.enabled_custom_tools || [];
+             
+             // If human tools are already disabled, no change needed
+             if (!isToolEnabled(currentEnabledTools, "human_feedback", "human_tools")) {
+               break;
+             }
+             
+             // If empty or has wildcard, replace with explicit list excluding human tools
+             if (currentEnabledTools.length === 0 || currentEnabledTools.includes("human_tools:*")) {
+               // Get all workspace tools and add them explicitly (exclude human tools)
                const workspaceTools = getToolsByCategory("workspace_tools");
                newAgentConfigs.enabled_custom_tools = workspaceTools.map(
                  (tool) => `workspace_tools:${tool}`
@@ -326,6 +376,120 @@ export default function BulkStepConfigModal({
                  }
                );
              }
+             break;
+           }
+           case "enable_human_tools": {
+             const currentEnabledTools = newAgentConfigs.enabled_custom_tools || [];
+             
+             // If human tools are already enabled, no change needed
+             if (isToolEnabled(currentEnabledTools, "human_feedback", "human_tools")) {
+               break;
+             }
+             
+             // If empty, it's already enabled (default), but we'll keep it empty
+             if (currentEnabledTools.length === 0) {
+               break;
+             }
+             
+             // Add human_feedback to the list (or add wildcard if we want all human tools)
+             // For now, just add the specific tool
+             const humanToolEntry = "human_tools:human_feedback";
+             if (!currentEnabledTools.includes(humanToolEntry) && !currentEnabledTools.includes("human_tools:*")) {
+               newAgentConfigs.enabled_custom_tools = [...currentEnabledTools, humanToolEntry];
+             }
+             break;
+           }
+           case "disable_shell_exec_access": {
+             const currentEnabledTools = newAgentConfigs.enabled_custom_tools || [];
+             const toolEntry = "workspace_tools:execute_shell_command";
+             
+             // If tool is already disabled, no change needed
+             if (!isToolEnabled(currentEnabledTools, "execute_shell_command", "workspace_tools")) {
+               break;
+             }
+             
+             // If empty or has wildcard, replace with explicit list excluding the tool
+             if (currentEnabledTools.length === 0 || currentEnabledTools.includes("workspace_tools:*")) {
+               const allWorkspaceTools = getToolsByCategory("workspace_tools");
+               newAgentConfigs.enabled_custom_tools = allWorkspaceTools
+                 .filter((tool) => tool !== "execute_shell_command")
+                 .map((tool) => `workspace_tools:${tool}`);
+             } else {
+               // Remove the tool from existing list (and remove wildcard if present)
+               newAgentConfigs.enabled_custom_tools = currentEnabledTools
+                 .filter((entry) => entry !== toolEntry && entry !== "workspace_tools:*");
+             }
+             break;
+           }
+           case "enable_shell_exec_access": {
+             const currentEnabledTools = newAgentConfigs.enabled_custom_tools || [];
+             const toolEntry = "workspace_tools:execute_shell_command";
+             
+             // If tool is already enabled, no change needed
+             if (isToolEnabled(currentEnabledTools, "execute_shell_command", "workspace_tools")) {
+               break;
+             }
+             
+             // If empty, it's already enabled (default), but we'll keep it empty
+             if (currentEnabledTools.length === 0) {
+               break;
+             }
+             
+             // Add the tool to the list
+             if (!currentEnabledTools.includes(toolEntry)) {
+               newAgentConfigs.enabled_custom_tools = [...currentEnabledTools, toolEntry];
+             }
+             
+             // If we now have all workspace tools, we could clear to use defaults
+             // But keeping explicit is safer - user can clear manually if needed
+             // However, if we had wildcard before, we should restore it
+             // Actually, if we're adding back, we should check if all tools are now present
+             // For simplicity, just add the tool - user can optimize later
+             break;
+           }
+           case "disable_read_image_access": {
+             const currentEnabledTools = newAgentConfigs.enabled_custom_tools || [];
+             const toolEntry = "workspace_tools:read_image";
+             
+             // If tool is already disabled, no change needed
+             if (!isToolEnabled(currentEnabledTools, "read_image", "workspace_tools")) {
+               break;
+             }
+             
+             // If empty or has wildcard, replace with explicit list excluding the tool
+             if (currentEnabledTools.length === 0 || currentEnabledTools.includes("workspace_tools:*")) {
+               const allWorkspaceTools = getToolsByCategory("workspace_tools");
+               newAgentConfigs.enabled_custom_tools = allWorkspaceTools
+                 .filter((tool) => tool !== "read_image")
+                 .map((tool) => `workspace_tools:${tool}`);
+             } else {
+               // Remove the tool from existing list (and remove wildcard if present)
+               newAgentConfigs.enabled_custom_tools = currentEnabledTools
+                 .filter((entry) => entry !== toolEntry && entry !== "workspace_tools:*");
+             }
+             break;
+           }
+           case "enable_read_image_access": {
+             const currentEnabledTools = newAgentConfigs.enabled_custom_tools || [];
+             const toolEntry = "workspace_tools:read_image";
+             
+             // If tool is already enabled, no change needed
+             if (isToolEnabled(currentEnabledTools, "read_image", "workspace_tools")) {
+               break;
+             }
+             
+             // If empty, it's already enabled (default), but we'll keep it empty
+             if (currentEnabledTools.length === 0) {
+               break;
+             }
+             
+             // Add the tool to the list
+             if (!currentEnabledTools.includes(toolEntry)) {
+               newAgentConfigs.enabled_custom_tools = [...currentEnabledTools, toolEntry];
+             }
+             
+             // If we now have all workspace tools, we could clear to use defaults
+             // But keeping explicit is safer - user can clear manually if needed
              break;
            }
            case "set_execution_max_turns":
@@ -1039,15 +1203,22 @@ export default function BulkStepConfigModal({
                     <div className="space-y-2">
                       <Button
                         variant="outline"
-                        onClick={() => setDisableShellExecAccess(!disableShellExecAccess)}
+                        onClick={() => handleImmediateAction(
+                          toolAccessState.shellExecDisabled 
+                            ? "enable_shell_exec_access" 
+                            : "disable_shell_exec_access"
+                        )}
+                        disabled={applyingAction !== null}
                         className={`w-full justify-start h-auto py-3 px-4 transition-all ${
-                          disableShellExecAccess
+                          toolAccessState.shellExecDisabled
                             ? "hover:bg-green-50 dark:hover:bg-green-950/20 hover:border-green-300 dark:hover:border-green-800"
                             : "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800"
                         }`}
                       >
                         <div className="flex items-center gap-3 w-full">
-                          {disableShellExecAccess ? (
+                          {applyingAction === "disable_shell_exec_access" || applyingAction === "enable_shell_exec_access" ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : toolAccessState.shellExecDisabled ? (
                             <>
                               <CheckCircle2 className="w-4 h-4 text-green-500" />
                               <span className="font-medium text-sm">Enable Shell Exec Access</span>
@@ -1061,10 +1232,10 @@ export default function BulkStepConfigModal({
                         </div>
                       </Button>
                       <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                        {disableShellExecAccess ? (
-                          <>Currently disabled. Click to enable the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">execute_shell_command</code> tool globally for all workflow execution agents.</>
+                        {toolAccessState.shellExecDisabled ? (
+                          <>Currently disabled. Click to enable the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">execute_shell_command</code> tool for all steps.</>
                         ) : (
-                          <>Disables the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">execute_shell_command</code> tool globally for all workflow execution agents. This prevents agents from executing shell commands, providing an additional security layer for sensitive environments.</>
+                          <>Disables the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">execute_shell_command</code> tool for all steps. This prevents agents from executing shell commands, providing an additional security layer for sensitive environments.</>
                         )}
                       </p>
                     </div>
@@ -1073,15 +1244,22 @@ export default function BulkStepConfigModal({
                     <div className="space-y-2">
                       <Button
                         variant="outline"
-                        onClick={() => setDisableReadImageAccess(!disableReadImageAccess)}
+                        onClick={() => handleImmediateAction(
+                          toolAccessState.readImageDisabled 
+                            ? "enable_read_image_access" 
+                            : "disable_read_image_access"
+                        )}
+                        disabled={applyingAction !== null}
                         className={`w-full justify-start h-auto py-3 px-4 transition-all ${
-                          disableReadImageAccess
+                          toolAccessState.readImageDisabled
                             ? "hover:bg-green-50 dark:hover:bg-green-950/20 hover:border-green-300 dark:hover:border-green-800"
                             : "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800"
                         }`}
                       >
                         <div className="flex items-center gap-3 w-full">
-                          {disableReadImageAccess ? (
+                          {applyingAction === "disable_read_image_access" || applyingAction === "enable_read_image_access" ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : toolAccessState.readImageDisabled ? (
                             <>
                               <CheckCircle2 className="w-4 h-4 text-green-500" />
                               <span className="font-medium text-sm">Enable Read Image Access</span>
@@ -1095,10 +1273,10 @@ export default function BulkStepConfigModal({
                         </div>
                       </Button>
                       <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                        {disableReadImageAccess ? (
-                          <>Currently disabled. Click to enable the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">read_image</code> tool globally for all workflow execution agents.</>
+                        {toolAccessState.readImageDisabled ? (
+                          <>Currently disabled. Click to enable the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">read_image</code> tool for all steps.</>
                         ) : (
-                          <>Disables the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">read_image</code> tool globally for all workflow execution agents. This prevents agents from reading and analyzing image files, useful for workflows that don't require image processing.</>
+                          <>Disables the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">read_image</code> tool for all steps. This prevents agents from reading and analyzing image files, useful for workflows that don't require image processing.</>
                         )}
                       </p>
                     </div>

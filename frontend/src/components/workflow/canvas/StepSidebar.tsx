@@ -108,6 +108,11 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   }, [])
 
 
+  // Check if evaluation step
+  const isEvaluationStep = useMemo(() => {
+    return (node?.data as any)?.isEvaluationStep === true
+  }, [node])
+
   // Handle phase selection
   const handleSelectPhase = async (phaseId: string) => {
     if (!presetQueryId || !node) return
@@ -178,11 +183,24 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       return
     }
 
+    // Get step ID
+    let stepId: string | undefined
+    if (node?.type === 'orchestrator') {
+      const orchestratorData = node.data as OrchestratorNodeData
+      stepId = orchestratorData.orchestration_step?.id ?? orchestratorData.step?.id
+    } else if (node?.data) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
+      stepId = stepData.step?.id
+    }
+
+    if (!stepId) {
+      console.error('[StepSidebar] Cannot delete learnings: step ID not available')
+      return
+    }
+
     setIsDeletingLearnings(true)
     try {
-      // stepIndex is 0-based, but step numbers are 1-based
-      const stepNumber = stepIndex + 1
-      const result = await agentApi.deleteStepLearnings(workspacePath, stepNumber)
+      const result = await agentApi.deleteStepLearnings(workspacePath, stepId)
       
       if (result.success) {
         console.log('[StepSidebar] Successfully deleted learnings:', result.message)
@@ -198,7 +216,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       setIsDeletingLearnings(false)
       setShowDeleteLearningsConfirm(false)
     }
-  }, [workspacePath, stepIndex])
+  }, [workspacePath, node])
 
   // Handle view learnings for this step
   const handleViewLearnings = useCallback(async () => {
@@ -757,10 +775,12 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         : llmConfigToOption(agentConfigs?.learning_llm) || getPresetDefaultLLM('learning')
     
     // Check if disabled (only relevant if not in code exec mode)
-    const isDisabled = isAlwaysEnabled 
-      ? false 
+    // LLM validation is disabled by default (undefined/null/true = disabled, false = enabled)
+    // Learning follows the old pattern (undefined/null = enabled, true = disabled)
+    const isDisabled = isAlwaysEnabled
+      ? false
       : (isValidation
-          ? agentConfigs?.disable_validation === true
+          ? agentConfigs?.disable_validation !== false  // LLM validation disabled by default
           : agentConfigs?.disable_learning === true)
     
     // Handle LLM change
@@ -970,8 +990,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         <div className="flex items-center gap-1.5">
           {!isEditing && (
             <>
-              {/* Phase Dropdown */}
-              {phases.length > 0 && (
+              {/* Phase Dropdown - Hide for evaluation steps */}
+              {!isEvaluationStep && phases.length > 0 && (
                 <div className="relative" ref={phaseDropdownRef}>
                   <button
                     onClick={() => !isRunning && setIsPhaseDropdownOpen(!isPhaseDropdownOpen)}
@@ -1010,8 +1030,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 </div>
               )}
               
-              {/* Run Step Button */}
-              {onStartPhase && (
+              {/* Run Step Button - Hide for evaluation steps */}
+              {!isEvaluationStep && onStartPhase && (
                 <button
                   onClick={handleRunStep}
                   disabled={isRunning || node.id.includes('-sub-agent-')}
@@ -1029,8 +1049,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 </button>
               )}
               
-              {/* View Learnings Button */}
-              {workspacePath && node && (() => {
+              {/* View Learnings Button - Hide for evaluation steps */}
+              {!isEvaluationStep && workspacePath && node && (() => {
                 const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
                 return stepData.step?.id ? (
                   <button
@@ -1054,7 +1074,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 <Edit2 className="w-4 h-4" />
               </button>
               
-              {/* Actions Dropdown Menu */}
+              {/* Actions Dropdown Menu - Hide for evaluation steps */}
+              {!isEvaluationStep && (
               <div className="relative" ref={actionsDropdownRef}>
                 <button
                   onClick={() => setIsActionsDropdownOpen(!isActionsDropdownOpen)}
@@ -1098,6 +1119,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                   </div>
                 )}
               </div>
+              )}
             </>
           )}
           {isEditing && (
@@ -1713,6 +1735,69 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 planSteps={plan?.steps || []}
               />
             </div>
+          ) : isOrchestrationStep(step) && node.type === 'orchestrator' ? (
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+              {/* Orchestrator Step Info */}
+              <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                <p className="text-xs text-blue-700 dark:text-blue-300">
+                  <strong>Orchestrator Step:</strong> Evaluates the input and routes to a specific sub-agent or ends the workflow.
+                </p>
+                {/* Routes Display */}
+                {step.orchestration_routes && step.orchestration_routes.length > 0 && (
+                  <div className="mt-3">
+                    <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 uppercase tracking-wide mb-2">
+                      Available Routes:
+                    </p>
+                    <div className="space-y-2">
+                      {step.orchestration_routes.map((route) => {
+                        const isEndRoute = route.route_id?.toLowerCase() === "end"
+                        return (
+                          <div key={route.route_id || 'unknown'} className="p-2 bg-white dark:bg-gray-800 rounded border border-blue-100 dark:border-blue-900">
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                                isEndRoute 
+                                  ? "bg-red-500 dark:bg-red-400" 
+                                  : "bg-blue-500 dark:bg-blue-400"
+                              }`} />
+                              <span className={`text-xs font-medium ${
+                                isEndRoute
+                                  ? "text-red-700 dark:text-red-300"
+                                  : "text-blue-700 dark:text-blue-300"
+                              }`}>
+                                {route.route_name || route.route_id}
+                              </span>
+                            </div>
+                            {route.condition && (
+                              <p className="text-xs text-gray-600 dark:text-gray-400 ml-4">
+                                Condition: {route.condition}
+                              </p>
+                            )}
+                            {route.context_to_pass && (
+                              <p className="text-xs text-gray-500 dark:text-gray-500 ml-4 mt-1 italic">
+                                Context: {route.context_to_pass}
+                              </p>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <StepEditPanel
+                step={stepWithConfigs}
+                stepIndex={stepIndex}
+                onSave={handleSave}
+                onCancel={() => {}}
+                isSaving={isSaving}
+                presetServers={presetServers}
+                presetLLMConfig={presetLLMConfig}
+                presetUseCodeExecutionMode={presetUseCodeExecutionMode}
+                isExpanded={true}
+                onToggleExpanded={() => {}}
+                planSteps={plan?.steps || []}
+              />
+            </div>
           ) : (
             <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
               {/* Show note for sub-agents (check for both patterns: -sub-agent- and nodes with undefined in ID that might be sub-agents) */}
@@ -1720,6 +1805,13 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 <div className="mb-3 p-3 bg-cyan-50 dark:bg-cyan-900/20 rounded-lg border border-cyan-200 dark:border-cyan-800">
                   <p className="text-xs text-cyan-700 dark:text-cyan-300">
                     <strong>Sub-Agent:</strong> This configuration applies to the sub-agent step within an orchestration route.
+                  </p>
+                </div>
+              )}
+              {isEvaluationStep && (
+                <div className="mb-3 p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800">
+                  <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                    <strong>Evaluation Step:</strong> This step evaluates the performance of the workflow against specific criteria.
                   </p>
                 </div>
               )}

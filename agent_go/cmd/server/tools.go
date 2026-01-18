@@ -102,6 +102,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 		nil,           // No tracers for server operations
 		api.logger,
 		false, // disableCache - use cache by default for server operations
+		nil,   // No runtime overrides for tool discovery
 	)
 	if err != nil {
 		// Check if this is an OAuth error - try to auto-discover OAuth endpoints

@@ -66,6 +66,7 @@ func listChatSessions(db database.Database) gin.HandlerFunc {
 		limitStr := c.DefaultQuery("limit", "20")
 		offsetStr := c.DefaultQuery("offset", "0")
 		presetQueryID := c.Query("preset_query_id")
+		agentMode := c.Query("agent_mode")
 
 		limit, err := strconv.Atoi(limitStr)
 		if err != nil {
@@ -85,7 +86,13 @@ func listChatSessions(db database.Database) gin.HandlerFunc {
 			presetQueryIDPtr = &presetQueryID
 		}
 
-		sessions, total, err := db.ListChatSessions(c.Request.Context(), limit, offset, presetQueryIDPtr)
+		// Convert agent_mode to pointer for optional filtering
+		var agentModePtr *string
+		if agentMode != "" {
+			agentModePtr = &agentMode
+		}
+
+		sessions, total, err := db.ListChatSessions(c.Request.Context(), limit, offset, presetQueryIDPtr, agentModePtr)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return

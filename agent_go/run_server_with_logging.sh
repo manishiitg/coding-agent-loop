@@ -1,7 +1,7 @@
 #!/bin/bash
 # Script to run the MCP agent server with logging enabled
 # This makes it easier to debug event issues by capturing all output to a log file
-# AND displaying it in real-time on the console using tee
+# Terminal output is suppressed as requested.
 
 # Get script directory first (needed for both test and server modes)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,7 +45,7 @@ if [[ "$1" == "--test-connections" || "$1" == "--test-mcp" || "$1" == "-t" ]]; t
     
     # Run the test-all command
     echo "🚀 Running MCP connection tests..."
-    go run main.go mcp test-all --config "$MCP_CONFIG" --log-file "logs/server_debug.log"
+    go run main.go mcp test-all --config "$MCP_CONFIG" >> "logs/server_debug.log" 2>&1
     exit $?
 fi
 
@@ -85,7 +85,11 @@ fi
 
 # Set environment variables for the server
 export LOG_LEVEL="debug"
-export LOG_FILE="logs/server_debug.log"
+# Use LOG_PATH for the shell script to redirect output
+LOG_PATH="logs/server_debug.log"
+# Unset LOG_FILE to ensure the Go application logs to stdout (avoiding duplicates)
+unset LOG_FILE
+
 export TRACING_PROVIDER="console"
 export LANGFUSE_DEBUG="true"
 export OBSERVABILITY_DEBUG="true"
@@ -132,7 +136,7 @@ export SUMMARY_KEEP_LAST_MESSAGES="4"  # Keep last 4 messages when summarizing (
 
 # Context editing configuration (compacts large tool outputs)
 # Note: Higher thresholds preserve cached tokens for cost efficiency
-export ENABLE_CONTEXT_EDITING="true"  # Enable context editing (default: true)
+export ENABLE_CONTEXT_EDITING="false"  # Enable context editing (default: true)
 export CONTEXT_EDITING_THRESHOLD="10000"  # Compact outputs larger than 10k tokens (default: 10000)
 export CONTEXT_EDITING_TURN_THRESHOLD="20"  # Compact outputs older than 20 turns (default: 20)
 
@@ -165,8 +169,8 @@ mkdir -p logs
 
 # Truncate the log files to start fresh
 echo "📝 Truncating log files for clean start..."
-> "$LOG_FILE"
-echo "✅ Server log file truncated: $LOG_FILE"
+> "$LOG_PATH"
+echo "✅ Server log file truncated: $LOG_PATH"
 > "logs/llm_debug.log"
 echo "✅ LLM log file truncated: logs/llm_debug.log"
 
@@ -191,34 +195,34 @@ else
 fi
 
 # Add timestamp header to log file
-echo "🚀 MCP Agent Server Session Started: $(date)" > "$LOG_FILE"
-echo "=========================================" >> "$LOG_FILE"
-echo "Configuration:" >> "$LOG_FILE"
-echo "- Agent Mode: $DEEP_SEARCH_AGENT_MODE" >> "$LOG_FILE"
-echo "- Split Execution Learning: $SPLIT_EXECUTION_LEARNING" >> "$LOG_FILE"
-echo "- Tool Execution Timeout: $TOOL_EXECUTION_TIMEOUT" >> "$LOG_FILE"
-echo "- MCP Cache TTL: $MCP_CACHE_TTL_MINUTES minutes (7 days)" >> "$LOG_FILE"
-echo "- Agent Provider: $AGENT_PROVIDER" >> "$LOG_FILE"
-echo "- Agent Model: $AGENT_MODEL" >> "$LOG_FILE"
-echo "- Main LLM Provider: $DEEP_SEARCH_MAIN_LLM_PROVIDER" >> "$LOG_FILE"
-echo "- Main LLM Model: $DEEP_SEARCH_MAIN_LLM_MODEL" >> "$LOG_FILE"
-echo "- Main LLM Temperature: $DEEP_SEARCH_MAIN_LLM_TEMPERATURE" >> "$LOG_FILE"
-echo "- Available Bedrock Models: $BEDROCK_AVAILABLE_MODELS" >> "$LOG_FILE"
-echo "- Available OpenRouter Models: $OPENROUTER_AVAILABLE_MODELS" >> "$LOG_FILE"
-echo "- Available OpenAI Models: $OPENAI_AVAILABLE_MODELS" >> "$LOG_FILE"
-echo "- Structured Output LLM: $DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER/$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL" >> "$LOG_FILE"
-echo "- Workspace tools: Enabled" >> "$LOG_FILE"
-echo "- Workspace Semantic Search: $WORKSPACE_ENABLE_SEMANTIC_SEARCH" >> "$LOG_FILE"
-echo "- Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION" >> "$LOG_FILE"
-echo "- Token Threshold: $TOKEN_THRESHOLD_PERCENT (70%) | Fixed: ${FIXED_TOKEN_THRESHOLD} tokens" >> "$LOG_FILE"
-echo "- Keep Last Messages: $SUMMARY_KEEP_LAST_MESSAGES" >> "$LOG_FILE"
-echo "- Context Editing: $ENABLE_CONTEXT_EDITING (Threshold: ${CONTEXT_EDITING_THRESHOLD} tokens, Age: ${CONTEXT_EDITING_TURN_THRESHOLD} turns)" >> "$LOG_FILE"
-echo "=========================================" >> "$LOG_FILE"
-echo "" >> "$LOG_FILE"
+echo "🚀 MCP Agent Server Session Started: $(date)" > "$LOG_PATH"
+echo "=========================================" >> "$LOG_PATH"
+echo "Configuration:" >> "$LOG_PATH"
+echo "- Agent Mode: $DEEP_SEARCH_AGENT_MODE" >> "$LOG_PATH"
+echo "- Split Execution Learning: $SPLIT_EXECUTION_LEARNING" >> "$LOG_PATH"
+echo "- Tool Execution Timeout: $TOOL_EXECUTION_TIMEOUT" >> "$LOG_PATH"
+echo "- MCP Cache TTL: $MCP_CACHE_TTL_MINUTES minutes (7 days)" >> "$LOG_PATH"
+echo "- Agent Provider: $AGENT_PROVIDER" >> "$LOG_PATH"
+echo "- Agent Model: $AGENT_MODEL" >> "$LOG_PATH"
+echo "- Main LLM Provider: $DEEP_SEARCH_MAIN_LLM_PROVIDER" >> "$LOG_PATH"
+echo "- Main LLM Model: $DEEP_SEARCH_MAIN_LLM_MODEL" >> "$LOG_PATH"
+echo "- Main LLM Temperature: $DEEP_SEARCH_MAIN_LLM_TEMPERATURE" >> "$LOG_PATH"
+echo "- Available Bedrock Models: $BEDROCK_AVAILABLE_MODELS" >> "$LOG_PATH"
+echo "- Available OpenRouter Models: $OPENROUTER_AVAILABLE_MODELS" >> "$LOG_PATH"
+echo "- Available OpenAI Models: $OPENAI_AVAILABLE_MODELS" >> "$LOG_PATH"
+echo "- Structured Output LLM: $DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER/$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL" >> "$LOG_PATH"
+echo "- Workspace tools: Enabled" >> "$LOG_PATH"
+echo "- Workspace Semantic Search: $WORKSPACE_ENABLE_SEMANTIC_SEARCH" >> "$LOG_PATH"
+echo "- Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION" >> "$LOG_PATH"
+echo "- Token Threshold: $TOKEN_THRESHOLD_PERCENT (70%) | Fixed: ${FIXED_TOKEN_THRESHOLD} tokens" >> "$LOG_PATH"
+echo "- Keep Last Messages: $SUMMARY_KEEP_LAST_MESSAGES" >> "$LOG_PATH"
+echo "- Context Editing: $ENABLE_CONTEXT_EDITING (Threshold: ${CONTEXT_EDITING_THRESHOLD} tokens, Age: ${CONTEXT_EDITING_TURN_THRESHOLD} turns)" >> "$LOG_PATH"
+echo "=========================================" >> "$LOG_PATH"
+echo "" >> "$LOG_PATH"
 
 # Start the server with enhanced logging and structured output LLM
 echo "🚀 Starting MCP Agent Server with enhanced logging..."
-echo "📝 Log file: $LOG_FILE"
+echo "📝 Log file: $LOG_PATH"
 echo "🧠 Agent Mode: $DEEP_SEARCH_AGENT_MODE"
 echo "🔀 Split Execution Learning: $SPLIT_EXECUTION_LEARNING"
 echo "⏱️  Tool Timeout: $TOOL_EXECUTION_TIMEOUT"
@@ -263,7 +267,6 @@ if [ "$BACKGROUND_MODE" = true ]; then
     go run main.go server \
         --log-level debug \
         --debug \
-        --log-file "$LOG_FILE" \
         --db-type "$DB_TYPE_FLAG" \
         --db-path "./chat_history.db" \
         --provider "$DEEP_SEARCH_MAIN_LLM_PROVIDER" \
@@ -274,18 +277,18 @@ if [ "$BACKGROUND_MODE" = true ]; then
         --agent-mode "$DEEP_SEARCH_AGENT_MODE" \
         --structured-output-provider "$DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER" \
         --structured-output-model "$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL" \
-        --structured-output-temp "$DEEP_SEARCH_STRUCTURED_OUTPUT_TEMPERATURE" >> "$LOG_FILE" 2>&1 &
+        --structured-output-temp "$DEEP_SEARCH_STRUCTURED_OUTPUT_TEMPERATURE" >> "$LOG_PATH" 2>&1 &
     
     SERVER_PID=$!
     echo "✅ Server started in background (PID: $SERVER_PID)"
-    echo "📝 Logs are being written to: $LOG_FILE"
+    echo "📝 Logs are being written to: $LOG_PATH"
     echo "🛑 To stop the server, run: kill $SERVER_PID"
     
     # Wait a moment to check if server started successfully
     sleep 3
     if ! kill -0 $SERVER_PID 2>/dev/null; then
-        echo "❌ Error: Server process died immediately. Check logs: $LOG_FILE"
-        tail -20 "$LOG_FILE"
+        echo "❌ Error: Server process died immediately. Check logs: $LOG_PATH"
+        tail -20 "$LOG_PATH"
         exit 1
     fi
     
@@ -294,7 +297,7 @@ if [ "$BACKGROUND_MODE" = true ]; then
         echo "✅ Server is running and listening on port 8000"
     else
         echo "⚠️  Warning: Server process is running but not listening on port 8000 yet"
-        echo "   Check logs: $LOG_FILE"
+        echo "   Check logs: $LOG_PATH"
     fi
 else
     # Foreground mode: run in foreground with output visible
@@ -305,7 +308,6 @@ else
     go run main.go server \
         --log-level debug \
         --debug \
-        --log-file "$LOG_FILE" \
         --db-type "$DB_TYPE_FLAG" \
         --db-path "./chat_history.db" \
         --provider "$DEEP_SEARCH_MAIN_LLM_PROVIDER" \
@@ -316,17 +318,17 @@ else
         --agent-mode "$DEEP_SEARCH_AGENT_MODE" \
         --structured-output-provider "$DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER" \
         --structured-output-model "$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL" \
-        --structured-output-temp "$DEEP_SEARCH_STRUCTURED_OUTPUT_TEMPERATURE"
+        --structured-output-temp "$DEEP_SEARCH_STRUCTURED_OUTPUT_TEMPERATURE" >> "$LOG_PATH" 2>&1
     
     EXIT_CODE=$?
     if [ $EXIT_CODE -ne 0 ]; then
         echo ""
         echo "❌ Error: Server exited with code $EXIT_CODE"
-        echo "📝 Check logs for details: $LOG_FILE"
-        if [ -f "$LOG_FILE" ]; then
+        echo "📝 Check logs for details: $LOG_PATH"
+        if [ -f "$LOG_PATH" ]; then
             echo ""
             echo "Last 20 lines of log file:"
-            tail -20 "$LOG_FILE"
+            tail -20 "$LOG_PATH"
         fi
         exit $EXIT_CODE
     fi

@@ -7,7 +7,7 @@ export { EventViewer } from './EventViewer'
 export { WorkflowCanvas, WorkflowToolbar, NodeDetailPanel } from './canvas'
 
 // Custom nodes
-export { StepNode, ConditionalNode, LoopNode, ValidationNode, LearningNode, StartNode, EndNode, nodeTypes } from './nodes'
+export { StepNode, ConditionalNode, LoopNode, StartNode, EndNode, nodeTypes } from './nodes'
 
 // Hooks
 export { 
@@ -21,8 +21,6 @@ export type {
   StepNodeData,
   ConditionalNodeData,
   LoopNodeData,
-  ValidationNodeData,
-  LearningNodeData,
   WorkflowNodeData,
   WorkflowNode,
   WorkflowEdge,

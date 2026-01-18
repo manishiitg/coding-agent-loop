@@ -342,14 +342,24 @@ func (s *SQLiteDB) DeleteWorkflowSessions(ctx context.Context) (int64, error) {
 }
 
 // ListChatSessions lists chat sessions with pagination
-func (s *SQLiteDB) ListChatSessions(ctx context.Context, limit, offset int, presetQueryID *string) ([]ChatHistorySummary, int, error) {
+func (s *SQLiteDB) ListChatSessions(ctx context.Context, limit, offset int, presetQueryID *string, agentMode *string) ([]ChatHistorySummary, int, error) {
 	// Build WHERE clause for filtering
-	var whereClause string
+	var whereConditions []string
 	var args []interface{}
 
 	if presetQueryID != nil && *presetQueryID != "" {
-		whereClause = " WHERE cs.preset_query_id = ?"
+		whereConditions = append(whereConditions, "cs.preset_query_id = ?")
 		args = append(args, *presetQueryID)
+	}
+
+	if agentMode != nil && *agentMode != "" {
+		whereConditions = append(whereConditions, "cs.agent_mode = ?")
+		args = append(args, *agentMode)
+	}
+
+	var whereClause string
+	if len(whereConditions) > 0 {
+		whereClause = " WHERE " + strings.Join(whereConditions, " AND ")
 	}
 
 	// Validate WHERE clause for safety

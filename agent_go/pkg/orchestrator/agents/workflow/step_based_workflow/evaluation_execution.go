@@ -62,11 +62,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	// Convert evaluation steps to PlanStepInterface
 	breakdownSteps := evaluationPlan.ToPlanSteps()
 
-	// Configure evaluation steps: disable validation, enable learning
+	// Set evaluation mode flag - this causes learnings to be stored in evaluation/learnings/
+	// and ensures step_config.json is read from evaluation/ directory
+	hcpo.isEvaluationMode = true
+
+	// Configure evaluation steps: apply configs from step_config.json, disable validation, enable learning
 	// Validation is disabled (steps auto-approve), learning is enabled to capture insights from evaluation runs
 	for i, step := range breakdownSteps {
+		// Apply configuration from evaluation/step_config.json if it exists
+		if err := ApplyStepConfigFromFile(ctx, step, hcpo); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to apply step config for step %d: %v", i+1, err))
+		}
+
 		if evalStep, ok := step.(*EvaluationStep); ok {
-			// Initialize AgentConfigs if nil
+			// Initialize AgentConfigs if nil (if ApplyStepConfigFromFile didn't create it)
 			if evalStep.AgentConfigs == nil {
 				evalStep.AgentConfigs = &AgentConfigs{}
 			}
@@ -82,6 +91,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	// Initialize or load progress
 	progress, err := hcpo.loadStepProgress(ctx)
 	if err != nil {
+		hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ No existing evaluation progress file found, initializing fresh progress: %v", err))
 		progress = &StepProgress{
 			CompletedStepIndices:     []int{},
 			TotalSteps:               len(breakdownSteps),
@@ -91,9 +101,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 			DecisionEvaluationCounts: make(DecisionEvaluationCount),
 		}
 	}
-
-	// Set evaluation mode flag - this causes learnings to be stored in evaluation/learnings/
-	hcpo.isEvaluationMode = true
 
 	// Build execution context with human input skipped for automated evaluation
 	hcpo.SetSkipHumanInput(true) // Evaluation runs are always automated - no human feedback prompts

@@ -1,21 +1,8 @@
 import React from 'react'
-
-interface StepProgressUpdatedEventData {
-  completed_step_indices?: number[]
-  total_steps?: number
-  last_completed_step?: number
-  workspace_path?: string
-  run_folder?: string
-  metadata?: {
-    orchestrator_agent_name?: string
-    orchestrator_iteration?: number
-    orchestrator_phase?: string
-    orchestrator_step?: number
-  }
-}
+import type { StepProgressUpdatedEvent } from '../../../generated/events-bridge'
 
 interface StepProgressUpdatedEventDisplayProps {
-  event: StepProgressUpdatedEventData
+  event: StepProgressUpdatedEvent
   compact?: boolean
 }
 
@@ -27,19 +14,29 @@ export const StepProgressUpdatedEventDisplay: React.FC<StepProgressUpdatedEventD
     <div className={`bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>
       <div className={`${compact ? 'text-xs' : 'text-sm'} text-green-700 dark:text-green-300`}>
         <div className="font-medium">Step Progress Updated</div>
-        {event.total_steps !== undefined && event.completed_step_indices && (
+        {event.status && (
           <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-green-600 dark:text-green-400 mt-1`}>
-            Progress: {event.completed_step_indices.length} / {event.total_steps} steps completed
+            Status: {event.status === 'start' ? 'Step Started' : event.status === 'end' ? 'Step Ended' : event.status === 'stop' ? 'Step Stopped' : event.status}
           </div>
         )}
-        {event.last_completed_step !== undefined && (
-          <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-green-500 dark:text-green-500 mt-1`}>
-            Last completed: Step {event.last_completed_step + 1}
+        {event.current_step_id && (
+          <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-green-600 dark:text-green-400 mt-1`}>
+            Current Step: {event.current_step_id}
           </div>
         )}
-        {event.metadata?.orchestrator_phase && (
+        {event.status && (
           <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-green-500 dark:text-green-500 mt-1`}>
-            Phase: {event.metadata.orchestrator_phase}
+            Status: {event.status === 'start' ? 'Started' : event.status === 'end' ? 'Ended' : event.status}
+          </div>
+        )}
+        {event.run_folder && (
+          <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-green-500 dark:text-green-500 mt-1`}>
+            Run Folder: {event.run_folder}
+          </div>
+        )}
+        {event.metadata && typeof event.metadata === 'object' && 'orchestrator_phase' in event.metadata && (
+          <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-green-500 dark:text-green-500 mt-1`}>
+            Phase: {String(event.metadata.orchestrator_phase)}
           </div>
         )}
       </div>

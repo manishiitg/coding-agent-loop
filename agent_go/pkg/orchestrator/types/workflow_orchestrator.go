@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -79,6 +80,12 @@ func GetWorkflowConstants() WorkflowConstants {
 				Options:     []WorkflowPhaseOption{},
 			},
 			{
+				ID:          "evaluation-debugger",
+				Title:       "Evaluation Debugger",
+				Description: "Analyze evaluation results and plan to provide feedback and suggestions for improving the evaluation plan based on scores.",
+				Options:     []WorkflowPhaseOption{},
+			},
+			{
 				ID:          "plan-improvement",
 				Title:       "Plan Debugger",
 				Description: "Analyze execution results, plan.json, learnings folder, and validation reports to provide feedback and suggestions for improving the plan based on real execution outcomes.",
@@ -107,6 +114,12 @@ func GetWorkflowConstants() WorkflowConstants {
 				Title:       "Learning Consolidation",
 				Description: "Analyze and consolidate learning files to identify duplicate patterns, similar patterns, and outdated patterns. Merges redundant patterns and optimizes learning structure for better future execution efficiency.",
 				Options:     []WorkflowPhaseOption{}, // No options for consolidation phase
+			},
+			{
+				ID:          "code-exec-debugging",
+				Title:       "Code Debugger",
+				Description: "Analyze execution logs and conversation history for code execution steps. Identifies common errors like hardcoded paths, incorrect CLI arguments, and workspace tool misuse, providing specific fixes to the plan.",
+				Options:     []WorkflowPhaseOption{}, // No options for code debugger phase
 			},
 		},
 	}
@@ -159,6 +172,10 @@ type WorkflowOrchestrator struct {
 	presetPhaseLLM                *step_based_workflow.AgentLLMConfig // Default for all phase agents (planning, anonymization, plan improvement, etc.)
 	presetPlanImprovementLLM      *step_based_workflow.AgentLLMConfig // Default for plan improvement agent
 	presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig // Default for plan tool optimization agent
+	presetCodeExecDebuggingLLM    *step_based_workflow.AgentLLMConfig // Default for code exec debugging agent
+
+	// Preset-level feature toggles
+	useKnowledgebase bool // Whether to create and reference knowledgebase folder (default: true)
 
 	// Frontend-provided execution options (when provided, skips interactive prompts)
 	executionOptions *step_based_workflow.ExecutionOptions
@@ -181,6 +198,11 @@ func (wo *WorkflowOrchestrator) SetExecutionOptions(options *step_based_workflow
 // GetExecutionOptions returns the current execution options
 func (wo *WorkflowOrchestrator) GetExecutionOptions() *step_based_workflow.ExecutionOptions {
 	return wo.executionOptions
+}
+
+// UseKnowledgebase returns whether the knowledgebase feature is enabled
+func (wo *WorkflowOrchestrator) UseKnowledgebase() bool {
+	return wo.useKnowledgebase
 }
 
 // Human verification types
@@ -219,9 +241,8 @@ type TodoVerificationResponse struct {
 }
 
 // NewWorkflowOrchestrator creates a new workflow orchestrator
+// Note: provider and model parameters removed - LLM selection uses temp override → step config → preset LLM priority
 func NewWorkflowOrchestrator(
-	provider string,
-	model string,
 	mcpConfigPath string,
 	temperature float64,
 	agentMode string,
@@ -240,12 +261,11 @@ func NewWorkflowOrchestrator(
 ) (*WorkflowOrchestrator, error) {
 
 	// Create base orchestrator
+	// Note: provider and model parameters removed - not used for workflow orchestrator (LLM comes from temp override/step config/preset)
 	baseOrchestrator, err := orchestrator.NewBaseOrchestrator(
 		logger,
 		eventBridge,
 		orchestrator.OrchestratorTypeWorkflow,
-		provider,
-		model,
 		mcpConfigPath,
 		temperature,
 		agentMode,
@@ -271,12 +291,16 @@ func NewWorkflowOrchestrator(
 				Provider: presetLLMConfig.ExecutionLLM.Provider,
 				ModelID:  presetLLMConfig.ExecutionLLM.ModelID,
 			}
+			log.Printf("[PRESET_EXECUTION_LLM_DEBUG] Extracted presetExecutionLLM from ExecutionLLM: %s/%s", presetExecutionLLM.Provider, presetExecutionLLM.ModelID)
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
 			// Fall back to legacy single default for execution
 			presetExecutionLLM = &step_based_workflow.AgentLLMConfig{
 				Provider: presetLLMConfig.Provider,
 				ModelID:  presetLLMConfig.ModelID,
 			}
+			log.Printf("[PRESET_EXECUTION_LLM_DEBUG] Extracted presetExecutionLLM from legacy Provider/ModelID: %s/%s", presetExecutionLLM.Provider, presetExecutionLLM.ModelID)
+		} else {
+			log.Printf("[PRESET_EXECUTION_LLM_DEBUG] No presetExecutionLLM found - presetLLMConfig.ExecutionLLM is nil and legacy Provider/ModelID are empty")
 		}
 		if presetLLMConfig.ValidationLLM != nil && presetLLMConfig.ValidationLLM.Provider != "" && presetLLMConfig.ValidationLLM.ModelID != "" {
 			presetValidationLLM = &step_based_workflow.AgentLLMConfig{
@@ -321,6 +345,14 @@ func NewWorkflowOrchestrator(
 			presetPlanToolOptimizationLLM = presetLearningLLM
 			// Note: presetAnonymizationLLM and presetLearningConsolidationLLM are deprecated and removed
 		}
+	} else {
+		log.Printf("[PRESET_EXECUTION_LLM_DEBUG] presetLLMConfig is nil - no preset LLM config provided")
+	}
+
+	// Extract feature toggles from preset config
+	useKnowledgebase := true // Default to enabled
+	if presetLLMConfig != nil && presetLLMConfig.UseKnowledgebase != nil {
+		useKnowledgebase = *presetLLMConfig.UseKnowledgebase
 	}
 
 	// Create workflow orchestrator instance
@@ -332,6 +364,7 @@ func NewWorkflowOrchestrator(
 		presetPhaseLLM:                presetPhaseLLM,
 		presetPlanImprovementLLM:      presetPlanImprovementLLM,
 		presetPlanToolOptimizationLLM: presetPlanToolOptimizationLLM,
+		useKnowledgebase:              useKnowledgebase,
 	}
 
 	return wo, nil
@@ -380,6 +413,10 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return wo.runEvaluationExecutionOnly(ctx, objective, selectedOptions)
 	}
 
+	if workflowStatus == "evaluation-debugger" {
+		return wo.runEvaluationDebugger(ctx, objective, selectedOptions)
+	}
+
 	if workflowStatus == "plan-improvement" {
 		return wo.runPlanImprovement(ctx, objective, selectedOptions)
 	}
@@ -400,9 +437,44 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return wo.runLearningConsolidation(ctx, objective, selectedOptions)
 	}
 
+	if workflowStatus == "code-exec-debugging" {
+		return wo.runCodeExecDebugging(ctx, objective, selectedOptions)
+	}
+
 	// All other workflow statuses (execution) go through execution phase
 	// Execution requires both variables.json and plan.json to exist
 	return wo.runPlanning(ctx, objective, selectedOptions)
+}
+
+// runCodeExecDebugging runs only the code execution debugging phase
+func (wo *WorkflowOrchestrator) runCodeExecDebugging(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Code Execution Debugging Phase"))
+
+	// Create code exec debugging manager directly (independent from controller)
+	debuggingManager := step_based_workflow.NewCodeExecDebuggingManager(
+		wo.BaseOrchestrator,
+		wo.presetPhaseLLM, // Use phase LLM for debugging as requested
+		wo.getSessionID(),
+		wo.getWorkflowID(),
+	)
+
+	// Extract selected_run_folder from execution options if available
+	var runPath string
+	if wo.executionOptions != nil && wo.executionOptions.SelectedRunFolder != "" {
+		runPath = wo.executionOptions.SelectedRunFolder
+		wo.GetLogger().Info(fmt.Sprintf("📊 Using selected_run_folder from execution options: %s", runPath))
+	} else {
+		wo.GetLogger().Info(fmt.Sprintf("📊 No selected_run_folder in execution options, will ask user for path"))
+	}
+
+	// Run only code exec debugging
+	result, err := debuggingManager.CodeExecDebuggingOnly(ctx, wo.GetWorkspacePath(), runPath)
+	if err != nil {
+		return "", fmt.Errorf("code execution debugging failed: %w", err)
+	}
+
+	wo.GetLogger().Info(fmt.Sprintf("✅ Code execution debugging completed successfully"))
+	return result, nil
 }
 
 // runPlanningOnly runs only the planning phase
@@ -411,10 +483,15 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 
 	// Create human controlled planner orchestrator (needed for planning)
 	llmConfig := wo.GetLLMConfig()
+	if wo.presetExecutionLLM != nil {
+		wo.GetLogger().Info(fmt.Sprintf("[PRESET_EXECUTION_LLM_DEBUG] [runPlanningOnly] presetExecutionLLM: %s/%s", wo.presetExecutionLLM.Provider, wo.presetExecutionLLM.ModelID))
+	} else {
+		wo.GetLogger().Info("[PRESET_EXECUTION_LLM_DEBUG] [runPlanningOnly] presetExecutionLLM is nil")
+	}
 	todoPlannerAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
 		ctx,
-		wo.GetProvider(),
-		wo.GetModel(),
+		"", // provider (not used - LLM comes from temp override/step config/preset)
+		"", // model (not used - LLM comes from temp override/step config/preset)
 		wo.GetTemperature(),
 		wo.GetAgentMode(),
 		wo.GetSelectedServers(),
@@ -435,6 +512,7 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 		wo.presetPhaseLLM,
 		nil, // presetAnonymizationLLM (deprecated, no longer used)
 		wo.presetPlanImprovementLLM,
+		wo.useKnowledgebase, // Feature toggle for knowledgebase
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
@@ -475,6 +553,37 @@ func (wo *WorkflowOrchestrator) runEvaluationDesignerOnly(ctx context.Context, o
 	return result, nil
 }
 
+// runEvaluationDebugger runs only the evaluation debugger phase
+func (wo *WorkflowOrchestrator) runEvaluationDebugger(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Evaluation Debugger Phase"))
+
+	// Create evaluation debugger manager directly
+	debuggerManager := step_based_workflow.NewEvaluationDebuggerManager(
+		wo.BaseOrchestrator,
+		wo.presetPhaseLLM, // Use phase LLM for debugging
+		wo.getSessionID(),
+		wo.getWorkflowID(),
+	)
+
+	// Extract selected_run_folder from execution options if available
+	var runPath string
+	if wo.executionOptions != nil && wo.executionOptions.SelectedRunFolder != "" {
+		runPath = wo.executionOptions.SelectedRunFolder
+		wo.GetLogger().Info(fmt.Sprintf("📊 Using selected_run_folder from execution options: %s", runPath))
+	} else {
+		wo.GetLogger().Info(fmt.Sprintf("📊 No selected_run_folder in execution options, will ask user for path"))
+	}
+
+	// Run only evaluation debugger
+	result, err := debuggerManager.EvaluationDebuggerOnly(ctx, wo.GetWorkspacePath(), runPath)
+	if err != nil {
+		return "", fmt.Errorf("evaluation debugger failed: %w", err)
+	}
+
+	wo.GetLogger().Info(fmt.Sprintf("✅ Evaluation debugger completed successfully"))
+	return result, nil
+}
+
 // runEvaluationExecutionOnly runs only the evaluation execution phase
 func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
 	wo.GetLogger().Info("🚀 Starting Evaluation Execution Phase")
@@ -505,8 +614,8 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 	llmConfig := wo.GetLLMConfig()
 	todoPlannerAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
 		ctx,
-		wo.GetProvider(),
-		wo.GetModel(),
+		"", // provider (not used - LLM comes from temp override/step config/preset)
+		"", // model (not used - LLM comes from temp override/step config/preset)
 		wo.GetTemperature(),
 		wo.GetAgentMode(),
 		wo.GetSelectedServers(),
@@ -527,6 +636,7 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		wo.presetPhaseLLM,
 		nil,
 		wo.presetPlanImprovementLLM,
+		wo.useKnowledgebase, // Feature toggle for knowledgebase
 	)
 	if err != nil {
 		wo.GetLogger().Error(fmt.Sprintf("❌ Failed to create orchestrator: %v", err), nil)
@@ -581,6 +691,7 @@ func (wo *WorkflowOrchestrator) runPlanImprovement(ctx context.Context, objectiv
 		wo.presetPhaseLLM, // Pass phase LLM for fallback
 		wo.getSessionID(),
 		wo.getWorkflowID(),
+		wo.useKnowledgebase,
 	)
 
 	// Extract selected_run_folder from execution options if available
@@ -615,6 +726,7 @@ func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, obj
 		wo.getSessionID(),
 		wo.getWorkflowID(),
 		wo.presetPhaseLLM, // Pass phase LLM (primary LLM for plan tool optimization)
+		wo.useKnowledgebase,
 	)
 
 	// Run only tool optimization (with optional step ID for step-specific execution)
@@ -708,10 +820,15 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 
 	// Create human controlled planner orchestrator directly
 	llmConfig := wo.GetLLMConfig()
+	if wo.presetExecutionLLM != nil {
+		wo.GetLogger().Info(fmt.Sprintf("[PRESET_EXECUTION_LLM_DEBUG] [runHumanControlledPlanning] presetExecutionLLM: %s/%s", wo.presetExecutionLLM.Provider, wo.presetExecutionLLM.ModelID))
+	} else {
+		wo.GetLogger().Info("[PRESET_EXECUTION_LLM_DEBUG] [runHumanControlledPlanning] presetExecutionLLM is nil")
+	}
 	todoPlannerAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
 		ctx,
-		wo.GetProvider(),
-		wo.GetModel(),
+		"", // provider (not used - LLM comes from temp override/step config/preset)
+		"", // model (not used - LLM comes from temp override/step config/preset)
 		wo.GetTemperature(),
 		wo.GetAgentMode(),
 		wo.GetSelectedServers(),
@@ -732,6 +849,7 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.presetPhaseLLM,
 		nil, // presetAnonymizationLLM (deprecated, no longer used)
 		wo.presetPlanImprovementLLM,
+		wo.useKnowledgebase, // Feature toggle for knowledgebase
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
@@ -891,11 +1009,13 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 					database.WorkflowStatusPreVerification, // Execution phase
 					"evaluation-designer",                  // Evaluation Designer phase
 					"evaluation-execution",                 // Evaluation execution phase
+					"evaluation-debugger",                  // Evaluation debugger phase
 					"plan-improvement",                     // Plan improvement phase
 					"plan-tool-optimization",               // Plan tool optimization phase
 					"learning-anonymization",               // Learning anonymization phase
 					"plan-learnings-alignment",             // Plan-learnings alignment phase
 					"learning-consolidation",               // Learning consolidation phase
+					"code-exec-debugging",                  // Code execution debugging phase
 				}
 				valid := false
 				for _, status := range validStatuses {

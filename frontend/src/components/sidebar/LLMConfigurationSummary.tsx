@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Settings, ChevronDown, ChevronRight } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
-import { useLLMStore } from '../../stores'
+import { useLLMStore, useAppStore } from '../../stores'
 
 interface LLMConfigurationSummaryProps {
   minimized?: boolean
@@ -10,10 +10,22 @@ interface LLMConfigurationSummaryProps {
 export default function LLMConfigurationSummary({
   minimized = false,
 }: LLMConfigurationSummaryProps) {
-  const { primaryConfig, agentConfig, savedLLMs, setShowLLMModal } = useLLMStore()
+  // Get current mode from app store
+  const agentMode = useAppStore(state => state.agentMode)
+  const currentMode: 'chat' | 'workflow' = agentMode === 'workflow' ? 'workflow' : 'chat'
+
+  const { getConfigForMode, setShowLLMModal, savedLLMs } = useLLMStore()
+
+  // Get mode-specific config
+  const modeConfig = getConfigForMode(currentMode)
+  const agentConfig = modeConfig.agentConfig
+  const primaryConfig = modeConfig.primaryConfig
+
   const [isExpanded, setIsExpanded] = useState(false)
 
   // Use agentConfig if available, otherwise fallback to primaryConfig
+  // agentConfig.primary is LLMModel, primaryConfig is LLMConfiguration
+  // Both have provider and model_id, so we can use either
   const currentLLM = agentConfig?.primary || primaryConfig
 
   // Get provider display info
@@ -38,7 +50,7 @@ export default function LLMConfigurationSummary({
 
   // Find matching published LLM for better label
   const publishedLLM = savedLLMs.find(
-    llm => llm.provider === currentLLM.provider && llm.model_id === currentLLM.model_id
+    (llm) => llm.provider === currentLLM.provider && llm.model_id === currentLLM.model_id
   )
   const modelDisplayName = publishedLLM?.name || currentLLM.model_id
 
@@ -74,6 +86,13 @@ export default function LLMConfigurationSummary({
           <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
             <Settings className="w-4 h-4" />
             LLM Configuration
+            <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+              currentMode === 'workflow'
+                ? 'bg-purple-500/20 text-purple-400'
+                : 'bg-blue-500/20 text-blue-400'
+            }`}>
+              {currentMode === 'workflow' ? 'Workflow' : 'Chat'}
+            </span>
           </h3>
           <button
             onClick={() => setIsExpanded(!isExpanded)}
@@ -112,7 +131,7 @@ export default function LLMConfigurationSummary({
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground">Fallbacks:</span>
                 <span className="text-sm font-mono text-foreground">
-                  {currentLLM.fallback_models?.length || 0}
+                  {agentConfig?.fallbacks?.length || primaryConfig.fallback_models?.length || 0}
                 </span>
               </div>
             </div>

@@ -62,6 +62,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 
   // Initialize state from step's agent_configs
   // Ensure validation is enabled for loop steps (required to check loop conditions)
+  // Ensure validation and learning are enabled for code execution mode
   const [agentConfigs, setAgentConfigs] = useState<AgentConfigs>(() => {
     const configs = step.agent_configs || {};
     console.log('[StepConfigDebug] Initializing agentConfigs from step:', {
@@ -72,14 +73,34 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       disable_validation: configs.disable_validation,
       configs,
     });
+    
+    // Determine effective code execution mode (step config > preset default)
+    const effectiveCodeExecMode = configs.use_code_execution_mode !== undefined 
+      ? configs.use_code_execution_mode 
+      : presetUseCodeExecutionMode;
+    
+    const updatedConfigs = { ...configs };
+    let needsUpdate = false;
+    
     // Force enable validation for loop steps
     if (step.has_loop && configs.disable_validation) {
-      return {
-        ...configs,
-        disable_validation: false,
-      };
+      updatedConfigs.disable_validation = false;
+      needsUpdate = true;
     }
-    return configs;
+    
+    // Force enable validation and learning for code execution mode
+    if (effectiveCodeExecMode) {
+      if (configs.disable_validation) {
+        updatedConfigs.disable_validation = false;
+        needsUpdate = true;
+      }
+      if (configs.disable_learning) {
+        updatedConfigs.disable_learning = false;
+        needsUpdate = true;
+      }
+    }
+    
+    return needsUpdate ? updatedConfigs : configs;
   });
 
   // Initialize step-level server/tool selection
@@ -161,7 +182,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       }
     }
     // Convert from old format (backward compatibility)
-    // @ts-expect-error - old format may still exist in database
     const oldCategories = configs.enabled_custom_tool_categories;
     const oldTools = configs.enabled_custom_tools;
     return convertOldFormatToNew(oldCategories, oldTools);
@@ -204,9 +224,28 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       
       // Reset agentConfigs state from step's config
       // Force enable validation for loop steps
-      const newAgentConfigs: AgentConfigs = step.has_loop && currentConfigs.disable_validation
-        ? { ...currentConfigs, disable_validation: false }
-        : currentConfigs;
+      // Force enable validation and learning for code execution mode
+      const effectiveCodeExecMode = currentConfigs.use_code_execution_mode !== undefined 
+        ? currentConfigs.use_code_execution_mode 
+        : presetUseCodeExecutionMode;
+      
+      const newAgentConfigs: AgentConfigs = { ...currentConfigs };
+      
+      // Force enable validation for loop steps
+      if (step.has_loop && currentConfigs.disable_validation) {
+        newAgentConfigs.disable_validation = false;
+      }
+      
+      // Force enable validation and learning for code execution mode
+      if (effectiveCodeExecMode) {
+        if (currentConfigs.disable_validation) {
+          newAgentConfigs.disable_validation = false;
+        }
+        if (currentConfigs.disable_learning) {
+          newAgentConfigs.disable_learning = false;
+        }
+      }
+      
       setAgentConfigs(newAgentConfigs);
       
       // Update servers: use step config if available, otherwise preset defaults
@@ -242,7 +281,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
           setEnabledCustomTools(currentConfigs.enabled_custom_tools);
         } else {
           // Convert from old format
-          // @ts-expect-error - old format may still exist in database
           const oldCategories = currentConfigs.enabled_custom_tool_categories;
           const oldTools = currentConfigs.enabled_custom_tools;
           setEnabledCustomTools(convertOldFormatToNew(oldCategories, oldTools));
@@ -679,13 +717,13 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       const codeExecLabel = effectiveCodeExecMode ? 'Code Exec' : 'Simple';
       parts.push(`Exec: ${execLLM.label} (${codeExecLabel})`);
     }
-    if (valLLM && !agentConfigs.disable_validation) parts.push(`Val: ${valLLM.label}`);
+    if (valLLM && agentConfigs.disable_validation === false) parts.push(`Val: ${valLLM.label}`);
     if (learnLLM && !agentConfigs.disable_learning) {
       const detailLevel = agentConfigs.learning_detail_level || 'exact';
       const detailLabel = detailLevel === 'exact' ? 'Exact' : 'General';
       parts.push(`Learn: ${learnLLM.label} (${detailLabel})`);
     }
-    if (agentConfigs.disable_validation) parts.push('Val: Disabled');
+    if (agentConfigs.disable_validation !== false) parts.push('Val: Disabled');
     if (agentConfigs.disable_learning) parts.push('Learn: Disabled');
     
     return parts.length > 0 ? parts.join(' • ') : 'Default config';
@@ -1227,7 +1265,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     >
                       <input
                         type="checkbox"
-                        checked={agentConfigs.disable_validation || false}
+                        checked={agentConfigs.disable_validation !== false}
                         onChange={(e) => {
                           if (!isDisabled) {
                             handleToggleChange('disable_validation', e.target.checked);
@@ -1237,13 +1275,13 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                         className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                       />
                       <span className="text-xs text-gray-600 dark:text-gray-400">
-                        Disable{step.has_loop && ' (Required for loops)'}{effectiveCodeExecMode && !step.has_loop && ' (Auto-enabled)'}
+                        Disable{step.has_loop && ' (Required for loops)'}
                       </span>
                     </label>
                   );
                 })()}
               </div>
-              {!agentConfigs.disable_validation ? (
+              {agentConfigs.disable_validation === false ? (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <div className="flex-1 min-w-0">

@@ -1516,27 +1516,13 @@ export interface StepProgressUpdatedEvent {
   metadata?: {
     [k: string]: unknown;
   };
-  completed_step_indices?: number[];
-  total_steps?: number;
   workspace_path?: string;
   run_folder?: string;
-  last_completed_step?: number;
-  last_completed_step_id?: string;
-  last_completed_step_title?: string;
-  branch_steps?: {
-    [k: string]: BranchStepProgress;
-  };
-  validation_failures?: {
-    [k: string]: number;
-  };
-}
-/**
- * This interface was referenced by `undefined`'s JSON-Schema definition
- * via the `patternProperty` "^[0-9]+$".
- */
-export interface BranchStepProgress {
-  branch_executed?: string;
-  completed_steps?: string[];
+  current_step_id?: string;
+  /**
+   * Status: 'start' (step started), 'stop' (step stopped), 'end' (step ended), or empty (regular progress update)
+   */
+  status?: string;
 }
 export interface DecisionEvaluatedEvent {
   timestamp?: string;
@@ -2295,6 +2281,12 @@ export interface BatchExecutionStartEvent {
   enabled_group_ids?: string[];
   iteration_number?: number;
   workspace_path?: string;
+  /**
+   * Execution options (run_mode, execution_strategy, etc.)
+   */
+  execution_options?: {
+    [k: string]: unknown;
+  };
 }
 export interface BatchGroupStartEvent {
   timestamp?: string;

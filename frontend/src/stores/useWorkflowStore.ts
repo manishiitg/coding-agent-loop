@@ -1,18 +1,14 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
-import type { WorkflowPhase, StepProgress, ExecutionOptions, AgentLLMConfig, VariablesManifest } from '../services/api-types'
+import type { WorkflowPhase, StepProgress, ExecutionOptions, AgentLLMConfig, VariablesManifest, EvaluationPlan } from '../services/api-types'
 import { ExecutionStrategy } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { useChatStore } from './useChatStore'
-import { resolveGroupFolderPath, extractGroupIdFromFolder } from '../utils/workflowUtils'
+import { resolveGroupFolderPath } from '../utils/workflowUtils'
+import { normalizeStartPoint, normalizeRunFolder } from '../utils/workflowStateNormalization'
 
 // Execution mode options
 export type ExecutionModeType = 'human_approval' | 'fast_execution' | 'with_learning'
-
-// LocalStorage key prefix for persisting workflow settings
-const STORAGE_KEY_PREFIX = 'workflow_settings_'
-const getStorageKey = (presetId: string, setting: 'iteration' | 'execution_mode' | 'start_point' | 'selected_groups') =>
-  `${STORAGE_KEY_PREFIX}${presetId}_${setting}`
 
 // Global localStorage key for temporary LLM overrides (persists across page refreshes)
 const TEMP_OVERRIDE_LLM_KEY = 'workflow_temp_override_llm'
@@ -21,9 +17,12 @@ const TEMP_OVERRIDE_LLM_ENABLED_KEY = 'workflow_temp_override_llm_enabled'
 const FALLBACK_TO_ORIGINAL_LLM_KEY = 'workflow_fallback_to_original_llm_on_failure'
 const SKIP_LEARNING_WHEN_TEMP_LLM1_KEY = 'workflow_skip_learning_when_temp_llm1'
 const SKIP_LEARNING_WHEN_TEMP_LLM2_KEY = 'workflow_skip_learning_when_temp_llm2'
-const SAVE_VALIDATION_RESPONSES_KEY = 'workflow_save_validation_responses'
-const DISABLE_SHELL_EXEC_ACCESS_KEY = 'workflow_disable_shell_exec_access'
-const DISABLE_READ_IMAGE_ACCESS_KEY = 'workflow_disable_read_image_access'
+const TEMP_LEARNING_LLM_KEY = 'workflow_temp_learning_llm'
+const SELECTED_GROUP_IDS_KEY = 'workflow_selected_group_ids'
+const CURRENT_RUNNING_GROUP_ID_KEY = 'workflow_current_running_group_id'
+const SELECTED_RUN_FOLDER_KEY = 'workflow_selected_run_folder'
+// NOTE: Running workflows logic has been moved to useRunningWorkflowsStore.ts
+// This store now focuses on workflow execution state and configuration
 
 export interface RunFolder {
   name: string
@@ -54,11 +53,12 @@ interface WorkflowStore {
   // === EXECUTION STATE (per workflow session) ===
   // Run folder management
   runFolders: RunFolder[]
-  selectedRunFolder: string // 'new' or folder name
+  selectedRunFolder: string | null // Folder name or null
   isLoadingRunFolders: boolean
 
   // Step progress
   stepProgress: StepProgress | null
+  stepProgressFolder: string | null // Track which folder the current progress belongs to
   isLoadingProgress: boolean
 
       // Execution options
@@ -78,6 +78,7 @@ interface WorkflowStore {
       fallbackToOriginalLLMOnFailure: boolean  // If true, use original LLM instead of temp override when validation fails
       skipLearningWhenTempLLM1: boolean  // If true, skip learning phases when tempLLM1 is used
       skipLearningWhenTempLLM2: boolean  // If true, skip learning phases when tempLLM2 is used
+      tempLearningLLM: AgentLLMConfig | null  // Temp LLM for learning agents (used when learnings already exist for a step)
       saveValidationResponses: boolean  // If true, save validation responses to workspace validation folder
       disableShellExecAccess: boolean  // If true, disable all execute_shell_command tool access globally
       disableReadImageAccess: boolean  // If true, disable all read_image tool access globally
@@ -85,11 +86,32 @@ interface WorkflowStore {
   // Variables manifest (for batch execution with multiple groups)
   variablesManifest: VariablesManifest | null
 
+  // Track current preset ID to detect page reload vs preset switch
+  _currentPresetId: string | null
+
   // Selected group IDs for execution (multi-select)
   selectedGroupIds: string[] // Array of group IDs to execute
 
   // Current running group (for batch execution)
   currentRunningGroupId: string | null
+
+  // Current step being executed (for auto-focus on canvas)
+  currentStepId: string | null
+
+  // Step execution status map (stepId -> status)
+  stepStatusMap: Map<string, 'pending' | 'running' | 'completed' | 'failed'>
+
+  // Batch execution progress (for progress header display)
+  batchProgress: {
+    isActive: boolean
+    totalGroups: number
+    currentGroupIndex: number
+    currentGroupId: string | null
+    completedCount: number
+    failedCount: number
+    remainingCount: number
+    startTime: number | null
+  } | null
 
   // UI state
   activePhase: string | null // Currently running phase
@@ -99,20 +121,29 @@ interface WorkflowStore {
   workflowChatTabs: Record<string, WorkflowChatTab>  // tabId -> tab
   activeWorkflowTabId: string | null  // Currently selected tab
 
+  // === WORKFLOW MODE STATE ===
+  workflowMode: 'plan' | 'eval'
+  evaluationPlan: EvaluationPlan | null
+  evaluationStepProgress: StepProgress | null
+  isLoadingEvaluationPlan: boolean
+
   // === ACTIONS ===
   // Constants
   loadPhases: () => Promise<void>
+  setPhases: (phases: WorkflowPhase[]) => void
   getPhaseById: (id: string) => WorkflowPhase | undefined
   getDefaultPhase: () => string
   getStepSpecificPhases: () => WorkflowPhase[]
 
   // Run folders
   loadRunFolders: (workspacePath: string) => Promise<void>
-  setSelectedRunFolder: (folder: string) => void
+  setRunFolders: (folders: RunFolder[]) => void
+  setSelectedRunFolder: (folder: string | null) => void
 
   // Progress
   loadProgress: (workspacePath: string, runFolder: string, forceLoad?: boolean) => Promise<void>
   loadFolderProgressOnDemand: (workspacePath: string, folderName: string) => Promise<void>
+  setStepProgress: (progress: StepProgress | null) => void
   getCompletedStepIndices: () => number[]
   updateStepProgressFromEvent: (progress: StepProgress) => void
 
@@ -131,7 +162,9 @@ interface WorkflowStore {
   setFallbackToOriginalLLMOnFailure: (enabled: boolean) => void
   setSkipLearningWhenTempLLM1: (enabled: boolean) => void
   setSkipLearningWhenTempLLM2: (enabled: boolean) => void
-  setSaveValidationResponses: (enabled: boolean) => void
+  setTempLearningLLM: (config: AgentLLMConfig | null) => void
+  clearTempLearningLLM: () => void
+  setSaveValidationResponses: () => void
   setDisableShellExecAccess: (enabled: boolean) => void
   setDisableReadImageAccess: (enabled: boolean) => void
 
@@ -142,9 +175,26 @@ interface WorkflowStore {
   toggleGroupSelection: (groupId: string) => void
   setSelectedGroupIds: (groupIds: string[]) => void
   clearSelectedGroupIds: () => void
+  // Restore selection state from localStorage (called after API load completes)
+  restoreSelectionFromLocalStorage: () => void
 
   // Current running group
   setCurrentRunningGroupId: (groupId: string | null) => void
+
+  // Current step (for auto-focus on canvas)
+  setCurrentStepId: (stepId: string | null) => void
+
+  // Step status updates
+  setStepStatus: (stepId: string, status: 'pending' | 'running' | 'completed' | 'failed') => void
+  clearStepStatusMap: () => void
+
+  // Consolidated batch group switching handler
+  // Handles group start/end events and updates state atomically
+  handleBatchGroupStart: (groupId: string, runFolder: string, workspacePath?: string, groupIndex?: number, totalGroups?: number) => void
+  handleBatchGroupEnd: (groupId: string, success?: boolean, remainingGroups?: number) => void
+
+  // Reset batch progress (called when batch completes or is canceled)
+  resetBatchProgress: () => void
 
   // UI
   setActivePhase: (phase: string | null) => void
@@ -165,9 +215,16 @@ interface WorkflowStore {
   // Check if tab has completion events
   checkTabCompletion: (tabId: string, events: Array<{ type: string }>) => boolean
 
+  // Workflow Mode Actions
+  setWorkflowMode: (mode: 'plan' | 'eval') => void
+  setEvaluationPlan: (plan: EvaluationPlan | null) => void
+  loadEvaluationPlan: (workspacePath: string) => Promise<void>
+
   // Persistence (localStorage)
   loadSavedSettings: (presetId: string) => void
-  saveSettings: (presetId: string) => void
+  saveSettings: () => void
+  // Switch to a new preset - resets context and loads settings in one update
+  switchToPreset: (presetId: string) => void
 
   // Reset
   resetExecutionState: () => void
@@ -186,15 +243,37 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       // Run folders
       runFolders: [],
-      selectedRunFolder: 'new',
+      // Selected run folder (persists across page refreshes via localStorage)
+      // Can be stored in combined format: { groupIds: [...], runFolder: "..." } or separate key
+      selectedRunFolder: (() => {
+        try {
+          // First try combined format
+          const groupData = localStorage.getItem(SELECTED_GROUP_IDS_KEY)
+          if (groupData) {
+            const parsed = JSON.parse(groupData)
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.runFolder) {
+              return parsed.runFolder
+            }
+          }
+          // Fallback to separate key
+          const saved = localStorage.getItem(SELECTED_RUN_FOLDER_KEY)
+          if (saved) {
+            return saved
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load selectedRunFolder:', error)
+        }
+        return null
+      })(),
       isLoadingRunFolders: false,
 
       // Progress
       stepProgress: null,
+      stepProgressFolder: null, // Track which folder the current progress belongs to
       isLoadingProgress: false,
 
       // Execution options
-      selectedExecutionMode: 'human_approval',
+      selectedExecutionMode: 'with_learning',
       selectedStartPoint: 0,
       
       // Temporary LLM overrides (persists across page refreshes via localStorage)
@@ -287,43 +366,78 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }
         return false  // Default to false
       })(),
-      // Save validation responses to workspace (always enabled)
+      tempLearningLLM: (() => {
+        try {
+          const saved = localStorage.getItem(TEMP_LEARNING_LLM_KEY)
+          if (saved) {
+            const parsed = JSON.parse(saved) as AgentLLMConfig
+            if (parsed.provider && parsed.model_id) {
+              return parsed
+            }
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load temp learning LLM from localStorage:', error)
+        }
+        return null
+      })(),
+      // Save validation responses to workspace (always enabled, not persisted)
       saveValidationResponses: true,
-      // Disable shell exec access (persists across page refreshes via localStorage)
-      // Load from localStorage on initialization
-      disableShellExecAccess: (() => {
-        try {
-          const saved = localStorage.getItem(DISABLE_SHELL_EXEC_ACCESS_KEY)
-          if (saved !== null) {
-            const parsed = JSON.parse(saved) as boolean
-            return parsed
-          }
-        } catch (error) {
-          console.error('[WorkflowStore] Failed to load disable shell exec access from localStorage:', error)
-        }
-        return false  // Default to false (shell exec enabled by default)
-      })(),
-      // Disable read image access (persists across page refreshes via localStorage)
-      // Load from localStorage on initialization
-      disableReadImageAccess: (() => {
-        try {
-          const saved = localStorage.getItem(DISABLE_READ_IMAGE_ACCESS_KEY)
-          if (saved !== null) {
-            const parsed = JSON.parse(saved) as boolean
-            return parsed
-          }
-        } catch (error) {
-          console.error('[WorkflowStore] Failed to load disable read image access from localStorage:', error)
-        }
-        return false  // Default to false (read image enabled by default)
-      })(),
+      // Disable shell exec access (defaults to false, not persisted)
+      disableShellExecAccess: false,
+      // Disable read image access (defaults to false, not persisted)
+      disableReadImageAccess: false,
 
       // Variables manifest
       variablesManifest: null,
-      selectedGroupIds: [],
 
-      // Current running group
-      currentRunningGroupId: null,
+      // Track current preset ID to detect page reload vs preset switch
+      _currentPresetId: null as string | null,
+
+      // Selected group IDs (persists across page refreshes via localStorage)
+      // Now stored in combined format: { groupIds: [...], runFolder: "..." }
+      selectedGroupIds: (() => {
+        try {
+          const saved = localStorage.getItem(SELECTED_GROUP_IDS_KEY)
+          if (saved) {
+            const parsed = JSON.parse(saved)
+            // Handle new format: { groupIds: [...], runFolder: "..." }
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              if (Array.isArray(parsed.groupIds)) {
+                return parsed.groupIds
+              }
+            }
+            // Handle old format: just array of groupIds
+            else if (Array.isArray(parsed)) {
+              return parsed
+            }
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load selectedGroupIds:', error)
+        }
+        return []
+      })(),
+
+      // Current running group (persists across page refreshes via localStorage)
+      currentRunningGroupId: (() => {
+        try {
+          const saved = localStorage.getItem(CURRENT_RUNNING_GROUP_ID_KEY)
+          if (saved) {
+            return saved
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load currentRunningGroupId from localStorage:', error)
+        }
+        return null
+      })(),
+
+      // Current step being executed (for auto-focus)
+      currentStepId: null,
+
+      // Step execution status map
+      stepStatusMap: new Map(),
+
+      // Batch execution progress
+      batchProgress: null,
 
       // UI state
       activePhase: null,
@@ -332,6 +446,12 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // Multi-tab chat state
       workflowChatTabs: {},
       activeWorkflowTabId: null,
+
+      // === Workflow Mode State ===
+      workflowMode: 'plan',
+      evaluationPlan: null,
+      evaluationStepProgress: null,
+      isLoadingEvaluationPlan: false,
 
       // === Actions ===
 
@@ -380,6 +500,13 @@ export const useWorkflowStore = create<WorkflowStore>()(
         return loadPromise
       },
 
+      setPhases: (phases: WorkflowPhase[]) => {
+        set({
+          phases: phases,
+          phasesInitialized: true
+        })
+      },
+
       getPhaseById: (id: string) => {
         return get().phases.find(p => p.id === id)
       },
@@ -399,7 +526,13 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       // Load run folders for a workspace
       loadRunFolders: async (workspacePath: string) => {
+        console.log('[WorkflowStore] loadRunFolders called:', {
+          workspacePath,
+          stackTrace: new Error().stack?.split('\n').slice(0, 5).join('\n')
+        })
+
         if (!workspacePath) {
+          console.log('[WorkflowStore] loadRunFolders: No workspacePath, clearing runFolders')
           set({ runFolders: [] })
           return
         }
@@ -408,6 +541,11 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
         try {
           const response = await agentApi.getRunFolders(workspacePath)
+          console.log('[WorkflowStore] loadRunFolders response:', {
+            hasResponse: !!response,
+            foldersCount: response?.folders?.length || 0,
+            folders: response?.folders?.map(f => f.name)
+          })
 
           if (!response) {
             set({ runFolders: [], isLoadingRunFolders: false })
@@ -436,7 +574,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
           // Validate current selection
           const currentSelection = get().selectedRunFolder
-          if (currentSelection !== 'new' && !sorted.some(f => f.name === currentSelection)) {
+          if (currentSelection && !sorted.some(f => f.name === currentSelection)) {
             // Check if the selection looks like a valid iteration folder (e.g., "iteration-3")
             // This handles the case where a folder was just created but hasn't appeared in the list yet
             const isValidIterationPattern = /^iteration-\d+/.test(currentSelection)
@@ -446,12 +584,23 @@ export const useWorkflowStore = create<WorkflowStore>()(
               // The folder should appear in the next refresh
               console.log(`[WorkflowStore] Preserving selection "${currentSelection}" - folder may not be in list yet`)
             } else {
-              // Saved folder no longer exists and doesn't match iteration pattern, default to newest or 'new'
-              const newSelection = sorted.length > 0 ? sorted[0].name : 'new'
+              // Saved folder no longer exists and doesn't match iteration pattern, default to newest or null
+              const newSelection = sorted.length > 0 ? sorted[0].name : null
               set({ selectedRunFolder: newSelection })
 
-              // Load progress for new selection if it's not 'new'
-              if (newSelection !== 'new') {
+              // Persist to localStorage
+              try {
+                if (newSelection) {
+                  localStorage.setItem(SELECTED_RUN_FOLDER_KEY, newSelection)
+                } else {
+                  localStorage.removeItem(SELECTED_RUN_FOLDER_KEY)
+                }
+              } catch (error) {
+                console.error('[WorkflowStore] Failed to save selectedRunFolder to localStorage:', error)
+              }
+
+              // Load progress for new selection if it exists
+              if (newSelection) {
                 get().loadProgress(workspacePath, newSelection)
               }
             }
@@ -462,11 +611,50 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }
       },
 
-      setSelectedRunFolder: (folder: string) => {
-        set({ selectedRunFolder: folder })
-        // Clear progress when switching to 'new'
-        if (folder === 'new') {
-          set({ stepProgress: null })
+      setRunFolders: (folders: RunFolder[]) => {
+        set({ runFolders: folders })
+      },
+
+      setSelectedRunFolder: (folder: string | null) => {
+        // Use normalization utility to validate folder path
+        const state = get()
+        const normalized = normalizeRunFolder(folder, state.variablesManifest)
+        set({ selectedRunFolder: normalized })
+
+        // Persist to localStorage - update combined format AND separate key
+        // Note: startPoint is NOT persisted - it's calculated from progress
+        try {
+          // Update combined format
+          const existingData = localStorage.getItem(SELECTED_GROUP_IDS_KEY)
+          if (existingData) {
+            const parsed = JSON.parse(existingData)
+            if (parsed && typeof parsed === 'object') {
+              parsed.runFolder = normalized
+              localStorage.setItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(parsed))
+            }
+          } else if (normalized) {
+            // Create new combined format if it doesn't exist
+            const persistData = {
+              groupIds: state.selectedGroupIds,
+              runFolder: normalized,
+              presetId: (state as any)._currentPresetId
+            }
+            localStorage.setItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
+          }
+
+          // Also update separate key for backward compatibility
+          if (normalized) {
+            localStorage.setItem(SELECTED_RUN_FOLDER_KEY, normalized)
+          } else {
+            localStorage.removeItem(SELECTED_RUN_FOLDER_KEY)
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save selectedRunFolder to localStorage:', error)
+        }
+
+        // Clear progress when switching to null
+        if (!normalized) {
+          set({ stepProgress: null, stepProgressFolder: null })
         }
       },
 
@@ -488,7 +676,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           return
         }
 
-        set({ isLoadingProgress: true })
+        set({ isLoadingProgress: true, stepProgressFolder: null }) // Clear folder tracking while loading
 
         try {
           const response = await agentApi.getProgress(workspacePath, runFolder)
@@ -500,32 +688,111 @@ export const useWorkflowStore = create<WorkflowStore>()(
             runFolder
           })
           if (response.exists && response.progress) {
-            set({ stepProgress: response.progress, isLoadingProgress: false })
+            const state = get()
+            const previousProgressFolder = state.stepProgressFolder
+            
+            set({ 
+              stepProgress: response.progress, 
+              stepProgressFolder: runFolder,
+              isLoadingProgress: false 
+            })
             console.log('[PROGRESS_DEBUG] Set stepProgress in store:', {
               completedStepIndices: response.progress.completed_step_indices,
-              totalSteps: response.progress.total_steps
+              totalSteps: response.progress.total_steps,
+              folder: runFolder
             })
 
             // Update the folder info in state so we can show progress in the dropdown
-            set(state => ({
-              runFolders: state.runFolders.map(f =>
+            set(prevState => ({
+              runFolders: prevState.runFolders.map(f =>
                 f.name === runFolder
                   ? { ...f, progress: response.progress || undefined }
                   : f
               )
             }))
+
+            // Update start point when switching groups - recalculate based on new group's progress
+            // Always update start point to match the loaded progress (handles both folder switches and initial loads)
+            const completedIndices = response.progress.completed_step_indices || []
+            const totalSteps = response.progress.total_steps || 0
+            const currentStartPoint = get().selectedStartPoint
+            
+            // Check if folder changed (group switch detected)
+            const folderChanged = previousProgressFolder && previousProgressFolder !== runFolder && previousProgressFolder !== 'new'
+            
+            console.log('[WorkflowStore] loadProgress - checking start point update:', {
+              previousProgressFolder,
+              newFolder: runFolder,
+              folderChanged,
+              completedIndices: completedIndices.length,
+              totalSteps,
+              currentStartPoint
+            })
+            
+            if (completedIndices.length > 0 && totalSteps > 0) {
+              // Calculate the resume point based on the group's progress
+              const completedStepNumbers = completedIndices.map(idx => idx + 1).sort((a, b) => a - b)
+              const lastCompletedStep = completedStepNumbers[completedStepNumbers.length - 1]
+              const nextStep = lastCompletedStep + 1
+              const resumePoint = nextStep <= totalSteps ? nextStep : lastCompletedStep
+
+              // Always auto-set start point to match loaded progress
+              if (currentStartPoint !== resumePoint) {
+                console.log('[WorkflowStore] ✅ Updating start point to match group progress:', {
+                  previousFolder: previousProgressFolder,
+                  newFolder: runFolder,
+                  completedSteps: completedStepNumbers,
+                  lastCompletedStep,
+                  resumePoint,
+                  previousStartPoint: currentStartPoint
+                })
+                // Normalize and set start point, clear branch step
+                const normalized = normalizeStartPoint(resumePoint)
+                set({ selectedStartPoint: normalized, selectedBranchStep: null })
+              } else {
+                console.log('[WorkflowStore] Start point already matches progress, skipping update')
+              }
+            } else if (completedIndices.length === 0) {
+              // Group has no progress - reset to start from beginning
+              if (currentStartPoint !== 0) {
+                console.log('[WorkflowStore] ✅ Group has no progress, resetting to start from beginning:', {
+                  previousFolder: previousProgressFolder,
+                  newFolder: runFolder,
+                  previousStartPoint: currentStartPoint
+                })
+                // Reset to 0 and clear branch step
+                set({ selectedStartPoint: 0, selectedBranchStep: null })
+              } else {
+                console.log('[WorkflowStore] Start point already 0, skipping update')
+              }
+            }
           } else {
             // No progress file exists - only reset progress, preserve user's selectedStartPoint
             // The user's selection should only be reset when they explicitly choose "Start from Beginning"
             const currentStartPoint = get().selectedStartPoint
-            set({ stepProgress: null, isLoadingProgress: false })
+            const state = get()
+            const previousProgressFolder = state.stepProgressFolder
+            
+            set({ stepProgress: null, stepProgressFolder: null, isLoadingProgress: false })
             console.log('[RESUME_DEBUG] No progress file found, preserving selectedStartPoint:', currentStartPoint)
+            
+            // If switching to a folder with no progress, reset start point
+            if (previousProgressFolder && previousProgressFolder !== runFolder && previousProgressFolder !== 'new') {
+              if (currentStartPoint !== 0) {
+                console.log('[WorkflowStore] Group switched to folder with no progress, resetting to start from beginning:', {
+                  previousFolder: previousProgressFolder,
+                  newFolder: runFolder,
+                  previousStartPoint: currentStartPoint
+                })
+                set({ selectedStartPoint: 0 })
+              }
+            }
           }
         } catch (error) {
           // On error, only reset progress, preserve user's selectedStartPoint
           // The user's selection should only be reset when they explicitly choose "Start from Beginning"
           const currentStartPoint = get().selectedStartPoint
-          set({ stepProgress: null, isLoadingProgress: false })
+          set({ stepProgress: null, stepProgressFolder: null, isLoadingProgress: false })
           console.error('[RESUME_DEBUG] Failed to load progress, preserving selectedStartPoint:', currentStartPoint, error)
         }
       },
@@ -561,6 +828,83 @@ export const useWorkflowStore = create<WorkflowStore>()(
         return get().stepProgress?.completed_step_indices || []
       },
 
+      setStepProgress: (progress: StepProgress | null) => {
+        const state = get()
+        const previousProgressFolder = state.stepProgressFolder
+        const currentFolder = state.selectedRunFolder
+        
+        // Clear folder tracking if progress is cleared
+        set({ 
+          stepProgress: progress,
+          stepProgressFolder: progress ? currentFolder : null
+        })
+        
+        // Update start point when switching groups - same logic as in loadProgress
+        if (progress && currentFolder && currentFolder !== 'new') {
+          // Check if folder changed (group switch detected)
+          const folderChanged = previousProgressFolder && previousProgressFolder !== currentFolder && previousProgressFolder !== 'new'
+          const completedIndices = progress.completed_step_indices || []
+          const totalSteps = progress.total_steps || 0
+          const currentStartPoint = get().selectedStartPoint
+          
+          console.log('[WorkflowStore] setStepProgress - checking start point update:', {
+            previousProgressFolder,
+            newFolder: currentFolder,
+            folderChanged,
+            completedIndices: completedIndices.length,
+            totalSteps,
+            currentStartPoint
+          })
+          
+          if (completedIndices.length > 0 && totalSteps > 0) {
+            // Calculate the resume point based on the NEW group's progress
+            const completedStepNumbers = completedIndices.map(idx => idx + 1).sort((a, b) => a - b)
+            const lastCompletedStep = completedStepNumbers[completedStepNumbers.length - 1]
+            const nextStep = lastCompletedStep + 1
+            const resumePoint = nextStep <= totalSteps ? nextStep : lastCompletedStep
+            
+            // Always update to match the loaded progress (don't check folderChanged - always sync)
+            if (currentStartPoint !== resumePoint) {
+              console.log('[WorkflowStore] ✅ Updating start point (via setStepProgress):', {
+                previousFolder: previousProgressFolder,
+                newFolder: currentFolder,
+                folderChanged,
+                completedSteps: completedStepNumbers,
+                lastCompletedStep,
+                resumePoint,
+                previousStartPoint: currentStartPoint
+              })
+              // Normalize and set start point, clear branch step
+              const normalized = normalizeStartPoint(resumePoint)
+              set({ selectedStartPoint: normalized, selectedBranchStep: null })
+            } else {
+              console.log('[WorkflowStore] Start point already matches progress (setStepProgress), skipping update')
+            }
+          } else if (completedIndices.length === 0) {
+            // New group has no progress - reset to start from beginning
+            if (currentStartPoint !== 0) {
+              console.log('[WorkflowStore] ✅ Group has no progress (via setStepProgress), resetting:', {
+                previousFolder: previousProgressFolder,
+                newFolder: currentFolder,
+                folderChanged,
+                previousStartPoint: currentStartPoint
+              })
+              // Reset to 0 and clear branch step
+              set({ selectedStartPoint: 0, selectedBranchStep: null })
+            } else {
+              console.log('[WorkflowStore] Start point already 0 (setStepProgress), skipping update')
+            }
+          }
+        } else if (!progress && previousProgressFolder) {
+          // Progress cleared - reset start point if it was set
+          const currentStartPoint = get().selectedStartPoint
+          if (currentStartPoint !== 0) {
+            console.log('[WorkflowStore] Progress cleared, resetting start point to 0')
+            set({ selectedStartPoint: 0 })
+          }
+        }
+      },
+
       // Update step progress from event data (called when step_progress_updated events are received)
       updateStepProgressFromEvent: (progress: StepProgress) => {
         const state = get()
@@ -585,9 +929,12 @@ export const useWorkflowStore = create<WorkflowStore>()(
         set({ selectedExecutionMode: mode })
       },
 
-      setStartPoint: (step: number) => {
-        console.log('[RESUME_DEBUG] setStartPoint called:', step)
-        set({ selectedStartPoint: step, selectedBranchStep: null }) // Clear branch step when setting regular step
+      setStartPoint: (step: number | string) => {
+        // Use normalization utility to ensure canonical format
+        const normalized = normalizeStartPoint(step)
+        console.log('[RESUME_DEBUG] setStartPoint called:', step, '→ normalized:', normalized)
+        set({ selectedStartPoint: normalized, selectedBranchStep: null }) // Clear branch step when setting regular step
+        // Note: startPoint is NOT persisted to localStorage - it's always calculated from progress
       },
       setBranchStep: (branchStep: { parentStepIndex: number; branchType: 'if_true' | 'if_false'; branchStepIndex: number } | null) => {
         set({ selectedBranchStep: branchStep, selectedStartPoint: 0 }) // Clear regular step when setting branch step
@@ -628,15 +975,24 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
         // Resolve the specific group folder path for phases that need context
         // Uses utility function to consolidate logic
+        console.log('[buildExecutionOptions] Before resolveGroupFolderPath:', {
+          currentRunningGroupId: state.currentRunningGroupId,
+          selectedRunFolder: state.selectedRunFolder,
+          selectedGroupIds: state.selectedGroupIds,
+          selectedGroupIdsLength: state.selectedGroupIds.length,
+          hasManifest: !!state.variablesManifest,
+          groupsCount: state.variablesManifest?.groups?.length || 0
+        })
         const resolvedRunFolder = resolveGroupFolderPath({
           currentRunningGroupId: state.currentRunningGroupId,
           selectedRunFolder: state.selectedRunFolder,
           selectedGroupIds: state.selectedGroupIds,
           manifest: state.variablesManifest
         })
+        console.log('[buildExecutionOptions] After resolveGroupFolderPath, resolvedRunFolder:', resolvedRunFolder)
         
         const options: ExecutionOptions = {
-          run_mode: state.selectedRunFolder === 'new' ? 'create_new_runs_always' : 'use_same_run',
+          run_mode: state.selectedRunFolder ? 'use_same_run' : 'create_new_runs_always',
           selected_run_folder: resolvedRunFolder,
           execution_strategy: executionStrategy,
         }
@@ -737,71 +1093,43 @@ export const useWorkflowStore = create<WorkflowStore>()(
           options.skip_learning_when_temp_llm2 = true
         }
         
+        // Include temp learning LLM if set (used when learnings already exist for a step)
+        if (state.tempLearningLLM) {
+          options.temp_learning_llm = state.tempLearningLLM
+        }
+        
         // Include save validation responses flag (always send to ensure backend knows user preference)
         options.save_validation_responses = state.saveValidationResponses
 
-        // Include tool access disable flags
-        if (state.disableShellExecAccess) {
-          options.disable_shell_exec_access = true
-        }
-        if (state.disableReadImageAccess) {
-          options.disable_read_image_access = true
-        }
-
-        // Include enabled group IDs from variables manifest (for batch execution)
-        // Priority: selectedGroupIds (from checkboxes) > folder path > all enabled groups
-        if (state.variablesManifest) {
-          if (state.variablesManifest.groups && state.variablesManifest.groups.length > 0) {
-            // If specific groups were selected via checkboxes, use those
-            if (state.selectedGroupIds.length > 0) {
-              // Verify all selected groups exist in manifest and are enabled
-              const validGroupIds = state.selectedGroupIds.filter(groupId => {
-                const group = state.variablesManifest!.groups!.find(g => g.group_id === groupId)
-                return group && group.enabled
-              })
-              if (validGroupIds.length > 0) {
-                options.enabled_group_ids = validGroupIds
-              } else {
-                // Fall back to all enabled groups if selected groups are invalid
-                const enabledGroupIDs = state.variablesManifest.groups
-                  .filter(g => g.enabled)
-                  .map(g => g.group_id)
-                if (enabledGroupIDs.length > 0) {
-                  options.enabled_group_ids = enabledGroupIDs
-                }
-              }
-            } else {
-              // No groups selected via checkboxes - check if folder path specifies a group
-              // Uses utility function to extract group ID from folder path
-              const selectedGroupId = extractGroupIdFromFolder(state.selectedRunFolder, state.variablesManifest)
-
-              if (selectedGroupId) {
-                // Verify the group exists in manifest
-                const groupExists = state.variablesManifest.groups.some(g => g.group_id === selectedGroupId)
-                if (groupExists) {
-                  options.enabled_group_ids = [selectedGroupId]
-                } else {
-                  // Fall back to all enabled groups
-                  const enabledGroupIDs = state.variablesManifest.groups
-                    .filter(g => g.enabled)
-                    .map(g => g.group_id)
-                  if (enabledGroupIDs.length > 0) {
-                    options.enabled_group_ids = enabledGroupIDs
-                  }
-                }
-              } else {
-                // No specific group selected - use all enabled groups
-                const enabledGroupIDs = state.variablesManifest.groups
-                  .filter(g => g.enabled)
-                  .map(g => g.group_id)
-                if (enabledGroupIDs.length > 0) {
-                  options.enabled_group_ids = enabledGroupIDs
-                }
-              }
-            }
+        // Include enabled group IDs from user selection
+        // NOTE: Execute button is disabled when no groups are selected, so if execution happens,
+        // selectedGroupIds MUST have values (when groups exist). We use them directly.
+        console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] Group selection check:', {
+          selectedGroupIds: state.selectedGroupIds,
+          selectedGroupIdsLength: state.selectedGroupIds.length,
+          hasManifest: !!state.variablesManifest,
+          groupsCount: state.variablesManifest?.groups?.length || 0
+        })
+        
+        // Use selectedGroupIds directly - they came from the UI where groups were already validated
+        // The execute button is disabled when no groups are selected, so this should always have values
+        if (state.selectedGroupIds.length > 0) {
+          options.enabled_group_ids = state.selectedGroupIds
+          console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ✅ Set enabled_group_ids from selectedGroupIds:', state.selectedGroupIds)
+        } else if (state.variablesManifest?.groups && state.variablesManifest.groups.length > 0) {
+          // Fallback: Use all enabled groups (shouldn't happen due to UI validation, but defensive)
+          const enabledGroupIDs = state.variablesManifest.groups
+            .filter(g => g.enabled)
+            .map(g => g.group_id)
+          if (enabledGroupIDs.length > 0) {
+            options.enabled_group_ids = enabledGroupIDs
+            console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ✅ Set enabled_group_ids from all enabled groups (fallback):', enabledGroupIDs)
+          } else {
+            console.warn('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ⚠️ No enabled groups found in manifest')
           }
-          // Single-group mode: if no groups array, all variables are in one virtual group
-          // In this case, we don't need to set enabled_group_ids as the backend handles it
+        } else {
+          // Single-group mode or no groups - backend handles it automatically
+          console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] No groups selected and no groups in manifest (single-group mode) - backend will handle')
         }
 
         console.log('[RESUME_DEBUG] ✅ Final execution options:', JSON.stringify({
@@ -809,9 +1137,11 @@ export const useWorkflowStore = create<WorkflowStore>()(
           resume_from_step: options.resume_from_step,
           resume_from_branch_step: options.resume_from_branch_step,
           run_mode: options.run_mode,
-          selected_run_folder: options.selected_run_folder
+          selected_run_folder: options.selected_run_folder,
+          enabled_group_ids: options.enabled_group_ids
         }, null, 2))
 
+        console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] buildExecutionOptions returning:', JSON.stringify(options, null, 2))
         return options
       },
       
@@ -913,40 +1243,58 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }
       },
       
-      setSaveValidationResponses: (_enabled: boolean) => {
-        set({ saveValidationResponses: true })
+      setTempLearningLLM: (config: AgentLLMConfig | null) => {
+        set({ tempLearningLLM: config })
         try {
-          // Always save true to localStorage
-          localStorage.setItem(SAVE_VALIDATION_RESPONSES_KEY, JSON.stringify(true))
-          console.log(`[WorkflowStore] Save validation responses forced to true`)
+          if (config) {
+            // Save to localStorage
+            localStorage.setItem(TEMP_LEARNING_LLM_KEY, JSON.stringify(config))
+            console.log(`[WorkflowStore] Temporary learning LLM set: ${config.provider}/${config.model_id}`)
+          } else {
+            // Clear from localStorage
+            localStorage.removeItem(TEMP_LEARNING_LLM_KEY)
+            console.log('[WorkflowStore] Temporary learning LLM cleared')
+          }
         } catch (error) {
-          console.error('[WorkflowStore] Failed to save save validation responses to localStorage:', error)
+          console.error('[WorkflowStore] Failed to save temp learning LLM to localStorage:', error)
         }
+      },
+      
+      clearTempLearningLLM: () => {
+        set({ tempLearningLLM: null })
+        try {
+          localStorage.removeItem(TEMP_LEARNING_LLM_KEY)
+          console.log('[WorkflowStore] Temporary learning LLM cleared')
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to clear temp learning LLM from localStorage:', error)
+        }
+      },
+      
+      setSaveValidationResponses: () => {
+        set({ saveValidationResponses: true })
+        // No longer persisted to localStorage
       },
       
       setDisableShellExecAccess: (enabled: boolean) => {
         set({ disableShellExecAccess: enabled })
-        try {
-          // Save to localStorage
-          localStorage.setItem(DISABLE_SHELL_EXEC_ACCESS_KEY, JSON.stringify(enabled))
-          console.log(`[WorkflowStore] Disable shell exec access set: ${enabled}`)
-        } catch (error) {
-          console.error('[WorkflowStore] Failed to save disable shell exec access to localStorage:', error)
-        }
+        // No longer persisted to localStorage
       },
       
       setDisableReadImageAccess: (enabled: boolean) => {
         set({ disableReadImageAccess: enabled })
-        try {
-          // Save to localStorage
-          localStorage.setItem(DISABLE_READ_IMAGE_ACCESS_KEY, JSON.stringify(enabled))
-          console.log(`[WorkflowStore] Disable read image access set: ${enabled}`)
-        } catch (error) {
-          console.error('[WorkflowStore] Failed to save disable read image access to localStorage:', error)
-        }
+        // No longer persisted to localStorage
       },
 
       setVariablesManifest: (manifest: VariablesManifest | null) => {
+        const prevManifest = get().variablesManifest
+        console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] setVariablesManifest called:', {
+          hasManifest: !!manifest,
+          groupsCount: manifest?.groups?.length || 0,
+          groupIds: manifest?.groups?.map(g => g.group_id) || [],
+          prevHasManifest: !!prevManifest,
+          prevGroupsCount: prevManifest?.groups?.length || 0,
+          stackTrace: new Error().stack?.split('\n').slice(1, 4).join('\n') // First 3 stack frames
+        })
         set({ variablesManifest: manifest })
       },
 
@@ -955,26 +1303,287 @@ export const useWorkflowStore = create<WorkflowStore>()(
         const state = get()
         const currentIds = state.selectedGroupIds
         const isSelected = currentIds.includes(groupId)
-        
-        if (isSelected) {
-          set({ selectedGroupIds: currentIds.filter(id => id !== groupId) })
-        } else {
-          set({ selectedGroupIds: [...currentIds, groupId] })
+
+        const newIds = isSelected
+          ? currentIds.filter(id => id !== groupId)
+          : [...currentIds, groupId]
+
+        set({ selectedGroupIds: newIds })
+
+        // Persist to localStorage - save groupIds, runFolder, AND presetId
+        // Note: startPoint is NOT persisted - it's calculated from progress
+        try {
+          const persistData = {
+            groupIds: newIds,
+            runFolder: state.selectedRunFolder,
+            presetId: (state as any)._currentPresetId
+          }
+          localStorage.setItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to persist group selection:', error)
         }
       },
 
       // Set selected group IDs directly
       setSelectedGroupIds: (groupIds: string[]) => {
+        const state = get()
         set({ selectedGroupIds: groupIds })
+
+        // Persist to localStorage - save groupIds, runFolder, AND presetId
+        // Note: startPoint is NOT persisted - it's calculated from progress
+        try {
+          const persistData = {
+            groupIds: groupIds,
+            runFolder: state.selectedRunFolder,
+            presetId: (state as any)._currentPresetId
+          }
+          localStorage.setItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to persist group selection:', error)
+        }
       },
 
       // Clear all selected group IDs
       clearSelectedGroupIds: () => {
         set({ selectedGroupIds: [] })
+
+        // Clear from localStorage
+        try {
+          localStorage.removeItem(SELECTED_GROUP_IDS_KEY)
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to clear group selection:', error)
+        }
+      },
+
+      // Restore selection state from localStorage (called after API load completes)
+      // Note: startPoint is NOT restored - it's calculated from progress via loadProgress
+      restoreSelectionFromLocalStorage: () => {
+        try {
+          let hasChanges = false
+          const updates: Partial<WorkflowStore> = {}
+
+          // Restore selectedGroupIds and selectedRunFolder from combined storage
+          const savedGroupData = localStorage.getItem(SELECTED_GROUP_IDS_KEY)
+          if (savedGroupData) {
+            const parsed = JSON.parse(savedGroupData)
+            // Handle new format: { groupIds: [...], runFolder: "..." }
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              if (Array.isArray(parsed.groupIds) && parsed.groupIds.length > 0) {
+                updates.selectedGroupIds = parsed.groupIds
+                hasChanges = true
+              }
+              if (parsed.runFolder) {
+                updates.selectedRunFolder = parsed.runFolder
+                hasChanges = true
+              }
+              // Note: startPoint is intentionally NOT restored - calculated from progress
+            }
+            // Handle old format: just array of groupIds (backward compatibility)
+            else if (Array.isArray(parsed) && parsed.length > 0) {
+              updates.selectedGroupIds = parsed
+              hasChanges = true
+            }
+          }
+
+          // Also check separate runFolder key (backward compatibility)
+          if (!updates.selectedRunFolder) {
+            const savedRunFolder = localStorage.getItem(SELECTED_RUN_FOLDER_KEY)
+            if (savedRunFolder) {
+              updates.selectedRunFolder = savedRunFolder
+              hasChanges = true
+            }
+          }
+
+          // Restore currentRunningGroupId
+          const savedCurrentGroup = localStorage.getItem(CURRENT_RUNNING_GROUP_ID_KEY)
+          if (savedCurrentGroup) {
+            updates.currentRunningGroupId = savedCurrentGroup
+            hasChanges = true
+          }
+
+          if (hasChanges) {
+            set(updates)
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to restore selection from localStorage:', error)
+        }
       },
 
       setCurrentRunningGroupId: (groupId: string | null) => {
         set({ currentRunningGroupId: groupId })
+
+        // Persist to localStorage
+        try {
+          if (groupId) {
+            localStorage.setItem(CURRENT_RUNNING_GROUP_ID_KEY, groupId)
+          } else {
+            localStorage.removeItem(CURRENT_RUNNING_GROUP_ID_KEY)
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save currentRunningGroupId to localStorage:', error)
+        }
+      },
+
+      setCurrentStepId: (stepId: string | null) => {
+        // Only update if value actually changed (prevents unnecessary re-renders and canvas refocus)
+        const current = get().currentStepId
+        if (current !== stepId) {
+          set({ currentStepId: stepId })
+        }
+      },
+
+      setStepStatus: (stepId: string, status: 'pending' | 'running' | 'completed' | 'failed') => {
+        // Only update if status actually changed (prevents unnecessary re-renders)
+        const currentStatus = get().stepStatusMap.get(stepId)
+        if (currentStatus === status) {
+          return // No change, skip update
+        }
+        set(state => {
+          const newMap = new Map(state.stepStatusMap)
+          newMap.set(stepId, status)
+          return { stepStatusMap: newMap }
+        })
+      },
+
+      clearStepStatusMap: () => {
+        set({ stepStatusMap: new Map() })
+      },
+
+      // Consolidated batch group switching handler
+      // Handles group start: sets currentRunningGroupId, updates selectedRunFolder, and updates batchProgress
+      handleBatchGroupStart: (groupId: string, runFolder: string, workspacePath?: string, groupIndex?: number, totalGroups?: number) => {
+        const state = get()
+
+        // Set current running group ID
+        set({ currentRunningGroupId: groupId })
+
+        // Persist currentRunningGroupId to localStorage
+        try {
+          localStorage.setItem(CURRENT_RUNNING_GROUP_ID_KEY, groupId)
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save currentRunningGroupId to localStorage:', error)
+        }
+
+        // Normalize and update selected run folder
+        const normalizedFolder = normalizeRunFolder(runFolder, state.variablesManifest)
+        set({ selectedRunFolder: normalizedFolder })
+
+        // Persist selectedRunFolder to localStorage
+        try {
+          if (normalizedFolder) {
+            localStorage.setItem(SELECTED_RUN_FOLDER_KEY, normalizedFolder)
+          } else {
+            localStorage.removeItem(SELECTED_RUN_FOLDER_KEY)
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save selectedRunFolder to localStorage:', error)
+        }
+
+        // Update batch progress if index/total provided
+        if (groupIndex !== undefined && totalGroups !== undefined) {
+          // Initialize batch progress on first group or update existing
+          if (!state.batchProgress?.isActive) {
+            set({
+              batchProgress: {
+                isActive: true,
+                totalGroups,
+                currentGroupIndex: groupIndex,
+                currentGroupId: groupId,
+                completedCount: 0,
+                failedCount: 0,
+                remainingCount: totalGroups,
+                startTime: Date.now()
+              }
+            })
+          } else {
+            set({
+              batchProgress: {
+                ...state.batchProgress,
+                currentGroupIndex: groupIndex,
+                currentGroupId: groupId,
+                totalGroups // Update in case it changed
+              }
+            })
+          }
+        }
+
+        console.log('[WorkflowStore] Batch group started:', {
+          groupId,
+          runFolder,
+          normalizedFolder,
+          workspacePath,
+          groupIndex,
+          totalGroups,
+          batchProgress: get().batchProgress
+        })
+
+        // Reload run folders and progress if workspace path provided
+        if (workspacePath) {
+          state.loadRunFolders(workspacePath).catch(err => {
+            console.warn('[WorkflowStore] Failed to reload run folders:', err)
+          })
+
+          if (normalizedFolder) {
+            state.loadProgress(workspacePath, normalizedFolder).catch(err => {
+              console.warn('[WorkflowStore] Failed to load progress:', err)
+            })
+          }
+        }
+      },
+
+      // Consolidated batch group end handler
+      // Clears currentRunningGroupId if it matches, and updates batch progress counts
+      handleBatchGroupEnd: (groupId: string, success?: boolean, remainingGroups?: number) => {
+        const state = get()
+
+        // Only clear if this is the currently running group
+        // This prevents clearing when events arrive out of order
+        if (state.currentRunningGroupId === groupId) {
+          set({ currentRunningGroupId: null })
+
+          // Clear from localStorage
+          try {
+            localStorage.removeItem(CURRENT_RUNNING_GROUP_ID_KEY)
+          } catch (error) {
+            console.error('[WorkflowStore] Failed to clear currentRunningGroupId from localStorage:', error)
+          }
+        }
+
+        // Update batch progress if we have active batch progress
+        if (state.batchProgress && success !== undefined) {
+          const newCompleted = success
+            ? state.batchProgress.completedCount + 1
+            : state.batchProgress.completedCount
+          const newFailed = !success
+            ? state.batchProgress.failedCount + 1
+            : state.batchProgress.failedCount
+          const remaining = remainingGroups ?? Math.max(0, state.batchProgress.remainingCount - 1)
+
+          set({
+            batchProgress: {
+              ...state.batchProgress,
+              completedCount: newCompleted,
+              failedCount: newFailed,
+              remainingCount: remaining,
+              // Keep batch active if there are remaining groups
+              isActive: remaining > 0,
+              // Clear current group ID if batch is done
+              currentGroupId: remaining > 0 ? state.batchProgress.currentGroupId : null
+            }
+          })
+        }
+
+        console.log('[WorkflowStore] Batch group ended:', {
+          groupId,
+          success,
+          remainingGroups,
+          batchProgress: get().batchProgress
+        })
+      },
+
+      // Reset batch progress (called when batch completes or is canceled)
+      resetBatchProgress: () => {
+        set({ batchProgress: null })
       },
 
       setActivePhase: (phase: string | null) => {
@@ -1200,65 +1809,201 @@ export const useWorkflowStore = create<WorkflowStore>()(
         ]
         
         return events.some(event => 
-          completionEventTypes.includes(event.type)
+          event.type && completionEventTypes.includes(event.type)
         )
       },
 
+      // Workflow Mode Actions
+      setWorkflowMode: (mode: 'plan' | 'eval') => {
+        set({ workflowMode: mode })
+      },
+
+      setEvaluationPlan: (plan: EvaluationPlan | null) => {
+        set({ evaluationPlan: plan })
+      },
+
+      loadEvaluationPlan: async (workspacePath: string) => {
+        if (!workspacePath) {
+          set({ evaluationPlan: null })
+          return
+        }
+
+        set({ isLoadingEvaluationPlan: true })
+        try {
+          // Note: agentApi.getEvaluationPlan needs to be implemented or we use getPlannerFileContent
+          // Assuming we use getPlannerFileContent for consistency with usePlanData pattern initially,
+          // but eventually we should use a typed API if available. 
+          // For now, we'll implement this logic in the hook useEvaluationPlanData 
+          // and just store the result here, or call the API here.
+          // Let's defer actual API call logic to the hook to keep store simpler, 
+          // but we provide the action to update state.
+          // Wait, the requirement says "loadEvaluationPlan: (workspacePath: string) => Promise<void>" in store.
+          // Let's implement it using file content API for now as per `usePlanData`.
+          
+          const path = `${workspacePath}/evaluation/evaluation_plan.json`
+          const response = await agentApi.getPlannerFileContent(path)
+          
+          if (response.success && response.data?.content) {
+            const plan = JSON.parse(response.data.content) as EvaluationPlan
+            set({ evaluationPlan: plan, isLoadingEvaluationPlan: false })
+          } else {
+            set({ evaluationPlan: null, isLoadingEvaluationPlan: false })
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load evaluation plan:', error)
+          set({ evaluationPlan: null, isLoadingEvaluationPlan: false })
+        }
+      },
+
       // Load saved settings from localStorage for a preset
+      // Uses a single set() call to avoid multiple re-renders
+      // Restores selectedRunFolder, selectedGroupIds, currentRunningGroupId from localStorage
+      // Note: startPoint is NOT restored - it's calculated from progress via loadProgress
       loadSavedSettings: (presetId: string) => {
         if (!presetId) return
 
         try {
-          // Load saved iteration folder
-          const savedIteration = localStorage.getItem(getStorageKey(presetId, 'iteration'))
-          if (savedIteration) {
-            set({ selectedRunFolder: savedIteration })
-          }
+          // Load persisted values from localStorage
+          let savedRunFolder: string | null = null
+          let savedGroupIds: string[] = []
+          let savedCurrentRunningGroupId: string | null = null
 
-          // Load saved execution mode
-          const savedMode = localStorage.getItem(getStorageKey(presetId, 'execution_mode'))
-          if (savedMode && ['human_approval', 'fast_execution', 'with_learning'].includes(savedMode)) {
-            set({ selectedExecutionMode: savedMode as ExecutionModeType })
-          }
-
-          // Load saved start point
-          const savedStartPoint = localStorage.getItem(getStorageKey(presetId, 'start_point'))
-          if (savedStartPoint) {
-            const parsed = parseInt(savedStartPoint, 10)
-            if (!isNaN(parsed)) {
-              set({ selectedStartPoint: parsed })
-            }
-          }
-
-          // Load saved selected group IDs
-          const savedGroups = localStorage.getItem(getStorageKey(presetId, 'selected_groups'))
-          if (savedGroups) {
-            try {
-              const parsed = JSON.parse(savedGroups) as string[]
-              if (Array.isArray(parsed)) {
-                set({ selectedGroupIds: parsed })
+          try {
+            // Load from combined format first
+            const groupDataStr = localStorage.getItem(SELECTED_GROUP_IDS_KEY)
+            if (groupDataStr) {
+              const parsed = JSON.parse(groupDataStr)
+              // Handle new format: { groupIds: [...], runFolder: "..." }
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                if (Array.isArray(parsed.groupIds)) {
+                  savedGroupIds = parsed.groupIds
+                }
+                if (parsed.runFolder) {
+                  savedRunFolder = parsed.runFolder
+                }
+                // Note: startPoint is intentionally NOT restored - calculated from progress
               }
-            } catch (e) {
-              console.error('[WorkflowStore] Failed to parse saved group IDs:', e)
+              // Handle old format: just array of groupIds
+              else if (Array.isArray(parsed)) {
+                savedGroupIds = parsed
+              }
             }
+
+            // Fallback to separate runFolder key if not in combined format
+            if (!savedRunFolder) {
+              const runFolderStr = localStorage.getItem(SELECTED_RUN_FOLDER_KEY)
+              if (runFolderStr) {
+                savedRunFolder = runFolderStr
+              }
+            }
+
+            const currentGroupStr = localStorage.getItem(CURRENT_RUNNING_GROUP_ID_KEY)
+            if (currentGroupStr) {
+              savedCurrentRunningGroupId = currentGroupStr
+            }
+          } catch (error) {
+            console.error('[WorkflowStore] Failed to load from localStorage:', error)
           }
+
+          // Build state update object - restore from localStorage or use defaults
+          // startPoint is always 0 - will be calculated from progress via loadProgress
+          const stateUpdate: Partial<WorkflowStore> = {
+            selectedRunFolder: savedRunFolder,
+            selectedExecutionMode: 'with_learning',
+            selectedStartPoint: 0,  // Always start fresh - calculated from progress
+            selectedBranchStep: null,
+            selectedGroupIds: savedGroupIds,
+            currentRunningGroupId: savedCurrentRunningGroupId,
+            activePhase: null
+          }
+
+          // Single set() call to avoid multiple re-renders
+          set(stateUpdate)
         } catch (error) {
-          console.error('[WorkflowStore] Failed to load settings from localStorage:', error)
+          console.error('[WorkflowStore] Failed to load saved settings:', error)
         }
       },
 
       // Save current settings to localStorage for a preset
-      saveSettings: (presetId: string) => {
+      // NOTE: No longer saves settings to localStorage - removed all persistence
+      saveSettings: () => {
+        // No-op: Settings are no longer persisted
+      },
+
+      // Switch to a new preset - combines reset and load into a single set() call
+      // This avoids multiple re-renders that would occur with separate reset + load calls
+      switchToPreset: (presetId: string) => {
         if (!presetId) return
 
-        const state = get()
+        // Check if localStorage has data for the same preset (page reload scenario)
+        let storedPresetId: string | null = null
         try {
-          localStorage.setItem(getStorageKey(presetId, 'iteration'), state.selectedRunFolder)
-          localStorage.setItem(getStorageKey(presetId, 'execution_mode'), state.selectedExecutionMode)
-          localStorage.setItem(getStorageKey(presetId, 'start_point'), String(state.selectedStartPoint))
-          localStorage.setItem(getStorageKey(presetId, 'selected_groups'), JSON.stringify(state.selectedGroupIds))
+          const groupDataStr = localStorage.getItem(SELECTED_GROUP_IDS_KEY)
+          if (groupDataStr) {
+            const parsed = JSON.parse(groupDataStr)
+            if (parsed && typeof parsed === 'object' && parsed.presetId) {
+              storedPresetId = parsed.presetId
+            }
+          }
+        } catch (e) {
+          // Ignore parse errors
+        }
+
+        const isSamePreset = storedPresetId === presetId
+
+        try {
+          // If switching to the SAME preset (page reload), preserve localStorage
+          if (isSamePreset) {
+            // Just reset workflow context but preserve selection - localStorage will be restored by loadSavedSettings
+            set({
+              runFolders: [],
+              stepProgress: null,
+              variablesManifest: null,
+              currentStepId: null,
+              stepStatusMap: new Map(),
+              batchProgress: null,
+              workflowChatTabs: {},
+              activeWorkflowTabId: null,
+              _currentPresetId: presetId
+            } as Partial<WorkflowStore>)
+            return
+          }
+
+          // Start with context reset values (workflow-specific data that must be cleared)
+          const stateUpdate: Partial<WorkflowStore> = {
+            // Reset workflow context (loaded from API, not per-preset)
+            runFolders: [],
+            stepProgress: null,
+            variablesManifest: null,
+            currentRunningGroupId: null,
+            currentStepId: null,
+            stepStatusMap: new Map(),
+            batchProgress: null,
+            workflowChatTabs: {},
+            activeWorkflowTabId: null,
+            // Defaults for user-selectable settings
+            selectedRunFolder: null,
+            selectedExecutionMode: 'with_learning',
+            selectedStartPoint: 0,
+            selectedBranchStep: null,
+            selectedGroupIds: [],
+            activePhase: null,
+            _currentPresetId: presetId
+          }
+
+          // Single set() call - resets context with defaults
+          set(stateUpdate as Partial<WorkflowStore>)
+
+          // Clear group-related localStorage only when switching to a DIFFERENT preset
+          try {
+            localStorage.removeItem(SELECTED_GROUP_IDS_KEY)
+            localStorage.removeItem(CURRENT_RUNNING_GROUP_ID_KEY)
+            localStorage.removeItem(SELECTED_RUN_FOLDER_KEY)
+          } catch (error) {
+            console.error('[WorkflowStore] Failed to clear group localStorage on preset switch:', error)
+          }
         } catch (error) {
-          console.error('[WorkflowStore] Failed to save settings to localStorage:', error)
+          console.error('[WorkflowStore] Failed to switch preset:', error)
         }
       },
 
@@ -1266,10 +2011,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
       resetExecutionState: () => {
         // Note: We don't clear tempOverrideLLM here because it's a global setting
         // that should persist across workflow switches
-        
-        // Close all workflow tabs (no observer cleanup needed)
-        // Observers are no longer used - just clear tabs
-        
+        // Note: We don't reset showChatArea or activePhase - these persist or are loaded per-preset
+
         set({
           runFolders: [],
           selectedRunFolder: 'new',
@@ -1280,11 +2023,22 @@ export const useWorkflowStore = create<WorkflowStore>()(
           variablesManifest: null,
           selectedGroupIds: [],
           currentRunningGroupId: null,
-          activePhase: null,
-          showChatArea: false,
+          currentStepId: null,
+          stepStatusMap: new Map(),
+          batchProgress: null,
+          // activePhase is saved/loaded per-preset, don't reset here
           workflowChatTabs: {},
           activeWorkflowTabId: null
         })
+
+        // Clear group-related localStorage when resetting execution state
+        try {
+          localStorage.removeItem(SELECTED_GROUP_IDS_KEY)
+          localStorage.removeItem(CURRENT_RUNNING_GROUP_ID_KEY)
+          localStorage.removeItem(SELECTED_RUN_FOLDER_KEY)
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to clear group localStorage on reset:', error)
+        }
       },
 
     }),
@@ -1301,11 +2055,6 @@ export const useWorkflowRunFolders = () => useWorkflowStore(state => state.runFo
 export const useWorkflowProgress = () => useWorkflowStore(state => state.stepProgress)
 export const useCompletedStepIndices = () => useWorkflowStore(state => state.stepProgress?.completed_step_indices || [])
 
-// Computed selector for selected group ID
-export const useSelectedGroupId = () => {
-  return useWorkflowStore(state => {
-    // Uses utility function to extract group ID from folder path
-    return extractGroupIdFromFolder(state.selectedRunFolder, state.variablesManifest)
-  })
-}
+// Legacy selector removed - use selectedGroupIds array instead
+// Group selection is now exclusively managed via checkbox multi-select (selectedGroupIds)
 

@@ -84,10 +84,10 @@ Coordinate work between sub-agents. You evaluate the situation, verify success, 
  | Path Type | Location | Behavior | Best Use |
  | :--- | :--- | :--- | :--- |
  | **Volatile** | {{.StepExecutionPath}}/ | Deleted on re-execution | Iteration-specific logs |
- | **Persistent** | knowledgebase/ | Never deleted across runs | Templates, Shared Config, Reference Data |
- | **Global** | execution/ | Read-only access | Cross-step dependencies |
-
-- **Knowledgebase**: Use 'knowledgebase/' to store assets that should persist between different execution attempts (e.g., a "gold standard" template, long-term lookup tables, or project-level settings).
+{{if eq .UseKnowledgebase "true"}} | **Persistent** | knowledgebase/ | Never deleted across runs | Templates, Shared Config, Reference Data |
+{{end}} | **Global** | execution/ | Read-only access | Cross-step dependencies |
+{{if eq .UseKnowledgebase "true"}}
+- **Knowledgebase**: Use 'knowledgebase/' to store assets that should persist between different execution attempts (e.g., a "gold standard" template, long-term lookup tables, or project-level settings).{{end}}
  - **Recovery**: Update '{{.StepExecutionPath}}/progress.md' with reasoning after major decisions.
 
 *Output ONLY via 'submit_orchestration_result'.*`)
@@ -274,7 +274,7 @@ func (hctpooa *WorkflowOrchestrationOrchestratorAgent) orchestrationOrchestrator
 	}
 
 	if isCodeExecutionMode {
-		templateData["CodeExecutionInstructions"] = prompt.GetCodeExecutionInstructions()
+		templateData["CodeExecutionInstructions"] = prompt.GetCodeExecutionInstructions(templateVars["WorkspacePath"])
 	}
 
 	var result strings.Builder

@@ -7,6 +7,7 @@ import { useAppStore } from './useAppStore'
 import { useWorkspaceStore } from './useWorkspaceStore'
 import { useMCPStore } from './useMCPStore'
 import { useLLMStore } from './useLLMStore'
+import { useWorkflowStore } from './useWorkflowStore'
 
 export interface PresetApplicationResult {
   success: boolean
@@ -54,6 +55,7 @@ interface GlobalPresetState {
   setSelectedPresetFolder: (folderPath: string | null) => void
   setCurrentQuery: (query: string) => void
   clearPresetState: () => void
+  setActivePreset: (modeCategory: 'chat' | 'workflow', presetId: string | null) => void
   
   // Helper actions
   getPresetsForMode: (modeCategory: 'chat' | 'workflow') => (CustomPreset | PredefinedPreset)[]
@@ -779,10 +781,24 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           
           // Clear chatSessionId to allow fresh session initialization
           useAppStore.getState().setChatSessionId('')
-          
+
           // Note: Session IDs are now managed per-tab, not globally
           // When a preset is applied, tabs will be created with new session IDs as needed
-          
+
+          // Handle workflow state when switching workflows
+          if (modeCategory === 'workflow') {
+            const workflowStore = useWorkflowStore.getState()
+
+            // Save current preset's settings before switching away
+            const currentPresetId = get().activePresetIds.workflow
+            if (currentPresetId && currentPresetId !== preset.id) {
+              workflowStore.saveSettings()
+            }
+
+            // Switch to new preset - resets context and loads saved settings in one update
+            workflowStore.switchToPreset(preset.id)
+          }
+
           // Set the current query in both stores
           set({ currentQuery: preset.query })
           
@@ -801,37 +817,54 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           const tools = preset.selectedTools || []
           set({ currentPresetTools: tools })
 
-          // Keep MCP store in sync so UI reflects selection
-          // IMPORTANT: Only sync for workflow mode. For chat mode, preserve user's manual server selection.
-          // Chat mode tabs have their own server selection in tab config, not global MCP store.
+          // Keep MCP store in sync so UI reflects selection (mode-specific)
+          // Workflow mode: sync to workflowSelectedServers
+          // Chat mode: don't sync - let user's manual selection persist
           if (modeCategory === 'workflow') {
             try {
-              const { setSelectedServers } = useMCPStore.getState()
-              if (typeof setSelectedServers === 'function') {
-                setSelectedServers(servers)
+              const { setWorkflowSelectedServers } = useMCPStore.getState()
+              if (typeof setWorkflowSelectedServers === 'function') {
+                setWorkflowSelectedServers(servers)
               }
             } catch (error) {
               console.warn('[GlobalPresetStore] Failed to sync MCP store:', error)
             }
           }
-          // For chat mode, don't sync to global MCP store - let user's manual selection persist
+          // For chat mode, don't sync to global MCP store - let user's manual selection persist in chatSelectedServers
           
           // Set folder selection
           const folderPath = preset.selectedFolder?.filepath || null
           set({ selectedPresetFolder: folderPath })
           
-          // Apply LLM configuration if preset has one
+          // Apply LLM configuration if preset has one (mode-specific)
           if (preset.llmConfig) {
-            const { setPrimaryConfig, primaryConfig } = useLLMStore.getState()
-            const updatedConfig: typeof primaryConfig = {
-              ...primaryConfig, // Preserve existing configuration
+            const llmState = useLLMStore.getState()
+            const {
+              getConfigForMode,
+              setChatPrimaryConfig,
+              setWorkflowPrimaryConfig,
+              setPrimaryConfig // Also update legacy for backward compatibility
+            } = llmState
+
+            // Get the appropriate mode-specific config as base
+            const mode: 'chat' | 'workflow' = modeCategory === 'workflow' ? 'workflow' : 'chat'
+            const modeConfig = getConfigForMode(mode)
+            const currentPrimaryConfig = modeConfig.primaryConfig
+
+            const updatedConfig = {
+              ...currentPrimaryConfig, // Preserve existing mode-specific configuration
+              provider: preset.llmConfig.provider || currentPrimaryConfig.provider,
+              model_id: preset.llmConfig.model_id || currentPrimaryConfig.model_id
             }
-            if (preset.llmConfig.provider) {
-              updatedConfig.provider = preset.llmConfig.provider
+
+            // Update mode-specific config
+            if (modeCategory === 'workflow') {
+              setWorkflowPrimaryConfig(updatedConfig)
+            } else {
+              setChatPrimaryConfig(updatedConfig)
             }
-            if (preset.llmConfig.model_id) {
-              updatedConfig.model_id = preset.llmConfig.model_id
-            }
+
+            // Also update legacy config for backward compatibility
             setPrimaryConfig(updatedConfig)
           }
           
@@ -936,6 +969,15 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             'workflow': null
           }
         })
+      },
+
+      setActivePreset: (modeCategory: 'chat' | 'workflow', presetId: string | null) => {
+        set(state => ({
+          activePresetIds: {
+            ...state.activePresetIds,
+            [modeCategory]: presetId
+          }
+        }))
       },
       
       // Helper actions

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -61,15 +60,13 @@ type StepBasedWorkflowOrchestrator struct {
 	selectedRunFolder string // Selected run folder name (e.g., "iteration-1", "iteration-2")
 	selectedRunMode   string // Selected run mode (e.g., "use_same_run", "create_new_runs_always")
 
+	// Batch execution context (tracked for step_progress_updated events)
+	currentGroupId  string // Current group ID being executed
+	currentGroupIdx int    // 0-based index of current group
+	totalGroups     int    // Total number of groups in batch
+
 	// Frontend-provided execution options (when provided, skips interactive prompts)
 	executionOptions *ExecutionOptions
-
-	// Conditional Agent for conditional step evaluation (default/orchestrator-level)
-	conditionalAgent *WorkflowConditionalAgent
-
-	// Cache for step-specific conditional agent instances (key: step ID)
-	stepConditionalAgentCache map[string]*WorkflowConditionalAgent
-	stepConditionalAgentMutex sync.RWMutex
 
 	// Preset-level agent defaults (used when step config doesn't specify)
 	presetExecutionLLM       *AgentLLMConfig // Default for execution agents
@@ -93,9 +90,8 @@ type StepBasedWorkflowOrchestrator struct {
 	// If true, save validation responses to workspace validation folder
 	saveValidationResponses bool
 
-	// Tool access control (from ExecutionOptions)
-	disableShellExecAccess bool // If true, disable execute_shell_command tool access globally
-	disableReadImageAccess bool // If true, disable read_image tool access globally
+	// Preset-level feature toggles
+	useKnowledgebase bool // Whether to create and reference knowledgebase folder (default: true)
 }
 
 // NewStepBasedWorkflowOrchestrator creates a new human-controlled todo planner orchestrator
@@ -123,15 +119,15 @@ func NewStepBasedWorkflowOrchestrator(
 	presetPhaseLLM *AgentLLMConfig, // Optional preset default for all phase agents
 	presetAnonymizationLLM *AgentLLMConfig, // Optional preset default for anonymization agent
 	presetPlanImprovementLLM *AgentLLMConfig, // Optional preset default for plan improvement agent
+	useKnowledgebase bool, // Whether to create and reference knowledgebase folder (default: true)
 ) (*StepBasedWorkflowOrchestrator, error) {
 
 	// Create base workflow orchestrator
+	// Note: provider and model parameters removed - not used (LLM comes from temp override/step config/preset)
 	baseOrchestrator, err := orchestrator.NewBaseOrchestrator(
 		logger,
 		eventBridge,
 		orchestrator.OrchestratorTypeWorkflow,
-		provider,
-		model,
 		mcpConfigPath,
 		temperature,
 		agentMode,
@@ -148,83 +144,32 @@ func NewStepBasedWorkflowOrchestrator(
 		return nil, fmt.Errorf("failed to create base orchestrator: %w", err)
 	}
 
-	// Create ConditionalAgent for conditional step evaluation
-	// Get LLM config from orchestrator to preserve API keys from frontend
-	orchestratorLLMConfig := baseOrchestrator.GetLLMConfig()
-	conditionalAgentConfig := &agents.OrchestratorAgentConfig{
-		LLMConfig: agents.LLMConfig{
-			Primary: agents.LLMModel{
-				Provider: provider,
-				ModelID:  model,
-			},
-		},
-		Temperature:          temperature,
-		MaxRetries:           3,
-		ServerNames:          selectedServers,      // Pass servers for agent
-		SelectedTools:        selectedTools,        // Pass tools for agent
-		UseCodeExecutionMode: useCodeExecutionMode, // Pass code execution mode
-		Mode:                 agents.AgentMode(agentMode),
-		MaxTurns:             maxTurns,
-		MCPConfigPath:        mcpConfigPath,
-	}
-	// Preserve API keys from orchestrator LLM config (sent from frontend)
-	if orchestratorLLMConfig != nil && orchestratorLLMConfig.APIKeys != nil {
-		conditionalAgentConfig.APIKeys = &agents.AgentAPIKeys{
-			OpenRouter: orchestratorLLMConfig.APIKeys.OpenRouter,
-			OpenAI:     orchestratorLLMConfig.APIKeys.OpenAI,
-			Anthropic:  orchestratorLLMConfig.APIKeys.Anthropic,
-			Vertex:     orchestratorLLMConfig.APIKeys.Vertex,
-		}
-		if orchestratorLLMConfig.APIKeys.Bedrock != nil {
-			conditionalAgentConfig.APIKeys.Bedrock = &agents.BedrockAgentConfig{
-				Region: orchestratorLLMConfig.APIKeys.Bedrock.Region,
-			}
-		}
-		logger.Info(fmt.Sprintf("🔑 Preserved API keys for conditional agent from orchestrator config"))
-	}
-	// Create default conditional agent using factory pattern (same as execution agent)
-	// Use CreateAndSetupStandardAgentWithConfig to ensure proper initialization, event bridge connection, and tool registration
-	// Pass all workspace tools for default agent (no step config filtering)
-	var conditionalAgent *WorkflowConditionalAgent
-	conditionalAgentInterface, err := baseOrchestrator.CreateAndSetupStandardAgentWithConfig(
-		ctx,
-		conditionalAgentConfig,
-		"conditional_evaluation", // phase
-		0,                        // step (default agent, will be updated per-step)
-		0,                        // iteration
-		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewWorkflowConditionalAgent(cfg, logger, tracer, eventBridge)
-		},
-		customTools,         // Pass all workspace tools (default agent, no step config filtering)
-		customToolExecutors, // Pass all workspace tool executors
-		false,               // Don't overwrite system prompt - conditional agent manages its own prompt
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create default conditional agent: %w", err)
-	}
+	// Generate session ID for MCP connection sharing across all agents in this workflow
+	// This MUST be set before creating any agents to ensure connection reuse
+	// NOTE: We always run with groups, so include groupID in sessionID format
+	// If groupID is not available yet (will be set later in batch execution), use "default-group" placeholder
+	// The sessionID will be overridden in batch_execution.go when the actual groupID is known
+	groupID := "default-group" // Placeholder - will be overridden in batch execution with actual groupID
+	workflowSessionID := fmt.Sprintf("session-group-%s-%d", groupID, time.Now().UnixNano())
+	baseOrchestrator.SetMCPSessionID(workflowSessionID)
+	logger.Info(fmt.Sprintf("🔗 Set MCP session ID for workflow: %s (will be overridden with actual groupID in batch execution)", workflowSessionID))
 
-	// Type assert to conditional agent
-	var ok bool
-	conditionalAgent, ok = conditionalAgentInterface.(*WorkflowConditionalAgent)
-	if !ok {
-		logger.Error("❌ [ORCHESTRATOR DEBUG] Factory returned wrong agent type for default conditional agent", nil)
-		return nil, fmt.Errorf("factory returned wrong agent type for default conditional agent")
-	}
-	logger.Info(fmt.Sprintf("✅ [ORCHESTRATOR DEBUG] Conditional agent type assertion successful"))
+	// NOTE: Default conditional agent is now created lazily when needed (in getConditionalAgentForStep)
+	// This ensures it's created after batch execution setup, with correct session ID and runtime overrides
+	// This matches the pattern used by execution and learning agents
 
 	hcpo := &StepBasedWorkflowOrchestrator{
-		BaseOrchestrator:          baseOrchestrator,
-		sessionID:                 fmt.Sprintf("session_%d", time.Now().UnixNano()),
-		workflowID:                fmt.Sprintf("workflow_%d", time.Now().UnixNano()),
-		conditionalAgent:          conditionalAgent,
-		stepConditionalAgentCache: make(map[string]*WorkflowConditionalAgent),
-		presetExecutionLLM:        presetExecutionLLM,
-		presetValidationLLM:       presetValidationLLM,
-		presetLearningLLM:         presetLearningLLM,
-		presetPhaseLLM:            presetPhaseLLM,
-		presetAnonymizationLLM:    presetAnonymizationLLM,
-		presetPlanImprovementLLM:  presetPlanImprovementLLM,
-		saveValidationResponses:   true, // Default to true (save validation responses by default)
+		BaseOrchestrator:         baseOrchestrator,
+		sessionID:                workflowSessionID, // Use the same session ID set on BaseOrchestrator for MCP connection sharing
+		workflowID:               fmt.Sprintf("workflow_%d", time.Now().UnixNano()),
+		presetExecutionLLM:       presetExecutionLLM,
+		presetValidationLLM:      presetValidationLLM,
+		presetLearningLLM:        presetLearningLLM,
+		presetPhaseLLM:           presetPhaseLLM,
+		presetAnonymizationLLM:   presetAnonymizationLLM,
+		presetPlanImprovementLLM: presetPlanImprovementLLM,
+		saveValidationResponses:  true, // Default to true (save validation responses by default)
+		useKnowledgebase:         useKnowledgebase,
 	}
 
 	// Create VariableManager for variable extraction operations (independent from controller)
@@ -251,32 +196,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 	hasValidConditionalLLM := agentConfigs != nil && agentConfigs.ConditionalLLM != nil && agentConfigs.ConditionalLLM.Provider != "" && agentConfigs.ConditionalLLM.ModelID != ""
 	hasStepSpecificConfig := agentConfigs != nil && (hasValidConditionalLLM || agentConfigs.UseCodeExecutionMode != nil)
 
+	// Determine code execution mode
+	var isCodeExecutionMode bool
+	if agentConfigs != nil && agentConfigs.UseCodeExecutionMode != nil {
+		isCodeExecutionMode = *agentConfigs.UseCodeExecutionMode
+	} else {
+		isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
+	}
+
+	// For conditional/decision agents, skip tempLLM and use step/preset LLM directly
+	// Fallback order: ConditionalLLM → ExecutionLLM → preset ExecutionLLM → orchestrator default
+	// Create LLM config: use conditional LLM if specified, otherwise use execution LLM
+	var llmConfig *orchestrator.LLMConfig
+	orchestratorLLMConfig := hcpo.GetLLMConfig()
+
 	if hasStepSpecificConfig {
-		// Determine code execution mode for cache key
-		var isCodeExecutionMode bool
-		if agentConfigs != nil && agentConfigs.UseCodeExecutionMode != nil {
-			isCodeExecutionMode = *agentConfigs.UseCodeExecutionMode
-		} else {
-			isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
-		}
-
-		// Include code execution mode in cache key to avoid using wrong cached agent
-		cacheKey := fmt.Sprintf("%s-codeexec-%v", stepID, isCodeExecutionMode)
-
-		// Check cache first
-		hcpo.stepConditionalAgentMutex.RLock()
-		cachedAgent, exists := hcpo.stepConditionalAgentCache[cacheKey]
-		hcpo.stepConditionalAgentMutex.RUnlock()
-
-		if exists && cachedAgent != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using cached step-specific conditional agent for step '%s' (ID: %s, code exec: %v)", step.GetTitle(), stepID, isCodeExecutionMode))
-			return cachedAgent
-		}
-
-		// Create LLM config: use conditional LLM if specified, otherwise use execution LLM
-		var llmConfig *orchestrator.LLMConfig
-		orchestratorLLMConfig := hcpo.GetLLMConfig()
-
+		// Step has specific config - use step-specific LLM
 		if hasValidConditionalLLM {
 			conditionalLLMConfig := agentConfigs.ConditionalLLM
 			llmConfig = &orchestrator.LLMConfig{
@@ -306,8 +241,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 		} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 			llmConfig = orchestratorLLMConfig
 		} else {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ No valid LLM configuration found for conditional agent step '%s', falling back to default", step.GetTitle()))
-			return hcpo.conditionalAgent // Fallback to default
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ No valid LLM configuration found for conditional agent step '%s'", step.GetTitle()))
+			return nil
 		}
 
 		// Use provided agent name, or fallback to default format
@@ -325,7 +260,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 		// Construct stepPath from stepIndex (e.g., "step-3" for stepIndex=2)
 		stepPath := fmt.Sprintf("step-%d", stepIndex+1)
 
-		// Use factory method - this handles initialization, event bridge connection, and tool registration
+		// Create fresh step-specific conditional agent (no caching)
 		agent, err := hcpo.createConditionalAgent(
 			ctx,
 			actualPhase,     // phase (from parameter)
@@ -338,21 +273,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 			stepID,          // step ID for step-specific learnings folder access
 		)
 		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create step-specific conditional agent for step '%s': %v, falling back to default", step.GetTitle(), err))
-			return hcpo.conditionalAgent // Fallback to default
+			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to create step-specific conditional agent for step '%s': %v", step.GetTitle(), err), nil)
+			return nil
 		}
 
 		// Type assert to conditional agent
 		stepConditionalAgent, ok := agent.(*WorkflowConditionalAgent)
 		if !ok {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Factory returned wrong agent type for step '%s', falling back to default", step.GetTitle()))
-			return hcpo.conditionalAgent // Fallback to default
+			hcpo.GetLogger().Error(fmt.Sprintf("❌ Factory returned wrong agent type for step '%s'", step.GetTitle()), nil)
+			return nil
 		}
-
-		// Cache the conditional agent with code execution mode in key
-		hcpo.stepConditionalAgentMutex.Lock()
-		hcpo.stepConditionalAgentCache[cacheKey] = stepConditionalAgent
-		hcpo.stepConditionalAgentMutex.Unlock()
 
 		if hasValidConditionalLLM {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created step-specific conditional agent for step '%s' (ID: %s, code exec: %v): %s/%s", step.GetTitle(), stepID, isCodeExecutionMode, agentConfigs.ConditionalLLM.Provider, agentConfigs.ConditionalLLM.ModelID))
@@ -362,8 +292,64 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 		return stepConditionalAgent
 	}
 
-	// Use default conditional agent
-	return hcpo.conditionalAgent
+	// No step-specific config - create default conditional agent fresh (no caching)
+	// Fallback order: preset ExecutionLLM → orchestrator default
+	if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
+		llmConfig = &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: hcpo.presetExecutionLLM.Provider,
+				ModelID:  hcpo.presetExecutionLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys,
+		}
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
+		llmConfig = orchestratorLLMConfig
+	} else {
+		hcpo.GetLogger().Error("❌ No valid LLM configuration found for default conditional agent", nil)
+		return nil
+	}
+
+	// Use provided agent name, or fallback to default format
+	actualAgentName := agentName
+	if actualAgentName == "" {
+		actualAgentName = "conditional-agent-default"
+	}
+
+	// Use provided phase, or fallback to default
+	actualPhase := phase
+	if actualPhase == "" {
+		actualPhase = "conditional_evaluation"
+	}
+
+	// Construct stepPath from stepIndex (e.g., "step-3" for stepIndex=2)
+	stepPath := fmt.Sprintf("step-%d", stepIndex+1)
+
+	// Create fresh default conditional agent (no caching, matches execution/learning agent pattern)
+	agent, err := hcpo.createConditionalAgent(
+		ctx,
+		actualPhase,     // phase
+		stepIndex,       // step index
+		0,               // iteration
+		actualAgentName, // agent name
+		nil,             // no step config (default agent)
+		llmConfig,       // LLM config
+		stepPath,        // step path for execution folder write access
+		stepID,          // step ID
+	)
+	if err != nil {
+		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to create default conditional agent: %v", err), nil)
+		return nil
+	}
+
+	// Type assert to conditional agent
+	defaultConditionalAgent, ok := agent.(*WorkflowConditionalAgent)
+	if !ok {
+		hcpo.GetLogger().Error("❌ Factory returned wrong agent type for default conditional agent", nil)
+		return nil
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created default conditional agent fresh (no caching, matches execution/learning agent pattern)"))
+	return defaultConditionalAgent
 }
 
 // getConditionalLLMForStep returns the ConditionalLLM to use for a specific step
@@ -378,7 +364,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalLLMForStep(step PlanSte
 	logger := hcpo.GetLogger()
 	tracer := hcpo.GetTracer()
 
-	// Determine LLM config: Priority: step execution_llm > preset execution_llm > orchestrator default
+	// For conditional LLM, skip tempLLM and use step/preset ExecutionLLM directly
+	// Fallback order: ExecutionLLM → preset ExecutionLLM
+	// Determine LLM config: Priority: step execution_llm > preset execution_llm
 	var llmConfig *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	agentConfigs := getAgentConfigs(step)
@@ -404,12 +392,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalLLMForStep(step PlanSte
 			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution LLM for conditional LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
-	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
-		// Use orchestrator default LLM config
-		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional LLM: %s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
 	} else {
-		return nil, fmt.Errorf("no valid LLM configuration found for conditional LLM: step config, preset execution LLM, and orchestrator default LLM are all empty or invalid")
+		return nil, fmt.Errorf("no valid LLM configuration found for conditional LLM: step config and preset execution LLM are both empty or invalid")
 	}
 
 	// Convert to OrchestratorAgentConfig
@@ -465,9 +449,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 
 	// Set objective and workspace path directly
 	// WorkspacePath is the base workspace path (no subdirectory)
+	// The workspace API will handle internal resolution to ../workspace-docs/ when needed
 	hcpo.SetObjective(objective)
 	hcpo.SetWorkspacePath(workspacePath)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] CreateTodoList: Objective and workspace path set"))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] CreateTodoList: Objective and workspace path set to %s", workspacePath))
 
 	// PHASE 0: Check both variables and plan at start (before any prompts)
 	// Check if variables.json exists - OPTIONAL (planning agent can create it)
@@ -1010,104 +995,45 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Proceeding to execution phase with %d steps", len(breakdownSteps)))
 
-	// Initialize progress tracking if not already loaded
-	// Only initialize fresh progress if we're NOT trying to preserve existing progress
-	// (i.e., if planChangeHandled = false, this is a first run and we should initialize)
-	if existingProgress == nil && !planChangeHandled {
-		// Initialize and save fresh progress file (first run scenario)
-		if err := hcpo.initializeFreshProgress(ctx, len(breakdownSteps)); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to initialize fresh progress: %v", err))
-			// Continue anyway with in-memory progress
-			existingProgress = &StepProgress{
-				CompletedStepIndices:     []int{},
-				TotalSteps:               len(breakdownSteps),
-				BranchSteps:              make(map[int]BranchStepProgress),
-				DecisionEvaluationCounts: make(DecisionEvaluationCount),
-			}
-		} else {
-			// Create in-memory progress object matching what was saved
-			existingProgress = &StepProgress{
-				CompletedStepIndices:     []int{},
-				TotalSteps:               len(breakdownSteps),
-				LastUpdated:              time.Now(),
-				BranchSteps:              make(map[int]BranchStepProgress),
-				DecisionEvaluationCounts: make(DecisionEvaluationCount),
-			}
-		}
-	} else if existingProgress != nil && !isResuming {
-		// Safety check: if we're starting fresh but existingProgress exists (shouldn't happen, but handle it)
-		// Reset DecisionEvaluationCounts to ensure old counts don't persist
-		if existingProgress.DecisionEvaluationCounts != nil && len(existingProgress.DecisionEvaluationCounts) > 0 {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Starting fresh but found existing DecisionEvaluationCounts with %d entries - resetting to prevent infinite loop errors", len(existingProgress.DecisionEvaluationCounts)))
-			existingProgress.DecisionEvaluationCounts = make(DecisionEvaluationCount)
-			// Save the reset progress
-			if err := hcpo.saveStepProgress(ctx, existingProgress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save reset progress: %v", err))
-			}
-		}
-	} else if existingProgress == nil && planChangeHandled {
-		// Plan change detected but progress file doesn't exist - preserve mode
-		// Don't initialize fresh progress, just continue with nil and let execution handle it
-		hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Preserving progress mode: progress file doesn't exist, continuing without initializing fresh progress"))
-		// Create minimal in-memory progress for execution to work with
-		existingProgress = &StepProgress{
-			CompletedStepIndices:     []int{},
-			TotalSteps:               len(breakdownSteps),
-			BranchSteps:              make(map[int]BranchStepProgress),
-			DecisionEvaluationCounts: make(DecisionEvaluationCount),
-		}
-	}
-
 	// Build execution context once from current controller state
 	execCtx := hcpo.buildExecutionContext()
 
-	// Check if batch execution should be used (multiple variable groups enabled)
-	if hcpo.shouldUseBatchExecution() {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Multiple variable groups detected, using batch execution mode"))
-		batchResult, err := hcpo.runBatchExecution(ctx, breakdownSteps, 1, execCtx)
-		if err != nil {
-			return "", fmt.Errorf("batch execution failed: %w", err)
-		}
-		if !batchResult.Success {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Batch execution completed with %d failed groups", batchResult.FailedGroups))
-		}
-	} else {
-		// Single group or no groups - use standard execution
-		// If a single group is selected and selectedRunFolder doesn't include the group path,
-		// we need to update it to include the group folder name
-		enabledGroups := hcpo.getEnabledGroupsForExecution()
-		if len(enabledGroups) == 1 && hcpo.selectedRunFolder != "" {
-			group := enabledGroups[0]
-			// Check if selectedRunFolder already contains a group path
-			if !strings.Contains(hcpo.selectedRunFolder, "/") {
-				// selectedRunFolder is just the iteration (e.g., "iteration-14")
-				// Need to add the group folder name
-				folderName := group.GroupID
-				if group.DisplayName != "" {
-					sanitized := hcpo.sanitizeDisplayNameForFolder(group.DisplayName)
-					if sanitized != "" {
-						folderName = sanitized
-					}
-				}
-				hcpo.selectedRunFolder = fmt.Sprintf("%s/%s", hcpo.selectedRunFolder, folderName)
-				hcpo.GetLogger().Info(fmt.Sprintf("📁 Updated selectedRunFolder to include group path: %s", hcpo.selectedRunFolder))
-				// Sync base orchestrator's iteration folder to match the updated selectedRunFolder
-				// This ensures consistency for token/log persistence and event-bridge context
-				hcpo.SetIterationFolder(hcpo.selectedRunFolder)
-			}
-		}
-		err = hcpo.runExecutionPhase(ctx, breakdownSteps, 1, existingProgress, startFromStep, execCtx)
-		if err != nil {
-			return "", fmt.Errorf("execution phase failed: %w", err)
-		}
+	// Always use batch execution mode (even for single group) to ensure:
+	// - Proper session ID management with actual groupID (not "default-group")
+	// - Consistent folder structure (runs/iteration-X/group-Y/)
+	// - Better isolation and cleanup per group
+	enabledGroups := hcpo.getEnabledGroupsForExecution()
 
-		// Auto-evaluation: Run scoring if evaluation_plan.json exists
-		if !hcpo.isEvaluationMode {
-			if evalErr := hcpo.MaybeRunAutoEvaluation(ctx); evalErr != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Auto-evaluation failed: %v", evalErr))
-				// Don't fail the whole execution if auto-evaluation fails
-			}
+	// NOTE: Progress initialization is skipped here because batch execution will handle it per group
+	// Each group has its own run folder and progress file, initialized by ApplyCleanup in runBatchExecution
+	// This prevents duplicate "Step Progress Updated" events before batch_execution_start
+
+	// DEBUG: Panic if no groups found or if groups have empty GroupID
+	if len(enabledGroups) == 0 {
+		// PANIC for debugging: groups are required for execution
+		panic(fmt.Sprintf("CRITICAL: No variable groups found in getEnabledGroupsForExecution() - cannot proceed without groups. variablesManifest is nil: %v", hcpo.variablesManifest == nil))
+	}
+
+	// Validate that all groups have valid GroupIDs
+	for i, group := range enabledGroups {
+		if group.GroupID == "" {
+			// PANIC for debugging: groupID is required for session ID and folder structure
+			panic(fmt.Sprintf("CRITICAL: Group at index %d has empty GroupID - all groups must have valid GroupIDs for batch execution. Group values: %v", i, group.Values))
 		}
+	}
+
+	if len(enabledGroups) > 1 {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Multiple variable groups detected (%d groups), using batch execution mode", len(enabledGroups)))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Single variable group detected (%s), using batch execution mode for consistent session ID and folder structure", enabledGroups[0].GroupID))
+	}
+
+	batchResult, err := hcpo.runBatchExecution(ctx, breakdownSteps, 1, execCtx)
+	if err != nil {
+		return "", fmt.Errorf("batch execution failed: %w", err)
+	}
+	if !batchResult.Success {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Batch execution completed with %d failed groups", batchResult.FailedGroups))
 	}
 
 	duration := time.Since(hcpo.GetStartTime())
@@ -1161,10 +1087,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) GetType() string {
 	return "human_controlled_todo_planner"
 }
 
+// UseKnowledgebase returns whether the knowledgebase feature is enabled
+func (hcpo *StepBasedWorkflowOrchestrator) UseKnowledgebase() bool {
+	return hcpo.useKnowledgebase
+}
+
 // Helper methods for human feedback tracking
 
 // getSessionID returns the session ID for this orchestrator
+// DEBUG: Panic if sessionID is empty to catch cases where it wasn't set properly
 func (hcpo *StepBasedWorkflowOrchestrator) getSessionID() string {
+	if hcpo.sessionID == "" {
+		// PANIC for debugging: sessionID should always be set (either at controller creation or in batch execution)
+		// This helps catch cases where sessionID is not properly initialized
+		panic(fmt.Sprintf("CRITICAL: sessionID is empty in StepBasedWorkflowOrchestrator.getSessionID() - this should never happen. SessionID must be set before use."))
+	}
 	return hcpo.sessionID
 }
 
@@ -1248,23 +1185,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetExecutionOptions(options *Executio
 		hcpo.saveValidationResponses = true
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Save validation responses enabled - validation responses will be saved to workspace"))
 
-		// Store tool access control flags
-		hcpo.disableShellExecAccess = options.DisableShellExecAccess
-		if hcpo.disableShellExecAccess {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Shell exec access disabled - execute_shell_command tool will be filtered out"))
-		}
-		hcpo.disableReadImageAccess = options.DisableReadImageAccess
-		if hcpo.disableReadImageAccess {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Read image access disabled - read_image tool will be filtered out"))
-		}
 	} else {
 		// Clear temporary overrides when options are cleared
 		hcpo.tempOverrideLLM = nil
 		hcpo.tempOverrideLLM2 = nil
 		hcpo.fallbackToOriginalLLMOnFailure = false
 		hcpo.saveValidationResponses = true // Default to true when no options provided
-		hcpo.disableShellExecAccess = false // Default to false when no options provided
-		hcpo.disableReadImageAccess = false // Default to false when no options provided
 	}
 }
 

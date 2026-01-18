@@ -37,19 +37,10 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 
 	// Populate LLMConfig from orchestrator.LLMConfig (unified structure)
 	if llmConfig != nil {
-		// Copy Primary with fallbacks if partially empty
-		primaryProvider := llmConfig.Primary.Provider
-		if primaryProvider == "" {
-			primaryProvider = bo.GetProvider()
-		}
-		primaryModel := llmConfig.Primary.ModelID
-		if primaryModel == "" {
-			primaryModel = bo.GetModel()
-		}
-
+		// Copy Primary directly - no fallback to orchestrator default (LLM selection uses temp override → step config → preset LLM)
 		config.LLMConfig.Primary = agents.LLMModel{
-			Provider: primaryProvider,
-			ModelID:  primaryModel,
+			Provider: llmConfig.Primary.Provider,
+			ModelID:  llmConfig.Primary.ModelID,
 			APIKey:   llmConfig.Primary.APIKey,
 			Region:   llmConfig.Primary.Region,
 		}
@@ -77,11 +68,9 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 			}
 		}
 	} else {
-		// Fallback to orchestrator defaults
-		config.LLMConfig.Primary = agents.LLMModel{
-			Provider: bo.GetProvider(),
-			ModelID:  bo.GetModel(),
-		}
+		// No fallback to orchestrator defaults - llmConfig must be provided
+		// LLM selection uses temp override → step config → preset LLM priority
+		panic(fmt.Sprintf("CRITICAL: llmConfig is nil in createAgentConfigWithLLM() for agent %s - LLM config must be provided. LLM selection uses temp override → step config → preset LLM priority, no orchestrator default fallback.", agentName))
 	}
 
 	config.Temperature = llmTemp
@@ -99,9 +88,13 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 
 	// Inject MCP session ID for connection sharing across agents in the same workflow
 	// When set, connections are stored in a session registry and reused
-	if bo.mcpSessionID != "" {
-		config.MCPSessionID = bo.mcpSessionID
+	// DEBUG: Panic if sessionID is empty to catch cases where it wasn't set properly
+	if bo.mcpSessionID == "" {
+		// PANIC for debugging: sessionID should always be set before creating agents
+		// This helps catch cases where sessionID is not properly initialized before agent creation
+		panic(fmt.Sprintf("CRITICAL: mcpSessionID is empty in BaseOrchestrator.createAgentConfigWithLLM() - cannot create agent without sessionID. SessionID must be set via SetMCPSessionID() before creating agents."))
 	}
+	config.MCPSessionID = bo.mcpSessionID
 
 	// Context summarization configuration from orchestrator
 	config.EnableContextSummarization = bo.GetEnableContextSummarization()
@@ -128,6 +121,7 @@ func (bo *BaseOrchestrator) setupStandardAgent(
 	agentName string,
 	phase string,
 	step, iteration int,
+	stepID string, // Step ID (e.g., "fetch-data", "process-results")
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 ) error {
@@ -156,7 +150,7 @@ func (bo *BaseOrchestrator) setupStandardAgent(
 	// 🔗 Connect agent to orchestrator's main event bridge using existing bridge (reuse)
 	baseAgentName := baseAgent.GetName()
 	if cab, ok := eventBridge.(*ContextAwareEventBridge); ok {
-		cab.SetOrchestratorContext(phase, step, baseAgentName)
+		cab.SetOrchestratorContext(phase, step, stepID, baseAgentName)
 		// Ensure iteration folder is applied to bridge (for token persistence)
 		// This ensures all agents automatically get the iteration folder if it's been set
 		bo.applyIterationFolderToBridge()
@@ -165,9 +159,9 @@ func (bo *BaseOrchestrator) setupStandardAgent(
 	} else {
 		// Fallback for interface-based bridge
 		if cab, ok := eventBridge.(interface {
-			SetOrchestratorContext(phase string, step int, agentName string)
+			SetOrchestratorContext(phase string, step int, stepID string, agentName string)
 		}); ok {
-			cab.SetOrchestratorContext(phase, step, baseAgentName)
+			cab.SetOrchestratorContext(phase, step, stepID, baseAgentName)
 			// Ensure iteration folder is applied to bridge (for token persistence)
 			bo.applyIterationFolderToBridge()
 			mcpAgent.AddEventListener(eventBridge)
@@ -299,6 +293,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 	agentName string,
 	phase string,
 	step, iteration int,
+	stepID string, // Step ID (e.g., "fetch-data", "process-results")
 	maxTurns int,
 	outputFormat agents.OutputFormat,
 	createAgentFunc func(*agents.OrchestratorAgentConfig, loggerv2.Logger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
@@ -312,7 +307,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
 
 	// Setup agent using common helper (pass config to check agent-specific code execution mode)
-	if err := bo.setupStandardAgent(ctx, agent, config, agentName, phase, step, iteration, customTools, customToolExecutors); err != nil {
+	if err := bo.setupStandardAgent(ctx, agent, config, agentName, phase, step, iteration, stepID, customTools, customToolExecutors); err != nil {
 		return nil, err
 	}
 
@@ -327,6 +322,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithConfig(
 	config *agents.OrchestratorAgentConfig,
 	phase string,
 	step, iteration int,
+	stepID string, // Step ID (e.g., "fetch-data", "process-results")
 	createAgentFunc func(*agents.OrchestratorAgentConfig, loggerv2.Logger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent,
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
@@ -339,7 +335,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithConfig(
 	agent := createAgentFunc(config, bo.GetLogger(), bo.GetTracer(), bo.GetContextAwareBridge())
 
 	// Setup agent using common helper (pass config to check agent-specific code execution mode)
-	if err := bo.setupStandardAgent(ctx, agent, config, config.AgentName, phase, step, iteration, customTools, customToolExecutors); err != nil {
+	if err := bo.setupStandardAgent(ctx, agent, config, config.AgentName, phase, step, iteration, stepID, customTools, customToolExecutors); err != nil {
 		return nil, err
 	}
 

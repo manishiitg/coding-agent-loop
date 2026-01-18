@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import * as Select from '@radix-ui/react-select'
 import { Check, ChevronDown, Calendar, DollarSign, Box, Search, X } from 'lucide-react'
 import { cn } from '../../lib/utils' // Assuming this exists given 'clsx' and 'tailwind-merge' are in package.json

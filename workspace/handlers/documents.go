@@ -416,31 +416,10 @@ func ListDocuments(c *gin.Context) {
 
 	// Build search path
 	var searchPath string
-	// Special handling for Downloads folder - use Downloads folder relative to docs-dir
-	if normalizedFolder == "Downloads" || strings.HasPrefix(normalizedFolder, "Downloads/") {
-		// Use Downloads folder relative to docs-dir (e.g., /app/workspace-docs/Downloads)
-		if normalizedFolder == "Downloads" {
-			searchPath = filepath.Join(docsDir, "Downloads")
-		} else {
-			// Handle Downloads/subfolder case
-			subfolder := strings.TrimPrefix(normalizedFolder, "Downloads/")
-			searchPath = filepath.Join(docsDir, "Downloads", subfolder)
-		}
-	} else if normalizedFolder != "" {
+	if normalizedFolder != "" {
 		searchPath = filepath.Join(docsDir, normalizedFolder)
 	} else {
 		searchPath = docsDir
-	}
-
-	// Debug logging for Downloads folder access
-	if normalizedFolder == "Downloads" || strings.HasPrefix(normalizedFolder, "Downloads/") {
-		log.Printf("[DEBUG Downloads] docsDir=%s, normalizedFolder=%s, searchPath=%s", docsDir, normalizedFolder, searchPath)
-		// Check if searchPath exists
-		if info, err := os.Stat(searchPath); err == nil {
-			log.Printf("[DEBUG Downloads] Path exists: %s (isDir=%v)", searchPath, info.IsDir())
-		} else {
-			log.Printf("[DEBUG Downloads] Path does not exist: %s (error: %v)", searchPath, err)
-		}
 	}
 
 	// Check if the folder exists before attempting to read it
@@ -538,14 +517,7 @@ func GlobDocuments(c *gin.Context) {
 
 	// Build search path
 	var searchPath string
-	if normalizedFolder == "Downloads" || strings.HasPrefix(normalizedFolder, "Downloads/") {
-		if normalizedFolder == "Downloads" {
-			searchPath = filepath.Join(docsDir, "Downloads")
-		} else {
-			subfolder := strings.TrimPrefix(normalizedFolder, "Downloads/")
-			searchPath = filepath.Join(docsDir, "Downloads", subfolder)
-		}
-	} else if normalizedFolder != "" {
+	if normalizedFolder != "" {
 		searchPath = filepath.Join(docsDir, normalizedFolder)
 	} else {
 		searchPath = docsDir

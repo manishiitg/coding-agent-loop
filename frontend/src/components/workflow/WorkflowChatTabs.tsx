@@ -23,31 +23,31 @@ export const WorkflowChatTabs: React.FC = () => {
     setTabStreaming,
     getTabStreamingStatus
   } = useChatStore()
-  
+
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
-  
+
   // Filter to only show active workflow tabs (have sessionId or isStreaming)
   const activeWorkflowTabs = useMemo(() => {
     return Object.values(chatTabs)
-      .filter(tab => 
-        tab.metadata?.mode === 'workflow' && 
+      .filter(tab =>
+        tab.metadata?.mode === 'workflow' &&
         (tab.sessionId || tab.isStreaming) // Only show active tabs
       )
       .sort((a, b) => a.createdAt - b.createdAt)
   }, [chatTabs])
-  
+
   // Close chat area when all workflow tabs are closed
   useEffect(() => {
     if (activeWorkflowTabs.length === 0) {
       setShowChatArea(false)
     }
   }, [activeWorkflowTabs.length, setShowChatArea])
-  
+
   // Don't render if no active workflow tabs
   if (activeWorkflowTabs.length === 0) {
     return null
   }
-  
+
   const handleTabClick = (tabId: string) => {
     switchTab(tabId)
   }
@@ -59,7 +59,7 @@ export const WorkflowChatTabs: React.FC = () => {
 
   const handleStopSession = async (e: React.MouseEvent, tab: ChatTab) => {
     e.stopPropagation()
-    
+
     if (!tab.sessionId) {
       console.warn('[WorkflowChatTabs] No session ID to stop for tab:', tab.tabId)
       return
@@ -69,7 +69,7 @@ export const WorkflowChatTabs: React.FC = () => {
       // Stop the session via API
       await agentApi.stopSession(tab.sessionId)
       console.log(`[WorkflowChatTabs] ✅ Stopped session ${tab.sessionId} for tab ${tab.tabId}`)
-      
+
       // Update tab's streaming status
       setTabStreaming(tab.tabId, false)
     } catch (error) {
@@ -80,12 +80,12 @@ export const WorkflowChatTabs: React.FC = () => {
   // Get tab color/indicator based on session status
   const getTabIndicator = (tab: ChatTab) => {
     const sessionStatus = tabSessionStatus[tab.tabId]
-    
+
     // Priority: streaming > session status > completed > default
     if (tab.isStreaming) {
       return 'bg-green-500 animate-pulse' // Streaming
     }
-    
+
     if (sessionStatus?.status) {
       switch (sessionStatus.status) {
         case 'running':
@@ -102,24 +102,24 @@ export const WorkflowChatTabs: React.FC = () => {
           return 'bg-gray-400' // Unknown status
       }
     }
-    
+
     if (tab.isCompleted) {
       return 'bg-gray-400' // Completed
     }
-    
+
     // Default: no session or unknown
     return 'bg-gray-400'
   }
-  
+
   // Get tooltip text for tab
   const getTabTooltip = (tab: ChatTab): string => {
     const sessionStatus = tabSessionStatus[tab.tabId]
     const parts: string[] = [tab.name]
-    
+
     if (tab.sessionId) {
       parts.push(`Session ID: ${tab.sessionId}`)
     }
-    
+
     let statusLabel: string | null = null
     if (sessionStatus?.status) {
       statusLabel = sessionStatus.status === 'active' ? 'Active' :
@@ -136,11 +136,11 @@ export const WorkflowChatTabs: React.FC = () => {
     } else if (tab.sessionId) {
       statusLabel = 'Inactive'
     }
-    
+
     if (statusLabel) {
       parts.push(`Status: ${statusLabel}`)
     }
-    
+
     return parts.join(' • ')
   }
 
@@ -153,23 +153,23 @@ export const WorkflowChatTabs: React.FC = () => {
           const tooltipText = getTabTooltip(tab)
           const isTabStreaming = getTabStreamingStatus(tab.tabId)
           const canStop = tab.sessionId && (isTabStreaming || tab.isStreaming)
-          
+
           // Calculate new event count for inactive tabs
           // NOTE: Events are already filtered by backend based on event_mode, so no need to filter again
           const newEventCount = (() => {
             if (isActive || !tab.sessionId) return 0
-            
+
             // Get all events for this tab's session (already filtered by backend)
             const allEvents = tabEvents[tab.sessionId] || []
-            
+
             // Get the last viewed count (events are already filtered, so this is the filtered count)
             const lastViewedCount = tab.lastViewedEventCount || 0
-            
+
             // New events = current count - last viewed count
             const newCount = Math.max(0, allEvents.length - lastViewedCount)
             return newCount
           })()
-          
+
           return (
             <Tooltip key={tab.tabId}>
               <TooltipTrigger asChild>
@@ -185,24 +185,24 @@ export const WorkflowChatTabs: React.FC = () => {
                 >
                   {/* Status Indicator */}
                   <div className={`w-1.5 h-1.5 rounded-full ${indicatorColor}`} />
-                  
+
                   {/* Tab Name */}
                   <span className="whitespace-nowrap">{tab.name}</span>
-                  
+
                   {/* New Events Badge - show for inactive tabs with new events */}
                   {!isActive && newEventCount > 0 && (
                     <span className="flex items-center justify-center min-w-[18px] h-4 px-1.5 text-xs font-semibold text-white bg-red-500 dark:bg-red-600 rounded-full">
                       {newEventCount > 99 ? '99+' : newEventCount}
                     </span>
                   )}
-                  
+
                   {/* Event Mode Toggle - show inside active tab header */}
                   {isActive && (
                     <div className="ml-1 flex items-center" onClick={(e) => e.stopPropagation()}>
                       <EventModeToggle />
                     </div>
                   )}
-                  
+
                   {/* Stop Button - show for tabs with sessionId that are streaming/running */}
                   {canStop && (
                     <button
@@ -217,7 +217,7 @@ export const WorkflowChatTabs: React.FC = () => {
                       <Square className="w-3 h-3 text-red-600 dark:text-red-400" fill="currentColor" />
                     </button>
                   )}
-                  
+
                   {/* Close Button */}
                   <button
                     onClick={(e) => handleTabClose(e, tab.tabId)}
@@ -238,56 +238,48 @@ export const WorkflowChatTabs: React.FC = () => {
             </Tooltip>
           )
         })}
-        
+
         {/* Auto-scroll Toggle and Close Button - only show when there are workflow tabs */}
         {activeWorkflowTabs.length > 0 && (
           <div className="ml-auto flex items-center gap-1 border-l border-gray-200 dark:border-gray-700 pl-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    const newAutoScrollState = !autoScroll
-                    setAutoScroll(newAutoScrollState)
-                    
-                    // If enabling auto-scroll (switching from Manual to Auto-scroll), scroll to bottom
-                    if (newAutoScrollState) {
-                      // Find the chat content scrollable element and scroll to bottom
-                      setTimeout(() => {
-                        const chatAreaContainer = document.querySelector('[data-testid="chat-area-container"]')
-                        if (chatAreaContainer) {
-                          const scrollableElement = chatAreaContainer.querySelector('.overflow-y-auto')
-                          if (scrollableElement) {
-                            scrollableElement.scrollTo({
-                              top: scrollableElement.scrollHeight,
-                              behavior: 'smooth'
-                            })
-                          }
-                        }
-                      }, 50)
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                const newAutoScrollState = !autoScroll
+                setAutoScroll(newAutoScrollState)
+
+                // If enabling auto-scroll (switching from Manual to Auto-scroll), scroll to bottom
+                if (newAutoScrollState) {
+                  // Find the chat content scrollable element and scroll to bottom
+                  setTimeout(() => {
+                    const chatAreaContainer = document.querySelector('[data-testid="chat-area-container"]')
+                    if (chatAreaContainer) {
+                      const scrollableElement = chatAreaContainer.querySelector('.overflow-y-auto')
+                      if (scrollableElement) {
+                        scrollableElement.scrollTo({
+                          top: scrollableElement.scrollHeight,
+                          behavior: 'smooth'
+                        })
+                      }
                     }
-                  }}
-                  className={`
-                    flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors
-                    ${autoScroll
-                      ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
-                      : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
-                    }
-                    hover:bg-gray-200 dark:hover:bg-gray-700
-                  `}
-                  title={autoScroll ? 'Auto-scroll enabled (click to disable)' : 'Auto-scroll disabled (click to enable)'}
-                >
-                  <ArrowDown className={`w-3.5 h-3.5 ${autoScroll ? 'opacity-70' : 'opacity-40'}`} />
-                  <span className="hidden sm:inline">
-                    {autoScroll ? 'Auto-scroll' : 'Manual'}
-                  </span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{autoScroll ? 'Auto-scroll enabled (click to disable)' : 'Auto-scroll disabled (click to enable)'}</p>
-              </TooltipContent>
-            </Tooltip>
-            
+                  }, 50)
+                }
+              }}
+              className={`
+                flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors
+                ${autoScroll
+                  ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+                  : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
+                }
+                hover:bg-gray-200 dark:hover:bg-gray-700
+              `}
+            >
+              <ArrowDown className={`w-3.5 h-3.5 ${autoScroll ? 'opacity-70' : 'opacity-40'}`} />
+              <span className="hidden sm:inline">
+                {autoScroll ? 'Auto-scroll' : 'Manual'}
+              </span>
+            </button>
+
             {/* Close Button - closes the entire chat area panel */}
             <Tooltip>
               <TooltipTrigger asChild>

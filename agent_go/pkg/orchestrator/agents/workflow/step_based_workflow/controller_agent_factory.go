@@ -3,6 +3,8 @@ package step_based_workflow
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,6 +23,212 @@ import (
 // ============================================================================
 // Phase 1: Helper Methods (Extracted for Reusability)
 // ============================================================================
+
+// getWorkspaceDocsRoot returns the absolute path to the workspace-docs root directory.
+// This is used specifically for resolving absolute paths for Playwright Downloads.
+//
+// CRITICAL FIX (Jan 2026): This function was added to fix a long-standing bug where
+// Playwright downloads were being saved to the wrong location (agent_go/Downloads instead
+// of workspace-docs/Workflow/.../execution/Downloads).
+//
+// Root Cause:
+//   - workspacePath is relative to workspace-docs root (e.g., "Workflow/ICICI...")
+//   - When using filepath.Abs() on a relative path, it resolves relative to the current
+//     working directory (which is agent_go/), not relative to workspace-docs root
+//   - This caused paths like "Workflow/..." to resolve to "agent_go/Workflow/..." instead
+//     of "workspace-docs/Workflow/..."
+//
+// Solution:
+// - Explicitly find the workspace-docs root directory
+// - Resolve all Downloads paths relative to workspace-docs root, not CWD
+// - This ensures paths are always correct regardless of where the process runs from
+//
+// It checks DOCS_DIR environment variable first, then falls back to calculating
+// relative to the current working directory (../workspace-docs from agent_go).
+func getWorkspaceDocsRoot() string {
+	// Check environment variable first
+	if docsDir := os.Getenv("DOCS_DIR"); docsDir != "" {
+		if absPath, err := filepath.Abs(docsDir); err == nil {
+			return absPath
+		}
+	}
+
+	// Fallback: calculate relative to current working directory
+	// Assuming agent_go is at mcp-agent-builder-go/agent_go, workspace-docs is at ../workspace-docs
+	cwd, err := os.Getwd()
+	if err != nil {
+		// If we can't get CWD, return empty and let caller handle it
+		return ""
+	}
+
+	// Try to find workspace-docs relative to current directory
+	// Common locations: ../workspace-docs (from agent_go) or ./workspace-docs (from root)
+	possiblePaths := []string{
+		filepath.Join(cwd, "..", "workspace-docs"),
+		filepath.Join(cwd, "workspace-docs"),
+	}
+
+	for _, path := range possiblePaths {
+		if absPath, err := filepath.Abs(path); err == nil {
+			// Check if directory exists
+			if info, err := os.Stat(absPath); err == nil && info.IsDir() {
+				return absPath
+			}
+		}
+	}
+
+	// Last resort: return calculated path even if it doesn't exist yet
+	if absPath, err := filepath.Abs(filepath.Join(cwd, "..", "workspace-docs")); err == nil {
+		return absPath
+	}
+
+	return ""
+}
+
+// setupPlaywrightDownloadsPathOverride configures the Downloads path runtime override for Playwright MCP.
+// This shared function is used by both execution agents and orchestrator agents to ensure
+// Playwright downloads go to the correct group-specific folder.
+//
+// CRITICAL FIX (Jan 2026): This function was extracted to fix a bug where orchestrator agents
+// were creating Playwright connections with the default Downloads path before execution agents
+// could set the correct override. Now both agent types set the override before creating connections.
+//
+// The function:
+// 1. Checks if Playwright is in the effective servers (step config or orchestrator defaults)
+// 2. Validates that selectedRunFolder is set (logs error if not)
+// 3. Creates the Downloads folder via API
+// 4. Resolves the absolute path relative to workspace-docs root (not CWD)
+// 5. Sets the runtime override on the config before agent creation
+//
+// This ensures the first agent (whether execution or orchestrator) that creates a Playwright
+// connection will use the correct Downloads path, and all subsequent agents will reuse it.
+func (hcpo *StepBasedWorkflowOrchestrator) setupPlaywrightDownloadsPathOverride(ctx context.Context, config *agents.OrchestratorAgentConfig, stepConfig *AgentConfigs) {
+	// Check effective servers (step config takes precedence over orchestrator defaults)
+	// CRITICAL FIX (Jan 2026): Must check step-specific servers too!
+	// Previously only checked hcpo.GetSelectedServers(), missing cases where Playwright
+	// was added via stepConfig.SelectedServers but wasn't in global defaults.
+	var effectiveServers []string
+	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
+		effectiveServers = stepConfig.SelectedServers
+	} else {
+		effectiveServers = hcpo.GetSelectedServers()
+	}
+
+	isPlaywrightAvailable := false
+	for _, server := range effectiveServers {
+		if server == "playwright" {
+			isPlaywrightAvailable = true
+			break
+		}
+	}
+
+	if !isPlaywrightAvailable {
+		return // No Playwright, nothing to configure
+	}
+
+	// CRITICAL: Ensure selectedRunFolder is set before configuring Downloads path
+	// If it's empty, all agents in this group will share a connection with wrong Downloads path
+	if hcpo.selectedRunFolder == "" {
+		hcpo.GetLogger().Error("❌ [CRITICAL] selectedRunFolder is EMPTY when configuring Playwright Downloads path! This will cause all downloads to go to the wrong location. Ensure ApplyExecutionContext is called before creating agents.", nil)
+		// Don't return error - continue with default path but log the issue
+	}
+
+	// Route playwright downloads to execution/Downloads folder in the run directory
+	workspacePath := hcpo.GetWorkspacePath()
+
+	// Build the relative path to Downloads folder
+	// If run folder is selected: "runs/{runFolder}/execution/Downloads"
+	// Otherwise: "execution/Downloads"
+	var downloadsRelativePath string
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Setting Downloads path - selectedRunFolder: '%s', workspacePath: '%s', sessionID: '%s'", hcpo.selectedRunFolder, workspacePath, hcpo.getSessionID()))
+	if hcpo.selectedRunFolder != "" {
+		downloadsRelativePath = filepath.Join("runs", hcpo.selectedRunFolder, "execution", "Downloads")
+	} else {
+		// WARNING: selectedRunFolder is empty - downloads will go to execution/Downloads instead of group-specific folder
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [CRITICAL] selectedRunFolder is EMPTY when setting Downloads path! Downloads will go to execution/Downloads instead of group-specific folder. This may indicate ApplyExecutionContext was not called or selectedRunFolder was not set correctly."))
+		downloadsRelativePath = filepath.Join("execution", "Downloads")
+	}
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Downloads relative path: '%s'", downloadsRelativePath))
+
+	// Create folder via Workspace API with workspacePath for normalization
+	if err := createFolderViaAPI(ctx, downloadsRelativePath, workspacePath); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create downloads directory via API %s: %v", downloadsRelativePath, err))
+	}
+
+	// Resolve to absolute path for Playwright MCP server configuration
+	// CRITICAL: workspacePath is relative to workspace-docs root (e.g., "Workflow/ICICI...")
+	// We MUST resolve it relative to workspace-docs root, NOT the current working directory
+	// Using filepath.Abs() on a relative path resolves relative to CWD, which is wrong!
+	var absDownloadsPath string
+	workspaceDocsRoot := getWorkspaceDocsRoot()
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] getWorkspaceDocsRoot() returned: %s", workspaceDocsRoot))
+	if workspaceDocsRoot == "" {
+		// Fallback to old behavior if we can't determine workspace-docs root
+		// This should NOT happen - log error and try to calculate it
+		cwd, _ := os.Getwd()
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ getWorkspaceDocsRoot() returned empty! CWD: %s, workspacePath: %s", cwd, workspacePath))
+
+		// Try one more time with explicit calculation
+		calculatedRoot := filepath.Join(cwd, "..", "workspace-docs")
+		if absCalculated, err := filepath.Abs(calculatedRoot); err == nil {
+			workspaceDocsRoot = absCalculated
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Calculated workspace-docs root: %s", workspaceDocsRoot))
+		}
+	}
+
+	if workspaceDocsRoot != "" {
+		// CORRECT: Resolve relative to workspace-docs root
+		// workspacePath is already relative to workspace-docs (e.g., "Workflow/ICICI...")
+		// downloadsRelativePath is relative to workspacePath (e.g., "runs/.../execution/Downloads")
+		// Final path: workspace-docs-root + workspacePath + downloadsRelativePath
+		absDownloadsPath = filepath.Join(workspaceDocsRoot, workspacePath, downloadsRelativePath)
+		absDownloadsPath = filepath.Clean(absDownloadsPath)
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Resolved Downloads path relative to workspace-docs root: %s", absDownloadsPath))
+	} else {
+		// Last resort fallback - this should be avoided as it will resolve relative to CWD (WRONG!)
+		// This path leads to agent_go/Downloads which is incorrect
+		fullDownloadsPath := filepath.Join(workspacePath, downloadsRelativePath)
+		var absErr error
+		absDownloadsPath, absErr = filepath.Abs(fullDownloadsPath)
+		if absErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to resolve absolute path for downloads %s: %v, using relative path", fullDownloadsPath, absErr))
+			absDownloadsPath = fullDownloadsPath
+		} else {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ CRITICAL: Could not determine workspace-docs root, using CWD-relative path (THIS IS WRONG): %s", absDownloadsPath))
+		}
+	}
+
+	// Configure Playwright to use the downloads path via runtime override
+	// IMPORTANT: This override is set on the config BEFORE agent creation, so it will be
+	// applied when the MCP connection is created.
+	//
+	// CRITICAL: If a Playwright connection already exists for this session, it will be REUSED
+	// without applying the new override. This can happen if:
+	// 1. Another agent in the same group already created the connection (this is OK - they should share)
+	// 2. A connection exists from a previous run that wasn't cleaned up (this is BAD)
+	//
+	// To ensure the first agent in a group creates the connection with the correct override,
+	// we rely on:
+	// - Closing the previous session before starting a new group (in batch execution)
+	// - Setting selectedRunFolder before setting session ID
+	// - Setting the override before agent creation
+	//
+	// If another agent in the SAME group already created the connection, that's fine - they share it.
+	// But if the connection was created with wrong config, all agents will share the wrong connection.
+	if config.RuntimeOverrides == nil {
+		config.RuntimeOverrides = make(mcpclient.RuntimeOverrides)
+	}
+	playwrightOverride := config.RuntimeOverrides["playwright"]
+	if playwrightOverride.ArgsReplace == nil {
+		playwrightOverride.ArgsReplace = make(map[string]string)
+	}
+	playwrightOverride.ArgsReplace["--output-dir"] = absDownloadsPath
+	config.RuntimeOverrides["playwright"] = playwrightOverride
+
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Configured Playwright downloads path to: %s (override will be applied when connection is created)", absDownloadsPath))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Runtime override for playwright: ArgsReplace=%+v", playwrightOverride.ArgsReplace))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Session ID: %s, selectedRunFolder: '%s', absDownloadsPath: '%s'", hcpo.getSessionID(), hcpo.selectedRunFolder, absDownloadsPath))
+}
 
 // setupExecutionFolderGuard sets up folder guard paths for execution agents
 // Returns readPaths and writePaths for folder guard configuration
@@ -43,15 +251,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	} else {
 		stepLearningsPath = fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
 	}
-	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
-	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
-
 	// Set folder guard paths:
-	// READ: step-specific learnings folder + execution folder (to read previous step results) + knowledgebase folder
-	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + knowledgebase folder to prevent writing to other steps
+	// READ: step-specific learnings folder + execution folder (to read previous step results) + knowledgebase folder (if enabled)
+	// WRITE: only the specific step folder (execution/step-{X}/ or execution/step-{X}-{branch}/) + knowledgebase folder (if enabled) + execution/Downloads folder to prevent writing to other steps
 	// Use getExecutionFolderPath to support both regular and branch steps
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
-	readPaths = []string{stepLearningsPath, executionWorkspacePath, knowledgebasePath}
+	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
+	readPaths = []string{stepLearningsPath, executionWorkspacePath}
+	writePaths = []string{stepFolderPath, downloadsPath}
+
+	// Add knowledgebase folder paths only if enabled
+	if hcpo.UseKnowledgebase() {
+		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
+		readPaths = append(readPaths, knowledgebasePath)
+		writePaths = append(writePaths, knowledgebasePath)
+	}
 
 	// Check if TARGET_RUN_PATH variable is set (used for evaluation) and add to read paths
 	// This allows evaluation agents to read the artifacts of the run they are evaluating
@@ -60,7 +274,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 		hcpo.GetLogger().Info(fmt.Sprintf("🔓 Added TARGET_RUN_PATH to read paths for evaluation: %s", targetRunPath))
 	}
 
-	writePaths = []string{stepFolderPath, knowledgebasePath}
 	return readPaths, writePaths
 }
 
@@ -128,8 +341,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveStepID(stepPath, stepIDOverrid
 
 // selectExecutionLLM selects the LLM config with cascading fallback logic
 // Priority:
-// - If disable_temp_llm is true: step config > preset > orchestrator (skip tempLLM)
-// - Otherwise: tempLLM1 (attempt 1) > tempLLM2 (attempt 2) > step config > preset default > orchestrator default
+// - If disable_temp_llm is true: step config > preset (skip tempLLM)
+// - Otherwise: tempLLM1 (attempt 1) > tempLLM2 (attempt 2) > step config > preset default
 // Only uses tempLLM if learnings folder has files (has existing learnings to improve upon)
 func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	ctx context.Context,
@@ -146,8 +359,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	// Check if step config explicitly disables tempLLM
 	disableTempLLM := stepConfig != nil && stepConfig.DisableTempLLM != nil && *stepConfig.DisableTempLLM
 	if disableTempLLM {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step %s has disable_temp_llm=true - skipping tempLLM override and using base LLM (step config > preset > orchestrator)", stepPath))
-		// Skip tempLLM entirely and go straight to step config > preset > orchestrator
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step %s has disable_temp_llm=true - skipping tempLLM override and using base LLM (step config > preset)", stepPath))
+		// Skip tempLLM entirely and go straight to step config > preset
 		if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only LLM: %s/%s", stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
 			return &orchestrator.LLMConfig{
@@ -167,15 +380,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 				APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 			}
 		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default execution-only LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
-			return orchestratorLLMConfig
+			err := fmt.Errorf("no valid LLM configuration found for execution agent: step config and preset execution LLM are both empty or invalid")
+			hcpo.GetLogger().Error("❌ No valid LLM configuration found for execution agent: step config and preset execution LLM are both empty or invalid", err)
+			return nil
 		}
 	}
 
 	// Cascading LLM selection based on retry attempt:
 	// - retryAttempt == 1: Use tempLLM1 (if available AND learnings folder has files)
 	// - retryAttempt == 2: Use tempLLM2 (if tempLLM1 was used and tempLLM2 is available AND learnings folder has files)
-	// - retryAttempt >= 3: Use step LLM (step config > preset > orchestrator)
+	// - retryAttempt >= 3: Use step LLM (step config > preset)
 	hasTempLLM1 := hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != ""
 	hasTempLLM2 := hcpo.tempOverrideLLM2 != nil && hcpo.tempOverrideLLM2.Provider != "" && hcpo.tempOverrideLLM2.ModelID != ""
 
@@ -287,8 +501,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default execution-only LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
-		return orchestratorLLMConfig
+		err := fmt.Errorf("no valid LLM configuration found for execution agent: temp override, step config, and preset execution LLM are all empty or invalid")
+		hcpo.GetLogger().Error("❌ No valid LLM configuration found for execution agent: temp override, step config, and preset execution LLM are all empty or invalid", err)
+		return nil
 	}
 }
 
@@ -354,42 +569,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 	}
 }
 
-// applyGlobalToolAccessFilters applies global tool access control filters based on ExecutionOptions
-func (hcpo *StepBasedWorkflowOrchestrator) applyGlobalToolAccessFilters(toolsToRegister []llmtypes.Tool, executorsToUse map[string]interface{}, agentType string) ([]llmtypes.Tool, map[string]interface{}) {
-	// Filter out disabled tools based on global configuration
-	var filteredTools []llmtypes.Tool
-	filteredExecutors := make(map[string]interface{})
-
-	for _, tool := range toolsToRegister {
-		toolName := tool.Function.Name
-
-		// Skip shell exec tool if disabled
-		if hcpo.disableShellExecAccess && toolName == "execute_shell_command" {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Excluding tool '%s' from %s (disabled by global configuration)", toolName, agentType))
-			continue
-		}
-
-		// Skip read image tool if disabled
-		if hcpo.disableReadImageAccess && toolName == "read_image" {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Excluding tool '%s' from %s (disabled by global configuration)", toolName, agentType))
-			continue
-		}
-
-		// Include tool
-		filteredTools = append(filteredTools, tool)
-		// Also include executor if it exists
-		if executor, exists := executorsToUse[toolName]; exists {
-			filteredExecutors[toolName] = executor
-		}
-	}
-
-	if len(filteredTools) != len(toolsToRegister) {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Applied global tool access filters for %s: %d tools remaining (removed %d disabled tools)", agentType, len(filteredTools), len(toolsToRegister)-len(filteredTools)))
-	}
-
-	return filteredTools, filteredExecutors
-}
-
 // prepareCustomTools filters and prepares custom tools based on step config
 func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentConfigs) ([]llmtypes.Tool, map[string]interface{}) {
 	var toolsToRegister []llmtypes.Tool
@@ -409,8 +588,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 		executorsToUse = hcpo.WorkspaceToolExecutors
 	}
 
-	// Apply global tool access control filters (from ExecutionOptions)
-	return hcpo.applyGlobalToolAccessFilters(toolsToRegister, executorsToUse, "execution agent")
+	return toolsToRegister, executorsToUse
 }
 
 // addPrerequisiteDetectionTool adds prerequisite detection tool if prerequisite detection is enabled
@@ -463,7 +641,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) addPrerequisiteDetectionTool(
 }
 
 // selectValidationLLM selects the LLM config for validation agents
-// Priority: step config > preset default > orchestrator default
+// Priority: step config > preset default
 func (hcpo *StepBasedWorkflowOrchestrator) selectValidationLLM(stepConfig *AgentConfigs) *orchestrator.LLMConfig {
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	if stepConfig != nil && stepConfig.ValidationLLM != nil && stepConfig.ValidationLLM.Provider != "" && stepConfig.ValidationLLM.ModelID != "" {
@@ -485,8 +663,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectValidationLLM(stepConfig *Agent
 			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default validation LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
-		return orchestratorLLMConfig
+		err := fmt.Errorf("no valid LLM configuration found for validation agent: step config and preset validation LLM are both empty or invalid")
+		hcpo.GetLogger().Error("❌ No valid LLM configuration found for validation agent: step config and preset validation LLM are both empty or invalid", err)
+		return nil
 	}
 }
 
@@ -507,12 +686,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupValidationFolderGuard() (readPat
 		runWorkspacePath = baseWorkspacePath
 	}
 	executionPath := fmt.Sprintf("%s/execution", runWorkspacePath)
-	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
-	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 
 	// Validation agent only reads - no write permissions needed
-	// Read access to execution folder (for step outputs) and knowledgebase folder (for reference data)
-	readPaths = []string{executionPath, knowledgebasePath}
+	// Read access to execution folder (for step outputs) and knowledgebase folder (for reference data) if enabled
+	readPaths = []string{executionPath}
+	if hcpo.UseKnowledgebase() {
+		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
+		readPaths = append(readPaths, knowledgebasePath)
+	}
 	writePaths = []string{} // No write permissions - validation agent only reads and returns structured JSON
 	return readPaths, writePaths
 }
@@ -541,27 +722,36 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupConditionalFolderGuard(stepPath 
 	}
 	// Step-specific execution folder: execution/step-{X}/ or execution/step-{X}-{branch}/ (for writing evaluation results)
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
-	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
-	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 
 	// Set folder guard paths:
-	// READ: step-specific learnings folder + entire execution folder (to read all previous step results and verify conditions) + knowledgebase folder
-	// WRITE: step-specific execution folder (to write evaluation results and intermediate files) + knowledgebase folder
-	readPaths = []string{stepLearningsPath, executionWorkspacePath, knowledgebasePath}
-	writePaths = []string{stepFolderPath, knowledgebasePath}
+	// READ: step-specific learnings folder + entire execution folder (to read all previous step results and verify conditions) + knowledgebase folder (if enabled)
+	// WRITE: step-specific execution folder (to write evaluation results and intermediate files) + knowledgebase folder (if enabled)
+	readPaths = []string{stepLearningsPath, executionWorkspacePath}
+	writePaths = []string{stepFolderPath}
+
+	// Add knowledgebase folder paths only if enabled
+	if hcpo.UseKnowledgebase() {
+		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
+		readPaths = append(readPaths, knowledgebasePath)
+		writePaths = append(writePaths, knowledgebasePath)
+	}
 	return readPaths, writePaths
 }
 
 // setupLearningFolderGuard sets up folder guard paths for learning agents
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
-func (hcpo *StepBasedWorkflowOrchestrator) setupLearningFolderGuard(learningPathIdentifier string) (readPaths, writePaths []string) {
+// stepPath: Step path identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps) - used for execution logs folder
+func (hcpo *StepBasedWorkflowOrchestrator) setupLearningFolderGuard(learningPathIdentifier string, stepPath string) (readPaths, writePaths []string) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
 	var runWorkspacePath string
+	var validationWorkspacePath string
 	if hcpo.selectedRunFolder != "" {
 		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
+		validationWorkspacePath = runWorkspacePath
 	} else {
 		runWorkspacePath = baseWorkspacePath
+		validationWorkspacePath = baseWorkspacePath
 	}
 	executionPath := fmt.Sprintf("%s/execution", runWorkspacePath)
 
@@ -578,26 +768,56 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupLearningFolderGuard(learningPath
 		baseLearningsPath = fmt.Sprintf("%s/learnings", baseWorkspacePath)
 	}
 
-	// Build read paths: execution path + base learnings path (for reading existing learnings)
+	// Build read paths: execution path + base learnings path + execution logs folder
 	readPaths = []string{executionPath}
 	// Add base learnings path for reading existing learnings (we read from base but write to step folder)
 	readPaths = append(readPaths, baseLearningsPath)
+
+	// Add execution logs folder so learning agents can read execution logs if needed
+	// Execution logs contain actual tool usage, conversation history, and execution results
+	executionLogsPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepPath)
+	readPaths = append(readPaths, executionLogsPath)
 
 	writePaths = []string{learningsPath}
 	return readPaths, writePaths
 }
 
 // getLearningMaxTurns determines max turns for learning agents
-// Fixed to 25 (not configurable)
+// Fixed to 50 (not configurable)
 func (hcpo *StepBasedWorkflowOrchestrator) getLearningMaxTurns(stepConfig *AgentConfigs) int {
-	return 25
+	return 50
 }
 
 // selectLearningLLM selects the LLM config for learning agents
-// Priority: cost-optimization (tempLLM if >50% stable) > step config > preset default > orchestrator default
-// Note: Temporary override only applies to execution agents, but learning agents have their own cost-optimization logic
+// Priority: tempLearningLLM (if learnings exist) > cost-optimization (tempLLM if >50% stable) > step config > preset default
+// Note: If learnings already exist for a step, use tempLearningLLM if configured. For new learning (no learnings), always use default LLM.
 func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context, stepConfig *AgentConfigs, stepID string, stepPath string) *orchestrator.LLMConfig {
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
+
+	// 0. TEMP LEARNING LLM: Check if learnings exist for this step and use tempLearningLLM if configured
+	// If learnings exist, we can use a cheaper LLM. If no learnings exist (new learning), always use default LLM for quality.
+	if stepID != "" {
+		// Check if learnings folder exists and has content
+		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, 0, stepPath) // stepIndex not needed for this check
+		if err == nil && !learningsEmpty {
+			// Learnings exist - check if tempLearningLLM is configured
+			if hcpo.executionOptions != nil && hcpo.executionOptions.TempLearningLLM != nil &&
+				hcpo.executionOptions.TempLearningLLM.Provider != "" && hcpo.executionOptions.TempLearningLLM.ModelID != "" {
+				hcpo.GetLogger().Info(fmt.Sprintf("🧠 [TEMP_LEARNING_LLM] Using temp learning LLM (%s/%s) because learnings already exist for step %s",
+					hcpo.executionOptions.TempLearningLLM.Provider, hcpo.executionOptions.TempLearningLLM.ModelID, stepID))
+				return &orchestrator.LLMConfig{
+					Primary: orchestrator.LLMModel{
+						Provider: hcpo.executionOptions.TempLearningLLM.Provider,
+						ModelID:  hcpo.executionOptions.TempLearningLLM.ModelID,
+					},
+					APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+				}
+			}
+		} else if err == nil && learningsEmpty {
+			// No learnings exist (new learning) - always use default LLM for quality
+			hcpo.GetLogger().Info(fmt.Sprintf("🧠 [TEMP_LEARNING_LLM] No learnings exist for step %s - using default LLM for new learning", stepID))
+		}
+	}
 
 	// 1. COST OPTIMIZATION: Check if we should switch to cheaper tempLLM based on stability threshold
 	// If stable runs reach 50% of threshold, use tempLLM for learning
@@ -606,15 +826,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 		if err == nil {
 			// Thresholds: Simple (3), Medium (5), Complex (10)
 			// 50% Thresholds: Simple (2), Medium (3), Complex (5)
+			//
+			// TODO: Turn-based classification is not reliable - turn count varies significantly based on
+			// the LLM model used (e.g., Claude vs GPT vs cheaper models) and doesn't reflect actual
+			// step complexity. We need to develop a better complexity metric.
 			shouldUseTempLLM := false
 			reason := ""
 
-			if metadata.LastTurnCount < 15 {
+			if metadata.LastTurnCount < 100 {
 				if metadata.SuccessfulRunsSimple >= 2 {
 					shouldUseTempLLM = true
 					reason = fmt.Sprintf("stability threshold reached 50%% (Simple: %d/3)", metadata.SuccessfulRunsSimple)
 				}
-			} else if metadata.LastTurnCount <= 30 {
+			} else if metadata.LastTurnCount <= 200 {
 				if metadata.SuccessfulRunsMedium >= 3 {
 					shouldUseTempLLM = true
 					reason = fmt.Sprintf("stability threshold reached 50%% (Medium: %d/5)", metadata.SuccessfulRunsMedium)
@@ -659,8 +883,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default learning LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
-		return orchestratorLLMConfig
+		err := fmt.Errorf("no valid LLM configuration found for learning agent: step config and preset learning LLM are both empty or invalid")
+		hcpo.GetLogger().Error("❌ No valid LLM configuration found for learning agent: step config and preset learning LLM are both empty or invalid", err)
+		return nil
 	}
 }
 
@@ -724,7 +949,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// 2. Setup folder guard (extracted method) - uses step-specific learnings folder
 	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, stepID)
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for execution-only agent - Read paths: %v, Write paths: %v (can read learnings/%s/ and execution/, can only write to %s)", readPaths, writePaths, stepID, stepPath))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for execution-only agent - Read paths: %v, Write paths: %v (can read learnings/%s/ and execution/, can write to %s and execution/Downloads/)", readPaths, writePaths, stepID, stepPath))
 
 	// 3. Determine settings (extracted methods)
 	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
@@ -739,9 +964,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		learningsFolderEmpty = true // Conservative: assume empty on error, skip tempLLM
 	}
 	llmConfig := hcpo.selectExecutionLLM(ctx, stepConfig, isRetryAfterValidationFailure, retryAttempt, stepID, stepPath, learningsFolderEmpty)
+	if llmConfig == nil {
+		return nil, fmt.Errorf("no valid LLM configuration found for execution agent: temp override, step config, and preset execution LLM are all empty or invalid")
+	}
 
 	// 4. Create config
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+
+	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	// Use shared function to ensure both execution and orchestrator agents set the override correctly
+	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
 
 	// Apply step-specific overrides
 	hcpo.applyStepConfigToAgentConfig(config, stepConfig, isCodeExecutionMode)
@@ -757,6 +989,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		phase,
 		pathInfo.ParentStepNumber-1, // 0-based step number
 		0,                           // iteration
+		stepID,                      // Step ID (resolved from step path)
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowExecutionOnlyAgent(cfg, logger, tracer, eventBridge)
 		},
@@ -803,7 +1036,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 }
 
 // createValidationAgent creates a validation agent for the current iteration
-func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Context, phase string, step int, agentName string, stepConfig *AgentConfigs) (agents.OrchestratorAgent, error) {
+func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Context, phase string, step int, stepID string, agentName string, stepConfig *AgentConfigs) (agents.OrchestratorAgent, error) {
 	// 1. Setup folder guard (read-only for validation agents)
 	readPaths, writePaths := hcpo.setupValidationFolderGuard()
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
@@ -812,6 +1045,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Con
 	// 2. Determine settings (extracted methods)
 	maxTurns := hcpo.getValidationMaxTurns(stepConfig)
 	llmConfig := hcpo.selectValidationLLM(stepConfig)
+	if llmConfig == nil {
+		return nil, fmt.Errorf("no valid LLM configuration found for validation agent: step config and preset validation LLM are both empty or invalid")
+	}
 
 	// 3. Create config
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
@@ -829,6 +1065,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Con
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
 	}
 
+	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	// Use shared function to ensure all agent types set the override correctly if they use Playwright
+	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
+
 	// 4. Prepare custom tools (filtered by step config)
 	toolsToRegister, executorsToUse := hcpo.prepareCustomTools(stepConfig)
 
@@ -838,7 +1078,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Con
 		config,
 		phase,
 		step,
-		0, // iteration
+		0,      // iteration
+		stepID, // Step ID
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowValidationAgent(cfg, logger, tracer, eventBridge)
 		},
@@ -867,10 +1108,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Con
 // stepIndex: 0-based step index for token tracking (should be passed from runSuccessLearningPhase/runFailureLearningPhase)
 func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, isCodeExecutionMode bool, stepID string, stepPath string, stepIndex int) (agents.OrchestratorAgent, error) {
 	// 1. Setup folder guard (extracted method)
-	readPaths, writePaths := hcpo.setupLearningFolderGuard(learningPathIdentifier)
+	// Pass stepPath to include execution logs folder in read paths
+	readPaths, writePaths := hcpo.setupLearningFolderGuard(learningPathIdentifier, stepPath)
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	agentType := "learning agent"
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for %s - Read paths: %v, Write paths: %v", agentType, readPaths, writePaths))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for %s - Read paths: %v, Write paths: %v (includes execution logs folder)", agentType, readPaths, writePaths))
 
 	// Ensure the learning folder exists before running the agent, as it expects to list files in it
 	if len(writePaths) > 0 {
@@ -885,8 +1127,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 
 	// 2. Determine settings (extracted methods)
 	maxTurns := hcpo.getLearningMaxTurns(stepConfig)
-	// Use learning LLM config - Priority: cost-optimization > step config > preset default > orchestrator default
+	// Use learning LLM config - Priority: cost-optimization > step config > preset default
 	llmConfig := hcpo.selectLearningLLM(ctx, stepConfig, stepID, stepPath)
+	if llmConfig == nil {
+		return nil, fmt.Errorf("no valid LLM configuration found for learning agent: step config and preset learning LLM are both empty or invalid")
+	}
 
 	// 3. Create config
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
@@ -910,6 +1155,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 	disabled := false
 	config.EnableContextOffloading = &disabled
 	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling large output virtual tools (context offloading) for %s", agentType))
+
+	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	// Use shared function to ensure all agent types set the override correctly if they use Playwright
+	// Note: Learning agents typically use NoServers, but we call this for consistency and safety
+	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
 
 	// 4. Prepare custom tools (filtered by step config)
 	toolsToRegister, executorsToUse := hcpo.prepareCustomTools(stepConfig)
@@ -936,7 +1186,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 		config,
 		phase,
 		stepNumberForContext,
-		0, // iteration (not used for learning agents)
+		0,      // iteration (not used for learning agents)
+		stepID, // Step ID
 		createAgentFunc,
 		toolsToRegister,
 		executorsToUse,
@@ -998,7 +1249,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 	maxTurns := hcpo.GetMaxTurns()
 	// Note: ConditionalMaxTurns doesn't exist in AgentConfigs - using orchestrator default
 
-	// Determine LLM config: Priority: step execution_llm > preset execution_llm > orchestrator default
+	// For conditional agents, skip tempLLM and use step/preset ExecutionLLM directly
+	// Fallback order: ExecutionLLM → preset ExecutionLLM
+	// Determine LLM config: Priority: step execution_llm > preset execution_llm
 	var llmConfig *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
@@ -1022,11 +1275,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution LLM for conditional agent: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
-	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
-		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional LLM: %s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
 	} else {
-		return nil, fmt.Errorf("no valid LLM configuration found for conditional agent: step config, preset execution LLM, and orchestrator default LLM are all empty or invalid")
+		return nil, fmt.Errorf("no valid LLM configuration found for conditional agent: step config and preset execution LLM are both empty or invalid")
 	}
 
 	// Create agent config with custom LLM if needed
@@ -1072,6 +1322,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
 	}
 
+	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	// CRITICAL FIX (Jan 2026): Conditional agents can use Playwright (via step-specific servers or orchestrator defaults).
+	// If the conditional agent creates the Playwright connection first, it must set the correct Downloads path override
+	// before creating the connection, otherwise all subsequent agents will reuse the wrong connection.
+	// Use shared function to ensure all agent types set the override correctly.
+	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
+
 	// Prepare custom tools and executors (same as execution agent)
 	// Filter by enabled categories and/or specific tools if specified
 	var toolsToRegister []llmtypes.Tool
@@ -1092,9 +1349,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using all workspace tools for conditional agent: %d tools", len(toolsToRegister)))
 	}
 
-	// Apply global tool access control filters (from ExecutionOptions)
-	toolsToRegister, executorsToUse = hcpo.applyGlobalToolAccessFilters(toolsToRegister, executorsToUse, "conditional agent")
-
 	// Use standard factory pattern - this handles initialization, event bridge connection, and tool registration
 	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
 		ctx,
@@ -1102,6 +1356,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 		phase,
 		step,
 		iteration,
+		stepID, // Step ID
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowConditionalAgent(cfg, logger, tracer, eventBridge)
 		},
@@ -1126,7 +1381,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 // createOrchestrationOrchestratorAgent creates an orchestration orchestrator agent using the standard factory pattern
 // This agent executes the main orchestration step (orchestration and delegation, not direct execution)
 // Note: Folder guard paths should be set by the caller before calling this function (see controller_orchestration.go)
-func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(ctx context.Context, phase string, step, iteration int, agentName string, stepConfig *AgentConfigs, orchestrationLLMConfig *orchestrator.LLMConfig) (agents.OrchestratorAgent, error) {
+func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(ctx context.Context, phase string, step, iteration int, stepID string, agentName string, stepConfig *AgentConfigs, orchestrationLLMConfig *orchestrator.LLMConfig) (agents.OrchestratorAgent, error) {
 	// Orchestration orchestrator agent needs folder guard (can write files)
 	// Note: Folder guard is set by caller in controller_orchestration.go before agent creation
 	// We apply it to the agent here via post-setup
@@ -1134,7 +1389,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 	// Determine max turns: use orchestrator default
 	maxTurns := hcpo.GetMaxTurns()
 
-	// Determine LLM config: Priority: step config > preset default > orchestrator default
+	// Determine LLM config: Priority: step config > preset default
 	var llmConfig *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	if orchestrationLLMConfig != nil && orchestrationLLMConfig.Primary.Provider != "" && orchestrationLLMConfig.Primary.ModelID != "" {
@@ -1146,11 +1401,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific orchestration orchestrator LLM: %s/%s", orchestrationLLMConfig.Primary.Provider, orchestrationLLMConfig.Primary.ModelID))
-	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
-		llmConfig = orchestratorLLMConfig
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default orchestration orchestrator LLM: %s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
+		llmConfig = &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: hcpo.presetExecutionLLM.Provider,
+				ModelID:  hcpo.presetExecutionLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default ExecutionLLM for orchestration orchestrator: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
 	} else {
-		return nil, fmt.Errorf("no valid LLM configuration found for orchestration orchestrator agent: step config and orchestrator default LLM are both empty or invalid")
+		return nil, fmt.Errorf("no valid LLM configuration found for orchestration orchestrator agent: step config and preset execution LLM are both empty or invalid")
 	}
 
 	// Create agent config with custom LLM if needed
@@ -1190,6 +1451,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
 	}
 
+	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	// CRITICAL FIX (Jan 2026): Orchestrator agents can also use Playwright (e.g., step 3 has SelectedServers: [playwright]).
+	// If the orchestrator agent creates the Playwright connection first, it must set the correct Downloads path override
+	// before creating the connection, otherwise all subsequent agents will reuse the wrong connection.
+	// Use shared function to ensure both execution and orchestrator agents set the override correctly.
+	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
+
 	// Prepare custom tools and executors
 	var toolsToRegister []llmtypes.Tool
 	var executorsToUse map[string]interface{}
@@ -1207,9 +1475,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 		executorsToUse = hcpo.WorkspaceToolExecutors
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using all workspace tools for orchestration orchestrator agent: %d tools", len(toolsToRegister)))
 	}
-
-	// Apply global tool access control filters (from ExecutionOptions)
-	toolsToRegister, executorsToUse = hcpo.applyGlobalToolAccessFilters(toolsToRegister, executorsToUse, "orchestration orchestrator agent")
 
 	// Filter out human tools if "no human" execution mode is active
 	execOpts := hcpo.GetExecutionOptions()
@@ -1245,6 +1510,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 		phase,
 		step,
 		iteration,
+		stepID, // Step ID
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowOrchestrationOrchestratorAgent(cfg, logger, tracer, eventBridge)
 		},
@@ -1267,24 +1533,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 }
 
 // selectEvaluationScoringLLM selects the LLM config for evaluation scoring agents
-// Priority: presetPhaseLLM > orchestrator default
+// Priority: presetExecutionLLM only
 func (hcpo *StepBasedWorkflowOrchestrator) selectEvaluationScoringLLM() (*orchestrator.LLMConfig, error) {
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 
-	if hcpo.presetPhaseLLM != nil && hcpo.presetPhaseLLM.Provider != "" && hcpo.presetPhaseLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for evaluation scoring: %s/%s", hcpo.presetPhaseLLM.Provider, hcpo.presetPhaseLLM.ModelID))
+	if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset execution LLM for evaluation scoring: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
 		return &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
-				Provider: hcpo.presetPhaseLLM.Provider,
-				ModelID:  hcpo.presetPhaseLLM.ModelID,
+				Provider: hcpo.presetExecutionLLM.Provider,
+				ModelID:  hcpo.presetExecutionLLM.ModelID,
 			},
 			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}, nil
-	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default LLM for evaluation scoring: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
-		return orchestratorLLMConfig, nil
 	} else {
-		return nil, fmt.Errorf("no valid LLM configuration found for evaluation scoring agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
+		return nil, fmt.Errorf("no valid LLM configuration found for evaluation scoring agent: presetExecutionLLM is empty or invalid")
 	}
 }
 
@@ -1293,7 +1556,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectEvaluationScoringLLM() (*orches
 func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx context.Context, phase string, step *EvaluationStep, executionOutput string) (agents.OrchestratorAgent, *EvaluationStepScore, error) {
 	agentName := "evaluation-scoring-agent"
 
-	// Select LLM config using presetPhaseLLM priority
+	// Select LLM config using presetExecutionLLM priority
 	llmConfig, err := hcpo.selectEvaluationScoringLLM()
 	if err != nil {
 		return nil, nil, err
@@ -1307,16 +1570,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 	config.ServerNames = []string{mcpclient.NoServers}
 	config.UseCodeExecutionMode = false
 
+	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	// Use shared function to ensure all agent types set the override correctly if they use Playwright
+	// Note: Evaluation scoring agents use NoServers, but we call this for consistency and safety
+	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, nil)
+
 	// Variable to capture the score from the tool
 	var capturedScore *EvaluationStepScore
+
+	// Create a cancellable context to break conversation as soon as submit_score tool is called
+	// This prevents the zero candidates error by stopping the conversation loop immediately after the tool call
+	toolCalledCtx, cancelToolCalled := context.WithCancel(ctx)
+	defer cancelToolCalled()
 
 	// Use base factory to create agent with proper event bridging
 	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
 		ctx,
 		config,
 		phase,
-		0, // step (not used for scoring agents)
-		0, // iteration (not used for scoring agents)
+		0,     // step (not used for scoring agents)
+		0,     // iteration (not used for scoring agents)
+		phase, // stepID (use phase name for phase-only agents)
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowEvaluationScoringAgent(cfg, logger, tracer, eventBridge)
 		},
@@ -1380,6 +1654,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 				SuccessCriteria: step.SuccessCriteria,
 			}
 
+			// Cancel the context to break the conversation immediately after capturing the score
+			// This prevents the zero candidates error by stopping the conversation loop
+			cancelToolCalled()
+
 			return fmt.Sprintf("Score submitted: %d/10 for step %s", score, stepID), nil
 		},
 		"structured_output",
@@ -1397,8 +1675,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 		return userPrompt
 	})
 
-	// Execute the scoring agent
-	_, _, err = scoringAgent.Execute(ctx, nil, nil)
+	// Execute the scoring agent with the cancellable context
+	// The context will be cancelled when submit_score is called, breaking the conversation loop
+	_, _, err = scoringAgent.Execute(toolCalledCtx, nil, nil)
+
+	// Check if score was captured - if so, context cancellation is expected and not an error
+	if capturedScore != nil {
+		// Score was captured successfully - context cancellation is expected behavior
+		// Ignore cancellation errors since we got what we needed
+		if err != nil && (toolCalledCtx.Err() == context.Canceled || strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context cancelled")) {
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Score captured successfully (context cancellation expected): %d/10 for step %s", capturedScore.Score, capturedScore.StepID))
+			err = nil // Clear the cancellation error since we got the score
+		}
+	}
+
 	if err != nil {
 		return nil, nil, fmt.Errorf("scoring agent execution failed: %w", err)
 	}
@@ -1415,9 +1705,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 // stepIndex: 0-based step index for token tracking
 func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, stepID string, stepPath string, stepIndex int) (agents.OrchestratorAgent, error) {
 	// 1. Setup folder guard (extracted method)
-	readPaths, writePaths := hcpo.setupLearningFolderGuard(learningPathIdentifier)
+	// For orchestration learning, stepPath is the orchestration step path
+	// Pass empty string for stepPath if not available (orchestration learning may not have stepPath)
+	readPaths, writePaths := hcpo.setupLearningFolderGuard(learningPathIdentifier, stepPath)
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for orchestration learning agent - Read paths: %v, Write paths: %v", readPaths, writePaths))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for orchestration learning agent - Read paths: %v, Write paths: %v (includes execution logs folder)", readPaths, writePaths))
 
 	// Ensure the learning folder exists before running the agent
 	if len(writePaths) > 0 {
@@ -1428,7 +1720,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationLearningAgent(ctx 
 
 	// Determine settings
 	maxTurns := hcpo.getLearningMaxTurns(stepConfig)
-	// Use learning LLM config - Priority: step config > preset default > orchestrator default
+	// Use learning LLM config - Priority: step config > preset default
 	llmConfig := hcpo.selectLearningLLM(ctx, stepConfig, stepID, stepPath)
 
 	// Create config
@@ -1439,6 +1731,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationLearningAgent(ctx 
 
 	// Code execution mode doesn't apply to learning agents
 	config.UseCodeExecutionMode = false
+
+	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	// Use shared function to ensure all agent types set the override correctly if they use Playwright
+	// Note: Orchestration learning agents use NoServers, but we call this for consistency and safety
+	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
 
 	// Prepare tools (learning agents need workspace tools for file operations)
 	toolsToRegister := hcpo.WorkspaceTools
@@ -1453,6 +1750,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationLearningAgent(ctx 
 		phase,
 		stepIndex, // Use stepIndex for proper token tracking
 		0,         // iteration (not used for learning agents)
+		stepID,    // Step ID
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowOrchestrationLearningAgent(cfg, logger, tracer, eventBridge)
 		},

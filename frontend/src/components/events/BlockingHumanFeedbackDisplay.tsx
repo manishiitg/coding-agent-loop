@@ -155,6 +155,15 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
     }
   }
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      if (!isSubmittingFeedback && !hasSubmitted && feedback.trim()) {
+        handleSubmitFeedback()
+      }
+    }
+  }
+
   // Show submitted state if feedback has been submitted
   if (hasSubmitted) {
     return (
@@ -244,13 +253,14 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
                 id="feedback-input"
                 value={feedback}
                 onChange={(e) => setFeedback(e.target.value)}
-                placeholder="Type your feedback here... (e.g., 'Approve', 'Looks good', 'Please fix the validation issue', etc.)"
+                onKeyDown={handleKeyDown}
+                placeholder="Type your feedback here... (Enter to submit, Shift+Enter for newline)"
                 className="w-full px-3 py-2 text-xs border border-yellow-200 dark:border-yellow-700 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-yellow-500 focus:border-yellow-500 resize-none"
                 rows={4}
                 disabled={isApproving || isSubmittingFeedback}
               />
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Type "Approve" or positive feedback to continue, or describe any issues to stop execution.
+                Press <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-[10px] font-mono">Enter</kbd> to submit. Describe any issues to stop execution, or just "Approve".
               </p>
             </div>
           )}

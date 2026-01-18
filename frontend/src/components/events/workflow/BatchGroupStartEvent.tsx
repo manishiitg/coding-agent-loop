@@ -1,26 +1,16 @@
-import React, { useEffect } from 'react'
+import React from 'react'
 import { Play, Layers } from 'lucide-react'
 import type { BatchGroupStartEvent as BatchGroupStartEventData } from '../../../generated/event-types'
-import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 
 interface BatchGroupStartEventProps {
   event: BatchGroupStartEventData
   compact?: boolean
 }
 
+// NOTE: Batch progress updates are handled in the event polling layer (ChatArea.tsx)
+// to ensure reliable updates even when events are filtered or not visible in UI.
+// This component is purely for display purposes.
 export const BatchGroupStartEvent: React.FC<BatchGroupStartEventProps> = ({ event, compact = false }) => {
-  const setCurrentRunningGroupId = useWorkflowStore(state => state.setCurrentRunningGroupId)
-
-  // Update store when this event is displayed
-  useEffect(() => {
-    if (event.group_id) {
-      setCurrentRunningGroupId(event.group_id)
-    }
-    // Clear when component unmounts (event is replaced)
-    return () => {
-      // Don't clear here - let batch_group_end handle it
-    }
-  }, [event.group_id, setCurrentRunningGroupId])
   if (compact) {
     return (
       <div className="p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded">

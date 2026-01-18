@@ -290,15 +290,26 @@ func (s *SupabaseDB) DeleteWorkflowSessions(ctx context.Context) (int64, error) 
 }
 
 // ListChatSessions lists chat sessions with pagination
-func (s *SupabaseDB) ListChatSessions(ctx context.Context, limit, offset int, presetQueryID *string) ([]ChatHistorySummary, int, error) {
-	var whereClause string
+func (s *SupabaseDB) ListChatSessions(ctx context.Context, limit, offset int, presetQueryID *string, agentMode *string) ([]ChatHistorySummary, int, error) {
+	var whereConditions []string
 	var args []interface{}
 	argCount := 0
 
 	if presetQueryID != nil && *presetQueryID != "" {
 		argCount++
-		whereClause = fmt.Sprintf(" WHERE cs.preset_query_id = $%d", argCount)
+		whereConditions = append(whereConditions, fmt.Sprintf("cs.preset_query_id = $%d", argCount))
 		args = append(args, *presetQueryID)
+	}
+
+	if agentMode != nil && *agentMode != "" {
+		argCount++
+		whereConditions = append(whereConditions, fmt.Sprintf("cs.agent_mode = $%d", argCount))
+		args = append(args, *agentMode)
+	}
+
+	var whereClause string
+	if len(whereConditions) > 0 {
+		whereClause = " WHERE " + strings.Join(whereConditions, " AND ")
 	}
 
 	if err := validateWhereClause(whereClause); err != nil {

@@ -11,7 +11,45 @@
       "args": [
         "@playwright/mcp@latest",
         "--output-dir",
-        "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs/Downloads"
+        "/Users/mipl/ai-work/mcp-agent-builder-go/workspace-docs/Downloads",
+        "--isolated"
+      ]
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["--yes", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "awslabs.aws-pricing-mcp-server": {
+      "command": "uvx",
+      "args": ["awslabs.aws-pricing-mcp-server"],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR",
+        "AWS_PROFILE": "default",
+        "AWS_REGION": "us-east-1"
+      },
+      "disabled": false,
+      "autoApprove": []
+    },
+    "aws-knowledge-mcp-server": {
+      "command": "uvx",
+      "args": [
+        "mcp-proxy",
+        "--transport",
+        "streamablehttp",
+        "https://knowledge-mcp.global.api.aws"
+      ]
+    },
+    "ddg-search": {
+      "command": "uvx",
+      "args": ["duckduckgo-mcp-server"]
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "chrome-devtools-mcp@latest",
+        "--channel=canary",
+        "--headless=true",
+        "--isolated=true"
       ]
     }
   }

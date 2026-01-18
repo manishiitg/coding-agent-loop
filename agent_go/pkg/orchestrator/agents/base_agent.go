@@ -34,6 +34,8 @@ const (
 	// Multi-agent TodoPlanner sub-agents (actively used)
 	TodoPlannerAnonymizationAgentType        AgentType = "todo_planner_anonymization"          // Anonymizes learnings by replacing values with variables
 	TodoPlannerPlanImprovementAgentType      AgentType = "todo_planner_plan_improvement"       // Analyzes execution and provides plan improvement feedback
+	TodoPlannerEvaluationDebuggerAgentType   AgentType = "todo_planner_evaluation_debugger"    // Analyzes evaluation execution and provides feedback for evaluation plan improvement
+	TodoPlannerCodeExecDebuggingAgentType    AgentType = "todo_planner_code_exec_debugging"    // Analyzes execution logs for code execution errors
 	TodoPlannerPlanningAgentType             AgentType = "todo_planner_planning"               // Creates step-wise plan from objective
 	TodoPlannerExecutionAgentType            AgentType = "todo_planner_execution"              // Executes first step of plan
 	TodoPlannerValidationAgentType           AgentType = "todo_planner_validation"             // Validates execution results
@@ -139,6 +141,7 @@ func NewBaseAgent(
 	llmConfig *LLMConfig, // NEW: Full LLM configuration
 	apiKeys *AgentAPIKeys, // API keys for providers
 	mcpSessionID string, // MCP session ID for connection sharing across agents
+	runtimeOverrides mcpclient.RuntimeOverrides, // Runtime config overrides for MCP servers (e.g., output directories)
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
 	// All agents use Simple mode
@@ -287,6 +290,15 @@ func NewBaseAgent(
 		logger.Info("🔗 Using MCP session for connection sharing",
 			loggerv2.String("session_id", mcpSessionID),
 			loggerv2.String("agent_name", name))
+	}
+
+	// Add runtime overrides for workflow-specific MCP server configuration
+	// e.g., setting unique output directories per workflow run
+	if runtimeOverrides != nil {
+		options = append(options, mcpagent.WithRuntimeOverrides(runtimeOverrides))
+		logger.Info("🔧 Using runtime overrides for MCP servers",
+			loggerv2.String("agent_name", name),
+			loggerv2.Int("overrides_count", len(runtimeOverrides)))
 	}
 
 	// Create agent with all options

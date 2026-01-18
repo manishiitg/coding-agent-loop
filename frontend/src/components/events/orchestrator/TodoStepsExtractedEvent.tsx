@@ -950,9 +950,9 @@ export const TodoStepsExtractedEventDisplay: React.FC<
                       
                       {step.agent_configs?.disable_validation !== undefined && (
                         <div className="text-xs">
-                          <span className="font-medium text-indigo-700 dark:text-indigo-400">Validation:</span>
-                          <span className={`ml-1 ${step.agent_configs.disable_validation ? 'text-gray-500 dark:text-gray-500' : 'text-indigo-600 dark:text-indigo-400'}`}>
-                            {step.agent_configs.disable_validation ? 'Disabled (Auto-approve)' : 'Enabled'}
+                          <span className="font-medium text-indigo-700 dark:text-indigo-400">LLM Validation:</span>
+                          <span className={`ml-1 ${step.agent_configs.disable_validation === false ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-500 dark:text-gray-500'}`}>
+                            {step.agent_configs.disable_validation === false ? 'Enabled' : 'Disabled (Auto-approve)'}
                           </span>
                         </div>
                       )}

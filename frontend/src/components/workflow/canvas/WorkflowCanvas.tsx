@@ -16,10 +16,14 @@ import { WorkflowToolbar } from './WorkflowToolbar'
 import { StepSidebar } from './StepSidebar'
 import { VariablesSidebar } from './VariablesSidebar'
 import { StepLegend } from './StepLegend'
+import { BatchProgressHeader } from '../BatchProgressHeader'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
+import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
 import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type StepNodeData, type ConditionalNodeData, type LoopNodeData, type DecisionNodeData, type OrchestratorNodeData } from '../hooks/usePlanToFlow'
+import { useEvaluationPlanToFlow, type EvaluationStepNodeData } from '../hooks/useEvaluationPlanToFlow'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
+import { useWorkspaceState } from '../hooks/useWorkspaceState'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { useAppStore } from '../../../stores/useAppStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -72,20 +76,24 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const pendingFocusStepIdRef = React.useRef<string | null>(null)
   // Store current viewport state (x, y, zoom) to preserve it during refresh
   const viewportStateRef = React.useRef<{ x: number; y: number; zoom: number } | null>(null)
-  
+
+  // Get workflow mode
+  const workflowMode = useWorkflowStore(state => state.workflowMode)
+
   // Generate localStorage key for viewport state (workspace-specific)
   const getViewportStorageKey = React.useCallback(() => {
-    return workspacePath 
-      ? `workflow-viewport-${workspacePath}` 
-      : 'workflow-viewport-default'
-  }, [workspacePath])
+    return workspacePath
+      ? `workflow-viewport-${workspacePath}-${workflowMode}`
+      : `workflow-viewport-default-${workflowMode}`
+  }, [workspacePath, workflowMode])
 
   // Get workflow layout file path
   const getLayoutFilePath = React.useCallback(() => {
-    return workspacePath 
+    if (!workspacePath) return null
+    return workflowMode === 'plan'
       ? `${workspacePath}/planning/workflow_layout.json`
-      : null
-  }, [workspacePath])
+      : `${workspacePath}/evaluation/eval_layout.json`
+  }, [workspacePath, workflowMode])
 
   // Load saved node positions and offsets from workspace
   const loadSavedLayout = React.useCallback(async (): Promise<{
@@ -309,19 +317,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     const prevIndicesStr = prevIndicesRef.current
     const indicesChanged = prevIndicesStr !== indicesStr
 
-    console.log('[EFFECT_DEBUG] WorkflowCanvas - stepProgress sync effect:', {
-      selectedRunFolder,
-      stepProgressIsNull: stepProgress === null,
-      stepProgress: stepProgress,
-      indices,
-      prevIndicesStr,
-      newIndicesStr: indicesStr,
-      indicesChanged,
-      willUpdate: indicesChanged
-    })
-
     if (indicesChanged) {
-      console.log('[EFFECT_DEBUG] WorkflowCanvas - UPDATING completedStepIndices to:', indices)
       prevIndicesRef.current = indicesStr
       setCompletedStepIndices(indices)
     }
@@ -344,12 +340,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       
       // Construct execution folder path
       const executionPath = `${workspacePath}/runs/${selectedRunFolder}/execution`
-      
-      console.log('[WorkflowCanvas] Highlighting execution folder due to selectedRunFolder change:', {
-        selectedRunFolder,
-        executionPath
-      })
-      
+
       // Refresh files first to ensure the folder exists in the tree
       fetchFiles().then(() => {
         // Small delay to ensure files are loaded before highlighting
@@ -364,41 +355,66 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [selectedRunFolder, workspacePath, highlightFile, fetchFiles])
 
-  // Load plan data with change detection
-  const { plan, loading, error, changes, updateStep, deleteStep, refresh: loadPlanRefresh, clearChanges, setChanges } = usePlanData(workspacePath)
+  // Load plan data (Plan Mode)
+  const planData = usePlanData(workflowMode === 'plan' ? workspacePath : null)
+  
+  // Load evaluation plan data (Eval Mode)
+  const evalData = useEvaluationPlanData(workflowMode === 'eval' ? workspacePath : null)
 
-  // Load variables when workspace changes
+  // Unify state based on mode
+  const plan = workflowMode === 'plan' ? planData.plan : null
+  const evaluationPlan = workflowMode === 'eval' ? evalData.evaluationPlan : null
+  
+  const loading = workflowMode === 'plan' ? planData.loading : evalData.loading
+  const error = workflowMode === 'plan' ? planData.error : evalData.error
+  const changes = workflowMode === 'plan' ? planData.changes : null
+  
+  const loadPlanRefresh = workflowMode === 'plan' ? planData.refresh : evalData.refresh
+  const clearChanges = workflowMode === 'plan' ? planData.clearChanges : () => {}
+  const setChanges = workflowMode === 'plan' ? planData.setChanges : () => {}
+
+  // *** NEW CONSOLIDATED API ***
+  // Load all workspace state (run folders, variables, phases, progress) in one call
+  // This replaces the old individual API calls and eliminates race conditions
+  const {
+    state: workspaceState,
+    loading: isLoadingWorkspaceState,
+    error: workspaceStateError,
+    isRetrying: isRetryingWorkspaceState,
+    retryCountdown: workspaceStateRetryCountdown,
+    refresh: refreshWorkspaceState
+  } = useWorkspaceState(workspacePath, selectedRunFolder)
+
+  // Sync workspace state to local state for backward compatibility
+  // TODO: Eventually migrate all consumers to use workspaceState directly
   React.useEffect(() => {
-    if (!workspacePath) {
+    if (workspaceState) {
+      const manifest = workspaceState.variables_manifest || null
+      setVariablesManifest(manifest)
+      // CRITICAL: Also sync to store so buildExecutionOptions can access it
+      setVariablesManifestInStore(manifest)
+      setIsLoadingVariables(false)
+    } else if (!isLoadingWorkspaceState) {
       setVariablesManifest(null)
       setVariablesManifestInStore(null)
-      return
+      setIsLoadingVariables(false)
+    } else {
+      setIsLoadingVariables(isLoadingWorkspaceState)
     }
+  }, [workspaceState, isLoadingWorkspaceState, setVariablesManifestInStore])
 
-    const loadVariables = async () => {
-      setIsLoadingVariables(true)
-      try {
-        const response = await agentApi.getVariableGroups(workspacePath)
-        if (response.success && response.manifest) {
-          setVariablesManifest(response.manifest)
-          // Also store in workflow store for buildExecutionOptions to access
-          setVariablesManifestInStore(response.manifest)
-        } else {
-          setVariablesManifest(null)
-          setVariablesManifestInStore(null)
-        }
-      } catch (err) {
-        console.error('[WorkflowCanvas] Failed to load variables:', err)
-        setVariablesManifest(null)
-        setVariablesManifestInStore(null)
-      } finally {
-        setIsLoadingVariables(false)
-      }
+  // Transform run folders for WorkflowToolbar (memoized to avoid repeated transformations)
+  const runFoldersForToolbar = React.useMemo(() => {
+    if (!workspaceState?.run_folders) return []
+    return workspaceState.run_folders.map(f => ({ name: f.name, progress: f.progress || undefined }))
+  }, [workspaceState?.run_folders])
+
+  // Log workspace state errors
+  React.useEffect(() => {
+    if (workspaceStateError) {
+      console.error('[WorkflowCanvas] Workspace state error:', workspaceStateError)
     }
-
-    loadVariables()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspacePath])
+  }, [workspaceStateError])
 
   // Callback for opening variables sidebar
   const handleOpenVariablesSidebar = useCallback(() => {
@@ -413,39 +429,24 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     setVariablesManifestInStore(manifest)
   }, [setVariablesManifestInStore])
 
-  // Refresh handler - reloads plan, step config, and variables
+  // Refresh handler - reloads plan, step config, and workspace state
   const handleRefresh = useCallback(async () => {
     if (!workspacePath) return
-    
-    console.log('[WorkflowCanvas] Refreshing plan, step config, and variables...')
-    
+
+    console.log('[WorkflowCanvas] Refreshing plan, step config, and workspace state...')
+
     // Save current viewport state before refresh
     // Only save if viewport has been initialized (not on first load)
     const currentViewport = hasInitializedView.current ? viewportStateRef.current : null
     console.log('[WorkflowCanvas] Saving viewport state before refresh:', currentViewport, 'hasInitializedView:', hasInitializedView.current)
-    
+
     // Refresh plan data (this also loads step_config.json)
     await loadPlanRefresh()
-    
-    // Reload variables
-    setIsLoadingVariables(true)
-    try {
-      const response = await agentApi.getVariableGroups(workspacePath)
-      if (response.success && response.manifest) {
-        setVariablesManifest(response.manifest)
-        setVariablesManifestInStore(response.manifest)
-      } else {
-        setVariablesManifest(null)
-        setVariablesManifestInStore(null)
-      }
-    } catch (err) {
-      console.error('[WorkflowCanvas] Failed to reload variables:', err)
-      setVariablesManifest(null)
-      setVariablesManifestInStore(null)
-    } finally {
-      setIsLoadingVariables(false)
-    }
-    
+
+    // *** NEW: Use consolidated workspace state refresh ***
+    // This reloads run folders, variables, phases, and progress in one call
+    await refreshWorkspaceState()
+
     // Restore viewport state after refresh completes
     // Only restore if we had a saved viewport (not on first load)
     // Use a small delay to ensure nodes have been updated
@@ -458,18 +459,20 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         )
       }, 100)
     }
-    
+
     console.log('[WorkflowCanvas] Refresh completed')
-  }, [workspacePath, loadPlanRefresh, setVariablesManifestInStore, setViewport])
+  }, [workspacePath, loadPlanRefresh, refreshWorkspaceState, setViewport])
 
   // Workflow execution
   const {
     status,
-    stepStatusMap,
-    stopWorkflow,
-    currentStepId
+    stopWorkflow
   } = useWorkflowExecution()
-  
+
+  // Current step and status from store (set by ChatArea polling when step_progress_updated events arrive)
+  const currentStepId = useWorkflowStore(state => state.currentStepId)
+  const stepStatusMap = useWorkflowStore(state => state.stepStatusMap)
+
   const isExecuting = status === 'running'
 
   // Refs for callbacks that need to be defined early
@@ -663,15 +666,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     if (parentPositionChanges.size > 0) {
       setNodes((nds) => {
         // First pass: update direct children
-        // Note: Sub-agents, validation, learning, and evaluation nodes are now independent
-        // They don't move when their parent moves (they can be manually positioned)
+        // Note: Sub-agents SHOULD move with their parent orchestrator
+        // Validation, learning, and evaluation nodes remain independent
         let updatedNodes = nds.map(node => {
           const parentId = childToParentRef.current.get(node.id)
-          // Skip if this is a sub-agent, validation, learning, or evaluation node
+          
+          // Skip if this is a validation, learning, or evaluation node
           // These are independent and can be manually positioned
-          const isSubAgent = node.id.includes('-sub-agent-')
           const isValidationLearningEval = node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation'
-          if (isSubAgent || isValidationLearningEval) {
+          if (isValidationLearningEval) {
             return node // These nodes are independent, don't update them here
           }
           
@@ -745,7 +748,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Single reusable function to focus/position a node at the top-left of the screen
   const focusNode = useCallback((
-    nodeId: string, 
+    nodeId: string,
     options?: {
       topPadding?: number  // Vertical padding from top (default: 50)
       selectNode?: boolean  // Whether to select the node (default: false)
@@ -875,7 +878,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [stepStatusMap])
 
   // Convert plan to React Flow nodes and edges (with change highlights and run callback)
-  const { nodes: initialNodes, edges: initialEdges } = usePlanToFlow(plan, { 
+  const planFlow = usePlanToFlow(plan, { 
     // Prerequisite edges are always shown (default: true in usePlanToFlow)
     changes,  // Pass changes to highlight modified nodes
     onRunFromStep: handleRunFromStepCallback,
@@ -884,11 +887,24 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     completedStepIndices,  // Pass completed steps for enabling/disabling run buttons
     stepStatusMap: stableStepStatusMap,  // Pass stabilized step status map
     workspacePath,  // Pass workspace path for file opening
-    selectedRunFolder,  // Pass selected run folder for file opening
+    selectedRunFolder: selectedRunFolder ?? undefined,  // Pass selected run folder for file opening (convert null to undefined)
     variablesManifest,  // Pass variables manifest for Variables node
     onOpenVariablesSidebar: handleOpenVariablesSidebar,  // Callback for opening variables sidebar
     isLoadingVariables  // Whether variables are loading
   })
+
+  // Convert evaluation plan to flow (Eval Mode)
+  const evalFlow = useEvaluationPlanToFlow(evaluationPlan, {
+    onRunFromStep: handleRunFromStepCallback,
+    onOpenSidebar: handleOpenSidebarCallback,
+    isExecuting,
+    completedStepIndices: [], // Evaluation steps don't have progress tracking yet
+    workspacePath,
+    selectedRunFolder: selectedRunFolder ?? undefined
+  })
+
+  // Select flow based on mode
+  const { nodes: initialNodes, edges: initialEdges } = workflowMode === 'plan' ? planFlow : evalFlow
 
   // Helper function to highlight and position a specific step node
   const highlightStepNode = useCallback((stepId: string) => {
@@ -903,32 +919,23 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       }
       return false
     })
-    
+
     if (nodeToFocus) {
-      // Focus viewport on the node without changing sidebar selection.
-      // This keeps the sidebar closed for execution events (currentStepId)
-      // and simply repositions the view when the sidebar is already open.
+      console.log('[WorkflowCanvas] highlightStepNode found node:', nodeToFocus.id)
+      // Focus viewport on the node but don't select it (don't open sidebar)
+      // User can manually open sidebar if needed
       focusNode(nodeToFocus.id, { topPadding: 150, selectNode: false, delay: 100 })
-      console.log('[WorkflowCanvas] Highlighted step node:', stepId, '-> node ID:', nodeToFocus.id)
     } else {
-      console.warn('[WorkflowCanvas] Could not find node for stepId:', stepId)
+      console.log('[WorkflowCanvas] highlightStepNode - no node found for stepId:', stepId)
     }
   }, [focusNode])
 
-  // Auto-focus on the current running step when it changes
-  React.useEffect(() => {
-    if (currentStepId) {
-      highlightStepNode(currentStepId)
-    }
-  }, [currentStepId, highlightStepNode])
+  // Auto-focus disabled - running step name is now shown in StepLegend instead
+  // This prevents the canvas from jumping around during workflow execution
 
   // Handle "run from step" button click on nodes - runs only the single step
   // Uses workflow store directly for execution options (single source of truth)
   const handleRunFromStep = useCallback((stepIndex: number, stepId: string) => {
-    console.log('[WorkflowCanvas] Run single step clicked:', stepIndex, stepId)
-    console.log('[WorkflowCanvas] onStartPhase available:', !!onStartPhase)
-    console.log('[WorkflowCanvas] selectedRunFolder:', selectedRunFolder)
-    
     // Find the node that matches this stepId
     // The node ID might be stepId, or it might be step-${stepIndex} if stepId doesn't exist
     // We need to find the node by matching step.id in the node data
@@ -941,15 +948,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       }
       return false
     })
-    
+
     if (nodeToFocus) {
       // Position viewport to show step at top-left (but don't open sidebar)
       focusNode(nodeToFocus.id, { topPadding: 150, selectNode: false, delay: 100 })
-      console.log('[WorkflowCanvas] Positioned viewport to show step at top-left:', nodeToFocus.id, 'for stepId:', stepId)
-    } else {
-      console.warn('[WorkflowCanvas] Could not find node for stepId:', stepId, 'stepIndex:', stepIndex)
     }
-    
+
     if (onStartPhase) {
       // Create execution options to run only this single step
       // Use buildExecutionOptions to include all flags (including fallback_to_original_llm_on_failure)
@@ -960,14 +964,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         execution_strategy: 'run_single_step',
         resume_from_step: stepIndex + 1  // 1-based step number (target step)
       }
-      console.log('[RESUME_DEBUG] 🚀 Starting single step execution:', {
-        stepIndex: stepIndex + 1,
-        execution_strategy: executionOptions.execution_strategy,
-        resume_from_step: executionOptions.resume_from_step
-      })
       onStartPhase('execution', executionOptions)
-    } else {
-      console.error('[RESUME_DEBUG] ❌ onStartPhase is not available!')
     }
   }, [onStartPhase, focusNode, selectedRunFolder])
 
@@ -979,23 +976,14 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
     refresh: async (changedStepIDs?: string[], deletedStepIDs?: string[]) => {
-      console.log('[WorkflowPlanUpdate] refresh() called via ref', { changedStepIDs, deletedStepIDs })
-      console.log('[WorkflowPlanUpdate] Current plan state:', { 
-        hasPlan: !!plan, 
-        stepCount: plan?.steps?.length || 0,
-        planSteps: plan?.steps?.map(s => ({ id: s.id, title: s.title })) || []
-      })
-      
       // Refresh plan to get latest data
       await loadPlanRefresh()
-      
+
       // If granular change data is provided, use it directly
       if (changedStepIDs || deletedStepIDs) {
-        console.log('[WorkflowPlanUpdate] Using granular change data from events')
         // The backend combines added and updated into changed_step_ids
         // For now, we'll treat all changedStepIDs as "updated" since the backend combines them
         // The visual highlighting will work correctly (blue ring for updated steps)
-        // TODO: Update backend to send separate added_step_ids and updated_step_ids for more accurate highlighting
         const updated = changedStepIDs?.filter(id => !deletedStepIDs?.includes(id)) || []
         const deleted = deletedStepIDs || []
         const changes: PlanChanges = {
@@ -1008,12 +996,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         if (changes.hasChanges) {
           setChanges(changes)
         }
-        console.log('[WorkflowPlanUpdate] refresh() completed with granular changes:', changes)
         return changes
       }
-      
+
       // No granular data - just refresh without setting changes
-      console.log('[WorkflowPlanUpdate] refresh() completed (no granular changes provided)')
       return null
     },
     getStepCount: () => {
@@ -1034,7 +1020,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       const stepToFocus = changes.added?.[0] || changes.updated?.[0]
       if (stepToFocus) {
         pendingFocusStepIdRef.current = stepToFocus
-        console.log('[WorkflowCanvas] Stored step ID to focus after nodes update:', stepToFocus)
       }
       
       // Clear any existing timeout
@@ -1154,8 +1139,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         // First try to load saved layout from file
         loadSavedLayout().then(savedLayout => {
           // Use saved layout if available, otherwise use current positions (captured before refresh)
-          const positionsToUse = savedLayout?.positions && savedLayout.positions.size > 0 
-            ? savedLayout.positions 
+          const positionsToUse = savedLayout?.positions && savedLayout.positions.size > 0
+            ? savedLayout.positions
             : currentPositionsRef.current
           const offsetsToUse = savedLayout?.offsets && savedLayout.offsets.size > 0
             ? savedLayout.offsets
@@ -1393,14 +1378,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Also re-focuses on the selected node after nodes update (e.g., after saving step config)
   React.useEffect(() => {
     const selectedId = selectedNodeIdRef.current
-    console.log('[WorkflowPlanUpdate] Checking selectedNode update', {
-      selectedId,
-      nodesLength: nodes.length,
-      hasSelectedNode: !!selectedNode
-    })
-    
+
     if (!selectedId || nodes.length === 0) {
-      console.log('[WorkflowPlanUpdate] No selected node or no nodes, skipping update')
       return
     }
 
@@ -1408,7 +1387,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     const updatedNode = nodes.find(n => n.id === selectedId) as WorkflowNode | undefined
     if (!updatedNode) {
       // Selected node no longer exists (was deleted)
-      console.log('[WorkflowPlanUpdate] Selected node no longer exists, clearing selection')
       setSelectedNode(null)
       // Reset view initialization since selected node is gone
       hasInitializedView.current = false
@@ -1420,7 +1398,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     const currentSelected = selectedNode
     if (!currentSelected || currentSelected.id !== selectedId) {
       // Selection changed or was cleared - don't update
-      console.log('[WorkflowPlanUpdate] Selection changed or cleared, skipping update')
       return
     }
 
@@ -1429,43 +1406,31 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     const newData = updatedNode.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | undefined
     const oldStep = oldData?.step
     const newStep = newData?.step
-    
+
     let shouldUpdate = false
     if (oldStep && newStep) {
       // Compare by JSON stringify to detect any changes
       const oldStepStr = JSON.stringify(oldStep)
       const newStepStr = JSON.stringify(newStep)
       if (oldStepStr !== newStepStr) {
-        console.log('[WorkflowPlanUpdate] Updating selectedNode with new step data from plan refresh', {
-          nodeId: selectedId,
-          oldStepKeys: Object.keys(oldStep),
-          newStepKeys: Object.keys(newStep),
-          agentConfigsChanged: JSON.stringify(oldStep.agent_configs || {}) !== JSON.stringify(newStep.agent_configs || {})
-        })
         shouldUpdate = true
-      } else {
-        console.log('[WorkflowPlanUpdate] Selected node step data unchanged')
       }
     } else if (updatedNode !== currentSelected) {
       // Node structure changed (e.g., type changed)
-      console.log('[WorkflowPlanUpdate] Node structure changed, updating selectedNode')
       shouldUpdate = true
-    } else {
-      console.log('[WorkflowPlanUpdate] Selected node unchanged')
     }
-    
+
     if (shouldUpdate) {
       setSelectedNode(updatedNode)
       // Re-focus on the selected node after update (e.g., after saving step config)
       // This ensures the view stays focused on the same step when the sidebar is closed
       setTimeout(() => {
         focusNode(selectedId, { topPadding: 150, selectNode: false, delay: 0 })
-        console.log('[WorkflowPlanUpdate] Re-focused on selected node after update:', selectedId)
       }, 100)
     }
   }, [nodes, selectedNode, focusNode]) // Include focusNode in dependencies
 
-  // Load saved viewport state from localStorage on mount
+  // Load saved viewport from localStorage
   const savedViewportRef = React.useRef<{ x: number; y: number; zoom: number } | null>(null)
   React.useEffect(() => {
     try {
@@ -1475,7 +1440,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         const parsed = JSON.parse(saved)
         if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number' && typeof parsed.zoom === 'number') {
           savedViewportRef.current = { x: parsed.x, y: parsed.y, zoom: parsed.zoom }
-          console.log('[WorkflowCanvas] Loaded saved viewport from localStorage:', savedViewportRef.current)
         }
       }
     } catch (error) {
@@ -1496,7 +1460,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           })
           viewportStateRef.current = savedViewportRef.current
           hasInitializedView.current = true
-          console.log('[WorkflowCanvas] Restored saved viewport from localStorage:', savedViewportRef.current)
         }, 200)
         return
       }
@@ -1620,8 +1583,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Track previous completedStepIndices to detect actual changes
   const prevCompletedIndicesRef = React.useRef<string>('')
 
-  // Update node status based on completedStepIndices and last_completed_step_id from step_progress_updated events
-  // This handles the case where step_progress_updated arrives but step_execution_end doesn't
+  // Update node status based on completedStepIndices from stepProgress (loaded from API)
+  // Note: step_progress_updated events no longer include progress details, but can trigger progress reload
   React.useEffect(() => {
     const lastCompletedStepId = stepProgress?.last_completed_step_id
 
@@ -1758,11 +1721,23 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [onStartPhase, highlightStepNode, selectedNode])
 
   // Get total step count
-  const totalSteps = plan?.steps?.length || 0
+  const totalSteps = workflowMode === 'plan' ? (plan?.steps?.length || 0) : (evaluationPlan?.steps?.length || 0)
 
 
   // Handle edit step
   const handleEditStep = useCallback(async (stepId: string, updates: Partial<PlanStep>) => {
+    // Eval Mode
+    if (workflowMode === 'eval') {
+      if (!evaluationPlan) return
+      const stepIndex = evaluationPlan.steps.findIndex(s => s.id === stepId)
+      if (stepIndex >= 0) {
+        await evalData.updateEvaluationStep(stepIndex, updates as any) // Type cast needed as EvaluationStep is similar to PlanStep
+        highlightStepNode(stepId)
+      }
+      return
+    }
+
+    // Plan Mode
     if (!plan) return
     
     // Capture current node positions before refresh to preserve layout
@@ -1817,7 +1792,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         throw new Error(`Step ID mismatch: requested ${stepId} but found ${foundStep.id} at index ${stepIndex}`)
       }
       
-      await updateStep(stepIndex, updates)
+      await planData.updateStep(stepIndex, updates)
       
       // Highlight the step node after saving config
       highlightStepNode(stepId)
@@ -1856,18 +1831,25 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       // Highlight the step node after saving
       highlightStepNode(stepId)
     }
-  }, [plan, workspacePath, updateStep, highlightStepNode, loadPlanRefresh])
+  }, [plan, evaluationPlan, workflowMode, workspacePath, planData, evalData, highlightStepNode, loadPlanRefresh])
 
   // Handle delete step
   const handleDeleteStep = useCallback(async (stepId: string) => {
+    // Eval Mode
+    if (workflowMode === 'eval') {
+      console.warn('[WorkflowCanvas] Delete not yet implemented for evaluation steps')
+      return
+    }
+
+    // Plan Mode
     if (!plan) return
     
     const stepIndex = plan.steps.findIndex(s => s.id === stepId)
     if (stepIndex >= 0) {
-      await deleteStep(stepIndex)
+      await planData.deleteStep(stepIndex)
       setSelectedNode(null)
     }
-  }, [plan, deleteStep])
+  }, [plan, workflowMode, planData])
 
   // Handle bulk update steps
   const handleBulkUpdateSteps = useCallback(async (updates: Array<{ stepId: string; updates: Partial<PlanStep> }>) => {
@@ -1921,32 +1903,70 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Handle toggle dependency edges
 
-  // Loading state
-  if (loading) {
+  // Unified loading state - wait for ALL data before showing canvas
+  // This ensures consistent state: plan, step_config, run folders, variables, phases, progress
+  const isFullyLoaded = !loading && !isLoadingWorkspaceState
+  const loadingMessages = []
+  if (loading) loadingMessages.push('plan & step config')
+  if (isLoadingWorkspaceState) loadingMessages.push('workspace state')
+
+  if (!isFullyLoaded) {
     return (
       <div className={`flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900 ${className}`}>
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-2 border-gray-400 dark:border-gray-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm text-gray-500 dark:text-gray-400">Loading plan...</span>
+          <span className="text-sm text-gray-500 dark:text-gray-400">
+            Loading {loadingMessages.join(' & ')}...
+          </span>
+          <span className="text-xs text-gray-400 dark:text-gray-500">
+            Please wait while we load everything
+          </span>
         </div>
       </div>
     )
   }
 
-  // Error state
-  if (error) {
+  // Error state - show errors from plan loading or workspace state loading
+  const hasError = error || workspaceStateError
+
+  if (hasError) {
     return (
       <div className={`flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900 ${className}`}>
-        <div className="flex flex-col items-center gap-3 text-center">
+        <div className="flex flex-col items-center gap-3 text-center max-w-md">
           <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
             <span className="text-2xl">⚠️</span>
           </div>
-          <span className="text-sm text-red-600 dark:text-red-400">{error}</span>
+          <div className="flex flex-col gap-2">
+            {error && (
+              <span className="text-sm text-red-600 dark:text-red-400">
+                <strong>Plan error:</strong> {error}
+              </span>
+            )}
+            {workspaceStateError && (
+              <div className="flex flex-col gap-2">
+                <span className="text-sm text-red-600 dark:text-red-400">
+                  <strong>Workspace error:</strong> {workspaceStateError}
+                </span>
+                {isRetryingWorkspaceState && (
+                  <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
+                    <div className="w-4 h-4 border-2 border-blue-600 dark:border-blue-400 border-t-transparent rounded-full animate-spin" />
+                    <span>
+                      Retrying in {workspaceStateRetryCountdown !== null ? `${workspaceStateRetryCountdown} second${workspaceStateRetryCountdown !== 1 ? 's' : ''}...` : '5 seconds...'}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
           <button
-            onClick={loadPlanRefresh}
-            className="px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
+            onClick={() => {
+              loadPlanRefresh()
+              refreshWorkspaceState()
+            }}
+            className="px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={isRetryingWorkspaceState}
           >
-            Retry
+            {isRetryingWorkspaceState ? 'Retrying...' : 'Retry Loading'}
           </button>
         </div>
       </div>
@@ -1954,7 +1974,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }
 
   // No plan state
-  if (!plan || !plan.steps || plan.steps.length === 0) {
+  const hasPlan = workflowMode === 'plan' ? (plan && plan.steps && plan.steps.length > 0) : (evaluationPlan && evaluationPlan.steps && evaluationPlan.steps.length > 0)
+  if (!hasPlan) {
     return (
       <div className={`flex flex-col h-full bg-gray-50 dark:bg-gray-900 ${className}`}>
         <WorkflowToolbar
@@ -1964,6 +1985,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           workspacePath={workspacePath}
           totalSteps={0}
           presetQueryId={presetQueryId}
+          runFolders={runFoldersForToolbar}
+          variablesManifest={variablesManifest}
+          stepProgress={stepProgress}
+          isLoadingWorkspaceState={isLoadingWorkspaceState}
           onStartPhase={handleStartPhase}
           onStop={stopWorkflow}
           onCreatePlan={onCreatePlan || (() => {})}
@@ -1978,13 +2003,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             </div>
             <div>
               <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                No Plan Yet
+                {workflowMode === 'plan' ? 'No Plan Yet' : 'No Evaluation Plan Yet'}
               </h3>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                Create a plan to visualize your workflow
+                {workflowMode === 'plan' 
+                  ? 'Create a plan to visualize your workflow' 
+                  : 'Run Evaluation Designer to create an evaluation plan'}
               </p>
             </div>
-            {onCreatePlan && (
+            {onCreatePlan && workflowMode === 'plan' && (
               <button
                 onClick={onCreatePlan}
                 className="px-6 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 font-medium"
@@ -2004,16 +2031,20 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       <WorkflowToolbar
         status={status}
         hasPlan={true}
-        plan={plan}
+        plan={workflowMode === 'plan' ? plan : undefined} // Only pass plan in plan mode (for start point calculation)
         currentPhase={currentPhase}
         workspacePath={workspacePath}
         totalSteps={totalSteps}
         presetQueryId={presetQueryId}
-          onStartPhase={handleStartPhase}
-          onStop={stopWorkflow}
-          onBulkUpdateSteps={handleBulkUpdateSteps}
-          onCreatePlan={onCreatePlan || (() => {})}
-          showChatArea={showChatArea}
+        runFolders={runFoldersForToolbar}
+        variablesManifest={variablesManifest}
+        stepProgress={stepProgress}
+        isLoadingWorkspaceState={isLoadingWorkspaceState}
+        onStartPhase={handleStartPhase}
+        onStop={stopWorkflow}
+        onBulkUpdateSteps={handleBulkUpdateSteps}
+        onCreatePlan={onCreatePlan || (() => {})}
+        showChatArea={showChatArea}
         onToggleChatArea={onToggleChatArea}
         onRefresh={handleRefresh}
         onSaveLayout={saveLayout}
@@ -2047,7 +2078,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
               zoom: viewport.zoom
             }
             viewportStateRef.current = viewportState
-            
+
             // Save to localStorage (only after initial view has been set)
             if (hasInitializedView.current) {
               try {
@@ -2076,6 +2107,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           />
         </ReactFlow>
 
+        {/* Batch Progress Header - Above Legend */}
+        <BatchProgressHeader position="canvas" />
+
         {/* Step Legend - Bottom Left */}
         {plan && plan.steps && plan.steps.length > 0 && (
           <StepLegend
@@ -2084,6 +2118,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             selectedNodeId={selectedNode?.id || null}
             onStepClick={handleNavigateToStep}
             workspacePath={workspacePath}
+            currentStepId={currentStepId}
           />
         )}
         </div>

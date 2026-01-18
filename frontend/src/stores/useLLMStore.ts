@@ -8,11 +8,19 @@ import { llmConfigService } from '../services/llm-config-api'
 
 interface LLMState extends StoreActions {
   // Primary LLM configuration (unified from sidebar and chat input)
+  // LEGACY: kept for backward compatibility, use mode-specific configs instead
   primaryConfig: LLMConfiguration
-  
+
   // New unified configuration (Tiered Fallback System)
+  // LEGACY: kept for backward compatibility, use mode-specific configs instead
   agentConfig: AgentLLMConfiguration | null
-  
+
+  // Mode-specific LLM configurations (chat vs workflow)
+  chatPrimaryConfig: LLMConfiguration
+  chatAgentConfig: AgentLLMConfiguration | null
+  workflowPrimaryConfig: LLMConfiguration
+  workflowAgentConfig: AgentLLMConfiguration | null
+
   // Saved/Published LLM Library
   savedLLMs: SavedLLM[]
   
@@ -50,6 +58,13 @@ interface LLMState extends StoreActions {
   // Actions
   setPrimaryConfig: (config: LLMConfiguration) => void
   setAgentConfig: (config: AgentLLMConfiguration | null) => void
+
+  // Mode-specific config actions
+  setChatPrimaryConfig: (config: LLMConfiguration) => void
+  setChatAgentConfig: (config: AgentLLMConfiguration | null) => void
+  setWorkflowPrimaryConfig: (config: LLMConfiguration) => void
+  setWorkflowAgentConfig: (config: AgentLLMConfiguration | null) => void
+  getConfigForMode: (mode: 'chat' | 'workflow') => { primaryConfig: LLMConfiguration; agentConfig: AgentLLMConfiguration | null }
   setOpenrouterConfig: (config: ExtendedLLMConfiguration) => void
   setBedrockConfig: (config: ExtendedLLMConfiguration) => void
   setOpenaiConfig: (config: ExtendedLLMConfiguration) => void
@@ -73,7 +88,7 @@ interface LLMState extends StoreActions {
   removeCustomVertexModel: (model: string) => void
   
   // Legacy actions (for backward compatibility)
-  updateProvider: (provider: 'openrouter' | 'bedrock') => void
+  updateProvider: (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic') => void
   updateModel: (modelId: string) => void
   updateFallbacks: (fallbacks: string[]) => void
   updateCrossProviderFallback: (fallback: LLMConfiguration['cross_provider_fallback']) => void
@@ -93,15 +108,32 @@ export const useLLMStore = create<LLMState>()(
     persist(
       (set, get) => ({
         // Initial state - will be loaded from backend
+        // LEGACY: kept for backward compatibility
         primaryConfig: {
           provider: 'openrouter',
           model_id: '',
           fallback_models: [],
           cross_provider_fallback: undefined
         },
-        
+
         agentConfig: null,
-        
+
+        // Mode-specific configs (initialized empty, will be migrated from legacy on first load)
+        chatPrimaryConfig: {
+          provider: 'openrouter',
+          model_id: '',
+          fallback_models: [],
+          cross_provider_fallback: undefined
+        },
+        chatAgentConfig: null,
+        workflowPrimaryConfig: {
+          provider: 'openrouter',
+          model_id: '',
+          fallback_models: [],
+          cross_provider_fallback: undefined
+        },
+        workflowAgentConfig: null,
+
         // Saved/Published LLM Library
         savedLLMs: [],
         
@@ -170,6 +202,37 @@ export const useLLMStore = create<LLMState>()(
 
         setAgentConfig: (config) => {
           set({ agentConfig: config, error: null })
+        },
+
+        // Mode-specific config actions
+        setChatPrimaryConfig: (config) => {
+          set({ chatPrimaryConfig: config, error: null })
+        },
+
+        setChatAgentConfig: (config) => {
+          set({ chatAgentConfig: config, error: null })
+        },
+
+        setWorkflowPrimaryConfig: (config) => {
+          set({ workflowPrimaryConfig: config, error: null })
+        },
+
+        setWorkflowAgentConfig: (config) => {
+          set({ workflowAgentConfig: config, error: null })
+        },
+
+        getConfigForMode: (mode) => {
+          const state = get()
+          if (mode === 'workflow') {
+            return {
+              primaryConfig: state.workflowPrimaryConfig,
+              agentConfig: state.workflowAgentConfig
+            }
+          }
+          return {
+            primaryConfig: state.chatPrimaryConfig,
+            agentConfig: state.chatAgentConfig
+          }
         },
 
         setOpenrouterConfig: (config) => {
@@ -625,8 +688,15 @@ export const useLLMStore = create<LLMState>()(
         name: 'llm-store',
         partialize: (state) => ({
           // Persist user configurations and custom models, but NOT default models from backend
+          // Legacy configs (kept for backward compatibility)
           primaryConfig: state.primaryConfig,
           agentConfig: state.agentConfig,
+          // Mode-specific configs
+          chatPrimaryConfig: state.chatPrimaryConfig,
+          chatAgentConfig: state.chatAgentConfig,
+          workflowPrimaryConfig: state.workflowPrimaryConfig,
+          workflowAgentConfig: state.workflowAgentConfig,
+          // Other persisted state
           savedLLMs: state.savedLLMs,
           openrouterConfig: state.openrouterConfig,
           bedrockConfig: state.bedrockConfig,
@@ -641,7 +711,25 @@ export const useLLMStore = create<LLMState>()(
           // DO NOT persist availableBedrockModels, availableOpenRouterModels, availableOpenAIModels
           // These should always be loaded fresh from backend
           // DO NOT persist defaultsLoaded - this should be reset on each app load
-        })
+        }),
+        // Migration: copy legacy config to mode-specific configs on first load
+        onRehydrateStorage: () => (state) => {
+          if (state) {
+            const hasLegacyConfig = state.primaryConfig?.provider && state.primaryConfig?.model_id
+            const hasChatConfig = state.chatPrimaryConfig?.model_id && state.chatPrimaryConfig.model_id !== ''
+            const hasWorkflowConfig = state.workflowPrimaryConfig?.model_id && state.workflowPrimaryConfig.model_id !== ''
+
+            // Migrate legacy config to mode-specific configs if not already set
+            if (hasLegacyConfig && !hasChatConfig) {
+              state.chatPrimaryConfig = { ...state.primaryConfig }
+              state.chatAgentConfig = state.agentConfig ? { ...state.agentConfig } : null
+            }
+            if (hasLegacyConfig && !hasWorkflowConfig) {
+              state.workflowPrimaryConfig = { ...state.primaryConfig }
+              state.workflowAgentConfig = state.agentConfig ? { ...state.agentConfig } : null
+            }
+          }
+        }
       }
     ),
     {

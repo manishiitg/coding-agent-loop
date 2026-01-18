@@ -9,7 +9,6 @@ import { agentApi } from '../../../services/api'
 import { isValidJSON } from '../../../utils/event-helpers'
 import { getToolsByCategory } from '../../../utils/customToolNames'
 import { NodeConfigFooter } from './NodeConfigFooter'
-import { NodeMarkdown } from './NodeMarkdown'
 import type { OrchestratorNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 
@@ -76,26 +75,6 @@ export const OrchestratorNode = memo(({ data, selected }: OrchestratorNodeProps)
   const { id, title, orchestration_step, orchestration_routes, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder } = data
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
-  
-  // Extract description and success criteria from step and orchestration_step
-  const routingDescription = step?.description
-  const routingSuccessCriteria = step?.success_criteria
-  const mainStepDescription = orchestration_step?.description
-  const mainStepSuccessCriteria = orchestration_step?.success_criteria
-
-  // Process text to convert escaped newlines to actual newlines
-  const processText = (text: string | undefined): string | undefined => {
-    if (!text) return undefined
-    return text
-      .replace(/\\n/g, '\n')  // Convert \n to actual newlines
-      .replace(/\\t/g, '\t')  // Convert \t to actual tabs
-      .replace(/\\r/g, '\r')  // Convert \r to actual carriage returns
-  }
-
-  const processedRoutingDescription = processText(routingDescription)
-  const processedRoutingSuccessCriteria = processText(routingSuccessCriteria)
-  const processedMainStepDescription = processText(mainStepDescription)
-  const processedMainStepSuccessCriteria = processText(mainStepSuccessCriteria)
 
   // Context inputs and outputs from the MAIN STEP (orchestration_step) - this is what actually executes
   const contextInputs = useMemo(() => orchestration_step?.context_dependencies || [], [orchestration_step?.context_dependencies])
@@ -435,16 +414,14 @@ export const OrchestratorNode = memo(({ data, selected }: OrchestratorNodeProps)
 
   // Calculate node height based on content
   const nodeHeight = useMemo(() => {
-    let height = 120 // Base height
-    if (routingDescription) height += 30
-    if (routingSuccessCriteria) height += 50
-    if (orchestration_step) height += 40
+    let height = 80 // Base height (header + title)
+    if (orchestration_step) height += 30
     if (hasContext) height += 40
-    return Math.max(height, 200) // Minimum height
-  }, [orchestration_step, routingDescription, routingSuccessCriteria, hasContext])
+    return Math.max(height, 120) // Minimum height
+  }, [orchestration_step, hasContext])
 
   return (
-    <div className={`relative w-[360px] ${changeType ? changeHighlightStyles[changeType] : ''}`}>
+    <div className={`relative w-[300px] ${changeType ? changeHighlightStyles[changeType] : ''}`}>
       {/* Header with buttons - above the card */}
       <div className="absolute -top-12 left-0 right-0 flex items-center justify-center gap-2 z-20">
         {/* Run from this step button */}
@@ -544,7 +521,7 @@ export const OrchestratorNode = memo(({ data, selected }: OrchestratorNodeProps)
         `}
         style={{
           minHeight: `${nodeHeight}px`,
-          width: '360px'
+          width: '300px'
         }}
       >
         {/* Input handle */}
@@ -563,97 +540,13 @@ export const OrchestratorNode = memo(({ data, selected }: OrchestratorNodeProps)
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white leading-tight text-center mb-1.5">
             {title || `Orchestrator ${stepIndex + 1}`}
           </h3>
-          
-          {/* Routing step description (main step) */}
-          {processedRoutingDescription && (
-            <div className="mb-2 px-1">
-              <NodeMarkdown content={processedRoutingDescription} textSize="xs" />
-            </div>
-          )}
-          
-          {/* Routing step success criteria (main step) */}
-          {processedRoutingSuccessCriteria && (
-            <div className="flex gap-2 p-2.5 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50 mb-2">
-              <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
-              <div className="flex-1 text-green-700 dark:text-green-300">
-                <NodeMarkdown content={processedRoutingSuccessCriteria} textSize="xs" />
-              </div>
-            </div>
-          )}
-          
-          {/* Main orchestrator step info */}
+
+          {/* Main orchestrator step title */}
           {orchestration_step && (
-            <div className="mt-1.5 p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700/60">
-              <p className="text-[10px] text-gray-700 dark:text-gray-300 font-semibold mb-1.5">
+            <div className="mt-1.5 p-2 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700/60">
+              <p className="text-[10px] text-gray-700 dark:text-gray-300 font-semibold">
                 Orchestrator: {orchestration_step.title || 'Untitled Step'}
               </p>
-              {/* Main step description - REQUIRED */}
-              {processedMainStepDescription ? (
-                <div className="text-gray-600 dark:text-gray-400">
-                  <NodeMarkdown content={processedMainStepDescription} textSize="tiny" />
-                </div>
-              ) : (
-                <p className="text-[10px] text-red-600 dark:text-red-400 italic">
-                  ⚠️ Description is required
-                </p>
-              )}
-              {/* Main step success criteria - REQUIRED */}
-              {processedMainStepSuccessCriteria ? (
-                <div className="flex gap-1.5 mt-2 p-2 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50">
-                  <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 text-green-700 dark:text-green-300">
-                    <NodeMarkdown content={processedMainStepSuccessCriteria} textSize="tiny" />
-                  </div>
-                </div>
-              ) : (
-                <div className="flex gap-1.5 mt-2 p-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50">
-                  <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-[10px] text-red-700 dark:text-red-300 leading-relaxed italic">
-                    ⚠️ Success criteria is required
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Routes Display */}
-          {orchestration_routes && orchestration_routes.length > 0 && (
-            <div className="mt-2 p-2.5 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50">
-              <p className="text-[10px] text-blue-700 dark:text-blue-300 font-semibold mb-1.5">
-                Available Routes:
-              </p>
-              <div className="space-y-1">
-                {orchestration_routes.map((route) => {
-                  const isEndRoute = route.route_id?.toLowerCase() === "end"
-                  return (
-                    <div key={route.route_id} className="flex items-start gap-1.5">
-                      <div className={`w-2 h-2 rounded-full mt-1 flex-shrink-0 ${
-                        isEndRoute 
-                          ? "bg-red-500 dark:bg-red-400" 
-                          : "bg-blue-500 dark:bg-blue-400"
-                      }`} />
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-[10px] font-medium ${
-                          isEndRoute
-                            ? "text-red-800 dark:text-red-200"
-                            : "text-blue-800 dark:text-blue-200"
-                        }`}>
-                          {route.route_name || route.route_id}
-                        </p>
-                        {route.condition && (
-                          <p className={`text-[9px] leading-relaxed mt-0.5 ${
-                            isEndRoute
-                              ? "text-red-600 dark:text-red-400"
-                              : "text-blue-600 dark:text-blue-400"
-                          }`}>
-                            {route.condition}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
             </div>
           )}
 

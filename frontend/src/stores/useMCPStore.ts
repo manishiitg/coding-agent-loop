@@ -9,9 +9,14 @@ interface MCPState extends StoreActions {
   toolList: ToolDefinition[]
   enabledServers: string[]
   enabledTools: string[]
-  
+
   // Server selection (unified approach)
-  selectedServers: string[] // Single source of truth for current selection
+  // LEGACY: kept for backward compatibility, use mode-specific selections
+  selectedServers: string[]
+
+  // Mode-specific server selections (chat vs workflow)
+  chatSelectedServers: string[]
+  workflowSelectedServers: string[]
   
   // UI state
   expandedServers: Set<string>
@@ -36,6 +41,11 @@ interface MCPState extends StoreActions {
   selectAllServers: () => void
   clearAllServers: () => void
   refreshTools: () => Promise<void>
+
+  // Mode-specific server actions
+  setChatSelectedServers: (servers: string[]) => void
+  setWorkflowSelectedServers: (servers: string[]) => void
+  getServersForMode: (mode: 'chat' | 'workflow') => string[]
   
   // Tool detail actions
   setExpandedServers: (servers: Set<string>) => void
@@ -64,7 +74,11 @@ export const useMCPStore = create<MCPState>()(
         toolList: [],
         enabledServers: [],
         enabledTools: [],
+        // LEGACY: kept for backward compatibility
         selectedServers: [],
+        // Mode-specific server selections (initialized empty, will be migrated)
+        chatSelectedServers: [],
+        workflowSelectedServers: [],
         expandedServers: new Set(),
         selectedTool: null,
         toolDetails: {},
@@ -107,6 +121,22 @@ export const useMCPStore = create<MCPState>()(
         clearAllServers: () => {
           // Set "NO_SERVERS" to indicate no servers should be used
           set({ selectedServers: ["NO_SERVERS"] })
+        },
+
+        // Mode-specific server actions
+        setChatSelectedServers: (servers) => {
+          set({ chatSelectedServers: servers })
+        },
+
+        setWorkflowSelectedServers: (servers) => {
+          set({ workflowSelectedServers: servers })
+        },
+
+        getServersForMode: (mode) => {
+          const state = get()
+          return mode === 'workflow'
+            ? state.workflowSelectedServers
+            : state.chatSelectedServers
         },
 
         refreshTools: async () => {
@@ -297,7 +327,11 @@ export const useMCPStore = create<MCPState>()(
         partialize: (state) => ({
           // Only persist user preferences, not temporary state
           enabledServers: state.enabledServers,
+          // Legacy field (kept for backward compatibility)
           selectedServers: state.selectedServers,
+          // Mode-specific server selections
+          chatSelectedServers: state.chatSelectedServers,
+          workflowSelectedServers: state.workflowSelectedServers,
           expandedServers: Array.from(state.expandedServers), // Convert Set to Array for persistence
           toolDetails: state.toolDetails
         }),
@@ -309,6 +343,19 @@ export const useMCPStore = create<MCPState>()(
           // Ensure loading state is false after rehydration if we have tools
           if (state && state.toolList && state.toolList.length > 0) {
             state.isLoadingTools = false
+          }
+          // Migration: copy legacy selectedServers to mode-specific if not already set
+          if (state) {
+            const hasLegacyServers = state.selectedServers && state.selectedServers.length > 0
+            const hasChatServers = state.chatSelectedServers && state.chatSelectedServers.length > 0
+            const hasWorkflowServers = state.workflowSelectedServers && state.workflowSelectedServers.length > 0
+
+            if (hasLegacyServers && !hasChatServers) {
+              state.chatSelectedServers = [...state.selectedServers]
+            }
+            if (hasLegacyServers && !hasWorkflowServers) {
+              state.workflowSelectedServers = [...state.selectedServers]
+            }
           }
         }
       }

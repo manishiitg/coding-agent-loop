@@ -129,6 +129,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default orchestration max iterations: %d (no step-specific config)", maxOrchestrationIterations))
 	}
 
+	// Track which tempLLM was used across iterations (for learning phase decision after loop)
+	var usedTempLLM string
+	// Track the last execution LLM used (for failure learning after loop)
+	var lastExecutionLLM string
+
 	// Main orchestration loop: execute until success criteria is met
 	for orchestrationIteration := 0; orchestrationIteration < maxOrchestrationIterations; orchestrationIteration++ {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Orchestration step iteration %d/%d", orchestrationIteration+1, maxOrchestrationIterations))
@@ -188,7 +193,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 				SubAgentStep:  route.SubAgentStep,
 			}
 		}
-		orchestrationResponse, updatedConversationHistory, err := hcpo.executeOrchestrationOrchestratorStep(
+		orchestrationResponse, updatedConversationHistory, executionLLM, err := hcpo.executeOrchestrationOrchestratorStep(
 			ctx,
 			orchestrationStepPlan, // Pass main step so it can use its own config
 			stepIndex,
@@ -205,11 +210,42 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute main orchestration step '%s': %v", orchestrationStepPlan.OrchestrationStep.GetTitle(), err), nil)
 			return false, "", fmt.Errorf("failed to execute main orchestration step '%s': %w", orchestrationStepPlan.OrchestrationStep.GetTitle(), err)
 		}
+		lastExecutionLLM = executionLLM
 
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Main orchestration step completed. Success criteria met: %t, Selected route: %s", orchestrationResponse.SuccessCriteriaMet, orchestrationResponse.SelectedRouteID))
 
 		// Update conversation history (in-memory only, not persisted)
 		conversationHistory = updatedConversationHistory
+
+		// Track which tempLLM was used (for learning phase decision)
+		// Determine based on orchestrationIteration and which tempLLMs exist
+		// orchestrationIteration is 0-based, so iteration 0 = retryAttempt 1, iteration 1 = retryAttempt 2
+		var usedTempLLM string
+		hasTempLLM1 := hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != ""
+		hasTempLLM2 := hcpo.tempOverrideLLM2 != nil && hcpo.tempOverrideLLM2.Provider != "" && hcpo.tempOverrideLLM2.ModelID != ""
+		retryAttemptForTracking := orchestrationIteration + 1 // Convert to 1-based for comparison
+		if retryAttemptForTracking == 1 && hasTempLLM1 {
+			usedTempLLM = "tempLLM1"
+		} else if retryAttemptForTracking == 2 && hasTempLLM2 {
+			usedTempLLM = "tempLLM2"
+		} else {
+			usedTempLLM = "" // Original LLM
+		}
+
+		// Find the selected route details for logging
+		var selectedRouteName string
+		var selectedSubAgentTitle string
+		var selectedSubAgentPath string
+		for i, route := range orchestrationStepPlan.OrchestrationRoutes {
+			if route.RouteID == orchestrationResponse.SelectedRouteID {
+				selectedRouteName = route.RouteName
+				if route.SubAgentStep != nil {
+					selectedSubAgentTitle = route.SubAgentStep.GetTitle()
+					selectedSubAgentPath = fmt.Sprintf("%s-sub-agent-%d", orchestrationStepPath, i+1)
+				}
+				break
+			}
+		}
 
 		// Store orchestration routing JSON to logs folder (always saved, not conditional)
 		var validationWorkspacePath string
@@ -228,8 +264,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 			"step_path":             orchestrationStepPath,
 			"orchestration_step_id": step.GetID(),
 			"iteration":             orchestrationIteration + 1,
+			"model":                 executionLLM, // Store model used
 			"orchestration_response": map[string]interface{}{
 				"selected_route_id":                  orchestrationResponse.SelectedRouteID,
+				"selected_route_name":                selectedRouteName,
+				"selected_sub_agent_title":           selectedSubAgentTitle,
+				"selected_sub_agent_path":            selectedSubAgentPath,
 				"success_criteria_met":               orchestrationResponse.SuccessCriteriaMet,
 				"success_reasoning":                  orchestrationResponse.SuccessReasoning,
 				"instructions_to_sub_agent":          orchestrationResponse.InstructionsToSubAgent,
@@ -255,8 +295,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 			"step_path":             mainStepPath,
 			"orchestration_step_id": step.GetID(),
 			"iteration":             orchestrationIteration + 1,
+			"model":                 executionLLM, // Store model used
 			"orchestration_response": map[string]interface{}{
 				"selected_route_id":                  orchestrationResponse.SelectedRouteID,
+				"selected_route_name":                selectedRouteName,
+				"selected_sub_agent_title":           selectedSubAgentTitle,
+				"selected_sub_agent_path":            selectedSubAgentPath,
 				"success_criteria_met":               orchestrationResponse.SuccessCriteriaMet,
 				"success_reasoning":                  orchestrationResponse.SuccessReasoning,
 				"instructions_to_sub_agent":          orchestrationResponse.InstructionsToSubAgent,
@@ -294,6 +338,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 				"step_path":             orchestrationStepPath,
 				"orchestration_step_id": step.GetID(),
 				"iteration":             orchestrationIteration + 1,
+				"model":                 executionLLM, // Store model used
 				"selected_route_id":     orchestrationResponse.SelectedRouteID,
 				"success_criteria_met":  orchestrationResponse.SuccessCriteriaMet,
 				"success_reasoning":     orchestrationResponse.SuccessReasoning,
@@ -412,7 +457,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 				// Proceed to LLM validation (pre-validation is skipped for orchestration steps)
 				// Create validation agent
 				validationAgentName := fmt.Sprintf("orchestration-validation-step-%d", stepIndex+1)
-				validationAgent, err := hcpo.createValidationAgent(ctx, "validation", stepIndex+1, validationAgentName, stepConfigs)
+				orchestrationStepID := orchestrationStepPlan.OrchestrationStep.GetID()
+				validationAgent, err := hcpo.createValidationAgent(ctx, "validation", stepIndex+1, orchestrationStepID, validationAgentName, stepConfigs)
 				if err != nil {
 					hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to create validation agent for orchestration step %d: %v", stepIndex+1, err), nil)
 					return false, "", fmt.Errorf("failed to create validation agent for orchestration step: %w", err)
@@ -476,8 +522,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 				orchestrationStepID := orchestrationStepPlan.OrchestrationStep.GetID()
 				shouldSkipLearningDueToLock, _ := hcpo.ShouldSkipLearningDueToLock(ctx, orchestrationStepConfig, orchestrationStepID, stepIndex, orchestrationStepPath)
 				// TEMP LLM OVERRIDE: Check if learning should be skipped based on which tempLLM was used
+				// usedTempLLM is already tracked above in this iteration
 				shouldSkipLearningDueToTempOverride := false
-				usedTempLLM := "" // Orchestration steps don't use temp LLM, but check for consistency
 				if hcpo.executionOptions != nil && usedTempLLM != "" {
 					if usedTempLLM == "tempLLM1" && hcpo.executionOptions.SkipLearningWhenTempLLM1 {
 						shouldSkipLearningDueToTempOverride = true
@@ -494,7 +540,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 
 					// Calculate turn count for orchestration step
 					turnCount := len(conversationHistory)
-					err = hcpo.runSuccessLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, validationResponse, isCodeExecutionMode, "", turnCount) // Orchestration steps don't use tempLLM
+					err = hcpo.runSuccessLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM)
 					if err != nil {
 						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for orchestration step %s: %v", orchestrationStepPath, err))
 					} else {
@@ -551,8 +597,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 			orchestrationStepID := orchestrationStepPlan.OrchestrationStep.GetID()
 			shouldSkipLearningDueToLock, _ := hcpo.ShouldSkipLearningDueToLock(ctx, orchestrationStepConfig, orchestrationStepID, stepIndex, orchestrationStepPath)
 			// TEMP LLM OVERRIDE: Check if learning should be skipped based on which tempLLM was used
+			// usedTempLLM is already tracked above in this iteration
 			shouldSkipLearningDueToTempOverride := false
-			usedTempLLM := "" // Orchestration steps don't use temp LLM, but check for consistency
 			if hcpo.executionOptions != nil && usedTempLLM != "" {
 				if usedTempLLM == "tempLLM1" && hcpo.executionOptions.SkipLearningWhenTempLLM1 {
 					shouldSkipLearningDueToTempOverride = true
@@ -569,7 +615,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 
 				// Calculate turn count for orchestration step
 				turnCount := len(conversationHistory)
-				_, _, err = hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, validationResponse, isCodeExecutionMode, turnCount)
+				_, _, err = hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM)
 				if err != nil {
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for orchestration step %s: %v", orchestrationStepPath, err))
 				} else {
@@ -812,6 +858,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 		// Use format: step-{N}-sub-agent-{index} (e.g., "step-2-sub-agent-1")
 		// Use orchestrationStepPath as base to support branch steps (e.g., "step-1-if-true-0-sub-agent-1")
 		subAgentPath := fmt.Sprintf("%s-sub-agent-%d", orchestrationStepPath, subAgentIndex)
+		if orchestrationIteration > 0 {
+			subAgentPath = fmt.Sprintf("%s-sub-agent-%d-i-%d", orchestrationStepPath, subAgentIndex, orchestrationIteration+1)
+		}
 		// Pass empty previousContextFiles to skip building previous steps summary for sub-agents
 		// Convert orchestration routes to OrchestrationRoute format for sub-agent context
 		orchestrationRoutesForSubAgent := make([]OrchestrationRoute, len(orchestrationStepPlan.OrchestrationRoutes))
@@ -944,8 +993,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 	orchestrationStepID := orchestrationStepPlan.OrchestrationStep.GetID()
 	shouldSkipLearningDueToLock, _ := hcpo.ShouldSkipLearningDueToLock(ctx, orchestrationStepConfig, orchestrationStepID, stepIndex, orchestrationStepPath)
 	// TEMP LLM OVERRIDE: Check if learning should be skipped based on which tempLLM was used
+	// usedTempLLM is tracked at the top-level loop scope
 	shouldSkipLearningDueToTempOverride := false
-	usedTempLLM := "" // Orchestration steps don't use temp LLM, but check for consistency
 	if hcpo.executionOptions != nil && usedTempLLM != "" {
 		if usedTempLLM == "tempLLM1" && hcpo.executionOptions.SkipLearningWhenTempLLM1 {
 			shouldSkipLearningDueToTempOverride = true
@@ -971,7 +1020,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 
 		// Calculate turn count for orchestration step
 		turnCount := len(conversationHistory)
-		_, _, err := hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, failureValidationResponse, isCodeExecutionMode, turnCount)
+		_, _, err := hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, failureValidationResponse, isCodeExecutionMode, usedTempLLM, turnCount, lastExecutionLLM)
 		if err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for orchestration step %s: %v", orchestrationStepPath, err))
 		} else {
@@ -1006,7 +1055,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationOrchestratorStep(
 	conversationHistory []llmtypes.MessageContent,
 	allSteps []PlanStepInterface,
 	execCtx *ExecutionContext,
-) (*OrchestrationResponse, []llmtypes.MessageContent, error) {
+) (*OrchestrationResponse, []llmtypes.MessageContent, string, error) {
 	// Prepare template variables similar to executeSingleStep
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
@@ -1157,16 +1206,25 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationOrchestratorStep(
 
 	orchestrationOrchestratorAgent, err := hcpo.getOrchestrationOrchestratorAgentForStep(ctx, step, stepIndex, iteration, retryAttempt, isRetryAfterValidationFailure, allSteps)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get orchestration orchestrator agent: %w", err)
+		return nil, nil, "", fmt.Errorf("failed to get orchestration orchestrator agent: %w", err)
+	}
+
+	// Capture execution LLM
+	var executionLLM string
+	if orchestrationOrchestratorAgent != nil && orchestrationOrchestratorAgent.GetConfig() != nil {
+		config := orchestrationOrchestratorAgent.GetConfig()
+		if config.LLMConfig.Primary.ModelID != "" {
+			executionLLM = fmt.Sprintf("%s/%s", config.LLMConfig.Primary.Provider, config.LLMConfig.Primary.ModelID)
+		}
 	}
 
 	// Execute the agent with structured output (includes evaluation and routing decisions)
 	orchestrationResponse, updatedConversationHistory, err := orchestrationOrchestratorAgent.ExecuteStructured(ctx, templateVars, conversationHistory)
 	if err != nil {
-		return nil, nil, fmt.Errorf("orchestration orchestrator agent execution failed: %w", err)
+		return nil, nil, "", fmt.Errorf("orchestration orchestrator agent execution failed: %w", err)
 	}
 
-	return orchestrationResponse, updatedConversationHistory, nil
+	return orchestrationResponse, updatedConversationHistory, executionLLM, nil
 }
 
 // getOrchestrationOrchestratorAgentForStep returns the OrchestrationOrchestratorAgent to use for the main orchestration step
@@ -1201,35 +1259,45 @@ func (hcpo *StepBasedWorkflowOrchestrator) getOrchestrationOrchestratorAgentForS
 		}
 	}
 
-	// Check if learnings folder has files
-	learningsFolderEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, stepIndex, stepPath)
-	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check if orchestration step %s learnings folder is empty: %v, assuming empty (will skip tempLLM)", stepID, err))
-		learningsFolderEmpty = true // Conservative: assume empty on error, skip tempLLM
+	// For orchestration orchestrator, skip tempLLM and use step/preset ExecutionLLM directly
+	// Fallback order: step ExecutionLLM → orchestrator default (preset is already merged into step config by ApplyStepConfigFromFile)
+	orchestratorLLMConfig := hcpo.GetLLMConfig()
+	var llmConfig *orchestrator.LLMConfig
+
+	// Debug: Log presetExecutionLLM availability
+	if hcpo.presetExecutionLLM != nil {
+		hcpo.GetLogger().Info(fmt.Sprintf("[PRESET_EXECUTION_LLM_DEBUG] [getOrchestrationOrchestratorAgentForStep] presetExecutionLLM available: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
+	} else {
+		hcpo.GetLogger().Info("[PRESET_EXECUTION_LLM_DEBUG] [getOrchestrationOrchestratorAgentForStep] presetExecutionLLM is nil")
 	}
 
-	// Use selectExecutionLLM helper for cascading fallback: tempLLM1 → tempLLM2 → step ExecutionLLM → preset ExecutionLLM → orchestrator default
-	// This handles all the tempLLM logic, learnings folder checks, and retry attempt logic
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
-	llmConfig := hcpo.selectExecutionLLM(ctx, orchestrationStepConfig, isRetryAfterValidationFailure, retryAttempt, stepID, stepPath, learningsFolderEmpty)
-
-	// Additional fallback for orchestration orchestrator: if no ExecutionLLM found, try ConditionalLLM
-	// This is specific to orchestration orchestrator (similar purpose - structured decision making)
-	// Only use ConditionalLLM if we got orchestrator default (meaning no step/preset ExecutionLLM was found, and no tempLLM was used)
-	if orchestrationStepConfig != nil && orchestrationStepConfig.ExecutionLLM == nil && orchestrationStepConfig.ConditionalLLM != nil && orchestrationStepConfig.ConditionalLLM.Provider != "" && orchestrationStepConfig.ConditionalLLM.ModelID != "" {
-		// Check if we got orchestrator default (no tempLLM, no step ExecutionLLM, no preset ExecutionLLM)
-		// If so, use ConditionalLLM as an additional fallback before orchestrator default
-		if llmConfig.Primary.Provider == orchestratorLLMConfig.Primary.Provider && llmConfig.Primary.ModelID == orchestratorLLMConfig.Primary.ModelID {
-			conditionalLLMConfig := orchestrationStepConfig.ConditionalLLM
-			llmConfig = &orchestrator.LLMConfig{
-				Primary: orchestrator.LLMModel{
-					Provider: conditionalLLMConfig.Provider,
-					ModelID:  conditionalLLMConfig.ModelID,
-				},
-				APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys
-			}
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional LLM for orchestration orchestrator (fallback when ExecutionLLM not available): %s/%s", conditionalLLMConfig.Provider, conditionalLLMConfig.ModelID))
+	// Try step ExecutionLLM first (includes merged preset config)
+	if orchestrationStepConfig != nil && orchestrationStepConfig.ExecutionLLM != nil &&
+		orchestrationStepConfig.ExecutionLLM.Provider != "" && orchestrationStepConfig.ExecutionLLM.ModelID != "" {
+		llmConfig = &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: orchestrationStepConfig.ExecutionLLM.Provider,
+				ModelID:  orchestrationStepConfig.ExecutionLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys,
 		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step/preset ExecutionLLM for orchestration orchestrator: %s/%s",
+			orchestrationStepConfig.ExecutionLLM.Provider, orchestrationStepConfig.ExecutionLLM.ModelID))
+	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
+		// Use preset default if available and step config didn't specify one
+		llmConfig = &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: hcpo.presetExecutionLLM.Provider,
+				ModelID:  hcpo.presetExecutionLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys,
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default ExecutionLLM for orchestration orchestrator: %s/%s",
+			hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
+	} else {
+		err := fmt.Errorf("no valid LLM configuration found for orchestration orchestrator: step config and preset execution LLM are both empty or invalid")
+		hcpo.GetLogger().Error("❌ No valid LLM configuration found for orchestration orchestrator: step config and preset execution LLM are both empty or invalid", err)
+		return nil, err
 	}
 
 	// Create agent name with step ID
@@ -1237,7 +1305,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getOrchestrationOrchestratorAgentForS
 
 	// Create orchestration orchestrator agent using factory
 	// orchestrationStepConfig already set above
-	orchestrationOrchestratorAgent, err := hcpo.createOrchestrationOrchestratorAgent(ctx, "orchestrator", stepIndex, iteration, agentName, orchestrationStepConfig, llmConfig)
+	orchestrationOrchestratorAgent, err := hcpo.createOrchestrationOrchestratorAgent(ctx, "orchestrator", stepIndex, iteration, stepID, agentName, orchestrationStepConfig, llmConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create orchestration orchestrator agent: %w", err)
 	}

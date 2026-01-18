@@ -8,6 +8,10 @@ import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import ChatArea, { type ChatAreaRef } from '../ChatArea'
 import { ChatHeader } from '../ChatHeader'
 import { WorkflowChatTabs } from './WorkflowChatTabs'
+import { RunningWorkflowsIndicator } from './RunningWorkflowsIndicator'
+import { RunningWorkflowsDrawer } from './RunningWorkflowsDrawer'
+import { useRunningWorkflowsStore, useShowRunningDrawer, type RunningWorkflow } from '../../stores/useRunningWorkflowsStore'
+import { sanitizeDisplayNameForFolder } from '../../utils/workflowUtils'
 
 // Helper component to get observerId and render ChatArea
 // Always renders ChatArea (even without observerId) so it can handle initialization
@@ -30,9 +34,194 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
   )
 })
 import { agentApi } from '../../services/api'
-import { type ExecutionOptions } from '../../services/api-types'
-import { getRawEventData } from '../../generated/event-types'
+import { type ExecutionOptions, type PollingEvent } from '../../services/api-types'
+import { getTypedEventData, getRawEventData } from '../../generated/event-types'
 import { usePlanData } from './hooks/usePlanData'
+
+/**
+ * Helper function to restore workflow state from loaded events
+ * Called during workflow reconnection to restore:
+ * - Current running step ID (for StepLegend)
+ * - Step statuses (running, completed, failed)
+ * - Batch progress (for BatchProgressHeader)
+ * This ensures the UI shows the correct state immediately after page refresh
+ */
+async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> {
+  try {
+    const { setTabEvents, setTabLastEventIndex } = useChatStore.getState()
+    const workflowStore = useWorkflowStore.getState()
+
+    // Skip if batch progress is already active (avoid overwriting live state)
+    if (workflowStore.batchProgress?.isActive) {
+      console.log('[WorkflowLayout] Batch progress already active, skipping restore')
+      return
+    }
+
+    // Load events for this session
+    const eventMode = 'basic'
+    const response = await agentApi.getSessionEvents(sessionId, 0, { eventMode })
+    const events = response.events as PollingEvent[]
+
+    if (events.length === 0) {
+      return
+    }
+
+    // Store events for the tab (so polling doesn't re-fetch them)
+    setTabEvents(sessionId, events)
+    // CRITICAL: Use last_processed_index from backend (not events.length - 1)
+    // Backend tracks the actual event index which may be higher due to filtering/cleanup
+    const lastIndex = response.last_processed_index ?? events.length - 1
+    setTabLastEventIndex(sessionId, lastIndex)
+    console.log(`[WorkflowLayout] restoreWorkflowStateFromEvents: loaded ${events.length} events, last_processed_index=${lastIndex}`)
+
+    // Scan events to find batch context, current step, and step statuses
+    let latestBatchContext: {
+      groupId: string
+      groupIndex: number
+      totalGroups: number
+      runFolder: string
+    } | null = null
+    let completedCount = 0
+    let failedCount = 0
+
+    // Track current step and step statuses
+    let latestRunningStepId: string | null = null
+    const stepStatuses = new Map<string, 'pending' | 'running' | 'completed' | 'failed'>()
+
+    for (const event of events) {
+      // Extract from step_progress_updated (most common, has batch context and step info)
+      if (event.type === 'step_progress_updated') {
+        // Try event.data.data first (standard format), then event.data (direct format)
+        const eventData = event.data as Record<string, unknown>
+        const data = (eventData?.data as Record<string, unknown>) || eventData
+        const groupId = data?.group_id as string
+        const groupIndex = data?.group_index as number
+        const totalGroups = data?.total_groups as number
+        const runFolder = data?.run_folder as string
+        const stepId = data?.current_step_id as string
+        const status = data?.status as string
+
+        if (groupId && totalGroups > 0) {
+          latestBatchContext = { groupId, groupIndex, totalGroups, runFolder }
+        }
+
+        // Track step status
+        if (stepId && status) {
+          if (status === 'start') {
+            latestRunningStepId = stepId
+            stepStatuses.set(stepId, 'running')
+          } else if (status === 'end') {
+            stepStatuses.set(stepId, 'completed')
+            // If this step just ended, it's no longer the running step
+            if (latestRunningStepId === stepId) {
+              latestRunningStepId = null
+            }
+          }
+        }
+      }
+
+      // Extract from batch_group_start
+      if (event.type === 'batch_group_start') {
+        const eventData = event.data as Record<string, unknown>
+        const data = (eventData?.data as Record<string, unknown>) || eventData
+        const groupId = data?.group_id as string
+        const groupIndex = data?.group_index as number
+        const totalGroups = data?.total_groups as number
+        const runFolder = data?.run_folder as string
+
+        if (groupId && totalGroups > 0) {
+          latestBatchContext = { groupId, groupIndex, totalGroups, runFolder }
+        }
+      }
+
+      // Count completed/failed from batch_group_end
+      if (event.type === 'batch_group_end') {
+        const eventData = event.data as Record<string, unknown>
+        const data = (eventData?.data as Record<string, unknown>) || eventData
+        const success = data?.success as boolean
+        if (success === true) completedCount++
+        else if (success === false) failedCount++
+      }
+
+      // Track step execution end (backup)
+      if (event.type === 'step_execution_end') {
+        const eventData = event.data as Record<string, unknown>
+        const data = (eventData?.data as Record<string, unknown>) || eventData
+        const stepId = data?.step_id as string
+        if (stepId) {
+          stepStatuses.set(stepId, 'completed')
+        }
+      }
+
+      // Track step execution failed
+      if (event.type === 'step_execution_failed') {
+        const eventData = event.data as Record<string, unknown>
+        const data = (eventData?.data as Record<string, unknown>) || eventData
+        const stepId = data?.step_id as string
+        if (stepId) {
+          stepStatuses.set(stepId, 'failed')
+        }
+      }
+    }
+
+    // Restore current step ID if we found a running step
+    if (latestRunningStepId) {
+      console.log(`[WorkflowLayout] Restoring currentStepId: ${latestRunningStepId}`)
+      workflowStore.setCurrentStepId(latestRunningStepId)
+    }
+
+    // Restore step statuses
+    if (stepStatuses.size > 0) {
+      console.log(`[WorkflowLayout] Restoring ${stepStatuses.size} step statuses`)
+      stepStatuses.forEach((status, stepId) => {
+        workflowStore.setStepStatus(stepId, status)
+      })
+    }
+
+    // Restore batch progress if we found batch context with multiple groups
+    if (latestBatchContext && latestBatchContext.totalGroups > 1) {
+      const remaining = latestBatchContext.totalGroups - completedCount - failedCount
+
+      // Only restore if batch is still active (has remaining groups)
+      if (remaining > 0) {
+        workflowStore.handleBatchGroupStart(
+          latestBatchContext.groupId,
+          latestBatchContext.runFolder || '',
+          undefined,
+          latestBatchContext.groupIndex,
+          latestBatchContext.totalGroups
+        )
+
+        // Update completed/failed counts if we have them
+        if (completedCount > 0 || failedCount > 0) {
+          const state = useWorkflowStore.getState()
+          if (state.batchProgress) {
+            useWorkflowStore.setState({
+              batchProgress: {
+                ...state.batchProgress,
+                completedCount,
+                failedCount,
+                remainingCount: remaining
+              }
+            })
+          }
+        }
+
+        console.log('[WorkflowLayout] Restored batch progress from events:', {
+          sessionId,
+          groupId: latestBatchContext.groupId,
+          groupIndex: latestBatchContext.groupIndex,
+          totalGroups: latestBatchContext.totalGroups,
+          completedCount,
+          failedCount,
+          remaining
+        })
+      }
+    }
+  } catch (error) {
+    console.warn('[WorkflowLayout] Failed to restore batch progress:', error)
+  }
+}
 
 interface WorkflowLayoutProps {
   className?: string
@@ -57,12 +246,15 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const events = React.useMemo(() => {
     return activeTab?.sessionId ? getTabEvents(activeTab.sessionId) : []
   }, [activeTab?.sessionId, getTabEvents])
-  
+
   // Use workflow store for UI state (single source of truth)
   const activePhase = useWorkflowStore(state => state.activePhase)
   const showChatArea = useWorkflowStore(state => state.showChatArea)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
-  
+  const minimizeWorkflow = useRunningWorkflowsStore(state => state.minimizeWorkflow)
+  const stepProgress = useWorkflowStore(state => state.stepProgress)
+  const showRunningDrawer = useShowRunningDrawer()
+
   // Tab management (generalized for both chat and workflow)
   const { createChatTab, getActiveTab } = useChatStore()
   const getPhaseById = useWorkflowStore(state => state.getPhaseById)
@@ -75,42 +267,29 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const lastProcessedEventIndexRef = useRef(-1)
   // Track the last processed step progress event index to avoid duplicate workspace refreshes
   const lastProcessedStepProgressIndexRef = useRef(-1)
-  // Track the last processed step execution start event index to avoid duplicate focus calls
-  const lastProcessedStepStartIndexRef = useRef(-1)
   // Store pending query to submit after ChatArea mounts
   const pendingQueryRef = useRef<{ query: string; executionOptions?: ExecutionOptions } | null>(null)
-  
-  // Callback ref that gets called when ChatArea mounts/unmounts
-  const chatAreaCallbackRef = useCallback((node: ChatAreaRef | null) => {
-    chatAreaRef.current = node
-    
-    // When ChatArea mounts and we have a pending query, submit it
-    if (node && pendingQueryRef.current) {
-      const { query, executionOptions } = pendingQueryRef.current
-      console.log('[WorkflowLayout] ChatArea mounted via callback ref, submitting pending query:', query)
-      node.submitQuery(query, executionOptions).catch(error => {
-        console.error('[WorkflowLayout] Failed to submit pending query:', error)
-      })
-      pendingQueryRef.current = null // Clear pending query after submission
-    }
-  }, [])
-  
-  // Get selected run folder and workspace fetchFiles function
+  // Track the previous preset ID for auto-minimize on preset switch
+  const previousPresetIdRef = useRef<string | null>(null)
+
+  // Get selected run folder and workspace functions (defined early for use in useEffect)
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
   const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
   const updateStepProgressFromEvent = useWorkflowStore(state => state.updateStepProgressFromEvent)
-  const { fetchFiles } = useWorkspaceStore()
-  
+  const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
+  const variablesManifest = useWorkflowStore(state => state.variablesManifest)
+  const { fetchFiles, setExpandedFolders } = useWorkspaceStore()
+
   // Get active workflow preset
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const customPresets = useGlobalPresetStore(state => state.customPresets)
   const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
-  
+
   const activeWorkflowPreset = useMemo(() => {
     if (selectedModeCategory === 'workflow' && activePresetId) {
       const customPreset = customPresets.find(p => p.id === activePresetId)
       if (customPreset) return customPreset
-      
+
       const predefinedPreset = predefinedPresets.find(p => p.id === activePresetId)
       if (predefinedPreset) return predefinedPreset
     }
@@ -124,7 +303,113 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
     return null
   }, [activeWorkflowPreset])
-  
+
+  // Auto-expand selectedRunFolder and selected groups in workspace sidebar whenever they change
+  useEffect(() => {
+    if (selectedRunFolder && selectedRunFolder !== 'new' && workspacePath) {
+      // Fetch files first to ensure folder exists, then expand
+      fetchFiles().then(() => {
+        // Collapse all other iteration folders first
+        const workspaceStore = useWorkspaceStore.getState()
+        const expandedFolders = workspaceStore.expandedFolders
+        const runsPath = `${workspacePath}/runs`
+
+        // Filter out all iteration-related folders from expandedFolders
+        const newExpandedFolders = new Set<string>()
+        expandedFolders.forEach(folder => {
+          // Keep folders that are NOT under runs/iteration-*
+          // Check all patterns: full paths, relative paths, and iteration folders
+          const isIterationFolder =
+            folder.includes('/runs/iteration-') ||           // Full path: "Workflow/ICICI/runs/iteration-3"
+            /^runs\/iteration-/.test(folder) ||             // Relative: "runs/iteration-3/group-1"
+            /^iteration-\d+/.test(folder)                   // Just iteration: "iteration-3"
+
+          if (!isIterationFolder) {
+            newExpandedFolders.add(folder)
+          }
+        })
+
+
+        // Add the runs folder itself to keep it expanded (both full and relative paths)
+        newExpandedFolders.add(runsPath)
+        newExpandedFolders.add('runs') // Relative path
+
+        // Extract iteration folder from selectedRunFolder (e.g., "iteration-3" from "iteration-3/group-1")
+        const iterationFolder = selectedRunFolder.includes('/')
+          ? selectedRunFolder.split('/')[0]
+          : selectedRunFolder
+
+        // Add all parent folders of the iteration
+        const iterationPath = `${workspacePath}/runs/${iterationFolder}`
+        const iterationPathParts = iterationPath.split('/')
+        let currentPath = ''
+        for (const part of iterationPathParts) {
+          currentPath = currentPath ? `${currentPath}/${part}` : part
+          newExpandedFolders.add(currentPath)
+        }
+
+        // Also add relative paths for iteration
+        newExpandedFolders.add(`runs/${iterationFolder}`)
+        newExpandedFolders.add(iterationFolder)
+
+        // If we have selected groups, expand all of them
+        if (selectedGroupIds && selectedGroupIds.length > 0 && variablesManifest?.groups) {
+          selectedGroupIds.forEach(groupId => {
+            // Find the group to get its display name
+            const group = variablesManifest.groups?.find(g => g.group_id === groupId)
+
+            // Use sanitized display_name if available, otherwise use group_id
+            // Sanitization ensures consistent folder naming with backend
+            const folderName = group?.display_name
+              ? sanitizeDisplayNameForFolder(group.display_name)
+              : groupId
+
+            // Build the full group path
+            const groupPath = `${workspacePath}/runs/${iterationFolder}/${folderName}`
+
+            // Add all parent folders of this group path
+            const groupPathParts = groupPath.split('/')
+            let groupCurrentPath = ''
+            for (const part of groupPathParts) {
+              groupCurrentPath = groupCurrentPath ? `${groupCurrentPath}/${part}` : part
+              newExpandedFolders.add(groupCurrentPath)
+            }
+
+            // Also add relative paths
+            newExpandedFolders.add(`runs/${iterationFolder}/${folderName}`)
+          })
+        }
+        // Legacy code removed: selectedRunFolder no longer contains group paths
+        // Group selection is now exclusively via selectedGroupIds array
+
+        // Update the expanded folders using the proper setter
+        setExpandedFolders(newExpandedFolders)
+      }).catch(error => {
+        console.error('[WorkflowLayout] Failed to fetch files for auto-expansion:', error)
+      })
+    }
+  }, [selectedRunFolder, selectedGroupIds, workspacePath, variablesManifest, fetchFiles, setExpandedFolders])
+
+  // Callback ref that gets called when ChatArea mounts/unmounts
+  const chatAreaCallbackRef = useCallback((node: ChatAreaRef | null) => {
+    chatAreaRef.current = node
+
+    // When ChatArea mounts and we have a pending query, submit it
+    if (node && pendingQueryRef.current) {
+      const { query, executionOptions } = pendingQueryRef.current
+      console.log('[EXECUTION_OPTIONS_DEBUG] [WorkflowLayout] ChatArea mounted, submitting pending query with executionOptions:', {
+        query,
+        hasExecutionOptions: Boolean(executionOptions),
+        executionOptions: executionOptions ? JSON.stringify(executionOptions, null, 2) : 'undefined'
+      })
+      console.log('[WorkflowLayout] ChatArea mounted via callback ref, submitting pending query:', query)
+      node.submitQuery(query, executionOptions).catch(error => {
+        console.error('[WorkflowLayout] Failed to submit pending query:', error)
+      })
+      pendingQueryRef.current = null // Clear pending query after submission
+    }
+  }, [])
+
   // Get plan data to map step indices to step IDs
   const { plan } = usePlanData(workspacePath)
 
@@ -202,47 +487,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [events])
 
-  // Listen for step_execution_start events to auto-focus on running steps
-  useEffect(() => {
-    if (events.length === 0 || !canvasRef.current) {
-      return
-    }
-    
-    // Find new step_execution_start events that we haven't processed yet
-    for (let i = lastProcessedStepStartIndexRef.current + 1; i < events.length; i++) {
-      const event = events[i]
-      
-      if (event.type === 'step_execution_start') {
-        // Use helper function to extract raw event data (handles nested structure)
-        const rawData = getRawEventData(event)
-        const eventData = rawData as {
-          step_id?: string
-          run_folder?: string
-          workspace_path?: string
-        } | undefined
-        
-        const stepId = eventData?.step_id
-        const runFolder = eventData?.run_folder
-        const workspacePathFromEvent = eventData?.workspace_path
-        
-        // Only focus if this event is for the current workspace and run folder
-        if (stepId && runFolder === selectedRunFolder && workspacePathFromEvent === workspacePath) {
-          console.log('[WorkflowLayout] Step started, focusing on step:', {
-            stepId,
-            runFolder,
-            workspacePath: workspacePathFromEvent,
-            eventIndex: i
-          })
-          
-          // Focus on the running step
-          canvasRef.current.focusStep(stepId)
-          
-          lastProcessedStepStartIndexRef.current = i
-        }
-      }
-    }
-  }, [events, workspacePath, selectedRunFolder])
-
   // Listen for step_progress_updated events to refresh workspace files for current iteration
   useEffect(() => {
     if (events.length === 0 || !workspacePath) {
@@ -254,23 +498,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       const event = events[i]
 
       if (event.type === 'step_progress_updated') {
-        // Use helper function to extract raw event data (handles nested structure)
-        const rawData = getRawEventData(event)
-        const eventData = rawData as {
-          run_folder?: string
-          workspace_path?: string
-          completed_step_indices?: number[]
-          total_steps?: number
-          last_completed_step?: number
-          last_completed_step_id?: string  // Step ID for direct node updates (new field from backend)
-          last_completed_step_title?: string
-          branch_steps?: {
-            [k: string]: {
-              branch_executed: string
-              completed_steps: string[]
-            }
-          }
-        } | undefined
+        // Use typed helper function to get properly typed event data
+        const eventData = getTypedEventData(event, 'step_progress_updated')
 
         if (!eventData) {
           continue
@@ -284,77 +513,17 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           selectedRunFolder === 'new' ||
           selectedRunFolder === eventData.run_folder
 
-        console.log('[WorkflowLayout] step_progress_updated event received:', {
-          eventRunFolder: eventData.run_folder,
-          eventWorkspacePath: eventData.workspace_path,
-          selectedRunFolder,
-          workspacePath,
-          isForCurrentWorkspace,
-          isForCurrentOrNewRun,
-          willProcess: isForCurrentWorkspace && isForCurrentOrNewRun,
-          completedIndices: eventData.completed_step_indices,
-          lastCompleted: eventData.last_completed_step
-        })
-
         // Process if this event is for the current workspace and either:
         // 1. Matches the selected run folder, OR
         // 2. We just started execution (selectedRunFolder is 'new')
         if (isForCurrentWorkspace && isForCurrentOrNewRun) {
           // If selectedRunFolder is 'new', update it to the actual run folder from the event
           if (selectedRunFolder === 'new' && eventData.run_folder) {
-            console.log('[WorkflowLayout] Updating selectedRunFolder from new to:', eventData.run_folder)
             setSelectedRunFolder(eventData.run_folder)
           }
-          console.log('[WorkflowLayout] Step progress updated for current iteration:', {
-            runFolder: eventData.run_folder,
-            completedSteps: eventData.completed_step_indices?.length || 0,
-            totalSteps: eventData.total_steps || 0,
-            lastCompletedStep: eventData.last_completed_step,
-            eventIndex: i
-          })
-          
-          // Update the workflow store's stepProgress from event data
-          // This ensures completedStepIndices is updated in real-time during execution
-          if (eventData.completed_step_indices !== undefined && eventData.total_steps !== undefined) {
-            // Convert branch_steps keys from string to number (event has string keys, StepProgress expects number keys)
-            const branchSteps: Record<number, { branch_executed: string; completed_steps: string[] }> | undefined =
-              eventData.branch_steps ? Object.fromEntries(
-                Object.entries(eventData.branch_steps).map(([key, value]) => [parseInt(key, 10), value])
-              ) : undefined
 
-            updateStepProgressFromEvent({
-              completed_step_indices: eventData.completed_step_indices,
-              total_steps: eventData.total_steps,
-              branch_steps: branchSteps,
-              last_updated: new Date().toISOString(),
-              last_completed_step_id: eventData.last_completed_step_id  // Pass step ID for direct node updates
-            })
-          }
-          
-          // Auto-focus on the last completed step if available
-          // Use last_completed_step_id directly from event (no index mapping needed)
-          if (eventData.last_completed_step_id && canvasRef.current) {
-            console.log('[WorkflowLayout] Focusing on completed step using step_id:', {
-              stepId: eventData.last_completed_step_id,
-              stepTitle: eventData.last_completed_step_title,
-              stepIndex: eventData.last_completed_step
-            })
-            canvasRef.current.focusStep(eventData.last_completed_step_id)
-          } else if (eventData.last_completed_step !== undefined && eventData.last_completed_step >= 0 && plan?.steps && canvasRef.current) {
-            // Fallback: use index mapping if step_id not available (backwards compatibility)
-            const stepIndex = eventData.last_completed_step
-            if (stepIndex < plan.steps.length) {
-              const completedStep = plan.steps[stepIndex]
-              if (completedStep?.id) {
-                console.log('[WorkflowLayout] Focusing on completed step using index mapping:', {
-                  stepIndex,
-                  stepId: completedStep.id,
-                  stepTitle: completedStep.title
-                })
-                canvasRef.current.focusStep(completedStep.id)
-              }
-            }
-          }
+          // Auto-focus disabled - running step name is now shown in StepLegend instead
+          // This prevents the canvas from jumping around during workflow execution
           
           // Refresh workspace files to show new execution files
           fetchFiles().catch((err) => {
@@ -421,6 +590,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         const { getPhaseById } = useWorkflowStore.getState()
 
         // Check each active session
+        console.log(`[DUPLICATE_DEBUG] Checking ${activeSessions.length} active sessions for reconnection (Active Preset: ${activePresetId})`)
         for (const activeSession of activeSessions) {
           try {
             if (activeSession.agent_mode !== 'workflow') {
@@ -430,19 +600,25 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             // Fetch chat session to get preset_query_id
             let chatSession
             let presetQueryId: string | undefined
+            let source = 'unknown'
             try {
               chatSession = await agentApi.getChatSession(activeSession.session_id)
               presetQueryId = chatSession.preset_query_id
+              source = 'api'
             } catch {
               const existingTabsForSession = Object.values(useChatStore.getState().chatTabs)
                 .filter(tab => tab.sessionId === activeSession.session_id && tab.metadata?.mode === 'workflow')
               
               if (existingTabsForSession.length > 0) {
                 presetQueryId = existingTabsForSession[0].metadata?.presetQueryId
+                source = 'existing-tab'
               } else {
+                source = 'failed-lookup'
                 continue
               }
             }
+            
+            console.log(`[DUPLICATE_DEBUG] Session ${activeSession.session_id}: presetQueryId=${presetQueryId} (source: ${source}), activePresetId=${activePresetId}`)
             
             // Extract phase ID from query
             let phaseId: string | null = null
@@ -462,8 +638,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               continue
             }
 
+            // STRICT RESTORATION: Only reconnect if the session explicitly belongs to this preset
+            // OR if the session is an orphan (no preset ID) and we have an active preset (adopt it)
             const shouldReconnect = presetQueryId === activePresetId || (!presetQueryId && activePresetId)
+            console.log(`[DUPLICATE_DEBUG] Session ${activeSession.session_id} reconnection check: ${shouldReconnect} (presetQueryId: '${presetQueryId}' === activePresetId: '${activePresetId}' OR orphan adoption)`)
+            
             if (!shouldReconnect) {
+              // Log why we skipped this session for debugging
+              // console.log(`[DUPLICATE_DEBUG] Skipping session ${activeSession.session_id} (presetQueryId: ${presetQueryId} !== activePresetId: ${activePresetId})`)
               continue
             }
 
@@ -540,17 +722,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               
               switchTab(existingTab.tabId)
               setShowChatArea(true)
-              
-              if (!presetQueryId && activePresetId) {
-                try {
-                  await agentApi.updateChatSession(activeSession.session_id, {
-                    preset_query_id: activePresetId
-                  })
-                } catch (error) {
-                  console.error(`[DUPLICATE_DEBUG] Failed to update chat session:`, error)
-                }
-              }
-              
+
+              // Restore batch progress from events (shows batch box immediately after refresh)
+              await restoreWorkflowStateFromEvents(activeSession.session_id)
+
               continue
             }
 
@@ -563,6 +738,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               console.warn(`[DUPLICATE_DEBUG] ⚠️ Race condition detected: Tab ${finalCheck.tabId} exists with sessionId ${activeSession.session_id}`)
               switchTab(finalCheck.tabId)
               setShowChatArea(true)
+              // Restore batch progress from events (shows batch box immediately after refresh)
+              await restoreWorkflowStateFromEvents(activeSession.session_id)
               continue
             }
 
@@ -592,16 +769,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
             switchTab(tabId)
             setShowChatArea(true)
-            
-            if (!presetQueryId && activePresetId) {
-              try {
-                await agentApi.updateChatSession(activeSession.session_id, {
-                  preset_query_id: activePresetId
-                })
-              } catch (error) {
-                console.error(`[DUPLICATE_DEBUG] Failed to update chat session:`, error)
-              }
-            }
+
+            // Restore batch progress from events (shows batch box immediately after refresh)
+            await restoreWorkflowStateFromEvents(activeSession.session_id)
           } catch (error) {
             console.error(`[DUPLICATE_DEBUG] Error reconnecting session ${activeSession.session_id}:`, error)
           }
@@ -616,11 +786,88 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     return () => clearTimeout(timeoutId)
   }, [selectedModeCategory, activePresetId, setShowChatArea])
 
+  // Auto-minimize workflows when switching to a different preset
+  useEffect(() => {
+    // Skip on initial mount (when previousPresetIdRef.current is null)
+    if (previousPresetIdRef.current === null) {
+      previousPresetIdRef.current = activePresetId
+      return
+    }
+
+    // Skip auto-minimize during restore operations (flag is set by RunningWorkflowsDrawer)
+    const isRestoringWorkflow = useRunningWorkflowsStore.getState().isRestoringWorkflow
+    if (isRestoringWorkflow) {
+      console.log('[WorkflowLayout] Skipping auto-minimize during workflow restore')
+      previousPresetIdRef.current = activePresetId
+      return
+    }
+
+    // Check if preset actually changed
+    if (previousPresetIdRef.current !== activePresetId && activePresetId) {
+      const chatStore = useChatStore.getState()
+      const chatTabs = chatStore.chatTabs
+
+      // Find ALL workflow tabs with active sessions that are NOT for the NEW preset
+      // This ensures we minimize any running workflows when switching presets
+      const tabsToMinimize = Object.values(chatTabs).filter(tab =>
+        tab.metadata?.mode === 'workflow' &&
+        tab.sessionId &&
+        // Minimize if: streaming, or has old presetId, or has no presetId (legacy tabs)
+        (tab.isStreaming ||
+         tab.metadata?.presetQueryId === previousPresetIdRef.current ||
+         tab.metadata?.presetQueryId !== activePresetId)
+      )
+
+      if (tabsToMinimize.length > 0) {
+        console.log(`[WorkflowLayout] Preset changed from ${previousPresetIdRef.current} to ${activePresetId}, auto-minimizing ${tabsToMinimize.length} workflows`)
+
+        // Minimize each running tab
+        for (const tab of tabsToMinimize) {
+          if (tab.sessionId) {
+            // Determine which preset this tab belongs to
+            const tabPresetId = tab.metadata?.presetQueryId || previousPresetIdRef.current || 'unknown'
+            const tabCustomPreset = customPresets.find(p => p.id === tabPresetId)
+            const tabPredefinedPreset = predefinedPresets.find(p => p.id === tabPresetId)
+            const tabPresetLabel = tabCustomPreset?.label || tabPredefinedPreset?.label || tab.name || 'Workflow'
+            const tabWorkspacePath = tabCustomPreset?.selectedFolder?.filepath || tabPredefinedPreset?.selectedFolder?.filepath || ''
+
+            minimizeWorkflow({
+              presetId: tabPresetId,
+              presetName: tabPresetLabel,
+              workspacePath: tabWorkspacePath,
+              sessionId: tab.sessionId,
+              runFolder: selectedRunFolder || '',
+              phaseId: tab.metadata?.phaseId || 'unknown',
+              phaseName: tab.name,
+              progress: stepProgress || undefined,
+              selectedGroupIds: useWorkflowStore.getState().selectedGroupIds
+            })
+
+            // Close the tab UI (keep session running in background)
+            chatStore.closeTab(tab.tabId, false, true)
+          }
+        }
+
+        // Close the chat area to show the new preset's canvas
+        setShowChatArea(false)
+      }
+    }
+
+    // Update the ref for next comparison
+    previousPresetIdRef.current = activePresetId
+  }, [activePresetId, customPresets, predefinedPresets, minimizeWorkflow, selectedRunFolder, stepProgress, setShowChatArea])
+
   // Note: Query submission is now handled via chatAreaCallbackRef when ChatArea mounts
   // No need for useEffect with setTimeout - callback ref is the proper React pattern
 
   // Handle phase start from toolbar (now accepts execution options directly)
   const handleStartPhase = useCallback(async (phaseId: string, executionOptions?: ExecutionOptions) => {
+    console.log('[EXECUTION_OPTIONS_DEBUG] [WorkflowLayout] handleStartPhase called:', {
+      phaseId,
+      hasExecutionOptions: Boolean(executionOptions),
+      executionOptions: executionOptions ? JSON.stringify(executionOptions, null, 2) : 'undefined'
+    })
+    
     // Ensure we're in workflow mode before starting phase (only if we have an active preset)
     if (activePresetId) {
       const currentMode = useModeStore.getState().selectedModeCategory
@@ -762,6 +1009,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     const query = `Execute workflow phase: ${phaseId}`
     
     // Store pending query to submit after ChatArea mounts
+    console.log('[EXECUTION_OPTIONS_DEBUG] [WorkflowLayout] Storing pending query with executionOptions:', {
+      query,
+      hasExecutionOptions: Boolean(executionOptions),
+      executionOptions: executionOptions ? JSON.stringify(executionOptions, null, 2) : 'undefined'
+    })
     pendingQueryRef.current = { query, executionOptions }
     
     // Show ChatArea when starting a phase (this will trigger ChatArea to mount)
@@ -779,20 +1031,132 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         useModeStore.getState().setModeCategory('workflow')
       }
     }
-    
+
     const phases = useWorkflowStore.getState().phases
     // Look for the "planning" phase explicitly, fallback to second phase (index 1) if not found
     const planningPhase = phases.find(p => p.id === 'planning') || (phases.length > 1 ? phases[1] : phases[0])
     const planningPhaseId = planningPhase?.id || 'planning'
     console.log('[WorkflowLayout] Create plan requested, starting planning phase:', planningPhaseId)
-    
+
     // Show ChatArea immediately (synchronously) before starting the phase
     setShowChatArea(true)
     // Note: Don't set activePhase here - allow parallel execution
-    
+
     // Then start the phase (which will also set showChatArea, but this ensures it's visible immediately)
     handleStartPhase(planningPhaseId)
   }, [handleStartPhase, setShowChatArea, activePresetId])
+
+  // Handle restoring a workflow from running list
+  const handleRestoreWorkflow = useCallback(async (workflow: RunningWorkflow) => {
+    console.log('[WorkflowLayout] Restoring workflow from running list:', workflow)
+
+    // Ensure we're in workflow mode
+    const currentMode = useModeStore.getState().selectedModeCategory
+    if (currentMode !== 'workflow') {
+      useModeStore.getState().setModeCategory('workflow')
+    }
+
+    // If this workflow is for a different preset, switch to it
+    if (workflow.presetId !== activePresetId) {
+      console.log('[WorkflowLayout] Switching to preset:', workflow.presetId)
+      useGlobalPresetStore.getState().setActivePreset('workflow', workflow.presetId)
+    }
+
+    // Load run folders to find the latest iteration
+    const { loadRunFolders, setSelectedGroupIds } = useWorkflowStore.getState()
+
+    if (workflow.workspacePath) {
+      try {
+        // Load run folders for this workspace
+        await loadRunFolders(workflow.workspacePath)
+
+        // Get the updated run folders from state
+        const folders = useWorkflowStore.getState().runFolders
+
+        if (folders.length > 0) {
+          // Folders are already sorted by iteration number descending (newest first)
+          const latestFolder = folders[0]
+          console.log('[WorkflowLayout] Latest iteration:', latestFolder.name, 'Stored iteration:', workflow.runFolder)
+
+          // Always use the latest iteration
+          setSelectedRunFolder(latestFolder.name)
+        } else if (workflow.runFolder && workflow.runFolder !== 'new') {
+          // No folders found, use the stored run folder
+          setSelectedRunFolder(workflow.runFolder)
+        }
+      } catch (error) {
+        console.error('[WorkflowLayout] Failed to load run folders during restore:', error)
+        // Fallback to stored run folder
+        if (workflow.runFolder && workflow.runFolder !== 'new') {
+          setSelectedRunFolder(workflow.runFolder)
+        }
+      }
+    } else if (workflow.runFolder && workflow.runFolder !== 'new') {
+      // No workspace path, just use stored run folder
+      setSelectedRunFolder(workflow.runFolder)
+    }
+
+    // Note: Workspace folder expansion is handled automatically by useEffect when selectedRunFolder changes
+
+    // Restore selected group IDs if they exist
+    if (workflow.selectedGroupIds && workflow.selectedGroupIds.length > 0) {
+      console.log('[WorkflowLayout] Restoring selected groups:', workflow.selectedGroupIds)
+      setSelectedGroupIds(workflow.selectedGroupIds)
+    }
+
+    // Create a new tab connected to the restored session
+    const { createChatTab, switchTab } = useChatStore.getState()
+    const { getPhaseById } = useWorkflowStore.getState()
+
+    // Get phase info
+    const phase = getPhaseById(workflow.phaseId)
+    const phaseName = phase?.title || workflow.phaseName
+
+    // Check if a tab with this sessionId already exists
+    const existingTabs = Object.values(useChatStore.getState().chatTabs)
+    const existingTab = existingTabs.find(tab =>
+      tab.sessionId === workflow.sessionId &&
+      tab.metadata?.mode === 'workflow'
+    )
+
+    if (existingTab) {
+      // Tab already exists, just switch to it
+      console.log('[WorkflowLayout] Found existing tab for session, switching to it:', existingTab.tabId)
+      switchTab(existingTab.tabId)
+    } else {
+      // Create a new tab connected to the session
+      console.log('[WorkflowLayout] Creating new tab for restored session:', workflow.sessionId)
+      const tabId = await createChatTab(phaseName, {
+        mode: 'workflow',
+        phaseId: workflow.phaseId,
+        phaseName,
+        presetQueryId: workflow.presetId
+      }, workflow.sessionId)  // Pass sessionId to connect to existing session
+
+      switchTab(tabId)
+    }
+
+    // Show the chat area so user can see the logs
+    setShowChatArea(true)
+
+    console.log('[WorkflowLayout] Workflow restored, sessionId:', workflow.sessionId)
+  }, [activePresetId, setSelectedRunFolder, setShowChatArea])
+
+  // Minimize chat area when drawer opens to reduce renders and stop event processing
+  // Open chat area when drawer closes
+  useEffect(() => {
+    if (showRunningDrawer) {
+      // Minimize chat area when drawer opens
+      setShowChatArea(false)
+      // When ChatArea is hidden, it will unmount, which stops:
+      // 1. Event rendering (EventDisplay won't render)
+      // 2. Polling management (useEffect hooks won't run)
+      // This significantly reduces browser load
+    } else {
+      // Always open chat area when drawer closes
+      setShowChatArea(true)
+    }
+  }, [showRunningDrawer, setShowChatArea])
 
   // No preset selected state
   if (!activeWorkflowPreset) {
@@ -852,7 +1216,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               <div className="flex-shrink-0">
                 <WorkflowChatTabs />
               </div>
-              
+
               {/* Single ChatArea component - takes remaining space */}
               <div className="flex-1 min-h-0">
                 <ChatAreaWithObserverId
@@ -866,6 +1230,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             </>
           )}
         </div>
+
+        {/* Running Workflows Drawer - overlays when open */}
+        <RunningWorkflowsDrawer
+          onRestoreWorkflow={handleRestoreWorkflow}
+        />
+
+        {/* Running Workflows Indicator - positioned within workflow area */}
+        <RunningWorkflowsIndicator />
       </div>
     </div>
   )

@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -664,73 +661,3 @@ func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath stri
 	return names, nil
 }
 
-// getWorkspaceAPIURL returns the workspace API base URL from environment or default
-func getWorkspaceAPIURL() string {
-	if url := os.Getenv("WORKSPACE_API_URL"); url != "" {
-		return url
-	}
-	return "http://localhost:8081"
-}
-
-// CleanupDownloadsFolderBulk deletes all files in the Downloads folder using the bulk delete API endpoint
-// This is more efficient than deleting files one by one
-func (bo *BaseOrchestrator) CleanupDownloadsFolderBulk(ctx context.Context) error {
-	bo.GetLogger().Info("🗑️ [DOWNLOADS BULK CLEANUP] Starting bulk cleanup of Downloads folder")
-
-	// Build API URL for bulk delete: DELETE /api/folders/Downloads/files?confirm=true
-	apiURL := getWorkspaceAPIURL() + "/api/folders/Downloads/files?confirm=true"
-
-	// Create HTTP request with context
-	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set timeout
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
-	// Make the request
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to call workspace API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Read response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
-	}
-
-	// Check HTTP status
-	if resp.StatusCode == http.StatusNotFound {
-		// Folder doesn't exist - that's okay, nothing to clean
-		bo.GetLogger().Info("ℹ️ [DOWNLOADS BULK CLEANUP] Downloads folder does not exist - nothing to clean")
-		return nil
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Parse JSON response
-	var apiResp struct {
-		Success bool        `json:"success"`
-		Message string      `json:"message"`
-		Error   string      `json:"error,omitempty"`
-		Data    interface{} `json:"data,omitempty"`
-	}
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return fmt.Errorf("failed to parse API response: %w", err)
-	}
-
-	// Check API response success
-	if !apiResp.Success {
-		return fmt.Errorf("workspace API error: %s", apiResp.Error)
-	}
-
-	bo.GetLogger().Info("✅ [DOWNLOADS BULK CLEANUP] Successfully cleaned Downloads folder using bulk delete API")
-	return nil
-}

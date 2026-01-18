@@ -38,6 +38,7 @@
     "react-dom": "^19.1.1",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^15.5.0",
+    "react-virtuoso": "^4.18.1",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^2.6.0",
     "zustand": "^5.0.8"
@@ -49,6 +50,7 @@
     "@types/react-dom": "^19.1.9",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^4.5.2",
+    "@welldone-software/why-did-you-render": "^10.0.1",
     "autoprefixer": "^10.4.21",
     "eslint": "^9.29.0",
     "eslint-plugin-react-hooks": "^5.2.0",

@@ -149,11 +149,6 @@ func (iso *Isolator) generateSandboxProfile() string {
 		sb.WriteString(")\n\n")
 	}
 
-	// Always allow Downloads folder (special exception per folder guard spec)
-	downloadsPath := filepath.Join(baseDir, "Downloads")
-	sb.WriteString("(allow file-read* file-write*\n")
-	sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", downloadsPath))
-	sb.WriteString(")\n\n")
 
 	// CRITICAL: Explicit deny for blocked paths (takes precedence, added last)
 	if len(iso.BlockedPaths) > 0 {
@@ -282,13 +277,6 @@ func (iso *Isolator) generateMountScript(command string, args []string) string {
 		sb.WriteString("\n")
 	}
 
-	// Step 5: Always mount Downloads folder (special exception per folder guard spec)
-	downloadsPath := filepath.Join(baseDir, "Downloads")
-	tempDownloads := filepath.Join(tempDir, "Downloads")
-	sb.WriteString("# Downloads always accessible\n")
-	sb.WriteString(fmt.Sprintf("mkdir -p \"%s\"\n", downloadsPath))
-	sb.WriteString(fmt.Sprintf("mkdir -p \"%s\" 2>/dev/null || true\n", tempDownloads))
-	sb.WriteString(fmt.Sprintf("mount --bind \"%s\" \"%s\"\n\n", tempDownloads, downloadsPath))
 
 	// Change to working directory
 	sb.WriteString(fmt.Sprintf("cd \"%s\"\n", iso.WorkDir))

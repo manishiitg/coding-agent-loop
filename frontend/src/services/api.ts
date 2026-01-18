@@ -39,6 +39,7 @@ import type {
   ExecutionLogsResponse,
   EvaluationReportsResponse,
   TokenUsageFile,
+  WorkspaceStateResponse,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -595,10 +596,13 @@ export const agentApi = {
   },
 
   // Chat History API
-  getChatSessions: async (limit: number = 20, offset: number = 0, presetQueryId?: string): Promise<ListChatSessionsResponse> => {
+  getChatSessions: async (limit: number = 20, offset: number = 0, presetQueryId?: string, agentMode?: string): Promise<ListChatSessionsResponse> => {
     const params: Record<string, string | number> = { limit, offset }
     if (presetQueryId) {
       params.preset_query_id = presetQueryId
+    }
+    if (agentMode) {
+      params.agent_mode = agentMode
     }
     const response = await api.get('/api/chat-history/sessions', { params })
     return response.data
@@ -733,9 +737,9 @@ export const agentApi = {
   },
 
   // Delete learnings for a specific step
-  deleteStepLearnings: async (workspacePath: string, stepNumber: number): Promise<{ success: boolean; message: string }> => {
+  deleteStepLearnings: async (workspacePath: string, stepId: string): Promise<{ success: boolean; message: string }> => {
     const response = await api.delete('/api/workflow/learnings', {
-      params: { workspace_path: workspacePath, step_number: stepNumber }
+      params: { workspace_path: workspacePath, step_id: stepId }
     })
     return response.data
   },
@@ -773,7 +777,7 @@ export const agentApi = {
   },
 
   // Get cost data (token usage) for a workflow run
-  getCosts: async (workspacePath: string, runFolder: string): Promise<{ success: boolean; token_usage?: TokenUsageFile }> => {
+  getCosts: async (workspacePath: string, runFolder: string): Promise<{ success: boolean; token_usage?: TokenUsageFile; evaluation_token_usage?: TokenUsageFile }> => {
     const response = await api.get('/api/workflow/costs', {
       params: { workspace_path: workspacePath, run_folder: runFolder }
     })
@@ -796,6 +800,19 @@ export const agentApi = {
     const response = await api.get('/api/workflow/evaluation-reports', {
       params: { workspace_path: workspacePath, run_folder: runFolder || '' }
     })
+    return response.data
+  },
+
+  // *** NEW CONSOLIDATED API ***
+  // Load all workspace state in a single API call (run folders, variables, phases, progress)
+  // This replaces multiple individual API calls (getRunFolders, getVariableGroups, constants, progress)
+  // Reduces network overhead, eliminates race conditions, and ensures consistent state
+  loadWorkspaceState: async (workspacePath: string, selectedFolder?: string | null): Promise<WorkspaceStateResponse> => {
+    const params: Record<string, string> = { workspace_path: workspacePath }
+    if (selectedFolder && selectedFolder !== 'new') {
+      params.selected_folder = selectedFolder
+    }
+    const response = await api.get('/api/workspace/state', { params })
     return response.data
   },
 

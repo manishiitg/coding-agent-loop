@@ -123,10 +123,6 @@ export function useIterationExpansion({
           const parentPathToExpand = parentIterationFolder.filepath || parentIterationFolder.originalFilepath
           if (parentPathToExpand) {
             newExpanded.add(parentPathToExpand)
-            console.log('[Workspace] Expanding parent iteration to show all groups:', {
-              selectedGroup: matchingIterationPath,
-              parentIteration: parentPathToExpand
-            })
           }
         }
       }
@@ -145,12 +141,6 @@ export function useIterationExpansion({
       Array.from(newExpanded).some((f) => !currentExpanded.has(f)) ||
       Array.from(currentExpanded).some((f) => !newExpanded.has(f))
     ) {
-      console.log('[Workspace] Auto-collapsing iterations:', {
-        selectedIteration: selectedIterationPath,
-        allIterations: allIterationFolders,
-        previousExpanded: Array.from(currentExpanded),
-        newExpanded: Array.from(newExpanded)
-      })
       setExpandedFolders(newExpanded)
     }
     // expandedFolders is intentionally excluded from dependencies - we only want to run when selectedRunFolder changes,

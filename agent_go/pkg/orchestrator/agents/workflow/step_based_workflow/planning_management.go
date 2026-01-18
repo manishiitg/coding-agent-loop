@@ -418,9 +418,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createPlanningAgent(ctx context.Conte
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (read access to runs/ for execution logs, write access to learnings/ for folder syncing)", readPaths, writePaths))
 
-	// Determine LLM config: Priority: presetPhaseLLM > orchestrator default
+	// Determine LLM config: Priority: presetPhaseLLM only
 	var llmConfigToUse *orchestrator.LLMConfig
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	if hcpo.presetPhaseLLM != nil && hcpo.presetPhaseLLM.Provider != "" && hcpo.presetPhaseLLM.ModelID != "" {
 		// Use phase LLM for planning agent
 		llmConfigToUse = &orchestrator.LLMConfig{
@@ -431,11 +430,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createPlanningAgent(ctx context.Conte
 			APIKeys: hcpo.GetAPIKeys(), // Safe: returns nil if orchestratorLLMConfig is nil
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for planning: %s/%s", hcpo.presetPhaseLLM.Provider, hcpo.presetPhaseLLM.ModelID))
-	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
-		llmConfigToUse = orchestratorLLMConfig
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default planning LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
 	} else {
-		return nil, fmt.Errorf("no valid LLM configuration found for planning agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
+		return nil, fmt.Errorf("no valid LLM configuration found for planning agent: presetPhaseLLM is empty or invalid")
 	}
 
 	// Create agent config with custom LLM
@@ -463,6 +459,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createPlanningAgent(ctx context.Conte
 		phase,
 		step,
 		iteration,
+		phase, // stepID (use phase name for phase-only agents)
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowPlanningAgent(cfg, logger, tracer, eventBridge)
 		},
@@ -575,12 +572,19 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 			}
 		}
 
-		// Validation is required for loop steps
-		if step.HasLoop && agentConfigs != nil && agentConfigs.DisableValidation != nil && *agentConfigs.DisableValidation {
-			enabledConfigs := *agentConfigs
-			val := false
-			enabledConfigs.DisableValidation = &val
-			agentConfigs = &enabledConfigs
+		// LLM validation is required for loop steps (to evaluate loop condition)
+		// Since LLM validation is disabled by default (nil = disabled), always force it on for loop steps
+		if step.HasLoop {
+			val := false // false = validation enabled
+			if agentConfigs == nil {
+				agentConfigs = &AgentConfigs{
+					DisableValidation: &val,
+				}
+			} else if agentConfigs.DisableValidation == nil || *agentConfigs.DisableValidation {
+				enabledConfigs := *agentConfigs
+				enabledConfigs.DisableValidation = &val
+				agentConfigs = &enabledConfigs
+			}
 		}
 
 		// Populate runtime field directly on plan step

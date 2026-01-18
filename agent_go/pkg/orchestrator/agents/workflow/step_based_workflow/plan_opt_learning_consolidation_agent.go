@@ -134,8 +134,7 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 	lcm.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	lcm.GetLogger().Info(fmt.Sprintf("🔍 Setting folder guard for learning consolidation agent - Read paths: %v, Write paths: %v (read/write access to learnings/ folder only)", readPaths, writePaths))
 
-	// Use preset phase LLM if available, otherwise fall back to orchestrator default
-	orchestratorLLMConfig := lcm.GetLLMConfig()
+	// Use preset phase LLM only
 	var llmConfigToUse *orchestrator.LLMConfig
 	if lcm.presetPhaseLLM != nil && lcm.presetPhaseLLM.Provider != "" && lcm.presetPhaseLLM.ModelID != "" {
 		// Use preset phase LLM
@@ -148,12 +147,8 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 			APIKeys:   lcm.GetAPIKeys(),   // Safe: returns nil if orchestratorLLMConfig is nil
 		}
 		lcm.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for learning consolidation: %s/%s", lcm.presetPhaseLLM.Provider, lcm.presetPhaseLLM.ModelID))
-	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
-		// Fall back to orchestrator default
-		llmConfigToUse = orchestratorLLMConfig
-		lcm.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default consolidation LLM: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
 	} else {
-		return nil, fmt.Errorf("no valid LLM configuration found for learning consolidation agent: presetPhaseLLM and orchestrator default LLM are both empty or invalid")
+		return nil, fmt.Errorf("no valid LLM configuration found for learning consolidation agent: presetPhaseLLM is empty or invalid")
 	}
 
 	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)
@@ -188,6 +183,7 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 		config,
 		"learning-consolidation",
 		0, 0, // step, iteration
+		"learning-consolidation", // stepID (use phase name for phase-only agents)
 		createAgentFunc,
 		allTools,
 		allExecutors,

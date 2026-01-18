@@ -41,10 +41,15 @@ func ParseStepConfigContent(content string) ([]StepConfig, error) {
 // Public method that accepts BaseOrchestrator, workspacePath, and runWorkspacePath as parameters
 // NOTE: workspacePath and runWorkspacePath are kept for API compatibility but paths are constructed as relative
 // ReadWorkspaceFile auto-prepends the workspace path, so we only pass relative paths
-func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, workspacePath, runWorkspacePath string) ([]StepConfig, error) {
+func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, workspacePath, runWorkspacePath, configSubdir string) ([]StepConfig, error) {
 	// Extract the run folder relative path from runWorkspacePath
 	// runWorkspacePath is typically "{workspace}/runs/{selectedRunFolder}" or just "{workspace}"
 	// We need to construct relative paths for ReadWorkspaceFile
+
+	// Default configSubdir to "planning" if empty
+	if configSubdir == "" {
+		configSubdir = "planning"
+	}
 
 	// First, try to read from run folder (run-specific config)
 	// Use relative path - ReadWorkspaceFile auto-prepends workspacePath
@@ -61,9 +66,9 @@ func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, wor
 				relativePart = relativePart[1:]
 			}
 		}
-		runConfigRelativePath = filepath.Join(relativePart, "planning", "step_config.json")
+		runConfigRelativePath = filepath.Join(relativePart, configSubdir, "step_config.json")
 	} else {
-		runConfigRelativePath = filepath.Join("planning", "step_config.json")
+		runConfigRelativePath = filepath.Join(configSubdir, "step_config.json")
 	}
 
 	content, err := bo.ReadWorkspaceFile(ctx, runConfigRelativePath)
@@ -79,7 +84,7 @@ func ReadStepConfigs(ctx context.Context, bo *orchestrator.BaseOrchestrator, wor
 
 	// Fallback to workspace default config
 	// Use relative path only - ReadWorkspaceFile auto-prepends workspacePath
-	configPath := filepath.Join("planning", "step_config.json")
+	configPath := filepath.Join(configSubdir, "step_config.json")
 	content, err = bo.ReadWorkspaceFile(ctx, configPath)
 	if err != nil {
 		// File doesn't exist yet - return empty array
@@ -105,15 +110,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepConfigs(ctx context.Context) 
 	workspacePath := hcpo.GetWorkspacePath()
 	// Build run folder path if selectedRunFolder is set
 	var runWorkspacePath string
+	
+	// Determine config subdir based on mode
+	configSubdir := "planning"
+	if hcpo.isEvaluationMode {
+		configSubdir = "evaluation"
+	}
+
 	if hcpo.selectedRunFolder != "" {
 		runWorkspacePath = filepath.Join(workspacePath, "runs", hcpo.selectedRunFolder)
-		hcpo.GetLogger().Info(fmt.Sprintf("📁 Reading step_config.json - will try run folder first: %s/planning/step_config.json", runWorkspacePath))
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Reading step_config.json - will try run folder first: %s/%s/step_config.json", runWorkspacePath, configSubdir))
 	} else {
 		// No run folder selected yet - use base workspace path
 		runWorkspacePath = workspacePath
-		hcpo.GetLogger().Info(fmt.Sprintf("📁 Reading step_config.json - no run folder selected, using base workspace: %s/planning/step_config.json", workspacePath))
+		hcpo.GetLogger().Info(fmt.Sprintf("📁 Reading step_config.json - no run folder selected, using base workspace: %s/%s/step_config.json", workspacePath, configSubdir))
 	}
-	return ReadStepConfigs(ctx, hcpo.BaseOrchestrator, workspacePath, runWorkspacePath)
+	return ReadStepConfigs(ctx, hcpo.BaseOrchestrator, workspacePath, runWorkspacePath, configSubdir)
 }
 
 // WriteStepConfigs writes step_config.json to the workspace in object format
@@ -122,8 +134,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepConfigs(ctx context.Context) 
 // Note: Directory creation is handled automatically by the workspace API
 // WriteWorkspaceFile auto-prepends the workspace path, so we only pass the relative path
 func (hcpo *StepBasedWorkflowOrchestrator) WriteStepConfigs(ctx context.Context, configs []StepConfig) error {
+	// Determine config subdir based on mode
+	configSubdir := "planning"
+	if hcpo.isEvaluationMode {
+		configSubdir = "evaluation"
+	}
+	
 	// Use relative path only - WriteWorkspaceFile auto-prepends workspacePath
-	configPath := filepath.Join("planning", "step_config.json")
+	configPath := filepath.Join(configSubdir, "step_config.json")
 
 	// Write in object format with "steps" field
 	configFile := StepConfigFile{

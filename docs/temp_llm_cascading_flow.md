@@ -54,7 +54,7 @@ graph TD
    - `retryAttempt == 1` (first attempt)
    - Learnings folder not empty
    - NOT blocked by `shouldSkipTempOverride`
-3. **Original LLM chain** (step LLM → preset LLM → orchestrator default) - Used when:
+3. **Original LLM chain** (step LLM → preset LLM) - Used when:
    - No tempLLM available, OR
    - Learnings folder empty, OR
    - Blocked by `shouldSkipTempOverride` (for tempLLM1 only), OR
@@ -134,7 +134,7 @@ else if !shouldSkipTempOverride && !learningsFolderEmpty && retryAttempt == 1 &&
 
 // Finally fall back to original LLM chain
 else {
-    // Use step LLM → preset LLM → orchestrator default
+    // Use step LLM → preset LLM
 }
 ```
 

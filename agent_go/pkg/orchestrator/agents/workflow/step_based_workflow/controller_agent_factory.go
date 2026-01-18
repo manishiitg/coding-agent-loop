@@ -789,10 +789,35 @@ func (hcpo *StepBasedWorkflowOrchestrator) getLearningMaxTurns(stepConfig *Agent
 }
 
 // selectLearningLLM selects the LLM config for learning agents
-// Priority: cost-optimization (tempLLM if >50% stable) > step config > preset default
-// Note: Temporary override only applies to execution agents, but learning agents have their own cost-optimization logic
+// Priority: tempLearningLLM (if learnings exist) > cost-optimization (tempLLM if >50% stable) > step config > preset default
+// Note: If learnings already exist for a step, use tempLearningLLM if configured. For new learning (no learnings), always use default LLM.
 func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context, stepConfig *AgentConfigs, stepID string, stepPath string) *orchestrator.LLMConfig {
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
+
+	// 0. TEMP LEARNING LLM: Check if learnings exist for this step and use tempLearningLLM if configured
+	// If learnings exist, we can use a cheaper LLM. If no learnings exist (new learning), always use default LLM for quality.
+	if stepID != "" {
+		// Check if learnings folder exists and has content
+		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, 0, stepPath) // stepIndex not needed for this check
+		if err == nil && !learningsEmpty {
+			// Learnings exist - check if tempLearningLLM is configured
+			if hcpo.executionOptions != nil && hcpo.executionOptions.TempLearningLLM != nil &&
+				hcpo.executionOptions.TempLearningLLM.Provider != "" && hcpo.executionOptions.TempLearningLLM.ModelID != "" {
+				hcpo.GetLogger().Info(fmt.Sprintf("🧠 [TEMP_LEARNING_LLM] Using temp learning LLM (%s/%s) because learnings already exist for step %s",
+					hcpo.executionOptions.TempLearningLLM.Provider, hcpo.executionOptions.TempLearningLLM.ModelID, stepID))
+				return &orchestrator.LLMConfig{
+					Primary: orchestrator.LLMModel{
+						Provider: hcpo.executionOptions.TempLearningLLM.Provider,
+						ModelID:  hcpo.executionOptions.TempLearningLLM.ModelID,
+					},
+					APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+				}
+			}
+		} else if err == nil && learningsEmpty {
+			// No learnings exist (new learning) - always use default LLM for quality
+			hcpo.GetLogger().Info(fmt.Sprintf("🧠 [TEMP_LEARNING_LLM] No learnings exist for step %s - using default LLM for new learning", stepID))
+		}
+	}
 
 	// 1. COST OPTIMIZATION: Check if we should switch to cheaper tempLLM based on stability threshold
 	// If stable runs reach 50% of threshold, use tempLLM for learning

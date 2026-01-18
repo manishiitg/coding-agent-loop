@@ -665,7 +665,7 @@ func createUnlockLearningsFunctionFromBase(bo *orchestrator.BaseOrchestrator, wo
 		learningPathIdentifier := stepID
 
 		// Unlock in step config
-		configs, err := ReadStepConfigs(ctx, bo, workspacePath, workspacePath)
+		configs, err := ReadStepConfigs(ctx, bo, workspacePath, workspacePath, "planning")
 		if err != nil {
 			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step configs for unlock: %v", err))
 			// Continue to reset metadata even if config read fails

@@ -42,6 +42,15 @@
     "ddg-search": {
       "command": "uvx",
       "args": ["duckduckgo-mcp-server"]
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "chrome-devtools-mcp@latest",
+        "--channel=canary",
+        "--headless=true",
+        "--isolated=true"
+      ]
     }
   }
 }

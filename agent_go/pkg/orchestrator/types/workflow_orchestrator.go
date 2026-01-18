@@ -80,6 +80,12 @@ func GetWorkflowConstants() WorkflowConstants {
 				Options:     []WorkflowPhaseOption{},
 			},
 			{
+				ID:          "evaluation-debugger",
+				Title:       "Evaluation Debugger",
+				Description: "Analyze evaluation results and plan to provide feedback and suggestions for improving the evaluation plan based on scores.",
+				Options:     []WorkflowPhaseOption{},
+			},
+			{
 				ID:          "plan-improvement",
 				Title:       "Plan Debugger",
 				Description: "Analyze execution results, plan.json, learnings folder, and validation reports to provide feedback and suggestions for improving the plan based on real execution outcomes.",
@@ -407,6 +413,10 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return wo.runEvaluationExecutionOnly(ctx, objective, selectedOptions)
 	}
 
+	if workflowStatus == "evaluation-debugger" {
+		return wo.runEvaluationDebugger(ctx, objective, selectedOptions)
+	}
+
 	if workflowStatus == "plan-improvement" {
 		return wo.runPlanImprovement(ctx, objective, selectedOptions)
 	}
@@ -540,6 +550,37 @@ func (wo *WorkflowOrchestrator) runEvaluationDesignerOnly(ctx context.Context, o
 	}
 
 	wo.GetLogger().Info(fmt.Sprintf("✅ Evaluation Designer completed successfully"))
+	return result, nil
+}
+
+// runEvaluationDebugger runs only the evaluation debugger phase
+func (wo *WorkflowOrchestrator) runEvaluationDebugger(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Evaluation Debugger Phase"))
+
+	// Create evaluation debugger manager directly
+	debuggerManager := step_based_workflow.NewEvaluationDebuggerManager(
+		wo.BaseOrchestrator,
+		wo.presetPhaseLLM, // Use phase LLM for debugging
+		wo.getSessionID(),
+		wo.getWorkflowID(),
+	)
+
+	// Extract selected_run_folder from execution options if available
+	var runPath string
+	if wo.executionOptions != nil && wo.executionOptions.SelectedRunFolder != "" {
+		runPath = wo.executionOptions.SelectedRunFolder
+		wo.GetLogger().Info(fmt.Sprintf("📊 Using selected_run_folder from execution options: %s", runPath))
+	} else {
+		wo.GetLogger().Info(fmt.Sprintf("📊 No selected_run_folder in execution options, will ask user for path"))
+	}
+
+	// Run only evaluation debugger
+	result, err := debuggerManager.EvaluationDebuggerOnly(ctx, wo.GetWorkspacePath(), runPath)
+	if err != nil {
+		return "", fmt.Errorf("evaluation debugger failed: %w", err)
+	}
+
+	wo.GetLogger().Info(fmt.Sprintf("✅ Evaluation debugger completed successfully"))
 	return result, nil
 }
 
@@ -968,6 +1009,7 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 					database.WorkflowStatusPreVerification, // Execution phase
 					"evaluation-designer",                  // Evaluation Designer phase
 					"evaluation-execution",                 // Evaluation execution phase
+					"evaluation-debugger",                  // Evaluation debugger phase
 					"plan-improvement",                     // Plan improvement phase
 					"plan-tool-optimization",               // Plan tool optimization phase
 					"learning-anonymization",               // Learning anonymization phase

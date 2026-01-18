@@ -17,15 +17,14 @@ export const RunningWorkflowsIndicator: React.FC = () => {
   const chatTabs = useChatStore(state => state.chatTabs)
   const getTabStreamingStatus = useChatStore(state => state.getTabStreamingStatus)
 
-  // Count all workflows (tracked + active streaming tabs)
-  const { running, total } = useMemo(() => {
+  // Count running workflows (tracked + active streaming tabs)
+  const { running, hasWorkflows } = useMemo(() => {
     const seenSessionIds = new Set<string>()
     let runningCount = 0
-    let totalCount = 0
+    let anyWorkflows = runningWorkflows.length > 0
 
     // Count tracked workflows
     runningWorkflows.forEach(wf => {
-      totalCount++
       if (wf.status === 'running') runningCount++
       if (wf.sessionId) seenSessionIds.add(wf.sessionId)
     })
@@ -36,18 +35,17 @@ export const RunningWorkflowsIndicator: React.FC = () => {
       if (tab.sessionId && seenSessionIds.has(tab.sessionId)) return
       if (!tab.metadata?.presetQueryId) return
 
+      anyWorkflows = true
       const isStreaming = getTabStreamingStatus(tab.tabId)
       if (isStreaming) {
-        totalCount++
         runningCount++
       }
     })
 
-    return { running: runningCount, total: totalCount }
+    return { running: runningCount, hasWorkflows: anyWorkflows }
   }, [runningWorkflows, chatTabs, getTabStreamingStatus])
 
   const hasRunning = running > 0
-  const hasWorkflows = total > 0
 
   return (
     <button
@@ -60,31 +58,18 @@ export const RunningWorkflowsIndicator: React.FC = () => {
         "focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2",
         hasRunning ? "border-primary border-2" : hasWorkflows ? "border-border" : "border-border/50 opacity-70 hover:opacity-100"
       )}
-      title={hasWorkflows ? `${running} running, ${total} total workflows` : "Running workflows"}
+      title={hasRunning ? `${running} running workflows` : "Workflows"}
     >
       <Layers className={cn(
-        "w-4 h-4",
+        "w-5 h-5",
         hasRunning ? "text-primary" : hasWorkflows ? "text-muted-foreground" : "text-muted-foreground/50"
       )} />
-
-      {/* Badge showing count - always show */}
-      <div className={cn(
-        "flex items-center justify-center min-w-[20px] h-5 px-1.5",
-        "text-xs font-bold rounded-full",
-        hasRunning
-          ? "bg-primary text-primary-foreground"
-          : hasWorkflows
-            ? "bg-muted text-muted-foreground"
-            : "bg-muted/50 text-muted-foreground/70"
-      )}>
-        {total > 99 ? '99+' : total}
-      </div>
 
       {/* Running indicator dot with pulse animation */}
       {hasRunning && (
         <div className="relative">
-          <div className="w-2 h-2 rounded-full bg-green-500" />
-          <div className="absolute inset-0 w-2 h-2 rounded-full bg-green-500 animate-ping" />
+          <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+          <div className="absolute inset-0 w-2.5 h-2.5 rounded-full bg-green-500 animate-ping" />
         </div>
       )}
     </button>

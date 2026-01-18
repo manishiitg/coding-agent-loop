@@ -34,6 +34,7 @@ const (
 	// Multi-agent TodoPlanner sub-agents (actively used)
 	TodoPlannerAnonymizationAgentType        AgentType = "todo_planner_anonymization"          // Anonymizes learnings by replacing values with variables
 	TodoPlannerPlanImprovementAgentType      AgentType = "todo_planner_plan_improvement"       // Analyzes execution and provides plan improvement feedback
+	TodoPlannerEvaluationDebuggerAgentType   AgentType = "todo_planner_evaluation_debugger"    // Analyzes evaluation execution and provides feedback for evaluation plan improvement
 	TodoPlannerCodeExecDebuggingAgentType    AgentType = "todo_planner_code_exec_debugging"    // Analyzes execution logs for code execution errors
 	TodoPlannerPlanningAgentType             AgentType = "todo_planner_planning"               // Creates step-wise plan from objective
 	TodoPlannerExecutionAgentType            AgentType = "todo_planner_execution"              // Executes first step of plan

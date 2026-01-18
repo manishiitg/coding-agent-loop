@@ -58,3 +58,9 @@ i) prompt tempaltes, need to check variables on compile time
 4. typing in chatinput is very slow
 
 5. make large tool output optional in chat agent
+
+6. remove objective and ask user what to do when creating new plan also
+
+7. can orchestrator decide if need to use tempLLM or normal LLM
+
+8. can orchestrator decide if need to leanr or not skills

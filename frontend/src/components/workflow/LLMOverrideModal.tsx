@@ -28,6 +28,9 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
   const setSkipLearningWhenTempLLM1 = useWorkflowStore(state => state.setSkipLearningWhenTempLLM1)
   const skipLearningWhenTempLLM2 = useWorkflowStore(state => state.skipLearningWhenTempLLM2)
   const setSkipLearningWhenTempLLM2 = useWorkflowStore(state => state.setSkipLearningWhenTempLLM2)
+  const tempLearningLLM = useWorkflowStore(state => state.tempLearningLLM)
+  const setTempLearningLLM = useWorkflowStore(state => state.setTempLearningLLM)
+  const clearTempLearningLLM = useWorkflowStore(state => state.clearTempLearningLLM)
   
   // Convert tempOverrideLLM to LLMOption format for the dropdown
   const selectedLLM1: LLMOption | null = tempOverrideLLM
@@ -39,6 +42,12 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
   const selectedLLM2: LLMOption | null = tempOverrideLLM2
     ? availableLLMs.find(
         llm => llm.provider === tempOverrideLLM2.provider && llm.model === tempOverrideLLM2.model_id
+      ) || null
+    : null
+  
+  const selectedLearningLLM: LLMOption | null = tempLearningLLM
+    ? availableLLMs.find(
+        llm => llm.provider === tempLearningLLM.provider && llm.model === tempLearningLLM.model_id
       ) || null
     : null
   
@@ -59,10 +68,19 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
     setTempOverrideLLM2(config)
   }
   
+  const handleLearningLLMSelect = (llm: LLMOption) => {
+    const config: AgentLLMConfig = {
+      provider: llm.provider as AgentLLMConfig['provider'],
+      model_id: llm.model
+    }
+    setTempLearningLLM(config)
+  }
+  
   // Handle clear overrides
   const handleClear = () => {
     clearTempOverrideLLM()
     clearTempOverrideLLM2()
+    clearTempLearningLLM()
     onClose()
   }
   
@@ -253,6 +271,39 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
             </label>
           </div>
           
+          {/* Temp Learning LLM */}
+          <div className="space-y-3 pt-4 border-t border-border">
+            <label className="text-sm font-medium text-foreground block">
+              Temp Learning LLM (For Existing Learnings)
+            </label>
+            <div className="flex items-start gap-2 pb-2">
+              <div className="relative flex-1">
+                <LLMSelectionDropdown
+                  availableLLMs={availableLLMs}
+                  selectedLLM={selectedLearningLLM}
+                  onLLMSelect={handleLearningLLMSelect}
+                  onRefresh={refreshAvailableLLMs}
+                  disabled={false}
+                  inModal={true}
+                  openDirection="down"
+                  title="Select Temp Learning LLM"
+                />
+              </div>
+              {tempLearningLLM && (
+                <button
+                  onClick={() => clearTempLearningLLM()}
+                  className="px-2 py-1 text-xs text-destructive hover:text-destructive/80"
+                  title="Clear Temp Learning LLM"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Use this LLM when learnings already exist for a step. For new learning (no existing learnings), the default LLM will be used.
+            </p>
+          </div>
+          
           {/* Fallback to original LLM on failure checkbox */}
           {(tempOverrideLLM || tempOverrideLLM2) && (
             <div className="space-y-2 pt-2 border-t border-border">
@@ -280,35 +331,47 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
         {/* Footer */}
         <div className="flex items-center justify-between p-4 border-t border-border bg-muted/30 flex-shrink-0">
           <div className="flex items-center gap-2">
-            {tempOverrideLLM || tempOverrideLLM2 ? (
+            {tempOverrideLLM || tempOverrideLLM2 || tempLearningLLM ? (
               <>
-                <div className="flex items-center gap-1.5">
-                  <div title={tempOverrideLLM ? `Temp LLM 1: ${tempOverrideLLM.provider}/${tempOverrideLLM.model_id}` : 'Temp LLM 1: not set'}>
-                    <Brain 
-                      className={`w-4 h-4 ${tempOverrideLLMEnabled && tempOverrideLLM ? 'text-primary fill-primary/20' : 'text-muted-foreground'}`} 
-                    />
+                {(tempOverrideLLM || tempOverrideLLM2) && (
+                  <div className="flex items-center gap-1.5">
+                    <div title={tempOverrideLLM ? `Temp LLM 1: ${tempOverrideLLM.provider}/${tempOverrideLLM.model_id}` : 'Temp LLM 1: not set'}>
+                      <Brain 
+                        className={`w-4 h-4 ${tempOverrideLLMEnabled && tempOverrideLLM ? 'text-primary fill-primary/20' : 'text-muted-foreground'}`} 
+                      />
+                    </div>
+                    <span className="text-xs text-muted-foreground">→</span>
+                    <div title={tempOverrideLLM2 ? `Temp LLM 2: ${tempOverrideLLM2.provider}/${tempOverrideLLM2.model_id}` : 'Temp LLM 2: not set'}>
+                      <Brain 
+                        className={`w-4 h-4 ${tempOverrideLLMEnabled && tempOverrideLLM2 ? 'text-primary fill-primary/20' : 'text-muted-foreground'}`} 
+                      />
+                    </div>
+                    <span className="text-xs text-muted-foreground">→</span>
+                    <div title="Step LLM (fallback)">
+                      <Brain className="w-4 h-4 text-muted-foreground" />
+                    </div>
                   </div>
-                  <span className="text-xs text-muted-foreground">→</span>
-                  <div title={tempOverrideLLM2 ? `Temp LLM 2: ${tempOverrideLLM2.provider}/${tempOverrideLLM2.model_id}` : 'Temp LLM 2: not set'}>
-                    <Brain 
-                      className={`w-4 h-4 ${tempOverrideLLMEnabled && tempOverrideLLM2 ? 'text-primary fill-primary/20' : 'text-muted-foreground'}`} 
-                    />
+                )}
+                {tempOverrideLLMEnabled && (tempOverrideLLM || tempOverrideLLM2) && (
+                  <span className={`text-xs ml-2 ${tempOverrideLLMEnabled ? 'text-primary' : 'text-muted-foreground'}`}>
+                    {tempOverrideLLMEnabled ? 'Active' : 'Disabled'}
+                  </span>
+                )}
+                {tempLearningLLM && (
+                  <div className="flex items-center gap-1.5 ml-2">
+                    <div title={`Temp Learning LLM: ${tempLearningLLM.provider}/${tempLearningLLM.model_id}`}>
+                      <Brain className="w-4 h-4 text-primary fill-primary/20" />
+                    </div>
+                    <span className="text-xs text-muted-foreground">Learning</span>
                   </div>
-                  <span className="text-xs text-muted-foreground">→</span>
-                  <div title="Step LLM (fallback)">
-                    <Brain className="w-4 h-4 text-muted-foreground" />
-                  </div>
-                </div>
-                <span className={`text-xs ml-2 ${tempOverrideLLMEnabled ? 'text-primary' : 'text-muted-foreground'}`}>
-                  {tempOverrideLLMEnabled ? 'Active' : 'Disabled'}
-                </span>
+                )}
               </>
             ) : (
               <span className="text-xs text-muted-foreground">No overrides configured</span>
             )}
           </div>
           <div className="flex items-center gap-2">
-            {(tempOverrideLLM || tempOverrideLLM2) && (
+            {(tempOverrideLLM || tempOverrideLLM2 || tempLearningLLM) && (
               <Button
                 variant="outline"
                 onClick={handleClear}

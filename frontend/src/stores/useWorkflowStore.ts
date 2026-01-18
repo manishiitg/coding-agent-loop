@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
-import type { WorkflowPhase, StepProgress, ExecutionOptions, AgentLLMConfig, VariablesManifest } from '../services/api-types'
+import type { WorkflowPhase, StepProgress, ExecutionOptions, AgentLLMConfig, VariablesManifest, EvaluationPlan } from '../services/api-types'
 import { ExecutionStrategy } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { useChatStore } from './useChatStore'
@@ -17,6 +17,7 @@ const TEMP_OVERRIDE_LLM_ENABLED_KEY = 'workflow_temp_override_llm_enabled'
 const FALLBACK_TO_ORIGINAL_LLM_KEY = 'workflow_fallback_to_original_llm_on_failure'
 const SKIP_LEARNING_WHEN_TEMP_LLM1_KEY = 'workflow_skip_learning_when_temp_llm1'
 const SKIP_LEARNING_WHEN_TEMP_LLM2_KEY = 'workflow_skip_learning_when_temp_llm2'
+const TEMP_LEARNING_LLM_KEY = 'workflow_temp_learning_llm'
 const SELECTED_GROUP_IDS_KEY = 'workflow_selected_group_ids'
 const CURRENT_RUNNING_GROUP_ID_KEY = 'workflow_current_running_group_id'
 const SELECTED_RUN_FOLDER_KEY = 'workflow_selected_run_folder'
@@ -77,6 +78,7 @@ interface WorkflowStore {
       fallbackToOriginalLLMOnFailure: boolean  // If true, use original LLM instead of temp override when validation fails
       skipLearningWhenTempLLM1: boolean  // If true, skip learning phases when tempLLM1 is used
       skipLearningWhenTempLLM2: boolean  // If true, skip learning phases when tempLLM2 is used
+      tempLearningLLM: AgentLLMConfig | null  // Temp LLM for learning agents (used when learnings already exist for a step)
       saveValidationResponses: boolean  // If true, save validation responses to workspace validation folder
       disableShellExecAccess: boolean  // If true, disable all execute_shell_command tool access globally
       disableReadImageAccess: boolean  // If true, disable all read_image tool access globally
@@ -119,6 +121,12 @@ interface WorkflowStore {
   workflowChatTabs: Record<string, WorkflowChatTab>  // tabId -> tab
   activeWorkflowTabId: string | null  // Currently selected tab
 
+  // === WORKFLOW MODE STATE ===
+  workflowMode: 'plan' | 'eval'
+  evaluationPlan: EvaluationPlan | null
+  evaluationStepProgress: StepProgress | null
+  isLoadingEvaluationPlan: boolean
+
   // === ACTIONS ===
   // Constants
   loadPhases: () => Promise<void>
@@ -154,6 +162,8 @@ interface WorkflowStore {
   setFallbackToOriginalLLMOnFailure: (enabled: boolean) => void
   setSkipLearningWhenTempLLM1: (enabled: boolean) => void
   setSkipLearningWhenTempLLM2: (enabled: boolean) => void
+  setTempLearningLLM: (config: AgentLLMConfig | null) => void
+  clearTempLearningLLM: () => void
   setSaveValidationResponses: () => void
   setDisableShellExecAccess: (enabled: boolean) => void
   setDisableReadImageAccess: (enabled: boolean) => void
@@ -204,6 +214,11 @@ interface WorkflowStore {
   getTabStreamingStatus: (tabId: string) => boolean
   // Check if tab has completion events
   checkTabCompletion: (tabId: string, events: Array<{ type: string }>) => boolean
+
+  // Workflow Mode Actions
+  setWorkflowMode: (mode: 'plan' | 'eval') => void
+  setEvaluationPlan: (plan: EvaluationPlan | null) => void
+  loadEvaluationPlan: (workspacePath: string) => Promise<void>
 
   // Persistence (localStorage)
   loadSavedSettings: (presetId: string) => void
@@ -351,6 +366,20 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }
         return false  // Default to false
       })(),
+      tempLearningLLM: (() => {
+        try {
+          const saved = localStorage.getItem(TEMP_LEARNING_LLM_KEY)
+          if (saved) {
+            const parsed = JSON.parse(saved) as AgentLLMConfig
+            if (parsed.provider && parsed.model_id) {
+              return parsed
+            }
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load temp learning LLM from localStorage:', error)
+        }
+        return null
+      })(),
       // Save validation responses to workspace (always enabled, not persisted)
       saveValidationResponses: true,
       // Disable shell exec access (defaults to false, not persisted)
@@ -417,6 +446,12 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // Multi-tab chat state
       workflowChatTabs: {},
       activeWorkflowTabId: null,
+
+      // === Workflow Mode State ===
+      workflowMode: 'plan',
+      evaluationPlan: null,
+      evaluationStepProgress: null,
+      isLoadingEvaluationPlan: false,
 
       // === Actions ===
 
@@ -1058,6 +1093,11 @@ export const useWorkflowStore = create<WorkflowStore>()(
           options.skip_learning_when_temp_llm2 = true
         }
         
+        // Include temp learning LLM if set (used when learnings already exist for a step)
+        if (state.tempLearningLLM) {
+          options.temp_learning_llm = state.tempLearningLLM
+        }
+        
         // Include save validation responses flag (always send to ensure backend knows user preference)
         options.save_validation_responses = state.saveValidationResponses
 
@@ -1200,6 +1240,33 @@ export const useWorkflowStore = create<WorkflowStore>()(
           console.log(`[WorkflowStore] Skip learning when tempLLM2 set: ${enabled}`)
         } catch (error) {
           console.error('[WorkflowStore] Failed to save skip learning when tempLLM2 to localStorage:', error)
+        }
+      },
+      
+      setTempLearningLLM: (config: AgentLLMConfig | null) => {
+        set({ tempLearningLLM: config })
+        try {
+          if (config) {
+            // Save to localStorage
+            localStorage.setItem(TEMP_LEARNING_LLM_KEY, JSON.stringify(config))
+            console.log(`[WorkflowStore] Temporary learning LLM set: ${config.provider}/${config.model_id}`)
+          } else {
+            // Clear from localStorage
+            localStorage.removeItem(TEMP_LEARNING_LLM_KEY)
+            console.log('[WorkflowStore] Temporary learning LLM cleared')
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save temp learning LLM to localStorage:', error)
+        }
+      },
+      
+      clearTempLearningLLM: () => {
+        set({ tempLearningLLM: null })
+        try {
+          localStorage.removeItem(TEMP_LEARNING_LLM_KEY)
+          console.log('[WorkflowStore] Temporary learning LLM cleared')
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to clear temp learning LLM from localStorage:', error)
         }
       },
       
@@ -1744,6 +1811,48 @@ export const useWorkflowStore = create<WorkflowStore>()(
         return events.some(event => 
           event.type && completionEventTypes.includes(event.type)
         )
+      },
+
+      // Workflow Mode Actions
+      setWorkflowMode: (mode: 'plan' | 'eval') => {
+        set({ workflowMode: mode })
+      },
+
+      setEvaluationPlan: (plan: EvaluationPlan | null) => {
+        set({ evaluationPlan: plan })
+      },
+
+      loadEvaluationPlan: async (workspacePath: string) => {
+        if (!workspacePath) {
+          set({ evaluationPlan: null })
+          return
+        }
+
+        set({ isLoadingEvaluationPlan: true })
+        try {
+          // Note: agentApi.getEvaluationPlan needs to be implemented or we use getPlannerFileContent
+          // Assuming we use getPlannerFileContent for consistency with usePlanData pattern initially,
+          // but eventually we should use a typed API if available. 
+          // For now, we'll implement this logic in the hook useEvaluationPlanData 
+          // and just store the result here, or call the API here.
+          // Let's defer actual API call logic to the hook to keep store simpler, 
+          // but we provide the action to update state.
+          // Wait, the requirement says "loadEvaluationPlan: (workspacePath: string) => Promise<void>" in store.
+          // Let's implement it using file content API for now as per `usePlanData`.
+          
+          const path = `${workspacePath}/evaluation/evaluation_plan.json`
+          const response = await agentApi.getPlannerFileContent(path)
+          
+          if (response.success && response.data?.content) {
+            const plan = JSON.parse(response.data.content) as EvaluationPlan
+            set({ evaluationPlan: plan, isLoadingEvaluationPlan: false })
+          } else {
+            set({ evaluationPlan: null, isLoadingEvaluationPlan: false })
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load evaluation plan:', error)
+          set({ evaluationPlan: null, isLoadingEvaluationPlan: false })
+        }
       },
 
       // Load saved settings from localStorage for a preset

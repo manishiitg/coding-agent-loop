@@ -5,6 +5,7 @@ import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep, isOrchestrationStep } from '../../../utils/stepConfigMatching'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { agentApi } from '../../../services/api'
+import { WorkflowLegend } from './WorkflowLegend'
 
 interface StepLegendProps {
   plan: { steps: PlanStep[] } | null
@@ -387,11 +388,14 @@ export const StepLegend: React.FC<StepLegendProps> = ({
               </>
             )}
           </span>
-          {isCollapsed ? (
-            <ChevronUp className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 ml-2" />
-          ) : (
-            <ChevronDown className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 ml-2" />
-          )}
+          <div className="flex items-center gap-1">
+            <WorkflowLegend />
+            {isCollapsed ? (
+              <ChevronUp className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 ml-1" />
+            ) : (
+              <ChevronDown className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 ml-1" />
+            )}
+          </div>
         </button>
 
         {/* Step List */}

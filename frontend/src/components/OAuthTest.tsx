@@ -13,8 +13,8 @@ interface OAuthTestProps {
 export const OAuthTest: React.FC<OAuthTestProps> = ({ serverName = 'Notion' }) => {
   const [tokenStatus, setTokenStatus] = useState<{
     valid: boolean;
-    expiresIn: string;
-    tokenPath: string;
+    expiresIn?: string;
+    tokenPath?: string;
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

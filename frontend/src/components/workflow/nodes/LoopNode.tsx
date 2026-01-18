@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { RefreshCw, CheckCircle, XCircle, Loader2, Plus, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Repeat, Play, Settings, Lock, ShieldCheck, SkipForward } from 'lucide-react'
+import { RefreshCw, CheckCircle, XCircle, Loader2, Plus, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Repeat, Play, Settings, Lock, FastForward } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -72,13 +72,24 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
 }
 
 export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
-  const { id, title, loop_condition, max_iterations, current_iteration, status, stepIndex, changeType, step, workspacePath, selectedRunFolder, onRunFromStep, onOpenSidebar, isExecuting, validation_schema } = data
+  const { id, title, loop_condition, max_iterations, current_iteration, status, stepIndex, changeType, step, workspacePath, selectedRunFolder, onRunFromStep, onOpenSidebar, isExecuting } = data
   const { availableLLMs } = useLLMStore()
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
 
   // Button is disabled if executing or no callback
   const isRunDisabled = isExecuting || !onRunFromStep
+
+  // Process text to convert escaped newlines to actual newlines
+  const processText = (text: string | undefined): string | undefined => {
+    if (!text) return undefined
+    return text
+      .replace(/\\n/g, '\n')  // Convert \n to actual newlines
+      .replace(/\\t/g, '\t')  // Convert \t to actual tabs
+      .replace(/\\r/g, '\r')  // Convert \r to actual carriage returns
+  }
+
+  const processedLoopCondition = processText(loop_condition)
 
   // Handle run from this step button click
   const handleRunClick = useCallback((e: MouseEvent) => {
@@ -89,10 +100,10 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
       console.log('[LoopNode] Calling onRunFromStep with:', stepIndex, step.id || `step-${stepIndex}`)
       onRunFromStep(stepIndex, step.id || `step-${stepIndex}`)
     } else {
-      console.warn('[LoopNode] Cannot run step:', { 
-        hasCallback: !!onRunFromStep, 
-        isExecuting, 
-        isRunDisabled 
+      console.warn('[LoopNode] Cannot run step:', {
+        hasCallback: !!onRunFromStep,
+        isExecuting,
+        isRunDisabled
       })
     }
   }, [onRunFromStep, isExecuting, stepIndex, step.id, isRunDisabled])
@@ -114,27 +125,10 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const customPresets = useGlobalPresetStore(state => state.customPresets)
   const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
-  
+
   const activePreset = activePresetId
     ? customPresets.find(p => p.id === activePresetId) || predefinedPresets.find(p => p.id === activePresetId)
     : null
-
-  // Get step details (same as StepNode)
-  const description = step.description
-  const success_criteria = step.success_criteria
-
-  // Process text to convert escaped newlines to actual newlines
-  const processText = (text: string | undefined): string | undefined => {
-    if (!text) return undefined
-    return text
-      .replace(/\\n/g, '\n')  // Convert \n to actual newlines
-      .replace(/\\t/g, '\t')  // Convert \t to actual tabs
-      .replace(/\\r/g, '\r')  // Convert \r to actual carriage returns
-  }
-
-  const processedLoopCondition = processText(loop_condition)
-  const processedDescription = processText(description)
-  const processedSuccessCriteria = processText(success_criteria)
 
   const stepConfig = step as { agent_configs?: { 
     use_code_execution_mode?: boolean
@@ -413,7 +407,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
 
   return (
     <div className={`
-      relative w-[360px] rounded-xl border-2 border-dashed bg-white dark:bg-gray-900 shadow-lg
+      relative w-[300px] rounded-xl border-2 border-dashed bg-white dark:bg-gray-900 shadow-lg
       ${statusBorderColors[status]}
       ${selected ? 'ring-2 ring-blue-500/40' : ''}
       ${changeType ? changeHighlightStyles[changeType] : ''}
@@ -532,46 +526,6 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
             <div className="text-[10px] font-bold text-cyan-600 dark:text-cyan-400 uppercase tracking-wide mb-1">Until</div>
             <div className="text-gray-700 dark:text-gray-300">
               <NodeMarkdown content={processedLoopCondition} textSize="xs" />
-            </div>
-          </div>
-        )}
-
-        {/* Description */}
-        {processedDescription && (
-          <div>
-            <NodeMarkdown content={processedDescription} textSize="xs" />
-          </div>
-        )}
-        
-        {/* Success Criteria */}
-        {processedSuccessCriteria && (
-          <div className="flex gap-2 p-2.5 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50">
-            <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
-            <div className="flex-1 text-green-700 dark:text-green-300">
-              <NodeMarkdown content={processedSuccessCriteria} textSize="xs" />
-            </div>
-          </div>
-        )}
-
-        {/* Validation Schema */}
-        {validation_schema && validation_schema.files && validation_schema.files.length > 0 && (
-          <div className="flex gap-2 p-2.5 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50">
-            <ShieldCheck className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <div className="text-xs font-semibold text-blue-700 dark:text-blue-300">
-                Validation Schema
-              </div>
-              <div className="text-[10px] mt-0.5 text-blue-600 dark:text-blue-400">
-                {validation_schema.files.length} file{validation_schema.files.length !== 1 ? 's' : ''} to validate
-                {validation_schema.files.map((file, idx) => {
-                  const checkCount = file.json_checks?.length || 0
-                  return (
-                    <div key={idx} className="mt-1">
-                      • {file.file_name} {checkCount > 0 && `(${checkCount} check${checkCount !== 1 ? 's' : ''})`}
-                    </div>
-                  )
-                })}
-              </div>
             </div>
           </div>
         )}

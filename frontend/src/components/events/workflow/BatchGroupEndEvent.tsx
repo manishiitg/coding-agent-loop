@@ -1,26 +1,16 @@
-import React, { useEffect } from 'react'
+import React from 'react'
 import { CheckCircle, XCircle, Layers } from 'lucide-react'
 import type { BatchGroupEndEvent as BatchGroupEndEventData } from '../../../generated/event-types'
-import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 
 interface BatchGroupEndEventProps {
   event: BatchGroupEndEventData
   compact?: boolean
 }
 
+// NOTE: Batch progress updates are handled in the event polling layer (ChatArea.tsx)
+// to ensure reliable updates even when events are filtered or not visible in UI.
+// This component is purely for display purposes.
 export const BatchGroupEndEvent: React.FC<BatchGroupEndEventProps> = ({ event, compact = false }) => {
-  const setCurrentRunningGroupId = useWorkflowStore(state => state.setCurrentRunningGroupId)
-
-  // Clear running group when this event is displayed
-  useEffect(() => {
-    // Only clear if this is the currently running group
-    if (event.group_id) {
-      const currentGroup = useWorkflowStore.getState().currentRunningGroupId
-      if (currentGroup === event.group_id) {
-        setCurrentRunningGroupId(null)
-      }
-    }
-  }, [event.group_id, setCurrentRunningGroupId])
 
   if (compact) {
     return (

@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, useState, useEffect, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, GitBranch, Play, Settings, Code, Terminal, AlertTriangle, Lock, ShieldCheck, SkipForward } from 'lucide-react'
+import { XCircle, Loader2, Plus, RefreshCw, GitBranch, Play, Settings, Code, Terminal, AlertTriangle, Lock, SkipForward, CheckCircle } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { agentApi } from '../../../services/api'
@@ -71,7 +71,7 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) => {
-  const { id, title, description, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, validation_schema, workspacePath } = data
+  const { id, title, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath } = data
 
   // Process text to convert escaped newlines to actual newlines
   const processText = (text: string | undefined): string | undefined => {
@@ -82,7 +82,6 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
       .replace(/\\r/g, '\r')  // Convert \r to actual carriage returns
   }
 
-  const processedDescription = processText(description)
   const processedConditionQuestion = processText(condition_question)
 
   // Get preset for config badges
@@ -347,7 +346,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
   }, [onOpenSidebar, id, stepIndex, step.id])
 
   return (
-    <div className={`relative w-[300px] ${changeType ? changeHighlightStyles[changeType] : ''}`}>
+    <div className={`relative w-[240px] ${changeType ? changeHighlightStyles[changeType] : ''}`}>
       {/* Header with buttons - above the diamond */}
       <div className="absolute -top-12 left-0 right-0 flex items-center justify-center gap-2 z-20">
         {/* Run from this step button */}
@@ -496,18 +495,9 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
         />
       </div>
 
-      {/* Description below the diamond */}
-      {processedDescription && (
-        <div className="mt-3 mx-4">
-          <div className="text-center">
-            <NodeMarkdown content={processedDescription} textSize="xs" />
-          </div>
-        </div>
-      )}
-
       {/* Question below the diamond */}
       {processedConditionQuestion && (
-        <div className={`mx-4 ${processedDescription ? 'mt-2' : 'mt-3'}`}>
+        <div className="mx-4 mt-3">
           <div className="p-2.5 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800/50 text-center">
             <NodeMarkdown content={processedConditionQuestion} textSize="tiny" />
           </div>
@@ -528,7 +518,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
         if (!hasRoutingInfo) return null
         
         return (
-          <div className={`mx-4 ${condition_question ? 'mt-2' : description ? 'mt-2' : 'mt-3'}`}>
+          <div className={`mx-4 ${condition_question ? 'mt-2' : 'mt-3'}`}>
             <div className="p-2 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700">
               <div className="text-[10px] font-semibold text-gray-700 dark:text-gray-300 mb-1.5 text-center">
                 Branch Routing
@@ -576,31 +566,6 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
           </div>
         )
       })()}
-
-      {/* Validation Schema */}
-      {validation_schema && validation_schema.files && validation_schema.files.length > 0 && (
-        <div className={`mx-4 ${condition_question ? 'mt-2' : description ? 'mt-2' : 'mt-3'}`}>
-          <div className="flex gap-2 p-2.5 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50">
-            <ShieldCheck className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <div className="text-xs font-semibold text-blue-700 dark:text-blue-300">
-                Validation Schema
-              </div>
-              <div className="text-[10px] mt-0.5 text-blue-600 dark:text-blue-400">
-                {validation_schema.files.length} file{validation_schema.files.length !== 1 ? 's' : ''} to validate
-                {validation_schema.files.map((file, idx) => {
-                  const checkCount = file.json_checks?.length || 0
-                  return (
-                    <div key={idx} className="mt-1">
-                      • {file.file_name} {checkCount > 0 && `(${checkCount} check${checkCount !== 1 ? 's' : ''})`}
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Config Footer - Show all configs including conditional LLM */}
       <div className="mt-2 mx-4">

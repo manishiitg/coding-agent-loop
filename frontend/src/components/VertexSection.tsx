@@ -14,12 +14,10 @@ interface VertexSectionProps {
   onTestAPIKey: (apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => void
   apiKeyStatus: 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
   apiKeyError: string | null
-  isPrimary: boolean
-  onSetPrimary: () => void
   metadata?: ModelMetadata[]
 }
 
-export function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, isPrimary, onSetPrimary, metadata }: VertexSectionProps) {
+export function VertexSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, apiKeyError, metadata }: VertexSectionProps) {
   const [apiKey, setApiKey] = useState(config.api_key || '')
   const [newCustomModel, setNewCustomModel] = useState('')
   const [isPublishing, setIsPublishing] = useState(false)

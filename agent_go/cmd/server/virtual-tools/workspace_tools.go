@@ -158,20 +158,20 @@ func getServerNameFromContext(ctx context.Context) string {
 // emitWorkspaceFileOperation emits a workspace file operation event
 func emitWorkspaceFileOperation(ctx context.Context, operation, filepath, folder string) {
 	// Debug: Check what's in context
-	if agentVal := ctx.Value("tool_execution_agent"); agentVal != nil {
-		fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Found agent in context, type: %T\n", agentVal)
-	} else {
-		fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: No agent found with key 'tool_execution_agent'\n")
-	}
+	// if agentVal := ctx.Value("tool_execution_agent"); agentVal != nil {
+	// 	fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Found agent in context, type: %T\n", agentVal)
+	// } else {
+	// 	fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: No agent found with key 'tool_execution_agent'\n")
+	// }
 
 	emitter := getEventEmitterFromContext(ctx)
 	if emitter == nil {
 		// No emitter in context - this is expected for some orchestrator direct calls
-		fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: No emitter in context for operation=%s, filepath=%s, folder=%s\n", operation, filepath, folder)
+		// fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: No emitter in context for operation=%s, filepath=%s, folder=%s\n", operation, filepath, folder)
 		return
 	}
 
-	fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Found emitter, type: %T\n", emitter)
+	// fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Found emitter, type: %T\n", emitter)
 
 	turn := getTurnFromContext(ctx)
 	serverName := getServerNameFromContext(ctx)
@@ -192,8 +192,8 @@ func emitWorkspaceFileOperation(ctx context.Context, operation, filepath, folder
 		}
 	}
 
-	fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Emitting event operation=%s, filepath=%s, folder=%s, turn=%d, serverName=%s, shouldHighlight=%v\n",
-		operation, filepath, folder, turn, serverName, shouldHighlight)
+	// fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Emitting event operation=%s, filepath=%s, folder=%s, turn=%d, serverName=%s, shouldHighlight=%v\n",
+	// 	operation, filepath, folder, turn, serverName, shouldHighlight)
 
 	eventData := events.NewWorkspaceFileOperationEvent(operation, filepath, folder, turn, serverName, shouldHighlight)
 	agentEvent := &events.AgentEvent{
@@ -206,7 +206,7 @@ func emitWorkspaceFileOperation(ctx context.Context, operation, filepath, folder
 		// Log error but don't break tool execution
 		fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Error emitting event: %v\n", err)
 	} else {
-		fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Successfully emitted event\n")
+		// fmt.Printf("[WorkspaceTools] emitWorkspaceFileOperation: Successfully emitted event\n")
 	}
 }
 
@@ -772,10 +772,10 @@ func handleListWorkspaceFiles(ctx context.Context, args map[string]interface{}) 
 	if bp := ctx.Value(FolderGuardBlockedPathsKey); bp != nil {
 		if paths, ok := bp.([]string); ok {
 			blockedPaths = paths
-			fmt.Printf("[FOLDER GUARD DEBUG] list_workspace_files extracted blocked paths from context: %v\n", blockedPaths)
+			// fmt.Printf("[FOLDER GUARD DEBUG] list_workspace_files extracted blocked paths from context: %v\n", blockedPaths)
 		}
 	} else {
-		fmt.Printf("[FOLDER GUARD DEBUG] list_workspace_files no blocked paths in context\n")
+		// fmt.Printf("[FOLDER GUARD DEBUG] list_workspace_files no blocked paths in context\n")
 	}
 
 	// Build API URL
@@ -798,7 +798,7 @@ func handleListWorkspaceFiles(ctx context.Context, args map[string]interface{}) 
 	req.URL.RawQuery = q.Encode()
 
 	// Debug logging
-	fmt.Printf("[DEBUG list_workspace_files] Requesting folder: %s, max_depth: %d, URL: %s\n", folder, maxDepth, req.URL.String())
+	// fmt.Printf("[DEBUG list_workspace_files] Requesting folder: %s, max_depth: %d, URL: %s\n", folder, maxDepth, req.URL.String())
 
 	// Set timeout
 	client := &http.Client{
@@ -845,7 +845,7 @@ func handleListWorkspaceFiles(ctx context.Context, args map[string]interface{}) 
 
 	// Debug logging for troubleshooting
 	if apiResp.Data == nil {
-		fmt.Printf("[DEBUG] Workspace API returned nil data for folder: %s, maxDepth: %d\n", folder, maxDepth)
+		// fmt.Printf("[DEBUG] Workspace API returned nil data for folder: %s, maxDepth: %d\n", folder, maxDepth)
 	}
 
 	// Note: Blocked paths filtering is now handled by the Workspace API
@@ -1316,7 +1316,7 @@ func handleRegexSearchWorkspaceFiles(ctx context.Context, args map[string]interf
 				debugInfo = debugInfo[:500] + "..."
 			}
 			// Note: Using fmt.Printf for debugging - can be removed in production
-			fmt.Printf("[DEBUG] regex_search API response data: %s\n", debugInfo)
+			// fmt.Printf("[DEBUG] regex_search API response data: %s\n", debugInfo)
 		}
 	}
 
@@ -1540,7 +1540,7 @@ func formatGlobDiscoveryResults(data interface{}, pattern string) (string, error
 			for k := range v {
 				keys = append(keys, k)
 			}
-			fmt.Printf("[DEBUG] formatGlobDiscoveryResults: map keys available: %v\n", keys)
+			// fmt.Printf("[DEBUG] formatGlobDiscoveryResults: map keys available: %v\n", keys)
 		}
 		// Extract filepaths from results array
 		for _, item := range resultsArray {
@@ -1849,8 +1849,8 @@ func handleExecuteShellCommand(ctx context.Context, args map[string]interface{})
 			"enforcement_mode": "strict",
 		}
 
-		fmt.Printf("[DEBUG] Folder guard enabled for shell execution - Read: %v, Write: %v, Blocked: %v\n",
-			folderGuardReadPaths, folderGuardWritePaths, folderGuardBlockedPaths)
+		// fmt.Printf("[DEBUG] Folder guard enabled for shell execution - Read: %v, Write: %v, Blocked: %v\n",
+		// 	folderGuardReadPaths, folderGuardWritePaths, folderGuardBlockedPaths)
 	}
 
 	// Create HTTP request with context
@@ -1948,6 +1948,15 @@ func handleExecuteShellCommand(ctx context.Context, args map[string]interface{})
 	// Add status message
 	if exitCode == 0 {
 		result.WriteString("✅ **Command executed successfully**")
+
+		// Add helpful note for Python commands with empty stdout
+		isPythonCmd := strings.Contains(strings.ToLower(command), "python")
+		if isPythonCmd && stdout == "" && stderr == "" {
+			result.WriteString("\n\n💡 **Note**: Python command produced no output. If you expected output:\n")
+			result.WriteString("- Ensure your script uses `print()` statements (not just file writes)\n")
+			result.WriteString("- Add `flush=True` to print: `print('message', flush=True)`\n")
+			result.WriteString("- Use `-u` flag for unbuffered output: `python3 -u script.py`")
+		}
 	} else {
 		result.WriteString(fmt.Sprintf("⚠️ **Command exited with code %d**", exitCode))
 	}
@@ -1966,7 +1975,7 @@ func formatWorkspaceSearchResults(data interface{}, query string) (string, error
 			if len(debugInfo) > 500 {
 				debugInfo = debugInfo[:500] + "..."
 			}
-			fmt.Printf("[DEBUG] formatWorkspaceSearchResults: data is not a map, type=%T, value=%s\n", data, debugInfo)
+			// fmt.Printf("[DEBUG] formatWorkspaceSearchResults: data is not a map, type=%T, value=%s\n", data, debugInfo)
 		}
 		return "", fmt.Errorf("unexpected response format from workspace API - expected object, got %T", data)
 	}
@@ -2005,7 +2014,7 @@ func formatWorkspaceSearchResults(data interface{}, query string) (string, error
 			if len(debugInfo) > 500 {
 				debugInfo = debugInfo[:500] + "..."
 			}
-			fmt.Printf("[DEBUG] formatWorkspaceSearchResults: results is not an array, type=%T, value=%s\n", results, debugInfo)
+			// fmt.Printf("[DEBUG] formatWorkspaceSearchResults: results is not an array, type=%T, value=%s\n", results, debugInfo)
 		}
 		return "", fmt.Errorf("results is not an array (type: %T, value: %v)", results, results)
 	}
@@ -2354,7 +2363,7 @@ func filterBlockedPathsFromListResults(data interface{}, blockedPaths []string) 
 				// Check if name or path starts with blocked path
 				if strings.HasPrefix(name, blockedPath) || strings.HasPrefix(path, blockedPath) {
 					isBlocked = true
-					fmt.Printf("[FOLDER GUARD] Filtered out list item from blocked path: %s\n", name)
+					// fmt.Printf("[FOLDER GUARD] Filtered out list item from blocked path: %s\n", name)
 					break
 				}
 			}
@@ -2413,7 +2422,7 @@ func filterBlockedPathsFromResults(data interface{}, blockedPaths []string) inte
 			// Check if filepath or folder starts with blocked path
 			if strings.HasPrefix(filepath, blockedPath) || strings.HasPrefix(folder, blockedPath) {
 				isBlocked = true
-				fmt.Printf("[FOLDER GUARD] Filtered out result from blocked path: %s\n", filepath)
+				// fmt.Printf("[FOLDER GUARD] Filtered out result from blocked path: %s\n", filepath)
 				break
 			}
 		}

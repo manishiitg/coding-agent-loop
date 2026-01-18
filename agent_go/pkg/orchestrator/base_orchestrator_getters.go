@@ -70,16 +70,6 @@ func (bo *BaseOrchestrator) GetContextAwareBridge() mcpagent.AgentEventListener 
 	return bo.contextAwareBridge
 }
 
-// GetProvider returns the LLM provider
-func (bo *BaseOrchestrator) GetProvider() string {
-	return bo.provider
-}
-
-// GetModel returns the LLM model
-func (bo *BaseOrchestrator) GetModel() string {
-	return bo.model
-}
-
 // GetMCPConfigPath returns the MCP configuration path
 func (bo *BaseOrchestrator) GetMCPConfigPath() string {
 	return bo.mcpConfigPath

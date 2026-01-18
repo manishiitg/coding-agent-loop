@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	mcpagent "mcpagent/agent"
 	baseevents "mcpagent/events"
 )
 
@@ -96,9 +97,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) getEnabledGroupsForExecution() []Vari
 }
 
 // shouldUseBatchExecution determines if batch execution mode should be used
+// Always use batch execution when we have at least 1 group (even for single group)
+// This ensures proper session ID management (with actual groupID), consistent folder structure, and better isolation
 func (hcpo *StepBasedWorkflowOrchestrator) shouldUseBatchExecution() bool {
 	enabledGroups := hcpo.getEnabledGroupsForExecution()
-	return len(enabledGroups) > 1
+	return len(enabledGroups) >= 1
 }
 
 // runBatchExecution executes the workflow for multiple variable groups sequentially
@@ -112,8 +115,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 	enabledGroups := hcpo.getEnabledGroupsForExecution()
 	totalGroups := len(enabledGroups)
 
+	// DEBUG: Panic if no groups found (should have been caught earlier, but double-check here)
 	if totalGroups == 0 {
-		return nil, fmt.Errorf(fmt.Sprintf("no enabled variable groups found for batch execution"), nil)
+		// PANIC for debugging: groups are required for batch execution
+		panic(fmt.Sprintf("CRITICAL: No enabled variable groups found in runBatchExecution() - this should have been caught earlier. variablesManifest is nil: %v", hcpo.variablesManifest == nil))
+	}
+
+	// Validate that all groups have valid GroupIDs
+	for i, group := range enabledGroups {
+		if group.GroupID == "" {
+			// PANIC for debugging: groupID is required for session ID and folder structure
+			panic(fmt.Sprintf("CRITICAL: Group at index %d has empty GroupID in runBatchExecution() - all groups must have valid GroupIDs. Group values: %v", i, group.Values))
+		}
 	}
 
 	// Validate that returned groups match requested groups (if specified)
@@ -278,8 +291,55 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 			continue
 		}
 
-		// Apply execution context (sets orchestrator state)
+		// CRITICAL FIX: Close entire previous session before starting new group
+		// This ensures the new session ID gets fresh connections with the correct Downloads path
+		// We must close the entire session (not just playwright) to ensure all connections are released
+		if groupIndex > 0 {
+			// Get previous session ID BEFORE we set the new one
+			previousSessionID := hcpo.getSessionID()
+			if previousSessionID != "" {
+				hcpo.GetLogger().Info(fmt.Sprintf("🔗 Closing entire previous session before starting group %s (session: %s)", group.GroupID, previousSessionID))
+				mcpagent.CloseSession(previousSessionID)
+			}
+		}
+
+		// Apply execution context (sets orchestrator state, including selectedRunFolder)
+		// This MUST be done before setting session ID so that Downloads path override uses correct run folder
 		execManager.ApplyExecutionContext(groupSetup)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] After ApplyExecutionContext - selectedRunFolder: '%s', runFolder: '%s'", hcpo.selectedRunFolder, runFolder))
+
+		// CRITICAL FIX: Generate a unique session ID for each workflow group
+		// This ensures each group gets its own MCP connections (e.g., Playwright browser)
+		// with the correct Downloads path. Without this, all groups share the same session ID
+		// and reuse connections created with the first group's Downloads path.
+		//
+		// IMPORTANT: Agents within the SAME group share connections (this is correct behavior).
+		// The session ID change ensures each GROUP gets its own isolated connections.
+		groupSessionID := fmt.Sprintf("session-group-%s-%d", group.GroupID, time.Now().UnixNano())
+		hcpo.sessionID = groupSessionID
+		hcpo.BaseOrchestrator.SetMCPSessionID(groupSessionID)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Generated unique MCP session ID for group %s: %s (run folder: %s)", group.GroupID, groupSessionID, hcpo.selectedRunFolder))
+
+		// Close MCP session after this group completes to free resources (browser profiles, etc.)
+		// Use defer to ensure cleanup even if execution fails
+		defer func() {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔗 Closing MCP session for group %s: %s", group.GroupID, groupSessionID))
+			mcpagent.CloseSession(groupSessionID)
+		}()
+
+		// Update batch context for step_progress_updated events
+		hcpo.currentGroupId = group.GroupID
+		hcpo.currentGroupIdx = groupIndex
+		hcpo.totalGroups = totalGroups
+
+		// Also set batch context on context-aware bridge so ALL events get batch info in metadata
+		if bridge := hcpo.GetContextAwareBridge(); bridge != nil {
+			if batchBridge, ok := bridge.(interface {
+				SetBatchContext(groupID string, groupIndex int, totalGroups int)
+			}); ok {
+				batchBridge.SetBatchContext(group.GroupID, groupIndex, totalGroups)
+			}
+		}
 
 		// Emit batch group start event
 		hcpo.emitBatchGroupStartEvent(ctx, group.GroupID, groupIndex, totalGroups, group.Values, runFolder, iteration)
@@ -342,6 +402,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 
 	// Emit batch execution end event
 	hcpo.emitBatchExecutionEndEvent(ctx, result, iteration)
+
+	// Clear batch context on context-aware bridge (cleanup after batch ends)
+	if bridge := hcpo.GetContextAwareBridge(); bridge != nil {
+		if batchBridge, ok := bridge.(interface {
+			ClearBatchContext()
+		}); ok {
+			batchBridge.ClearBatchContext()
+		}
+	}
 
 	if result.Success {
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Batch execution completed: %d/%d groups succeeded in %v", result.CompletedGroups, totalGroups, result.Duration))
@@ -478,21 +547,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) sanitizeDisplayNameForFolder(displayN
 
 // createGroupRunFolder creates the run folder path for a specific group
 // Uses display_name if available (sanitized), otherwise falls back to group_id
+// ALWAYS uses nested structure (iteration-X/group) regardless of number of groups
 func (hcpo *StepBasedWorkflowOrchestrator) createGroupRunFolder(baseIterationFolder, groupID, displayName string, totalGroups int) string {
-	if totalGroups > 1 {
-		// Multiple groups - use nested structure
-		// Try to use sanitized display_name, fall back to group_id
-		folderName := groupID
-		if displayName != "" {
-			sanitized := hcpo.sanitizeDisplayNameForFolder(displayName)
-			if sanitized != "" {
-				folderName = sanitized
-			}
+	// ALWAYS use nested structure - try to use sanitized display_name, fall back to group_id
+	folderName := groupID
+	if displayName != "" {
+		sanitized := hcpo.sanitizeDisplayNameForFolder(displayName)
+		if sanitized != "" {
+			folderName = sanitized
 		}
-		return fmt.Sprintf("%s/%s", baseIterationFolder, folderName)
 	}
-	// Single group - use base folder directly
-	return baseIterationFolder
+	return fmt.Sprintf("%s/%s", baseIterationFolder, folderName)
 }
 
 // getNextIterationNumber determines the next iteration number for batch execution
@@ -536,12 +601,74 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitBatchExecutionStartEvent(ctx cont
 		return
 	}
 
-	event := events.NewBatchExecutionStartEvent(totalGroups, enabledGroupIDs, iteration, hcpo.GetWorkspacePath())
+	// Convert execution options to map for event
+	var executionOptionsMap map[string]interface{}
+	if hcpo.executionOptions != nil {
+		executionOptionsMap = hcpo.executionOptionsToMap()
+	}
+
+	event := events.NewBatchExecutionStartEvent(totalGroups, enabledGroupIDs, iteration, hcpo.GetWorkspacePath(), executionOptionsMap)
 	bridge.HandleEvent(ctx, &baseevents.AgentEvent{
 		Type:      events.BatchExecutionStart,
 		Timestamp: time.Now(),
 		Data:      event,
 	})
+}
+
+// executionOptionsToMap converts ExecutionOptions to a map for event serialization
+func (hcpo *StepBasedWorkflowOrchestrator) executionOptionsToMap() map[string]interface{} {
+	if hcpo.executionOptions == nil {
+		return nil
+	}
+
+	opts := hcpo.executionOptions
+	result := make(map[string]interface{})
+
+	if opts.RunMode != "" {
+		result["run_mode"] = opts.RunMode
+	}
+	if opts.SelectedRunFolder != "" {
+		result["selected_run_folder"] = opts.SelectedRunFolder
+	}
+	if opts.ExecutionStrategy != "" {
+		result["execution_strategy"] = opts.ExecutionStrategy
+	}
+	if opts.ResumeFromStep > 0 {
+		result["resume_from_step"] = opts.ResumeFromStep
+	}
+	if opts.ResumeFromBranchStep != nil {
+		result["resume_from_branch_step"] = map[string]interface{}{
+			"parent_step_index": opts.ResumeFromBranchStep.ParentStepIndex,
+			"branch_type":       opts.ResumeFromBranchStep.BranchType,
+			"branch_step_index": opts.ResumeFromBranchStep.BranchStepIndex,
+		}
+	}
+	if opts.FastExecuteEndStep > 0 {
+		result["fast_execute_end_step"] = opts.FastExecuteEndStep
+	}
+	if opts.PlanChangeAction != "" {
+		result["plan_change_action"] = opts.PlanChangeAction
+	}
+	if opts.AllStepsCompletedAction != "" {
+		result["all_steps_completed_action"] = opts.AllStepsCompletedAction
+	}
+	if opts.TempOverrideLLM != nil {
+		result["temp_override_llm"] = map[string]interface{}{
+			"provider": opts.TempOverrideLLM.Provider,
+			"model_id": opts.TempOverrideLLM.ModelID,
+		}
+	}
+	if opts.TempOverrideLLM2 != nil {
+		result["temp_override_llm2"] = map[string]interface{}{
+			"provider": opts.TempOverrideLLM2.Provider,
+			"model_id": opts.TempOverrideLLM2.ModelID,
+		}
+	}
+	if opts.FallbackToOriginalLLMOnFailure {
+		result["fallback_to_original_llm_on_failure"] = opts.FallbackToOriginalLLMOnFailure
+	}
+
+	return result
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) emitBatchGroupStartEvent(ctx context.Context, groupID string, groupIndex, totalGroups int, variableValues map[string]string, runFolder string, iteration int) {

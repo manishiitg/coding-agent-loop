@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -85,6 +86,12 @@ func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, 
 		return "", false, fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
 
+	// Check if file doesn't exist (API returns Success: true but with error/message)
+	if strings.Contains(apiResp.Message, "File does not exist") ||
+		strings.Contains(apiResp.Error, "File not found") {
+		return "", false, nil // File doesn't exist, not an error
+	}
+
 	// Extract content from response
 	var content string
 	if fileContent, ok := apiResp.Data.(virtualtools.WorkspaceFileContent); ok {
@@ -96,6 +103,9 @@ func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, 
 	}
 
 	if content == "" {
+		// Debug logging to see actual response structure
+		dataBytes, _ := json.Marshal(apiResp.Data)
+		log.Printf("[DEBUG] readFileFromWorkspace: Failed to extract content from response. FilePath: %s, Response Data: %s", filePath, string(dataBytes))
 		return "", false, fmt.Errorf("failed to extract content from API response")
 	}
 
@@ -553,15 +563,17 @@ type ExecutionOptions struct {
 	SkipLearningWhenTempLLM1 bool `json:"skip_learning_when_temp_llm1,omitempty"` // If true, skip learning phases when tempLLM1 is used (default: false, learning runs)
 	SkipLearningWhenTempLLM2 bool `json:"skip_learning_when_temp_llm2,omitempty"` // If true, skip learning phases when tempLLM2 is used (default: false, learning runs)
 
+	// Temporary LLM for learning agents (optional, used when learnings already exist for a step)
+	// If learnings exist for a step_id, use TempLearningLLM if configured
+	// If no learnings exist (new learning), always use default LLM (step config → preset)
+	TempLearningLLM *AgentLLMConfig `json:"temp_learning_llm,omitempty"`
+
 	// Variable group execution options (for batch execution with multiple groups)
 	EnabledGroupIDs []string `json:"enabled_group_ids,omitempty"` // Group IDs to execute (if empty, uses groups' enabled flags)
 
 	// Logging options
 	SaveValidationResponses bool `json:"save_validation_responses,omitempty"` // If true, save validation responses and execution logs to workspace (default: true)
 
-	// Tool access control (global configuration)
-	DisableShellExecAccess bool `json:"disable_shell_exec_access,omitempty"` // If true, disable execute_shell_command tool access globally
-	DisableReadImageAccess bool `json:"disable_read_image_access,omitempty"` // If true, disable read_image tool access globally
 }
 
 // AgentLLMConfig represents LLM configuration for an agent (matches controller type)
@@ -1699,21 +1711,14 @@ func (api *StreamingAPI) handleDeleteStepLearnings(w http.ResponseWriter, r *htt
 		return
 	}
 
-	stepNumberStr := r.URL.Query().Get("step_number")
-	if stepNumberStr == "" {
-		http.Error(w, "step_number parameter is required", http.StatusBadRequest)
+	stepID := r.URL.Query().Get("step_id")
+	if stepID == "" {
+		http.Error(w, "step_id parameter is required", http.StatusBadRequest)
 		return
 	}
 
-	// Validate step number (must be a positive integer)
-	var stepNumber int
-	if _, err := fmt.Sscanf(stepNumberStr, "%d", &stepNumber); err != nil || stepNumber < 1 {
-		http.Error(w, "step_number must be a positive integer", http.StatusBadRequest)
-		return
-	}
-
-	// Construct learnings folder path: {workspacePath}/learnings/step-{stepNumber}
-	learningsPath := fmt.Sprintf("%s/learnings/step-%d", workspacePath, stepNumber)
+	// Construct learnings folder path: {workspacePath}/learnings/{stepID}
+	learningsPath := fmt.Sprintf("%s/learnings/%s", workspacePath, stepID)
 
 	// URL-encode the folder path segments
 	pathSegments := strings.Split(learningsPath, "/")
@@ -1749,7 +1754,7 @@ func (api *StreamingAPI) handleDeleteStepLearnings(w http.ResponseWriter, r *htt
 		// Folder doesn't exist - return success (idempotent)
 		response := map[string]interface{}{
 			"success": true,
-			"message": fmt.Sprintf("Learnings folder for step %d does not exist (already deleted)", stepNumber),
+			"message": fmt.Sprintf("Learnings folder for step %s does not exist (already deleted)", stepID),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -1777,7 +1782,7 @@ func (api *StreamingAPI) handleDeleteStepLearnings(w http.ResponseWriter, r *htt
 	// Success response
 	response := map[string]interface{}{
 		"success": true,
-		"message": fmt.Sprintf("Successfully deleted learnings for step %d", stepNumber),
+		"message": fmt.Sprintf("Successfully deleted learnings for step %s", stepID),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1886,23 +1891,51 @@ func (api *StreamingAPI) handleGetAllStepLearnings(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Read step configs to get agent configs (use_code_execution_mode, learning_detail_level)
+	stepConfigs, err := readStepConfigFromWorkspace(r.Context(), workspacePath)
+	if err != nil {
+		// Log warning but continue - step configs may not exist
+		log.Printf("Warning: Failed to read step configs: %v", err)
+	}
+
+	// Create a map from step ID to agent configs
+	stepConfigMap := make(map[string]*todo_creation_human.AgentConfigs)
+	for _, config := range stepConfigs {
+		if config.ID != "" && config.AgentConfigs != nil {
+			stepConfigMap[config.ID] = config.AgentConfigs
+		}
+	}
+
 	// Collect all step IDs recursively
 	stepIDs := collectAllStepIDs(plan.Steps)
 
-	// Read learning metadata for each step ID
 	learningsMap := make(map[string]interface{})
 	for _, stepID := range stepIDs {
 		metadata, err := readLearningMetadataForStep(r.Context(), workspacePath, stepID)
 		if err != nil {
-			// Log error but continue with other steps
-			fmt.Printf("Warning: Failed to read learning metadata for step %s: %v\n", stepID, err)
-			learningsMap[stepID] = nil
-		} else {
-			learningsMap[stepID] = metadata
+			log.Printf("Warning: Failed to read learning metadata for step %s: %v", stepID, err)
+			metadata = nil
 		}
+
+		// Merge step config data into metadata
+		if agentConfigs, found := stepConfigMap[stepID]; found && agentConfigs != nil {
+			if metadata == nil {
+				metadata = make(map[string]interface{})
+			}
+			if agentConfigs.UseCodeExecutionMode != nil {
+				metadata["use_code_execution_mode"] = *agentConfigs.UseCodeExecutionMode
+			}
+			if agentConfigs.LearningDetailLevel != "" {
+				metadata["learning_detail_level"] = agentConfigs.LearningDetailLevel
+			}
+			if agentConfigs.LockLearnings != nil {
+				metadata["lock_learnings"] = *agentConfigs.LockLearnings
+			}
+		}
+
+		learningsMap[stepID] = metadata
 	}
 
-	// Return response
 	response := map[string]interface{}{
 		"success":   true,
 		"learnings": learningsMap,
@@ -3500,6 +3533,27 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 	getStepEntry := func(stepId string) map[string]interface{} {
 		if _, exists := stepsLogs[stepId]; !exists {
 			meta := stepMetadata[stepId]
+
+			// If metadata not found, try stripping iteration suffix (e.g. "step-1-sub-agent-1-i-2" -> "step-1-sub-agent-1")
+			if meta == nil {
+				// Check for -i-{N} suffix
+				if idx := strings.LastIndex(stepId, "-i-"); idx > 0 {
+					baseId := stepId[:idx]
+					// Verify it's followed by digits
+					suffix := stepId[idx+3:]
+					isDigit := true
+					for _, c := range suffix {
+						if c < '0' || c > '9' {
+							isDigit = false
+							break
+						}
+					}
+					if isDigit && len(suffix) > 0 {
+						meta = stepMetadata[baseId]
+					}
+				}
+			}
+
 			title := stepId
 			desc := ""
 			originalId := ""
@@ -3984,9 +4038,22 @@ func (api *StreamingAPI) handleGetCosts(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// Also try to read evaluation token_usage.json
+	var evaluationTokenUsage interface{} = nil
+	if runFolder != "" && runFolder != "new" {
+		evalTokenUsagePath := fmt.Sprintf("%s/evaluation/runs/%s/token_usage.json", cleanedWorkspacePath, runFolder)
+		content, exists, _ := readFileFromWorkspace(r.Context(), evalTokenUsagePath)
+		if exists {
+			if err := json.Unmarshal([]byte(content), &evaluationTokenUsage); err != nil {
+				fmt.Printf("Error unmarshalling evaluation token usage from %s: %v\n", evalTokenUsagePath, err)
+			}
+		}
+	}
+
 	response := map[string]interface{}{
-		"success":     true,
-		"token_usage": tokenUsage,
+		"success":                true,
+		"token_usage":            tokenUsage,
+		"evaluation_token_usage": evaluationTokenUsage,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -4125,10 +4192,11 @@ func (api *StreamingAPI) handleGetEvaluationReports(w http.ResponseWriter, r *ht
 	}
 
 	type Response struct {
-		Success   bool                    `json:"success"`
-		Reports   []EvaluationReportEntry `json:"reports"`
-		Aggregate *EvaluationAggregate    `json:"aggregate,omitempty"`
-		Error     string                  `json:"error,omitempty"`
+		Success        bool                    `json:"success"`
+		Reports        []EvaluationReportEntry `json:"reports"`
+		Aggregate      *EvaluationAggregate    `json:"aggregate,omitempty"`
+		EvaluationPlan *string                 `json:"evaluation_plan,omitempty"`
+		Error          string                  `json:"error,omitempty"`
 	}
 
 	// List evaluation run folders
@@ -4155,9 +4223,34 @@ func (api *StreamingAPI) handleGetEvaluationReports(w http.ResponseWriter, r *ht
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		// No evaluation runs folder exists yet - return empty response
+		// No evaluation runs folder exists yet - still try to read evaluation plan
+		var evaluationPlan *string
+		evaluationPlanPath := fmt.Sprintf("%s/evaluation/evaluation_plan.json", cleanedWorkspacePath)
+		planContent, exists, err := readFileFromWorkspace(r.Context(), evaluationPlanPath)
+		if err == nil && exists {
+			// Try to format the JSON if it's valid JSON
+			var planJSON interface{}
+			if err := json.Unmarshal([]byte(planContent), &planJSON); err == nil {
+				// Re-marshal with indentation for pretty printing
+				if formatted, err := json.MarshalIndent(planJSON, "", "  "); err == nil {
+					formattedStr := string(formatted)
+					evaluationPlan = &formattedStr
+				} else {
+					// If formatting fails, use original content
+					evaluationPlan = &planContent
+				}
+			} else {
+				// If not valid JSON, use as-is
+				evaluationPlan = &planContent
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Response{Success: true, Reports: []EvaluationReportEntry{}})
+		json.NewEncoder(w).Encode(Response{
+			Success:        true,
+			Reports:        []EvaluationReportEntry{},
+			EvaluationPlan: evaluationPlan,
+		})
 		return
 	}
 
@@ -4301,10 +4394,33 @@ func (api *StreamingAPI) handleGetEvaluationReports(w http.ResponseWriter, r *ht
 		}
 	}
 
+	// Read evaluation plan if it exists
+	var evaluationPlan *string
+	evaluationPlanPath := fmt.Sprintf("%s/evaluation/evaluation_plan.json", cleanedWorkspacePath)
+	planContent, exists, err := readFileFromWorkspace(r.Context(), evaluationPlanPath)
+	if err == nil && exists {
+		// Try to format the JSON if it's valid JSON
+		var planJSON interface{}
+		if err := json.Unmarshal([]byte(planContent), &planJSON); err == nil {
+			// Re-marshal with indentation for pretty printing
+			if formatted, err := json.MarshalIndent(planJSON, "", "  "); err == nil {
+				formattedStr := string(formatted)
+				evaluationPlan = &formattedStr
+			} else {
+				// If formatting fails, use original content
+				evaluationPlan = &planContent
+			}
+		} else {
+			// If not valid JSON, use as-is
+			evaluationPlan = &planContent
+		}
+	}
+
 	response := Response{
-		Success:   true,
-		Reports:   reports,
-		Aggregate: aggregate,
+		Success:        true,
+		Reports:        reports,
+		Aggregate:      aggregate,
+		EvaluationPlan: evaluationPlan,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

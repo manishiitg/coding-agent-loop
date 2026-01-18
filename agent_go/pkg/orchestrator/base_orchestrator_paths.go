@@ -53,34 +53,8 @@ func validatePathInWorkspace(workspacePath, inputPath string) error {
 	}
 	inputAbs = filepath.Clean(inputAbs)
 
-	// Special exception: Allow Downloads directory to bypass workspace boundary check
-	// Downloads is a common directory that should be accessible regardless of workspace restrictions
-	// Check if the path contains "Downloads" as a directory component (not just as part of a filename)
+	// Convert inputAbs to slash format for consistent comparison
 	inputAbsSlash := filepath.ToSlash(inputAbs)
-	inputPathSlash := filepath.ToSlash(inputPath)
-
-	// Check if path is in Downloads directory (allow "Downloads", "Downloads/...", or paths containing "/Downloads/")
-	// But still prevent directory traversal attacks like "../../Downloads"
-	isDownloadsPath := false
-	if strings.HasPrefix(inputPathSlash, "Downloads/") || inputPathSlash == "Downloads" {
-		// Direct Downloads path - allow it (no directory traversal)
-		isDownloadsPath = true
-	} else if strings.Contains(inputAbsSlash, "/Downloads/") || strings.HasSuffix(inputAbsSlash, "/Downloads") {
-		// Path contains Downloads directory - check it's not a directory traversal attack
-		if !strings.Contains(inputPathSlash, "../") && !strings.Contains(inputPathSlash, "..\\") {
-			isDownloadsPath = true
-		}
-	}
-
-	// If it's a Downloads path, skip workspace boundary validation
-	if isDownloadsPath {
-		// Final safety check: prevent any directory traversal attempts
-		if strings.Contains(inputPathSlash, "../") || strings.Contains(inputPathSlash, "..\\") {
-			return fmt.Errorf("path '%s' contains directory traversal and cannot be used even for Downloads directory", inputPath)
-		}
-		// Allow Downloads paths
-		return nil
-	}
 
 	// Check if input path is within workspace boundary
 	// First, verify that inputAbs actually has workspaceAbs as a prefix with proper path separator

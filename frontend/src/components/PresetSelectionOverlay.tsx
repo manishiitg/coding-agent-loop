@@ -26,7 +26,12 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
   const { addPreset, deletePreset, customPresets } = usePresetManagement()
   const { getPresetsForMode } = usePresetApplication()
   const { getAgentModeFromCategory } = useModeStore()
-  const { enabledServers } = useMCPStore()
+  // Use toolList to get all available servers, not just enabled ones
+  const toolList = useMCPStore(state => state.toolList)
+  const availableServers = React.useMemo(() => 
+    [...new Set(toolList.map(t => t.server).filter(Boolean) as string[])],
+    [toolList]
+  )
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null)
   const [isPresetModalOpen, setIsPresetModalOpen] = useState(false)
 
@@ -89,7 +94,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     if (process.env.NODE_ENV === 'development') {
       console.debug('[PRESET_SELECTION] Creating preset with servers:', selectedServers)
       console.debug('[PRESET_SELECTION] Creating preset with tools:', selectedTools)
-      console.debug('[PRESET_SELECTION] Available servers:', enabledServers)
+      console.debug('[PRESET_SELECTION] Available servers:', availableServers)
     }
     
     try {
@@ -206,7 +211,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
               </button>
             </div>
           ) : (
-            <div className="space-y-2 max-h-64 overflow-y-auto">
+            <div className="space-y-2 max-h-96 overflow-y-auto">
               {presets.map((preset) => (
                 <div
                   key={preset.id}
@@ -293,7 +298,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
         onClose={handlePresetModalClose}
         onSave={handlePresetSave}
         editingPreset={null}
-        availableServers={enabledServers}
+        availableServers={availableServers}
         hideAgentModeSelection={true}
         fixedAgentMode={getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'workflow'}
       />

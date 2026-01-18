@@ -42,10 +42,12 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 1. **Source of Truth**: The **Step Description** defines WHAT to do. It ALWAYS overrides learnings.
 2. **Workspace Paths**:
    - **Go Code**: 'basePath := os.Args[1]'. ALWAYS use 'filepath.Join(basePath, "relative/path")'.
+   - **Warning**: 'basePath' ALREADY contains the full execution path (e.g., '.../execution'). **DO NOT** re-append 'Workflow/...' or the full project path to it. Use short relative paths (e.g., "step-6/file.json").
    - **Tool Args**: Pass '{{.WorkspacePath}}' as the first argument in 'args'.
    - **NEVER hardcode absolute paths** (e.g., /Users/...) as they change between runs.
 3. **Pre-requisites**: Read all **Context Dependencies** before execution. They are inputs.
 4. **Mandatory Output**: Create '{{.StepExecutionPath}}/{{.StepContextOutput}}' matching the provided schema.
+5. **File Existence**: 'ReadWorkspaceFile' **PANICS** if the file is missing (it does NOT return an error string). **ALWAYS** use 'ListWorkspaceFiles' to verify existence before reading.
 
 {{if .PreviousStepsSummary}}
 ## 📋 Previous Steps Summary
@@ -75,12 +77,13 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 {{end}}
 {{end}}
 
-## 📁 File System Access
-- **READ**: 'learnings/', 'execution/' (previous steps), 'knowledgebase/'.
-- **WRITE/CLEANUP**:
+## 📁 File System Access (Folder Guard Enforced)
+**Allowed READ paths**: {{.FolderGuardReadPaths}}
+**Allowed WRITE paths**: {{.FolderGuardWritePaths}}
+
 - **Step Folder**: '{{.StepExecutionPath}}/' - **VOLATILE**. Deleted on re-execution/restart. Only write your primary results here.
-- **Knowledgebase**: '{{.KnowledgebasePath}}/' - **PERSISTENT**. Shared across all runs. Use for templates, reference data, or global configs that must survive across execution attempts. Path validation is enforced.
-- **Rule**: Read from any allowed folder (learnings, execution, knowledgebase), but only write to your specific step folder or the persistent knowledgebase.
+{{if eq .UseKnowledgebase "true"}}- **Knowledgebase**: '{{.KnowledgebasePath}}/' - **PERSISTENT**. Shared across all runs. Use for templates, reference data, or global configs that must survive across execution attempts.
+{{end}}- **Rule**: Use the EXACT paths above. Read from any allowed read path, write only to allowed write paths. Path validation is strictly enforced.
 
 {{if .HasLoop}}
 ## 🔄 Loop Execution
@@ -92,6 +95,7 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 {{if .IsCodeExecutionMode}}
 ## 💻 Advanced Code Patterns
 - **JSON Safety**: Read dependencies FIRST, define Go structs matching their JSON tags, then parse.
+- **Robust Parsing**: For CSV/Delimited text, **NEVER** use simple 'strings.Split' if fields might contain delimiters (e.g., descriptions with commas). Use **Regex** or 'csv.Reader' to handle complex data reliably.
 - **Verification**: Programmatically verify success. Print "✅ PASS: [detail]" or "❌ FAIL: [reason]" + 'os.Exit(1)'.
 - **Repeatability**: Write one comprehensive program with helper functions rather than fragmented scripts.
 {{end}}
@@ -253,7 +257,8 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	if isCodeExecutionMode {
 		// Get the reusable instructions - keep {{TOOL_STRUCTURE}} placeholder
 		// agent.go will automatically replace it with actual tool structure when SetSystemPrompt is called
-		codeExecutionInstructions = prompt.GetCodeExecutionInstructions()
+		// Pass workspacePath so {{.WorkspacePath}} is substituted with actual path in examples
+		codeExecutionInstructions = prompt.GetCodeExecutionInstructions(workspacePath)
 	}
 
 	// Get variable names and values for system prompt
@@ -262,6 +267,8 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	prerequisiteRulesInfo := templateVars["PrerequisiteRulesInfo"]
 	decisionEvaluationQuestion := templateVars["DecisionEvaluationQuestion"]
 	validationSchema := templateVars["ValidationSchema"] // Validation schema JSON string
+	folderGuardReadPaths := templateVars["FolderGuardReadPaths"]
+	folderGuardWritePaths := templateVars["FolderGuardWritePaths"]
 
 	// Execute the pre-parsed template
 	var result strings.Builder
@@ -283,8 +290,10 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"OtherAgentsCapabilities":    otherAgentsCapabilities,
 		"PrerequisiteRulesInfo":      prerequisiteRulesInfo,
 		"DecisionEvaluationQuestion": decisionEvaluationQuestion,
-		"ValidationSchema":           validationSchema,  // Validation schema JSON string
-		"KnowledgebasePath":          knowledgebasePath, // Knowledgebase folder path
+		"ValidationSchema":           validationSchema,       // Validation schema JSON string
+		"KnowledgebasePath":          knowledgebasePath,      // Knowledgebase folder path
+		"FolderGuardReadPaths":       folderGuardReadPaths,   // Folder guard read paths for agent guidance
+		"FolderGuardWritePaths":      folderGuardWritePaths,  // Folder guard write paths for agent guidance
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution-only system prompt template: %v", err)

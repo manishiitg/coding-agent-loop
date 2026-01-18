@@ -4,7 +4,7 @@ import dagre from 'dagre'
 import type { PlanStep, PlanningResponse, AgentConfigs, AgentLLMConfig, PrerequisiteRule, ValidationSchema } from '../../../utils/stepConfigMatching'
 import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep, isHumanInputStep } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
-import type { VariablesManifest } from '../../../services/api-types'
+import type { VariablesManifest, EvaluationStep } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import type { ExecutionSettingsNodeData } from '../nodes/ExecutionSettingsNode'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
@@ -157,7 +157,23 @@ export interface EvaluationNodeData extends Record<string, unknown> {
   llmModel?: string  // LLM model name
 }
 
-export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | HumanInputNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData
+export interface EvaluationStepNodeData extends Record<string, unknown> {
+  id: string
+  title: string
+  description?: string
+  success_criteria?: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  stepIndex: number
+  step: EvaluationStep
+  onRunFromStep?: OnRunFromStepCallback
+  onOpenSidebar?: OnOpenSidebarCallback
+  isExecuting?: boolean
+  workspacePath?: string | null
+  selectedRunFolder?: string
+  isEvaluationStep: boolean
+}
+
+export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | HumanInputNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData | EvaluationStepNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -187,112 +203,52 @@ interface UsePlanToFlowOptions {
 // Dagre layout configuration
 const DAGRE_CONFIG = {
   rankdir: 'LR', // Left to right (tree layout)
-  // Increased spacing for complex workflows (orchestrator, conditionals, loops)
-  nodesep: 600,  // Vertical spacing between nodes in same rank (increased from 550 for markdown rendering)
-  ranksep: 220,  // Horizontal spacing between ranks (columns) (increased from 120)
-  marginx: 80,   // Increased margins for better edge spacing
+  nodesep: 500,  // Vertical spacing between nodes in same rank (increased for general spacing)
+  ranksep: 200,  // Horizontal spacing between ranks (columns)
+  marginx: 80,
   marginy: 80
 }
 
-// Node dimensions for layout calculation (base dimensions)
+// Node dimensions for layout calculation (base dimensions) - smaller since content is simplified
 const NODE_DIMENSIONS = {
-  step: { width: 340, height: 200 },
-  conditional: { width: 300, height: 160 },
-  decision: { width: 300, height: 180 },  // Decision step node (similar to conditional but shows inner step)
-  orchestrator: { width: 360, height: 250 },   // Orchestrator step node (shows orchestrator and sub-agents)
-  human_input: { width: 320, height: 180 },  // Human input step node
-  loop: { width: 360, height: 280 },
-  validation: { width: 120, height: 50 },
-  learning: { width: 120, height: 50 },
+  step: { width: 280, height: 120 },
+  conditional: { width: 240, height: 100 },
+  decision: { width: 260, height: 120 },
+  orchestrator: { width: 300, height: 120 },
+  human_input: { width: 260, height: 120 },
+  loop: { width: 300, height: 140 },
   start: { width: 80, height: 36 },
   end: { width: 80, height: 36 },
-  variables: { width: 260, height: 180 },
-  'execution-settings': { width: 240, height: 120 }
-}
-
-/**
- * Estimate markdown overhead (extra spacing from markdown rendering)
- * Counts lists, code blocks, headings, and paragraphs to estimate extra height
- */
-function estimateMarkdownOverhead(text: string): number {
-  if (!text || typeof text !== 'string') return 0
-
-  let overhead = 0
-
-  // Count paragraphs (each has ~8px bottom margin)
-  const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim().length > 0)
-  overhead += paragraphs.length * 8
-
-  // Count list items (each has ~4px spacing)
-  const listItems = (text.match(/^[\s]*[-*+]\s/gm) || []).length + (text.match(/^[\s]*\d+\.\s/gm) || []).length
-  overhead += listItems * 4
-
-  // Count code blocks (each has ~16px padding)
-  const codeBlocks = (text.match(/```[\s\S]*?```/g) || []).length
-  overhead += codeBlocks * 16
-
-  // Count headings (each has ~12px margin)
-  const headings = (text.match(/^#{1,6}\s/gm) || []).length
-  overhead += headings * 12
-
-  return overhead
+  variables: { width: 220, height: 120 },
+  'execution-settings': { width: 200, height: 100 }
 }
 
 /**
  * Estimate node height based on content
- * This accounts for dynamic content like descriptions, success criteria, validation schemas, etc.
- * Now includes markdown rendering overhead (paragraph margins, list spacing, code blocks, etc.)
+ * Simplified version - nodes no longer show description, success criteria, or validation schema
+ * Only accounts for: context files, prerequisite rules, loop conditions
  */
 function estimateNodeHeight(node: WorkflowNode): number {
   const baseDimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
   let estimatedHeight = baseDimensions.height
 
-  // Get node data (union of all possible node data types)
+  // Get node data
   const data = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | Record<string, unknown>
 
-  // Base height components (header, padding, footer)
-  const headerHeight = 80 // Header with buttons
-  const footerHeight = 60 // Config footer
-  const padding = 24 // Top and bottom padding (py-3 = 12px each)
+  // Base height components (header, padding, footer) - simplified
+  const headerHeight = 60 // Header with buttons
+  const footerHeight = 40 // Config footer
+  const padding = 16 // Top and bottom padding
 
-  // Content height estimation
+  // Content height estimation - only for context files and prerequisite rules
   let contentHeight = 0
 
-  // Line height increased from 20px to 24px to account for markdown spacing
-  const LINE_HEIGHT = 24 // Increased for markdown rendering (paragraph margins, list spacing, etc.)
-  const CHARS_PER_LINE = 60 // Approximate characters per line at 12px font
-
-  // Description text (estimate ~24px per line, ~60 chars per line at 12px font)
-  if ('description' in data && typeof data.description === 'string' && data.description) {
-    const descLines = Math.ceil(data.description.length / CHARS_PER_LINE)
-    const baseDescHeight = Math.max(descLines * LINE_HEIGHT, 30)
-    const markdownOverhead = estimateMarkdownOverhead(data.description)
-    contentHeight += baseDescHeight + markdownOverhead + 12 // min 30px + markdown overhead + spacing
-  }
-
-  // Success criteria (box with padding)
-  if ('success_criteria' in data && typeof data.success_criteria === 'string' && data.success_criteria) {
-    const criteriaLines = Math.ceil(data.success_criteria.length / CHARS_PER_LINE)
-    const baseCriteriaHeight = Math.max(criteriaLines * LINE_HEIGHT, 50)
-    const markdownOverhead = estimateMarkdownOverhead(data.success_criteria)
-    contentHeight += baseCriteriaHeight + markdownOverhead + 12 // min 50px + markdown overhead + spacing
-  }
-
-  // Validation schema
-  if ('validation_schema' in data && data.validation_schema && typeof data.validation_schema === 'object') {
-    const validationSchema = data.validation_schema as ValidationSchema
-    if (validationSchema.files && Array.isArray(validationSchema.files) && validationSchema.files.length > 0) {
-      const fileCount = validationSchema.files.length
-      contentHeight += 60 + (fileCount * 20) + 12 // Base + per file + spacing
-    }
-  }
-
-  // Prerequisite rules (from step.agent_configs)
+  // Prerequisite rules and context files (from step.agent_configs)
   if ('step' in data && data.step && typeof data.step === 'object') {
     const step = data.step as PlanStep
     if (step.agent_configs?.enable_prerequisite_detection && step.agent_configs?.prerequisite_rules) {
       const ruleCount = step.agent_configs.prerequisite_rules.length
-      contentHeight += (ruleCount * 60) + 12 // ~60px per rule + spacing
+      contentHeight += (ruleCount * 40) + 8 // ~40px per rule + spacing
     }
 
     // Context files (inputs and outputs)
@@ -303,40 +259,23 @@ function estimateNodeHeight(node: WorkflowNode): number {
       : (contextOutput ? [contextOutput] : [])
     if (contextInputs.length > 0 || contextOutputs.length > 0) {
       const totalFiles = contextInputs.length + contextOutputs.length
-      contentHeight += 30 + (totalFiles * 25) + 12 // Base + per file + spacing
+      contentHeight += 20 + (totalFiles * 20) + 8 // Base + per file + spacing
     }
   }
 
-  // For orchestrator nodes, add extra height for sub-agents section
-  if (node.type === 'orchestrator') {
-    contentHeight += 40 // Extra space for orchestration info
-  }
-
-  // For conditional nodes, add height for condition question
-  if (node.type === 'conditional' && 'condition_question' in data && typeof data.condition_question === 'string' && data.condition_question) {
-    const questionLines = Math.ceil(data.condition_question.length / 50)
-    const baseQuestionHeight = Math.max(questionLines * LINE_HEIGHT, 40)
-    const markdownOverhead = estimateMarkdownOverhead(data.condition_question)
-    contentHeight += baseQuestionHeight + markdownOverhead + 12
-  }
-
-  // For loop nodes, add height for iteration info
+  // For loop nodes, add height for loop condition
   if (node.type === 'loop') {
-    contentHeight += 40 // Loop iteration badge and info
-    // Also check for loop_condition if it exists
+    contentHeight += 30 // Loop iteration badge
     if ('loop_condition' in data && typeof data.loop_condition === 'string' && data.loop_condition) {
-      const loopLines = Math.ceil(data.loop_condition.length / CHARS_PER_LINE)
-      const baseLoopHeight = Math.max(loopLines * LINE_HEIGHT, 30)
-      const markdownOverhead = estimateMarkdownOverhead(data.loop_condition)
-      contentHeight += baseLoopHeight + markdownOverhead + 12
+      contentHeight += 40 // Loop condition box
     }
   }
 
   // Calculate total estimated height
   estimatedHeight = headerHeight + padding + contentHeight + footerHeight
 
-  // Add safety margin (40% extra) to account for text wrapping, badges, markdown rendering overhead, etc.
-  estimatedHeight = Math.ceil(estimatedHeight * 1.4)
+  // Add safety margin (20% extra) - reduced from 40% since nodes are simpler
+  estimatedHeight = Math.ceil(estimatedHeight * 1.2)
 
   // Ensure minimum height
   estimatedHeight = Math.max(estimatedHeight, baseDimensions.height)
@@ -345,98 +284,119 @@ function estimateNodeHeight(node: WorkflowNode): number {
 }
 
 /**
- * Post-process layout to fix overlapping conditional branches
- * Ensures branches from different conditionals don't overlap vertically
+ * Calculate topology metrics to adjust layout spacing
  */
-function fixOverlappingBranches(nodes: WorkflowNode[]): WorkflowNode[] {
-  // Find all conditional nodes and their branch nodes
-  const conditionalNodes = nodes.filter(n => n.type === 'conditional')
-  const branchGroups: Array<{
-    conditionalId: string
-    conditionalNode: WorkflowNode
-    branchNodes: WorkflowNode[]
-  }> = []
+function calculateTopologyMetrics(nodes: WorkflowNode[]): { hasOrchestrator: boolean; maxOrchestratorDepth: number; maxOrchestratorSubAgents: number } {
+  let hasOrchestrator = false
+  let maxOrchestratorDepth = 0
+  let maxOrchestratorSubAgents = 0
 
-  conditionalNodes.forEach(conditionalNode => {
-    const branchNodes = nodes.filter(n =>
-      n.id.startsWith(`${conditionalNode.id}-true-`) ||
-      n.id.startsWith(`${conditionalNode.id}-false-`)
-    )
-    if (branchNodes.length > 0) {
-      branchGroups.push({
-        conditionalId: conditionalNode.id,
-        conditionalNode,
-        branchNodes
-      })
+  nodes.forEach(node => {
+    if (node.type === 'orchestrator') {
+      hasOrchestrator = true
+      const data = node.data as OrchestratorNodeData
+      const routes = data.orchestration_routes?.length || 0
+      
+      // Count actual sub-agents (excluding "end" route if strictly just counting agent steps, 
+      // but usually routes map to sub-agents. We'll count all routes for spacing safety).
+      maxOrchestratorSubAgents = Math.max(maxOrchestratorSubAgents, routes)
+      
+      maxOrchestratorDepth = Math.max(maxOrchestratorDepth, routes)
     }
   })
 
-  // If we have multiple conditional branches, check for overlaps and adjust
-  if (branchGroups.length < 2) {
-    return nodes // No need to adjust if less than 2 conditionals
-  }
+  return { hasOrchestrator, maxOrchestratorDepth, maxOrchestratorSubAgents }
+}
 
-  // Sort branch groups by their conditional node's x position (left to right)
-  branchGroups.sort((a, b) => a.conditionalNode.position.x - b.conditionalNode.position.x)
-
+/**
+ * Reposition branch nodes for conditional and decision nodes
+ * After Dagre layout, adjust Y positions so:
+ * - TRUE branch: positioned ABOVE the parent conditional
+ * - FALSE branch: positioned BELOW the parent conditional
+ * X positions from Dagre are kept (horizontal flow preserved)
+ */
+function positionBranchNodes(nodes: WorkflowNode[]): WorkflowNode[] {
   const adjustedNodes = [...nodes]
-  const nodeMap = new Map(adjustedNodes.map(n => [n.id, n]))
+  const nodeMap = new Map(adjustedNodes.map((n, i) => [n.id, { node: n, index: i }]))
 
-  // Get vertical bounds for a branch group using current adjusted positions
-  const getGroupBounds = (group: typeof branchGroups[0]): { top: number; bottom: number } | null => {
-    if (group.branchNodes.length === 0) return null
-    const positions = group.branchNodes.map(branchNode => {
-      const node = nodeMap.get(branchNode.id)!
-      const dimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-      return {
-        top: node.position.y,
-        bottom: node.position.y + dimensions.height
-      }
+  // Find conditional and decision nodes (both have TRUE/FALSE branches)
+  const branchingNodes = adjustedNodes.filter(n =>
+    n.type === 'conditional' || n.type === 'decision'
+  )
+
+  branchingNodes.forEach(parent => {
+    const parentDims = NODE_DIMENSIONS[parent.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+    const parentCenterY = parent.position.y + parentDims.height / 2
+
+    // Find TRUE branch nodes (direct children only, not nested)
+    const trueBranch = adjustedNodes.filter(n => {
+      if (!n.id.startsWith(`${parent.id}-true-`)) return false
+      // Check it's a direct child (no additional -true- or -false- after the first)
+      const suffix = n.id.substring(`${parent.id}-true-`.length)
+      return !suffix.includes('-true-') && !suffix.includes('-false-')
     })
-    return {
-      top: Math.min(...positions.map(p => p.top)),
-      bottom: Math.max(...positions.map(p => p.bottom))
+
+    // Find FALSE branch nodes (direct children only)
+    const falseBranch = adjustedNodes.filter(n => {
+      if (!n.id.startsWith(`${parent.id}-false-`)) return false
+      const suffix = n.id.substring(`${parent.id}-false-`.length)
+      return !suffix.includes('-true-') && !suffix.includes('-false-')
+    })
+
+    // Calculate dynamic offset based on branch content
+    // Check if either branch contains orchestrator nodes (which need more vertical space)
+    const trueHasOrchestrator = trueBranch.some(n => n.type === 'orchestrator')
+    const falseHasOrchestrator = falseBranch.some(n => n.type === 'orchestrator')
+    
+    // Base offset
+    let verticalOffset = 450
+    
+    // Increase offset if orchestrators are present in branches
+    // Orchestrators have sub-agents below them, requiring more vertical clearance
+    if (trueHasOrchestrator || falseHasOrchestrator) {
+      verticalOffset = 600 // Increased from 450 to 600 for orchestrators
     }
-  }
 
-  // For each branch group (after the first), ensure it doesn't overlap with previous groups
-  for (let i = 1; i < branchGroups.length; i++) {
-    const currentGroup = branchGroups[i]
-    const currentBounds = getGroupBounds(currentGroup)
-    if (!currentBounds) continue
+    console.log(`[Layout Debug] Repositioning branches for ${parent.id}: ${trueBranch.length} true, ${falseBranch.length} false. Offset: ${verticalOffset}`)
 
-    // Check overlap with all previous groups
-    let maxBottom = -Infinity
-    for (let j = 0; j < i; j++) {
-      const prevGroup = branchGroups[j]
-      const prevBounds = getGroupBounds(prevGroup)
-      if (prevBounds) {
-        maxBottom = Math.max(maxBottom, prevBounds.bottom)
-      }
-    }
+    // Reposition TRUE branch ABOVE the parent (adjust Y only, keep X from Dagre)
+    if (trueBranch.length > 0) {
+      const targetY = parentCenterY - verticalOffset
 
-    // If current group overlaps with previous groups, move it down
-    if (currentBounds.top < maxBottom) {
-      const minSeparation = 800 // Minimum vertical separation between branch groups (increased significantly)
-      const separationNeeded = maxBottom - currentBounds.top + minSeparation
-
-      // Move all nodes in current branch group down
-      currentGroup.branchNodes.forEach(branchNode => {
-        const nodeIndex = adjustedNodes.findIndex(n => n.id === branchNode.id)
-        if (nodeIndex >= 0) {
-          adjustedNodes[nodeIndex] = {
-            ...adjustedNodes[nodeIndex],
+      trueBranch.forEach(node => {
+        const info = nodeMap.get(node.id)
+        if (info) {
+          const dims = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+          adjustedNodes[info.index] = {
+            ...adjustedNodes[info.index],
             position: {
-              ...adjustedNodes[nodeIndex].position,
-              y: adjustedNodes[nodeIndex].position.y + separationNeeded
+              x: adjustedNodes[info.index].position.x, // Keep X from Dagre
+              y: targetY - dims.height / 2
             }
           }
-          // Update the map so subsequent calculations use adjusted positions
-          nodeMap.set(branchNode.id, adjustedNodes[nodeIndex])
         }
       })
     }
-  }
+
+    // Reposition FALSE branch BELOW the parent (adjust Y only, keep X from Dagre)
+    if (falseBranch.length > 0) {
+      const targetY = parentCenterY + verticalOffset
+
+      falseBranch.forEach(node => {
+        const info = nodeMap.get(node.id)
+        if (info) {
+          const dims = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+          adjustedNodes[info.index] = {
+            ...adjustedNodes[info.index],
+            position: {
+              x: adjustedNodes[info.index].position.x, // Keep X from Dagre
+              y: targetY - dims.height / 2
+            }
+          }
+        }
+      })
+    }
+  })
 
   return adjustedNodes
 }
@@ -447,9 +407,8 @@ function fixOverlappingBranches(nodes: WorkflowNode[]): WorkflowNode[] {
  * This handles overlaps from orchestrator sub-agents, conditional branches, loops, etc.
  */
 function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
-  const MIN_SEPARATION = 100 // Minimum gap between nodes (increased from 80 for markdown rendering)
+  const MIN_SEPARATION = 40 // Minimum gap between nodes
   const adjustedNodes = [...nodes]
-  let collisionCount = 0
 
   // Get bounding box for a node (using estimated height based on content)
   const getBounds = (node: WorkflowNode): { left: number; right: number; top: number; bottom: number } => {
@@ -509,8 +468,8 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
     if (hOverlapAmount > 0 && vOverlapAmount > 0) {
       // Full overlap - shift vertically (prefer moving down for nodes that come later)
       const shiftY = a.top < b.top
-        ? (vOverlapAmount + MIN_SEPARATION)  // Move a down
-        : -(vOverlapAmount + MIN_SEPARATION)  // Move a up
+        ? -(vOverlapAmount + MIN_SEPARATION)  // Move a up
+        : (vOverlapAmount + MIN_SEPARATION)   // Move a down
       return { dx: 0, dy: shiftY }
     }
 
@@ -518,28 +477,28 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
     if (vOverlapAmount > 0) {
       // Vertical overlap - shift vertically
       const shiftY = a.top < b.top
-        ? (vOverlapAmount + MIN_SEPARATION)  // Move a down
-        : -(vOverlapAmount + MIN_SEPARATION)  // Move a up
+        ? -(vOverlapAmount + MIN_SEPARATION)  // Move a up
+        : (vOverlapAmount + MIN_SEPARATION)   // Move a down
       return { dx: 0, dy: shiftY }
     } else if (hOverlapAmount > 0) {
       // Horizontal overlap - shift horizontally
       const shiftX = a.left < b.left
-        ? (hOverlapAmount + MIN_SEPARATION)  // Move a right
-        : -(hOverlapAmount + MIN_SEPARATION) // Move a left
+        ? -(hOverlapAmount + MIN_SEPARATION)  // Move a left
+        : (hOverlapAmount + MIN_SEPARATION)   // Move a right
       return { dx: shiftX, dy: 0 }
     } else if (hDistance < MIN_SEPARATION && vDistance < MIN_SEPARATION) {
       // Too close but not overlapping - shift in direction that needs more space
       if (vDistance < hDistance) {
         // Need more vertical separation
         const shiftY = a.top < b.top
-          ? (MIN_SEPARATION - vDistance)  // Move a down
-          : -(MIN_SEPARATION - vDistance)  // Move a up
+          ? -(MIN_SEPARATION - vDistance)  // Move a up
+          : (MIN_SEPARATION - vDistance)   // Move a down
         return { dx: 0, dy: shiftY }
       } else {
         // Need more horizontal separation
         const shiftX = a.left < b.left
-          ? (MIN_SEPARATION - hDistance)  // Move a right
-          : -(MIN_SEPARATION - hDistance) // Move a left
+          ? -(MIN_SEPARATION - hDistance)  // Move a left
+          : (MIN_SEPARATION - hDistance)   // Move a right
         return { dx: shiftX, dy: 0 }
       }
     }
@@ -593,18 +552,10 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
 
       // Check for overlap
       if (boxesOverlap(adjustedCurrentBounds, adjustedOtherBounds)) {
-        collisionCount++
         const shift = calculateShift(adjustedCurrentBounds, adjustedOtherBounds)
 
         if (shift.dx !== 0 || shift.dy !== 0) {
-          // Log collision details for debugging
-          if (collisionCount <= 5) { // Log first 5 collisions to avoid spam
-            console.log(`[CollisionDetection] Collision ${collisionCount}: ${currentNode.id} (${currentNode.type}) overlaps ${otherNode.id} (${otherNode.type})`, {
-              currentPos: { x: currentNode.position.x, y: currentNode.position.y },
-              otherPos: { x: otherNode.position.x, y: otherNode.position.y },
-              shift: { dx: shift.dx, dy: shift.dy }
-            })
-          }
+          // Log collision details for debugging (removed to reduce console noise)
 
           // Update shift for current node
           const currentShiftValue = shifts.get(currentNode.id) || { dx: 0, dy: 0 }
@@ -625,10 +576,7 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
     }
   }
 
-  // Log collision detection results
-  if (collisionCount > 0) {
-    console.log(`[CollisionDetection] Detected ${collisionCount} collisions, applying shifts to ${Array.from(shifts.values()).filter(s => s.dx !== 0 || s.dy !== 0).length} nodes`)
-  }
+  // Log collision detection results (removed to reduce console noise)
 
   // Apply all shifts to nodes
   const shiftedNodes = adjustedNodes.map(node => {
@@ -652,49 +600,90 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
  * Auto-layout nodes using Dagre algorithm
  */
 function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[]): { nodes: WorkflowNode[], edges: WorkflowEdge[] } {
+  console.log('[Layout Debug] === Starting Dagre Layout ===')
+  
+  // Calculate topology metrics to determine spacing requirements
+  const { hasOrchestrator } = calculateTopologyMetrics(nodes)
+  
+  // Dynamic config based on topology
+  const dynamicConfig = {
+    ...DAGRE_CONFIG,
+    // Vertical spacing is now handled by the increased default nodesep (500)
+    // Horizontal spacing defaults to 150. Specific offsets are handled via minlen on edges.
+  }
+  
+  console.log('[Layout Debug] Input nodes:', nodes.length, 'edges:', edges.length)
+  console.log('[Layout Debug] Topology:', { hasOrchestrator })
+  console.log('[Layout Debug] Dynamic Config:', dynamicConfig)
+  console.log('[Layout Debug] NODE_DIMENSIONS:', NODE_DIMENSIONS)
+
   const g = new dagre.graphlib.Graph()
-  g.setGraph(DAGRE_CONFIG)
+  g.setGraph(dynamicConfig)
   g.setDefaultEdgeLabel(() => ({}))
 
-  // Separate sub-agents from main nodes (sub-agents will be positioned manually)
-  const subAgentIds = new Set(nodes.filter(n => n.id.includes('-sub-agent-')).map(n => n.id))
-  const subAgentRelatedNodeIds = new Set<string>()
+  // Only exclude SUB-AGENT nodes from Dagre (they're positioned manually below orchestrators)
+  // Branch nodes MUST be in Dagre to maintain graph connectivity
+  const excludedNodeIds = new Set<string>()
 
-  // Find all nodes related to sub-agents (validation, learning nodes)
   nodes.forEach(node => {
-    if (subAgentIds.has(node.id) || node.id.includes('-sub-agent-')) {
-      subAgentRelatedNodeIds.add(node.id)
-      // Also add validation/learning nodes for sub-agents
-      nodes.forEach(n => {
-        if (n.id.startsWith(node.id + '-')) {
-          subAgentRelatedNodeIds.add(n.id)
-        }
-      })
+    if (node.id.includes('-sub-agent-')) {
+      excludedNodeIds.add(node.id)
     }
   })
 
-  // Add only non-sub-agent nodes to dagre graph
+  console.log(`[Layout Debug] Excluding ${excludedNodeIds.size} sub-agent nodes from Dagre`)
+
+  // Add all nodes except sub-agents to Dagre graph
   nodes.forEach(node => {
-    if (!subAgentRelatedNodeIds.has(node.id)) {
+    if (!excludedNodeIds.has(node.id)) {
       const dimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
       g.setNode(node.id, { width: dimensions.width, height: dimensions.height })
     }
   })
 
-  // Add only edges that don't involve sub-agents to dagre graph
+  // Add all edges except those involving sub-agents
   edges.forEach(edge => {
-    if (!subAgentRelatedNodeIds.has(edge.source) && !subAgentRelatedNodeIds.has(edge.target)) {
-      g.setEdge(edge.source, edge.target)
+    if (!excludedNodeIds.has(edge.source) && !excludedNodeIds.has(edge.target)) {
+      // Find if source is an orchestrator to apply dynamic horizontal spacing
+      const sourceNode = nodes.find(n => n.id === edge.source)
+      
+      if (sourceNode?.type === 'orchestrator') {
+        const data = sourceNode.data as OrchestratorNodeData
+        const numSubAgents = data.orchestration_routes?.length || 0
+        
+        if (numSubAgents > 0) {
+          const SUB_AGENT_WIDTH = 280
+          const GAP = 40
+          // Total width of sub-agent row
+          const totalRowWidth = (numSubAgents * SUB_AGENT_WIDTH) + ((numSubAgents - 1) * GAP)
+          // Half width (extension to the right from orchestrator center)
+          const halfWidth = totalRowWidth / 2
+          
+          // Calculate minlen: number of rank separations needed to clear the sub-agents
+          // We want at least halfWidth + 100px of clearance.
+          // Total horizontal distance = ranksep * minlen
+          const requiredClearance = halfWidth + 100
+          const minlen = Math.ceil(requiredClearance / dynamicConfig.ranksep)
+          
+          console.log(`[Layout Debug] Edge ${edge.source} -> ${edge.target}: Orchestrator has ${numSubAgents} sub-agents. Setting minlen=${minlen} for clearance.`)
+          g.setEdge(edge.source, edge.target, { minlen })
+        } else {
+          g.setEdge(edge.source, edge.target)
+        }
+      } else {
+        g.setEdge(edge.source, edge.target)
+      }
     }
   })
 
   // Run layout
   dagre.layout(g)
+  console.log('[Layout Debug] Dagre layout complete')
 
   // Apply positions to nodes (only for nodes that were in Dagre)
   const layoutedNodes = nodes.map(node => {
-    if (subAgentRelatedNodeIds.has(node.id)) {
-      // Keep sub-agents at their initial position (will be positioned manually later)
+    if (excludedNodeIds.has(node.id)) {
+      // Keep excluded nodes at initial position (will be positioned manually later)
       return node
     }
 
@@ -715,10 +704,17 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[]): { nodes:
     }
   })
 
-  // Post-process to fix overlapping branches
-  const fixedNodes = fixOverlappingBranches(layoutedNodes)
+  // Position branch nodes: TRUE above, FALSE below their parent conditional/decision
+  const withBranches = positionBranchNodes(layoutedNodes)
 
-  return { nodes: fixedNodes, edges }
+  // Log final positions
+  console.log('[Layout Debug] === Final Node Positions ===')
+  withBranches.forEach(n => {
+    console.log(`[Layout Debug] ${n.id} (${n.type}): x=${Math.round(n.position.x)}, y=${Math.round(n.position.y)}`)
+  })
+  console.log('[Layout Debug] === End Layout ===')
+
+  return { nodes: withBranches, edges }
 }
 
 /**
@@ -925,138 +921,22 @@ function getLLMProviderAndModel(
 
 /**
  * Create validation and learning nodes for a step
- * Returns the nodes and edges, plus the "exit" node ID (for connecting to next step)
- * @param nodeType - The type of the parent node (to determine if retry handle exists)
+ * DISABLED: Validation and learning nodes are no longer displayed in the workflow canvas
+ * Returns empty nodes and edges, with the step itself as the exit node
  */
 function createValidationLearningNodes(
-  step: PlanStep,
+  _step: PlanStep,
   stepNodeId: string,
-  presetUseCodeExecutionMode: boolean,
-  presetLLMConfig: AgentLLMConfig | undefined,
-  presetValidationLLM: AgentLLMConfig | undefined,
-  presetLearningLLM: AgentLLMConfig | undefined,
-  availableLLMs: Array<{ provider: string; model: string; label: string }>,
-  nodeType?: 'step' | 'conditional' | 'decision' | 'loop' | 'orchestrator'
+  _presetUseCodeExecutionMode: boolean,
+  _presetLLMConfig: AgentLLMConfig | undefined,
+  _presetValidationLLM: AgentLLMConfig | undefined,
+  _presetLearningLLM: AgentLLMConfig | undefined,
+  _availableLLMs: Array<{ provider: string; model: string; label: string }>,
+  _nodeType?: 'step' | 'conditional' | 'decision' | 'loop' | 'orchestrator'
 ): { nodes: WorkflowNode[], edges: WorkflowEdge[], exitNodeId: string } {
-  const nodes: WorkflowNode[] = []
-  const edges: WorkflowEdge[] = []
-
-  const agentConfigs = step.agent_configs as AgentConfigs | undefined
-
-  // Determine if code execution mode is enabled
-  const stepCodeExecSetting = agentConfigs?.use_code_execution_mode
-  const useCodeExecutionMode = stepCodeExecSetting !== undefined
-    ? stepCodeExecSetting
-    : presetUseCodeExecutionMode  // Fall back to preset default
-
-  // In code exec mode: validation and learning are always enabled
-  // Otherwise: check disable flags
-  const hasValidation = useCodeExecutionMode
-    ? true  // Always enabled in code exec mode
-    : !agentConfigs?.disable_validation
-
-  const hasLearning = useCodeExecutionMode
-    ? true  // Always enabled in code exec mode
-    : !agentConfigs?.disable_learning
-
-  let currentNodeId = stepNodeId
-
-  // Get validation LLM provider and model
-  const validationLLM = agentConfigs?.validation_llm || presetValidationLLM || presetLLMConfig
-  const validationLLMInfo = getLLMProviderAndModel(validationLLM, presetLLMConfig, availableLLMs)
-
-  // Get learning LLM provider and model
-  // Always use learning_llm config (not execution_llm), even in code exec mode
-  // Priority: step learning_llm → preset learning_llm → preset default (provider/model_id)
-  const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id
-    ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : undefined
-  const learningLLM = agentConfigs?.learning_llm || presetLearningLLM || presetDefaultLLM || presetLLMConfig
-  const learningLLMInfo = getLLMProviderAndModel(learningLLM, presetLLMConfig, availableLLMs)
-
-  // Add validation node if enabled
-  if (hasValidation) {
-    const validationNodeId = `${stepNodeId}-validation`
-    const validationNode: WorkflowNode = {
-      id: validationNodeId,
-      type: 'validation',
-      position: { x: 0, y: 0 },
-      data: {
-        id: validationNodeId,
-        parentStepId: stepNodeId,
-        parentStepTitle: step.title,
-        status: 'pending',
-        llmProvider: validationLLMInfo.provider,
-        llmModel: validationLLMInfo.model
-      } as ValidationNodeData
-    }
-    nodes.push(validationNode)
-
-    // Edge from step to validation
-    edges.push({
-      id: `${stepNodeId}-to-validation`,
-      source: stepNodeId,
-      target: validationNodeId,
-      type: 'smoothstep',
-      animated: false,
-      style: { stroke: '#6366f1', strokeWidth: 2 }
-    })
-
-    // Loop-back edge from validation to step (retry)
-    // Only create retry edge if the target node type supports retry handles
-    // Orchestrator nodes don't have retry handles, so skip for orchestrator type
-    if (nodeType !== 'orchestrator') {
-      edges.push({
-        id: `${validationNodeId}-retry-to-${stepNodeId}`,
-        source: validationNodeId,
-        sourceHandle: 'retry',
-        target: stepNodeId,
-        targetHandle: 'retry',
-        type: 'smoothstep',
-        label: 'Retry',
-        labelStyle: { fill: '#f59e0b', fontWeight: 500, fontSize: 9 },
-        labelBgStyle: { fill: '#fffbeb', fillOpacity: 0.9 },
-        labelBgPadding: [2, 2] as [number, number],
-        labelBgBorderRadius: 3,
-        style: { stroke: '#f59e0b', strokeWidth: 1.5, strokeDasharray: '4 2' },
-        animated: false
-      })
-    }
-
-    currentNodeId = validationNodeId
-  }
-
-  // Add learning node if enabled
-  if (hasLearning) {
-    const learningNodeId = `${stepNodeId}-learning`
-    const learningNode: WorkflowNode = {
-      id: learningNodeId,
-      type: 'learning',
-      position: { x: 0, y: 0 },
-      data: {
-        id: learningNodeId,
-        parentStepId: stepNodeId,
-        parentStepTitle: step.title,
-        status: 'pending',
-        llmProvider: learningLLMInfo.provider,
-        llmModel: learningLLMInfo.model
-      } as LearningNodeData
-    }
-    nodes.push(learningNode)
-
-    // Edge from previous node (step or validation) to learning
-    edges.push({
-      id: `${currentNodeId}-to-learning`,
-      source: currentNodeId,
-      target: learningNodeId,
-      type: 'smoothstep',
-      animated: false,
-      style: { stroke: '#f59e0b', strokeWidth: 2 }
-    })
-
-    currentNodeId = learningNodeId
-  }
-
-  return { nodes, edges, exitNodeId: currentNodeId }
+  // Validation and learning nodes are no longer displayed in the workflow canvas
+  // Simply return the step itself as the exit node
+  return { nodes: [], edges: [], exitNodeId: stepNodeId }
 }
 
 /**
@@ -1750,7 +1630,7 @@ function processSteps(
               position: { x: 0, y: 0 },
               data: {
                 id: subAgentNodeId, // CRITICAL: data.id must match node.id
-                title: subAgentStep.title || `Sub-Agent ${route.route_name || route.route_id || routeId}`,
+                title: subAgentStep.title || `${route.route_name || route.route_id || routeId}`,
                 description: subAgentStep.description,
                 success_criteria: subAgentStep.success_criteria,
                 status,
@@ -1769,55 +1649,8 @@ function processSteps(
 
             orchestratorSubAgentNodes.push(subAgentNode)
 
-            // Add learning node for sub-agent (sub-agents don't have validation, only learning)
-            const agentConfigs = route.sub_agent_step.agent_configs as AgentConfigs | undefined
-
-            // Determine if code execution mode is enabled
-            const stepCodeExecSetting = agentConfigs?.use_code_execution_mode
-            const useCodeExecutionMode = stepCodeExecSetting !== undefined
-              ? stepCodeExecSetting
-              : presetUseCodeExecutionMode
-
-            // Sub-agents always have learning enabled (unless explicitly disabled)
-            const hasLearning = useCodeExecutionMode
-              ? true  // Always enabled in code exec mode
-              : !agentConfigs?.disable_learning
-
-            let subAgentExitNodeId = subAgentNodeId
-
-            if (hasLearning) {
-              // Get learning LLM provider and model
-              const learningLLM = agentConfigs?.learning_llm || presetLearningLLM
-              const learningLLMInfo = getLLMProviderAndModel(learningLLM, presetLLMConfig, availableLLMs)
-
-              const learningNodeId = `${subAgentNodeId}-learning`
-              const learningNode: WorkflowNode = {
-                id: learningNodeId,
-                type: 'learning',
-                position: { x: 0, y: 0 },
-                data: {
-                  id: learningNodeId,
-                  parentStepId: subAgentNodeId,
-                  parentStepTitle: route.sub_agent_step.title,
-                  status: 'pending',
-                  llmProvider: learningLLMInfo.provider,
-                  llmModel: learningLLMInfo.model
-                } as LearningNodeData
-              }
-              orchestratorSubAgentNodes.push(learningNode)
-
-              // Edge from sub-agent to learning
-              orchestratorEdges.push({
-                id: `${subAgentNodeId}-to-learning`,
-                source: subAgentNodeId,
-                target: learningNodeId,
-                type: 'smoothstep',
-                animated: false,
-                style: { stroke: '#f59e0b', strokeWidth: 2 }
-              })
-
-              subAgentExitNodeId = learningNodeId
-            }
+            // Learning nodes are no longer displayed in the workflow canvas
+            const subAgentExitNodeId = subAgentNodeId
 
             // Helper to truncate condition to 10 words
             const truncateToWords = (text: string, maxWords: number): string => {
@@ -2426,6 +2259,15 @@ export function usePlanToFlow(
         type: 'smoothstep',
         style: { stroke: '#6b7280', strokeWidth: 2 }
       })
+    } else {
+      // Connect Variables to End if no steps
+      edges.push({
+        id: 'variables-to-end',
+        source: 'variables',
+        target: 'end',
+        type: 'smoothstep',
+        style: { stroke: '#6b7280', strokeWidth: 2 }
+      })
     }
 
     // Add sequential edges
@@ -2576,6 +2418,7 @@ export function usePlanToFlow(
     const layoutedResult = layoutWithDagre(nodes, edges)
 
     // Position sub-agents vertically below their parent orchestrator nodes
+    console.log('[Layout Debug] === Sub-agent Positioning ===')
     const orchestratorNodeMap = new Map<string, { nodeIndex: number; subAgentIndices: number[] }>()
 
     // Find all orchestrator nodes and their sub-agents by index
@@ -2592,62 +2435,39 @@ export function usePlanToFlow(
       }
     })
 
-    // Position sub-agents vertically below their parent orchestrator node
+    // Position sub-agents in HORIZONTAL ROW below their parent orchestrator node
     orchestratorNodeMap.forEach(({ nodeIndex: orchestratorNodeIndex, subAgentIndices }) => {
       const orchestratorNode = layoutedResult.nodes[orchestratorNodeIndex]
       const orchestratorDimensions = NODE_DIMENSIONS.orchestrator || NODE_DIMENSIONS.step
+      console.log(`[Layout Debug] Orchestrator "${orchestratorNode.id}" at y=${Math.round(orchestratorNode.position.y)}, has ${subAgentIndices.length} sub-agents`)
 
-      // Find the bottom-most node related to the orchestrator node (including validation/learning nodes)
-      let orchestratorBottom = orchestratorNode.position.y + orchestratorDimensions.height
-      layoutedResult.nodes.forEach((n) => {
-        if (n.id.startsWith(orchestratorNode.id + '-') && !n.id.includes('-sub-agent-')) {
-          const nDimensions = NODE_DIMENSIONS[n.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-          const nBottom = n.position.y + nDimensions.height
-          if (nBottom > orchestratorBottom) {
-            orchestratorBottom = nBottom
-          }
+      if (subAgentIndices.length === 0) return
+
+      const VERTICAL_GAP = 120  // Gap between orchestrator and sub-agents row
+      const HORIZONTAL_GAP = 40 // Gap between sub-agents
+
+      // Calculate total width needed for all sub-agents
+      let totalWidth = 0
+      subAgentIndices.forEach((idx, i) => {
+        const dims = NODE_DIMENSIONS[layoutedResult.nodes[idx].type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+        totalWidth += dims.width
+        if (i < subAgentIndices.length - 1) {
+          totalWidth += HORIZONTAL_GAP
         }
       })
 
-      const verticalSpacing = 1500 // Space between orchestrator node and sub-agents (increased from 1200)
-      const horizontalSpacing = 120 // Space between sub-agents horizontally (increased from 100)
+      // Center sub-agents under orchestrator
+      const startX = orchestratorNode.position.x + (orchestratorDimensions.width - totalWidth) / 2
+      const subAgentY = orchestratorNode.position.y + orchestratorDimensions.height + VERTICAL_GAP
 
-      // All sub-agents should be at the same Y position (same horizontal line)
-      const subAgentY = orchestratorBottom + verticalSpacing
+      console.log(`[Layout Debug] Sub-agents will be arranged horizontally at y=${Math.round(subAgentY)}, starting x=${Math.round(startX)}`)
 
-      // Calculate total width needed for all sub-agents and their learning nodes
-      let totalSubAgentWidth = 0
-      const subAgentWidths: number[] = []
+      let currentX = startX
       subAgentIndices.forEach((subAgentIndex) => {
         const subAgent = layoutedResult.nodes[subAgentIndex]
         const subAgentDimensions = NODE_DIMENSIONS[subAgent.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
 
-        // Check if sub-agent has learning node to account for its width
-        let subAgentTotalWidth = subAgentDimensions.width
-        layoutedResult.nodes.forEach((n) => {
-          if (n.id.startsWith(subAgent.id + '-learning')) {
-            const learningDimensions = NODE_DIMENSIONS.learning || NODE_DIMENSIONS.step
-            subAgentTotalWidth += learningDimensions.width + 20 // Add learning node width + spacing
-          }
-        })
-
-        subAgentWidths.push(subAgentTotalWidth)
-        totalSubAgentWidth += subAgentTotalWidth
-        if (subAgentIndices.indexOf(subAgentIndex) < subAgentIndices.length - 1) {
-          totalSubAgentWidth += horizontalSpacing // Add spacing between sub-agents
-        }
-      })
-
-      // Start X position to center all sub-agents relative to orchestrator node
-      const startX = orchestratorNode.position.x + (orchestratorDimensions.width - totalSubAgentWidth) / 2
-
-      let currentX = startX
-
-      subAgentIndices.forEach((subAgentIndex, index) => {
-        const subAgent = layoutedResult.nodes[subAgentIndex]
-        const subAgentDimensions = NODE_DIMENSIONS[subAgent.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-
-        // Update the actual node in the array - all at same Y, different X
+        // Update position - same Y, different X (horizontal row)
         layoutedResult.nodes[subAgentIndex] = {
           ...subAgent,
           position: {
@@ -2656,22 +2476,7 @@ export function usePlanToFlow(
           }
         }
 
-        // Also position validation/learning nodes for this sub-agent
-        layoutedResult.nodes.forEach((n, nIndex) => {
-          if (n.id.startsWith(subAgent.id + '-')) {
-            // Position validation/learning nodes next to their sub-agent (closer spacing)
-            layoutedResult.nodes[nIndex] = {
-              ...n,
-              position: {
-                x: currentX + subAgentDimensions.width + 10,
-                y: subAgentY
-              }
-            }
-          }
-        })
-
-        // Move to next sub-agent position
-        currentX += subAgentWidths[index] + horizontalSpacing
+        currentX += subAgentDimensions.width + HORIZONTAL_GAP
       })
     })
 
@@ -2820,7 +2625,7 @@ export function usePlanToFlow(
     layoutedResult.nodes = detectAndResolveCollisions(layoutedResult.nodes)
     const nodesAfterCollision = layoutedResult.nodes.length
     if (nodesBeforeCollision !== nodesAfterCollision) {
-      console.warn('[CollisionDetection] Node count changed during collision detection!', { before: nodesBeforeCollision, after: nodesAfterCollision })
+      // Node count changed during collision detection (log removed to reduce console noise)
     }
 
     // Helper to determine if a step can run

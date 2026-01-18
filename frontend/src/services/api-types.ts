@@ -522,6 +522,23 @@ export interface GitSyncResponse {
 }
 
 
+// Workflow metadata for background/minimized workflows
+// Stored in session config to enable querying and restoring background workflows
+export interface WorkflowMetadata {
+  preset_id?: string;           // Preset ID for context restoration
+  preset_name?: string;         // Display name
+  workspace_path?: string;      // Workflow workspace path
+  run_folder?: string;          // Current run folder (e.g., "iteration-1")
+  phase_id?: string;            // Current phase ID (e.g., "execution")
+  phase_name?: string;          // Phase display name
+  is_minimized?: boolean;       // True when workflow is in background
+  minimized_at?: number;        // Unix timestamp (ms) when minimized
+  step_progress?: StepProgress; // Current step progress
+  current_step_id?: string;     // Currently executing step ID
+  current_step_title?: string;  // Currently executing step title
+  last_polled?: number;         // Unix timestamp (ms) of last status check
+}
+
 // Chat Session Configuration
 export interface ChatSessionConfig {
   selected_servers?: string[];
@@ -543,6 +560,7 @@ export interface ChatSessionConfig {
     type: 'file' | 'folder';
   }>;
   enable_workspace_access?: boolean;
+  workflow_metadata?: WorkflowMetadata; // Workflow-specific metadata (for background workflows)
 }
 
 // Chat History API types
@@ -627,6 +645,9 @@ export interface PresetLLMConfig {
   validation_llm?: AgentLLMConfig       // Default for validation agents
   learning_llm?: AgentLLMConfig         // Default for learning agents
   phase_llm?: AgentLLMConfig            // Default for all phase agents (planning, anonymization, plan improvement, etc.)
+
+  // Feature toggles
+  use_knowledgebase?: boolean           // nil/true = enabled (default), false = disabled
 }
 
 // Preset Query API types
@@ -812,12 +833,15 @@ export interface ExecutionOptions {
   skip_learning_when_temp_llm1?: boolean;  // If true, skip learning phases when tempLLM1 is used (default: false, learning runs)
   skip_learning_when_temp_llm2?: boolean;  // If true, skip learning phases when tempLLM2 is used (default: false, learning runs)
   
+  // Temporary LLM for learning agents (optional, used when learnings already exist for a step)
+  // If learnings exist for a step_id, use temp_learning_llm if configured
+  // If no learnings exist (new learning), always use default LLM (step config → preset)
+  temp_learning_llm?: AgentLLMConfig;
+  
   // Validation response persistence
   save_validation_responses?: boolean;  // If true, save validation responses to workspace validation folder (default: true)
   
   // Tool access control (global configuration)
-  disable_shell_exec_access?: boolean;  // If true, disable execute_shell_command tool access globally
-  disable_read_image_access?: boolean;  // If true, disable read_image tool access globally
   
   // Variable group execution options (for batch execution with multiple groups)
   enabled_group_ids?: string[];  // Group IDs to execute (if empty, uses groups' enabled flags)
@@ -838,7 +862,27 @@ export const ExecutionStrategy = {
   RUN_SINGLE_STEP: 'run_single_step',
 } as const;
 
+// Execution strategies
 export type ExecutionStrategyType = typeof ExecutionStrategy[keyof typeof ExecutionStrategy];
+
+// Evaluation types
+export interface EvaluationStep {
+  id: string
+  title: string
+  description: string
+  pre_validation?: ValidationSchema
+  success_criteria: string
+  agent_configs?: AgentConfigs
+}
+
+export interface EvaluationPlan {
+  steps: EvaluationStep[]
+}
+
+export interface EvaluationStepConfig {
+  id: string
+  agent_configs: AgentConfigs
+}
 
 // Variable Groups API types
 export interface Variable {
@@ -1080,6 +1124,7 @@ export interface EvaluationReportsResponse {
   success: boolean;
   reports: EvaluationReportEntry[];
   aggregate?: EvaluationAggregate;
+  evaluation_plan?: string;
   error?: string;
 }
 
@@ -1095,4 +1140,42 @@ export interface EvaluationAggregate {
   highest_score: number;
   lowest_score: number;
   max_possible_score: number;
-} 
+}
+
+// Consolidated workspace state (NEW - single API call for all workspace data)
+export interface WorkspaceStateResponse {
+  success: boolean;
+  data?: WorkspaceState;
+  error?: string;
+}
+
+export interface WorkspaceState {
+  run_folders: RunFolderInfo[];
+  selected_progress?: StepProgress;
+  variables_manifest?: VariablesManifest;
+  phases: WorkflowPhase[];
+}
+
+export interface RunFolderInfo {
+  name: string;
+  progress?: StepProgress;
+}
+
+export interface StepProgress {
+  completed_step_indices: number[];
+  total_steps: number;
+  last_updated: string;
+  branch_steps?: Record<number, BranchStepProgress>;
+}
+
+export interface BranchStepProgress {
+  branch_executed: string;
+  completed_steps: string[];
+}
+
+export interface WorkflowPhase {
+  id: string;
+  title: string;
+  description: string;
+  options?: WorkflowPhaseOption[];
+}

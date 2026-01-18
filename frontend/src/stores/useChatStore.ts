@@ -79,16 +79,27 @@ export interface ChatTab {
 }
 
 // Helper function to get default tab config from current global state
-const getDefaultTabConfig = (): ChatTabConfig => {
+// Uses mode-specific configs for LLM and server selections
+const getDefaultTabConfig = (mode: 'chat' | 'workflow' = 'chat'): ChatTabConfig => {
   const mcpStore = useMCPStore?.getState?.()
   const llmStore = useLLMStore?.getState?.()
-  
+
+  // Get mode-specific server selection
+  const selectedServers = mode === 'workflow'
+    ? (mcpStore?.workflowSelectedServers || mcpStore?.selectedServers || [])
+    : (mcpStore?.chatSelectedServers || mcpStore?.selectedServers || [])
+
+  // Get mode-specific LLM config
+  const llmConfig = mode === 'workflow'
+    ? (llmStore?.workflowPrimaryConfig || llmStore?.primaryConfig)
+    : (llmStore?.chatPrimaryConfig || llmStore?.primaryConfig)
+
   return {
     inputText: '',
     // Default to false (simple mode) - user can toggle to true (code exec mode) via ChatInput
     useCodeExecutionMode: false,
-    selectedServers: mcpStore?.selectedServers || [],
-    llmConfig: llmStore?.primaryConfig || {
+    selectedServers,
+    llmConfig: llmConfig || {
       provider: 'openrouter',
       model_id: '',
       fallback_models: [],
@@ -221,6 +232,7 @@ interface ChatState extends StoreActions {
       addTabEvents: (sessionId: string, events: PollingEvent[]) => void
       setTabEvents: (sessionId: string, events: PollingEvent[]) => void
       clearTabEvents: (sessionId: string) => void
+      cleanupTabEvents: (sessionId: string, keepCount: number) => void
       getTabLastEventIndex: (sessionId: string) => number
       setTabLastEventIndex: (sessionId: string, index: number) => void
       getTabHasMoreOlderEvents: (sessionId: string) => boolean
@@ -262,7 +274,7 @@ interface ChatState extends StoreActions {
   // Tab management actions
   createChatTab: (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'basic' | 'advanced' | 'tiny') => Promise<string>  // Returns tabId
   switchTab: (tabId: string) => void
-  closeTab: (tabId: string) => Promise<void>
+  closeTab: (tabId: string, stopSession?: boolean, keepEvents?: boolean) => Promise<void>
   getTab: (tabId: string) => ChatTab | undefined
   getActiveTab: () => ChatTab | undefined
   getTabsByMode: (mode: 'chat' | 'workflow') => ChatTab[]
@@ -383,7 +395,7 @@ export const useChatStore = create<ChatState>()(
           onPoll().catch(error => {
             console.error('[ChatStore] Error in polling callback:', error)
           })
-        }, 1000)
+        }, 2000)  // 2 seconds - reduced from 1s to improve performance
         
         set({ pollingInterval: interval })
       },
@@ -454,11 +466,11 @@ export const useChatStore = create<ChatState>()(
       addTabEvents: (sessionId: string, events: PollingEvent[]) => {
         set((state) => {
           const currentEvents = state.tabEvents[sessionId] || []
-          
-          // Deduplicate events by ID to prevent React key warnings
+
+          // Deduplicate events by ID to prevent React key warnings and performance issues
           // Create a Set of existing event IDs for fast lookup
           const existingEventIds = new Set(currentEvents.map(e => e.id))
-          
+
           // Filter out events that already exist
           const uniqueNewEvents = events.filter(event => {
             if (!event.id) {
@@ -474,12 +486,12 @@ export const useChatStore = create<ChatState>()(
             existingEventIds.add(event.id)
             return true
           })
-          
-          // Only log if duplicates were found
+
+          // Only log if duplicates were found (helps debug)
           if (uniqueNewEvents.length < events.length) {
             console.log(`[addTabEvents] Deduplicated ${events.length - uniqueNewEvents.length} duplicate events for session ${sessionId}`)
           }
-          
+
           const newEvents = [...currentEvents, ...uniqueNewEvents]
           
           // Trigger cleanup if threshold exceeded
@@ -525,7 +537,7 @@ export const useChatStore = create<ChatState>()(
           delete newTabEventIndices[sessionId]
           const newTabHasMoreOlderEvents = { ...state.tabHasMoreOlderEvents }
           delete newTabHasMoreOlderEvents[sessionId]
-          
+
           return {
             tabEvents: newTabEvents,
             tabEventIndices: newTabEventIndices,
@@ -533,7 +545,29 @@ export const useChatStore = create<ChatState>()(
           }
         })
       },
-      
+
+      cleanupTabEvents: (sessionId: string, keepCount: number) => {
+        set((state) => {
+          const events = state.tabEvents[sessionId]
+
+          if (!events || events.length <= keepCount) {
+            return state // No cleanup needed
+          }
+
+          // Keep only recent events and important events using the utility
+          const cleaned = cleanupOldEvents(events)
+
+          console.log(`[ChatStore] Cleaned up events for ${sessionId}: ${events.length} -> ${cleaned.length}`)
+
+          return {
+            tabEvents: {
+              ...state.tabEvents,
+              [sessionId]: cleaned
+            }
+          }
+        })
+      },
+
       getTabLastEventIndex: (sessionId: string) => {
         const state = get()
         return state.tabEventIndices[sessionId] ?? -1
@@ -737,8 +771,8 @@ export const useChatStore = create<ChatState>()(
           console.log(`[ChatStore] Generated new session ID for tab ${tabId}: ${sessionIdForTab}`)
         }
         
-        // Get default config from current global state
-        const defaultConfig = getDefaultTabConfig()
+        // Get default config from current global state (mode-specific)
+        const defaultConfig = getDefaultTabConfig(mode)
         
         // Validate session ID before creating tab
         if (!sessionIdForTab || sessionIdForTab.trim() === '') {
@@ -838,45 +872,45 @@ export const useChatStore = create<ChatState>()(
         }
       },
       
-      closeTab: async (tabId: string) => {
+      closeTab: async (tabId: string, stopSession: boolean = true, keepEvents: boolean = false) => {
         const state = get()
         const tab = state.chatTabs[tabId]
-        
+
         if (!tab) {
           console.warn(`[ChatStore] Tab ${tabId} not found`)
           return
         }
-        
-        // Stop session if streaming
-        if (tab.isStreaming && tab.sessionId) {
+
+        // Stop session if streaming (unless explicitly disabled, e.g., when minimizing to background)
+        if (stopSession && tab.isStreaming && tab.sessionId) {
           try {
             await agentApi.stopSession(tab.sessionId)
           } catch (error) {
             console.error(`[ChatStore] Failed to stop session ${tab.sessionId}:`, error)
           }
         }
-        
-        // Clear tab's events (by sessionId)
-        const newTabEvents = { ...state.tabEvents }
-        if (tab.sessionId) {
+
+        // Clear tab's events (by sessionId) unless keepEvents is true (e.g., for background workflows)
+        let newTabEvents = state.tabEvents
+        let newTabEventIndices = state.tabEventIndices
+        if (!keepEvents && tab.sessionId) {
+          newTabEvents = { ...state.tabEvents }
           delete newTabEvents[tab.sessionId]
-        }
-        const newTabEventIndices = { ...state.tabEventIndices }
-        if (tab.sessionId) {
+          newTabEventIndices = { ...state.tabEventIndices }
           delete newTabEventIndices[tab.sessionId]
         }
-        
+
         // Remove tab
         const newTabs = { ...state.chatTabs }
         delete newTabs[tabId]
-        
+
         // Switch to another tab if this was active
         let newActiveTabId = state.activeTabId
         if (state.activeTabId === tabId) {
           const remainingTabs = Object.values(newTabs).sort((a, b) => b.createdAt - a.createdAt)
           newActiveTabId = remainingTabs.length > 0 ? remainingTabs[0].tabId : null
         }
-        
+
         set({
           chatTabs: newTabs,
           activeTabId: newActiveTabId,

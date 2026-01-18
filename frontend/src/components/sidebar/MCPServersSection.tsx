@@ -152,7 +152,7 @@ export default function MCPServersSection() {
                     {/* OAuth Status Badge - auto-detects if server requires OAuth */}
                     <OAuthStatusBadge
                       serverName={serverName}
-                      requiresOAuth={tools[0].requires_oauth}
+                      requiresOAuth={(tools[0] as any).requires_oauth}
                       onAuthChange={(valid) => {
                         if (valid) {
                           // Refresh tools after successful OAuth authentication

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"mcpagent/mcpclient"
 )
 
 // OrchestratorAgent defines the interface for all orchestrator agents
@@ -126,6 +127,10 @@ type OrchestratorAgentConfig struct {
 	// When set, MCP connections are shared across agents with the same session ID
 	// Connections persist until CloseSession() is called (not when agent closes)
 	MCPSessionID string `json:"mcp_session_id,omitempty"`
+
+	// Runtime config overrides for MCP servers
+	// Allows workflow-specific modifications like output directories per run
+	RuntimeOverrides mcpclient.RuntimeOverrides `json:"runtime_overrides,omitempty"`
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration

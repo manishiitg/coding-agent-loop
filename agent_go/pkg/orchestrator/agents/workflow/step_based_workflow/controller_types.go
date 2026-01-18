@@ -82,12 +82,13 @@ type ExecutionOptions struct {
 	SkipLearningWhenTempLLM1 bool `json:"skip_learning_when_temp_llm1,omitempty"` // If true, skip learning phases when tempLLM1 is used (default: false, learning runs)
 	SkipLearningWhenTempLLM2 bool `json:"skip_learning_when_temp_llm2,omitempty"` // If true, skip learning phases when tempLLM2 is used (default: false, learning runs)
 
+	// Temporary LLM for learning agents (optional, used when learnings already exist for a step)
+	// If learnings exist for a step_id, use TempLearningLLM if configured
+	// If no learnings exist (new learning), always use default LLM (step config → preset)
+	TempLearningLLM *AgentLLMConfig `json:"temp_learning_llm,omitempty"`
+
 	// Validation response persistence
 	SaveValidationResponses bool `json:"save_validation_responses,omitempty"` // If true, save validation responses to workspace validation folder (default: true)
-
-	// Tool access control (global configuration)
-	DisableShellExecAccess bool `json:"disable_shell_exec_access,omitempty"` // If true, disable execute_shell_command tool access globally
-	DisableReadImageAccess bool `json:"disable_read_image_access,omitempty"` // If true, disable read_image tool access globally
 
 	// Variable group execution options (for batch execution with multiple groups)
 	EnabledGroupIDs []string `json:"enabled_group_ids,omitempty"` // Group IDs to execute (if empty, uses groups' enabled flags)

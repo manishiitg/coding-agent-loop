@@ -305,6 +305,8 @@ workspace/
 │   ├── planning/
 │   │   ├── plan.json               # Phase 1: Execution plan
 │   │   └── step_config.json        # Per-step agent configurations
+│   ├── knowledgebase/               # Persistent shared storage (optional, enabled by default)
+│   │   └── *.md, *.json, etc.      # Templates, reference data, global configs
 │   ├── learnings/                   # Learning patterns
 │   │   ├── success_patterns.md     # What worked (shared)
 │   │   ├── failure_analysis.md     # What failed (shared)
@@ -397,11 +399,11 @@ workspace/
 
 ### Agent LLM Configuration
 
-**Priority**: Step config > Preset default > Orchestrator default
+**Priority**: Step config > Preset default (no orchestrator default fallback)
 
 | Level | Configuration | Example |
 |-------|---------------|---------|
-| **Orchestrator** | `presetExecutionLLM`, `presetValidationLLM`, `presetLearningLLM`, `presetPhaseLLM` | Default LLM for all steps |
+| **Preset** | `presetExecutionLLM`, `presetValidationLLM`, `presetLearningLLM`, `presetPhaseLLM` | Default LLM for all steps |
 | **Step** | `step_config.json` → `execution_llm`, `validation_llm`, `learning_llm` | Per-step override |
 
 **Preset LLM Configurations:**
@@ -409,12 +411,11 @@ workspace/
 - **`validation_llm`**: Default for validation agents
 - **`learning_llm`**: Default for learning agents
 - **`phase_llm`**: Default for all phase agents (planning, anonymization, plan improvement, plan tool optimization, learning consolidation, plan learnings alignment)
-  - Priority: `phase_llm` > orchestrator default
-  - All phase agents use this unified configuration instead of individual configs
+  - All phase agents use this unified configuration
 
 ### Temporary LLM Override (tempLLM)
 
-**Flow**: `tempLLM1` (attempt 1) → if FAILED → `tempLLM2` (attempt 2) → if FAILED → original LLM (attempt 3+)
+**Flow**: `tempLLM1` (attempt 1) → if FAILED → `tempLLM2` (attempt 2) → if FAILED → step LLM → preset LLM (attempt 3+)
 
 | Setting | Behavior |
 |---------|----------|
@@ -447,9 +448,26 @@ workspace/
 
 | Setting | Description |
 |---------|-------------|
-| **disable_validation** | Auto-approve steps without validation |
-| **Loop Validation** | Checks both success criteria AND loop condition |
+| **disable_validation** | LLM validation: `nil`/`true` = disabled by default (auto-approve), `false` = enabled. Pre-validation always runs if schema exists. |
+| **Loop Validation** | Checks both success criteria AND loop condition (LLM validation forced on for loop steps) |
 | **Prerequisite Failure Detection** | Per-step config to detect missing prerequisites and navigate back |
+
+### Preset-Level Feature Toggles
+
+These settings are configured at the preset level in `PresetLLMConfig`:
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| **use_knowledgebase** | `boolean` | `true` (enabled) | Enable/disable the `knowledgebase/` folder. When enabled, creates a persistent folder for templates, reference data, and global configs shared across all runs. When disabled, knowledgebase is not created and excluded from agent prompts and folder guards. |
+
+**Knowledgebase Folder Behavior:**
+- **Enabled (default)**: `knowledgebase/` folder is created at workspace root, included in agent prompts, and has read/write access in folder guards
+- **Disabled**: No folder creation, knowledgebase references removed from all agent prompts, no folder guard paths added
+- **Use Cases**: Disable for simple workflows that don't need persistent shared storage, or to reduce agent prompt complexity
+
+**Files:**
+- Backend: [`models.go`](../agent_go/pkg/database/models.go) - `PresetLLMConfig.UseKnowledgebase`
+- Frontend: [`PresetModal.tsx`](../frontend/src/components/PresetModal.tsx) - Knowledgebase toggle in workflow mode
 
 ### Retry Limits
 

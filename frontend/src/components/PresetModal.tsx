@@ -44,6 +44,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [llmConfig, setLlmConfig] = useState<PresetLLMConfig | null>(null);
   const [useCodeExecutionMode, setUseCodeExecutionMode] = useState(false);
   const [enableContextSummarization, setEnableContextSummarization] = useState(true);
+  const [useKnowledgebase, setUseKnowledgebase] = useState(true); // Default true (enabled)
   // Agent-specific LLM configs (for workflow mode)
   const [executionLLM, setExecutionLLM] = useState<AgentLLMConfig | null>(null);
   const [validationLLM, setValidationLLM] = useState<AgentLLMConfig | null>(null);
@@ -98,6 +99,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setLlmConfig(presetLLM);
       setUseCodeExecutionMode(editingPreset.useCodeExecutionMode || false);
       setEnableContextSummarization(editingPreset.enableContextSummarization !== undefined ? editingPreset.enableContextSummarization : true);
+      setUseKnowledgebase(presetLLM.use_knowledgebase !== false); // Default true unless explicitly false
       // Load agent-specific configs if available
       setExecutionLLM(presetLLM.execution_llm || null);
       setValidationLLM(presetLLM.validation_llm || null);
@@ -120,6 +122,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setLlmConfig(defaultLLM);
       setUseCodeExecutionMode(false);
       setEnableContextSummarization(true);
+      setUseKnowledgebase(true); // Default true
       // Initialize agent-specific configs to null (will use legacy default)
       setExecutionLLM(null);
       setValidationLLM(null);
@@ -191,6 +194,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           validation_llm: validationLLM || defaultAgentLLM,
           learning_llm: learningLLM || defaultAgentLLM,
           phase_llm: phaseLLM || defaultAgentLLM,
+          use_knowledgebase: useKnowledgebase,
         };
       }
       console.log('[PRESET_MODAL] Agent LLM configs being saved:', {
@@ -239,7 +243,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, enableContextSummarization, onSave, onClose]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, enableContextSummarization, useKnowledgebase, onSave, onClose]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -717,6 +721,36 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                   </div>
                 </div>
               </div>
+
+              {/* Knowledgebase Toggle (Workflow mode only) */}
+              {effectiveAgentMode === 'workflow' && (
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Knowledgebase
+                  </label>
+                  <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-gray-900 dark:text-white">
+                          Enable Knowledgebase
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          Persistent folder shared across all runs for templates, reference data, and configurations
+                        </div>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={useKnowledgebase}
+                          onChange={(e) => setUseKnowledgebase(e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </form>

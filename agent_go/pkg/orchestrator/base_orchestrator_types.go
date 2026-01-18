@@ -67,7 +67,8 @@ type StepTokenUsage struct {
 // StepTokenData represents token data for a step to be persisted
 type StepTokenData struct {
 	Phase            string
-	Step             int
+	Step             int    // Step index (deprecated, use StepID)
+	StepID           string // Step ID (e.g., "fetch-data", "process-results")
 	StepTitle        string
 	InputTokens      int
 	OutputTokens     int

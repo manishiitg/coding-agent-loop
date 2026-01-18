@@ -1,4 +1,5 @@
 import React from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { EventList } from './events'
 import { Card, CardContent } from './ui/Card'
 import ReactMarkdown from 'react-markdown'
@@ -21,7 +22,11 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
     isCompleted,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     isApprovingWorkflow: _isApproving
-  } = useChatStore()
+  } = useChatStore(useShallow(state => ({
+    finalResponse: state.finalResponse,
+    isCompleted: state.isCompleted,
+    isApprovingWorkflow: state.isApprovingWorkflow
+  })))
   
   // CRITICAL: Always use prop events - never fall back to global events to prevent cross-tab mixing
   // Events should always be passed from ChatArea (which uses tab-specific events)
@@ -53,11 +58,6 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
       console.error('Failed to submit feedback:', error)
     }
   }, [])
-
-  // Debug: Log events received by EventDisplay
-  React.useEffect(() => {
-    console.log(`[EventDisplay] Received ${events.length} events:`, events.map(e => ({ id: e.id, type: e.type, timestamp: e.timestamp })))
-  }, [events])
 
   return (
     <div className="space-y-4 min-w-0" data-testid="event-display-container">
@@ -143,3 +143,6 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
 })
 
 EventDisplay.displayName = 'EventDisplay'
+
+EventDisplay.whyDidYouRender = true
+

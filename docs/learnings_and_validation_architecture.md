@@ -20,9 +20,9 @@ This document outlines the workflow for learning stabilization, model optimizati
 - **Existing Learnings:** **ALWAYS LOADED** into system prompt if they exist (via `LoadStepLearningHistory()`).
 - **Locking Decision (TurnCount-Based):**
     - Based on `TurnCount` (complexity) of successful executions:
-        - **Simple (< 15 turns):** Lock after **3** successful runs.
-        - **Medium (15-30 turns):** Lock after **5** successful runs.
-        - **Complex (> 30 turns):** Lock after **10** successful runs.
+        - **Simple (< 100 turns):** Lock after **3** successful runs.
+        - **Medium (100-200 turns):** Lock after **5** successful runs.
+        - **Complex (> 200 turns):** Lock after **10** successful runs.
     - *Successful run* means validation passed (success criteria met).
     - Locking is automatic after reaching the threshold for the complexity level.
 
@@ -69,6 +69,12 @@ The system supports flexible validation strategies to balance reliability and sp
 
 The system uses a simple, reliable approach: count successful executions and lock based on complexity.
 
+**⚠️ TODO: Turn-based classification limitation:** The current turn-count-based complexity classification has a significant limitation: turn count varies significantly depending on the LLM model used (e.g., Claude vs GPT vs cheaper models) and doesn't reflect actual step complexity. A better complexity metric should consider:
+- Actual step requirements (dependencies, validation criteria, data transformations)
+- Historical success rates and consistency
+- Resource usage patterns
+- Step interdependencies and workflow context
+
 ### How It Works:
 
 1. **After each successful execution** (validation passed):
@@ -80,6 +86,12 @@ The system uses a simple, reliable approach: count successful executions and loc
      - **Simple:** After **2** runs (of 3) → use tempLLM for learning
      - **Medium:** After **3** runs (of 5) → use tempLLM for learning
      - **Complex:** After **5** runs (of 10) → use tempLLM for learning
+   - **tempLLM Success with Skip Flags:**
+     - If `tempLLM1` or `tempLLM2` was used AND validation passed
+     - AND the corresponding skip flag is enabled (`SkipLearningWhenTempLLM1` or `SkipLearningWhenTempLLM2`)
+     - Success learning agent is **SKIPPED** (cost optimization)
+     - **BUT** metadata is **STILL UPDATED** with success count and turnCount
+     - **Rationale:** tempLLM succeeded using existing learnings → learnings are good enough → skip expensive learning extraction BUT still track the success toward auto-lock threshold
 
 2. **After each failed execution** (validation failed):
    - **Failure Learning Agent:** Runs to analyze the failure and provide a refined task description for the retry attempt.
@@ -87,11 +99,17 @@ The system uses a simple, reliable approach: count successful executions and loc
    - **No Counter Increment:** Successful run counters are **NOT** incremented on failure.
    - **Detection Skipped:** Failure learning skips the "New Learning Detection" check (always assumes new learning) to keep the retry loop active and avoid premature locking during instability.
    - **Safety Lock:** Auto-lock will still trigger if `TotalIterations` reaches 15, preventing infinite retry-learning loops.
+   - **tempLLM Skip Logic (Cost Optimization):**
+     - If `tempLLM1` or `tempLLM2` was used for execution AND validation failed
+     - AND the corresponding skip flag is enabled (`SkipLearningWhenTempLLM1` or `SkipLearningWhenTempLLM2`)
+     - Then failure learning is **SKIPPED** entirely
+     - The system will retry with the original/main LLM (higher quality model)
+     - **Rationale:** tempLLM failures don't need learning - just retry with better model to save costs
 
 3. **Complexity Classification:**
-   - **Simple:** `< 15 turns` → Lock after **3** successful runs
-   - **Medium:** `15-30 turns` → Lock after **5** successful runs  
-   - **Complex:** `> 30 turns` → Lock after **10** successful runs
+   - **Simple:** `< 100 turns` → Lock after **3** successful runs
+   - **Medium:** `100-200 turns` → Lock after **5** successful runs  
+   - **Complex:** `> 200 turns` → Lock after **10** successful runs
 
 4. **Locking Behavior:**
    - Once threshold reached, `LockLearnings = true` is set automatically
@@ -125,7 +143,7 @@ The system uses a simple, reliable approach: count successful executions and loc
 2. **tempLLM2** (if learnings exist AND retryAttempt == 2)
 3. **Step Config LLM** (if configured)
 4. **Preset Default LLM** (if configured)
-5. **Orchestrator Default LLM** (fallback)
+5. **Preset LLM** (final fallback - no orchestrator default)
 
 #### LLM Fallback Rules:
 - **Only used when:** Step has existing learnings (learnings folder has files)
@@ -299,6 +317,58 @@ You can override this dynamic behavior using the `keep_learning_full` feature fl
 
 ---
 
+## 🔁 Loop Learning Strategy (Cost Optimization)
+
+Loop steps present a unique challenge: learning after every iteration can be extremely expensive (10 iterations = 10x learning cost). The system implements a smart default strategy to balance learning quality with cost efficiency.
+
+### Smart Default Behavior
+
+**Default Rule:** Run learning for the **first 2 iterations only**, then stop.
+
+**Rationale:**
+- **Iteration 1:** Learn the initial pattern and approach
+- **Iteration 2:** Capture refinements and edge cases
+- **Iteration 3+:** Pattern is established, no need for redundant learning
+- **Final (Loop Completes):** Final success learning captures the complete workflow
+
+### Configuration Override
+
+Set `learning_after_loop_iteration: true` in `step_config.json` to force learning on **ALL** iterations (not recommended for cost reasons).
+
+```json
+{
+  "agent_configs": {
+    "learning_after_loop_iteration": true
+  }
+}
+```
+
+### Cost Savings Example
+
+**Scenario:** Loop with 10 iterations
+
+| Strategy | Learning Calls | Cost |
+|----------|----------------|------|
+| **All Iterations** | 10 (each iteration) + 1 (final) = **11 times** | 💰💰💰 |
+| **Smart Default** | 2 (first 2 iterations) + 1 (final) = **3 times** | 💰 |
+| **Savings** | **73% cost reduction** 🎉 | |
+
+### Implementation Details
+
+- **Location:** `controller_execution.go:1961-1983`
+- **Check:** `if loopIterationCount <= 2 { learningAfterLoopIteration = true }`
+- **Override:** Explicit config always takes precedence over smart default
+- **Logging:** Clear logs indicate when learning is enabled/skipped per iteration
+
+### Benefits
+
+- ✅ **Cost Efficient:** Massive savings for loops with many iterations
+- ✅ **Quality Preserved:** First 2 iterations capture essential patterns
+- ✅ **Automatic:** Works out-of-the-box with no configuration
+- ✅ **Flexible:** Can be overridden per step if needed
+
+---
+
 ## 🛠 Component Roles
 
 | Component | Responsibility | Timing |
@@ -327,10 +397,12 @@ learnings/
 - `step_id`: Step identifier
 - `step_hash`: SHA256 of step definition (for change detection)
 - `total_iterations`: Total number of learning attempts
-- `successful_runs_simple`: Counter for simple steps (< 15 turns)
-- `successful_runs_medium`: Counter for medium steps (15-30 turns)
-- `successful_runs_complex`: Counter for complex steps (> 30 turns)
+- `successful_runs_simple`: Counter for simple steps (< 100 turns)
+- `successful_runs_medium`: Counter for medium steps (100-200 turns)
+- `successful_runs_complex`: Counter for complex steps (> 200 turns)
 - `last_turn_count`: Last recorded TurnCount
+- `last_execution_llm`: The LLM used for the last execution (associated with last_turn_count)
+- `last_learning_llm`: The LLM used for the last learning cycle
 - `auto_locked_at`: Timestamp when auto-lock was triggered
 - `auto_lock_reason`: Reason for lock (e.g., "threshold_reached")
 
@@ -350,7 +422,7 @@ learnings/
 3. **TurnCount-Based Auto-Locking**
    - Locking is based on successful execution count, not learning detection
    - Complexity is determined by `TurnCount` (number of LLM turns in execution)
-   - Simple steps (< 15 turns) lock faster (3 runs), complex steps (> 30 turns) need more runs (10 runs)
+   - Simple steps (< 100 turns) lock faster (3 runs), complex steps (> 200 turns) need more runs (10 runs)
    - Each successful run (validation passed) increments the counter
 
 4. **Existing Learnings Usage (Explore vs. Exploit)**
@@ -386,11 +458,39 @@ learnings/
 - [x] **Event Logging**: Log cost-optimization model switches for transparency.
      
           ### Phase 4: Integration & Validation (DONE)
-     
+
           - [x] **Validation Modes:** Implemented `Auto`, `Always`, `Skip` validation strategies.
-     
+
           - [x] **Cleanup:** Removed legacy `skip_llm_validation_if_pre_validation_passes` boolean and detection logic.
-     
+
           - [x] **Testing:** Verify "Change Step -> Reset" and "Run X times -> Auto-lock" workflows.
-     
-     
+
+### Phase 5: Cost Optimization Enhancements (DONE)
+
+- [x] **Skip Failure Learning for tempLLM Failures:**
+  - Added `usedTempLLM` parameter to `runFailureLearningPhase()`
+  - When tempLLM fails validation, skip failure learning entirely
+  - System retries with main/preset LLM instead (better quality)
+  - Prevents wasting tokens on failure learning when cheaper model fails
+  - Files: `controller_learning.go`, `controller_execution.go`, `controller_orchestration.go`
+
+- [x] **Update Metadata on tempLLM Success Skip:**
+  - When tempLLM succeeds but learning is skipped (due to flags)
+  - Metadata is still updated with success count and turnCount
+  - Ensures step progresses toward auto-lock threshold (3 successes)
+  - Maintains proper tracking even when skipping expensive learning extraction
+  - Files: `controller_execution.go:2099-2124, 1836-1860, 2041-2067`
+
+- [x] **Smart Loop Learning (First 2 Iterations Only):**
+  - Default behavior: Run learning only for first 2 loop iterations
+  - Iteration 1: Learn initial pattern
+  - Iteration 2: Capture refinements
+  - Iteration 3+: Skip learning (pattern established)
+  - Cost savings: ~73% for loops with 10+ iterations
+  - Override: Set `learning_after_loop_iteration: true` in step config to force all iterations
+  - Files: `controller_execution.go:1961-1983`
+
+**Impact:**
+- 🎯 Major cost reduction for loop-heavy workflows (up to 73% savings)
+- 💰 Prevents unnecessary learning on tempLLM failures
+- 📊 Maintains metadata accuracy for auto-lock progression

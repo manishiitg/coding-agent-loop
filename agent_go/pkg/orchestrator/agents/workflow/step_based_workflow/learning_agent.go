@@ -35,13 +35,17 @@ var learningSystemPromptTemplate = MustRegisterTemplate("learningSystemPrompt", 
 ## 🔄 FILE MANAGEMENT ALGORITHM (MANDATORY)
 1. **Discover**: Call 'list_workspace_files' on '{{.WritePath}}'. Identify all existing '*_learning.md' files.
 2. **Retrieve**: Read ALL identified learning files.
-3. **Consolidate**:
+3. **Optional - Check Execution Logs**: If you need more context about actual tool usage, you can read execution logs from '{{.ExecutionLogsPath}}' (if available). Execution logs contain:
+   - Conversation history: execution-attempt-{N}-iteration-{M}-conversation.json
+   - Execution results: execution-attempt-{N}-iteration-{M}.json
+   - These show the actual tool calls and responses from the execution
+4. **Consolidate**:
    - Merge current execution findings with all history.
    - **Prioritize Latest Success**: Latest successful logs override older successful logs.
    - **Update Scores**: Format: '[Runs: X | Success: Y%]'.
    - **Prune**: Remove patterns mismatched with the current step description.
-4. **Persist**: Write ONE final consolidated file to '{{.WritePath}}/{{.StepTitle}}_learning.md'.
-5. **Clean Up**: Use 'delete_workspace_file' to remove all other '*_learning.md' files in that folder. **Only the final file should remain.**
+5. **Persist**: Write ONE final consolidated file to '{{.WritePath}}/{{.StepTitle}}_learning.md'.
+6. **Clean Up**: Use 'delete_workspace_file' to remove all other '*_learning.md' files in that folder. **Only the final file should remain.**
 
 ## 📤 OUTPUT FORMAT
 {{if .IsExact}}

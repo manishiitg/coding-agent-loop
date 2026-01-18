@@ -3,6 +3,25 @@ import { agentApi } from '../../../services/api'
 import type { PlanStep, PlanningResponse, StepConfig, AgentConfigs } from '../../../utils/stepConfigMatching'
 import { isConditionalStep, isDecisionStep, isOrchestrationStep } from '../../../utils/stepConfigMatching'
 
+// Module-level cache to dedupe loadPlan calls across multiple hook instances
+// This prevents duplicate API calls when multiple components use usePlanData
+interface PlanCache {
+  workspacePath: string | null
+  promise: Promise<PlanningResponse | null> | null
+  data: PlanningResponse | null
+  timestamp: number
+}
+
+const planCache: PlanCache = {
+  workspacePath: null,
+  promise: null,
+  data: null,
+  timestamp: 0
+}
+
+// Cache expiry time (5 seconds) - allows refetch after mutations
+const CACHE_EXPIRY_MS = 5000
+
 // Types for plan change detection
 export type ChangeType = 'added' | 'updated' | 'deleted'
 
@@ -150,123 +169,128 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     return `${workspacePath}/planning/step_config.json`
   }, [workspacePath])
 
-  // Load plan from workspace (no comparison - changes come from granular events)
-  const loadPlan = useCallback(async (): Promise<void> => {
+  // Internal function to actually fetch plan data (used by cached loadPlan)
+  const fetchPlanData = useCallback(async (): Promise<PlanningResponse | null> => {
     const planPath = getPlanFilePath()
     const stepConfigPath = getStepConfigFilePath()
     if (!planPath) {
+      throw new Error('No workspace path provided')
+    }
+
+    console.log('[WorkflowPlanUpdate] Fetching plan from:', planPath)
+    const response = await agentApi.getPlannerFileContent(planPath)
+
+    if (response.success && response.data && response.data.content && typeof response.data.content === 'string') {
+      let planData: PlanningResponse = JSON.parse(response.data.content)
+      console.log('[WorkflowPlanUpdate] Plan loaded:', { stepCount: planData.steps?.length || 0 })
+
+      // Also load step_config.json to merge agent_configs
+      if (stepConfigPath) {
+        try {
+          const stepConfigResponse = await agentApi.getPlannerFileContent(stepConfigPath)
+          if (stepConfigResponse.success && stepConfigResponse.data && stepConfigResponse.data.content && typeof stepConfigResponse.data.content === 'string') {
+            const rawStepConfig = JSON.parse(stepConfigResponse.data.content)
+            const stepConfigs = normalizeStepConfigFile(rawStepConfig)
+            planData = mergeStepConfigs(planData, stepConfigs)
+            console.log('[WorkflowPlanUpdate] Merged step_config.json:', { stepConfigCount: stepConfigs.length })
+          }
+        } catch {
+          // step_config.json doesn't exist or couldn't be loaded - that's okay
+          console.log('[WorkflowPlanUpdate] No step_config.json found')
+        }
+      }
+
+      return planData
+    }
+
+    return null
+  }, [getPlanFilePath, getStepConfigFilePath])
+
+  // Load plan from workspace with caching to prevent duplicate API calls
+  const loadPlan = useCallback(async (): Promise<void> => {
+    if (!workspacePath) {
       setError('No workspace path provided')
       return
     }
 
-    console.log('[WorkflowPlanUpdate] loadPlan called', { planPath, stepConfigPath, workspacePath })
+    const now = Date.now()
+
+    // Check if we have a valid cached result for this workspace
+    if (
+      planCache.workspacePath === workspacePath &&
+      planCache.data !== null &&
+      (now - planCache.timestamp) < CACHE_EXPIRY_MS
+    ) {
+      console.log('[WorkflowPlanUpdate] Using cached plan data')
+      setPlan(planCache.data)
+      return
+    }
+
+    // Check if a load is already in progress for this workspace
+    if (planCache.workspacePath === workspacePath && planCache.promise) {
+      console.log('[WorkflowPlanUpdate] Load already in progress, waiting...')
+      try {
+        const data = await planCache.promise
+        setPlan(data)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load plan')
+      }
+      return
+    }
 
     // Check if workspace changed
     const isWorkspaceChange = currentWorkspaceRef.current !== workspacePath
     if (isWorkspaceChange) {
       currentWorkspaceRef.current = workspacePath
-      console.log('[WorkflowPlanUpdate] Workspace changed')
+      // Clear cache for different workspace
+      planCache.workspacePath = workspacePath
+      planCache.data = null
+      planCache.promise = null
+      console.log('[WorkflowPlanUpdate] Workspace changed, loading plan')
+    } else {
+      console.log('[WorkflowPlanUpdate] loadPlan called for same workspace')
     }
 
     setLoading(true)
     setError(null)
 
+    // Create the promise and cache it
+    const loadPromise = fetchPlanData()
+    planCache.promise = loadPromise
+    planCache.workspacePath = workspacePath
+
     try {
-      console.log('[WorkflowPlanUpdate] Fetching plan from:', planPath)
-      const response = await agentApi.getPlannerFileContent(planPath)
-      console.log('[WorkflowPlanUpdate] Plan fetch response:', { success: response.success, hasData: !!response.data, hasContent: !!response.data?.content })
-      
-      // Check if response has data AND content exists and is a string
-      if (response.success && response.data && response.data.content && typeof response.data.content === 'string') {
-        let planData: PlanningResponse = JSON.parse(response.data.content)
-        console.log('[WorkflowPlanUpdate] Plan loaded:', { stepCount: planData.steps?.length || 0, hasSteps: !!planData.steps })
-        
-        // Also load step_config.json to merge agent_configs
-        if (stepConfigPath) {
-          try {
-            console.log('[WorkflowPlanUpdate] Fetching step_config from:', stepConfigPath)
-            const stepConfigResponse = await agentApi.getPlannerFileContent(stepConfigPath)
-            console.log('[StepConfigDebug] ⚠️ CRITICAL: step_config.json API response:', {
-              success: stepConfigResponse.success,
-              hasData: !!stepConfigResponse.data,
-              hasContent: !!stepConfigResponse.data?.content,
-              dataKeys: stepConfigResponse.data ? Object.keys(stepConfigResponse.data) : [],
-              responseStructure: stepConfigResponse
-            })
-            // Check if step_config has content before parsing
-            if (stepConfigResponse.success && stepConfigResponse.data && stepConfigResponse.data.content && typeof stepConfigResponse.data.content === 'string') {
-              console.log('[StepConfigDebug] ⚠️ CRITICAL: Raw file content BEFORE parsing:', {
-                contentLength: stepConfigResponse.data.content.length,
-                contentPreview: stepConfigResponse.data.content.substring(0, 500),
-                fullContent: stepConfigResponse.data.content
-              })
-              const rawStepConfig = JSON.parse(stepConfigResponse.data.content)
-              console.log('[StepConfigDebug] ⚠️ CRITICAL: Raw step_config.json structure AFTER parsing:', {
-                hasSteps: !Array.isArray(rawStepConfig) && 'steps' in rawStepConfig,
-                isArray: Array.isArray(rawStepConfig),
-                keys: Array.isArray(rawStepConfig) ? `Array[${rawStepConfig.length}]` : Object.keys(rawStepConfig),
-                firstItem: Array.isArray(rawStepConfig) && rawStepConfig.length > 0 ? rawStepConfig[0] : null,
-                rawContent: rawStepConfig
-              })
-              
-              // Normalize from object format: { "steps": [...] }
-              const stepConfigs = normalizeStepConfigFile(rawStepConfig)
-              console.log('[StepConfigDebug] Normalized step_config.json:', {
-                stepCount: stepConfigs.length,
-                format: 'object with steps field',
-                steps: stepConfigs.map(s => ({
-                  id: s.id,
-                  hasAgentConfigs: !!s.agent_configs,
-                  selectedTools: s.agent_configs?.selected_tools
-                }))
-              })
-              
-              // Merge agent_configs into plan steps
-              planData = mergeStepConfigs(planData, stepConfigs)
-              console.log('[StepConfigDebug] Merged step_config.json into plan', {
-                stepConfigCount: stepConfigs.length,
-                mergedSteps: planData.steps.map(s => ({
-                  id: s.id,
-                  hasAgentConfigs: !!s.agent_configs,
-                  selectedTools: s.agent_configs?.selected_tools,
-                  selectedServers: s.agent_configs?.selected_servers
-                }))
-              })
-            }
-          } catch (err) {
-            // step_config.json doesn't exist or couldn't be loaded - that's okay
-            console.log('[WorkflowPlanUpdate] No step_config.json found, using plan without agent configs', err)
-          }
-        }
-        
-        // Update state (no comparison - changes come from granular events via setChanges)
-        console.log('[WorkflowPlanUpdate] Updating plan state')
-        setPlan(planData)
-      } else {
-        // Plan doesn't exist yet - that's okay
-        setPlan(null)
-        console.log('[usePlanData] No plan found at:', planPath)
+      const planData = await loadPromise
+
+      // Update cache
+      planCache.data = planData
+      planCache.timestamp = Date.now()
+      planCache.promise = null
+
+      setPlan(planData)
+      if (!planData) {
+        console.log('[usePlanData] No plan found')
       }
-      return
     } catch (err) {
+      planCache.promise = null
+
       // Check if it's a 404 (plan doesn't exist)
       if (err && typeof err === 'object' && 'response' in err) {
         const axiosError = err as { response?: { status?: number } }
         if (axiosError.response?.status === 404) {
-          // Plan doesn't exist yet - not an error
           setPlan(null)
-          console.log('[usePlanData] Plan not found (404):', planPath)
+          console.log('[usePlanData] Plan not found (404)')
           return
         }
       }
-      
+
       console.error('[usePlanData] Failed to load plan:', err)
       setError(err instanceof Error ? err.message : 'Failed to load plan')
       return
     } finally {
       setLoading(false)
     }
-  }, [getPlanFilePath, getStepConfigFilePath, workspacePath])
+  }, [workspacePath, fetchPlanData])
 
   /**
    * LEGACY METHOD: Direct file save for plan.json
@@ -291,6 +315,13 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
    * 
    * @deprecated Prefer using backend APIs (updateStep, deleteStep, addStep) for normal operations
    */
+  // Helper to invalidate the plan cache (call after mutations)
+  const invalidatePlanCache = useCallback(() => {
+    planCache.data = null
+    planCache.timestamp = 0
+    planCache.promise = null
+  }, [])
+
   const savePlan = useCallback(async (updatedPlan: PlanningResponse) => {
     const planPath = getPlanFilePath()
     if (!planPath) {
@@ -309,7 +340,10 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
         throw new Error(response.message || 'Failed to save plan')
       }
 
+      // Update local state and cache
       setPlan(updatedPlan)
+      planCache.data = updatedPlan
+      planCache.timestamp = Date.now()
     } catch (err) {
       console.error('[usePlanData] Failed to save plan:', err)
       throw err
@@ -605,7 +639,11 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
   }, [plan, workspacePath, loadPlan])
 
   // Refresh plan (returns detected changes)
-  const refresh = loadPlan
+  // Refresh function that invalidates cache and reloads
+  const refresh = useCallback(async () => {
+    invalidatePlanCache()
+    await loadPlan()
+  }, [loadPlan, invalidatePlanCache])
 
   // Clear changes state (call after highlighting animation completes)
   const clearChanges = useCallback(() => {
@@ -613,6 +651,8 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
   }, [])
 
   // Auto-load plan when workspace path changes
+  // Note: loadPlan has internal caching that prevents duplicate API calls,
+  // so we don't need to re-run this effect when loadPlan is recreated
   useEffect(() => {
     if (workspacePath) {
       loadPlan()
@@ -623,7 +663,8 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
       setError(null)
       setChanges(null)
     }
-  }, [workspacePath, loadPlan])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspacePath]) // Only re-run when workspace changes, not when loadPlan is recreated
 
   return {
     plan,

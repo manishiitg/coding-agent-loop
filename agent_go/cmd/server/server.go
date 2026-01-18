@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	_ "net/http/pprof" // Register pprof handlers
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -293,9 +293,15 @@ type StreamingAPI struct {
 
 	// Workflow orchestrator sessions: sessionID -> orchestrator.Orchestrator
 
-	// Workflow orchestrator contexts for cancellation: sessionID -> context.CancelFunc
+	// Workflow orchestrator contexts for cancellation: queryID -> context.CancelFunc
+	// Using queryID (not sessionID) ensures each execution is independent
 	workflowOrchestratorContexts   map[string]context.CancelFunc
 	workflowOrchestratorContextMux sync.RWMutex
+
+	// Mapping of sessionID -> []queryID to track which executions belong to which session
+	// Used by handleStopSession to cancel all executions for a session
+	sessionQueryIDs   map[string][]string
+	sessionQueryIDMux sync.RWMutex
 
 	// Workflow objectives: sessionID -> objective
 	workflowObjectives   map[string]string
@@ -464,13 +470,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		StructuredOutputProvider: viper.GetString("structured-output-provider"),
 		StructuredOutputModel:    viper.GetString("structured-output-model"),
 		StructuredOutputTemp:     viper.GetFloat64("structured-output-temp"),
-	}
-
-	absConfigPath, err := filepath.Abs(config.MCPConfigPath)
-	if err != nil {
-		fmt.Printf("[DEBUG] Could not resolve absolute config path: %v\n", err)
-	} else {
-		fmt.Printf("[DEBUG] Absolute config path: %s\n", absConfigPath)
 	}
 
 	log.Printf("[SERVER DEBUG] Using MCP config file: %s", config.MCPConfigPath)
@@ -657,6 +656,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		config:                       config,
 		agentCancelFuncs:             make(map[string]context.CancelFunc),
 		workflowOrchestratorContexts: make(map[string]context.CancelFunc),
+		sessionQueryIDs:              make(map[string][]string),
 		workflowObjectives:           make(map[string]string),
 		conversationHistory:          make(map[string][]llmtypes.MessageContent),
 		chatDB:                       chatDB,
@@ -708,9 +708,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/tools/remove", api.handleRemoveServer).Methods("POST")
 
 	// Tool execution APIs - handlers provided by mcpagent/executor library
-	// Note: We pass nil for logger as server uses different logger interface (utils.ExtendedLogger vs loggerv2.Logger)
-	// The executor package will use its own default noop logger for internal logging
-	executorHandlers := executor.NewExecutorHandlers(api.mcpConfigPath, nil)
+	// Pass server logger for proper debugging of session registry usage
+	executorHandlers := executor.NewExecutorHandlers(api.mcpConfigPath, api.logger)
 	apiRouter.HandleFunc("/mcp/execute", executorHandlers.HandleMCPExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/custom/execute", executorHandlers.HandleCustomExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/virtual/execute", executorHandlers.HandleVirtualExecute).Methods("POST", "OPTIONS")
@@ -774,6 +773,11 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/status", api.handleGetWorkflowStatus).Methods("GET")
 	apiRouter.HandleFunc("/workflow/update", api.handleUpdateWorkflow).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/constants", orchtypes.HandleWorkflowConstants).Methods("GET")
+
+	// Consolidated workspace state endpoint (NEW - loads everything in one call)
+	apiRouter.HandleFunc("/workspace/state", api.handleLoadWorkspaceState).Methods("GET", "OPTIONS")
+
+	// Legacy individual endpoints (kept for backward compatibility)
 	apiRouter.HandleFunc("/workflow/run-folders", api.handleGetRunFolders).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/run-folder", api.handleCreateRunFolder).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/progress", api.handleGetProgress).Methods("GET", "OPTIONS")
@@ -793,6 +797,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/plan/batch-update-steps", api.handleBatchUpdateSteps).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/delete-step", api.handleDeleteStep).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/add-step", api.handleAddStep).Methods("POST", "OPTIONS")
+
+	// pprof routes for profiling (must be before static file serving)
+	router.PathPrefix("/debug/pprof/").Handler(http.DefaultServeMux)
 
 	// Static file serving (for frontend)
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("./static/")))
@@ -995,31 +1002,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		"query_id":   queryID,
 	})
 
-	// Set agent execution LLM defaults: API request takes precedence, then environment variables, then server config, then fallback to Bedrock
-	agentProvider := req.Provider // API request takes highest priority
-	if agentProvider == "" {
-		agentProvider = os.Getenv("AGENT_PROVIDER") // Environment variable as fallback
-	}
-	if agentProvider == "" {
-		agentProvider = api.config.Provider // Server config as fallback
-	}
-	if agentProvider == "" {
-		agentProvider = "bedrock" // Default fallback
-	}
-
-	// Set agent model: API request takes precedence, then environment variables, then server config
-	agentModel := req.ModelID // API request takes highest priority
-	if agentModel == "" {
-		agentModel = os.Getenv("AGENT_MODEL") // Environment variable as fallback
-	}
-	if agentModel == "" {
-		agentModel = api.config.ModelID // Server config as fallback
-	}
-	if agentModel == "" && agentProvider == "bedrock" {
-		agentModel = os.Getenv("BEDROCK_PRIMARY_MODEL") // Use .env configuration
-	}
-	req.Provider = agentProvider
-	req.ModelID = agentModel
+	// NOTE: For workflow mode, LLM selection follows priority: temp override → step config → preset LLM
+	// No orchestrator default fallback. req.Provider and req.ModelID are not used for workflow agents.
+	// For non-workflow agents (simple/chat mode), req.Provider and req.ModelID come from the frontend request.
+	// Environment variable fallbacks have been removed - frontend always sends these values.
 
 	// Default maxTurns from environment variable or 100 if not provided or 0 (applies to both workflow and simple agent modes)
 	if req.MaxTurns <= 0 {
@@ -1129,18 +1115,44 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Continue without chat session - events won't be stored but query can proceed
 		}
 	} else {
-		// Reactivate session if it was stopped/completed/error - update status to "active" for new query
-		if chatSession.Status == "stopped" || chatSession.Status == "completed" || chatSession.Status == "error" {
-			updateReq := &database.UpdateChatSessionRequest{
-				Status:      "active",
-				CompletedAt: nil, // Clear completion timestamp when reactivating
+		// Prepare update request
+		updateReq := &database.UpdateChatSessionRequest{}
+		shouldUpdate := false
+
+		// 1. Update PresetQueryID if provided and currently missing or different
+		// This fixes "orphan" sessions by associating them with the current preset
+		if req.PresetQueryID != "" {
+			currentID := ""
+			if chatSession.PresetQueryID != nil {
+				currentID = *chatSession.PresetQueryID
 			}
+			if currentID != req.PresetQueryID {
+				updateReq.PresetQueryID = req.PresetQueryID
+				shouldUpdate = true
+				log.Printf("[SESSION UPDATE] Updating session %s PresetQueryID from '%s' to '%s'", sessionID, currentID, req.PresetQueryID)
+			}
+		}
+
+		// 2. Reactivate session if it was stopped/completed/error
+		if chatSession.Status == "stopped" || chatSession.Status == "completed" || chatSession.Status == "error" {
+			updateReq.Status = "active"
+			updateReq.CompletedAt = nil // Clear completion timestamp when reactivating
+			shouldUpdate = true
+			log.Printf("[SESSION REACTIVATION] Reactivating session %s (old status: %s)", sessionID, chatSession.Status)
+		}
+
+		// Apply updates if needed
+		if shouldUpdate {
 			_, err := api.chatDB.UpdateChatSession(r.Context(), sessionID, updateReq)
 			if err != nil {
-				// Continue with existing session status
+				log.Printf("[DATABASE ERROR] Failed to update chat session %s: %v", sessionID, err)
+				// Continue with existing session state - critical path should not fail
 			}
+		}
 
-			// Initialize EventStore for reactivated session to ensure new events are stored correctly
+		// Initialize EventStore for reactivated session to ensure new events are stored correctly
+		// Only needed if we actually reactivated (status changed)
+		if chatSession.Status == "stopped" || chatSession.Status == "completed" || chatSession.Status == "error" {
 			// Calculate existing event count to use as baseIndex for polling
 			var baseIndex int
 			existingEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 1000000, 0)
@@ -1314,9 +1326,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Create workflow orchestrator for this request
 		// Note: req.MaxTurns is already defaulted to 100 earlier in the handler
+		// Note: provider and model parameters removed - LLM selection uses temp override → step config → preset LLM
 		workflowOrchestrator, err := orchtypes.NewWorkflowOrchestrator(
-			req.Provider,         // provider
-			req.ModelID,          // model
 			api.mcpConfigPath,    // mcpConfigPath
 			api.temperature,      // temperature
 			"workflow",           // agentMode
@@ -1346,10 +1357,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// This prevents the workflow from being cancelled when the HTTP request ends
 		workflowCtx, workflowCancel := context.WithCancel(context.Background())
 
-		// Store the cancel function for potential cancellation
+		// Store the cancel function for potential cancellation (keyed by queryID for independent executions)
 		api.workflowOrchestratorContextMux.Lock()
-		api.workflowOrchestratorContexts[sessionID] = workflowCancel
+		api.workflowOrchestratorContexts[queryID] = workflowCancel
 		api.workflowOrchestratorContextMux.Unlock()
+
+		// Track which queryIDs belong to this session (for handleStopSession)
+		api.sessionQueryIDMux.Lock()
+		api.sessionQueryIDs[sessionID] = append(api.sessionQueryIDs[sessionID], queryID)
+		api.sessionQueryIDMux.Unlock()
 
 		// Return immediate response with query ID
 		response := QueryResponse{
@@ -1367,11 +1383,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Execute workflow asynchronously
 		go func() {
 			defer func() {
-				// Clean up the cancel function when done
+				// Clean up the cancel function when done (keyed by queryID)
 				api.workflowOrchestratorContextMux.Lock()
-				delete(api.workflowOrchestratorContexts, sessionID)
+				delete(api.workflowOrchestratorContexts, queryID)
 				api.workflowOrchestratorContextMux.Unlock()
 
+				// Remove queryID from session tracking
+				api.sessionQueryIDMux.Lock()
+				if queryIDs, exists := api.sessionQueryIDs[sessionID]; exists {
+					// Filter out this queryID
+					newQueryIDs := make([]string, 0, len(queryIDs)-1)
+					for _, qid := range queryIDs {
+						if qid != queryID {
+							newQueryIDs = append(newQueryIDs, qid)
+						}
+					}
+					if len(newQueryIDs) > 0 {
+						api.sessionQueryIDs[sessionID] = newQueryIDs
+					} else {
+						delete(api.sessionQueryIDs, sessionID)
+					}
+				}
+				api.sessionQueryIDMux.Unlock()
 			}()
 
 			// Check database for workflow approval status if preset_id is provided
@@ -1461,7 +1494,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Pass execution options from frontend if provided
+			log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Received request - req.ExecutionOptions is nil: %v", req.ExecutionOptions == nil)
 			if req.ExecutionOptions != nil {
+				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Execution options received: %+v", req.ExecutionOptions)
 				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: run_mode=%s, strategy=%s, run_folder=%s, resume_from_step=%d, enabled_group_ids=%v, skip_learning_temp_llm1=%v, skip_learning_temp_llm2=%v, save_validation_responses=%v",
 					req.ExecutionOptions.RunMode, req.ExecutionOptions.ExecutionStrategy, req.ExecutionOptions.SelectedRunFolder, req.ExecutionOptions.ResumeFromStep, req.ExecutionOptions.EnabledGroupIDs, req.ExecutionOptions.SkipLearningWhenTempLLM1, req.ExecutionOptions.SkipLearningWhenTempLLM2, req.ExecutionOptions.SaveValidationResponses)
 
@@ -1479,8 +1514,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					SkipLearningWhenTempLLM2:       req.ExecutionOptions.SkipLearningWhenTempLLM2,
 					EnabledGroupIDs:                req.ExecutionOptions.EnabledGroupIDs,
 					SaveValidationResponses:        req.ExecutionOptions.SaveValidationResponses,
-					DisableShellExecAccess:         req.ExecutionOptions.DisableShellExecAccess,
-					DisableReadImageAccess:         req.ExecutionOptions.DisableReadImageAccess,
 				}
 
 				// Convert TempOverrideLLM if present
@@ -1517,8 +1550,25 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
+				// Convert TempLearningLLM if present
+				if req.ExecutionOptions.TempLearningLLM != nil {
+					controllerOpts.TempLearningLLM = &todo_creation_human.AgentLLMConfig{
+						Provider: req.ExecutionOptions.TempLearningLLM.Provider,
+						ModelID:  req.ExecutionOptions.TempLearningLLM.ModelID,
+					}
+					log.Printf("[WORKFLOW EXECUTION] Temp learning LLM included: %s/%s", controllerOpts.TempLearningLLM.Provider, controllerOpts.TempLearningLLM.ModelID)
+				} else {
+					// Explicitly set to nil to ensure backend clears any existing override
+					controllerOpts.TempLearningLLM = nil
+					log.Printf("[WORKFLOW EXECUTION] Temp learning LLM not provided - will clear existing override")
+				}
+
 				// Set execution options on the workflow orchestrator
+				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Setting execution options on orchestrator: %+v", controllerOpts)
 				workflowOrchestrator.SetExecutionOptions(controllerOpts)
+				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Execution options set on orchestrator successfully")
+			} else {
+				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] No execution options provided in request - req.ExecutionOptions is nil")
 			}
 
 			// Execute workflow with the preset objective (not the phase query)
@@ -1615,7 +1665,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					updateReq := &database.UpdateChatSessionRequest{
 						Status:        "completed",
 						CompletedAt:   &completedAt,
-						PresetQueryID: "", // Explicitly set to empty string to trigger NULL in database
 					}
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					_, err := api.chatDB.UpdateChatSession(ctx, sessionID, updateReq)
@@ -1942,6 +1991,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Default to 0 (use default: 5)
 				return 0
 			}(),
+			// MCP session ID for connection reuse (e.g., Playwright browser sharing)
+			// Use the chat session ID so all agents in the same session share MCP connections
+			SessionID: sessionID,
 		}
 
 		// Set agent mode based on request
@@ -1976,7 +2028,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Chat mode is detected by: "simple", "" (empty/default), or "chat" agent mode
 		// Workflow/orchestrator modes handle workspace tools differently, so exclude them
 		isChatMode := req.AgentMode == "simple" || req.AgentMode == "" || req.AgentMode == "chat"
-		log.Printf("[FOLDER GUARD DEBUG] req.AgentMode=%s, isChatMode=%v, GetUnderlyingAgent()!=nil: %v", req.AgentMode, isChatMode, llmAgent.GetUnderlyingAgent() != nil)
+		// log.Printf("[FOLDER GUARD DEBUG] req.AgentMode=%s, isChatMode=%v, GetUnderlyingAgent()!=nil: %v", req.AgentMode, isChatMode, llmAgent.GetUnderlyingAgent() != nil)
 		if isChatMode && llmAgent.GetUnderlyingAgent() != nil {
 			// Check if workspace access is enabled
 			// Default to true for backward compatibility with legacy requests
@@ -2351,7 +2403,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			updateReq := &database.UpdateChatSessionRequest{
 				Status:        "completed",
 				CompletedAt:   &completedAt,
-				PresetQueryID: "", // Explicitly set to empty string to trigger NULL in database
 			}
 			_, err := api.chatDB.UpdateChatSession(streamCtx, sessionID, updateReq)
 			if err != nil {
@@ -2399,14 +2450,25 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 
 	// Note: No regular agent cleanup needed - fresh agents created per request
 
-	// Cancel workflow orchestrator context if it exists
-	api.workflowOrchestratorContextMux.Lock()
-	if cancelFunc, exists := api.workflowOrchestratorContexts[sessionID]; exists {
-		cancelFunc() // Cancel the workflow orchestrator execution
-		delete(api.workflowOrchestratorContexts, sessionID)
-		log.Printf("[SESSION DEBUG] Cancelled workflow orchestrator execution for session %s", sessionID)
+	// Cancel all workflow orchestrator contexts for this session
+	// Since we now use queryID as the key, we need to look up all queryIDs for this session
+	api.sessionQueryIDMux.Lock()
+	queryIDs := api.sessionQueryIDs[sessionID]
+	delete(api.sessionQueryIDs, sessionID) // Clear the mapping
+	api.sessionQueryIDMux.Unlock()
+
+	if len(queryIDs) > 0 {
+		api.workflowOrchestratorContextMux.Lock()
+		for _, qid := range queryIDs {
+			if cancelFunc, exists := api.workflowOrchestratorContexts[qid]; exists {
+				cancelFunc() // Cancel this workflow execution
+				delete(api.workflowOrchestratorContexts, qid)
+				log.Printf("[SESSION DEBUG] Cancelled workflow execution %s for session %s", qid, sessionID)
+			}
+		}
+		api.workflowOrchestratorContextMux.Unlock()
+		log.Printf("[SESSION DEBUG] Cancelled %d workflow execution(s) for session %s", len(queryIDs), sessionID)
 	}
-	api.workflowOrchestratorContextMux.Unlock()
 
 	// Clear workflow objective
 	api.workflowObjectiveMux.Lock()
@@ -2458,18 +2520,20 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 // State management functions removed - orchestrator is now stateless
 
 // createServerLogger creates a logger instance for the server
-// This logger writes to logs/server_debug.log (or the file specified via --log-file flag)
+// This logger writes to stdout only to avoid duplication with shell redirection
 func createServerLogger() loggerv2.Logger {
-	// Check for log file from flag or environment variable, default to server_debug.log
-	logFile := viper.GetString("log-file")
-	if logFile == "" {
-		logFile = os.Getenv("LOG_FILE")
-	}
-	if logFile == "" {
-		logFile = "logs/server_debug.log"
+	// Force stdout logging by passing empty log file and enableStdout=true
+	// This prevents the application from writing to the file directly,
+	// allowing the shell script's redirection to handle file logging without duplicates.
+	logFile := ""
+
+	// Check for log level from environment variable
+	logLevel := os.Getenv("LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "info"
 	}
 
-	serverLogger, err := logger.CreateLogger(logFile, "info", "text", false)
+	serverLogger, err := logger.CreateLogger(logFile, logLevel, "text", true)
 	if err != nil {
 		log.Fatalf("Failed to create server logger: %w", err)
 	}
@@ -2537,7 +2601,7 @@ func listChatSessionsHandler(db database.Database) http.HandlerFunc {
 			presetQueryIDPtr = &presetQueryID
 		}
 
-		sessions, total, err := db.ListChatSessions(r.Context(), limit, offset, presetQueryIDPtr)
+		sessions, total, err := db.ListChatSessions(r.Context(), limit, offset, presetQueryIDPtr, nil)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -2964,9 +3028,8 @@ func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
 
 		log.Printf("[ACTIVE_SESSION] Updating database for session %s status to: %s", sessionID, status)
 		_, err := api.chatDB.UpdateChatSession(ctx, sessionID, &database.UpdateChatSessionRequest{
-			Status:        status,
-			CompletedAt:   completedAt,
-			PresetQueryID: "", // Explicitly set to empty string to trigger NULL in database
+			Status:      status,
+			CompletedAt: completedAt,
 		})
 		if err != nil {
 			log.Printf("[ACTIVE_SESSION] Failed to update database for session %s: %v", sessionID, err)

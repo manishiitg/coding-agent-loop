@@ -25,10 +25,15 @@ type ContextAwareEventBridge struct {
 	tokenPersister   TokenPersister // Interface for persisting token usage
 	iterationFolder  string         // Current iteration folder for persistence
 	currentPhase     string
-	currentStep      int
+	currentStep      int    // Step index (deprecated, kept for backward compat)
+	currentStepID    string // Step ID (e.g., "fetch-data", "process-results")
 	currentAgentName string
-	mu               sync.RWMutex
-	logger           loggerv2.Logger
+	// Batch execution context (for batch progress tracking in frontend)
+	currentGroupID  string // Current group ID being executed
+	currentGroupIdx int    // 0-based index of current group
+	totalGroups     int    // Total number of groups in batch
+	mu              sync.RWMutex
+	logger          loggerv2.Logger
 }
 
 // Name implements the EventBridge interface
@@ -60,15 +65,16 @@ func (c *ContextAwareEventBridge) SetIterationFolder(iterationFolder string) {
 }
 
 // SetOrchestratorContext sets the current orchestrator context
-func (c *ContextAwareEventBridge) SetOrchestratorContext(phase string, step int, agentName string) {
+func (c *ContextAwareEventBridge) SetOrchestratorContext(phase string, step int, stepID string, agentName string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.currentPhase = phase
 	c.currentStep = step
+	c.currentStepID = stepID
 	c.currentAgentName = agentName
 
-	c.logger.Info(fmt.Sprintf("🎯 Set orchestrator context: %s (step %d)", phase, step+1))
+	c.logger.Info(fmt.Sprintf("🎯 Set orchestrator context: %s (step %d, ID: %s)", phase, step+1, stepID))
 }
 
 // ClearOrchestratorContext clears the orchestrator context
@@ -78,25 +84,79 @@ func (c *ContextAwareEventBridge) ClearOrchestratorContext() {
 
 	c.currentPhase = ""
 	c.currentStep = 0
+	c.currentStepID = ""
 	c.currentAgentName = ""
 
 	c.logger.Info("🧹 Cleared orchestrator context")
 }
 
+// SetBatchContext sets the current batch execution context
+func (c *ContextAwareEventBridge) SetBatchContext(groupID string, groupIndex int, totalGroups int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.currentGroupID = groupID
+	c.currentGroupIdx = groupIndex
+	c.totalGroups = totalGroups
+
+	c.logger.Info(fmt.Sprintf("📦 Set batch context: group %s (%d/%d)", groupID, groupIndex+1, totalGroups))
+}
+
+// ClearBatchContext clears the batch execution context
+func (c *ContextAwareEventBridge) ClearBatchContext() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.currentGroupID = ""
+	c.currentGroupIdx = 0
+	c.totalGroups = 0
+
+	c.logger.Info("🧹 Cleared batch context")
+}
+
+// SetCurrentStepID sets the current step ID (simple version - just step ID for all events)
+func (c *ContextAwareEventBridge) SetCurrentStepID(stepID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.currentStepID = stepID
+
+	c.logger.Info(fmt.Sprintf("🎯 Set current step ID: %s", stepID))
+}
+
+// ClearCurrentStepID clears the current step ID
+func (c *ContextAwareEventBridge) ClearCurrentStepID() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.currentStepID = ""
+
+	c.logger.Info("🧹 Cleared current step ID")
+}
+
 // HandleEvent implements AgentEventListener interface
 func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
-	// Copy orchestrator context while holding read lock
+	// Copy orchestrator and batch context while holding read lock
 	c.mu.RLock()
 	currentPhase := c.currentPhase
 	currentStep := c.currentStep
+	currentStepID := c.currentStepID
 	currentAgentName := c.currentAgentName
+	currentGroupID := c.currentGroupID
+	currentGroupIdx := c.currentGroupIdx
+	totalGroups := c.totalGroups
 	c.mu.RUnlock()
 
-	// Early return if no current phase
-	if currentPhase != "" {
-		c.logger.Debug(fmt.Sprintf("🔍 ContextAwareBridge: Processing event %s with phase %s", event.Type, currentPhase))
+	// Check what context we have
+	hasOrchestratorContext := currentPhase != ""
+	hasBatchContext := totalGroups > 0
+	hasStepID := currentStepID != ""
 
-		// Add orchestrator context to metadata
+	// Add context to metadata if we have any context (step ID, batch, or orchestrator)
+	if hasOrchestratorContext || hasBatchContext || hasStepID {
+		c.logger.Debug(fmt.Sprintf("🔍 ContextAwareBridge: Processing event %s with step %s, batch %s", event.Type, currentStepID, currentGroupID))
+
+		// Add context to metadata
 		// We need to check if the event data has a BaseEventData field
 		if eventData, ok := event.Data.(interface {
 			GetBaseEventData() *events.BaseEventData
@@ -110,9 +170,26 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 				if baseData.Metadata == nil {
 					baseData.Metadata = make(map[string]any)
 				}
-				baseData.Metadata["orchestrator_phase"] = currentPhase
-				baseData.Metadata["orchestrator_step"] = currentStep
-				baseData.Metadata["orchestrator_agent_name"] = currentAgentName
+
+				// Add current step ID (simple tracking - which step is running)
+				if hasStepID {
+					baseData.Metadata["current_step_id"] = currentStepID
+				}
+
+				// Add batch context (which group is running)
+				if hasBatchContext {
+					baseData.Metadata["batch_group_id"] = currentGroupID
+					baseData.Metadata["batch_group_index"] = currentGroupIdx
+					baseData.Metadata["batch_total_groups"] = totalGroups
+				}
+
+				// Add full orchestrator context if available (backward compat)
+				if hasOrchestratorContext {
+					baseData.Metadata["orchestrator_phase"] = currentPhase
+					baseData.Metadata["orchestrator_step"] = currentStep
+					baseData.Metadata["orchestrator_step_id"] = currentStepID
+					baseData.Metadata["orchestrator_agent_name"] = currentAgentName
+				}
 
 				c.logger.Debug(fmt.Sprintf("✅ ContextAwareBridge: Added metadata to event %s, metadata keys count: %d", event.Type, len(baseData.Metadata)))
 			}
@@ -179,11 +256,11 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 							if err := phasePersister.PersistPhaseTokenUsage(ctx, phaseTokenData, modelTokenData); err != nil {
 								c.logger.Warn(fmt.Sprintf("⚠️ Failed to persist phase token usage: %v", err))
 							} else {
-								c.logger.Debug(fmt.Sprintf("💾 Persisted phase token usage directly to file"))
+								c.logger.Debug("💾 Persisted phase token usage directly to file")
 							}
 						}()
 					} else {
-						c.logger.Debug(fmt.Sprintf("⚠️ Token persister does not implement PhaseTokenPersister, skipping phase token persistence"))
+						c.logger.Debug("⚠️ Token persister does not implement PhaseTokenPersister, skipping phase token persistence")
 					}
 				}
 			} else {
@@ -193,6 +270,7 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 					stepTokenData = &StepTokenData{
 						Phase:            currentPhase,
 						Step:             currentStep,
+						StepID:           currentStepID, // Use step ID instead of index
 						InputTokens:      tokenEvent.PromptTokens,     // input tokens
 						OutputTokens:     tokenEvent.CompletionTokens, // output tokens
 						CacheTokens:      cacheTokensSeparate.Total,   // total cache (backward compat)
@@ -215,7 +293,7 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 						if err := persister.PersistTokenUsage(ctx, iterationFolder, stepTokenData, modelTokenData); err != nil {
 							c.logger.Warn(fmt.Sprintf("⚠️ Failed to persist token usage: %v", err))
 						} else {
-							c.logger.Debug(fmt.Sprintf("💾 Persisted token usage directly to file"))
+							c.logger.Debug("💾 Persisted token usage directly to file")
 						}
 					}()
 				}

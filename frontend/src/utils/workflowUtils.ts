@@ -6,15 +6,21 @@ import type { VariableGroup, VariablesManifest } from '../services/api-types'
  */
 
 /**
- * Sanitizes a display name for use in folder paths
- * Converts to lowercase, replaces special characters with dashes, normalizes multiple dashes
- * 
+ * Sanitizes a display name for use in folder paths.
+ * Converts to lowercase, replaces special characters with dashes, normalizes multiple dashes.
+ *
+ * This ensures consistent folder naming across frontend and backend.
+ *
  * @param displayName - The display name to sanitize
  * @returns Sanitized display name, or empty string if invalid
+ *
+ * @example
+ * sanitizeDisplayNameForFolder("Real Training #1") // Returns: "real-training-1"
+ * sanitizeDisplayNameForFolder("Production--Env") // Returns: "production-env"
  */
 export function sanitizeDisplayNameForFolder(displayName: string | undefined): string {
   if (!displayName) return ''
-  
+
   return displayName
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
@@ -121,15 +127,34 @@ export function buildGroupFolderPath(
 }
 
 /**
- * Determines the specific group folder path to use for phases that need context
- * Priority: currentRunningGroupId > selectedRunFolder (if group path) > first selectedGroupIds
- * 
+ * Determines the specific group folder path to use for phases that need context.
+ *
+ * This function resolves which group folder path should be used based on a simplified priority system:
+ * - Priority 1: Currently running group (during batch execution) - provides execution feedback
+ * - Priority 2: First selected group from checkboxes - user's explicit selection
+ * - Fallback: Iteration folder only (no specific group)
+ *
  * @param options - Configuration options
- * @param options.currentRunningGroupId - Currently running group ID (if during batch execution)
- * @param options.selectedRunFolder - Currently selected run folder
+ * @param options.currentRunningGroupId - Currently running group ID (during batch execution)
+ * @param options.selectedRunFolder - Currently selected run folder (e.g., "iteration-1")
  * @param options.selectedGroupIds - Array of selected group IDs from checkboxes
- * @param options.manifest - Variables manifest
- * @returns The resolved group folder path, or the original selectedRunFolder if no groups involved
+ * @param options.manifest - Variables manifest containing group definitions
+ * @returns The resolved group folder path (e.g., "iteration-1/group-5"), iteration folder, or undefined
+ *
+ * @example
+ * // During batch execution
+ * resolveGroupFolderPath({ currentRunningGroupId: 'group-2', selectedRunFolder: 'iteration-1', ... })
+ * // Returns: "iteration-1/group-2"
+ *
+ * @example
+ * // User selected groups via checkboxes
+ * resolveGroupFolderPath({ selectedGroupIds: ['group-1', 'group-3'], selectedRunFolder: 'iteration-5', ... })
+ * // Returns: "iteration-5/group-1" (uses first selected)
+ *
+ * @example
+ * // No groups selected - execute all enabled
+ * resolveGroupFolderPath({ selectedGroupIds: [], selectedRunFolder: 'iteration-1', ... })
+ * // Returns: "iteration-1"
  */
 export function resolveGroupFolderPath(options: {
   currentRunningGroupId?: string | null
@@ -143,44 +168,60 @@ export function resolveGroupFolderPath(options: {
     selectedGroupIds = [],
     manifest
   } = options
-  
-  // If no manifest or groups, return selectedRunFolder as-is
+
+  // If no manifest or groups, return selectedRunFolder as-is (if valid)
+  // This is normal - don't log errors for this case
   if (!manifest?.groups || manifest.groups.length === 0) {
-    return selectedRunFolder === 'new' ? undefined : selectedRunFolder || undefined
+    // Only return if selectedRunFolder is a valid string (not null/undefined/empty)
+    return (selectedRunFolder && selectedRunFolder !== 'new') ? selectedRunFolder : undefined
+  }
+
+  // Try to extract iteration folder from selectedRunFolder
+  const iterationFolder = extractIterationFolder(selectedRunFolder)
+  
+  // If we couldn't extract iteration from selectedRunFolder, try to find it from selectedGroupIds
+  // This handles the case where page refreshes and selectedRunFolder is invalid but we have selectedGroupIds
+  if (!iterationFolder && selectedGroupIds.length > 0 && manifest.groups) {
+    // Try to find a group that matches one of the selectedGroupIds and extract its iteration
+    // We can't directly get iteration from groupId, but we can check if any run folders exist
+    // For now, if we have selectedGroupIds but no valid selectedRunFolder, return undefined
+    // The caller should handle this case
+    // This is normal during page refresh - don't log errors
+    return undefined
   }
   
-  let targetGroupId: string | null = null
-  let resolvedFolder: string | undefined = selectedRunFolder === 'new' ? undefined : selectedRunFolder || undefined
-  
+  // If still no iteration folder, return selectedRunFolder as-is (if valid) or undefined
+  // This is normal when data isn't ready yet (e.g., during initial load or page refresh)
+  // Only log if we have all the data but still can't extract (which would be unusual)
+  if (!iterationFolder) {
+    // Only log if we have a selectedRunFolder but it's in an unexpected format
+    // This helps debug actual issues without spamming logs during normal operation
+    if (selectedRunFolder && selectedRunFolder !== 'new' && !selectedRunFolder.startsWith('iteration-')) {
+      // This is unusual - selectedRunFolder exists but doesn't match expected format
+      // But don't log repeatedly - this might be called many times during renders
+      // The caller can handle undefined gracefully
+    }
+    return (selectedRunFolder && selectedRunFolder !== 'new') ? selectedRunFolder : undefined
+  }
+
   // Priority 1: Use currently running group (during batch execution)
+  // This provides real-time feedback on which group is executing
   if (currentRunningGroupId) {
-    targetGroupId = currentRunningGroupId
+    const groupPath = buildGroupFolderPath(currentRunningGroupId, iterationFolder, manifest)
+    return groupPath || iterationFolder
   }
-  // Priority 2: Check if selectedRunFolder already specifies a group
-  else if (selectedRunFolder && selectedRunFolder !== 'new' && selectedRunFolder.includes('/')) {
-    // selectedRunFolder already contains a group path, use it as-is
-    resolvedFolder = selectedRunFolder
-    return resolvedFolder
-  }
-  // Priority 3: Use first selected group from checkboxes
-  else if (selectedGroupIds.length > 0) {
-    targetGroupId = selectedGroupIds[0]
-    
+
+  // Priority 2: Use first selected group from checkboxes
+  // This represents the user's explicit selection for context
+  if (selectedGroupIds.length > 0) {
+    const groupPath = buildGroupFolderPath(selectedGroupIds[0], iterationFolder, manifest)
     if (selectedGroupIds.length > 1) {
-      console.warn('[workflowUtils] Multiple groups selected, using first group for context:', targetGroupId)
+      console.warn('[workflowUtils] Multiple groups selected, using first group for context:', selectedGroupIds[0])
     }
+    return groupPath || iterationFolder
   }
-  
-  // Build the group folder path if we have a target group ID
-  if (targetGroupId && (!resolvedFolder || !resolvedFolder.includes('/'))) {
-    const iterationFolder = extractIterationFolder(selectedRunFolder)
-    if (iterationFolder) {
-      const groupPath = buildGroupFolderPath(targetGroupId, iterationFolder, manifest)
-      if (groupPath) {
-        resolvedFolder = groupPath
-      }
-    }
-  }
-  
-  return resolvedFolder
+
+  // No specific group selected - return iteration folder only
+  // Backend will execute all enabled groups
+  return iterationFolder
 }

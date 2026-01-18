@@ -340,10 +340,11 @@ func (e *TempLLMSkippedEvent) GetEventType() events.EventType {
 // BatchExecutionStartEvent represents the start of batch execution across multiple variable groups
 type BatchExecutionStartEvent struct {
 	events.BaseEventData
-	TotalGroups     int      `json:"total_groups"`      // Total number of enabled groups
-	EnabledGroupIDs []string `json:"enabled_group_ids"` // List of group IDs to execute
-	IterationNumber int      `json:"iteration_number"`  // Current iteration number
-	WorkspacePath   string   `json:"workspace_path"`
+	TotalGroups      int                    `json:"total_groups"`      // Total number of enabled groups
+	EnabledGroupIDs  []string               `json:"enabled_group_ids"` // List of group IDs to execute
+	IterationNumber  int                    `json:"iteration_number"`  // Current iteration number
+	WorkspacePath    string                 `json:"workspace_path"`
+	ExecutionOptions map[string]interface{} `json:"execution_options,omitempty"` // Execution options (run_mode, execution_strategy, etc.)
 }
 
 func (e *BatchExecutionStartEvent) GetEventType() events.EventType {
@@ -351,15 +352,16 @@ func (e *BatchExecutionStartEvent) GetEventType() events.EventType {
 }
 
 // NewBatchExecutionStartEvent creates a new BatchExecutionStartEvent
-func NewBatchExecutionStartEvent(totalGroups int, enabledGroupIDs []string, iterationNumber int, workspacePath string) *BatchExecutionStartEvent {
+func NewBatchExecutionStartEvent(totalGroups int, enabledGroupIDs []string, iterationNumber int, workspacePath string, executionOptions map[string]interface{}) *BatchExecutionStartEvent {
 	return &BatchExecutionStartEvent{
 		BaseEventData: events.BaseEventData{
 			Timestamp: time.Now(),
 		},
-		TotalGroups:     totalGroups,
-		EnabledGroupIDs: enabledGroupIDs,
-		IterationNumber: iterationNumber,
-		WorkspacePath:   workspacePath,
+		TotalGroups:      totalGroups,
+		EnabledGroupIDs:  enabledGroupIDs,
+		IterationNumber:  iterationNumber,
+		WorkspacePath:    workspacePath,
+		ExecutionOptions: executionOptions,
 	}
 }
 

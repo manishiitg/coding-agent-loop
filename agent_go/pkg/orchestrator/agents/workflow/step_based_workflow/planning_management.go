@@ -43,13 +43,17 @@ type LearningFileInfo struct {
 
 // validateDecisionStep validates that a decision step has all required fields
 // Returns error if any required field is missing
+// DecisionPlanStep is now flattened - fields are directly on the step
 func validateDecisionStepTyped(step PlanStepInterface, stepIndex int) error {
 	if decisionStep, ok := step.(*DecisionPlanStep); ok {
-		if decisionStep.DecisionStep == nil {
-			return fmt.Errorf("decision step at index %d (title: %q) is missing required decision_step field", stepIndex, step.GetTitle())
+		if decisionStep.ID == "" {
+			return fmt.Errorf("decision step at index %d (title: %q) is missing required ID field", stepIndex, step.GetTitle())
 		}
-		if decisionStep.DecisionStep.GetID() == "" {
-			return fmt.Errorf("decision step at index %d (title: %q) has decision_step with missing required ID field", stepIndex, step.GetTitle())
+		if decisionStep.Description == "" {
+			return fmt.Errorf("decision step at index %d (title: %q) is missing required description field", stepIndex, step.GetTitle())
+		}
+		if decisionStep.SuccessCriteria == "" {
+			return fmt.Errorf("decision step at index %d (title: %q) is missing required success_criteria field", stepIndex, step.GetTitle())
 		}
 		if decisionStep.DecisionEvaluationQuestion == "" {
 			return fmt.Errorf("decision step at index %d (title: %q) is missing required decision_evaluation_question field", stepIndex, step.GetTitle())
@@ -60,23 +64,7 @@ func validateDecisionStepTyped(step PlanStepInterface, stepIndex int) error {
 		if decisionStep.IfFalseNextStepID == "" {
 			return fmt.Errorf("decision step at index %d (title: %q) is missing required if_false_next_step_id field", stepIndex, step.GetTitle())
 		}
-		// Recursively validate nested decision step
-		if err := validateDecisionStepTyped(decisionStep.DecisionStep, stepIndex); err != nil {
-			return err
-		}
-		// Recursively validate nested branch steps in decision_step (if it's conditional)
-		if conditionalStep, ok := decisionStep.DecisionStep.(*ConditionalPlanStep); ok {
-			if len(conditionalStep.IfTrueSteps) > 0 {
-				if err := validateBranchStepIDs(conditionalStep.IfTrueSteps, decisionStep.DecisionStep.GetTitle(), "true"); err != nil {
-					return err
-				}
-			}
-			if len(conditionalStep.IfFalseSteps) > 0 {
-				if err := validateBranchStepIDs(conditionalStep.IfFalseSteps, decisionStep.DecisionStep.GetTitle(), "false"); err != nil {
-					return err
-				}
-			}
-		}
+		// No nested step to validate - DecisionPlanStep is flattened
 	}
 	return nil
 }
@@ -606,13 +594,7 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		return nil
 
 	case *DecisionPlanStep:
-		// Decision step: populate inner DecisionStep recursively
-		if step.DecisionStep != nil {
-			if err := populateRuntimeFields(step.DecisionStep, stepConfigs); err != nil {
-				return fmt.Errorf("failed to populate decision inner step: %w", err)
-			}
-		}
-
+		// Decision step is now flattened - no nested step to populate
 		// Populate runtime field directly on plan step
 		step.AgentConfigs = agentConfigs
 		return nil
@@ -735,12 +717,7 @@ func populateStepRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepCo
 		}
 
 	case *DecisionPlanStep:
-		// Populate inner DecisionStep
-		if step.DecisionStep != nil {
-			if err := populateRuntimeFields(step.DecisionStep, stepConfigs); err != nil {
-				return nil, fmt.Errorf("failed to populate decision inner step: %w", err)
-			}
-		}
+		// Decision step is now flattened - no nested step to populate
 
 	case *OrchestrationPlanStep:
 		// Populate inner OrchestrationStep
@@ -845,11 +822,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) populateStepsRuntimeFields(ctx contex
 		// Log config matching results for nested steps
 		switch s := todoStep.(type) {
 		case *DecisionPlanStep:
-			if s.DecisionStep != nil {
-				innerConfigs := getAgentConfigs(s.DecisionStep)
-				if innerConfigs != nil {
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Decision step '%s' (ID: %s) matched config from step_config.json", s.DecisionStep.GetTitle(), s.DecisionStep.GetID()))
-				}
+			// Decision step is now flattened - configs are directly on the step
+			innerConfigs := getAgentConfigs(s)
+			if innerConfigs != nil {
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Decision step '%s' (ID: %s) matched config from step_config.json", s.GetTitle(), s.GetID()))
 			}
 		case *OrchestrationPlanStep:
 			if s.OrchestrationStep != nil {

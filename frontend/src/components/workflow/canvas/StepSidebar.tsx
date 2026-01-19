@@ -556,6 +556,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       
       await onEditStep(node.id, updates)
       setIsEditing(false)
+      onClose()
     } catch (error) {
       console.error('[StepSidebar] Error saving step edit:', error)
     } finally {
@@ -672,6 +673,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         
         await onEditStep(innerStepId, innerStepUpdates)
       }
+      
+      onClose()
     } catch (error) {
       console.error('[StepSidebar] Error saving step:', error)
     } finally {
@@ -974,7 +977,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   }
   
   return (
-    <div className={`absolute right-0 top-0 bottom-0 ${sidebarWidth} bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 shadow-xl ${showChatArea ? 'z-10' : 'z-50'} flex flex-col transition-all duration-300`}>
+    <div className={`absolute right-0 top-0 bottom-0 ${sidebarWidth} bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 shadow-xl z-50 flex flex-col transition-all duration-300`}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
         <div className="flex flex-col gap-0.5">

@@ -967,6 +967,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset code execution mode: %v", isCodeExecutionMode))
 		}
+		// Determine tool search mode: Priority: step config > preset default
+		isToolSearchMode := hcpo.getToolSearchMode(agentConfigs)
+
 		// Always use learnings folder (unified folder for all learning types)
 		learningsPath := fmt.Sprintf("%s/learnings", hcpo.GetWorkspacePath())
 		// Get execution folder path for this step (e.g., "execution/step-8" or "execution/step-3-true-0")
@@ -985,7 +988,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 		// Get folder guard paths for template (so agent knows exact paths it can access)
 		// Use step.GetID() as stepID for folder guard setup
-		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID())
+		// Check if learnings exist to determine if learnings folder should be included
+		hasLearnings := false
+		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, step.GetID(), stepIndex, stepPath)
+		if err == nil {
+			hasLearnings = !learningsEmpty
+		}
+		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), hasLearnings)
 
 		templateVars := map[string]string{
 			"StepTitle":             ResolveVariables(step.GetTitle(), hcpo.variableValues),
@@ -997,6 +1006,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"KnowledgebasePath":     knowledgebasePath,                         // Knowledgebase folder path (persistent files across runs) - empty if disabled
 			"UseKnowledgebase":      fmt.Sprintf("%v", useKnowledgebase),       // Whether knowledgebase is enabled
 			"IsCodeExecutionMode":   fmt.Sprintf("%v", isCodeExecutionMode),    // Code execution mode flag (step-specific or preset)
+			"UseToolSearchMode":     fmt.Sprintf("%v", isToolSearchMode),       // Tool search mode flag (step-specific or preset)
 			"HumanFeedback":         "",                                        // Human feedback for retry attempts (set after validation failure)
 			"StepNumber":            stepPath,                                  // Step identifier (e.g., "step-8" or "step-3-if-true-0")
 			"StepExecutionPath":     stepExecutionPath,                         // Full execution folder path (e.g., "execution/step-8")
@@ -1397,6 +1407,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 				// Add learning history to template vars for execution-only agent (reused for all retry attempts)
 				templateVars["LearningHistory"] = formattedLearningHistory
+				// Set HasLearnings flag to explicitly indicate whether learnings exist (prevents agent from searching)
+				templateVars["HasLearnings"] = fmt.Sprintf("%t", formattedLearningHistory != "")
 
 				// Set KeepLearningFull feature flag (already determined above, just log and set template var)
 				if agentConfigs != nil && agentConfigs.KeepLearningFull != nil {
@@ -2531,7 +2543,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 												hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to re-read learnings after failure learning: %v - will use previous learnings", readErr))
 											} else {
 												formattedLearningHistory = updatedLearningHistory
-												templateVars["LearningHistory"] = formattedLearningHistory // Update template vars for next retry
+												templateVars["LearningHistory"] = formattedLearningHistory                       // Update template vars for next retry
+												templateVars["HasLearnings"] = fmt.Sprintf("%t", formattedLearningHistory != "") // Update HasLearnings flag
 												hcpo.GetLogger().Info(fmt.Sprintf("✅ Re-read learnings after failure learning update (length: %d chars)", len(formattedLearningHistory)))
 											}
 										} else {
@@ -2549,7 +2562,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 													hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to re-read learnings after failure learning: %v - will use previous learnings", readErr))
 												} else {
 													formattedLearningHistory = updatedLearningHistory
-													templateVars["LearningHistory"] = formattedLearningHistory // Update template vars for next retry
+													templateVars["LearningHistory"] = formattedLearningHistory                       // Update template vars for next retry
+													templateVars["HasLearnings"] = fmt.Sprintf("%t", formattedLearningHistory != "") // Update HasLearnings flag
 													hcpo.GetLogger().Info(fmt.Sprintf("✅ Re-read learnings after failure learning update (length: %d chars)", len(formattedLearningHistory)))
 												}
 											} else {

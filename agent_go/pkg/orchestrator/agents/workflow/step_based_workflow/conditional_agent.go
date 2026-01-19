@@ -37,8 +37,10 @@ var conditionalSystemTemplate = MustRegisterTemplate("conditionalSystem", `## �
 **Current Values**: {{.VariableValues}}
 {{end}}
 
+{{if .LearningHistory}}
 ## 📚 LEARNINGS (Historical)
 {{.LearningHistory}}
+{{end}}
 
 ## 📤 OUTPUT
 Return ONLY JSON: {"result": true|false, "reason": "evidence-based explanation"}`)
@@ -64,8 +66,10 @@ var decisionSystemTemplate = MustRegisterTemplate("decisionSystem", `## 🤖 ROL
 **Current Values**: {{.VariableValues}}
 {{end}}
 
+{{if .LearningHistory}}
 ## 📚 LEARNINGS
 {{.LearningHistory}}
+{{end}}
 
 ## 📤 OUTPUT
 Call 'submit_decision_result' with structured reasoning.`)

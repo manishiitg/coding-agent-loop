@@ -539,15 +539,13 @@ func (c *ConditionalPlanStep) UnmarshalJSON(data []byte) error {
 }
 
 // DecisionPlanStep represents a decision step (execute step, evaluate output, route based on result)
-// NOTE: Decision steps are wrappers that route based on inner step execution.
-// The wrapper only needs ID and Title for identification/display.
-// Description, SuccessCriteria, ContextDependencies, and ContextOutput come from the inner DecisionStep.
-// Loops are NOT supported on decision wrappers - if looping is needed, it should be on the inner DecisionStep.
+// Decision steps execute their own description/success_criteria (execution phase),
+// then evaluate the output against DecisionEvaluationQuestion (evaluation phase),
+// and route to IfTrueNextStepID or IfFalseNextStepID based on the evaluation result.
+// Prerequisite rules are NOT supported on decision steps.
 type DecisionPlanStep struct {
-	Type                       StepType          `json:"type"`                                   // Always "decision" - required for JSON marshaling/unmarshaling
-	ID                         string            `json:"id"`                                     // Stable step ID - required for identification
-	Title                      string            `json:"title"`                                  // Display title for the decision step wrapper
-	DecisionStep               PlanStepInterface `json:"decision_step,omitempty"`                // The single step to execute (has its own Description, SuccessCriteria, etc.)
+	Type StepType `json:"type"` // Always "decision" - required for JSON marshaling/unmarshaling
+	CommonStepFields
 	DecisionEvaluationQuestion string            `json:"decision_evaluation_question,omitempty"` // Question to evaluate step output
 	IfTrueNextStepID           string            `json:"if_true_next_step_id,omitempty"`         // ID of step to connect to if decision is true (or "end")
 	IfFalseNextStepID          string            `json:"if_false_next_step_id,omitempty"`        // ID of step to connect to if decision is false (or "end")
@@ -555,39 +553,33 @@ type DecisionPlanStep struct {
 	DecisionReason             string            `json:"-"`                                      // runtime: stores evaluation reasoning (backward compatibility) - not stored in plan.json
 	DecisionResponse           *DecisionResponse `json:"-"`                                      // runtime: stores structured decision evaluation response - not stored in plan.json
 	AgentConfigs               *AgentConfigs     `json:"-"`                                      // runtime: per-agent configuration (LLM, max turns, toggles) - not stored in plan.json
-	// Prerequisite rules are NOT supported on decision wrappers - if needed, they should be on the inner DecisionStep.
 }
 
 // Implement PlanStepInterface for DecisionPlanStep
 func (d *DecisionPlanStep) GetID() string                           { return d.ID }
 func (d *DecisionPlanStep) GetTitle() string                        { return d.Title }
-func (d *DecisionPlanStep) GetDescription() string                  { return "" }  // Not used - inner DecisionStep has description
-func (d *DecisionPlanStep) GetSuccessCriteria() string              { return "" }  // Not used - inner DecisionStep has success criteria
-func (d *DecisionPlanStep) GetContextDependencies() []string        { return nil } // Not used - inner DecisionStep has context dependencies
-func (d *DecisionPlanStep) GetContextOutput() FlexibleContextOutput { return "" }  // Not used - inner DecisionStep produces context output
+func (d *DecisionPlanStep) GetDescription() string                  { return d.Description }
+func (d *DecisionPlanStep) GetSuccessCriteria() string              { return d.SuccessCriteria }
+func (d *DecisionPlanStep) GetContextDependencies() []string        { return d.ContextDependencies }
+func (d *DecisionPlanStep) GetContextOutput() FlexibleContextOutput { return d.ContextOutput }
 func (d *DecisionPlanStep) GetEnablePrerequisiteDetection() *bool {
-	return nil // Not supported on decision wrappers
+	return nil // Not supported on decision steps
 }
-func (d *DecisionPlanStep) GetPrerequisiteRules() []PrerequisiteRule { return nil } // Not supported on decision wrappers
-func (d *DecisionPlanStep) GetValidationSchema() *ValidationSchema {
-	// Return validation schema from inner DecisionStep if it exists
-	if d.DecisionStep != nil {
-		return d.DecisionStep.GetValidationSchema()
-	}
-	return nil
-}
-func (d *DecisionPlanStep) StepType() StepType { return StepTypeDecision }
+func (d *DecisionPlanStep) GetPrerequisiteRules() []PrerequisiteRule { return nil } // Not supported on decision steps
+func (d *DecisionPlanStep) GetValidationSchema() *ValidationSchema   { return d.ValidationSchema }
+func (d *DecisionPlanStep) StepType() StepType                       { return StepTypeDecision }
 func (d *DecisionPlanStep) GetCommonFields() CommonStepFields {
+	// Return common fields but override prerequisite fields (not supported on decision steps)
 	return CommonStepFields{
 		ID:                          d.ID,
 		Title:                       d.Title,
-		Description:                 "",  // Not used for decision wrapper
-		SuccessCriteria:             "",  // Not used for decision wrapper
-		ContextDependencies:         nil, // Not used for decision wrapper
-		ContextOutput:               "",  // Not used for decision wrapper
-		EnablePrerequisiteDetection: nil, // Not supported on decision wrappers
-		PrerequisiteRules:           nil, // Not supported on decision wrappers
-		ValidationSchema:            d.GetValidationSchema(),
+		Description:                 d.Description,
+		SuccessCriteria:             d.SuccessCriteria,
+		ContextDependencies:         d.ContextDependencies,
+		ContextOutput:               d.ContextOutput,
+		EnablePrerequisiteDetection: nil, // Not supported on decision steps
+		PrerequisiteRules:           nil, // Not supported on decision steps
+		ValidationSchema:            d.ValidationSchema,
 	}
 }
 
@@ -595,78 +587,112 @@ func (d *DecisionPlanStep) GetCommonFields() CommonStepFields {
 func (d *DecisionPlanStep) MarshalJSON() ([]byte, error) {
 	// Ensure type is set
 	d.Type = StepTypeDecision
-
-	type decisionJSON struct {
-		Type                       StepType        `json:"type"`
-		ID                         string          `json:"id"`
-		Title                      string          `json:"title"`
-		DecisionStep               json.RawMessage `json:"decision_step,omitempty"`
-		DecisionEvaluationQuestion string          `json:"decision_evaluation_question,omitempty"`
-		IfTrueNextStepID           string          `json:"if_true_next_step_id,omitempty"`
-		IfFalseNextStepID          string          `json:"if_false_next_step_id,omitempty"`
-	}
-
-	result := decisionJSON{
-		Type:                       d.Type,
-		ID:                         d.ID,
-		Title:                      d.Title,
-		DecisionEvaluationQuestion: d.DecisionEvaluationQuestion,
-		IfTrueNextStepID:           d.IfTrueNextStepID,
-		IfFalseNextStepID:          d.IfFalseNextStepID,
-	}
-
-	// Marshal DecisionStep if it exists
-	if d.DecisionStep != nil {
-		stepJSON, err := json.Marshal(d.DecisionStep)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal decision_step: %w", err)
-		}
-		result.DecisionStep = stepJSON
-	} else {
-		result.DecisionStep = []byte("null")
-	}
-
-	return json.Marshal(result)
+	// Use type alias to avoid infinite recursion
+	type Alias DecisionPlanStep
+	return json.Marshal((*Alias)(d))
 }
 
 // UnmarshalJSON implements custom unmarshaling for DecisionPlanStep
-// This is needed to properly handle nested decision_step
+// This handles both the new flattened format and the legacy nested decision_step format
 func (d *DecisionPlanStep) UnmarshalJSON(data []byte) error {
-	// First, unmarshal into a temporary struct to extract nested step as raw JSON
-	var temp struct {
-		Type                       StepType        `json:"type"`
-		ID                         string          `json:"id"`
-		Title                      string          `json:"title"`
-		DecisionStep               json.RawMessage `json:"decision_step,omitempty"`
-		DecisionEvaluationQuestion string          `json:"decision_evaluation_question,omitempty"`
-		IfTrueNextStepID           string          `json:"if_true_next_step_id,omitempty"`
-		IfFalseNextStepID          string          `json:"if_false_next_step_id,omitempty"`
-		// Runtime fields (DecisionResult, DecisionReason, DecisionResponse, AgentConfigs) are excluded - they use json:"-" and won't be in plan.json
+	// First, check if this is the legacy format with nested decision_step
+	var legacyCheck struct {
+		DecisionStep json.RawMessage `json:"decision_step,omitempty"`
+	}
+	if err := json.Unmarshal(data, &legacyCheck); err == nil && len(legacyCheck.DecisionStep) > 0 && string(legacyCheck.DecisionStep) != "null" {
+		// Legacy format detected - migrate from nested decision_step
+		return d.unmarshalLegacyFormat(data)
 	}
 
+	// New flattened format - use type alias to avoid infinite recursion
+	type Alias DecisionPlanStep
+	var temp Alias
 	if err := json.Unmarshal(data, &temp); err != nil {
 		return fmt.Errorf("failed to unmarshal decision step: %w", err)
 	}
 
-	// Copy basic fields
-	d.Type = temp.Type
-	d.ID = temp.ID
-	d.Title = temp.Title
-	d.DecisionEvaluationQuestion = temp.DecisionEvaluationQuestion
-	d.IfTrueNextStepID = temp.IfTrueNextStepID
-	d.IfFalseNextStepID = temp.IfFalseNextStepID
-	// Runtime fields (DecisionResult, DecisionReason, DecisionResponse, AgentConfigs) are not unmarshaled - they use json:"-"
+	*d = DecisionPlanStep(temp)
+	return nil
+}
 
-	// Unmarshal nested decision_step
-	if len(temp.DecisionStep) > 0 {
-		step, err := unmarshalStepFromJSON(temp.DecisionStep)
-		if err != nil {
-			return fmt.Errorf("failed to unmarshal decision_step: %w", err)
-		}
-		d.DecisionStep = step
-	} else {
-		d.DecisionStep = nil
+// unmarshalLegacyFormat handles migration from the old nested decision_step format
+func (d *DecisionPlanStep) unmarshalLegacyFormat(data []byte) error {
+	// Parse the legacy format
+	var legacy struct {
+		Type                       StepType              `json:"type"`
+		ID                         string                `json:"id"`
+		Title                      string                `json:"title"`
+		DecisionStep               json.RawMessage       `json:"decision_step,omitempty"`
+		DecisionEvaluationQuestion string                `json:"decision_evaluation_question,omitempty"`
+		IfTrueNextStepID           string                `json:"if_true_next_step_id,omitempty"`
+		IfFalseNextStepID          string                `json:"if_false_next_step_id,omitempty"`
+		ContextDependencies        []string              `json:"context_dependencies,omitempty"`
+		ContextOutput              FlexibleContextOutput `json:"context_output,omitempty"`
+		ValidationSchema           *ValidationSchema     `json:"validation_schema,omitempty"`
 	}
+
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return fmt.Errorf("failed to unmarshal legacy decision step: %w", err)
+	}
+
+	// Parse the nested decision_step to extract its fields
+	var innerStep struct {
+		ID                  string                `json:"id"`
+		Title               string                `json:"title"`
+		Description         string                `json:"description"`
+		SuccessCriteria     string                `json:"success_criteria"`
+		ContextDependencies []string              `json:"context_dependencies,omitempty"`
+		ContextOutput       FlexibleContextOutput `json:"context_output,omitempty"`
+		ValidationSchema    *ValidationSchema     `json:"validation_schema,omitempty"`
+	}
+
+	if err := json.Unmarshal(legacy.DecisionStep, &innerStep); err != nil {
+		return fmt.Errorf("failed to unmarshal inner decision_step: %w", err)
+	}
+
+	// Migrate: Copy fields from inner step to the flattened structure
+	// Use inner step's ID if wrapper doesn't have one, otherwise use wrapper's ID
+	d.Type = legacy.Type
+	if legacy.ID != "" {
+		d.ID = legacy.ID
+	} else {
+		d.ID = innerStep.ID
+	}
+	if legacy.Title != "" {
+		d.Title = legacy.Title
+	} else {
+		d.Title = innerStep.Title
+	}
+	d.Description = innerStep.Description
+	d.SuccessCriteria = innerStep.SuccessCriteria
+
+	// Context dependencies: prefer inner step's, fallback to wrapper's
+	if len(innerStep.ContextDependencies) > 0 {
+		d.ContextDependencies = innerStep.ContextDependencies
+	} else {
+		d.ContextDependencies = legacy.ContextDependencies
+	}
+
+	// Context output: prefer inner step's, fallback to wrapper's
+	if innerStep.ContextOutput != "" {
+		d.ContextOutput = innerStep.ContextOutput
+	} else {
+		d.ContextOutput = legacy.ContextOutput
+	}
+
+	// Validation schema: prefer inner step's, fallback to wrapper's
+	if innerStep.ValidationSchema != nil {
+		d.ValidationSchema = innerStep.ValidationSchema
+	} else {
+		d.ValidationSchema = legacy.ValidationSchema
+	}
+
+	d.DecisionEvaluationQuestion = legacy.DecisionEvaluationQuestion
+	d.IfTrueNextStepID = legacy.IfTrueNextStepID
+	d.IfFalseNextStepID = legacy.IfFalseNextStepID
+
+	// Log the migration (note: we don't have access to logger here, so this is silent)
+	// The migration will be visible when the plan is next saved (it will be in the new format)
 
 	return nil
 }
@@ -1648,6 +1674,7 @@ func getAddConditionalStepSchema() string {
 }
 
 // getAddDecisionStepSchema returns the JSON schema for add_decision_step tool
+// Decision steps use a flattened structure: description, success_criteria, context_output, etc. are directly on the step
 func getAddDecisionStepSchema() string {
 	return `{
 		"type": "object",
@@ -1660,52 +1687,52 @@ func getAddDecisionStepSchema() string {
 				"type": "string",
 				"description": "REQUIRED: Short, clear title for the decision step"
 			},
-			"decision_step": {
+			"description": {
+				"type": "string",
+				"description": "REQUIRED: Description of what the decision step does during execution phase"
+			},
+			"success_criteria": {
+				"type": "string",
+				"description": "REQUIRED: How to verify the decision step's execution phase completed successfully"
+			},
+			"context_dependencies": {
+				"type": "array",
+				"items": {"type": "string"},
+				"description": "REQUIRED: List of context files from previous steps that this step depends on. Use empty array [] if no dependencies."
+			},
+			"context_output": {
+				"type": "string",
+				"description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."
+			},
+			"validation_schema": {
 				"type": "object",
-				"description": "REQUIRED: The single step to execute. Must include all required fields. This is typically a 'regular' step type.",
+				"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string, min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}.",
 				"properties": {
-					"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', or 'orchestration'. For decision_step, typically use 'regular'."},
-					"id": {"type": "string", "description": "REQUIRED: Stable step ID for the decision step"},
-					"title": {"type": "string", "description": "REQUIRED: Title of the decision step"},
-					"description": {"type": "string", "description": "REQUIRED: Description of what the decision step does"},
-					"success_criteria": {"type": "string", "description": "REQUIRED: How to verify the decision step completed successfully"},
-					"context_dependencies": {"type": "array", "items": {"type": "string"}, "description": "REQUIRED: List of context files from previous steps that this step depends on. Use empty array [] if no dependencies."},
-					"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."},
-					"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
-					"loop_condition": {"type": "string", "description": "OPTIONAL: Condition that must be met to exit the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-					"max_iterations": {"type": "integer", "description": "OPTIONAL: Maximum number of loop iterations allowed. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-					"loop_description": {"type": "string", "description": "OPTIONAL: Describe what happens in EACH ITERATION of the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-					"validation_schema": {
-						"type": "object",
-						"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string, min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}. CRITICAL FOR array_length - AVOID COMMON MISTAKE: path=COUNT/number field (e.g., '$.count', '$.total_expected_count'), compare_with_path=ARRAY field (e.g., '$.items', '$.downloaded_files'). CORRECT: path='$.count', consistency_check={type='array_length', compare_with_path='$.items'}. WRONG (SWAPPED): path='$.items', compare_with_path='$.count' ❌. Field hints: Number='count', 'total', 'length'. Array='files', 'items', 'list', 'array'.",
-						"properties": {
-							"files": {
-								"type": "array",
-								"items": {
-									"type": "object",
-									"properties": {
-										"file_name": {"type": "string"},
-										"must_exist": {"type": "boolean"},
-										"json_checks": {
-											"type": "array",
-											"items": {
+					"files": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"file_name": {"type": "string"},
+								"must_exist": {"type": "boolean"},
+								"json_checks": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"path": {"type": "string"},
+											"must_exist": {"type": "boolean"},
+											"value_type": {"type": "string"},
+											"min_length": {"type": "number"},
+											"max_length": {"type": "number"},
+											"pattern": {"type": "string"},
+											"min_value": {"type": "number"},
+											"max_value": {"type": "number"},
+											"consistency_check": {
 												"type": "object",
 												"properties": {
-													"path": {"type": "string"},
-													"must_exist": {"type": "boolean"},
-													"value_type": {"type": "string"},
-													"min_length": {"type": "number"},
-													"max_length": {"type": "number"},
-													"pattern": {"type": "string", "description": "OPTIONAL: Valid Go regex pattern for string format validation. MUST be valid Go regex syntax (use regexp.Compile). Common patterns: '^[A-Z]+$' (uppercase only), '^\\d{4}-\\d{2}-\\d{2}$' (date format), '^[a-z0-9-]+$' (lowercase alphanumeric with hyphens). CRITICAL: Ensure all parentheses are balanced, escape special characters (use \\\\ for backslash, \\\\( for literal parenthesis), and test your pattern. Invalid patterns will be skipped with a warning. Examples: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Avoid: incomplete patterns like 'VALUE\\\\(SUBSTITUTE\\\\(.*' (missing closing parentheses)."},
-													"min_value": {"type": "number"},
-													"max_value": {"type": "number"},
-													"consistency_check": {
-														"type": "object",
-														"properties": {
-															"type": {"type": "string", "description": "Type of consistency check: 'array_length' (CRITICAL - AVOID COMMON MISTAKE: path must point to COUNT/number field like '$.count' or '$.total_expected_count', compare_with_path must point to ARRAY field like '$.items' or '$.downloaded_files'. DO NOT SWAP THEM! Correct: path='$.count', compare_with_path='$.items'. Wrong: path='$.items', compare_with_path='$.count' ❌), 'equals', 'greater_than', 'less_than', or 'in_array'"},
-															"compare_with_path": {"type": "string", "description": "REQUIRED: JSONPath to compare with. For 'array_length' type: MUST point to the ARRAY field (e.g., '$.items', '$.downloaded_files', '$.files', '$.databases', '$.entries'). DO NOT use number fields here! For other types: JSONPath to compare with (e.g., '$.count', '$.status')."}
-														}
-													}
+													"type": {"type": "string"},
+													"compare_with_path": {"type": "string"}
 												}
 											}
 										}
@@ -1714,12 +1741,11 @@ func getAddDecisionStepSchema() string {
 							}
 						}
 					}
-				},
-				"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output", "validation_schema"]
+				}
 			},
 			"decision_evaluation_question": {
 				"type": "string",
-				"description": "REQUIRED: Question to evaluate the decision step's execution output (e.g., 'Is the deployment healthy and all services running?')"
+				"description": "REQUIRED: Question to evaluate the decision step's execution output (e.g., 'Is the deployment healthy and all services running?'). This is asked AFTER the step executes."
 			},
 			"if_true_next_step_id": {
 				"type": "string",
@@ -1734,7 +1760,7 @@ func getAddDecisionStepSchema() string {
 				"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string \"\" to insert at the beginning of the plan (before the first step)."
 			}
 		},
-		"required": ["id", "title", "decision_step", "decision_evaluation_question", "if_true_next_step_id", "if_false_next_step_id", "insert_after_step_id"]
+		"required": ["id", "title", "description", "success_criteria", "context_dependencies", "context_output", "validation_schema", "decision_evaluation_question", "if_true_next_step_id", "if_false_next_step_id", "insert_after_step_id"]
 	}`
 }
 
@@ -2322,6 +2348,7 @@ func getUpdateConditionalStepSchema() string {
 }
 
 // getUpdateDecisionStepSchema returns the JSON schema for update_decision_step tool
+// Decision steps use a flattened structure with description, success_criteria, etc. directly on the step
 func getUpdateDecisionStepSchema() string {
 	return `{
 		"type": "object",
@@ -2336,11 +2363,11 @@ func getUpdateDecisionStepSchema() string {
 			},
 			"description": {
 				"type": "string",
-				"description": "OPTIONAL: Updated description. Only include if you want to change the description. If omitted, the existing description is preserved. NOTE: For decision steps (has_decision_step=true), this field is NOT used during execution - only decision_step.description is used. Do not update this field for decision steps."
+				"description": "OPTIONAL: Updated description. Only include if you want to change the description. This is used during the execution phase. If omitted, the existing description is preserved."
 			},
 			"success_criteria": {
 				"type": "string",
-				"description": "OPTIONAL: Updated success criteria. Only include if you want to change it. If omitted, the existing success criteria is preserved."
+				"description": "OPTIONAL: Updated success criteria. Only include if you want to change it. This is used during the execution phase. If omitted, the existing success criteria is preserved."
 			},
 			"context_dependencies": {
 				"type": "array",
@@ -2351,64 +2378,26 @@ func getUpdateDecisionStepSchema() string {
 				"type": "string",
 				"description": "OPTIONAL: Updated context output. Only include if you want to change it. If omitted, the existing context output is preserved."
 			},
-			"has_loop": {
-				"type": "boolean",
-				"description": "OPTIONAL: Updated has_loop flag. Only include if you want to change it. NOTE: Loop support is currently not implemented in agents. Always set to false. If omitted, the existing has_loop value is preserved."
-			},
-			"loop_condition": {
-				"type": "string",
-				"description": "OPTIONAL: Updated loop condition. Only include if you want to change it. NOTE: Loop support is currently not implemented in agents. This field is ignored. If omitted, the existing loop condition is preserved."
-			},
-			"max_iterations": {
-				"type": "integer",
-				"description": "OPTIONAL: Updated max iterations. Only include if you want to change it. NOTE: Loop support is currently not implemented in agents. This field is ignored. If omitted, the existing max iterations is preserved."
-			},
-			"loop_description": {
-				"type": "string",
-				"description": "OPTIONAL: Updated loop description. Only include if you want to change it. NOTE: Loop support is currently not implemented in agents. This field is ignored. If omitted, the existing loop description is preserved."
-			},
-			"enable_prerequisite_detection": {
-				"type": "boolean",
-				"description": "OPTIONAL: Updated enable_prerequisite_detection flag. Only include if you want to change it. Set to true when this step depends on outputs from previous steps that might expire or become invalid (e.g., login sessions, API tokens, config files). If omitted, the existing value is preserved."
-			},
-			"prerequisite_rules": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"depends_on_step": {
-							"type": "string",
-							"description": "REQUIRED: The step ID this rule depends on. Must be a step that appears earlier in the plan."
-						},
-						"description": {
-							"type": "string",
-							"description": "REQUIRED: Natural language description of when to detect prerequisite failures for this specific step. Examples: 'If login session is missing or expired, go back to step 0', 'If config file is missing, go back to step 1'."
-						}
-					},
-					"required": ["depends_on_step", "description"]
-				},
-				"description": "OPTIONAL: Updated prerequisite rules array. Only include if you want to change it. Each rule specifies one step dependency and one description of when to detect prerequisite failures. If omitted, the existing prerequisite rules are preserved."
-			},
-			"decision_step": {
+			"validation_schema": {
 				"type": "object",
-				"description": "OPTIONAL: Updated decision step. Only include if you want to change it. The single step to execute. Must include all required fields: id, title, description, success_criteria, has_loop, context_output. If omitted, the existing decision step is preserved.",
+				"description": "OPTIONAL: Updated validation schema. Only include if you want to change it. If omitted, the existing validation schema is preserved.",
 				"properties": {
-					"id": {"type": "string", "description": "REQUIRED: Stable step ID for the decision step"},
-					"title": {"type": "string", "description": "REQUIRED: Title of the decision step"},
-					"description": {"type": "string", "description": "REQUIRED: Description of what the decision step does"},
-					"success_criteria": {"type": "string", "description": "REQUIRED: How to verify the decision step completed successfully"},
-					"context_dependencies": {"type": "array", "items": {"type": "string"}},
-					"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."},
-					"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
-					"loop_condition": {"type": "string", "description": "OPTIONAL: Condition that must be met to exit the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-					"max_iterations": {"type": "integer", "description": "OPTIONAL: Maximum number of loop iterations allowed. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-					"loop_description": {"type": "string", "description": "OPTIONAL: Describe what happens in EACH ITERATION of the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."}
-				},
-				"required": ["id", "title", "description", "success_criteria", "has_loop", "context_output"]
+					"files": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"file_name": {"type": "string"},
+								"must_exist": {"type": "boolean"},
+								"json_checks": {"type": "array", "items": {"type": "object"}}
+							}
+						}
+					}
+				}
 			},
 			"decision_evaluation_question": {
 				"type": "string",
-				"description": "OPTIONAL: Updated decision evaluation question. Only include if you want to change it. Question to evaluate the decision step's execution output (e.g., 'Is the deployment healthy and all services running?'). If omitted, the existing question is preserved."
+				"description": "OPTIONAL: Updated decision evaluation question. Only include if you want to change it. Question to evaluate the decision step's execution output (e.g., 'Is the deployment healthy and all services running?'). This is asked AFTER the step executes. If omitted, the existing question is preserved."
 			},
 			"if_true_next_step_id": {
 				"type": "string",
@@ -3223,10 +3212,8 @@ func updateValidationSchemaOnStep(step PlanStepInterface, schema *ValidationSche
 	case *ConditionalPlanStep:
 		s.ValidationSchema = schema
 	case *DecisionPlanStep:
-		// For DecisionPlanStep, validation schema is on the inner DecisionStep
-		if s.DecisionStep != nil {
-			updateValidationSchemaOnStep(s.DecisionStep, schema)
-		}
+		// DecisionPlanStep has validation schema directly via CommonStepFields
+		s.ValidationSchema = schema
 	case *OrchestrationPlanStep:
 		// For OrchestrationPlanStep, validation schema is on the inner OrchestrationStep
 		if s.OrchestrationStep != nil {
@@ -3479,15 +3466,8 @@ func compareNestedStepFields(oldStep PlanStepInterface, newStep PlanStepInterfac
 
 	case *DecisionPlanStep:
 		if newS, ok := newStep.(*DecisionPlanStep); ok {
-			// Compare wrapper's title (already compared in common fields, but ensure it's here for clarity)
-			if oldS.Title != newS.Title {
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".title",
-					OldValue: oldS.Title,
-					NewValue: newS.Title,
-				})
-			}
+			// DecisionPlanStep is now flattened - compare decision-specific fields
+			// Common fields (Title, Description, SuccessCriteria, etc.) are already compared above
 			if oldS.DecisionEvaluationQuestion != newS.DecisionEvaluationQuestion {
 				*fieldChanges = append(*fieldChanges, PlanFieldChange{
 					StepID:   stepID,
@@ -3510,25 +3490,6 @@ func compareNestedStepFields(oldStep PlanStepInterface, newStep PlanStepInterfac
 					Field:    prefix + ".if_false_next_step_id",
 					OldValue: oldS.IfFalseNextStepID,
 					NewValue: newS.IfFalseNextStepID,
-				})
-			}
-			// Compare nested decision step
-			if oldS.DecisionStep != nil && newS.DecisionStep != nil {
-				compareNestedStepFields(oldS.DecisionStep, newS.DecisionStep, stepID, prefix+".decision_step", fieldChanges)
-			} else if oldS.DecisionStep != nil || newS.DecisionStep != nil {
-				oldID := "nil"
-				if oldS.DecisionStep != nil {
-					oldID = oldS.DecisionStep.GetID()
-				}
-				newID := "nil"
-				if newS.DecisionStep != nil {
-					newID = newS.DecisionStep.GetID()
-				}
-				*fieldChanges = append(*fieldChanges, PlanFieldChange{
-					StepID:   stepID,
-					Field:    prefix + ".decision_step",
-					OldValue: oldID,
-					NewValue: newID,
 				})
 			}
 		}
@@ -3736,61 +3697,24 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 
 	case *DecisionPlanStep:
 		updated := *step
+		// DecisionPlanStep is now flattened - all fields are directly on the step
 		if partialUpdate.Title != "" {
 			updated.Title = partialUpdate.Title
 		}
-		if partialUpdate.DecisionStep != nil {
-			// If we have an existing nested step, merge the partial update into it to preserve fields
-			// that weren't in the update (like context_dependencies, validation_schema, etc.)
-			if updated.DecisionStep != nil {
-				// Create a PartialPlanStep from the map by extracting fields directly
-				nestedPartial := PartialPlanStep{}
-				// Extract common fields from the map
-				if desc, ok := partialUpdate.DecisionStep["description"].(string); ok {
-					nestedPartial.Description = desc
-				}
-				if title, ok := partialUpdate.DecisionStep["title"].(string); ok {
-					nestedPartial.Title = title
-				}
-				if successCriteria, ok := partialUpdate.DecisionStep["success_criteria"].(string); ok {
-					nestedPartial.SuccessCriteria = successCriteria
-				}
-				if contextDeps, ok := partialUpdate.DecisionStep["context_dependencies"].([]interface{}); ok {
-					nestedPartial.ContextDependencies = make([]string, 0, len(contextDeps))
-					for _, dep := range contextDeps {
-						if depStr, ok := dep.(string); ok {
-							nestedPartial.ContextDependencies = append(nestedPartial.ContextDependencies, depStr)
-						}
-					}
-				}
-				if contextOutput, ok := partialUpdate.DecisionStep["context_output"]; ok {
-					if contextOutputMap, ok := contextOutput.(map[string]interface{}); ok {
-						contextOutputJSON, _ := json.Marshal(contextOutputMap)
-						json.Unmarshal(contextOutputJSON, &nestedPartial.ContextOutput)
-					}
-				}
-				if validationSchema, ok := partialUpdate.DecisionStep["validation_schema"]; ok {
-					if validationSchemaMap, ok := validationSchema.(map[string]interface{}); ok {
-						validationSchemaJSON, _ := json.Marshal(validationSchemaMap)
-						var vs ValidationSchema
-						if json.Unmarshal(validationSchemaJSON, &vs) == nil {
-							nestedPartial.ValidationSchema = &vs
-						}
-					}
-				}
-				if nextStepID, ok := partialUpdate.DecisionStep["next_step_id"].(string); ok {
-					nestedPartial.NextStepID = nextStepID
-				}
-				// Merge the nested partial update into the existing nested step
-				updated.DecisionStep = mergePartialStepUpdate(updated.DecisionStep, nestedPartial)
-			} else {
-				// No existing nested step - convert and assign directly
-				converted, err := convertMapToStep(partialUpdate.DecisionStep)
-				if err != nil {
-					return existingStep
-				}
-				updated.DecisionStep = converted
-			}
+		if partialUpdate.Description != "" {
+			updated.Description = partialUpdate.Description
+		}
+		if partialUpdate.SuccessCriteria != "" {
+			updated.SuccessCriteria = partialUpdate.SuccessCriteria
+		}
+		if partialUpdate.ContextDependencies != nil {
+			updated.ContextDependencies = partialUpdate.ContextDependencies
+		}
+		if partialUpdate.ContextOutput != "" {
+			updated.ContextOutput = FlexibleContextOutput(partialUpdate.ContextOutput)
+		}
+		if partialUpdate.ValidationSchema != nil {
+			updated.ValidationSchema = partialUpdate.ValidationSchema
 		}
 		if partialUpdate.DecisionEvaluationQuestion != "" {
 			updated.DecisionEvaluationQuestion = partialUpdate.DecisionEvaluationQuestion
@@ -3800,10 +3724,6 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		}
 		if partialUpdate.IfFalseNextStepID != "" {
 			updated.IfFalseNextStepID = partialUpdate.IfFalseNextStepID
-		}
-		if partialUpdate.ValidationSchema != nil && updated.DecisionStep != nil {
-			// Update validation schema on the inner DecisionStep (can be any step type)
-			updateValidationSchemaOnStep(updated.DecisionStep, partialUpdate.ValidationSchema)
 		}
 		return &updated
 
@@ -4261,37 +4181,8 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 			NewValue: partialUpdate.IfFalseNextStepID,
 		})
 	}
-	// Decision step fields
-	if partialUpdate.DecisionStep != nil {
-		changedFields = append(changedFields, "decision_step")
-		// Convert new decision step from map to PlanStepInterface
-		newDecisionStep, err := convertMapToStep(partialUpdate.DecisionStep)
-		if err == nil {
-			// Get old decision step
-			var oldDecisionStep PlanStepInterface
-			if decisionStep, ok := existingStep.(*DecisionPlanStep); ok {
-				oldDecisionStep = decisionStep.DecisionStep
-			}
-			// Compare nested step fields in detail
-			compareNestedStepFields(oldDecisionStep, newDecisionStep, partialUpdate.ExistingStepID, "decision_step", fieldChanges)
-		} else {
-			// Fallback to ID-only tracking if conversion fails
-			oldDecisionStep := "nil"
-			if decisionStep, ok := existingStep.(*DecisionPlanStep); ok && decisionStep.DecisionStep != nil {
-				oldDecisionStep = decisionStep.DecisionStep.GetID()
-			}
-			newDecisionStepID := ""
-			if id, ok := partialUpdate.DecisionStep["id"].(string); ok {
-				newDecisionStepID = id
-			}
-			*fieldChanges = append(*fieldChanges, PlanFieldChange{
-				StepID:   partialUpdate.ExistingStepID,
-				Field:    "decision_step",
-				OldValue: oldDecisionStep,
-				NewValue: newDecisionStepID,
-			})
-		}
-	}
+	// Decision step fields - DecisionPlanStep is now flattened, so only track decision_evaluation_question
+	// Common fields (description, success_criteria, etc.) are tracked via the common field tracking above
 	if partialUpdate.DecisionEvaluationQuestion != "" {
 		changedFields = append(changedFields, "decision_evaluation_question")
 		oldDecisionEvaluationQuestion := ""
@@ -5057,27 +4948,25 @@ func createAddHumanInputStepExecutor(workspacePath string, logger loggerv2.Logge
 
 // validateDecisionStepFieldsTyped validates that a DecisionPlanStep has all required fields
 // Returns an error message suitable for returning as a tool response if validation fails
+// DecisionPlanStep is now flattened - fields are directly on the step
 func validateDecisionStepFieldsTyped(step *DecisionPlanStep) error {
-	if step.DecisionStep == nil {
-		return fmt.Errorf("step (title: %q, ID: %s) has decision step type but is missing required decision_step field. Please provide the decision_step object with all required fields (id, title, description, success_criteria, has_loop, context_output)", step.Title, step.ID)
+	if step.ID == "" {
+		return fmt.Errorf("step (title: %q) is missing required ID field. Please provide an ID for the decision step", step.Title)
 	}
-	if step.DecisionStep.GetID() == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) has decision_step with missing required ID field. Please provide an ID for the decision_step", step.Title, step.ID)
+	if step.Description == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) is missing required description field. Please provide a description for the decision step", step.Title, step.ID)
 	}
-	if step.DecisionStep.GetDescription() == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) has decision_step with missing required description field. Please provide a description for the decision_step", step.Title, step.ID)
-	}
-	if step.DecisionStep.GetSuccessCriteria() == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) has decision_step with missing required success_criteria field. Please provide success_criteria for the decision_step", step.Title, step.ID)
+	if step.SuccessCriteria == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) is missing required success_criteria field. Please provide success_criteria for the decision step", step.Title, step.ID)
 	}
 	if step.DecisionEvaluationQuestion == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) has decision step type but is missing required decision_evaluation_question field. Please provide a question to evaluate the decision step's execution output", step.Title, step.ID)
+		return fmt.Errorf("step (title: %q, ID: %s) is missing required decision_evaluation_question field. Please provide a question to evaluate the decision step's execution output", step.Title, step.ID)
 	}
 	if step.IfTrueNextStepID == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) has decision step type but is missing required if_true_next_step_id field. Please provide the ID of the step to route to after evaluation is true", step.Title, step.ID)
+		return fmt.Errorf("step (title: %q, ID: %s) is missing required if_true_next_step_id field. Please provide the ID of the step to route to after evaluation is true", step.Title, step.ID)
 	}
 	if step.IfFalseNextStepID == "" {
-		return fmt.Errorf("step (title: %q, ID: %s) has decision step type but is missing required if_false_next_step_id field. Please provide the ID of the step to route to after evaluation is false", step.Title, step.ID)
+		return fmt.Errorf("step (title: %q, ID: %s) is missing required if_false_next_step_id field. Please provide the ID of the step to route to after evaluation is false", step.Title, step.ID)
 	}
 	return nil
 }

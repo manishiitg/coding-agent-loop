@@ -1800,14 +1800,8 @@ func collectAllStepIDs(steps []todo_creation_human.PlanStepInterface) []string {
 			}
 		}
 
-		// Handle decision steps - collect decision step ID
-		if decisionStep, ok := step.(*todo_creation_human.DecisionPlanStep); ok {
-			if decisionStep.DecisionStep != nil {
-				if decisionStepID := decisionStep.DecisionStep.GetID(); decisionStepID != "" {
-					stepIDs = append(stepIDs, decisionStepID)
-				}
-			}
-		}
+		// Handle decision steps - DecisionPlanStep is now flattened, ID already collected above
+		// No nested step to collect
 
 		// Handle orchestration steps - collect orchestration step ID and sub-agent IDs
 		if orchestrationStep, ok := step.(*todo_creation_human.OrchestrationPlanStep); ok {
@@ -2298,14 +2292,8 @@ func findInStepsWithOffset(step todo_creation_human.PlanStepInterface, targetID 
 			}
 		}
 	case *todo_creation_human.DecisionPlanStep:
-		if s.DecisionStep != nil {
-			if s.DecisionStep.GetID() == targetID {
-				return s.DecisionStep, append(basePath, -1)
-			}
-			if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{s.DecisionStep}, targetID, basePath); found != nil {
-				return found, foundPath
-			}
-		}
+		// DecisionPlanStep now has flattened structure (no nested DecisionStep)
+		// The step itself contains all fields - no nested steps to search
 	case *todo_creation_human.OrchestrationPlanStep:
 		if s.OrchestrationStep != nil {
 			if s.OrchestrationStep.GetID() == targetID {
@@ -2364,16 +2352,8 @@ func findStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string) (
 					}
 				}
 			case *todo_creation_human.DecisionPlanStep:
-				// Check decision_step
-				if s.DecisionStep != nil {
-					if s.DecisionStep.GetID() == targetID {
-						return s.DecisionStep, append(currentPath, -1) // -1 indicates decision_step
-					}
-					// Recursively check nested steps in decision_step
-					if found, foundPath := findInSteps([]todo_creation_human.PlanStepInterface{s.DecisionStep}, targetID, currentPath); found != nil {
-						return found, foundPath
-					}
-				}
+				// DecisionPlanStep now has flattened structure (no nested DecisionStep)
+				// The step itself contains all fields - no nested steps to search
 			case *todo_creation_human.OrchestrationPlanStep:
 				// Check orchestration_step
 				if s.OrchestrationStep != nil {
@@ -2478,9 +2458,21 @@ func updateStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string,
 
 	case *todo_creation_human.DecisionPlanStep:
 		updated := *s // Copy the step
-		// Decision steps only have ID and Title in common fields
+		// Decision steps now have flattened structure with all common fields
 		if updates.Title != nil {
 			updated.Title = *updates.Title
+		}
+		if updates.Description != nil {
+			updated.Description = *updates.Description
+		}
+		if updates.SuccessCriteria != nil {
+			updated.SuccessCriteria = *updates.SuccessCriteria
+		}
+		if updates.ContextDependencies != nil {
+			updated.ContextDependencies = *updates.ContextDependencies
+		}
+		if updates.ContextOutput != nil {
+			updated.ContextOutput = *updates.ContextOutput
 		}
 		if updates.DecisionEvaluationQuestion != nil {
 			updated.DecisionEvaluationQuestion = *updates.DecisionEvaluationQuestion
@@ -2490,14 +2482,6 @@ func updateStepInPlan(plan *todo_creation_human.PlanningResponse, stepID string,
 		}
 		if updates.IfFalseNextStepID != nil {
 			updated.IfFalseNextStepID = *updates.IfFalseNextStepID
-		}
-		// Handle nested decision_step
-		if len(updates.DecisionStep) > 0 {
-			step, err := unmarshalStepFromJSON(updates.DecisionStep)
-			if err != nil {
-				return fmt.Errorf("failed to unmarshal decision_step: %w", err)
-			}
-			updated.DecisionStep = step
 		}
 		updatedStep = &updated
 
@@ -2648,16 +2632,9 @@ func updateNestedStepInPlan(plan *todo_creation_human.PlanningResponse, path []i
 		// Deeper nesting - recursively update
 		return updateNestedStepInPlanRecursive(s.IfTrueSteps, s.IfFalseSteps, path[1:], updatedStep)
 	case *todo_creation_human.DecisionPlanStep:
-		if len(path) == 2 && path[1] == -1 {
-			// decision_step
-			s.DecisionStep = updatedStep
-			return nil
-		}
-		// Deeper nesting in decision_step
-		if s.DecisionStep != nil {
-			// Recursively update in decision_step
-			return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.DecisionStep}, nil, path[1:], updatedStep)
-		}
+		// DecisionPlanStep now has flattened structure (no nested DecisionStep)
+		// The step itself is updated directly at the parent level, no nested updates needed
+		return fmt.Errorf("unexpected nested path for decision step - decision steps no longer have nested steps")
 	case *todo_creation_human.OrchestrationPlanStep:
 		if len(path) == 2 && path[1] == -2 {
 			// orchestration_step
@@ -2701,9 +2678,8 @@ func updateNestedStepInPlanRecursive(ifTrueSteps, ifFalseSteps []todo_creation_h
 		case *todo_creation_human.ConditionalPlanStep:
 			return updateNestedStepInPlanRecursive(s.IfTrueSteps, s.IfFalseSteps, path[1:], updatedStep)
 		case *todo_creation_human.DecisionPlanStep:
-			if s.DecisionStep != nil {
-				return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.DecisionStep}, nil, path[1:], updatedStep)
-			}
+			// DecisionPlanStep now has flattened structure (no nested DecisionStep)
+			return fmt.Errorf("unexpected nested path for decision step - decision steps no longer have nested steps")
 		case *todo_creation_human.OrchestrationPlanStep:
 			if s.OrchestrationStep != nil {
 				return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.OrchestrationStep}, nil, path[1:], updatedStep)
@@ -2725,9 +2701,8 @@ func updateNestedStepInPlanRecursive(ifTrueSteps, ifFalseSteps []todo_creation_h
 			case *todo_creation_human.ConditionalPlanStep:
 				return updateNestedStepInPlanRecursive(s.IfTrueSteps, s.IfFalseSteps, path[1:], updatedStep)
 			case *todo_creation_human.DecisionPlanStep:
-				if s.DecisionStep != nil {
-					return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.DecisionStep}, nil, path[1:], updatedStep)
-				}
+				// DecisionPlanStep now has flattened structure (no nested DecisionStep)
+				return fmt.Errorf("unexpected nested path for decision step - decision steps no longer have nested steps")
 			case *todo_creation_human.OrchestrationPlanStep:
 				if s.OrchestrationStep != nil {
 					return updateNestedStepInPlanRecursive([]todo_creation_human.PlanStepInterface{s.OrchestrationStep}, nil, path[1:], updatedStep)

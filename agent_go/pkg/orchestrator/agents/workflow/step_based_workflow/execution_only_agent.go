@@ -30,6 +30,11 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 {{.CodeExecutionInstructions}}
 {{end}}
 
+{{if .UseToolSearchMode}}
+## 🔍 Tool Search Mode
+{{.ToolSearchInstructions}}
+{{end}}
+
 {{if .VariableNames}}
 ## 🔑 Variables
 {{.VariableNames}}
@@ -64,7 +69,7 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 {{.OtherAgentsCapabilities}}
 {{end}}
 
-{{if .LearningHistory}}
+{{if eq .HasLearnings "true"}}
 ## 📚 Learning Application (Secondary Guidance)
 {{if eq .KeepLearningFull "true"}}{{.LearningHistory}}{{end}}
 
@@ -261,6 +266,14 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		codeExecutionInstructions = prompt.GetCodeExecutionInstructions(workspacePath)
 	}
 
+	// Get tool search instructions (reuse from builder.go)
+	toolSearchInstructions := ""
+	useToolSearchMode := templateVars["UseToolSearchMode"] == "true"
+	if useToolSearchMode {
+		// Get the reusable instructions
+		toolSearchInstructions = prompt.GetToolSearchInstructions()
+	}
+
 	// Get variable names and values for system prompt
 	variableNames := templateVars["VariableNames"]
 	variableValues := templateVars["VariableValues"]
@@ -276,11 +289,14 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"WorkspacePath":              workspacePath,
 		"IsCodeExecutionMode":        isCodeExecutionMode,
 		"CodeExecutionInstructions":  codeExecutionInstructions,
+		"UseToolSearchMode":          useToolSearchMode,
+		"ToolSearchInstructions":     toolSearchInstructions,
 		"HasLoop":                    hasLoop,
 		"StepContextOutput":          stepContextOutput,
 		"CurrentDate":                currentDate,
 		"CurrentTime":                currentTime,
 		"LearningHistory":            learningHistory,
+		"HasLearnings":               fmt.Sprintf("%t", learningHistory != ""),
 		"KeepLearningFull":           fmt.Sprintf("%t", keepLearningFull),
 		"VariableNames":              variableNames,
 		"VariableValues":             variableValues,
@@ -290,10 +306,10 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"OtherAgentsCapabilities":    otherAgentsCapabilities,
 		"PrerequisiteRulesInfo":      prerequisiteRulesInfo,
 		"DecisionEvaluationQuestion": decisionEvaluationQuestion,
-		"ValidationSchema":           validationSchema,       // Validation schema JSON string
-		"KnowledgebasePath":          knowledgebasePath,      // Knowledgebase folder path
-		"FolderGuardReadPaths":       folderGuardReadPaths,   // Folder guard read paths for agent guidance
-		"FolderGuardWritePaths":      folderGuardWritePaths,  // Folder guard write paths for agent guidance
+		"ValidationSchema":           validationSchema,      // Validation schema JSON string
+		"KnowledgebasePath":          knowledgebasePath,     // Knowledgebase folder path
+		"FolderGuardReadPaths":       folderGuardReadPaths,  // Folder guard read paths for agent guidance
+		"FolderGuardWritePaths":      folderGuardWritePaths, // Folder guard write paths for agent guidance
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution-only system prompt template: %v", err)

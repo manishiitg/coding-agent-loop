@@ -9,12 +9,13 @@ import (
 )
 
 // executeDecisionStep executes a decision step by:
-// 1. Executing the single decision_step
+// 1. Executing the decision step itself (using its Description, SuccessCriteria, etc.)
 // 2. Evaluating the output using ConditionalLLM with decision_evaluation_question
 // 3. Returning the decision result for routing (handled by main execution loop)
 //
 // Unlike conditional steps which only evaluate conditions, decision steps
 // execute a step first and then evaluate the output to determine routing.
+// DecisionPlanStep is flattened - execution fields are directly on the step.
 //
 // NOTE: This function works with PlanStepInterface (specifically DecisionPlanStep).
 // The step type is already validated by the main execution loop before calling this function.
@@ -29,20 +30,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 	execCtx *ExecutionContext,
 	allSteps []PlanStepInterface,
 ) (bool, string, error) {
-	// Steps are already PlanStepInterface - no conversion needed
-
-	// Get inner step as PlanStepInterface from original step
+	// Get the DecisionPlanStep for decision-specific fields
 	decisionStep, ok := step.(*DecisionPlanStep)
 	if !ok {
 		return false, "", fmt.Errorf("step is not a DecisionPlanStep")
 	}
-	innerStepPlan := decisionStep.DecisionStep
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🎯 Executing decision step %d: %s", stepIndex+1, step.GetTitle()))
 
-	// Validate decision step has required fields
-	if innerStepPlan == nil {
-		return false, "", fmt.Errorf("decision step %d (%s) is missing required decision_step field", stepIndex+1, step.GetTitle())
+	// Validate decision step has required fields (DecisionPlanStep is now flattened)
+	if decisionStep.Description == "" {
+		return false, "", fmt.Errorf("decision step %d (%s) is missing required description field", stepIndex+1, step.GetTitle())
+	}
+	if decisionStep.SuccessCriteria == "" {
+		return false, "", fmt.Errorf("decision step %d (%s) is missing required success_criteria field", stepIndex+1, step.GetTitle())
 	}
 	if decisionStep.DecisionEvaluationQuestion == "" {
 		return false, "", fmt.Errorf("decision step %d (%s) is missing required decision_evaluation_question field", stepIndex+1, step.GetTitle())
@@ -70,78 +71,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 		runNumber = totalEvaluations + 1 // Next run number
 	}
 
-	// 1. Execute the decision_step
-	hcpo.GetLogger().Info(fmt.Sprintf("📋 Executing decision step's inner step: %s (run %d)", innerStepPlan.GetTitle(), runNumber))
+	// 1. Execute the decision step (DecisionPlanStep is flattened - it has its own description, success_criteria, etc.)
+	hcpo.GetLogger().Info(fmt.Sprintf("📋 Executing decision step: %s (run %d)", step.GetTitle(), runNumber))
 	// Use simple path: step-{X}-decision
-	innerStepPath := fmt.Sprintf("step-%d-decision", stepIndex+1)
+	executionStepPath := fmt.Sprintf("step-%d-decision", stepIndex+1)
 
-	// Prepare inner step with proper code execution mode configuration
-	// Priority: inner step's own step config > parent decision step's config > preset default
-	// First, try to match step configs at execution time (in case step_config.json was updated)
-	_ = ApplyStepConfigFromFile(ctx, innerStepPlan, hcpo)
+	// Apply step config at execution time (in case step_config.json was updated)
+	_ = ApplyStepConfigFromFile(ctx, step, hcpo)
 	// Ignore error - use defaults if config loading fails
-
-	// If inner step still doesn't have code execution mode set, inherit from parent decision step
-	innerStepConfigs := getAgentConfigs(innerStepPlan)
-	parentStepConfigs := getAgentConfigs(step)
-	if innerStepConfigs == nil || innerStepConfigs.UseCodeExecutionMode == nil {
-		// Inner step doesn't have code execution mode set, inherit from parent if available
-		if parentStepConfigs != nil && parentStepConfigs.UseCodeExecutionMode != nil {
-			// Set AgentConfigs on inner step if it doesn't exist (handle all step types)
-			if innerStepConfigs == nil {
-				switch innerStep := innerStepPlan.(type) {
-				case *RegularPlanStep:
-					innerStep.AgentConfigs = &AgentConfigs{}
-				case *ConditionalPlanStep:
-					innerStep.AgentConfigs = &AgentConfigs{}
-				case *DecisionPlanStep:
-					innerStep.AgentConfigs = &AgentConfigs{}
-				case *OrchestrationPlanStep:
-					innerStep.AgentConfigs = &AgentConfigs{}
-				}
-				innerStepConfigs = getAgentConfigs(innerStepPlan)
-			}
-			// Inherit UseCodeExecutionMode from parent decision step
-			if innerStepConfigs != nil {
-				codeExecMode := *parentStepConfigs.UseCodeExecutionMode
-				innerStepConfigs.UseCodeExecutionMode = &codeExecMode
-				hcpo.GetLogger().Info(fmt.Sprintf("🔧 Inherited code execution mode from parent decision step (ID: %s) to inner step (ID: %s): %v", step.GetID(), innerStepPlan.GetID(), codeExecMode))
-			}
-		} else {
-			// Try to load parent step config from file if not already loaded
-			if err := ApplyStepConfigFromFile(ctx, step, hcpo); err == nil {
-				parentStepConfigs = getAgentConfigs(step)
-				if parentStepConfigs != nil && parentStepConfigs.UseCodeExecutionMode != nil {
-					// Initialize inner step config if needed
-					if innerStepConfigs == nil {
-						switch innerStep := innerStepPlan.(type) {
-						case *RegularPlanStep:
-							innerStep.AgentConfigs = &AgentConfigs{}
-						case *ConditionalPlanStep:
-							innerStep.AgentConfigs = &AgentConfigs{}
-						case *DecisionPlanStep:
-							innerStep.AgentConfigs = &AgentConfigs{}
-						case *OrchestrationPlanStep:
-							innerStep.AgentConfigs = &AgentConfigs{}
-						}
-						innerStepConfigs = getAgentConfigs(innerStepPlan)
-					}
-					// Inherit UseCodeExecutionMode from parent decision step
-					if innerStepConfigs != nil {
-						codeExecMode := *parentStepConfigs.UseCodeExecutionMode
-						innerStepConfigs.UseCodeExecutionMode = &codeExecMode
-						hcpo.GetLogger().Info(fmt.Sprintf("🔧 Loaded and inherited code execution mode from parent decision step (ID: %s) to inner step (ID: %s): %v", step.GetID(), innerStepPlan.GetID(), codeExecMode))
-					}
-				}
-			}
-		}
-	}
 
 	executionResult, updatedContextFiles, err := hcpo.executeSingleStep(
 		ctx,
-		innerStepPlan, // Use PlanStepInterface for executeSingleStep
+		step, // Execute the decision step itself (it has description, success_criteria, etc.)
 		stepIndex,
-		innerStepPath,
+		executionStepPath,
 		1, // totalSteps = 1 for single decision step
 		iteration,
 		previousContextFiles,
@@ -150,29 +93,29 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 		execCtx,
 		allSteps,                                // Use []PlanStepInterface
 		true,                                    // isDecisionInnerStep = true (skip final human feedback on success)
-		nil,                                     // decisionContext = nil (this is the inner step, not a routed step)
+		nil,                                     // decisionContext = nil (this is the decision step execution, not a routed step)
 		decisionStep.DecisionEvaluationQuestion, // decisionEvaluationQuestion - pass to execution agent for output formatting
-		false,                                   // isSubAgent = false (decision inner step, not a sub-agent)
+		false,                                   // isSubAgent = false (decision step, not a sub-agent)
 		[]string{},                              // previousExecutionResults - empty for decision steps (they don't need previous execution outputs)
 		nil,                                     // orchestrationRoutes - nil for decision steps (not sub-agents)
 	)
 	if err != nil {
-		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute decision step's inner step '%s': %v", innerStepPlan.GetTitle(), err), nil)
-		return false, "", fmt.Errorf("failed to execute decision step's inner step '%s': %w", innerStepPlan.GetTitle(), err)
+		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute decision step '%s': %v", step.GetTitle(), err), nil)
+		return false, "", fmt.Errorf("failed to execute decision step '%s': %w", step.GetTitle(), err)
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Decision step's inner step completed. Output length: %d chars", len(executionResult)))
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Decision step execution completed. Output length: %d chars", len(executionResult)))
 
-	// Check if inner step signaled early workflow termination
-	// Inner steps can signal termination by including "WORKFLOW_END" or "END_WORKFLOW" in their output
+	// Check if step signaled early workflow termination
+	// Steps can signal termination by including "WORKFLOW_END" or "END_WORKFLOW" in their output
 	executionResultUpper := strings.ToUpper(executionResult)
 	if strings.Contains(executionResultUpper, "WORKFLOW_END") || strings.Contains(executionResultUpper, "END_WORKFLOW") {
-		hcpo.GetLogger().Info(fmt.Sprintf("🏁 Decision step's inner step '%s' signaled workflow termination - ending workflow early", innerStepPlan.GetTitle()))
+		hcpo.GetLogger().Info(fmt.Sprintf("🏁 Decision step '%s' signaled workflow termination - ending workflow early", step.GetTitle()))
 		// Return a special error that the caller can detect to signal termination
-		return false, executionResult, fmt.Errorf("WORKFLOW_END: decision step's inner step '%s' signaled workflow termination", innerStepPlan.GetTitle())
+		return false, executionResult, fmt.Errorf("WORKFLOW_END: decision step '%s' signaled workflow termination", step.GetTitle())
 	}
 
-	// Store inner step execution result to logs (always enabled)
+	// Store decision step execution result to logs (always enabled)
 	// Determine validation workspace path (same logic as validation agent)
 	var validationWorkspacePath string
 	if hcpo.selectedRunFolder != "" {
@@ -181,14 +124,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 		validationWorkspacePath = hcpo.GetWorkspacePath()
 	}
 
-	// Get execution logs folder path based on innerStepPath (step-{X}-decision)
-	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, innerStepPath)
+	// Get execution logs folder path based on executionStepPath (step-{X}-decision)
+	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, executionStepPath)
 
-	// Save inner step execution result
-	executionResultFilePath := fmt.Sprintf("%s/decision-inner-step.json", executionLogsFolderPath)
+	// Save decision step execution result
+	executionResultFilePath := fmt.Sprintf("%s/decision-execution.json", executionLogsFolderPath)
 	executionResponse := map[string]interface{}{
 		"step_index":       stepIndex + 1,
-		"step_path":        innerStepPath,
+		"step_path":        executionStepPath,
 		"decision_step_id": step.GetID(),
 		"execution_result": executionResult,
 		"timestamp":        time.Now().Format(time.RFC3339),
@@ -197,32 +140,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 	// Marshal and save execution result
 	executionJSON, err := json.MarshalIndent(executionResponse, "", "  ")
 	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal decision inner step execution response to JSON: %v", err))
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal decision step execution response to JSON: %v", err))
 	} else {
 		if err := hcpo.WriteWorkspaceFile(ctx, executionResultFilePath, string(executionJSON)); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write decision inner step execution response to %s: %v", executionResultFilePath, err))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write decision step execution response to %s: %v", executionResultFilePath, err))
 		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("💾 Decision inner step execution response saved to: %s", executionResultFilePath))
+			hcpo.GetLogger().Info(fmt.Sprintf("💾 Decision step execution response saved to: %s", executionResultFilePath))
 		}
 	}
 
 	// 2. Evaluate the execution output using the ConditionalAgent (full agent with workspace tools)
 	hcpo.GetLogger().Info(fmt.Sprintf("🤔 Evaluating decision step output with question: %s", decisionStep.DecisionEvaluationQuestion))
 
-	// Read learnings separately (passed as separate learningHistory variable, not in executionResult)
-	// Use inner decision step ID for learnings (consistent with orchestration pattern)
-	innerStepID := innerStepPlan.GetID()
-	if innerStepID == "" {
-		// Fallback to parent wrapper ID if inner step has no ID
-		innerStepID = step.GetID()
-	}
-	learningHistory, _ := hcpo.LoadStepLearningHistory(ctx, innerStepID, stepIndex, decisionStepPath, "decision")
+	// Read learnings for the decision step (learnings are stored under the step's ID)
+	learningHistory, _ := hcpo.LoadStepLearningHistory(ctx, step.GetID(), stepIndex, decisionStepPath, "decision")
 
 	// Determine code execution mode: Priority: step config > orchestrator default
 	var isCodeExecutionMode bool
-	parentStepConfigs = getAgentConfigs(step)
-	if parentStepConfigs != nil && parentStepConfigs.UseCodeExecutionMode != nil {
-		isCodeExecutionMode = *parentStepConfigs.UseCodeExecutionMode
+	stepConfigs := getAgentConfigs(step)
+	if stepConfigs != nil && stepConfigs.UseCodeExecutionMode != nil {
+		isCodeExecutionMode = *stepConfigs.UseCodeExecutionMode
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode for decision evaluation: %v", isCodeExecutionMode))
 	} else {
 		isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
@@ -275,28 +212,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Decision step evaluated: result=%t", decisionResponse.Result))
 
-	// AUTO-UNLOCK LEARNINGS: If decision result is false, automatically unlock learnings for the inner step
-	// This ensures that when a decision step returns false, the inner step can learn from the failure
+	// AUTO-UNLOCK LEARNINGS: If decision result is false, automatically unlock learnings for the step
+	// This ensures that when a decision step returns false, the step can learn from the failure
 	if !decisionResponse.Result {
-		innerStepID := innerStepPlan.GetID()
-		if innerStepID == "" {
-			// Fallback to parent wrapper ID if inner step has no ID
-			innerStepID = step.GetID()
-		}
-		// Get agent configs for the inner step to check if learnings are locked
-		innerStepConfigs := getAgentConfigs(innerStepPlan)
-		isLearningsLocked := innerStepConfigs != nil && innerStepConfigs.LockLearnings != nil && *innerStepConfigs.LockLearnings
+		decisionStepID := step.GetID()
+		// Get agent configs for the step to check if learnings are locked
+		stepConfigsForUnlock := getAgentConfigs(step)
+		isLearningsLocked := stepConfigsForUnlock != nil && stepConfigsForUnlock.LockLearnings != nil && *stepConfigsForUnlock.LockLearnings
 		if isLearningsLocked {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔓 Decision step returned FALSE - auto-unlocking learnings for inner step %s so it can learn from the failure", innerStepID))
-			if unlockErr := hcpo.unlockStepLearningsInConfig(ctx, innerStepID); unlockErr != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-unlock learnings for inner step %s: %v", innerStepID, unlockErr))
+			hcpo.GetLogger().Info(fmt.Sprintf("🔓 Decision step returned FALSE - auto-unlocking learnings for step %s so it can learn from the failure", decisionStepID))
+			if unlockErr := hcpo.unlockStepLearningsInConfig(ctx, decisionStepID); unlockErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-unlock learnings for step %s: %v", decisionStepID, unlockErr))
 			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Auto-unlocked learnings for inner step %s (decision step returned false)", innerStepID))
-				// Update unlock metadata - use inner step path for learning path identifier
-				innerStepPath := fmt.Sprintf("step-%d-decision", stepIndex+1)
-				learningPathIdentifier := innerStepID // Use step ID as learning path identifier (new format)
-				if metadataErr := hcpo.updateUnlockMetadata(ctx, innerStepID, stepIndex, innerStepPath, learningPathIdentifier, "decision_step_false"); metadataErr != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update unlock metadata for inner step %s: %v", innerStepID, metadataErr))
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Auto-unlocked learnings for step %s (decision step returned false)", decisionStepID))
+				// Update unlock metadata - use step path for learning path identifier
+				unlockStepPath := fmt.Sprintf("step-%d-decision", stepIndex+1)
+				learningPathIdentifier := decisionStepID // Use step ID as learning path identifier (new format)
+				if metadataErr := hcpo.updateUnlockMetadata(ctx, decisionStepID, stepIndex, unlockStepPath, learningPathIdentifier, "decision_step_false"); metadataErr != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update unlock metadata for step %s: %v", decisionStepID, metadataErr))
 				}
 			}
 		}

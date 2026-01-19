@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronDown, ChevronUp, Settings, Sparkles, Code2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Settings, Sparkles, Code2, Search } from 'lucide-react';
 import { Button } from '../../ui/Button';
 import LLMSelectionDropdown from '../../LLMSelectionDropdown';
 import { ToolSelectionSection } from '../../ToolSelectionSection';
@@ -71,6 +71,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       step_agent_configs: step.agent_configs,
       disable_learning: configs.disable_learning,
       disable_validation: configs.disable_validation,
+      use_tool_search_mode: configs.use_tool_search_mode,
       configs,
     });
     
@@ -592,6 +593,32 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       finalConfigs.selected_tools = undefined;
     }
 
+    // Handle Tool Search Mode logic
+    if (agentConfigs.use_tool_search_mode) {
+      // Enable Tool Search Mode
+      finalConfigs.use_tool_search_mode = true;
+      
+      // Map currently selected tools to pre-discovered tools
+      if (selectedTools.length > 0) {
+        // Extract tool names (remove "server:" prefix)
+        const toolNames = selectedTools.map(t => {
+          const parts = t.split(':');
+          return parts.length > 1 ? parts[1] : t;
+        }).filter(t => t !== '*'); // Exclude wildcards
+        
+        // Save as pre-discovered tools
+        finalConfigs.pre_discovered_tools = toolNames;
+        
+        // Clear selected_tools to allow dynamic search (defaults to all tools from selected servers)
+        // This effectively "unlocks" other tools for searching while keeping known ones ready
+        finalConfigs.selected_tools = undefined;
+      }
+    } else {
+      // Disable Tool Search Mode
+      delete finalConfigs.use_tool_search_mode;
+      delete finalConfigs.pre_discovered_tools;
+    }
+
     // Handle custom tools in unified format: "category:tool" or "category:*"
     if (enabledCustomTools.length === 0) {
       // Empty array means all tools enabled (default behavior)
@@ -683,6 +710,8 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
         disable_learning: finalConfigs.disable_learning,
         disable_validation: finalConfigs.disable_validation,
         use_code_execution_mode: finalConfigs.use_code_execution_mode,
+        use_tool_search_mode: finalConfigs.use_tool_search_mode,
+        pre_discovered_tools: finalConfigs.pre_discovered_tools
       },
     });
 
@@ -714,7 +743,9 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     
     const parts = [];
     if (execLLM) {
-      const codeExecLabel = effectiveCodeExecMode ? 'Code Exec' : 'Simple';
+      let codeExecLabel = 'Simple';
+      if (effectiveCodeExecMode) codeExecLabel = 'Code Exec';
+      if (agentConfigs.use_tool_search_mode) codeExecLabel = 'Tool Search';
       parts.push(`Exec: ${execLLM.label} (${codeExecLabel})`);
     }
     if (valLLM && agentConfigs.disable_validation === false) parts.push(`Val: ${valLLM.label}`);
@@ -750,7 +781,12 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     }
     
     // Tool details
-    if (selectedTools.length > 0) {
+    if (agentConfigs.use_tool_search_mode) {
+      parts.push('Tool Search Enabled');
+      if (selectedTools.length > 0) {
+        parts.push(`${selectedTools.length} pre-discovered`);
+      }
+    } else if (selectedTools.length > 0) {
       const allToolsServers = selectedTools.filter(t => t.endsWith(':*')).map(t => t.replace(':*', ''));
       const specificTools = selectedTools.filter(t => !t.endsWith(':*'));
       
@@ -1156,15 +1192,17 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                         <button
                           type="button"
                           onClick={() => {
-                            console.log('[StepEditPanel] Setting use_code_execution_mode to false');
+                            console.log('[StepEditPanel] Setting mode to Simple');
                             setAgentConfigs((prev) => ({
                               ...prev,
                               use_code_execution_mode: false,
+                              use_tool_search_mode: false,
                             }));
                           }}
                           className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
-                            agentConfigs.use_code_execution_mode === false || 
-                            (agentConfigs.use_code_execution_mode === undefined && !presetUseCodeExecutionMode)
+                            !agentConfigs.use_tool_search_mode &&
+                            (agentConfigs.use_code_execution_mode === false || 
+                            (agentConfigs.use_code_execution_mode === undefined && !presetUseCodeExecutionMode))
                               ? 'agent-mode-selected rounded-l-md rounded-r-none'
                               : 'agent-mode-unselected rounded-none'
                           }`}
@@ -1177,15 +1215,17 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                         <p>Simple mode - Direct MCP tool access</p>
                       </TooltipContent>
                     </Tooltip>
+                    
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <button
                           type="button"
                           onClick={() => {
-                            console.log('[StepEditPanel] Setting use_code_execution_mode to true');
+                            console.log('[StepEditPanel] Setting mode to Code Exec');
                             setAgentConfigs((prev) => ({
                               ...prev,
                               use_code_execution_mode: true,
+                              use_tool_search_mode: false,
                               // Auto-enable learning and validation when code exec is enabled
                               disable_learning: false,
                               disable_validation: false,
@@ -1193,10 +1233,11 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                               learning_detail_level: 'exact',
                             }));
                           }}
-                          className={`px-2 py-1 text-xs font-medium transition-colors ${
-                            agentConfigs.use_code_execution_mode === true ||
-                            (agentConfigs.use_code_execution_mode === undefined && presetUseCodeExecutionMode)
-                              ? 'agent-mode-selected rounded-r-md rounded-l-none'
+                          className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
+                            !agentConfigs.use_tool_search_mode &&
+                            (agentConfigs.use_code_execution_mode === true ||
+                            (agentConfigs.use_code_execution_mode === undefined && presetUseCodeExecutionMode))
+                              ? 'agent-mode-selected rounded-none'
                               : 'agent-mode-unselected rounded-none'
                           }`}
                         >
@@ -1206,6 +1247,33 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                       </TooltipTrigger>
                       <TooltipContent>
                         <p>Code Exec mode - MCP tools accessed via generated Go code</p>
+                      </TooltipContent>
+                    </Tooltip>
+
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            console.log('[StepEditPanel] Setting mode to Tool Search');
+                            setAgentConfigs((prev) => ({
+                              ...prev,
+                              use_code_execution_mode: false,
+                              use_tool_search_mode: true,
+                            }));
+                          }}
+                          className={`px-2 py-1 text-xs font-medium transition-colors ${
+                            agentConfigs.use_tool_search_mode === true
+                              ? 'agent-mode-selected rounded-r-md rounded-l-none'
+                              : 'agent-mode-unselected rounded-none'
+                          }`}
+                        >
+                          <Search className="w-3 h-3 inline mr-1" />
+                          Tool Search
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Tool Search mode - Dynamic tool discovery</p>
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>

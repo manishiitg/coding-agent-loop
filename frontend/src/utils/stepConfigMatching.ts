@@ -28,6 +28,8 @@ export interface AgentConfigs {
   enabled_custom_tools?: string[];
   enable_context_offloading?: boolean;
   use_code_execution_mode?: boolean;
+  use_tool_search_mode?: boolean;
+  pre_discovered_tools?: string[];
   enable_prerequisite_detection?: boolean;
   prerequisite_rules?: PrerequisiteRule[];
   keep_learning_full?: boolean;

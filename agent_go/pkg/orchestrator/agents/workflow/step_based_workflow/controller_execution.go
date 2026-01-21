@@ -2766,6 +2766,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		// It will be handled by the caller if needed
 
 		if approved {
+			// Write step_done.json marker file (for both regular and branch steps)
+			stepDonePath := filepath.Join(stepExecutionPath, "step_done.json")
+			stepDoneData := map[string]interface{}{
+				"completed_at": time.Now().UTC().Format(time.RFC3339),
+				"step_index":   stepIndex,
+				"step_path":    stepPath,
+				"step_id":      step.GetID(),
+			}
+			if jsonBytes, err := json.MarshalIndent(stepDoneData, "", "  "); err == nil {
+				if err := hcpo.WriteWorkspaceFile(ctx, stepDonePath, string(jsonBytes)); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write step_done.json: %v", err))
+				}
+			}
+
 			// User approved - mark step as completed and exit outer loop
 			// Only update progress if this is not a branch step
 			if !isBranchStep {

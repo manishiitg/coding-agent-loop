@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react'
-import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Repeat, Zap, Lock, SkipForward, ShieldCheck } from 'lucide-react'
+import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Repeat, Zap, Lock, SkipForward, ShieldCheck, Search } from 'lucide-react'
 import type { WorkflowNode, StepNodeData, ConditionalNodeData, LoopNodeData, DecisionNodeData, OrchestratorNodeData } from '../hooks/usePlanToFlow'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep, isOrchestrationStep } from '../../../utils/stepConfigMatching'
@@ -49,6 +49,7 @@ export const StepLegend: React.FC<StepLegendProps> = ({
   }, [activePresetId, customPresets, predefinedPresets])
   
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
+  const presetUseToolSearchMode = activePreset?.useToolSearchMode ?? false
 
   // Type guard to check if node has step data
   const hasStepData = (node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData } => {
@@ -417,6 +418,13 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                 ? stepCodeExecSetting === true  // Step has explicit setting
                 : presetUseCodeExecutionMode     // Fall back to preset default
 
+              // Determine if tool search mode is enabled for this step
+              // Priority: step config > preset default (matching backend logic)
+              const stepToolSearchSetting = step.agent_configs?.use_tool_search_mode
+              const useToolSearchMode = stepToolSearchSetting !== undefined 
+                ? stepToolSearchSetting === true  // Step has explicit setting
+                : presetUseToolSearchMode         // Fall back to preset default
+
               // Check if learnings are locked (matching StepNode logic - show icon if lock_learnings is true)
               // For orchestration steps, check orchestration_step.agent_configs
               // For regular steps, check step.agent_configs
@@ -521,6 +529,9 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                         </span>
                         {useCodeExecutionMode && (
                           <Code className="w-3 h-3 text-blue-500 flex-shrink-0" />
+                        )}
+                        {!useCodeExecutionMode && useToolSearchMode && (
+                          <Search className="w-3 h-3 text-yellow-500 flex-shrink-0" />
                         )}
                         {lockLearnings && (
                           <span title="Learnings are locked" className="flex-shrink-0">

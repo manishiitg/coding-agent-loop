@@ -239,6 +239,10 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       },
       
       addPreset: async (label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, useToolSearchMode) => {
+        // Apply workflow-specific default for tool search mode
+        // When agentMode is 'workflow' and useToolSearchMode is not explicitly provided, default to true
+        const effectiveToolSearchMode = useToolSearchMode !== undefined ? useToolSearchMode : (agentMode === 'workflow')
+
         try {
           // Logic for Tool Search Mode:
           // If enabled, the tools selected in the UI become "pre-discovered tools" (always available).
@@ -246,7 +250,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           let toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
           let preDiscoveredTools: string[] = []
 
-          if (useToolSearchMode) {
+          if (effectiveToolSearchMode) {
             // Extract tool names from "server:tool" format
             preDiscoveredTools = toolsForBackend.map(t => {
               const parts = t.split(':')
@@ -261,10 +265,10 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             selectedTools,
             toolsForBackend,
             preDiscoveredTools,
-            useToolSearchMode,
+            effectiveToolSearchMode,
             label
           });
-          
+
           const request: CreatePresetQueryRequest = {
             label,
             query,
@@ -272,7 +276,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             selected_tools: toolsForBackend, // Filtered tools (empty if tool search mode)
             agent_mode: agentMode,
             selected_folder: selectedFolder?.filepath,
-            use_tool_search_mode: useToolSearchMode,
+            use_tool_search_mode: effectiveToolSearchMode,
             pre_discovered_tools: preDiscoveredTools
           }
           
@@ -313,22 +317,22 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             selectedFolder,
             llmConfig,
             useCodeExecutionMode,
-            useToolSearchMode,
+            useToolSearchMode: effectiveToolSearchMode,
             preDiscoveredTools,
             enableContextSummarization
           }
-          
+
           set(state => ({
             customPresets: [...state.customPresets, newPreset]
           }))
-          
+
           return newPreset
         } catch (error) {
           console.error('[PRESET] Error adding preset:', error)
           throw error
         }
       },
-      
+
       updatePreset: async (id, label, query, selectedServers, selectedTools, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, useToolSearchMode) => {
         // CRITICAL: Log ALL arguments using rest parameters to see what's actually passed
         console.error('[code_execution] [PRESET_STORE] ========== updatePreset CALLED ==========')
@@ -474,13 +478,17 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           'operation': id ? 'UPDATE' : 'CREATE'
         })
         
+        // Apply workflow-specific default for tool search mode
+        // When agentMode is 'workflow' and useToolSearchMode is not explicitly provided, default to true
+        const effectiveToolSearchMode = useToolSearchMode !== undefined ? useToolSearchMode : (agentMode === 'workflow')
+
         // Logic for Tool Search Mode (shared):
         // If enabled, the tools selected in the UI become "pre-discovered tools" (always available).
         // We clear selected_tools to allow the agent to search ALL tools from the selected servers.
         let toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
         let preDiscoveredTools: string[] = []
 
-        if (useToolSearchMode) {
+        if (effectiveToolSearchMode) {
           // Extract tool names from "server:tool" format
           preDiscoveredTools = toolsForBackend.map(t => {
             const parts = t.split(':')
@@ -493,7 +501,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         if (id) {
           // Update existing preset
           console.log('[code_execution] [PRESET_STORE] Updating existing preset:', id)
-          
+
           try {
             const request: UpdatePresetQueryRequest = {
               label,
@@ -502,7 +510,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               selected_tools: toolsForBackend,
               agent_mode: agentMode,
               selected_folder: selectedFolder?.filepath,
-              use_tool_search_mode: useToolSearchMode,
+              use_tool_search_mode: effectiveToolSearchMode,
               pre_discovered_tools: preDiscoveredTools
             }
             
@@ -542,7 +550,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                       selectedFolder,
                       llmConfig,
                       useCodeExecutionMode,
-                      useToolSearchMode,
+                      useToolSearchMode: effectiveToolSearchMode,
                       preDiscoveredTools,
                       enableContextSummarization
                     }
@@ -569,33 +577,33 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               selected_tools: toolsForBackend,
               agent_mode: agentMode,
               selected_folder: selectedFolder?.filepath,
-              use_tool_search_mode: useToolSearchMode,
+              use_tool_search_mode: effectiveToolSearchMode,
               pre_discovered_tools: preDiscoveredTools
             }
-            
+
             // Include LLM config if provided
             if (llmConfig) {
               request.llm_config = llmConfig
             }
-            
+
             // Include code execution mode if provided
             if (useCodeExecutionMode !== undefined) {
               request.use_code_execution_mode = useCodeExecutionMode
               console.log('[code_execution] [PRESET_STORE] Including code execution mode in create request:', useCodeExecutionMode)
             }
-            
+
             // Include context summarization if provided
             if (enableContextSummarization !== undefined) {
               request.enable_context_summarization = enableContextSummarization
             }
-            
+
             console.log('[code_execution] [PRESET_STORE] Creating preset with request:', {
               ...request,
               use_code_execution_mode: request.use_code_execution_mode
             })
-            
+
             const response = await agentApi.createPresetQuery(request)
-            
+
             const newPreset: CustomPreset = {
               id: response.id,
               label: response.label,
@@ -607,7 +615,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               selectedFolder,
               llmConfig,
               useCodeExecutionMode,
-              useToolSearchMode,
+              useToolSearchMode: effectiveToolSearchMode,
               preDiscoveredTools,
               enableContextSummarization
             }

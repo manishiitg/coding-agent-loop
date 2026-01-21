@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { RefreshCw, CheckCircle, XCircle, Loader2, Plus, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Repeat, Play, Settings, Lock, FastForward } from 'lucide-react'
+import { RefreshCw, CheckCircle, XCircle, Loader2, Plus, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Repeat, Play, Settings, Lock, FastForward, Search } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -132,6 +132,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
 
   const stepConfig = step as { agent_configs?: { 
     use_code_execution_mode?: boolean
+    use_tool_search_mode?: boolean
     execution_llm?: { provider?: string; model_id?: string }
     execution_max_turns?: number
     learning_llm?: { provider?: string; model_id?: string }
@@ -155,6 +156,16 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
   const useCodeExecutionMode = stepCodeExecSetting !== undefined 
     ? stepCodeExecSetting === true  // Step has explicit setting
     : presetUseCodeExecutionMode     // Fall back to preset default
+
+  // Get preset's default tool search mode
+  const presetUseToolSearchMode = activePreset?.useToolSearchMode ?? false
+  
+  // Determine tool search mode: Priority - step config > preset default (matching backend logic)
+  // Only use step-specific if it's EXPLICITLY set (not undefined)
+  const stepToolSearchSetting = stepConfig?.agent_configs?.use_tool_search_mode
+  const useToolSearchMode = stepToolSearchSetting !== undefined 
+    ? stepToolSearchSetting === true  // Step has explicit setting
+    : presetUseToolSearchMode         // Fall back to preset default
 
   const contextInputs = useMemo(() => step.context_dependencies || [], [step.context_dependencies])
   const contextOutputs = useMemo(() => {
@@ -488,14 +499,16 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
           ) : null}
           {/* Agent Mode Badge */}
           {useCodeExecutionMode ? (
-            <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px] font-semibold border border-amber-200 dark:border-amber-800">
-              <Terminal className="w-3.5 h-3.5" />
-              <span>Code</span>
+            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" title="Code Execution Mode">
+              <Terminal className="w-4 h-4" />
+            </div>
+          ) : useToolSearchMode ? (
+            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-800" title="Tool Search Mode">
+              <Search className="w-4 h-4" />
             </div>
           ) : (
-            <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-slate-100 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 text-[10px] font-semibold border border-slate-200 dark:border-slate-700">
-              <Code className="w-3.5 h-3.5" />
-              <span>Agent</span>
+            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-slate-100 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700" title="Simple Agent Mode">
+              <Code className="w-4 h-4" />
             </div>
           )}
           {/* Lock Learnings Badge */}

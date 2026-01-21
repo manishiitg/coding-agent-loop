@@ -12,7 +12,8 @@ type EvaluationStep struct {
 	Description     string            `json:"description"`
 	PreValidation   *ValidationSchema `json:"pre_validation,omitempty"`
 	SuccessCriteria string            `json:"success_criteria"`
-	AgentConfigs    *AgentConfigs     `json:"-"` // runtime config
+	AgentConfigs    *AgentConfigs     `json:"-"`                      // runtime config
+	ContextOutput   string            `json:"context_output,omitempty"` // Filename of output produced by the step
 }
 
 // Implement PlanStepInterface for EvaluationStep
@@ -22,7 +23,7 @@ func (e *EvaluationStep) GetTitle() string                        { return e.Tit
 func (e *EvaluationStep) GetDescription() string                  { return e.Description }
 func (e *EvaluationStep) GetSuccessCriteria() string              { return e.SuccessCriteria }
 func (e *EvaluationStep) GetContextDependencies() []string        { return nil }
-func (e *EvaluationStep) GetContextOutput() FlexibleContextOutput { return "" }
+func (e *EvaluationStep) GetContextOutput() FlexibleContextOutput { return FlexibleContextOutput(e.ContextOutput) }
 func (e *EvaluationStep) GetEnablePrerequisiteDetection() *bool {
 	val := false
 	return &val
@@ -38,6 +39,7 @@ func (e *EvaluationStep) GetCommonFields() CommonStepFields {
 		Description:      e.Description,
 		SuccessCriteria:  e.SuccessCriteria,
 		ValidationSchema: e.PreValidation,
+		ContextOutput:    FlexibleContextOutput(e.ContextOutput),
 	}
 }
 
@@ -90,15 +92,24 @@ func (ep *EvaluationPlan) ToPlanSteps() []PlanStepInterface {
 	return steps
 }
 
+// StepOutputContent represents the content of a step's output file
+type StepOutputContent struct {
+	FilePath string      `json:"file_path"`
+	Content  interface{} `json:"content"`
+	IsJSON   bool        `json:"is_json"`
+}
+
 // EvaluationStepScore represents the score for a single evaluation step
 type EvaluationStepScore struct {
-	StepID          string `json:"step_id"`
-	StepTitle       string `json:"step_title"`
-	Score           int    `json:"score"`
-	MaxScore        int    `json:"max_score"`
-	Reasoning       string `json:"reasoning"`
-	Evidence        string `json:"evidence"`
-	SuccessCriteria string `json:"success_criteria"`
+	StepID          string             `json:"step_id"`
+	StepTitle       string             `json:"step_title"`
+	Score           int                `json:"score"`
+	MaxScore        int                `json:"max_score"`
+	Reasoning       string             `json:"reasoning"`
+	Evidence        string             `json:"evidence"`
+	SuccessCriteria string             `json:"success_criteria"`
+	ContextOutput   string             `json:"context_output,omitempty"`
+	OutputContent   *StepOutputContent `json:"output_content,omitempty"`
 }
 
 // EvaluationReport represents the final evaluation report with all scores

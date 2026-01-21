@@ -114,7 +114,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       };
       setLlmConfig(presetLLM);
       setUseCodeExecutionMode(editingPreset.useCodeExecutionMode || false);
-      setUseToolSearchMode(editingPreset.useToolSearchMode || false);
+      // For workflow presets, default to true if not explicitly set
+      const isWorkflow = editingPreset.agentMode === 'workflow';
+      setUseToolSearchMode(editingPreset.useToolSearchMode !== undefined ? editingPreset.useToolSearchMode : isWorkflow);
       setEnableContextSummarization(editingPreset.enableContextSummarization !== undefined ? editingPreset.enableContextSummarization : true);
       setUseKnowledgebase(presetLLM.use_knowledgebase !== false); // Default true unless explicitly false
       // Load agent-specific configs if available
@@ -138,7 +140,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       };
       setLlmConfig(defaultLLM);
       setUseCodeExecutionMode(false);
-      setUseToolSearchMode(false);
+      // Default tool search mode to true for workflow presets, false for others
+      setUseToolSearchMode(defaultMode === 'workflow');
       setEnableContextSummarization(true);
       setUseKnowledgebase(true); // Default true
       // Initialize agent-specific configs to null (will use legacy default)

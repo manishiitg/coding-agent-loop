@@ -70,3 +70,5 @@ i) prompt tempaltes, need to check variables on compile time
 10. have a too to fetch via web
 
 11. if sheel tool is enabled in workspace/ do we need other list tools etc
+
+12. the success learning agents should not have human tools

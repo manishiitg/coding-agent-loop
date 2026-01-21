@@ -72,6 +72,48 @@ function getSuccessfulRuns(metadata: LearningMetadata | null): number {
          (metadata.successful_runs_complex || 0)
 }
 
+// Check if learnings folder exists
+// Returns true only if metadata contains actual learning data (not just step config fields)
+// Step config fields (use_code_execution_mode, learning_detail_level, lock_learnings) can exist
+// even when the folder doesn't exist, so we need to check for actual learning data fields
+function hasLearningsFolder(
+  metadata: LearningMetadata | null,
+  cachedContent: { content: string; codeContent?: string; codeFileName?: string; error: string | null } | undefined
+): boolean {
+  if (!metadata) return false
+  
+  // Check if metadata has actual learning data fields (not just step config)
+  // These fields indicate the folder exists and has been used for learning:
+  const hasLearningData = 
+    metadata.step_id !== undefined ||
+    metadata.successful_runs_simple !== undefined ||
+    metadata.successful_runs_medium !== undefined ||
+    metadata.successful_runs_complex !== undefined ||
+    metadata.last_turn_count !== undefined ||
+    metadata.auto_locked_at !== undefined ||
+    metadata.auto_lock_reason !== undefined ||
+    metadata.total_iterations !== undefined ||
+    metadata.lock_threshold !== undefined
+  
+  // If no learning data fields, folder doesn't exist (only step config fields present)
+  if (!hasLearningData) return false
+  
+  // If we have cached content with an error indicating folder doesn't exist, return false
+  if (cachedContent?.error) {
+    const errorLower = cachedContent.error.toLowerCase()
+    if (errorLower.includes('not found') || 
+        errorLower.includes("doesn't exist") ||
+        errorLower.includes('does not exist') ||
+        errorLower.includes('no such file') ||
+        errorLower.includes('no such directory')) {
+      return false
+    }
+  }
+  
+  // Folder exists if we have learning data fields
+  return true
+}
+
 // Parse learnings API response into typed Record
 function parseLearningsResponse(learningsData: Record<string, unknown>): Record<string, LearningMetadata | null> {
   const result: Record<string, LearningMetadata | null> = {}
@@ -238,7 +280,17 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
         return newCache
       })
 
-      // Refresh learnings list
+      // Remove from expanded items if it was expanded
+      setExpandedStepIds(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(stepId)
+        return newSet
+      })
+
+      // Clear any error state
+      setError(null)
+
+      // Refresh learnings list to update UI
       const response = await agentApi.getAllStepLearnings(workspacePath)
       if (response.success) {
         setLearnings(parseLearningsResponse(response.learnings || {}))
@@ -622,75 +674,81 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                             <span className="text-xs text-muted-foreground font-mono">({stepId})</span>
                           </div>
                           <div className="flex items-center gap-4 mt-2 text-sm">
-                            <div className="flex items-center gap-2">
-                              {isLocked ? (
-                                <>
-                                  <Lock className="w-4 h-4 text-green-600 dark:text-green-400" />
-                                  <span className="text-green-600 dark:text-green-400">
-                                    {isAutoLocked && isManuallyLocked ? 'Locked (Auto + Manual)' :
-                                     isAutoLocked ? 'Locked (Auto)' :
-                                     'Locked (Manual)'}
-                                  </span>
-                                </>
-                              ) : (
-                                <>
-                                  <Unlock className="w-4 h-4 text-yellow-600 dark:text-yellow-400" />
-                                  <span className="text-yellow-600 dark:text-yellow-400">Unlocked</span>
-                                </>
-                              )}
-                            </div>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                // If locked (auto or manual), unlock it. If unlocked, lock it.
-                                toggleLock(stepId, isLocked)
-                              }}
-                              disabled={isUpdatingLock}
-                              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                                isLocked
-                                  ? 'bg-yellow-100 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:hover:bg-yellow-900/50 text-yellow-700 dark:text-yellow-400'
-                                  : 'bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
-                              }`}
-                              title={isLocked ? "Unlock learnings" : "Lock learnings manually"}
-                            >
-                              {isUpdatingLock ? (
-                                <>
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  <span>Updating...</span>
-                                </>
-                              ) : isLocked ? (
-                                <>
-                                  <Unlock className="w-3.5 h-3.5" />
-                                  <span>Unlock</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Lock className="w-3.5 h-3.5" />
-                                  <span>Lock</span>
-                                </>
-                              )}
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setDeleteConfirmStepId(stepId)
-                              }}
-                              disabled={deletingStepIds.has(stepId)}
-                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-red-100 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-400"
-                              title="Delete learnings"
-                            >
-                              {deletingStepIds.has(stepId) ? (
-                                <>
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  <span>Deleting...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  <span>Delete</span>
-                                </>
-                              )}
-                            </button>
+                            {metadata && (
+                              <>
+                                <div className="flex items-center gap-2">
+                                  {isLocked ? (
+                                    <>
+                                      <Lock className="w-4 h-4 text-green-600 dark:text-green-400" />
+                                      <span className="text-green-600 dark:text-green-400">
+                                        {isAutoLocked && isManuallyLocked ? 'Locked (Auto + Manual)' :
+                                         isAutoLocked ? 'Locked (Auto)' :
+                                         'Locked (Manual)'}
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Unlock className="w-4 h-4 text-yellow-600 dark:text-yellow-400" />
+                                      <span className="text-yellow-600 dark:text-yellow-400">Unlocked</span>
+                                    </>
+                                  )}
+                                </div>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    // If locked (auto or manual), unlock it. If unlocked, lock it.
+                                    toggleLock(stepId, isLocked)
+                                  }}
+                                  disabled={isUpdatingLock}
+                                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                                    isLocked
+                                      ? 'bg-yellow-100 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:hover:bg-yellow-900/50 text-yellow-700 dark:text-yellow-400'
+                                      : 'bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                                  }`}
+                                  title={isLocked ? "Unlock learnings" : "Lock learnings manually"}
+                                >
+                                  {isUpdatingLock ? (
+                                    <>
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                      <span>Updating...</span>
+                                    </>
+                                  ) : isLocked ? (
+                                    <>
+                                      <Unlock className="w-3.5 h-3.5" />
+                                      <span>Unlock</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Lock className="w-3.5 h-3.5" />
+                                      <span>Lock</span>
+                                    </>
+                                  )}
+                                </button>
+                                {hasLearningsFolder(metadata, cachedContent) && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setDeleteConfirmStepId(stepId)
+                                    }}
+                                    disabled={deletingStepIds.has(stepId)}
+                                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-red-100 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-400"
+                                    title="Delete learnings"
+                                  >
+                                    {deletingStepIds.has(stepId) ? (
+                                      <>
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        <span>Deleting...</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                        <span>Delete</span>
+                                      </>
+                                    )}
+                                  </button>
+                                )}
+                              </>
+                            )}
                             {metadata && (
                               <div className="flex flex-col gap-1">
                                 <div className="flex items-center gap-2">

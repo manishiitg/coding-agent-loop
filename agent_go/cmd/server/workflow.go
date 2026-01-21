@@ -300,7 +300,9 @@ func readProgressForFolder(ctx context.Context, stepsFilePath string) (*StepProg
 	// Parse the JSON content
 	var progress StepProgress
 	if err := json.Unmarshal([]byte(content), &progress); err != nil {
-		return nil, fmt.Errorf("failed to parse steps_done.json content: %w", err)
+		// If unable to parse JSON (e.g., merge conflicts, corrupted file), return nil (empty progress)
+		// This allows the API to continue working even if the file is corrupted
+		return nil, nil
 	}
 	return &progress, nil
 }
@@ -3401,10 +3403,13 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 	}
 
 	var logsBasePath string
+	var executionBasePath string
 	if runFolder != "" && runFolder != "new" {
 		logsBasePath = fmt.Sprintf("%s/runs/%s/logs", cleanedWorkspacePath, runFolder)
+		executionBasePath = fmt.Sprintf("%s/runs/%s/execution", cleanedWorkspacePath, runFolder)
 	} else {
 		logsBasePath = fmt.Sprintf("%s/logs", cleanedWorkspacePath)
+		executionBasePath = fmt.Sprintf("%s/execution", cleanedWorkspacePath)
 	}
 
 	// Fetch workflow definition to get step titles and descriptions
@@ -3423,6 +3428,15 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 		}
 	}
 
+	// Typed response structure for folder listing
+	type FolderListingResponse struct {
+		Success bool                                `json:"success"`
+		Message string                              `json:"message"`
+		Error   string                              `json:"error"`
+		Data    virtualtools.WorkspaceFolderListing `json:"data"`
+	}
+
+	// 1. Fetch Logs Folder Listing
 	// List files in logs folder recursively (max_depth=3 to get step/validation.json and step/execution/exec.json)
 	apiURL := getWorkspaceAPIURL() + "/api/documents"
 	req, err := http.NewRequestWithContext(r.Context(), "GET", apiURL, nil)
@@ -3450,31 +3464,30 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if resp.StatusCode == http.StatusNotFound {
-		http.Error(w, "Logs folder not found", http.StatusNotFound)
-		return
+	var logsResp FolderListingResponse
+	if resp.StatusCode == http.StatusOK {
+		json.Unmarshal(body, &logsResp)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		http.Error(w, fmt.Sprintf("Workspace API returned status %d: %s", resp.StatusCode, string(body)), http.StatusInternalServerError)
-		return
+	// 2. Fetch Execution Folder Listing (for artifacts and output content)
+	// Max depth 2: step-N/file
+	execReq, _ := http.NewRequestWithContext(r.Context(), "GET", apiURL, nil)
+	execQ := execReq.URL.Query()
+	execQ.Add("folder", executionBasePath)
+	execQ.Add("max_depth", "2")
+	execReq.URL.RawQuery = execQ.Encode()
+
+	execResp, err := client.Do(execReq)
+	var execListingResp FolderListingResponse
+	if err == nil {
+		defer execResp.Body.Close()
+		execBody, _ := io.ReadAll(execResp.Body)
+		if execResp.StatusCode == http.StatusOK {
+			json.Unmarshal(execBody, &execListingResp)
+		}
 	}
 
-	// Typed response structure for folder listing
-	type FolderListingResponse struct {
-		Success bool                                `json:"success"`
-		Message string                              `json:"message"`
-		Error   string                              `json:"error"`
-		Data    virtualtools.WorkspaceFolderListing `json:"data"`
-	}
-
-	var apiResp FolderListingResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to parse API response: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	if !apiResp.Success {
+	if !logsResp.Success && !execListingResp.Success {
 		response := map[string]interface{}{
 			"success": true,
 			"steps":   map[string]interface{}{},
@@ -3516,6 +3529,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 			originalId := ""
 			stepType := "regular"
 			contextOutput := ""
+			successCriteria := ""
 			if meta != nil {
 				if t := meta["title"]; t != "" {
 					title = t
@@ -3526,32 +3540,36 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 					stepType = t
 				}
 				contextOutput = meta["context_output"]
+				successCriteria = meta["success_criteria"]
 			}
 
 			stepsLogs[stepId] = map[string]interface{}{
-				"step_id":        stepId,
-				"original_id":    originalId,
-				"type":           stepType,
-				"title":          title,
-				"description":    desc,
-				"context_output": contextOutput,
-				"output_content": nil, // Will be populated if output file exists
-				"validations":    []map[string]interface{}{},
-				"executions":     []map[string]interface{}{},
-				"decisions":      []map[string]interface{}{},
-				"orchestration":  []map[string]interface{}{},
-				"conditionals":   []map[string]interface{}{},
-				"learnings":      []map[string]interface{}{},
-				"archived_logs":  []map[string]interface{}{}, // Archived logs from previous runs
+				"step_id":          stepId,
+				"original_id":      originalId,
+				"type":             stepType,
+				"title":            title,
+				"description":      desc,
+				"success_criteria": successCriteria,
+				"context_output":   contextOutput,
+				"is_completed":     false,
+				"output_content":   nil, // Will be populated if output file exists
+				"artifacts":        []map[string]interface{}{},
+				"validations":      []map[string]interface{}{},
+				"executions":       []map[string]interface{}{},
+				"decisions":        []map[string]interface{}{},
+				"orchestration":    []map[string]interface{}{},
+				"conditionals":     []map[string]interface{}{},
+				"learnings":        []map[string]interface{}{},
+				"archived_logs":    []map[string]interface{}{}, // Archived logs from previous runs
 			}
 		}
 		return stepsLogs[stepId]
 	}
 
-	var processFolder func(items []virtualtools.WorkspaceFolderItem)
-	processFolder = func(items []virtualtools.WorkspaceFolderItem) {
+	// Helper to process logs folder (validations, logs, status)
+	var processLogsFolder func(items []virtualtools.WorkspaceFolderItem)
+	processLogsFolder = func(items []virtualtools.WorkspaceFolderItem) {
 		for _, item := range items {
-			// Extract name from filepath as Document struct doesn't have Name field
 			name := filepath.Base(item.FilePath)
 			isDir := item.IsDirectory || item.Type == "folder"
 
@@ -3562,6 +3580,17 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 					for _, child := range item.Children {
 						childName := filepath.Base(child.FilePath)
 						childIsDir := child.IsDirectory || child.Type == "folder"
+
+						if !childIsDir && childName == "step_done.json" {
+							logPath := child.FilePath
+							if processedPaths[logPath] {
+								continue
+							}
+							processedPaths[logPath] = true
+
+							entry := getStepEntry(stepId)
+							entry["is_completed"] = true
+						}
 
 						if !childIsDir && strings.HasPrefix(childName, "validation") && strings.HasSuffix(childName, ".json") {
 							logPath := child.FilePath
@@ -3578,13 +3607,10 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 								fmt.Sscanf(childName, "validation-%d.json", &attempt)
 							}
 
-							// Fetch validation content
 							content, exists, _ := readFileFromWorkspace(r.Context(), logPath)
 							var validationData interface{} = nil
 							if exists {
-								if err := json.Unmarshal([]byte(content), &validationData); err != nil {
-									fmt.Printf("Error unmarshalling validation data for %s: %v\n", logPath, err)
-								}
+								json.Unmarshal([]byte(content), &validationData)
 							}
 
 							validations = append(validations, map[string]interface{}{
@@ -3605,7 +3631,6 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 							entry["validations"] = validations
 						}
 
-						// Learning Logs (JSONL)
 						if !childIsDir && childName == "learning-execution.json" {
 							logPath := child.FilePath
 							if processedPaths[logPath] {
@@ -3632,7 +3657,6 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 							entry["learnings"] = learningLogs
 						}
 
-						// Conditional Logs
 						if !childIsDir && childName == "conditional-evaluation.json" {
 							logPath := child.FilePath
 							if processedPaths[logPath] {
@@ -3646,16 +3670,13 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 							content, exists, _ := readFileFromWorkspace(r.Context(), logPath)
 							var condData map[string]interface{}
 							if exists {
-								if err := json.Unmarshal([]byte(content), &condData); err != nil {
-									fmt.Printf("Error unmarshalling conditional data for %s: %v\n", logPath, err)
-								}
+								json.Unmarshal([]byte(content), &condData)
 							}
 
 							conditionals = append(conditionals, condData)
 							entry["conditionals"] = conditionals
 						}
 
-						// Decision Logs
 						if !childIsDir && childName == "decision-evaluation.json" {
 							logPath := child.FilePath
 							if processedPaths[logPath] {
@@ -3669,16 +3690,13 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 							content, exists, _ := readFileFromWorkspace(r.Context(), logPath)
 							var decisionData map[string]interface{}
 							if exists {
-								if err := json.Unmarshal([]byte(content), &decisionData); err != nil {
-									fmt.Printf("Error unmarshalling decision data for %s: %v\n", logPath, err)
-								}
+								json.Unmarshal([]byte(content), &decisionData)
 							}
 
 							decisions = append(decisions, decisionData)
 							entry["decisions"] = decisions
 						}
 
-						// Orchestration Logs (JSONL)
 						if !childIsDir && childName == "orchestration-execution.json" {
 							logPath := child.FilePath
 							if processedPaths[logPath] {
@@ -3709,6 +3727,8 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 							if len(child.Children) > 0 {
 								for _, execChild := range child.Children {
 									execName := filepath.Base(execChild.FilePath)
+									
+									// Handle standard execution attempts
 									if strings.HasPrefix(execName, "execution-attempt-") && strings.HasSuffix(execName, ".json") && !strings.Contains(execName, "-conversation") {
 										execPath := execChild.FilePath
 										if processedPaths[execPath] {
@@ -3756,48 +3776,44 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 										})
 
 										entry["executions"] = executions
+									} else if execName == "decision-execution.json" {
+										// Handle decision execution result
+										execPath := execChild.FilePath
+										if processedPaths[execPath] {
+											continue
+										}
+										processedPaths[execPath] = true
+
+										entry := getStepEntry(stepId)
+										executions, _ := entry["executions"].([]map[string]interface{})
+
+										// Fetch execution result content
+										content, exists, _ := readFileFromWorkspace(r.Context(), execPath)
+										var execData interface{} = nil
+										if exists {
+											if err := json.Unmarshal([]byte(content), &execData); err != nil {
+												fmt.Printf("Error unmarshalling decision execution data for %s: %v\n", execPath, err)
+											}
+										}
+
+										executions = append(executions, map[string]interface{}{
+											"attempt":           1, // Decision steps typically run once per iteration
+											"iteration":         0,
+											"file_path":         execPath,
+											"conversation_path": "", // No separate conversation file for decision steps usually
+											"content":           execData,
+										})
+
+										entry["executions"] = executions
 									}
 								}
 							}
 						}
 
-						// Check for context_output file (step output)
-						// This checks if the current file matches the expected context_output filename for this step
-						entry := getStepEntry(stepId)
-						expectedOutput, _ := entry["context_output"].(string)
-						if !childIsDir && expectedOutput != "" && childName == expectedOutput {
-							outputPath := child.FilePath
-							if !processedPaths[outputPath] {
-								processedPaths[outputPath] = true
-
-								// Read the output file content
-								content, exists, _ := readFileFromWorkspace(r.Context(), outputPath)
-								if exists {
-									var outputData interface{}
-									if err := json.Unmarshal([]byte(content), &outputData); err != nil {
-										// Not valid JSON, store as string
-										entry["output_content"] = map[string]interface{}{
-											"file_path": outputPath,
-											"content":   content,
-											"is_json":   false,
-										}
-									} else {
-										entry["output_content"] = map[string]interface{}{
-											"file_path": outputPath,
-											"content":   outputData,
-											"is_json":   true,
-										}
-									}
-								}
-							}
-						}
-
-						// Process archived logs folder
 						if childIsDir && childName == "archived" {
 							entry := getStepEntry(stepId)
 							archivedLogs, _ := entry["archived_logs"].([]map[string]interface{})
 
-							// Each child of "archived" is a timestamp folder
 							for _, timestampFolder := range child.Children {
 								timestampName := filepath.Base(timestampFolder.FilePath)
 								timestampIsDir := timestampFolder.IsDirectory || timestampFolder.Type == "folder"
@@ -3813,7 +3829,6 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 									"learnings":   []map[string]interface{}{},
 								}
 
-								// Process files within the timestamp folder
 								for _, archivedFile := range timestampFolder.Children {
 									archivedFileName := filepath.Base(archivedFile.FilePath)
 									archivedFilePath := archivedFile.FilePath
@@ -3863,11 +3878,10 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 								archivedLogs = append(archivedLogs, archiveEntry)
 							}
 
-							// Sort archived logs by timestamp (newest first)
 							sort.Slice(archivedLogs, func(i, j int) bool {
 								t1, _ := archivedLogs[i]["timestamp"].(string)
 								t2, _ := archivedLogs[j]["timestamp"].(string)
-								return t1 > t2 // Descending order
+								return t1 > t2
 							})
 
 							entry["archived_logs"] = archivedLogs
@@ -3876,16 +3890,119 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 				}
 			} else if isDir {
 				if len(item.Children) > 0 {
-					processFolder(item.Children)
+					processLogsFolder(item.Children)
 				}
 			}
 		}
 	}
 
-	processFolder(apiResp.Data)
+	// Helper to process execution folder (artifacts, outputs)
+	var processExecutionFolder func(items []virtualtools.WorkspaceFolderItem)
+	processExecutionFolder = func(items []virtualtools.WorkspaceFolderItem) {
+		for _, item := range items {
+			name := filepath.Base(item.FilePath)
+			isDir := item.IsDirectory || item.Type == "folder"
 
-	// Try to read token_usage.json for the run
-	// With group folders, token_usage.json may be in:
+			// Case 1: Folder or File named after a step (e.g., execution/step-1/ or execution/step-1)
+			if strings.HasPrefix(name, "step-") {
+				stepId := name
+				entry := getStepEntry(stepId)
+				expectedOutputsStr, _ := entry["context_output"].(string)
+				expectedOutputs := strings.Split(expectedOutputsStr, ",")
+
+				if isDir {
+					// It's a folder, process its children to find output files
+					if len(item.Children) > 0 {
+						for _, child := range item.Children {
+							childName := filepath.Base(child.FilePath)
+							childIsDir := child.IsDirectory || child.Type == "folder"
+
+							if childIsDir {
+								continue
+							}
+
+							// Match against expected outputs
+							isMatched := false
+							for _, expected := range expectedOutputs {
+								if expected != "" && childName == expected {
+									isMatched = true
+									break
+								}
+							}
+
+							if isMatched {
+								outputPath := child.FilePath
+								if !processedPaths[outputPath] {
+									processedPaths[outputPath] = true
+
+									content, exists, _ := readFileFromWorkspace(r.Context(), outputPath)
+									if exists {
+										var outputData interface{}
+										isJson := false
+										if err := json.Unmarshal([]byte(content), &outputData); err == nil {
+											isJson = true
+										} else {
+											outputData = content
+										}
+										entry["output_content"] = map[string]interface{}{
+											"file_path": outputPath,
+											"content":   outputData,
+											"is_json":   isJson,
+										}
+									}
+								}
+							} else {
+								// It's an artifact
+								if !processedPaths[child.FilePath] {
+									processedPaths[child.FilePath] = true
+									artifacts, _ := entry["artifacts"].([]map[string]interface{})
+									artifacts = append(artifacts, map[string]interface{}{
+										"file_name": childName,
+										"file_path": child.FilePath,
+									})
+									entry["artifacts"] = artifacts
+								}
+							}
+						}
+					}
+				} else {
+					// It's a FILE named after a step (e.g., execution/step-1)
+					// Treat this file as the output content for this step
+					if !processedPaths[item.FilePath] {
+						processedPaths[item.FilePath] = true
+						content, exists, _ := readFileFromWorkspace(r.Context(), item.FilePath)
+						if exists {
+							var outputData interface{}
+							isJson := false
+							if err := json.Unmarshal([]byte(content), &outputData); err == nil {
+								isJson = true
+							} else {
+								outputData = content
+							}
+							entry["output_content"] = map[string]interface{}{
+								"file_path": item.FilePath,
+								"content":   outputData,
+								"is_json":   isJson,
+							}
+						}
+					}
+				}
+			} else if isDir {
+				// Recurse into subfolders
+				if len(item.Children) > 0 {
+					processExecutionFolder(item.Children)
+				}
+			}
+		}
+	}
+
+	if logsResp.Success {
+		processLogsFolder(logsResp.Data)
+	}
+	if execListingResp.Success {
+		processExecutionFolder(execListingResp.Data)
+	}
+
 	// 1. Direct path: runs/{runFolder}/token_usage.json (for single group or group-specific folder)
 	// 2. Group subfolders: runs/{runFolder}/{groupName}/token_usage.json (for parent iteration folder)
 	var tokenUsage interface{} = nil
@@ -4114,14 +4231,22 @@ func (api *StreamingAPI) handleGetEvaluationReports(w http.ResponseWriter, r *ht
 	// Evaluation reports are in evaluation/runs/{targetRunFolder}/evaluation_report.json
 	evaluationRunsPath := fmt.Sprintf("%s/evaluation/runs", cleanedWorkspacePath)
 
+	type StepOutputContent struct {
+		FilePath string      `json:"file_path"`
+		Content  interface{} `json:"content"`
+		IsJSON   bool        `json:"is_json"`
+	}
+
 	type EvaluationStepScore struct {
-		StepID          string `json:"step_id"`
-		StepTitle       string `json:"step_title"`
-		Score           int    `json:"score"`
-		MaxScore        int    `json:"max_score"`
-		Reasoning       string `json:"reasoning"`
-		Evidence        string `json:"evidence"`
-		SuccessCriteria string `json:"success_criteria"`
+		StepID          string             `json:"step_id"`
+		StepTitle       string             `json:"step_title"`
+		Score           int                `json:"score"`
+		MaxScore        int                `json:"max_score"`
+		Reasoning       string             `json:"reasoning"`
+		Evidence        string             `json:"evidence"`
+		SuccessCriteria string             `json:"success_criteria"`
+		ContextOutput   string             `json:"context_output,omitempty"`
+		OutputContent   *StepOutputContent `json:"output_content,omitempty"`
 	}
 
 	type EvaluationReport struct {
@@ -4391,14 +4516,25 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 		stepType, _ := step["type"].(string)
 		title, _ := step["title"].(string)
 		desc, _ := step["description"].(string)
+		criteria, _ := step["success_criteria"].(string)
+		if criteria == "" {
+			criteria, _ = step["success_reasoning"].(string)
+		}
 
-		// Handle inner steps for complex types if description is missing at top level
-		if desc == "" {
-			if inner, ok := step["decision_step"].(map[string]interface{}); ok {
+		// Handle inner steps for complex types
+		if inner, ok := step["decision_step"].(map[string]interface{}); ok {
+			if desc == "" {
 				if innerDesc, ok := inner["description"].(string); ok {
 					desc = innerDesc
 				}
-			} else if inner, ok := step["orchestration_step"].(map[string]interface{}); ok {
+			}
+			if criteria == "" {
+				if innerCriteria, ok := inner["success_criteria"].(string); ok {
+					criteria = innerCriteria
+				}
+			}
+		} else if inner, ok := step["orchestration_step"].(map[string]interface{}); ok {
+			if desc == "" {
 				if innerDesc, ok := inner["description"].(string); ok {
 					desc = innerDesc
 				}
@@ -4419,22 +4555,40 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 		}
 
 		// Get context_output for the step (the output file name)
-		contextOutput, _ := step["context_output"].(string)
+		// Handle both string and array formats
+		var contextOutputs []string
+		if co, ok := step["context_output"].(string); ok && co != "" {
+			contextOutputs = []string{co}
+		} else if coList, ok := step["context_output"].([]interface{}); ok {
+			for _, co := range coList {
+				if coStr, ok := co.(string); ok && coStr != "" {
+					contextOutputs = append(contextOutputs, coStr)
+				}
+			}
+		}
+
 		// Also check decision_step for inner step context_output
-		if contextOutput == "" {
+		if len(contextOutputs) == 0 {
 			if inner, ok := step["decision_step"].(map[string]interface{}); ok {
-				if innerOutput, ok := inner["context_output"].(string); ok {
-					contextOutput = innerOutput
+				if co, ok := inner["context_output"].(string); ok && co != "" {
+					contextOutputs = []string{co}
+				} else if coList, ok := inner["context_output"].([]interface{}); ok {
+					for _, co := range coList {
+						if coStr, ok := co.(string); ok && coStr != "" {
+							contextOutputs = append(contextOutputs, coStr)
+						}
+					}
 				}
 			}
 		}
 
 		meta := map[string]string{
-			"title":          title,
-			"description":    desc,
-			"original_id":    id,
-			"type":           resolvedType,
-			"context_output": contextOutput,
+			"title":            title,
+			"description":      desc,
+			"success_criteria": criteria,
+			"original_id":      id,
+			"type":             resolvedType,
+			"context_output":   strings.Join(contextOutputs, ","), // Store as comma-separated string for simplicity in meta
 		}
 
 		// Store metadata by multiple keys to ensure it's found
@@ -4449,12 +4603,27 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 			dTitle, _ := decisionStep["title"].(string)
 			dDesc, _ := decisionStep["description"].(string)
 			dId, _ := decisionStep["id"].(string)
+			dCriteria, _ := decisionStep["success_criteria"].(string)
+
+			// Extract context_output for inner decision step
+			var dContextOutputs []string
+			if co, ok := decisionStep["context_output"].(string); ok && co != "" {
+				dContextOutputs = []string{co}
+			} else if coList, ok := decisionStep["context_output"].([]interface{}); ok {
+				for _, co := range coList {
+					if coStr, ok := co.(string); ok && coStr != "" {
+						dContextOutputs = append(dContextOutputs, coStr)
+					}
+				}
+			}
 
 			dMeta := map[string]string{
-				"title":       dTitle,
-				"description": dDesc,
-				"original_id": dId,
-				"type":        "decision-inner",
+				"title":            dTitle,
+				"description":      dDesc,
+				"success_criteria": dCriteria,
+				"original_id":      dId,
+				"type":             "decision-inner",
+				"context_output":   strings.Join(dContextOutputs, ","),
 			}
 			metadata[decisionKey] = dMeta
 			if dId != "" {
@@ -4479,11 +4648,13 @@ func populateStepMetadata(steps []map[string]interface{}, prefix string, metadat
 					if subStep, ok := route["sub_agent_step"].(map[string]interface{}); ok {
 						subAgentKey := fmt.Sprintf("%s-sub-agent-%d", stepKey, j+1)
 						subId, _ := subStep["id"].(string)
+						subCriteria, _ := subStep["success_criteria"].(string)
 						subMeta := map[string]string{
-							"title":       subStep["title"].(string),
-							"description": subStep["description"].(string),
-							"original_id": subId,
-							"type":        "sub-agent",
+							"title":            subStep["title"].(string),
+							"description":      subStep["description"].(string),
+							"success_criteria": subCriteria,
+							"original_id":      subId,
+							"type":             "sub-agent",
 						}
 						metadata[subAgentKey] = subMeta
 						if subId != "" {

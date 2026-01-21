@@ -155,27 +155,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 	// Read learnings for the decision step (learnings are stored under the step's ID)
 	learningHistory, _ := hcpo.LoadStepLearningHistory(ctx, step.GetID(), stepIndex, decisionStepPath, "decision")
 
-	// Determine code execution mode: Priority: step config > orchestrator default
-	var isCodeExecutionMode bool
-	stepConfigs := getAgentConfigs(step)
-	if stepConfigs != nil && stepConfigs.UseCodeExecutionMode != nil {
-		isCodeExecutionMode = *stepConfigs.UseCodeExecutionMode
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode for decision evaluation: %v", isCodeExecutionMode))
-	} else {
-		isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator code execution mode for decision evaluation: %v", isCodeExecutionMode))
-	}
+	// 🔧 DECISION STEP EVALUATION ALWAYS USES SIMPLE AGENT MODE (non-code execution)
+	// This ensures structured output tools (like submit_decision_result) are called directly by the LLM
+	// rather than via code execution, which prevents "tool was called but not found in messages" errors
+	var isCodeExecutionMode bool = false
+	hcpo.GetLogger().Info("🔧 Decision step evaluation always uses simple agent mode (code execution disabled)")
 
-	// Ensure step config has UseCodeExecutionMode set if it differs from default or if we want code execution mode
-	// This ensures getConditionalAgentForStep creates a step-specific agent with the correct mode
+	// Ensure step config has UseCodeExecutionMode set to false
+	// This ensures getConditionalAgentForStep creates a step-specific agent with simple agent mode
 	if decisionStep.AgentConfigs == nil {
 		decisionStep.AgentConfigs = &AgentConfigs{}
 	}
-	if decisionStep.AgentConfigs.UseCodeExecutionMode == nil {
-		// Set it so getConditionalAgentForStep will create a step-specific agent
-		decisionStep.AgentConfigs.UseCodeExecutionMode = &isCodeExecutionMode
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Setting UseCodeExecutionMode=%v in step config for conditional agent creation", isCodeExecutionMode))
-	}
+	decisionStep.AgentConfigs.UseCodeExecutionMode = &isCodeExecutionMode
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Setting UseCodeExecutionMode=false in step config for decision evaluation (always simple agent mode)"))
 
 	// Ensure step execution folder exists before creating conditional agent (agent needs to write to this folder)
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)

@@ -782,9 +782,16 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     
     // Tool details
     if (agentConfigs.use_tool_search_mode) {
-      parts.push('Tool Search Enabled');
-      if (selectedTools.length > 0) {
-        parts.push(`${selectedTools.length} pre-discovered`);
+      parts.push('Tool Search');
+      if (agentConfigs.pre_discovered_tools && agentConfigs.pre_discovered_tools.length > 0) {
+        const tools = agentConfigs.pre_discovered_tools;
+        if (tools.length <= 3) {
+          // Show actual names for small lists
+          parts.push(`Pre-discovered: ${tools.join(', ')}`);
+        } else {
+          // Show first 2 names + count for larger lists
+          parts.push(`Pre-discovered: ${tools.slice(0, 2).join(', ')} +${tools.length - 2} more`);
+        }
       }
     } else if (selectedTools.length > 0) {
       const allToolsServers = selectedTools.filter(t => t.endsWith(':*')).map(t => t.replace(':*', ''));
@@ -1780,6 +1787,26 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                       onToolChange={setSelectedTools}
                       stepId={step.id}
                     />
+                  )}
+
+                  {/* Pre-discovered Tools Display - show when Tool Search Mode is enabled */}
+                  {agentConfigs.use_tool_search_mode && agentConfigs.pre_discovered_tools && agentConfigs.pre_discovered_tools.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                      <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5 flex items-center gap-1">
+                        <Sparkles className="w-3 h-3" />
+                        Pre-discovered Tools ({agentConfigs.pre_discovered_tools.length})
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {agentConfigs.pre_discovered_tools.map((tool, idx) => (
+                          <span
+                            key={idx}
+                            className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                          >
+                            {tool}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
               </>

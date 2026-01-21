@@ -30,6 +30,9 @@ interface NodeConfigFooterProps {
   hasHumanTools?: boolean
   hasLargeOutput?: boolean
   learningAfterLoopIteration?: boolean
+  useCodeExecutionMode?: boolean
+  useToolSearchMode?: boolean
+  preDiscoveredTools?: string[]
 }
 
 export const NodeConfigFooter = memo(({
@@ -45,16 +48,22 @@ export const NodeConfigFooter = memo(({
   humanToolsInfo,
   hasHumanTools = false,
   hasLargeOutput = false,
-  learningAfterLoopIteration = false
+  learningAfterLoopIteration = false,
+  useCodeExecutionMode = false,
+  useToolSearchMode = false,
+  preDiscoveredTools = []
 }: NodeConfigFooterProps) => {
-  const hasConfig = executionLLM || 
-    learningLLM || 
-    effectiveServers.length > 0 || 
-    toolsDisplayInfo.length > 0 || 
-    hasWorkspaceTools || 
-    hasHumanTools || 
+  // Determine mode: simple mode is neither code exec nor tool search
+  const isSimpleMode = !useCodeExecutionMode && !useToolSearchMode
+  const hasConfig = executionLLM ||
+    learningLLM ||
+    effectiveServers.length > 0 ||
+    toolsDisplayInfo.length > 0 ||
+    hasWorkspaceTools ||
+    hasHumanTools ||
     hasLargeOutput ||
-    learningAfterLoopIteration
+    learningAfterLoopIteration ||
+    preDiscoveredTools.length > 0
 
   if (!hasConfig) {
     return null
@@ -83,16 +92,45 @@ export const NodeConfigFooter = memo(({
             Learnings Locked 🔒
           </span>
         )}
-        {effectiveServers.map((s, i) => (
-          <span key={i} className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
-            {s}
-          </span>
-        ))}
-        {toolsDisplayInfo.length > 0 && toolsDisplayInfo.map((info, i) => (
+        {/* SIMPLE MODE: Server (tool count) badges - gray */}
+        {isSimpleMode && toolsDisplayInfo.length > 0 && toolsDisplayInfo.map((info, i) => (
           <span key={i} className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
             {info.hasAllTools ? `${info.server} (all tools)` : `${info.server} (${info.specificTools} tool${info.specificTools !== 1 ? 's' : ''})`}
           </span>
         ))}
+
+        {/* CODE EXEC MODE: Server names only - amber */}
+        {useCodeExecutionMode && effectiveServers.map((server, i) => (
+          <span
+            key={i}
+            className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300"
+            title={`Server available for code execution: ${server}`}
+          >
+            {server}
+          </span>
+        ))}
+
+        {/* TOOL SEARCH MODE: Pre-discovered tools - yellow */}
+        {useToolSearchMode && preDiscoveredTools.length > 0 && (
+          <span
+            className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300"
+            title={`Pre-discovered tools: ${preDiscoveredTools.join(', ')}`}
+          >
+            {preDiscoveredTools.length <= 3
+              ? preDiscoveredTools.join(', ')
+              : `${preDiscoveredTools.slice(0, 2).join(', ')} +${preDiscoveredTools.length - 2} more`}
+          </span>
+        )}
+
+        {/* TOOL SEARCH MODE: De-emphasized server info - muted gray, smaller */}
+        {useToolSearchMode && effectiveServers.length > 0 && (
+          <span
+            className="px-1.5 py-0.5 rounded-md text-[9px] font-medium bg-gray-100 dark:bg-gray-800/40 text-gray-500 dark:text-gray-500"
+            title={`Searchable servers: ${effectiveServers.join(', ')}`}
+          >
+            {effectiveServers.length === 1 ? effectiveServers[0] : `${effectiveServers.length} servers`}
+          </span>
+        )}
         {hasWorkspaceTools && workspaceToolsInfo && (
           <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300" title={`Workspace tools: ${workspaceToolsInfo.enabled}/${workspaceToolsInfo.total}`}>
             WS: {workspaceToolsInfo.enabled}/{workspaceToolsInfo.total}

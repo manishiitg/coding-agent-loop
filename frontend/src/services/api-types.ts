@@ -1001,8 +1001,11 @@ export interface StepExecutionLogs {
   type: string;
   title: string;
   description: string;
+  success_criteria?: string;
   context_output?: string;  // Expected output filename
+  is_completed?: boolean;   // Explicit completion marker
   output_content?: StepOutputContent;  // Actual output file content
+  artifacts?: { file_name: string; file_path: string }[]; // Other output files
   validations: ValidationLog[];
   executions: ExecutionAttemptLog[];
   decisions?: DecisionLog[];
@@ -1124,6 +1127,8 @@ export interface EvaluationStepScore {
   reasoning: string;
   evidence: string;
   success_criteria: string;
+  context_output?: string;
+  output_content?: StepOutputContent;
 }
 
 export interface EvaluationReport {

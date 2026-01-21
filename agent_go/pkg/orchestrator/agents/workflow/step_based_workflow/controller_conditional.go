@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -513,6 +514,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Completed conditional step %d: executed %s branch", stepIndex+1, map[bool]string{true: "TRUE", false: "FALSE"}[conditionResult]))
+
+	// Write step_done.json for the conditional step itself
+	// executionWorkspacePath is defined earlier in the function
+	stepExecutionPath = getExecutionFolderPath(executionWorkspacePath, conditionalStepPath)
+	stepDonePath := filepath.Join(stepExecutionPath, "step_done.json")
+	stepDoneData := map[string]interface{}{
+		"completed_at": time.Now().UTC().Format(time.RFC3339),
+		"step_index":   stepIndex,
+		"step_path":    conditionalStepPath,
+		"step_id":      step.GetID(),
+		"type":         "conditional",
+	}
+	if jsonBytes, err := json.MarshalIndent(stepDoneData, "", "  "); err == nil {
+		if err := hcpo.WriteWorkspaceFile(ctx, stepDonePath, string(jsonBytes)); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write step_done.json for conditional step: %v", err))
+		}
+	}
 
 	// Emit step_finished event for conditional step
 	// Use regular step path for conditional step (not -conditional suffix)

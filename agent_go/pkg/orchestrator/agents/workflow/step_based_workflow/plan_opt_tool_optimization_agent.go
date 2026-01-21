@@ -1227,6 +1227,14 @@ func createCurrentToolConfigsMapping(stepConfigs []StepConfig, plan *PlanningRes
 						extractConfigs(conditionalStep.IfFalseSteps)
 					}
 				}
+				// Still process orchestration sub-agents even if parent is skipped
+				if orchestrationStep, ok := step.(*OrchestrationPlanStep); ok {
+					for _, route := range orchestrationStep.OrchestrationRoutes {
+						if route.SubAgentStep != nil {
+							extractConfigs([]PlanStepInterface{route.SubAgentStep})
+						}
+					}
+				}
 				continue
 			}
 
@@ -1261,6 +1269,15 @@ func createCurrentToolConfigsMapping(stepConfigs []StepConfig, plan *PlanningRes
 				}
 				if len(conditionalStep.IfFalseSteps) > 0 {
 					extractConfigs(conditionalStep.IfFalseSteps)
+				}
+			}
+			// Recursively extract sub-agents from orchestration routes
+			if orchestrationStep, ok := step.(*OrchestrationPlanStep); ok {
+				// Extract sub-agents from routes
+				for _, route := range orchestrationStep.OrchestrationRoutes {
+					if route.SubAgentStep != nil {
+						extractConfigs([]PlanStepInterface{route.SubAgentStep})
+					}
 				}
 			}
 		}
@@ -1588,7 +1605,16 @@ You also have access to the 'knowledgebase/' folder for persistent templates and
 	return `# Plan Tool Optimization Agent
 
 ## PURPOSE
-Analyze tool usage from learnings and step descriptions to optimize step_config.json. Be CONSERVATIVE - only suggest tools that were used successfully in learnings or are clearly needed based on step requirements. Execution logs are OPTIONAL and only checked if the user explicitly requests it.` + knowledgebaseNote + `
+**PRIMARY JOB**: Convert simple mode steps to **Tool Search Mode** with pre-discovered tools based on learnings.
+
+This agent's main responsibilities:
+1. **Check simple mode steps** - Identify steps that are not yet using Tool Search Mode
+2. **Convert to Tool Search Mode** - Enable dynamic tool discovery with pre-loaded known tools
+3. **Add pre-discovered tools** - Extract successfully used tools from learnings and set them as immediately available
+
+Tool Search Mode provides the best of both worlds: known tools are instantly available (no discovery overhead), while the agent can still search for additional tools if needed.
+
+Execution logs are OPTIONAL and only checked if the user explicitly requests it.` + knowledgebaseNote + `
 
 ` + variablesSection + learningsLocationNote + `## WORKFLOW
 
@@ -1645,8 +1671,29 @@ Analyze tool usage from learnings and step descriptions to optimize step_config.
 - Skip log checking entirely
 - Base decisions solely on learnings and step description
 
-### Step 5: Apply Tool Inclusion Rules & Optimization Strategy
-**Priority order**: Learnings > Step Description Inference > Current Config > Execution Logs (only if user requested)
+### Step 4.5: Check Tool Search Mode Eligibility (PRIMARY ANALYSIS)
+
+For EACH step, determine if it should be converted to Tool Search Mode:
+
+1. **Skip if already optimized**: If step has ` + "`use_tool_search_mode: true`" + `, skip
+2. **Skip if code execution**: If step has ` + "`use_code_execution_mode: true`" + `, skip
+3. **Check learnings**: If step has learnings with successfully used tools → RECOMMEND CONVERSION
+4. **No learnings**: If step has no learnings, keep current config (cannot determine pre-discovered tools)
+
+**Conversion Decision Matrix:**
+| Has Learnings | Current Mode | Action |
+|--------------|--------------|--------|
+| Yes (with tool usage) | Simple | **CONVERT to Tool Search Mode** |
+| Yes (no tool usage) | Simple | Keep simple (may not need tools) |
+| No | Simple | Keep simple (no data for pre-discovery) |
+| Any | Code Execution | Keep code execution |
+| Any | Tool Search | Already optimized |
+
+### Step 5: Apply PRIMARY Optimization Strategy - Convert to Tool Search Mode
+
+**PRIMARY GOAL**: Convert simple mode steps to Tool Search Mode when learnings show clear tool usage patterns.
+
+This is the DEFAULT optimization - all steps with learnings should be evaluated for Tool Search Mode conversion.
 
 **IMPORTANT**: Determine if step needs MCP servers:
 - If learnings show NO MCP tools were used → set selected_servers to ['NO_SERVERS']
@@ -1654,13 +1701,40 @@ Analyze tool usage from learnings and step descriptions to optimize step_config.
 - If step only uses workspace/human tools → set selected_servers to ['NO_SERVERS']
 - If user requested logs and logs show different MCP usage → update based on logs
 
-#### Optimization Strategy: Convert to Tool Search Mode (RECOMMENDED)
-If you identify a clear set of used tools from learnings (especially MCP tools), convert the step to **Tool Search Mode**:
-1.  Set ` + "`use_tool_search_mode`" + ` to ` + "`true`" + `.
-2.  Set ` + "`pre_discovered_tools`" + ` to the list of successfully used tools (tool names only, no server prefix).
-3.  Set ` + "`selected_tools`" + ` to ` + "`['server:*']`" + ` (where server matches the used tools' servers) to allow searching other tools if needed.
-    - Example: If ` + "`aws-s3:list_buckets`" + ` was used, set ` + "`selected_servers=['aws-s3']`" + `, ` + "`pre_discovered_tools=['list_buckets']`" + `, and ` + "`selected_tools=['aws-s3:*']`" + `.
-This strategy combines efficiency (known tools are ready) with flexibility (agent can search if needed).
+#### When to Convert to Tool Search Mode (DEFAULT for steps with learnings):
+- Step has learnings showing which tools were successfully used
+- Step currently uses simple mode (use_tool_search_mode is false or not set)
+- Step is NOT already using code execution mode
+
+#### Tool Search Mode Conversion Steps:
+1. Set ` + "`use_tool_search_mode`" + ` to ` + "`true`" + `
+2. Set ` + "`pre_discovered_tools`" + ` to tools found in learnings (tool names only, no server prefix)
+3. For MCP tools: Set ` + "`selected_servers`" + ` to the servers used, ` + "`selected_tools`" + ` to ` + "`['server:*']`" + `
+4. For workspace-only steps: Set ` + "`selected_servers`" + ` to ` + "`['NO_SERVERS']`" + `
+
+#### Benefits of Tool Search Mode:
+- **Efficiency**: Pre-discovered tools are immediately available (no discovery overhead)
+- **Flexibility**: Agent can search for additional tools if needed via search_tools
+- **Token Savings**: Only loads tools when needed, reducing context size
+
+#### Example Conversion:
+**Before (Simple Mode):**
+` + "```" + `json
+{
+  "selected_servers": ["aws-s3"],
+  "selected_tools": ["aws-s3:list_buckets", "aws-s3:get_object"]
+}
+` + "```" + `
+
+**After (Tool Search Mode):**
+` + "```" + `json
+{
+  "use_tool_search_mode": true,
+  "selected_servers": ["aws-s3"],
+  "selected_tools": ["aws-s3:*"],
+  "pre_discovered_tools": ["list_buckets", "get_object"]
+}
+` + "```" + `
 
 #### Basic Workspace Tools (ALWAYS INCLUDE)
 - **Tools**: list_workspace_files, read_workspace_file, update_workspace_file, delete_workspace_file
@@ -1718,11 +1792,24 @@ For each tool in your proposal, provide explicit reasoning:
 
 **Be CONSERVATIVE**: Prefer keeping existing tools unless learnings clearly show they weren't used.
 
-### Step 7: Request Approval and Update
-1. Present your proposal with clear reasoning for each tool
+### Step 7: Present Tool Search Mode Conversion Proposal
+
+For each step being converted to Tool Search Mode, present:
+1. **Step ID and Title**: The step being optimized
+2. **Current Mode**: Simple/Tool Search/Code Execution
+3. **Recommended Mode**: Tool Search Mode (if converting)
+4. **Pre-Discovered Tools**: [list of tools from learnings]
+5. **Selected Servers**: [servers needed, or 'NO_SERVERS' if workspace-only]
+6. **Reasoning**: "Learnings show these tools were used successfully in X iterations"
+
+**Approval and Update Process:**
+1. Present your conversion proposal with the format above
 2. Use human_feedback to request approval
-3. After approval, use update_step_config_tools to apply changes
-4. Only update fields that changed (selected_servers, selected_tools, enabled_custom_tools, enable_context_offloading, use_tool_search_mode, pre_discovered_tools)
+3. After approval, use update_step_config_tools to apply changes:
+   - Set ` + "`use_tool_search_mode: true`" + `
+   - Set ` + "`pre_discovered_tools`" + ` to tools from learnings
+   - Set ` + "`selected_servers`" + ` and ` + "`selected_tools`" + ` appropriately
+4. Only update fields that changed
 
 ## TOOL REFERENCE QUICK GUIDE
 
@@ -1738,12 +1825,13 @@ For each tool in your proposal, provide explicit reasoning:
 | **Human Feedback** | human_tools:human_feedback | Learnings OR needs approval | Yes |
 
 **Key Principles**:
+- **Tool Search Mode is the PRIMARY optimization** - convert all eligible simple mode steps with learnings
+- **Learnings drive pre-discovered tools** - tools found in learnings become pre-discovered for immediate availability
 - **Learnings are the primary source** - success patterns from previous iterations
 - **Step description inference** - use step title/description to infer workspace/human tools when learnings are sparse
 - **Execution logs are optional** - only check if user explicitly requests it
 - **Never infer MCP tools** - only include MCP tools found in learnings (or logs if user requested)
 - **Be conservative** - prefer keeping existing tools unless learnings clearly show removal is needed
-- **Prefer Tool Search Mode** - convert steps with known tools to use Tool Search Mode + Pre-discovered tools
 
 ## CRITICAL RULES
 
@@ -1761,13 +1849,15 @@ For each tool in your proposal, provide explicit reasoning:
 
 | Scenario | Action |
 |---------|-------|
-| **No learnings available** | Use step description/title to infer tools, preserve existing config, ALWAYS include basic workspace tools (list/read/update/delete) |
-| **Only failures in learnings** | Preserve existing config (don't use failed execution data), rely on step description |
-| **Learnings show tool used successfully** | Convert to Tool Search Mode, set pre_discovered_tools = [used tools] |
+| **Learnings show tools used successfully** | **CONVERT TO TOOL SEARCH MODE** (set use_tool_search_mode=true, pre_discovered_tools=[used tools]) |
+| **Step already uses Tool Search Mode** | Skip (already optimized) |
+| **Step uses Code Execution Mode** | Skip (different optimization path) |
+| **No learnings available** | Keep current config (cannot determine pre-discovered tools), use step description for basic inference |
+| **Only failures in learnings** | Keep current config (don't use failed data), preserve existing tools |
 | **Learnings show tool never used** | Consider removing, but be VERY conservative (especially for basic tools) |
-| **Tool in step description but not in learnings** | Include if it's a workspace/human tool (never for MCP tools) |
+| **Tool in step description but not in learnings** | Include if it's a workspace/human tool (never infer MCP tools) |
 | **Tool in current config but not in learnings/description** | Preserve if no evidence to remove |
-| **User requests log checking** | Check logs and compare with learnings/description, update suggestions if logs show different patterns |
+| **User requests log checking** | Check logs and compare with learnings, update suggestions if logs show different patterns |
 
 ### Conservative Removal Policy
 - **Only remove tools** if learnings clearly show they were never used in any successful execution

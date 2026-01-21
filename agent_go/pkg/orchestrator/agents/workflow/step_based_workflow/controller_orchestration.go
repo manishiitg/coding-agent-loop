@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -555,6 +556,25 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 						hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping learning agents for orchestration step %d (using existing learnings)", stepIndex+1))
 					} else if shouldSkipLearningDueToTempOverride {
 						hcpo.GetLogger().Info(fmt.Sprintf("🔧 Temp LLM override: Skipping learning agents for orchestration step %d", stepIndex+1))
+					}
+				}
+
+				// Write step_done.json for orchestration step
+				runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+				executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
+				stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, orchestrationStepPath)
+
+				stepDonePath := filepath.Join(stepExecutionPath, "step_done.json")
+				stepDoneData := map[string]interface{}{
+					"completed_at": time.Now().UTC().Format(time.RFC3339),
+					"step_index":   stepIndex,
+					"step_path":    orchestrationStepPath,
+					"step_id":      step.GetID(),
+					"type":         "orchestration",
+				}
+				if jsonBytes, err := json.MarshalIndent(stepDoneData, "", "  "); err == nil {
+					if err := hcpo.WriteWorkspaceFile(ctx, stepDonePath, string(jsonBytes)); err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write step_done.json for orchestration step: %v", err))
 					}
 				}
 

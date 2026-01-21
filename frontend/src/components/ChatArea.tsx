@@ -515,7 +515,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     
     // Only disable auto-scroll if user actively scrolls up significantly
     // Don't show toast - user can see the toggle in header and floating button
-    if (isScrollingUp && scrollDistance > 50 && autoScroll) {
+    if (isScrollingUp && scrollDistance > 150 && autoScroll) {
       setAutoScroll(false);
     }
     // Re-enable auto-scroll when user scrolls back to bottom

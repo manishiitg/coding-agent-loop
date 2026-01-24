@@ -6,6 +6,7 @@ import { Card } from './ui/Card';
 import { Folder, Plus, X, Settings, Sparkles, Code2, Info, Search } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
 import { ToolSelectionSection } from './ToolSelectionSection';
+import { SkillSelectionSection } from './skills/SkillSelectionSection';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip';
 import type { CustomPreset } from '../types/preset';
 import type { PlannerFile, PresetLLMConfig, AgentLLMConfig } from '../services/api-types';
@@ -17,7 +18,7 @@ import type { LLMOption } from '../types/llm';
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean) => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean) => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
@@ -37,6 +38,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [query, setQuery] = useState('');
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [agentMode, setAgentMode] = useState<'simple' | 'workflow'>('simple');
   const [selectedFolder, setSelectedFolder] = useState<PlannerFile | null>(null);
   const [showFolderDialog, setShowFolderDialog] = useState(false);
@@ -102,10 +104,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     if (editingPreset) {
       console.log('[PresetModal] Loading preset:', editingPreset);
       console.log('[PresetModal] Selected tools from preset:', editingPreset.selectedTools);
+      console.log('[PresetModal] Selected skills from preset:', editingPreset.selectedSkills);
       setLabel(editingPreset.label);
       setQuery(editingPreset.query);
       setSelectedServers(editingPreset.selectedServers || []);
       setSelectedTools(editingPreset.selectedTools || []); // NEW
+      setSelectedSkills(editingPreset.selectedSkills || []);
       setAgentMode(editingPreset.agentMode || 'simple');
       setSelectedFolder(editingPreset.selectedFolder || null);
       const presetLLM = editingPreset.llmConfig || {
@@ -129,6 +133,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setQuery('');
       setSelectedServers([]);
       setSelectedTools([]); // NEW
+      setSelectedSkills([]);
       // Default to current mode if no fixedAgentMode is provided
       const defaultMode = fixedAgentMode || (selectedModeCategory ? (getAgentModeFromCategory(selectedModeCategory) as 'simple' | 'workflow') : 'simple');
       setAgentMode(defaultMode);
@@ -193,6 +198,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       console.log('[PresetModal] Saving preset with:', {
         selectedServers,
         selectedTools,
+        selectedSkills,
         label,
         agentMode: effectiveAgentMode
       });
@@ -255,20 +261,21 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       console.log('[code_execution] [PRESET_MODAL] Final onSave call - param8:', codeExecutionModeToPass, 'original:', useCodeExecutionMode)
       
       onSave(
-        label.trim(), 
-        query.trim(), 
-        selectedServers, 
-        selectedTools, 
-        effectiveAgentMode, 
-        selectedFolder || undefined, 
-        finalLLMConfig, 
+        label.trim(),
+        query.trim(),
+        selectedServers,
+        selectedTools,
+        selectedSkills, // Skill folder names for workflow
+        effectiveAgentMode,
+        selectedFolder || undefined,
+        finalLLMConfig,
         codeExecutionModeToPass,  // Always pass explicit boolean, never undefined
         enableContextSummarization,
         toolSearchModeToPass // Always pass explicit boolean
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, enableContextSummarization, useKnowledgebase, onSave, onClose]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, enableContextSummarization, useKnowledgebase, onSave, onClose]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -637,6 +644,14 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                   selectedTools={selectedTools}
                   onServerChange={setSelectedServers}
                   onToolChange={setSelectedTools}
+                />
+              )}
+
+              {/* Skills Selection - Workflow mode only */}
+              {effectiveAgentMode === 'workflow' && (
+                <SkillSelectionSection
+                  selectedSkills={selectedSkills}
+                  onSkillChange={setSelectedSkills}
                 />
               )}
 

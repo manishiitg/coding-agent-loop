@@ -116,14 +116,15 @@ interface PresetQueriesProps {
     setIsModalOpen(false);
   }, []);
 
-  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean) => {
+  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean) => {
     console.log('[code_execution] [PresetQueries] handleSavePreset called with:', {
       label,
       editingPreset: editingPreset?.id,
       useCodeExecutionMode,
+      selectedSkills,
       type: typeof useCodeExecutionMode
     })
-    
+
     try {
       // Use consolidated savePreset function - pass id if editing, undefined if creating
       await savePreset(
@@ -131,6 +132,7 @@ interface PresetQueriesProps {
         query,
         selectedServers,
         selectedTools,
+        selectedSkills, // Skill folder names for workflow
         agentMode,
         selectedFolder,
         llmConfig,

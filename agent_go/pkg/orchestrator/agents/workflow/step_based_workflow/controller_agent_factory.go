@@ -1008,6 +1008,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// 3. Setup folder guard (extracted method) - uses step-specific learnings folder only if learnings exist
 	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, stepID, hasLearnings)
+
+	// Add skill folder paths to read paths (skills are read-only)
+	effectiveSkills := GetEffectiveSkills(stepConfig, hcpo.BaseOrchestrator)
+	if len(effectiveSkills) > 0 {
+		skillReadPaths, _ := BuildSkillFolderGuardPaths(effectiveSkills)
+		readPaths = append(readPaths, skillReadPaths...)
+		hcpo.GetLogger().Info(fmt.Sprintf("🎯 Added skill folder paths to folder guard: %v", skillReadPaths))
+	}
+
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	if hasLearnings {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for execution-only agent - Read paths: %v, Write paths: %v (can read learnings/%s/ and execution/, can write to %s and execution/Downloads/)", readPaths, writePaths, stepID, stepPath))
@@ -1088,6 +1097,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		}
 		// Prerequisite detection not enabled, just log warning
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to add prerequisite detection tool: %v", err))
+	}
+
+	// Add skill prompt if skills are selected (uses effectiveSkills from folder guard setup above)
+	if len(effectiveSkills) > 0 {
+		skillPrompt := BuildWorkflowSkillPrompt(ctx, effectiveSkills, hcpo.BaseOrchestrator)
+		if skillPrompt != "" {
+			mcpAgent.AppendSystemPrompt(skillPrompt)
+			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Added skill prompt to execution agent (%d skills): %v", len(effectiveSkills), effectiveSkills))
+		}
 	}
 
 	// Apply post-setup configuration (folder guard paths and optional registry update)

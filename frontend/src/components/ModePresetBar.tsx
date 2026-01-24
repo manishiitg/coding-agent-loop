@@ -103,11 +103,12 @@ export const ModePresetBar: React.FC = () => {
   }, [])
 
   const handleSavePreset = useCallback(async (
-    label: string, 
-    query: string, 
-    selectedServers?: string[], 
+    label: string,
+    query: string,
+    selectedServers?: string[],
     selectedTools?: string[],
-    agentMode?: 'simple' | 'workflow', 
+    selectedSkills?: string[], // Skill folder names for workflow
+    agentMode?: 'simple' | 'workflow',
     selectedFolder?: PlannerFile,
     llmConfig?: PresetLLMConfig,
     useCodeExecutionMode?: boolean,
@@ -117,12 +118,13 @@ export const ModePresetBar: React.FC = () => {
     try {
       // Use consolidated savePreset function - pass id if editing, undefined if creating
       const savedPreset = await savePreset(
-        label, 
-        query, 
-        selectedServers, 
+        label,
+        query,
+        selectedServers,
         selectedTools,
+        selectedSkills, // Skill folder names for workflow
         editingPreset ? editingPreset.agentMode : agentMode,
-        selectedFolder, 
+        selectedFolder,
         llmConfig,
         useCodeExecutionMode,
         editingPreset?.id,

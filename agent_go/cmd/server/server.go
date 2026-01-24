@@ -273,6 +273,88 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 	return wrappedExecutors
 }
 
+// wrapExecutorsWithSkillFolderGuard wraps workspace tool executors to restrict skill folder access
+// This creates a wrapper that:
+// 1. ALLOWS read-only access to selected skill folders (skills/<selected-skill>/)
+// 2. BLOCKS all access to non-selected skill folders
+// 3. BLOCKS write access to all skill folders
+func wrapExecutorsWithSkillFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), selectedSkills []string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+	if len(selectedSkills) == 0 {
+		return executors
+	}
+
+	// Build list of allowed skill paths (read-only)
+	allowedSkillPaths := make([]string, 0, len(selectedSkills))
+	for _, skill := range selectedSkills {
+		allowedSkillPaths = append(allowedSkillPaths, "skills/"+skill+"/")
+		allowedSkillPaths = append(allowedSkillPaths, "skills/"+skill)
+	}
+
+	wrappedExecutors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
+
+	for toolName, executor := range executors {
+		toolNameCopy := toolName
+		originalExecutor := executor
+
+		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
+			// For shell commands, check if accessing skills folder
+			if toolNameCopy == "execute_shell_command" {
+				if cmdValue, exists := args["command"]; exists {
+					if cmdStr, ok := cmdValue.(string); ok {
+						cmdLower := strings.ToLower(cmdStr)
+
+						// Check if command references skills/ folder
+						if strings.Contains(cmdLower, "skills/") || strings.Contains(cmdLower, "skills ") {
+							// Block any write operations to skills/
+							writeCommands := []string{"rm ", "mv ", "cp ", "mkdir ", "touch ", "echo ", ">", ">>", "tee "}
+							for _, writeCmd := range writeCommands {
+								if strings.Contains(cmdLower, writeCmd) && strings.Contains(cmdLower, "skills") {
+									log.Printf("[SKILL FOLDER GUARD] Blocked write command to skills/: %s", cmdStr)
+									return "", fmt.Errorf("access denied: cannot write to skills/ folder (read-only access)")
+								}
+							}
+
+							// Check if accessing a non-selected skill
+							// Allow: cat skills/selected-skill/SKILL.md
+							// Block: cat skills/other-skill/SKILL.md
+							isAllowed := false
+							for _, allowedPath := range allowedSkillPaths {
+								allowedLower := strings.ToLower(allowedPath)
+								if strings.Contains(cmdLower, allowedLower) {
+									isAllowed = true
+									break
+								}
+							}
+
+							// If accessing skills/ but not an allowed skill path, block it
+							// But allow listing the skills/ folder itself
+							if !isAllowed && !strings.HasSuffix(strings.TrimSpace(cmdLower), "skills/") && !strings.HasSuffix(strings.TrimSpace(cmdLower), "skills") {
+								// Check if it's accessing a specific skill folder (not just skills/)
+								if strings.Contains(cmdLower, "skills/") {
+									parts := strings.Split(cmdStr, "skills/")
+									if len(parts) > 1 && len(strings.TrimSpace(parts[1])) > 0 {
+										// It's accessing a specific skill, check if allowed
+										log.Printf("[SKILL FOLDER GUARD] Blocked access to non-selected skill: %s (allowed: %v)", cmdStr, selectedSkills)
+										return "", fmt.Errorf("access denied: you can only access the selected skills: %v", selectedSkills)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// Call original executor
+			return originalExecutor(ctx, args)
+		}
+
+		wrappedExecutors[toolNameCopy] = wrappedExecutor
+	}
+
+	log.Printf("[SKILL FOLDER GUARD] Wrapped %d executors - only selected skills accessible (read-only): %v", len(wrappedExecutors), selectedSkills)
+	return wrappedExecutors
+}
+
 // ServerCmd represents the server command
 var ServerCmd = &cobra.Command{
 	Use:   "server",
@@ -428,6 +510,8 @@ type QueryRequest struct {
 	ContextEditingTurnThreshold int   `json:"context_editing_turn_threshold,omitempty"` // Turn age threshold for context editing (0 = use default: 5)
 	// Workspace access configuration
 	EnableWorkspaceAccess *bool `json:"enable_workspace_access,omitempty"` // Enable/disable workspace file access tools (nil = inherit default, true/false = explicit override)
+	// Selected skills to include in chat context
+	SelectedSkills []string `json:"selected_skills,omitempty"` // Array of skill folder names
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -842,6 +926,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/plan/batch-update-steps", api.handleBatchUpdateSteps).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/delete-step", api.handleDeleteStep).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/add-step", api.handleAddStep).Methods("POST", "OPTIONS")
+
+	// Skills API routes (from skill_routes.go)
+	RegisterSkillRoutes(apiRouter, api)
 
 	// pprof routes for profiling (must be before static file serving)
 	router.PathPrefix("/debug/pprof/").Handler(http.DefaultServeMux)
@@ -1292,11 +1379,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
 		allTools, allExecutors, toolCategories := createCustomTools(true) // Workflow mode: all tools (basic + git + advanced + human)
 
-		// Load selected tools, code execution mode, tool search mode, and preset LLM config from preset if available (for workflow agents)
+		// Load selected tools, code execution mode, tool search mode, skills, and preset LLM config from preset if available (for workflow agents)
 		var selectedTools []string
 		var useCodeExecutionMode bool
 		var useToolSearchMode bool
 		var preDiscoveredTools []string
+		var selectedSkills []string
 		var presetLLMConfig *database.PresetLLMConfig
 		if req.PresetQueryID != "" {
 			ctx := context.Background()
@@ -1363,6 +1451,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[TOOL_SEARCH] Loaded %d pre-discovered tools from preset", len(preDiscoveredTools))
 					}
 				}
+				// Load selected skills from preset
+				if preset.SelectedSkills != "" {
+					var skills []string
+					if err := json.Unmarshal([]byte(preset.SelectedSkills), &skills); err != nil {
+						log.Printf("[SKILLS] Failed to parse selected skills from preset: %v", err)
+					} else if len(skills) > 0 {
+						selectedSkills = skills
+						log.Printf("[SKILLS] Loaded %d skills from preset: %v", len(skills), skills)
+					}
+				}
 			}
 		}
 
@@ -1416,6 +1514,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[WORKFLOW ERROR] Failed to create workflow orchestrator: %v", err)
 			http.Error(w, fmt.Sprintf("Failed to create workflow orchestrator: %v", err), http.StatusInternalServerError)
 			return
+		}
+
+		// Set selected skills on the orchestrator
+		if len(selectedSkills) > 0 {
+			workflowOrchestrator.SetSelectedSkills(selectedSkills)
+			log.Printf("[SKILLS] Applied %d skills to workflow orchestrator: %v", len(selectedSkills), selectedSkills)
 		}
 
 		// Store workflow orchestrator for guidance injection
@@ -2120,6 +2224,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if req.EnableWorkspaceAccess != nil {
 				enableWorkspaceAccess = *req.EnableWorkspaceAccess
 			}
+			// Automatically enable workspace access when skills are selected
+			// Skills need workspace access to read files and context
+			if len(req.SelectedSkills) > 0 {
+				enableWorkspaceAccess = true
+				log.Printf("[SKILLS] Automatically enabling workspace access (skills selected: %v)", req.SelectedSkills)
+			}
 
 			if enableWorkspaceAccess {
 				// Chat mode: only workspace_advanced tools (shell, image, web fetch, PDF)
@@ -2130,6 +2240,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Apply folder guard to block Workflow/ folder access in chat mode
 				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors)
 				log.Printf("[CHAT MODE FOLDER GUARD] Applied Workflow/ folder restriction to chat mode")
+
+				// Apply skill folder guard if skills are selected (read-only access to selected skills only)
+				if len(req.SelectedSkills) > 0 {
+					workspaceExecutors = wrapExecutorsWithSkillFolderGuard(workspaceExecutors, req.SelectedSkills)
+					log.Printf("[SKILL FOLDER GUARD] Applied skill folder restriction - only selected skills accessible: %v", req.SelectedSkills)
+				}
 
 				log.Printf("[WORKSPACE TOOLS] Registering %d workspace advanced tools for chat mode (enable_workspace_access: %v)", len(workspaceTools), enableWorkspaceAccess)
 
@@ -2259,6 +2375,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Add base instructions for all agents
 			underlyingAgent.AppendSystemPrompt(GetAgentInstructions())
+
+			// Add skill instructions if skills are selected
+			if len(req.SelectedSkills) > 0 {
+				skillPrompt := buildSkillPrompt(req.SelectedSkills)
+				if skillPrompt != "" {
+					underlyingAgent.AppendSystemPrompt(skillPrompt)
+					log.Printf("[SKILLS] Added skill instructions to system prompt (%d skills)", len(req.SelectedSkills))
+				}
+			}
 		}
 
 		// Add event observer immediately after agent creation to capture all events

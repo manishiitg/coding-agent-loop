@@ -269,6 +269,9 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	if source.SelectedTools != nil {
 		target.SelectedTools = source.SelectedTools
 	}
+	if source.EnabledSkills != nil {
+		target.EnabledSkills = source.EnabledSkills
+	}
 	if source.KeepLearningFull != nil {
 		target.KeepLearningFull = source.KeepLearningFull
 	}

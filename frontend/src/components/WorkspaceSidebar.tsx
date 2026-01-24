@@ -3,6 +3,7 @@ import SidebarHeader from './sidebar/SidebarHeader'
 import LLMConfigurationSummary from './sidebar/LLMConfigurationSummary'
 import HumanFeedbackConnectorsSection from './sidebar/HumanFeedbackConnectorsSection'
 import MCPServersSection from './sidebar/MCPServersSection'
+import { SkillsSection } from './skills'
 import ChatHistorySection from './sidebar/ChatHistorySection'
 import LLMConfigurationModal from './LLMConfigurationModal'
 import type { ActiveSessionInfo } from '../services/api-types'
@@ -107,6 +108,9 @@ export default function WorkspaceSidebar({
             {/* MCP Servers */}
             <MCPServersSection />
 
+            {/* Skills */}
+            <SkillsSection />
+
             {/* Chat History */}
             <ChatHistorySection
               onSessionSelect={(sessionId, sessionTitle, sessionType, activeSessionInfo) => {
@@ -170,6 +174,27 @@ export default function WorkspaceSidebar({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
             </svg>
           </button>
+
+          {/* Skills Icon */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggleMinimize()
+                }}
+                className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+                title="Skills"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                </svg>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Skills</p>
+            </TooltipContent>
+          </Tooltip>
 
           {/* Chat History Icon */}
           <ChatHistorySection minimized={true} />

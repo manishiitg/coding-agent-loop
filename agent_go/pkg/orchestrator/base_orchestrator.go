@@ -65,6 +65,7 @@ type BaseOrchestrator struct {
 	agentMode            string
 	selectedServers      []string
 	selectedTools        []string   // Selected tools in "server:tool" format
+	selectedSkills       []string   // Selected skill folder names for workflow
 	useCodeExecutionMode bool       // MCP code execution mode
 	useToolSearchMode    bool       // Enable tool search mode (discover tools on-demand)
 	preDiscoveredTools   []string   // Tools always available without searching

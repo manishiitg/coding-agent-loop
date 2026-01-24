@@ -96,6 +96,8 @@ export interface AgentQueryRequest {
   summary_keep_last_messages?: number // Number of recent messages to keep when summarizing (default: 8)
   // Workspace access configuration
   enable_workspace_access?: boolean // Enable/disable workspace file access tools (default: true)
+  // Selected skills to include in the chat context
+  selected_skills?: string[] // Array of skill folder names
 }
 
 export interface AgentQueryResponse {
@@ -670,6 +672,7 @@ export interface PresetQuery {
   use_code_execution_mode?: boolean;
   use_tool_search_mode?: boolean;
   pre_discovered_tools?: string; // JSON string of tools array
+  selected_skills?: string; // JSON string of skill folder names
   enable_context_summarization?: boolean; // Enable context summarization
   is_predefined: boolean;
   created_at: string;
@@ -688,6 +691,7 @@ export interface CreatePresetQueryRequest {
   use_code_execution_mode?: boolean; // MCP code execution mode
   use_tool_search_mode?: boolean; // Tool search mode
   pre_discovered_tools?: string[]; // Tools always available without searching
+  selected_skills?: string[]; // Skill folder names for workflow
   enable_context_summarization?: boolean; // Enable context summarization
   is_predefined?: boolean;
 }
@@ -703,6 +707,7 @@ export interface UpdatePresetQueryRequest {
   use_code_execution_mode?: boolean; // MCP code execution mode
   use_tool_search_mode?: boolean; // Tool search mode
   pre_discovered_tools?: string[]; // Tools always available without searching
+  selected_skills?: string[]; // Skill folder names for workflow
   enable_context_summarization?: boolean; // Enable context summarization
 }
 

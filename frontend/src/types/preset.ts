@@ -8,6 +8,7 @@ export interface CustomPreset {
   createdAt: number;
   selectedServers?: string[];
   selectedTools?: string[]; // NEW: Array of "server:tool" strings
+  selectedSkills?: string[]; // Skill folder names for workflow
   agentMode?: 'simple' | 'workflow';
   selectedFolder?: PlannerFile; // Single folder
   llmConfig?: PresetLLMConfig; // LLM configuration for this preset
@@ -23,6 +24,7 @@ export interface PredefinedPreset {
   query: string
   selectedServers?: string[];
   selectedTools?: string[]; // NEW: Array of "server:tool" strings
+  selectedSkills?: string[]; // Skill folder names for workflow
   agentMode?: 'simple' | 'workflow';
   selectedFolder?: PlannerFile;
   llmConfig?: PresetLLMConfig; // LLM configuration for this preset

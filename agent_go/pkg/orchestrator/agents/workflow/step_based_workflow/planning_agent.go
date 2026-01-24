@@ -301,6 +301,7 @@ type AgentConfigs struct {
 	UseCodeExecutionMode        *bool              `json:"use_code_execution_mode,omitempty"`        // Step-level code execution mode override (nil = use preset default, true/false = override)
 	UseToolSearchMode           *bool              `json:"use_tool_search_mode,omitempty"`           // Step-level tool search mode override (nil = use preset default, true/false = override)
 	PreDiscoveredTools          []string           `json:"pre_discovered_tools,omitempty"`           // Tools always available without searching (overrides preset if specified)
+	EnabledSkills               []string           `json:"enabled_skills,omitempty"`                 // Step-level skill selection (skill folder names, overrides preset if specified)
 	EnablePrerequisiteDetection *bool              `json:"enable_prerequisite_detection,omitempty"`  // Enable prerequisite failure detection for this step (default: false)
 	PrerequisiteRules           []PrerequisiteRule `json:"prerequisite_rules,omitempty"`             // Array of prerequisite rules, each with one step dependency and one description
 	KeepLearningFull            *bool              `json:"keep_learning_full,omitempty"`             // Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (default: false, can be overridden by KEEP_LEARNING_FULL env var)

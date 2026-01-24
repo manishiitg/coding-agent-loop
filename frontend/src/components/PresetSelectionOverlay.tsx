@@ -78,11 +78,12 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
   }
 
   const handlePresetSave = async (
-    label: string, 
-    query: string, 
-    selectedServers?: string[], 
+    label: string,
+    query: string,
+    selectedServers?: string[],
     selectedTools?: string[],
-    _agentMode?: 'simple' | 'workflow', 
+    selectedSkills?: string[],
+    _agentMode?: 'simple' | 'workflow',
     selectedFolder?: PlannerFile,
     llmConfig?: PresetLLMConfig,
     useCodeExecutionMode?: boolean
@@ -99,7 +100,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     
     try {
       // Create the preset and get the returned preset object directly
-      const newPreset = await addPreset(label, query, selectedServers, selectedTools, presetAgentMode, selectedFolder, llmConfig, useCodeExecutionMode)
+      const newPreset = await addPreset(label, query, selectedServers, selectedTools, selectedSkills, presetAgentMode, selectedFolder, llmConfig, useCodeExecutionMode)
       
       if (!newPreset) {
         console.error('Failed to create preset')

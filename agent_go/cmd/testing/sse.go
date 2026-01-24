@@ -9,8 +9,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"mcpagent/llm"
-	loggerv2 "mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/llm"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )

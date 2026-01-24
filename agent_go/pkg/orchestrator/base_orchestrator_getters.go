@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	mcpagent "mcpagent/agent"
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/observability"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/observability"
 )
 
 // GetLogger returns the orchestrator's logger

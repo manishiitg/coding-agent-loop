@@ -14,10 +14,10 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	mcpagent "mcpagent/agent"
-	baseevents "mcpagent/events"
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/observability"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	baseevents "github.com/manishiitg/mcpagent/events"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )

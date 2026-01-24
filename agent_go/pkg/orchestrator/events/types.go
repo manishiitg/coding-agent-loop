@@ -1,7 +1,7 @@
 package events
 
 import (
-	"mcpagent/events"
+	"github.com/manishiitg/mcpagent/events"
 )
 
 // Orchestrator Event Types

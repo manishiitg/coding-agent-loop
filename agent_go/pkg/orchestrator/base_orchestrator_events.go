@@ -6,7 +6,7 @@ import (
 	"time"
 
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	baseevents "mcpagent/events"
+	baseevents "github.com/manishiitg/mcpagent/events"
 )
 
 // emitEvent emits an event through the event bridge

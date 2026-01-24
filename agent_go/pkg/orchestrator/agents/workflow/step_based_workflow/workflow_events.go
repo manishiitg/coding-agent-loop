@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	baseevents "mcpagent/events"
+	baseevents "github.com/manishiitg/mcpagent/events"
 )
 
 // DecisionResponseEvent represents the decision response data for events

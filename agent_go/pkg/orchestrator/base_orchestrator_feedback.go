@@ -9,7 +9,7 @@ import (
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	baseevents "mcpagent/events"
+	baseevents "github.com/manishiitg/mcpagent/events"
 )
 
 // RequestHumanFeedback is a common function for requesting human feedback with blocking behavior

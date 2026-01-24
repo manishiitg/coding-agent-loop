@@ -3,9 +3,9 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	mcpagent "mcpagent/agent"
-	"mcpagent/events"
-	loggerv2 "mcpagent/logger/v2"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/events"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"sync"
 )
 

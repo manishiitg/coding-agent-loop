@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	loggerv2 "mcpagent/logger/v2"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // StepConfig represents a single step's configuration in step_config.json

@@ -9,9 +9,9 @@ import (
 
 	"github.com/gorilla/mux"
 
-	mcpagent "mcpagent/agent"
-	"mcpagent/llm"
-	"mcpagent/mcpclient"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/llm"
+	"github.com/manishiitg/mcpagent/mcpclient"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 

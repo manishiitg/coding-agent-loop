@@ -7,8 +7,8 @@ import (
 
 	"mcp-agent-builder-go/agent_go/internal/events"
 	"mcp-agent-builder-go/agent_go/pkg/database"
-	pkgevents "mcpagent/events"
-	loggerv2 "mcpagent/logger/v2"
+	pkgevents "github.com/manishiitg/mcpagent/events"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // EventBridge defines the interface for event bridges

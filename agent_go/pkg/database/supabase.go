@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"mcpagent/events"
+	"github.com/manishiitg/mcpagent/events"
 
 	_ "github.com/lib/pq"
 )

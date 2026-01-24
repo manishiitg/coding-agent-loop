@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/viper"
 
 	"mcp-agent-builder-go/agent_go/internal/utils"
-	mcpagent "mcpagent/agent"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 )
 
 var toolOutputHandlerTestCmd = &cobra.Command{

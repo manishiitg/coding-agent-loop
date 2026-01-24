@@ -12,7 +12,8 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/lib/pq v1.10.9
-	github.com/manishiitg/multi-llm-provider-go v0.2.1-0.20260111071343-fdc495291dc6
+	github.com/manishiitg/mcpagent v0.0.0
+	github.com/manishiitg/multi-llm-provider-go v0.3.0-pre.1
 	github.com/mark3labs/mcp-go v0.44.0-beta.1
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/pkoukk/tiktoken-go v0.1.8
@@ -22,13 +23,13 @@ require (
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/viper v1.21.0
 	golang.org/x/image v0.32.0
-	mcpagent v0.0.0
+	gopkg.in/yaml.v3 v3.0.1
 	workspace v0.0.0-00010101000000-000000000000
 )
 
 replace workspace => ../workspace
 
-replace mcpagent => ../../mcpagent
+replace github.com/manishiitg/mcpagent => ../../mcpagent
 
 replace github.com/manishiitg/multi-llm-provider-go => ../../multi-llm-provider-go
 
@@ -123,5 +124,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260112192933-99fd39fd28a9 // indirect
 	google.golang.org/grpc v1.78.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

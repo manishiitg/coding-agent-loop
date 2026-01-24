@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"mcpagent/events"
+	"github.com/manishiitg/mcpagent/events"
 )
 
 // ADVANCED_MODE_EVENTS contains event types that are hidden in basic mode

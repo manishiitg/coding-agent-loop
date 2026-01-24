@@ -9,7 +9,7 @@ import (
 
 	"mcp-agent-builder-go/agent_go/internal/events"
 	"mcp-agent-builder-go/agent_go/pkg/database"
-	pkgevents "mcpagent/events"
+	pkgevents "github.com/manishiitg/mcpagent/events"
 
 	"github.com/gin-gonic/gin"
 )

@@ -3,14 +3,14 @@ package agents
 import (
 	"context"
 	"fmt"
-	loggerv2 "mcpagent/logger/v2"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"strings"
 	"time"
 
-	mcpagent "mcpagent/agent"
-	internalLLM "mcpagent/llm"
-	"mcpagent/mcpclient"
-	"mcpagent/observability"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	internalLLM "github.com/manishiitg/mcpagent/llm"
+	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )

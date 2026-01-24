@@ -10,9 +10,9 @@ import (
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	mcpagent "mcpagent/agent"
-	"mcpagent/llm"
-	loggerv2 "mcpagent/logger/v2"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/llm"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"workspace/handlers"
 	"workspace/models"
 

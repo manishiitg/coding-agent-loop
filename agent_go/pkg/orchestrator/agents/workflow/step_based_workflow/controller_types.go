@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	baseevents "mcpagent/events"
+	baseevents "github.com/manishiitg/mcpagent/events"
 )
 
 // BranchStepProgress tracks branch execution progress for conditional steps

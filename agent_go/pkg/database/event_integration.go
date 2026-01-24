@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"mcpagent/events"
+	"github.com/manishiitg/mcpagent/events"
 )
 
 // EventDatabaseObserver implements the EventObserver interface to store events in the database

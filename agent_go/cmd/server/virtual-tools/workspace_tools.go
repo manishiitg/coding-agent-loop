@@ -23,7 +23,7 @@ import (
 	"github.com/ledongthuc/pdf"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
-	"mcpagent/events"
+	"github.com/manishiitg/mcpagent/events"
 	"workspace/models"
 
 	"golang.org/x/image/draw"

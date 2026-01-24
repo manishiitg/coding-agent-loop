@@ -3,8 +3,8 @@ package testing
 import (
 	"os"
 
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/observability"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/observability"
 )
 
 // InitializeTracer initializes the appropriate tracer based on environment configuration.

@@ -12,8 +12,8 @@ import (
 
 	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	"mcpagent/events"
-	"mcpagent/mcpcache"
+	"github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/mcpcache"
 
 	"github.com/invopop/jsonschema"
 )

@@ -3,7 +3,7 @@ package events
 import (
 	"time"
 
-	"mcpagent/events"
+	"github.com/manishiitg/mcpagent/events"
 )
 
 // Orchestrator Events

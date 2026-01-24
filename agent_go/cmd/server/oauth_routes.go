@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"mcpagent/mcpcache"
-	"mcpagent/mcpclient"
-	"mcpagent/oauth"
+	"github.com/manishiitg/mcpagent/mcpcache"
+	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/oauth"
 )
 
 // OAuthFlowState tracks ongoing OAuth flows

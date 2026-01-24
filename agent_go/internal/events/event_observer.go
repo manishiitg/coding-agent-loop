@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/logger"
-	"mcpagent/events"
-	loggerv2 "mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/events"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // EventObserver implements AgentEventListener to capture agent events

@@ -39,7 +39,7 @@ A skill is a reusable set of instructions that guides you on how to handle speci
 - **Additional files**: Some skills may include reference files, templates, or examples
 
 ### How to Use Skills in Workflow:
-1. **Read the skill**: Use read_workspace_file to read "skills/<skill-name>/SKILL.md"
+1. **Read the skill**: Read the SKILL.md file from the workspace
 2. **Follow the instructions**: Apply the skill's methodology to the current step
 3. **Check for additional files**: List the skill folder to find supporting files
 
@@ -68,7 +68,7 @@ A skill is a reusable set of instructions that guides you on how to handle speci
 
 	promptParts = append(promptParts, `
 
-**Action Required:** Read each skill's SKILL.md using read_workspace_file before executing the step.
+**Action Required:** Read each skill's SKILL.md from the workspace before executing the step.
 `)
 
 	return strings.Join(promptParts, "\n")

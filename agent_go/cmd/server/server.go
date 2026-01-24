@@ -35,6 +35,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"mcp-agent-builder-go/agent_go/pkg/logger"
+	"mcp-agent-builder-go/agent_go/pkg/skills"
 
 	"github.com/joho/godotenv"
 
@@ -177,21 +178,39 @@ func createCustomTools(workflowMode bool) ([]llmtypes.Tool, map[string]interface
 				toolCategories[tool.Function.Name] = humanCategory
 			}
 		}
+
+		// Add browser tools for browser automation via agent-browser
+		browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
+		browserTools := virtualtools.CreateWorkspaceBrowserTools()
+		browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors()
+
+		allTools = append(allTools, browserTools...)
+		for name, executor := range browserExecutors {
+			allExecutors[name] = executor
+		}
+
+		// Assign category to browser tools
+		for _, tool := range browserTools {
+			if tool.Function != nil {
+				toolCategories[tool.Function.Name] = browserCategory
+			}
+		}
 	}
 
 	return allTools, allExecutors, toolCategories
 }
 
-// wrapExecutorsWithChatModeFolderGuard wraps workspace tool executors to block Workflow/ folder WRITE access in chat mode
+// wrapExecutorsWithChatModeFolderGuard wraps workspace tool executors to restrict chat mode to only write in Chats/ folder
 // This creates a wrapper that:
-// 1. ALLOWS read access to Workflow/ (list, search, read operations)
-// 2. BLOCKS write access to Workflow/ (update, delete, move, shell commands)
-// 3. BLOCKS git commands (can leak data through .git/ database)
+// 1. ALLOWS read access to all folders (list, search, read operations)
+// 2. ONLY ALLOWS write access to Chats/ folder
+// 3. BLOCKS write access to all other folders (Workflow/, skills/, etc.)
+// 4. BLOCKS git commands (can leak data through .git/ database)
 func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error)) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
-	// Blocked paths for WRITE operations - Workflow/ folder is read-only in chat mode
-	blockedWritePaths := []string{"Workflow/", "Workflow"}
+	// The ONLY folder chat mode can write to
+	allowedWriteFolder := "Chats/"
 
-	// Write tools that should be blocked for Workflow/ paths
+	// Write tools that should be restricted to Chats/ folder
 	writeTools := map[string]bool{
 		"update_workspace_file":     true,
 		"delete_workspace_file":     true,
@@ -209,58 +228,54 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 		originalExecutor := executor
 
 		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
-			// For shell commands, block git commands and commands referencing Workflow/
-			// Shell commands can potentially write, so we block Workflow/ access entirely
+			// For shell commands, block git commands and restrict to Chats/ folder for writes
 			if toolNameCopy == "execute_shell_command" {
 				if cmdValue, exists := args["command"]; exists {
 					if cmdStr, ok := cmdValue.(string); ok {
 						cmdLower := strings.ToLower(cmdStr)
 
-						// Block git commands entirely - they can leak/modify Workflow data through .git/ database
+						// Block git commands entirely - they can leak/modify data through .git/ database
 						if strings.HasPrefix(cmdLower, "git ") || strings.Contains(cmdLower, " git ") ||
 							strings.Contains(cmdLower, "&& git ") || strings.Contains(cmdLower, "; git ") ||
 							strings.Contains(cmdLower, "| git ") || strings.Contains(cmdLower, "|| git ") {
-							log.Printf("[CHAT MODE FOLDER GUARD] Blocked git command (can modify restricted folder): %s", cmdStr)
-							return "", fmt.Errorf("access denied: git commands are not allowed in chat mode (they can modify restricted folders)")
+							log.Printf("[CHAT MODE FOLDER GUARD] Blocked git command: %s", cmdStr)
+							return "", fmt.Errorf("access denied: git commands are not allowed in chat mode")
 						}
 
-						// Block shell commands referencing Workflow/ (can't distinguish read/write at shell level)
-						for _, blockedPath := range blockedWritePaths {
-							blockedLower := strings.ToLower(strings.TrimSuffix(blockedPath, "/"))
-							if strings.Contains(cmdLower, blockedLower+"/") ||
-								strings.Contains(cmdLower, blockedLower+" ") ||
-								strings.Contains(cmdLower, " "+blockedLower) ||
-								strings.Contains(cmdLower, "/"+blockedLower) ||
-								strings.HasSuffix(cmdLower, blockedLower) {
-								log.Printf("[CHAT MODE FOLDER GUARD] Blocked shell command referencing '%s': %s", blockedPath, cmdStr)
-								return "", fmt.Errorf("access denied: shell commands cannot reference '%s' (use workspace tools for read access)", blockedPath)
-							}
+						// Check if shell command references Workflow/ folder (blocked entirely for shell)
+						workflowLower := "workflow"
+						if strings.Contains(cmdLower, workflowLower+"/") ||
+							strings.Contains(cmdLower, workflowLower+" ") ||
+							strings.Contains(cmdLower, " "+workflowLower) ||
+							strings.Contains(cmdLower, "/"+workflowLower) ||
+							strings.HasSuffix(cmdLower, workflowLower) {
+							log.Printf("[CHAT MODE FOLDER GUARD] Blocked shell command referencing Workflow/: %s", cmdStr)
+							return "", fmt.Errorf("access denied: shell commands cannot reference 'Workflow/' folder in chat mode")
 						}
 					}
 				}
-				// Inject blocked paths for kernel-level sandboxing (defense in depth for writes)
-				log.Printf("[CHAT MODE FOLDER GUARD] Shell command - kernel-level sandbox will block writes to: %v", blockedWritePaths)
-				ctx = context.WithValue(ctx, virtualtools.FolderGuardBlockedPathsKey, blockedWritePaths)
+				// Inject allowed write folder for kernel-level sandboxing
+				// Shell commands can only write to Chats/ folder
+				ctx = context.WithValue(ctx, virtualtools.FolderGuardAllowedWriteFolderKey, allowedWriteFolder)
 			}
 
-			// For WRITE tools only, check path parameters for Workflow/ paths
+			// For WRITE tools, ONLY allow writes to Chats/ folder
 			if writeTools[toolNameCopy] {
 				for _, paramName := range writePathParams {
 					if paramValue, exists := args[paramName]; exists {
 						if pathStr, ok := paramValue.(string); ok && pathStr != "" {
-							for _, blockedPath := range blockedWritePaths {
-								if strings.HasPrefix(pathStr, blockedPath) {
-									log.Printf("[CHAT MODE FOLDER GUARD] Blocked WRITE to '%s' for tool %s - Workflow/ is read-only in chat mode", pathStr, toolNameCopy)
-									return "", fmt.Errorf("access denied: cannot write to '%s' (Workflow/ folder is read-only in chat mode)", pathStr)
-								}
+							// Check if path starts with Chats/ - this is the ONLY allowed write location
+							if !strings.HasPrefix(pathStr, allowedWriteFolder) && !strings.HasPrefix(pathStr, "Chats") {
+								log.Printf("[CHAT MODE FOLDER GUARD] Blocked WRITE to '%s' for tool %s - chat mode can only write to Chats/ folder", pathStr, toolNameCopy)
+								return "", fmt.Errorf("access denied: cannot write to '%s' (chat mode can only write to Chats/ folder)", pathStr)
 							}
 						}
 					}
 				}
 			}
 
-			// READ tools (list, search, read_workspace_file) are ALLOWED for Workflow/
-			// No blocking or context injection needed for read operations
+			// READ tools (list, search, read_workspace_file) are ALLOWED for all folders
+			// No blocking needed for read operations
 
 			// Call original executor
 			return originalExecutor(ctx, args)
@@ -269,7 +284,7 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 		wrappedExecutors[toolNameCopy] = wrappedExecutor
 	}
 
-	log.Printf("[CHAT MODE FOLDER GUARD] Wrapped %d executors - Workflow/ is READ-ONLY (writes blocked)", len(wrappedExecutors))
+	log.Printf("[CHAT MODE FOLDER GUARD] Wrapped %d executors - chat mode can only write to Chats/ folder", len(wrappedExecutors))
 	return wrappedExecutors
 }
 
@@ -510,6 +525,8 @@ type QueryRequest struct {
 	ContextEditingTurnThreshold int   `json:"context_editing_turn_threshold,omitempty"` // Turn age threshold for context editing (0 = use default: 5)
 	// Workspace access configuration
 	EnableWorkspaceAccess *bool `json:"enable_workspace_access,omitempty"` // Enable/disable workspace file access tools (nil = inherit default, true/false = explicit override)
+	// Browser automation access configuration
+	EnableBrowserAccess *bool `json:"enable_browser_access,omitempty"` // Enable/disable browser automation tool (nil = inherit default, true/false = explicit override)
 	// Selected skills to include in chat context
 	SelectedSkills []string `json:"selected_skills,omitempty"` // Array of skill folder names
 }
@@ -2231,7 +2248,34 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[SKILLS] Automatically enabling workspace access (skills selected: %v)", req.SelectedSkills)
 			}
 
+			// Handle browser access: when enabled, auto-enable workspace and add agent-browser skill
+			enableBrowserAccess := false
+			if req.EnableBrowserAccess != nil && *req.EnableBrowserAccess {
+				enableBrowserAccess = true
+				enableWorkspaceAccess = true // Browser tool lives in workspace category
+				// Auto-add agent-browser skill if not already selected
+				hasAgentBrowserSkill := false
+				for _, skill := range req.SelectedSkills {
+					if skill == "agent-browser" {
+						hasAgentBrowserSkill = true
+						break
+					}
+				}
+				if !hasAgentBrowserSkill {
+					req.SelectedSkills = append(req.SelectedSkills, "agent-browser")
+				}
+				log.Printf("[BROWSER] Auto-adding agent-browser skill and tool (enable_browser_access: true)")
+			}
+
 			if enableWorkspaceAccess {
+				// Create Chats/ folder if it doesn't exist (chat mode can only write here)
+				if err := skills.CreateFolder("Chats"); err != nil {
+					// Log warning but don't fail - folder may already exist
+					log.Printf("[CHAT MODE] Warning: Could not create Chats/ folder: %v", err)
+				} else {
+					log.Printf("[CHAT MODE] Ensured Chats/ folder exists for chat output")
+				}
+
 				// Chat mode: only workspace_advanced tools (shell, image, web fetch, PDF)
 				workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
 				workspaceExecutors := virtualtools.CreateWorkspaceAdvancedToolExecutors()
@@ -2296,6 +2340,50 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace advanced tools for chat mode", len(workspaceTools))
+
+				// Register browser tool if browser access is enabled
+				if enableBrowserAccess {
+					browserTools := virtualtools.CreateWorkspaceBrowserTools()
+					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors()
+					browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
+
+					// Apply same folder guard as workspace tools (chat mode can only write to Chats/)
+					browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors)
+					log.Printf("[BROWSER TOOLS] Applied folder guard to browser tools")
+
+					for _, tool := range browserTools {
+						if tool.Function == nil {
+							continue
+						}
+						toolName := tool.Function.Name
+						if executor, exists := browserExecutors[toolName]; exists {
+							var params map[string]interface{}
+							if tool.Function.Parameters != nil {
+								paramsBytes, err := json.Marshal(tool.Function.Parameters)
+								if err == nil {
+									json.Unmarshal(paramsBytes, &params)
+								}
+							}
+							if params == nil {
+								log.Printf("[BROWSER TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
+								continue
+							}
+
+							if err := underlyingAgent.RegisterCustomTool(
+								toolName,
+								tool.Function.Description,
+								params,
+								executor,
+								browserCategory,
+							); err != nil {
+								log.Printf("[BROWSER TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
+								continue
+							}
+							log.Printf("[BROWSER TOOLS] Registered browser tool: %s (category: %s)", toolName, browserCategory)
+						}
+					}
+					log.Printf("[BROWSER TOOLS] Successfully registered %d browser tools for chat mode", len(browserTools))
+				}
 			} else {
 				log.Printf("[WORKSPACE TOOLS] Skipping workspace tools registration (enable_workspace_access: false)")
 			}

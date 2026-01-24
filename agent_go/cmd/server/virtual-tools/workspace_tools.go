@@ -50,6 +50,8 @@ const (
 	FolderGuardWritePathsKey contextKey = "folder_guard_write_paths"
 	// FolderGuardBlockedPathsKey is the context key for blocked paths (deny list)
 	FolderGuardBlockedPathsKey contextKey = "folder_guard_blocked_paths"
+	// FolderGuardAllowedWriteFolderKey is the context key for the only folder allowed for writes (chat mode)
+	FolderGuardAllowedWriteFolderKey contextKey = "folder_guard_allowed_write_folder"
 )
 
 // Legacy constants for backward compatibility (use exported versions)

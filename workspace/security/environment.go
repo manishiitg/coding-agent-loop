@@ -14,6 +14,9 @@ func BuildSafeEnvironment() []string {
 		"LANG=C.UTF-8",
 		"LC_ALL=C.UTF-8",
 
+		// Browser automation (agent-browser uses system chromium on Alpine)
+		"AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser",
+
 		// DO NOT include:
 		// - DATABASE_URL
 		// - API_KEYS

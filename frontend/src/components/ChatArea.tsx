@@ -2499,6 +2499,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         enable_workspace_access: selectedModeCategory === 'chat'
           ? (currentTab?.config?.enableWorkspaceAccess ?? true)
           : undefined,
+        // Browser access: Send the setting from tab config (default: false)
+        enable_browser_access: selectedModeCategory === 'chat'
+          ? (currentTab?.config?.enableBrowserAccess ?? false)
+          : undefined,
         // Selected skills: Include skill folder names from tab config
         selected_skills: selectedModeCategory === 'chat' && currentTab?.config?.selectedSkills?.length
           ? currentTab.config.selectedSkills

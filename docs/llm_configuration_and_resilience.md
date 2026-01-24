@@ -1,6 +1,147 @@
-# Temporary LLM Cascading Flow
+# LLM Configuration & Resilience
 
-## 📋 Overview
+This document outlines the system for managing LLM configurations, user-driven fallbacks, and the automated temporary LLM cascading flow for execution resilience.
+
+---
+
+## 1. User-Driven LLM Configuration
+
+**Status**: Implementation Complete (2026-01-05)
+
+### 📋 Overview
+
+The user-controlled LLM configuration system allows the **Primary LLM to be selected from Published LLMs**. Each Published LLM carries its own API key, temperature, and model-specific options. This ensures that the backend requires no API keys at startup and operates using ambient credentials (AWS) for internal operations only.
+
+**Key Principles:**
+- **Primary LLM**: Selected from Published LLMs (not configured directly).
+- **Self-contained Auth**: Each Published LLM stores its own API key.
+- **Backend Defaults**: Backend uses ambient credentials (AWS Bedrock) for internal operations only.
+- **Fallback Chain**: Simple ordered fallback array configured by the user.
+
+### 📁 Key Files & Locations
+
+| Component | File | Key Functions |
+|-----------|------|---------------|
+| **LLM Store** | `frontend/src/stores/useLLMStore.ts` | `savedLLMs`, `refreshAvailableLLMs()`, `getCurrentLLMOption()` |
+| **Published LLM Tab** | `frontend/src/components/llm/LibraryTab.tsx` | Publish/delete/select LLMs |
+| **Fallbacks Tab** | `frontend/src/components/llm/FallbacksTab.tsx` | Primary selection, fallback chain |
+| **LLM Dropdown** | `frontend/src/components/LLMSelectionDropdown.tsx` | Rich metadata display |
+| **LLM Types** | `frontend/src/types/llm.ts` | `LLMOption` interface |
+| **API Types** | `frontend/src/services/api-types.ts` | `SavedLLM`, `LLMModel`, `AgentLLMConfiguration` |
+| **Backend Server** | `agent_go/cmd/server/server.go` | No internal LLM required |
+
+### 🔄 Workflow
+
+```
+User configures LLM in Provider Tab (OpenRouter, Bedrock, etc.)
+    ↓
+Publishes to "Published LLM" list (saves API key, temp, options)
+    ↓
+Selects Published LLM as Primary (from Fallbacks or Published LLM tab)
+    ↓
+LLM Dropdown shows all Published LLMs with metadata
+    ↓
+Agent execution uses Published LLM config (with its stored API key)
+```
+
+### 🏗️ Architecture
+
+#### Data Flow
+
+| Step | Frontend | Backend |
+|------|----------|---------|
+| 1. Configure | Provider tabs (OpenRouter, Bedrock, etc.) | - |
+| 2. Publish | `saveLLM()` → `savedLLMs[]` | - |
+| 3. Select Primary | `handleLibrarySelect()` → `agentConfig.primary` | - |
+| 4. Execute | Sends `LLMConfig` with API key | Uses provided credentials |
+
+#### Types
+
+```typescript
+// Published LLM (stored in frontend)
+interface SavedLLM extends LLMModel {
+  id: string
+  name: string
+  api_key?: string      // Stored per-LLM
+  temperature?: number
+  options?: Record<string, unknown>  // reasoning_effort, thinking_level, etc.
+}
+
+// Agent configuration sent to backend
+interface AgentLLMConfiguration {
+  primary: LLMModel     // Selected from savedLLMs
+  fallbacks: LLMModel[] // Ordered fallback chain
+}
+```
+
+### ⚙️ Configuration
+
+#### Backend Defaults (run_server_with_logging.sh)
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `DEEP_SEARCH_MAIN_LLM_PROVIDER` | `bedrock` | Uses AWS credentials (no API key) |
+| `DEEP_SEARCH_MAIN_LLM_MODEL` | `global.anthropic.claude-sonnet-4-5-*` | Default model |
+| `AGENT_PROVIDER` | `bedrock` | Internal operations only |
+
+**Note:** Backend no longer creates an `internalLLM` at startup. All agent execution uses Published LLM configs from frontend.
+
+### 🛠️ UI Components
+
+| Component | Purpose | Key Features |
+|-----------|---------|--------------|
+| **Published LLM Tab** | Manage saved configs | Publish current, set as primary, delete, show API key last 4 digits |
+| **Fallbacks Tab** | Configure fallback chain | Change Primary button, add from Published LLM or custom |
+| **LLM Dropdown** | Select LLM for execution | Rich metadata (cost, context, temp, reasoning options) |
+
+#### LLM Dropdown Display
+
+```
+┌─────────────────────────────────────────┐
+│ OPENROUTER                              │
+│   My GPT-4o Config                      │
+│   gpt-4o                                │
+│   📦 128k  💲$2.50/1M  🌡️ 0.7          │
+│   Reasoning: medium                     │
+├─────────────────────────────────────────┤
+│ BEDROCK                                 │
+│   Production Claude                     │
+│   claude-sonnet-4.5                     │
+│   📦 200k  💲$3.00/1M  🌡️ 0.0          │
+└─────────────────────────────────────────┘
+```
+
+### 🔍 For LLMs: Quick Reference
+
+**Constraints:**
+- ✅ Primary LLM must be selected from Published LLMs
+- ✅ Each Published LLM stores its own API key
+- ✅ Backend uses Bedrock (AWS credentials) for internal ops
+- ❌ No hardcoded API keys in backend
+- ❌ No `internalLLM` created at startup
+
+**Key Store Actions:**
+```typescript
+// Publish current config
+saveLLM(llm, name, modelName, authMethod)
+
+// Select as primary (from FallbacksTab or LibraryTab)
+handleLibrarySelect(savedLLM) → updates agentConfig.primary
+
+// Refresh dropdown options
+refreshAvailableLLMs() → builds from savedLLMs with metadata
+```
+
+**Auto-refresh triggers:**
+- `saveLLM()` → calls `refreshAvailableLLMs()`
+- `deleteSavedLLM()` → calls `refreshAvailableLLMs()`
+- `loadDefaults()` → calls `refreshAvailableLLMs()`
+
+---
+
+## 2. Temporary LLM Cascading Flow
+
+### 📋 Overview
 
 The Temporary LLM Cascading Flow provides automatic fallback to alternative LLM models when execution fails, using a cascading sequence: tempLLM1 → tempLLM2 → original LLM. This enables recovery from model-specific failures while maintaining execution quality.
 
@@ -9,9 +150,7 @@ The Temporary LLM Cascading Flow provides automatic fallback to alternative LLM 
 - **Learning-based**: Uses learnings folder to determine available temp LLMs
 - **Configurable fallback**: Supports skipping tempLLM1 while keeping tempLLM2
 
----
-
-## 📁 Key Files & Locations
+### 📁 Key Files & Locations
 
 | Component | File Path | Key Functions |
 |-----------|-----------|---------------|
@@ -19,9 +158,7 @@ The Temporary LLM Cascading Flow provides automatic fallback to alternative LLM 
 | **LLM Selection** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) | `selectExecutionLLM()` - LLM selection logic (lines 228-270) |
 | **Validation Check** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `isValidationFailure()` function (lines 46-54) |
 
----
-
-## 🔄 Flow Sequence
+### 🔄 Flow Sequence
 
 ```mermaid
 graph TD
@@ -60,11 +197,9 @@ graph TD
    - Blocked by `shouldSkipTempOverride` (for tempLLM1 only), OR
    - Step config has `disable_temp_llm: true`
 
----
+### ⚙️ Failure Criteria
 
-## ⚙️ Failure Criteria
-
-### For tempLLM Purposes
+#### For tempLLM Purposes
 
 **Only `ExecutionStatus == "FAILED"` counts as failure:**
 
@@ -75,7 +210,7 @@ graph TD
 | `INCOMPLETE` | Success | ❌ No retry |
 | `FAILED` | Failure | ✅ Triggers next attempt |
 
-### Validation Status Handling
+#### Validation Status Handling
 
 **File**: [`controller_execution.go:46-54`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L46)
 
@@ -91,11 +226,9 @@ graph TD
 - **Decision Step False Result**: Steps routed from decision step with `false` result are treated as validation failure (skip tempLLM)
 - **Loop Iterations**: New loop iterations after failure (`loopIterationCount > 1`) trigger `isRetryAfterValidationFailure`
 
----
+### 🔄 Implementation Details
 
-## 🔄 Implementation Details
-
-### Key Logic
+#### Key Logic
 
 **File:** [`controller_execution.go:1221-1228`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L1221)
 
@@ -138,7 +271,7 @@ else {
 }
 ```
 
-### Conditions
+#### Conditions
 
 **File**: [`controller_agent_factory.go:131-236`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go#L131)
 
@@ -152,9 +285,7 @@ else {
 | `retryAttempt == 2` | Second retry attempt | None | Always uses tempLLM2 if available (checked first) |
 | `isRetryAfterValidationFailure && retryAttempt == 1` | New loop iteration after failure | None | Uses tempLLM2 if available (checked first) |
 
----
-
-## 🛠️ Common Issues & Solutions
+### 🛠️ Common Issues & Solutions
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
@@ -165,9 +296,7 @@ else {
 | tempLLM skipped after decision step false | Decision step false result triggers `isRetryAfterValidationFailure` | This is expected behavior - decision step false is treated as validation failure |
 | tempLLM skipped on loop iteration | New loop iteration after failure triggers `isRetryAfterValidationFailure` | This is expected behavior - uses tempLLM2 if available, otherwise original LLM |
 
----
-
-## 🔍 For LLMs: Quick Reference
+### 🔍 For LLMs: Quick Reference
 
 **Constraints:**
 - ✅ **Allowed**: Retry with tempLLM1 on attempt 1 (if learnings exist and not blocked)
@@ -222,3 +351,5 @@ Loop Iteration 2: tempLLM2 (isRetryAfterValidationFailure && retryAttempt == 1) 
 
 - [Workflow Orchestrator](workflow_orchestrator.md) - Overall execution system
 - [Controller Execution](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) - Retry logic implementation
+- [Model Metadata](../../multi-llm-provider-go/llmtypes/model_metadata.go) - Pricing, context, capabilities
+- [LLM Store](../../frontend/src/stores/useLLMStore.ts) - State management

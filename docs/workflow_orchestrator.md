@@ -315,7 +315,7 @@ workspace/
 │   │   │   ├── scripts/            # Python scripts (code execution mode)
 │   │   │   └── code/               # Go code patterns (code execution mode)
 │   │   └── {step_id}-{true/false}-{Y}/  # Branch step learnings
-│   └── runs/                        # Execution runs
+│   └── runs/
 │       ├── iteration-same/          # Default run folder
 │       │   ├── execution/           # Execution outputs
 │       │   ├── validation/          # Validation reports
@@ -585,3 +585,1932 @@ type CleanupScope struct {
 - [Conditional Agent Implementation](conditional_agent_implementation.md) - Conditional branching logic
 - [Prerequisite Failure Implementation](prerequisite_failure_implementation.md) - Prerequisite detection and navigation
 - [Temp LLM Cascading Flow](temp_llm_cascading_flow.md) - Temporary LLM override flow details
+
+---
+---
+
+# Orchestration Step Implementation
+
+## Overview
+
+**Status**: ✅ **FULLY IMPLEMENTED** (as Orchestration Step)
+
+**Orchestration Step** (also referred to as "Routing Step" in planning docs) is a step type that acts as an orchestrator with multiple sub-agents. The main orchestration step executes with full MCP tools, evaluates its output to select a sub-agent based on conditions, and iteratively executes sub-agents until success criteria is met.
+
+**Note**: The implementation uses "Orchestration" naming (`OrchestrationPlanStep`, `executeOrchestrationStep()`, etc.) rather than "Routing" naming.
+
+## Key Concepts
+
+### Main Routing Step
+- **Purpose**: Execute with full MCP tools and evaluate output to determine routing
+- **Access**: Full MCP tools (like normal step)
+- **Output**: Structured evaluation to select route and check success criteria
+
+### Sub-Agents
+- **Purpose**: Execute specific tasks based on routing conditions
+- **Scope**: Private to routing step (not accessible by other workflow steps)
+- **Validation**: Disabled (execution + learning only)
+- **Context**: Receives context from main routing step about what to do
+
+### Execution Flow
+
+**File**: [`controller_orchestration.go:52-1249`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_orchestration.go#L52)
+
+```
+1. Validate orchestration step (orchestration_step, routes, next_step_id)
+2. Determine max iterations (step config > orchestrator default)
+3. Main Loop (up to max iterations):
+   a. Execute main orchestration step using OrchestrationOrchestratorAgent
+      - Agent combines execution AND evaluation in one step
+      - Returns OrchestrationResponse with:
+        * success_criteria_met (bool)
+        * selected_route_id (string)
+        * instructions_to_sub_agent (string)
+        * success_criteria_for_sub_agent (string)
+   b. If success criteria met:
+      - Call validation agent
+      - If validation passes → Exit loop, route to NextStepID
+   c. If success criteria NOT met:
+      - Validate selected_route_id exists
+      - Handle special routes ("end", "learning")
+      - Execute selected sub-agent with dynamic instructions
+      - Sub-agent output added to context for next iteration
+      - Loop back to step 3a
+4. If max iterations reached without success → Return failure
+```
+
+**Key Points**:
+- Uses `OrchestrationOrchestratorAgent` which combines execution and evaluation (no separate evaluation agent)
+- Sub-agents receive dynamic instructions from orchestrator (not static step description)
+- Sub-agents use path format: `step-{N}-sub-agent-{index}`
+- Max iterations configurable per step (default: orchestrator's max turns)
+
+## Data Structures
+
+**File**: [`controller_types.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_types.go)
+
+### OrchestrationRoute
+```go
+type OrchestrationRoute struct {
+    RouteID       string            `json:"route_id"`                  // Unique ID for this route
+    RouteName     string            `json:"route_name"`                // Human-readable name
+    Condition     string            `json:"condition"`                 // Condition description (e.g., "If error is authentication-related")
+    SubAgentStep  PlanStepInterface `json:"sub_agent_step"`            // The sub-agent step to execute (private, not in main workflow)
+    ContextToPass string            `json:"context_to_pass,omitempty"` // Optional: specific context to pass to sub-agent
+}
+```
+
+### OrchestrationResponse
+```go
+type OrchestrationResponse struct {
+    SelectedRouteID                string `json:"selected_route_id"`                            // Which route was selected (can be "end" to terminate workflow, empty to continue working, or a route ID)
+    SuccessCriteriaMet             bool   `json:"success_criteria_met"`                         // Whether main orchestrator's success criteria is met
+    SuccessReasoning               string `json:"success_reasoning,omitempty"`                  // Reasoning for success criteria evaluation
+    InstructionsToSubAgent         string `json:"instructions_to_sub_agent,omitempty"`          // Instructions to pass to the selected sub-agent (replaces step description, required if selected_route_id is provided)
+    SuccessCriteriaForSubAgent     string `json:"success_criteria_for_sub_agent,omitempty"`     // Success criteria to pass to the selected sub-agent (replaces step success criteria, required if selected_route_id is provided)
+    ContextDependenciesForSubAgent string `json:"context_dependencies_for_sub_agent,omitempty"` // Context dependencies to pass to the selected sub-agent (replaces step context dependencies, optional)
+    ContextOutputForSubAgent       string `json:"context_output_for_sub_agent,omitempty"`       // Context output file name to pass to the selected sub-agent (replaces step context output, optional)
+}
+```
+
+### OrchestrationPlanStep
+**File**: [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go)
+
+```go
+type OrchestrationPlanStep struct {
+    Type                  StepType                 `json:"type"`                           // Always "orchestration"
+    ID                    string                   `json:"id"`                             // Stable step ID
+    Title                 string                   `json:"title"`                          // Display title for the orchestration step wrapper
+    OrchestrationStep     PlanStepInterface        `json:"orchestration_step,omitempty"`   // The main orchestrator step to execute
+    OrchestrationRoutes   []PlanOrchestrationRoute `json:"orchestration_routes,omitempty"` // Array of possible routes with conditions
+    NextStepID            string                   `json:"next_step_id,omitempty"`         // ID of step after orchestration completes (or "end")
+    OrchestrationResponse *OrchestrationResponse   `json:"-"`                              // runtime: stores selected route and success evaluation
+}
+```
+
+**Note**: Progress tracking is handled via `StepProgress.CompletedStepIndices` - orchestration steps don't have separate progress structure.
+
+## Implementation Status
+
+### Backend (Go) - ✅ Complete
+
+1. ✅ **Data Structures** - `OrchestrationRoute`, `OrchestrationResponse`, `OrchestrationPlanStep` in `controller_types.go` and `planning_agent.go`
+2. ✅ **Orchestration Agent** - `OrchestrationOrchestratorAgent` in [`orchestration_orchestrator_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/orchestration_orchestrator_agent.go) - combines execution and evaluation
+3. ✅ **Execution Function** - `executeOrchestrationStep()` in [`controller_orchestration.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_orchestration.go)
+4. ✅ **Main Loop Integration** - Orchestration step handling in `controller_execution.go`
+5. ✅ **Progress Tracking** - Uses `StepProgress.CompletedStepIndices` for completion tracking
+6. ✅ **Learning Agent** - `OrchestrationLearningAgent` in [`orchestration_learning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/orchestration_learning_agent.go)
+7. ✅ **Events** - Orchestration step events (step_started, route_selected, sub_agent_completed, step_finished)
+
+### Frontend (TypeScript/React) - ✅ Complete
+
+- ✅ TypeScript types for orchestration steps
+- ✅ Canvas rendering for orchestration steps and sub-agents
+- ✅ Step sidebar editing for orchestration steps
+- ✅ React Flow integration with sub-agent nodes
+
+## Key Differences from Decision Steps
+
+| Feature | Decision Step | Orchestration Step |
+|---------|--------------|-------------------|
+| Choices | 2 (true/false) | N (multiple routes) |
+| Sub-steps | None | Yes (sub-agents) |
+| Loop | No | Yes (until success criteria met) |
+| Context passing | One-way | Bidirectional (main ↔ sub-agent) |
+| Success evaluation | N/A | Evaluated each iteration |
+| Evaluation Agent | Separate `ConditionalAgent.EvaluateDecision()` | Built into `OrchestrationOrchestratorAgent` |
+| Max Iterations | N/A | Configurable (default: 5) |
+| Sub-agent Instructions | N/A | Dynamic instructions from orchestrator |
+
+## Key Files & Locations
+
+| Component | File | Key Functions |
+|-----------|------|---------------|
+| **Execution Function** | [`controller_orchestration.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_orchestration.go) | `executeOrchestrationStep()` |
+| **Orchestrator Agent** | [`orchestration_orchestrator_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/orchestration_orchestrator_agent.go) | `OrchestrationOrchestratorAgent.ExecuteStructured()` |
+| **Learning Agent** | [`orchestration_learning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/orchestration_learning_agent.go) | `OrchestrationLearningAgent` |
+| **Data Types** | [`controller_types.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_types.go) | `OrchestrationRoute`, `OrchestrationResponse` |
+| **Plan Types** | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go) | `OrchestrationPlanStep`, `PlanOrchestrationRoute` |
+
+## Example Use Case
+
+**Step: "Handle API Error"**
+- Main orchestration step: "Analyze error and determine type"
+- Routes:
+  - `auth-error`: Fix authentication issues
+  - `network-error`: Fix network connectivity
+  - `data-error`: Fix data validation
+- Flow: Main step analyzes → Selects route → Sub-agent fixes → Main step re-evaluates → Repeat until success
+
+**Implementation**:
+- Uses `has_orchestration_step: true` in step config
+- `orchestration_step`: Main step with description and success criteria
+- `orchestration_routes`: Array of routes with conditions and sub-agent steps
+- `next_step_id`: Step to route to when orchestration completes
+
+---
+---
+
+# Decision Step Implementation
+
+## Overview
+
+**Decision Step** (`type: "decision"`) is a workflow step type that executes a step, evaluates its output to determine true/false, and routes to different next steps based on the evaluation result. This is distinct from conditional steps which evaluate a question without executing anything.
+
+**Status**: ✅ **FULLY IMPLEMENTED** (as of January 2026 - updated to flattened structure)
+
+## Key Concepts
+
+### Decision Step vs Conditional Step
+
+| Feature | Conditional Step (`type: "conditional"`) | Decision Step (`type: "decision"`) |
+|---------|-----------------------------------|-------------------------------------|
+| **Evaluation Source** | `condition_question` → `ConditionalAgent.Decide()` | Execute step → `ConditionalAgent.EvaluateDecision()` |
+| **Execution** | No execution (evaluation only) | Executes the decision step itself |
+| **Branch Execution** | `IfTrueSteps[]` / `IfFalseSteps[]` arrays | Single step execution only |
+| **Routing** | Optional `next_step_id` (defaults to sequential) | **Required** `if_true_next_step_id` / `if_false_next_step_id` |
+| **Use Case** | Decision point without execution | Execute something, then decide based on result |
+| **Evaluation Input** | `conditionContext` (previous step output) | `executionOutput` (step execution result) |
+| **Learning History** | Loaded for conditional step ID | Loaded for decision step ID |
+
+### Example Use Case
+
+```json
+{
+  "type": "decision",
+  "id": "check-deployment-status",
+  "title": "Check Deployment Status",
+  "description": "Call deployment API to get current status",
+  "success_criteria": "API returns status response",
+  "context_output": "deployment_status.json",
+  "decision_evaluation_question": "Is the deployment healthy and all services running?",
+  "if_true_next_step_id": "proceed-to-next-phase",
+  "if_false_next_step_id": "rollback-deployment"
+}
+```
+
+## Data Structure
+
+### DecisionPlanStep (Flattened)
+
+**File**: `../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go`
+
+The decision step now uses a flattened structure with embedded `CommonStepFields`:
+
+```go
+type DecisionPlanStep struct {
+    Type StepType `json:"type"` // Always "decision"
+
+    // Embedded CommonStepFields
+    CommonStepFields           // ID, Title, Description, SuccessCriteria, ContextDependencies, ContextOutput, etc.
+
+    // Decision-specific fields
+    DecisionEvaluationQuestion string            `json:"decision_evaluation_question,omitempty"` // Question to evaluate step output
+    IfTrueNextStepID           string            `json:"if_true_next_step_id,omitempty"`         // REQUIRED: Next step if evaluation is true
+    IfFalseNextStepID          string            `json:"if_false_next_step_id,omitempty"`        // REQUIRED: Next step if evaluation is false
+    DecisionResponse           *DecisionResponse `json:"-"`                                       // runtime: stores evaluation result
+    AgentConfigs               *AgentConfigs     `json:"agent_configs,omitempty"`                // Step-specific agent configuration
+}
+```
+
+### Backward Compatibility
+
+The system supports automatic migration from the legacy nested format:
+
+**Legacy Format (auto-migrated on load):**
+```json
+{
+  "type": "decision",
+  "id": "wrapper-id",
+  "title": "Decision Wrapper",
+  "decision_step": {
+    "type": "regular",
+    "id": "inner-step-id",
+    "title": "Inner Step",
+    "description": "...",
+    "success_criteria": "..."
+  },
+  "decision_evaluation_question": "...",
+  "if_true_next_step_id": "...",
+  "if_false_next_step_id": "..."
+}
+```
+
+When the legacy format is detected during JSON unmarshal, fields from `decision_step` are automatically copied to the parent level.
+
+## Implementation
+
+### Execution Flow
+
+The decision step has a two-phase execution model:
+
+```
+1. Execute Decision Step (the step itself)
+   - Uses executeSingleStep() with isDecisionInnerStep=true
+   - Step has its own Description, SuccessCriteria, etc.
+   ↓
+2. Get execution output/result
+   ↓
+3. Load learning history for decision step (via LoadStepLearningHistory())
+   ↓
+4. Evaluate output using ConditionalAgent.EvaluateDecision()
+   - Uses execution output directly (not conditionContext)
+   - Includes learning history, variables, code execution mode
+   ↓
+5. Auto-unlock learnings if result is false
+   ↓
+6. Route to IfTrueNextStepID or IfFalseNextStepID
+```
+
+### Core Implementation
+
+**File**: [`controller_decision.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_decision.go)
+
+**Function**: `executeDecisionStep()`
+
+The implementation:
+1. Validates required fields (description, success_criteria, evaluation_question, routing IDs)
+2. Executes the decision step itself using `executeSingleStep()` with `isDecisionInnerStep=true` flag
+3. Loads learning history for the step via `LoadStepLearningHistory()`
+4. Determines code execution mode (step config > orchestrator default)
+5. Evaluates the execution output using `ConditionalAgent.EvaluateDecision()` (not `Decide()`)
+6. Auto-unlocks learnings for the step if decision result is false
+7. Stores the decision result and reasoning
+8. Emits appropriate events (step_started, decision_evaluated, step_finished)
+9. Returns the decision result for routing by the main execution loop
+
+**Key Details**:
+- Uses `ConditionalAgent.EvaluateDecision()` method (different from `Decide()` used by conditional steps)
+- `EvaluateDecision()` takes `executionOutput` directly (not `conditionContext`)
+- Learning history is loaded using the step's own ID
+- Variables (names and values) are passed to the evaluation agent
+
+### Validation
+
+**File**: [`planning_management.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_management.go)
+
+**Function**: `validateDecisionStepTyped()`
+
+Validates:
+- ✅ `description` is not empty
+- ✅ `success_criteria` is not empty
+- ✅ `decision_evaluation_question` is not empty
+- ✅ `if_true_next_step_id` is not empty
+- ✅ `if_false_next_step_id` is not empty
+
+## Evaluation Method: EvaluateDecision vs Decide
+
+**File**: [`conditional_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/conditional_agent.go)
+
+Decision steps use `EvaluateDecision()` method, which differs from `Decide()` used by conditional steps:
+
+| Method | Used By | Input | Output | Tool Submission |
+|--------|---------|-------|--------|-----------------|
+| `Decide()` | Conditional steps | `conditionContext` (previous step output), `question` | `ConditionalResponse` with `result` and `reason` | Direct JSON response |
+| `EvaluateDecision()` | Decision steps | `executionOutput` (inner step result), `question` | `DecisionResponse` with `result` and `reasoning` | Via `submit_decision_result` tool |
+
+**Key Differences**:
+- `EvaluateDecision()` uses `ExecuteStructuredWithInputProcessorViaTool()` with `submit_decision_result` tool
+- `Decide()` uses `ExecuteStructuredWithInputProcessor()` with direct JSON response
+- `EvaluateDecision()` takes execution output directly, not condition context
+- Both methods support code execution mode and learning history
+
+## Planning Agent Integration
+
+### Schema Updates
+
+**File**: [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go)
+
+Decision step fields are included in:
+- `getAddDecisionStepSchema()` - For adding new decision steps
+- `getUpdateDecisionStepSchema()` - For updating existing decision steps
+
+### Planning Tools
+
+The following tools support decision steps:
+- `add_decision_step` - Add a new decision step
+- `update_decision_step` - Update decision step properties
+
+**Location**: `planning_agent.go` - tool registration
+
+## Frontend Integration
+
+### TypeScript Types
+
+**Files**:
+- `../frontend/src/generated/events.ts`
+- `../frontend/src/generated/events-bridge.ts`
+- `../frontend/src/utils/stepConfigMatching.ts`
+
+All include decision step fields in `PlanStep` and `TodoStep` interfaces.
+
+### Canvas Rendering
+
+**File**: `../frontend/src/components/workflow/nodes/DecisionNode.tsx`
+
+Dedicated `DecisionNode` component that:
+- Displays the decision step with diamond shape
+- Shows step information (title, description)
+- Displays evaluation question
+- Renders true/false routing edges
+- Shows context inputs/outputs
+- Supports status indicators and execution controls
+
+**File**: `../frontend/src/components/workflow/hooks/usePlanToFlow.ts`
+
+Converts decision steps to React Flow nodes and edges:
+- Creates decision node type
+- Generates true/false routing edges
+- Handles nested step visualization
+
+### Step Sidebar
+
+**File**: `../frontend/src/components/workflow/canvas/StepSidebar.tsx`
+
+Provides UI for editing decision steps:
+- Edit step fields (description, success_criteria, etc.)
+- Edit `decision_evaluation_question`
+- Edit `if_true_next_step_id` / `if_false_next_step_id`
+
+## Progress Tracking
+
+### Step Progress
+
+**File**: `../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_progress.go`
+
+Decision step execution is tracked with:
+- Decision step execution completion
+- Evaluation result (true/false)
+- Next step routing
+- Run number calculation based on evaluation counts
+
+### Execution Logs
+
+When `saveValidationResponses` is enabled, the following logs are saved:
+- `execution/step-{X}-decision/decision-execution.json` - Step execution result (via `getExecutionFolderPathForLogs()`)
+- `validation/step-{X}/decision-evaluation.json` - Decision evaluation result with reasoning
+
+**File Paths**:
+- Step execution: Uses `getExecutionFolderPathForLogs()` helper
+- Decision evaluation: Uses `getValidationFolderPath()` helper
+
+## Learning History and Code Execution Mode
+
+### Learning History Loading
+
+**File**: [`controller_decision.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_decision.go)
+
+Learning history is loaded for decision evaluation using the step's ID:
+
+```go
+// Read learnings for the decision step (learnings are stored under the step's ID)
+learningHistory, _ := hcpo.LoadStepLearningHistory(ctx, step.GetID(), stepIndex, decisionStepPath, "decision")
+```
+
+**Key Rules**:
+- Uses step's own ID for learning folder identification
+- Loaded via `LoadStepLearningHistory()` helper method
+- Passed separately to `EvaluateDecision()` (not included in execution output)
+
+### Code Execution Mode
+
+Code execution mode is determined with priority: step config > orchestrator default
+
+```go
+var isCodeExecutionMode bool
+stepConfigs := getAgentConfigs(step)
+if stepConfigs != nil && stepConfigs.UseCodeExecutionMode != nil {
+    isCodeExecutionMode = *stepConfigs.UseCodeExecutionMode
+} else {
+    isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
+}
+```
+
+**Inheritance**:
+- Uses step's own agent config if set
+- Falls back to orchestrator default if not set
+- Code execution mode is passed to `EvaluateDecision()` for evaluation agent
+
+### Auto-Unlock Learnings
+
+**File**: [`controller_decision.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_decision.go)
+
+When decision result is `false`, learnings are automatically unlocked for the step:
+
+```go
+if !decisionResponse.Result {
+    // Auto-unlock learnings for step so it can learn from the failure
+    hcpo.unlockStepLearningsInConfig(ctx, step.GetID())
+}
+```
+
+**Rationale**: Allows the step to learn from failures when decision evaluation returns false.
+
+## Event Emission
+
+### Events
+
+**File**: [`controller_decision.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_decision.go)
+
+Emits the following events:
+- `step_started` - When decision step starts
+- `orchestrator_agent_start` - When decision step execution starts
+- `orchestrator_agent_end` - When decision step execution completes
+- `decision_evaluated` - When evaluation completes (includes result and reasoning)
+- `step_finished` - When decision step completes (after routing)
+
+### Event Context
+
+Orchestrator context includes:
+- Phase: `"execution"` for decision step execution
+- Phase: `"decision_evaluation"` for evaluation
+- Step index: Step index
+- Step path: `step-{X}` for the step, `step-{X}-decision` for execution path
+
+## Schema Definitions
+
+Decision step fields are defined in:
+- `../schemas/unified-events-complete.schema.json`
+- `../schemas/polling-event.schema.json`
+- `../agent_go/schemas/unified-events-complete.schema.json`
+- `../agent_go/schemas/polling-event.schema.json`
+
+## Testing Considerations
+
+### Test Cases
+
+1. **Basic Decision Step**
+   - Execute decision step
+   - Evaluate output (true case)
+   - Route to if_true_next_step_id
+
+2. **False Evaluation**
+   - Execute decision step
+   - Evaluate output (false case)
+   - Route to if_false_next_step_id
+
+3. **End Workflow**
+   - Route to "end" terminates workflow
+
+4. **Missing Fields**
+   - Validation catches missing required fields
+
+5. **Legacy Format Migration**
+   - Load old plan.json with nested `decision_step` → auto-migrates and works
+
+## Implementation Status
+
+### Backend (Go) - ✅ Complete
+
+- ✅ Add fields to `PlanStep` struct
+- ✅ Add fields to `TodoStep` struct
+- ✅ Update step conversion logic
+- ✅ Add `executeDecisionStep()` function
+- ✅ Update main execution loop to handle decision steps
+- ✅ Add validation for decision steps
+- ✅ Update planning agent schemas
+- ✅ Update planning agent prompts
+- ✅ Add planning tools
+- ✅ Add event emission
+- ✅ Add progress tracking
+- ✅ Add execution logging
+
+### Frontend (TypeScript/React) - ✅ Complete
+
+- ✅ Update TypeScript types
+- ✅ Add frontend canvas rendering (DecisionNode)
+- ✅ Add frontend step sidebar editing
+- ✅ Add React Flow integration
+- ✅ Add event handling
+
+### Schema - ✅ Complete
+
+- ✅ Update unified events schema
+- ✅ Update polling event schema
+
+## Migration Notes
+
+### Backward Compatibility
+
+- Existing plans with legacy nested `decision_step` format are automatically migrated on load
+- When a plan with the old format is loaded, fields from the nested `decision_step` are copied to the parent level
+- The migration is seamless - no manual intervention required
+- A warning is logged when legacy format is detected and migrated
+
+### Step Config Matching
+
+Decision step is matched by ID in `step_config.json`:
+- Use `MatchStepConfigByID()` to find config for the decision step's ID
+- Apply config to decision step execution
+
+## Key Design Decisions
+
+1. **Flattened Structure**: Decision steps use a flattened structure with embedded `CommonStepFields`, providing a single ID for the step (unlike the previous nested structure).
+
+2. **Two-Phase Execution**: Decision steps have two execution phases:
+   - Execution Phase: The step itself executes using its Description, SuccessCriteria, etc.
+   - Evaluation Phase: `ConditionalAgent.EvaluateDecision()` evaluates the output against `DecisionEvaluationQuestion`
+
+3. **Required Routing**: Both `if_true_next_step_id` and `if_false_next_step_id` are required, ensuring explicit routing for all outcomes.
+
+4. **Full Agent Evaluation**: Uses `ConditionalAgent.EvaluateDecision()` (full agent with workspace tools), not a lightweight LLM call.
+
+5. **Execution Logs**: Stores both step execution and evaluation results for debugging and analysis.
+
+6. **Auto-Unlock on Failure**: Automatically unlocks learnings for the step when decision result is false, enabling learning from failures.
+
+7. **Code Execution Mode Support**: Supports code execution mode for both step execution and evaluation.
+
+8. **Variable Support**: Passes variable names and values to evaluation agent for context-aware decisions.
+
+9. **Backward Compatibility**: Legacy nested `decision_step` format is automatically migrated on load.
+
+## Summary
+
+Decision Step provides a way to execute a step, evaluate its output, and route to different next steps based on the evaluation. It complements conditional steps by adding execution capability to the decision-making process. The feature uses a flattened structure with embedded CommonStepFields, providing a single ID for learning storage and step configuration. The feature is fully implemented across backend, frontend, and schemas, with comprehensive validation, logging, and event emission.
+
+---
+---
+
+# Conditional Agent Implementation
+
+## Overview
+
+The Conditional Agent (`HumanControlledTodoPlannerConditionalAgent`) evaluates true/false decisions for workflow branching. It uses structured JSON output and tool-based verification to make accurate conditional decisions.
+
+## Key Implementation Details
+
+### 1. Agent Creation and Factory Pattern
+
+**Location**: [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) - `createConditionalAgent()`
+
+The conditional agent uses the same factory pattern as the validation agent for consistency:
+
+```go
+agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
+    ctx,
+    config,
+    phase,        // "conditional_evaluation"
+    step,         // Step index
+    iteration,    // Iteration number
+    func(cfg, logger, tracer, eventBridge) agents.OrchestratorAgent {
+        return NewHumanControlledTodoPlannerConditionalAgent(cfg, logger, tracer, eventBridge)
+    },
+    toolsToRegister,   // Workspace tools (filtered by step config)
+    executorsToUse,    // Tool executors
+    false,             // Don't overwrite system prompt
+)
+```
+
+**Key Features**:
+- Uses `CreateAndSetupStandardAgentWithConfig` for proper initialization
+- Automatically connects context-aware event bridge
+- Registers workspace tools and MCP tools based on step configuration
+- Supports step-specific LLM configuration (`conditional_llm` in step config)
+- Supports code execution mode (inherited from step config or orchestrator default)
+
+### 2. Context-Aware Event Bridge Connection
+
+**Location**: [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go) - Default agent creation, [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) - Factory method
+
+The conditional agent's event bridge is automatically connected via the factory pattern:
+
+- **Event Bridge**: Context-aware bridge (`ContextAwareEventBridge`) is set during agent creation
+- **Orchestrator Context**: Set during agent creation in `getConditionalAgentForStep()` → `createConditionalAgent()` (factory pattern)
+- **Context Phase**: Set to "conditional_evaluation" phase for conditional evaluation
+- **Context Restoration**: After evaluation, context is restored to "execution" phase for subsequent steps
+
+**Event Emission**:
+- `OrchestratorAgentStart` event: Automatically emitted via `ExecuteStructuredWithInputProcessorViaTool`
+- `OrchestratorAgentEnd` event: **Suppressed** for conditional agents (to avoid "Conditional LLM Completed" log spam)
+- Structured response JSON: Emitted in `result` field of events (when applicable)
+
+### 3. Condition Context (conditionContext)
+
+**Location**: [`controller_conditional.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_conditional.go) - `executeConditionalStep()`
+
+The `conditionContext` parameter contains **only** the output from the **last previous execution agent** (in-memory, not from files):
+
+```go
+// Build conditionContext - ONLY the last previous execution agent output (from in-memory results)
+contextBuilder := strings.Builder{}
+
+// Add context from the LAST previous execution agent output ONLY
+if len(previousExecutionResults) > 0 {
+    // Get the last (most recent) execution result
+    lastExecutionResult := ""
+    for i := len(previousExecutionResults) - 1; i >= 0; i-- {
+        if previousExecutionResults[i] != "" {
+            lastExecutionResult = previousExecutionResults[i]
+            break
+        }
+    }
+
+    if lastExecutionResult != "" {
+        contextBuilder.WriteString("Previous Step Execution Output:\n")
+        contextBuilder.WriteString(fmt.Sprintf("%s\n", lastExecutionResult))
+    }
+}
+
+conditionContext := contextBuilder.String()
+```
+
+**Key Rules**:
+- Contains **only** the last previous step's execution output
+- Passed **in-memory** (not read from files)
+- Does **not** include static context, learnings, or other metadata
+- Empty if no previous execution results exist
+
+### 4. Learning History (Separate Parameter)
+
+**Location**: [`controller_conditional.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_conditional.go) - `executeConditionalStep()`
+
+Learning history is passed as a **separate parameter** (`learningHistory`) via `LoadStepLearningHistory()`:
+
+```go
+// Read learnings separately (passed as separate learningHistory variable, not in conditionContext)
+learningHistory, _ := hcpo.LoadStepLearningHistory(ctx, step.GetID(), stepIndex, conditionalStepPath, "conditional")
+```
+
+**Key Rules**:
+- Separate from `conditionContext`
+- Loaded via `LoadStepLearningHistory()` helper method
+- Included in system prompt under "📚 LEARNINGS (Historical)"
+- Used for guidance, not as current state
+- Agent must verify conditions using tools, not rely on learnings
+
+### 5. Tool Access and Configuration
+
+**Location**: [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) - `createConditionalAgent()`
+
+The conditional agent receives workspace tools and MCP tools based on step configuration:
+
+```go
+// Filter workspace tools based on step config if specified
+var toolsToRegister []llmtypes.Tool
+var executorsToUse map[string]interface{}
+if stepConfig != nil && (len(stepConfig.EnabledCustomToolCategories) > 0 || len(stepConfig.EnabledCustomTools) > 0) {
+    unifiedEnabledTools := orchestrator.ConvertOldFormatToNewFormat(
+        stepConfig.EnabledCustomToolCategories,
+        stepConfig.EnabledCustomTools,
+    )
+    toolsToRegister, executorsToUse = orchestrator.FilterCustomToolsByCategory(
+        hcpo.WorkspaceTools,
+        hcpo.WorkspaceToolExecutors,
+        unifiedEnabledTools,
+    )
+} else {
+    // Use all workspace tools if no filtering specified
+    toolsToRegister = hcpo.WorkspaceTools
+    executorsToUse = hcpo.WorkspaceToolExecutors
+}
+```
+
+**Key Features**:
+- Supports step-specific tool filtering (`EnabledCustomToolCategories`, `EnabledCustomTools`)
+- Falls back to all workspace tools if no filtering specified
+- MCP servers and tools are selected based on step config (`SelectedServers`, `SelectedTools`)
+- Code execution mode support (inherited from step config or orchestrator)
+
+### 6. Structured Response JSON in Events
+
+**Location**: [`base_orchestrator_agent.go`](../agent_go/pkg/orchestrator/agents/base_orchestrator_agent.go) - `emitAgentEndEventWithStructuredResponse()`
+
+For structured responses (conditional and validation agents), the JSON is emitted in the `result` field:
+
+```go
+// Structured output: marshal to JSON for result field and map for structuredResponse field
+resultBytes, marshalErr := json.Marshal(result.StructuredResult)
+if marshalErr == nil {
+    // Set Result field to the JSON string of the structured response
+    resultStr = string(resultBytes)
+    
+    // Also unmarshal to map for StructuredResponse field
+    var responseMap map[string]interface{}
+    if unmarshalErr := json.Unmarshal(resultBytes, &responseMap); unmarshalErr == nil {
+        structuredResponse = responseMap
+    }
+}
+```
+
+**Event Structure**:
+- `result`: JSON string of structured response (e.g., `{"result": true, "reason": "..."}`)
+- `structured_response`: Map representation of the same JSON (for programmatic access)
+
+### 7. Prompt Engineering
+
+**Location**: [`conditional_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/conditional_agent.go) - `Decide()` method
+
+The conditional agent's prompts emphasize **tool-based verification**:
+
+**System Prompt Key Points**:
+- **CRITICAL**: Context is historical reference data - never rely on context alone
+- **REQUIRED**: Use MCP tools to verify actual current state
+- **Verification Strategy**: Identify needed information → Use tools → Cross-reference → Document results
+- **Decision Criteria**: Only decide when verified evidence from tools is available
+
+**User Message Key Points**:
+- **MANDATORY**: Must use MCP tools to verify current state before decision
+- **Do not rely on reference context alone** - it is historical data
+- **Use tools to**: Read files, query systems, cross-reference, confirm criteria
+
+**Output Format**:
+```json
+{
+  "result": true/false,
+  "reason": "detailed explanation of verification process and evidence"
+}
+```
+
+**Reason Requirements**:
+- Tools used for verification
+- What each tool revealed
+- How evidence supports decision
+- Any cross-verification performed
+
+### 8. Event Suppression
+
+**Location**: [`base_orchestrator_agent.go`](../agent_go/pkg/orchestrator/agents/base_orchestrator_agent.go) - `emitAgentEndEventWithStructuredResponse()`
+
+The `OrchestratorAgentEnd` event is suppressed for conditional agents to avoid log spam:
+
+```go
+// Skip emitting OrchestratorAgentEnd event for conditional agents
+if boa.agentType == ConditionalAgentType {
+    boa.logger.Debug(fmt.Sprintf("ℹ️ Skipping OrchestratorAgentEnd event for conditional agent type: %s", boa.agentType))
+    return
+}
+```
+
+**Rationale**: Conditional evaluations are frequent and the "Conditional LLM Completed" log message is not needed. The structured response JSON in the `result` field provides the necessary information.
+
+### 9. Agent Type and Identification
+
+**Location**: [`base_agent.go`](../agent_go/pkg/orchestrator/agents/base_agent.go) - Agent type constants
+
+```go
+const ConditionalAgentType AgentType = "conditional"
+```
+
+**Usage**:
+- Agent type: `"conditional"`
+- Frontend display: "Conditional LLM" (in `OrchestratorAgentStartEvent.tsx` and `OrchestratorAgentEndEvent.tsx`)
+- Icon: 🔀 (branch icon)
+- Color: indigo
+
+### 10. Code Execution Mode Support
+
+**Location**: [`conditional_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/conditional_agent.go) - `Decide()` method
+
+The conditional agent supports code execution mode:
+
+- **Code Execution Mode**: Overwrites base system prompt with code execution instructions
+- **Non-Code Execution Mode**: Appends to base system prompt (keeps MCP tools available)
+- **Determination**: Inherited from step config (`UseCodeExecutionMode`) or orchestrator default
+
+**Code Execution Instructions**: Includes guidance on using code execution tools to verify conditions.
+
+## Usage Flow
+
+1. **Step Execution**: `executeConditionalStep()` is called for conditional steps (in `controller_conditional.go`)
+2. **Context Building**: `conditionContext` is built from last previous execution output (in-memory)
+3. **Learning Loading**: Learning history is loaded via `LoadStepLearningHistory()` (separate parameter)
+4. **Code Execution Mode**: Determined from step config or orchestrator default
+5. **Agent Creation**: Conditional agent is created via `getConditionalAgentForStep()` (step-specific or default)
+6. **Context Setup**: Orchestrator context is set to "conditional_evaluation" phase (done in factory)
+7. **Decision**: `conditionalAgent.Decide()` is called with context, question, and learnings
+8. **Tool Verification**: Agent uses MCP tools (or code execution) to verify current state
+9. **Structured Output**: Agent returns `ConditionalResponse` with `result` (bool) and `reason` (string)
+10. **Branch Selection**: Based on `result`, either `if_true_steps` or `if_false_steps` are executed
+11. **Nested Support**: Branch steps can include nested conditional steps (max depth: 2)
+
+## Key Design Principles
+
+1. **Tool-Based Verification**: Always verify conditions using tools, not just context
+2. **In-Memory Context**: Pass execution results in-memory, not via file I/O
+3. **Last Step Only**: `conditionContext` contains only the last previous step's output
+4. **Separate Learnings**: Learning history is separate from condition context
+5. **Factory Pattern**: Consistent agent creation pattern (same as validation agent)
+6. **Event Suppression**: Suppress verbose end events for conditional agents
+7. **Structured JSON**: Emit structured response JSON in `result` field for programmatic access
+8. **Step-Specific Config**: Support step-specific LLM, tools, and code execution mode
+
+## Related Files
+
+- [`conditional_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/conditional_agent.go): Conditional agent implementation (`Decide()` method)
+- [`controller_conditional.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_conditional.go): Conditional step execution logic (`executeConditionalStep()`)
+- [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go): Factory method for conditional agent creation (`createConditionalAgent()`)
+- [`controller.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller.go): Step-specific agent retrieval (`getConditionalAgentForStep()`)
+- [`controller_learning_helpers.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_learning_helpers.go): Learning history loading (`LoadStepLearningHistory()`)
+- [`base_orchestrator_agent.go`](../agent_go/pkg/orchestrator/agents/base_orchestrator_agent.go): Structured response event emission
+- [`base_agent.go`](../agent_go/pkg/orchestrator/agents/base_agent.go): Agent type constants
+
+---
+---
+
+# Prerequisite Failure Detection - Implementation Guide
+
+## 📋 Overview
+
+**Status**: ✅ **COMPLETED**
+
+Prerequisite failure detection allows the execution agent to proactively detect missing prerequisites during step execution and immediately navigate back to the prerequisite step. Users enable prerequisite detection for specific steps and configure **prerequisite rules** - each rule specifies one step dependency and one description of when to detect prerequisite failures.
+
+**Key Design**: The execution agent has access to a special tool `detect_prerequisite_failure` that, when called, immediately stops execution and triggers navigation to the prerequisite step. This is a proactive, tool-based approach rather than post-validation detection.
+
+**Key Benefits:**
+- Immediate detection during execution (no need to wait for validation)
+- LLM-driven decision making (execution agent decides when prerequisites are missing)
+- Single tool handles all prerequisite scenarios via `depends_on_step_id` parameter
+- Context cancellation ensures execution stops immediately when tool is called
+
+---
+
+## 📁 Key Files & Locations
+
+| Component | File | Key Functions/Types |
+|-----------|------|---------------------|
+| **Tool Creation** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `createPrerequisiteDetectionTool()`, `formatPrerequisiteRulesForExecutionAgent()`, `PrerequisiteFailureError` |
+| **Tool Registration** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go) | `addPrerequisiteDetectionTool()`, `createExecutionOnlyAgent()` |
+| **Execution Loop** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `executeSingleStep()` - channel-based error handling |
+| **System Prompt** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go) | `executionOnlySystemPromptProcessor()` - includes prerequisite rules info |
+| **Data Model** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | `PrerequisiteInfo`, `PrerequisiteRuleInfo`, `gatherPrerequisiteInfo()` |
+| **Frontend Config** | [`frontend/src/components/workflow/canvas/PrerequisiteConfigPanel.tsx`](../frontend/src/components/workflow/canvas/PrerequisiteConfigPanel.tsx) | UI for configuring prerequisite rules |
+| **Frontend Visualization** | [`frontend/src/components/workflow/hooks/usePlanToFlow.ts`](../frontend/src/components/workflow/hooks/usePlanToFlow.ts) | `createPrerequisiteEdges()` - creates prerequisite edges in React Flow |
+
+---
+
+## 🔄 How It Works
+
+### 1. Configuration
+
+User enables prerequisite detection and configures rules in the UI:
+
+```json
+{
+  "steps": [{
+    "id": "step-2",
+    "agent_configs": {
+      "enable_prerequisite_detection": true,
+      "prerequisite_rules": [
+        {
+          "depends_on_step": "step-0",
+          "description": "If login session is missing or expired, go back to step 0"
+        }
+      ]
+    }
+  }]
+}
+```
+
+### 2. Tool Registration
+
+During step execution, if prerequisite detection is enabled:
+
+1. **Gather Prerequisite Info**: `gatherPrerequisiteInfo()` collects prerequisite rules and dependency step information
+   - Checks if `enable_prerequisite_detection` is enabled in step config
+   - Validates prerequisite rules (skips rules with empty `depends_on_step`)
+   - Collects dependency step info (step ID, index, title, completion status, context output)
+   - Returns `PrerequisiteInfo` with validated rules
+2. **Create Cancellable Context**: Execution context is wrapped with `context.WithCancel()` to allow immediate cancellation
+3. **Create Error Channel**: Buffered channel (`chan *PrerequisiteFailureError`, buffer size 1) is created to receive errors from tool
+4. **Create Agent**: `createExecutionOnlyAgent()` is called with prerequisite info and error channel
+5. **Register Tool**: `addPrerequisiteDetectionTool()` registers `detect_prerequisite_failure` tool **after** agent creation:
+   - Tool executor validates `depends_on_step_id` against configured rules
+   - Tool executor validates step index, navigation distance, and prerequisites
+   - On success, tool sends error to channel and cancels execution context
+6. **Update System Prompt**: Prerequisite rules are formatted and added to execution agent's system prompt via `formatPrerequisiteRulesForExecutionAgent()`
+
+### 3. Tool Execution Flow
+
+```mermaid
+sequenceDiagram
+    participant LLM as Execution Agent (LLM)
+    participant Tool as detect_prerequisite_failure
+    participant Channel as Error Channel
+    participant Context as Execution Context
+    participant Orchestrator as Execution Loop
+    
+    LLM->>Tool: Call tool with depends_on_step_id + reason
+    Tool->>Tool: Validate step ID, index, distance
+    Tool->>Channel: Send PrerequisiteFailureError
+    Tool->>Context: Cancel context
+    Context-->>LLM: Execution stopped
+    Orchestrator->>Channel: Check for prerequisite error
+    Channel-->>Orchestrator: PrerequisiteFailureError
+    Orchestrator->>Orchestrator: Trigger navigation
+```
+
+### 4. Immediate Cancellation
+
+When the tool is called:
+
+1. **Validation**: Tool validates:
+   - `depends_on_step_id` exists in prerequisite rules
+   - Step index exists in plan
+   - Target step is before current step
+   - Navigation distance ≤ 10 steps
+
+2. **Error Creation**: Creates `PrerequisiteFailureError` with:
+   - `DependsOnStepID`: The step ID to navigate to
+   - `StepIndex`: 0-based step index
+   - `Reason`: User-provided reason
+
+3. **Channel Send**: Sends error to channel (non-blocking)
+
+4. **Context Cancellation**: Calls `cancelFunc()` to immediately stop agent execution
+
+5. **Return**: Returns empty string (execution already stopped)
+
+### 5. Error Handling in Execution Loop
+
+After `Execute()` returns (due to context cancellation):
+
+```go
+// Check for prerequisite failure (from tool call via channel)
+var prereqErr *PrerequisiteFailureError
+select {
+case prereqErr = <-prereqErrChan:
+    // Prerequisite failure detected - tool called and context was cancelled
+default:
+    // No prerequisite failure - check for other errors
+}
+```
+
+If prerequisite error found:
+1. Find target step by ID in `allSteps` array (more reliable than using computed index)
+2. Validate target step:
+   - Step index exists and is valid
+   - Target step is before current step
+   - Navigation distance ≤ 10 steps
+   - Step index is within bounds
+3. Clean up progress from target step onward via `cleanupProgressFromStep()`
+4. Emit `PrerequisiteNavigationEvent` with from/to step indices and IDs
+5. Return navigation error to restart from target step
+
+**Navigation Logic**:
+- Uses step ID lookup first (more reliable than index)
+- Validates multiple constraints before navigation
+- Logs warnings for invalid navigation attempts (doesn't crash)
+
+---
+
+## 🏗️ Architecture
+
+### Tool Registration
+
+**File**: [`controller_agent_factory.go:362-409`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_agent_factory.go#L362)
+
+Tool registration is done via `addPrerequisiteDetectionTool()` method, which is called after agent creation:
+
+```go
+func (hcpo *HumanControlledTodoPlannerOrchestrator) addPrerequisiteDetectionTool(
+    prerequisiteInfo *PrerequisiteInfo,
+    allSteps []PlanStepInterface,  // Note: Uses PlanStepInterface
+    currentStepIndex int,
+    cancelFunc context.CancelFunc, 
+    prereqErrChan chan<- *PrerequisiteFailureError,
+    agentName string,
+    mcpAgent *mcpagent.Agent,
+) error {
+    if prerequisiteInfo == nil || len(prerequisiteInfo.PrerequisiteRules) == 0 {
+        return nil // No prerequisite detection needed
+    }
+
+    toolExecutor := hcpo.createPrerequisiteDetectionTool(
+        prerequisiteInfo, allSteps, currentStepIndex, 
+        cancelFunc, prereqErrChan)
+    
+    toolParams := map[string]interface{}{
+        "type": "object",
+        "properties": map[string]interface{}{
+            "depends_on_step_id": map[string]interface{}{
+                "type":        "string",
+                "description": "Step ID from one of the prerequisite rules to navigate back to (e.g., \"step-0\")",
+            },
+            "reason": map[string]interface{}{
+                "type":        "string",
+                "description": "Brief explanation of why the prerequisite failure was detected, matching the condition described in the prerequisite rule",
+            },
+        },
+        "required": []string{"depends_on_step_id", "reason"},
+    }
+    
+    toolDescription := "Detect a prerequisite failure and navigate back to a prerequisite step. Call this tool when you detect that a prerequisite condition (as described in the prerequisite rules) is met during execution. Execution will stop and automatically navigate back to the specified prerequisite step."
+    
+    // Use "structured_output" category so it's always available even in code execution mode
+    return mcpAgent.RegisterCustomTool(
+        "detect_prerequisite_failure",
+        toolDescription,
+        toolParams,
+        toolExecutor,
+        "structured_output",
+    )
+}
+```
+
+**Key Points**:
+- Called **after** agent creation (must be called AFTER the agent is created)
+- Uses `[]PlanStepInterface` type (not `[]TodoStep`)
+- Tool category is `"structured_output"` to ensure availability in code execution mode
+
+### Tool Executor
+
+**File**: [`controller_execution.go:459-538`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L459)
+
+The tool executor:
+1. Extracts and validates parameters (`depends_on_step_id` and `reason` must be non-empty strings)
+2. Validates `depends_on_step_id` is in configured prerequisite rules (validates against `validPrerequisiteStepIDs` map)
+3. Validates step index exists in plan (looks up step ID in `stepIDToIndex` map)
+4. Validates dependency step is before current step (`stepIndex < currentStepIndex`)
+5. Validates navigation distance ≤ 10 steps (`navigationDistance = currentStepIndex - stepIndex`)
+6. Creates `PrerequisiteFailureError` with step ID, index, and reason
+7. Logs prerequisite failure detection
+8. Sends error to channel (non-blocking with `select` and `default`)
+9. Cancels execution context via `cancelFunc()`
+10. Returns empty string (execution already stopped by context cancellation)
+
+**Validation Details**:
+- Returns error if `depends_on_step_id` is empty or not in prerequisite rules
+- Returns error if step ID not found in plan steps
+- Returns error if target step is not before current step
+- Returns error if navigation distance exceeds 10 steps
+- Logs warning if channel is full or closed (but still cancels execution)
+
+### System Prompt Integration
+
+**File**: [`execution_only_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/execution_only_agent.go)
+
+Prerequisite rules are formatted via `formatPrerequisiteRulesForExecutionAgent()` and included in the system prompt template:
+
+```go
+{{if .PrerequisiteRulesInfo}}{{.PrerequisiteRulesInfo}}{{end}}
+```
+
+The formatted text includes:
+- Available prerequisite rules with step IDs and descriptions
+- Instructions on when to call `detect_prerequisite_failure`
+- How to use the tool (parameters, behavior)
+
+---
+
+## 🧩 Code Examples
+
+### Tool Executor Implementation
+
+```go
+func (hcpo *HumanControlledTodoPlannerOrchestrator) createPrerequisiteDetectionTool(
+    prerequisiteInfo *PrerequisiteInfo, 
+    allSteps []PlanStepInterface,  // Note: Uses PlanStepInterface
+    currentStepIndex int, 
+    cancelFunc context.CancelFunc, 
+    prereqErrChan chan<- *PrerequisiteFailureError,
+) func(ctx context.Context, args map[string]interface{}) (string, error) {
+    // Create map of step ID to step index for validation
+    stepIDToIndex := make(map[string]int)
+    for i, s := range allSteps {
+        if s.GetID() != "" {
+            stepIDToIndex[s.GetID()] = i
+        }
+    }
+
+    // Create map of valid prerequisite step IDs (from rules)
+    validPrerequisiteStepIDs := make(map[string]PrerequisiteRuleInfo)
+    for _, rule := range prerequisiteInfo.PrerequisiteRules {
+        validPrerequisiteStepIDs[rule.DependsOnStep] = rule
+    }
+    
+    return func(ctx context.Context, args map[string]interface{}) (string, error) {
+        // Extract and validate parameters
+        dependsOnStepID, ok := args["depends_on_step_id"].(string)
+        if !ok || dependsOnStepID == "" {
+            return "", fmt.Errorf("depends_on_step_id parameter is required and must be a non-empty string")
+        }
+
+        reason, ok := args["reason"].(string)
+        if !ok || reason == "" {
+            return "", fmt.Errorf("reason parameter is required and must be a non-empty string")
+        }
+        
+        // Validate step ID is in prerequisite rules
+        _, isValid := validPrerequisiteStepIDs[dependsOnStepID]
+        if !isValid {
+            // Return error with valid IDs
+            validIDs := make([]string, 0, len(validPrerequisiteStepIDs))
+            for id := range validPrerequisiteStepIDs {
+                validIDs = append(validIDs, id)
+            }
+            return "", fmt.Errorf("invalid depends_on_step_id: %s. Valid prerequisite step IDs are: %v", dependsOnStepID, validIDs)
+        }
+        
+        // Get step index and validate
+        stepIndex, exists := stepIDToIndex[dependsOnStepID]
+        if !exists {
+            return "", fmt.Errorf("step ID %s not found in plan steps", dependsOnStepID)
+        }
+        
+        // Validate: dependency step must be before current step
+        if stepIndex >= currentStepIndex {
+            return "", fmt.Errorf("prerequisite step %s (index %d) must be before current step %d", dependsOnStepID, stepIndex, currentStepIndex)
+        }
+        
+        // Check max navigation distance (safety limit: 10 steps)
+        navigationDistance := currentStepIndex - stepIndex
+        if navigationDistance > 10 {
+            return "", fmt.Errorf("navigation distance %d exceeds maximum (10 steps)", navigationDistance)
+        }
+        
+        // Create error
+        prereqErr := &PrerequisiteFailureError{
+            DependsOnStepID: dependsOnStepID,
+            StepIndex:       stepIndex,
+            Reason:          reason,
+        }
+        
+        hcpo.GetLogger().Info(fmt.Sprintf("🔄 Prerequisite failure detected via tool call: %s (navigate to step %s, index %d) - stopping execution immediately", reason, dependsOnStepID, stepIndex))
+        
+        // Send to channel (non-blocking)
+        select {
+        case prereqErrChan <- prereqErr:
+        default:
+            // Channel full or closed - log warning but still cancel
+            hcpo.GetLogger().Warn("⚠️ Prerequisite error channel full or closed, but continuing with cancellation")
+        }
+        
+        // Cancel execution immediately
+        if cancelFunc != nil {
+            cancelFunc()
+        }
+        
+        return "", nil
+    }
+}
+```
+
+### Execution Loop Integration
+
+**File**: [`controller_execution.go:1279-1376`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L1279)
+
+```go
+// Create cancellable context
+executionCtx, cancelExecution := context.WithCancel(ctx)
+defer cancelExecution()
+
+// Create error channel
+prereqErrChan := make(chan *PrerequisiteFailureError, 1)
+
+// Create agent with tool registration
+// Note: stepIDOverride parameter added for sub-agent support
+executionAgent, err := hcpo.createExecutionOnlyAgent(
+    executionCtx, "execution_only", stepPath, executionAgentName, 
+    step.AgentConfigs, isRetryAfterValidationFailure, retryAttempt, 
+    prerequisiteInfoForExecution, allSteps, stepIndex, 
+    cancelExecution, prereqErrChan, step.GetID(), // stepIDOverride parameter
+)
+
+// Execute agent
+executionResult, executionConversationHistory, err := executionAgent.Execute(
+    executionCtx, templateVars, []llmtypes.MessageContent{},
+)
+
+// Check for prerequisite failure (from tool call via channel)
+var prereqErr *PrerequisiteFailureError
+select {
+case prereqErr = <-prereqErrChan:
+    // Prerequisite failure detected - tool called and context was cancelled
+    hcpo.GetLogger().Info(fmt.Sprintf("🔄 Prerequisite failure detected via tool call for step %d: %s (target step: %d)", stepIndex+1, prereqErr.Reason, prereqErr.StepIndex+1))
+default:
+    // No prerequisite failure - check for other errors
+    if err != nil {
+        // Check if this is a prerequisite failure error (legacy check - should not happen with new implementation)
+        var legacyPrereqErr *PrerequisiteFailureError
+        if errors.As(err, &legacyPrereqErr) {
+            prereqErr = legacyPrereqErr
+        }
+    }
+}
+
+if prereqErr != nil {
+    // Find target step by ID (more reliable than using computed index)
+    targetStepID := prereqErr.DependsOnStepID
+    targetStepIndex := -1
+    if targetStepID != "" && allSteps != nil {
+        for idx, s := range allSteps {
+            if s.GetID() == targetStepID {
+                targetStepIndex = idx
+                break
+            }
+        }
+    }
+    
+    // Validate target step (index, distance, branch constraints)
+    // ... validation logic ...
+    
+    // Clean up progress from target step onward
+    hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress)
+    
+    // Emit PrerequisiteNavigationEvent
+    // ... event emission ...
+    
+    // Return navigation error to restart from target step
+    return "", updatedContextFiles, fmt.Errorf("prerequisite failure: %w", prereqErr)
+}
+```
+
+**Key Changes**:
+- `createExecutionOnlyAgent()` now includes `stepIDOverride` parameter
+- Error handling includes legacy check for prerequisite errors in `err` (backward compatibility)
+- Navigation logic finds step by ID first, then validates index
+- Target step validation includes multiple checks (index exists, is before current step, distance ≤ 10)
+
+---
+
+## ⚙️ Configuration
+
+### Step Configuration
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `enable_prerequisite_detection` | `boolean` | `false` | Enable prerequisite detection for this step |
+| `prerequisite_rules` | `PrerequisiteRule[]` | `[]` | Array of prerequisite rules |
+
+### Prerequisite Rule Structure
+
+| Field | Type | Required | Purpose |
+|-------|------|----------|---------|
+| `depends_on_step` | `string` | Yes | Step ID this rule depends on (e.g., `"step-0"`) |
+| `description` | `string` | Yes | Natural language description of when to detect prerequisite failure |
+
+### Tool Parameters
+
+| Parameter | Type | Required | Purpose |
+|-----------|------|----------|---------|
+| `depends_on_step_id` | `string` | Yes | Step ID from prerequisite rules to navigate to |
+| `reason` | `string` | Yes | Brief explanation of why prerequisite failure was detected |
+
+---
+
+## 🛠️ Common Issues & Solutions
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Tool not available in execution agent | Prerequisite detection not enabled or no rules configured | Check `enable_prerequisite_detection` and `prerequisite_rules` in step config |
+| Execution doesn't stop immediately | Context cancellation not working | Verify `cancelFunc` is passed correctly to tool executor |
+| Prerequisite error not detected | Channel not checked after Execute() | Ensure `select` statement checks channel after `Execute()` returns |
+| Invalid step ID error | Step ID not in prerequisite rules | Verify `depends_on_step_id` matches a configured rule's `depends_on_step` |
+| Navigation distance exceeded | Target step too far back | Maximum 10 steps - check step indices |
+
+---
+
+## 🔍 For LLMs: Quick Reference
+
+### Constraints
+
+✅ **Allowed:**
+- Calling `detect_prerequisite_failure` when prerequisite condition is met
+- Using any configured `depends_on_step_id` from prerequisite rules
+- Providing clear reason for prerequisite failure
+
+❌ **Forbidden:**
+- Calling tool with step IDs not in prerequisite rules
+- Calling tool for execution failures (not prerequisite failures)
+- Navigating more than 10 steps back
+
+### Tool Usage Pattern
+
+```go
+// When prerequisite condition is detected:
+detect_prerequisite_failure({
+    "depends_on_step_id": "step-0",  // Must match a configured rule
+    "reason": "Login session expired" // Brief explanation
+})
+```
+
+### System Prompt Format
+
+The execution agent receives prerequisite rules in this format:
+
+```
+## 🔄 Prerequisite Detection
+
+**Prerequisite detection is enabled for this step.** If you detect that a prerequisite condition described below is met during execution, you can call the `detect_prerequisite_failure` tool to navigate back to the prerequisite step.
+
+### Available Prerequisite Rules:
+
+**Rule 1:**
+- **Step ID**: `step-0` (Step 1: Login to Website)
+- **Condition**: If login session is missing or expired, go back to step 0
+
+### How to Use:
+1. Call `detect_prerequisite_failure` with:
+   - `depends_on_step_id`: The step ID from the matching rule
+   - `reason`: A brief explanation
+2. Execution will stop and automatically navigate back
+```
+
+---
+
+## 📊 Data Model
+
+### PrerequisiteFailureError
+
+```go
+type PrerequisiteFailureError struct {
+    DependsOnStepID string // Step ID to navigate back to
+    StepIndex       int    // 0-based step index (computed from step ID)
+    Reason          string // Reason for prerequisite failure
+}
+```
+
+### PrerequisiteInfo
+
+```go
+type PrerequisiteInfo struct {
+    CurrentStepID               string                 `json:"current_step_id"`
+    CurrentStepIndex            int                    `json:"current_step_index"`
+    EnablePrerequisiteDetection bool                   `json:"enable_prerequisite_detection"`
+    PrerequisiteRules           []PrerequisiteRuleInfo `json:"prerequisite_rules"`
+}
+
+type PrerequisiteRuleInfo struct {
+    DependsOnStep      string             `json:"depends_on_step"`
+    Description        string             `json:"description"`
+    DependencyStepInfo DependencyStepInfo `json:"dependency_step_info"`
+}
+```
+
+---
+
+## 🎯 Safety Limits
+
+| Limit | Value | Purpose |
+|-------|-------|---------|
+| **Max Navigation Distance** | 10 steps | Prevents excessive backtracking |
+| **Channel Buffer Size** | 1 | Single error per execution |
+| **Validation** | Multiple checks | Step ID, index, distance, branch constraints |
+
+---
+
+## ✅ Implementation Status
+
+1. ✅ **Data Model**: `PrerequisiteRule`, `PrerequisiteInfo`, `PrerequisiteFailureError`
+2. ✅ **Tool Creation**: `createPrerequisiteDetectionTool()` with context cancellation
+3. ✅ **Tool Registration**: Registered in `createExecutionOnlyAgent()` with `structured_output` category
+4. ✅ **System Prompt**: `formatPrerequisiteRulesForExecutionAgent()` adds rules to execution agent prompt
+5. ✅ **Execution Loop**: Channel-based error detection in `executeSingleStep()`
+6. ✅ **Navigation Logic**: Progress cleanup and event emission
+7. ✅ **Frontend UI**: `PrerequisiteConfigPanel` for rule configuration
+8. ✅ **Frontend Visualization**: Prerequisite edges in React Flow
+
+---
+
+## 📖 Related Documentation
+
+- [Workflow Execution Guide](../workflow_execution.md) - Overall workflow execution flow
+- [Agent Factory Guide](../agent_factory.md) - Agent creation and tool registration
+- [Event System](../events.md) - Event types and handling
+
+---
+---
+
+# Variable Groups Implementation
+
+## Overview
+
+Variable groups enable batch execution of workflows with multiple sets of variable values. Each group contains the same variable names but different values. Users can enable/disable groups per run, and the workflow executes sequentially for each enabled group. The system supports both single-group (backward compatible) and multi-group modes.
+
+**Key Features:**
+- Multiple variable groups with shared variable definitions
+- Enable/disable groups for selective execution
+- Sequential batch execution for enabled groups
+- Nested folder structure for multi-group runs
+- Backward compatible with single-group format
+- Optional display names for groups
+
+---
+
+## Key Files & Locations
+
+| Component | File Path | Key Functions/Exports |
+|-----------|-----------|---------------------|
+| **Variable Structures** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/variable_extraction_agent.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/variable_extraction_agent.go) | `VariableGroup`, `VariablesManifest`, `HasGroups()`, `GetEnabledGroups()` |
+| **Batch Execution** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_batch_execution.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_batch_execution.go) | `runBatchExecution()`, `getEnabledGroupsForExecution()` |
+| **API Handlers** | [`agent_go/cmd/server/workflow.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/workflow.go) | `handleGetVariableGroups()`, `handleUpdateVariableGroups()` |
+| **Variables Node** | [`frontend/src/components/workflow/nodes/VariablesNode.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/nodes/VariablesNode.tsx) | `VariablesNode` React Flow node component |
+| **Variables Sidebar** | [`frontend/src/components/workflow/canvas/VariablesSidebar.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/canvas/VariablesSidebar.tsx) | `VariablesSidebar` group management UI |
+| **API Types** | [`frontend/src/services/api-types.ts`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/services/api-types.ts) | `VariableGroup`, `VariablesManifest`, `BatchExecutionProgress` |
+| **API Service** | [`frontend/src/services/api.ts`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/services/api.ts) | `agentApi.getVariableGroups()`, `agentApi.updateVariableGroups()` |
+
+---
+
+## Data Structures
+
+### Backend (Go)
+
+```go
+// Variable represents a single variable definition
+type Variable struct {
+    Name        string `json:"name"`        // e.g., "AWS_ACCOUNT_ID"
+    Value       string `json:"value"`       // Original value (used in single-group mode)
+    Description string `json:"description"` // e.g., "AWS account number for deployment"
+}
+
+// VariableGroup represents a single set of variable values for batch execution
+type VariableGroup struct {
+    GroupID     string            `json:"group_id"`     // e.g., "group-1", "group-2"
+    DisplayName string            `json:"display_name"` // Optional user-friendly name (e.g., "Production", "Staging")
+    Values      map[string]string `json:"values"`       // Variable name -> value mapping
+    Enabled     bool              `json:"enabled"`     // Whether to include in execution
+}
+
+// VariablesManifest contains all extracted variables
+// Supports both single-group (backward compatible) and multi-group modes
+type VariablesManifest struct {
+    Objective      string          `json:"objective"`        // Templated objective with {{VARS}}
+    Variables      []Variable      `json:"variables"`        // List of variable definitions
+    Groups         []VariableGroup `json:"groups,omitempty"` // Array of variable groups (multi-group mode)
+    ExtractionDate string          `json:"extraction_date"`
+}
+```
+
+**Key Methods:**
+- `HasGroups() bool` - Returns true if manifest has multiple groups
+- `GetEnabledGroups() []VariableGroup` - Returns only enabled groups (creates virtual group for single-group mode)
+- `GetVariableValues(groupID string) map[string]string` - Gets values for specific group
+- `AddGroup() *VariableGroup` - Adds new group with empty values
+- `DeleteGroup(groupID string) bool` - Removes group by ID
+- `ToggleGroup(groupID string, enabled bool) bool` - Enables/disables group
+- `UpdateGroupValues(groupID string, values map[string]string) bool` - Updates group values
+
+### Frontend (TypeScript)
+
+```typescript
+// Variable definition (shared across groups)
+interface Variable {
+  name: string;
+  value?: string;  // Used in single-group mode
+  description: string;
+}
+
+// Single variable group
+interface VariableGroup {
+  group_id: string;  // e.g., "group-1", "group-2" (used as fallback for folder names)
+  display_name?: string;  // Optional user-friendly name (e.g., "Production", "Staging")
+  values: Record<string, string>;  // Variable name -> value mapping
+  enabled: boolean;
+}
+
+// Full manifest
+interface VariablesManifest {
+  objective: string;  // Templated objective with {{VARS}}
+  variables: Variable[];  // Variable definitions
+  groups?: VariableGroup[];  // Array of variable groups (multi-group mode)
+  extraction_date: string;
+}
+
+// Batch execution progress
+interface BatchExecutionProgress {
+  total_groups: number;
+  enabled_groups: string[];  // Group IDs to execute
+  completed_groups: string[];  // Group IDs that finished
+  current_group: string;  // Currently executing group ID
+  group_progress: Record<string, StepProgress>;  // Per-group step progress
+  iteration_number: number;
+}
+```
+
+---
+
+## API Endpoints
+
+### Get Variable Groups
+
+```
+GET  /api/workflow/variable-groups?workspace_path={path}
+     Response: {
+       success: boolean
+       manifest?: VariablesManifest
+       error?: string
+     }
+```
+
+**Purpose:** Load variable groups from `variables/variables.json`.
+
+### Update Variable Groups
+
+```
+PUT  /api/workflow/variable-groups?workspace_path={path}
+     Body: VariablesManifest
+     Response: {
+       success: boolean
+       message: string
+     }
+```
+
+**Purpose:** Save updated variable groups to `variables/variables.json`. Used for all group operations (add, update, delete, toggle).
+
+**Note:** The frontend manages group operations locally and sends the complete manifest to update. There are no separate endpoints for individual group operations.
+
+---
+
+## Execution Flow
+
+### Single Group (Backward Compatible)
+
+```
+1. Load variables.json
+2. Check if "groups" field exists and has length > 0
+3. If NO groups: use old format (single set of values from Variables[].Value)
+4. Create virtual group "group-1" with values from Variables
+5. Run workflow once
+6. Output: runs/iteration-1/ (top-level folder, not nested)
+```
+
+### Multiple Groups
+
+```
+1. Load variables.json
+2. Check if "groups" field exists and has length > 0
+3. If YES: filter to enabled groups only (or use ExecutionOptions.EnabledGroupIDs)
+4. Determine base iteration folder based on run_mode:
+   a. If user selected folder: use it (extract iteration-X from nested paths)
+   b. If create_new_runs_always: create new iteration folder
+   c. If use_same_run: use latest existing iteration folder
+5. For each enabled group:
+   a. Set hcpo.variableValues = group.Values
+   b. Set folder name = iteration-X/group-Y (nested structure)
+   c. Run full workflow
+   d. Mark group as completed
+   e. Emit group_execution_completed event
+6. Emit batch_execution_completed event
+7. Output: runs/iteration-1/group-1/, runs/iteration-1/group-3/
+```
+
+### Group Selection Priority
+
+The system uses the following priority for determining which groups to execute:
+
+1. **ExecutionOptions.EnabledGroupIDs** (if specified) - Uses explicitly requested group IDs
+2. **Manifest Enabled Groups** - Falls back to groups with `enabled: true` in manifest
+
+**Code:**
+```go
+// From controller_batch_execution.go
+func (hcpo *HumanControlledTodoPlannerOrchestrator) getEnabledGroupsForExecution() []VariableGroup {
+    // Check if ExecutionOptions specifies specific group IDs
+    if hcpo.executionOptions != nil && len(hcpo.executionOptions.EnabledGroupIDs) > 0 {
+        // Use specified group IDs from ExecutionOptions
+        return groups // Filtered by requested IDs
+    }
+    // Fall back to manifest's enabled groups
+    return hcpo.variablesManifest.GetEnabledGroups()
+}
+```
+
+### Folder Naming Logic
+
+```go
+// Single group: iteration-X (top-level folder)
+// Multiple groups: iteration-X/group-Y (nested folder structure)
+
+// Implementation determines folder name based on total enabled groups
+if totalGroups <= 1 {
+    return fmt.Sprintf("iteration-%d", iterationNum)
+}
+return fmt.Sprintf("iteration-%d/%s", iterationNum, groupID)
+```
+
+--- 
+
+### Run Mode Behavior
+
+Batch execution respects the `run_mode` setting from `ExecutionOptions`:
+
+1. **User Selected Folder** (`selectedRunFolder` is set):
+   - Uses the selected folder directly
+   - If nested (e.g., `iteration-1/group-1`), extracts base iteration folder (`iteration-1`)
+   - Creates group subfolders within the selected iteration
+
+2. **Create New Run Mode** (`create_new_runs_always`):
+   - Always creates a new iteration folder
+   - Uses `getNextIterationNumber()` to find the next available iteration
+   - Creates nested group folders: `iteration-X/group-Y`
+
+3. **Use Same Run Mode** (`use_same_run`):
+   - Uses the latest existing iteration folder (finds highest iteration number)
+   - If no folders exist, creates `iteration-1`
+   - Creates group subfolders within the existing iteration: `iteration-X/group-Y`
+
+---
+
+## File Structure
+
+### Workspace Layout
+
+```
+workspace/
+├── variables/
+│   └── variables.json          # Contains groups array (if multi-group)
+├── planning/
+│   └── plan.json
+└── runs/
+    ├── iteration-1/            # Single group (backward compatible)
+    │   ├── execution/
+    │   └── steps_done.json
+    ├── iteration-2/             # Multi-group: base iteration folder
+    │   ├── group-1/            # First group (nested)
+    │   │   ├── execution/
+    │   │   └── steps_done.json
+    │   └── group-3/            # Third group (group-2 was disabled)
+    │       ├── execution/
+    │       └── steps_done.json
+    └── batch_progress.json     # Batch execution tracking (optional)
+```
+
+### variables.json Format
+
+**Single Group (backward compatible):**
+```json
+{
+  "objective": "Deploy {{APP_NAME}} to {{REGION}}",
+  "variables": [
+    { "name": "APP_NAME", "value": "my-app", "description": "Application name" },
+    { "name": "REGION", "value": "us-east-1", "description": "AWS region" }
+  ],
+  "extraction_date": "2025-01-15"
+}
+```
+
+**Multiple Groups:**
+```json
+{
+  "objective": "Deploy {{APP_NAME}} to {{REGION}}",
+  "variables": [
+    { "name": "APP_NAME", "description": "Application name" },
+    { "name": "REGION", "description": "AWS region" }
+  ],
+  "groups": [
+    {
+      "group_id": "group-1",
+      "display_name": "Production",
+      "values": { "APP_NAME": "my-app", "REGION": "us-east-1" },
+      "enabled": true
+    },
+    {
+      "group_id": "group-2",
+      "display_name": "Staging",
+      "values": { "APP_NAME": "my-app-2", "REGION": "us-west-2" },
+      "enabled": true
+    },
+    {
+      "group_id": "group-3",
+      "display_name": "Development",
+      "values": { "APP_NAME": "my-app-dev", "REGION": "eu-west-1" },
+      "enabled": false
+    }
+  ],
+  "extraction_date": "2025-01-15"
+}
+```
+
+---
+
+## Frontend Components
+
+### VariablesNode
+
+**File:** [`frontend/src/components/workflow/nodes/VariablesNode.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/nodes/VariablesNode.tsx)
+
+**Features:**
+- Displays variable count and group count
+- Shows enabled groups indicator (e.g., "2/3 Groups")
+- Lists variable names and values for each group
+- Shows group status (running, selected, enabled, disabled)
+- Supports display names for groups
+- Click to open VariablesSidebar
+
+**Display Format:**
+- Header: "Variables (N)" with group count if multiple groups
+- Group list: Shows all groups with their values (first 3 variables visible)
+- Status indicators: Running (blue), Selected (purple), Enabled (green), Disabled (gray)
+
+### VariablesSidebar
+
+**File:** [`frontend/src/components/workflow/canvas/VariablesSidebar.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/canvas/VariablesSidebar.tsx)
+
+**Features:**
+- Table view of all groups
+- Edit values inline
+- Enable/disable toggles
+- Add new group button
+- Delete group button
+- Edit display names
+- Save changes to backend
+
+**Operations:**
+- **Add Group**: Creates new group with empty values for all variables
+- **Update Group**: Updates values or display name
+- **Toggle Enabled**: Enables/disables group
+- **Delete Group**: Removes group from manifest
+- **Save**: Sends complete manifest to backend via `PUT /api/workflow/variable-groups`
+
+---
+
+## Backend Implementation
+
+### Batch Execution
+
+**File:** [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_batch_execution.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_batch_execution.go)
+
+**Key Functions:**
+- `getEnabledGroupsForExecution()` - Determines which groups to execute (respects ExecutionOptions.EnabledGroupIDs)
+- `shouldUseBatchExecution()` - Checks if batch mode should be used (>1 enabled group)
+- `runBatchExecution()` - Executes workflow sequentially for each enabled group
+
+**Execution Flow:**
+1. Get enabled groups (from ExecutionOptions or manifest)
+2. Validate groups exist
+3. For each group:
+   - Set variable values
+   - Create run folder (nested structure for multi-group)
+   - Execute workflow
+   - Track progress
+   - Emit events
+4. Return batch execution result
+
+### Events
+
+**Batch Execution Events:**
+- `batch_execution_started` - Batch execution begins
+- `group_execution_started` - Individual group execution starts
+- `group_execution_completed` - Individual group execution completes
+- `batch_execution_completed` - All groups completed
+- `batch_progress_updated` - Progress update during batch execution
+
+---
+
+## Migration & Backward Compatibility
+
+### Old Format Detection
+
+The system automatically detects single-group format:
+
+```go
+func (m *VariablesManifest) HasGroups() bool {
+    return len(m.Groups) > 0
+}
+
+func (m *VariablesManifest) GetEnabledGroups() []VariableGroup {
+    if !m.HasGroups() {
+        // Single group mode: create a virtual group from Variables
+        values := make(map[string]string)
+        for _, v := range m.Variables {
+            values[v.Name] = v.Value
+        }
+        return []VariableGroup{{ // Note: GroupID is hardcoded to "group-1" for single group mode
+            GroupID: "group-1",
+            Values:  values,
+            Enabled: true,
+        }}
+    }
+    // Multi-group mode: return enabled groups
+    var enabled []VariableGroup
+    for _, g := range m.Groups {
+        if g.Enabled {
+            enabled = append(enabled, g)
+        }
+    }
+    return enabled
+}
+```
+
+### Backward Compatibility
+
+✅ **Single-group format** is fully supported:
+- Old format with `Variables[].Value` works without changes
+- System creates virtual group automatically
+- Folder structure remains `iteration-X/` (not nested)
+
+✅ **Multi-group format**:
+- Requires `groups` array in `variables.json`
+- Variables array contains only definitions (no values)
+- Folder structure uses nested format: `iteration-X/group-Y/`
+
+---
+
+## Common Issues & Solutions
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Groups not executing | Groups disabled in manifest | Check `enabled: true` for groups |
+| Wrong groups executing | ExecutionOptions.EnabledGroupIDs not respected | Verify group IDs match manifest |
+| Folder structure wrong | Single group using nested format | Check `totalGroups <= 1` logic |
+| Variables not loading | variables.json missing or invalid | Verify file exists and JSON is valid |
+| Groups not saving | API call failing | Check workspace_path parameter |
+
+---
+
+## Quick Reference (Constraints)
+
+### Key Types
+
+```typescript
+// Get variable groups
+const response = await agentApi.getVariableGroups(workspacePath)
+const manifest = response.manifest
+
+// Update variable groups (complete manifest)
+await agentApi.updateVariableGroups(workspacePath, manifest)
+
+// Check if multi-group mode
+const isMultiGroup = manifest?.groups && manifest.groups.length > 1
+
+// Get enabled groups
+const enabledGroups = manifest?.groups?.filter(g => g.enabled) || []
+```
+
+### Constraints
+
+✅ **Allowed:**
+- Multiple groups with same variable names
+- Optional `display_name` for groups
+- Enabling/disabling groups
+- ExecutionOptions.EnabledGroupIDs for selective execution
+- Nested folder structure for multi-group
+
+❌ **Forbidden:**
+- Different variable names across groups (all groups share same variables)
+- Empty groups array (use single-group format instead)
+- Missing `group_id` field
+
+### Common Patterns
+
+**Pattern 1: Add New Group**
+```typescript
+const newGroup: VariableGroup = {
+  group_id: `group-${manifest.groups.length + 1}`,
+  values: {}, // Initialize with empty values
+  enabled: true
+}
+manifest.groups.push(newGroup)
+await agentApi.updateVariableGroups(workspacePath, manifest)
+```
+
+**Pattern 2: Toggle Group Enabled**
+```typescript
+const group = manifest.groups.find(g => g.group_id === groupId)
+if (group) {
+  group.enabled = !group.enabled
+  await agentApi.updateVariableGroups(workspacePath, manifest)
+}
+```
+
+**Pattern 3: Execute Specific Groups**
+```typescript
+const executionOptions: ExecutionOptions = {
+  enabledGroupIDs: ['group-1', 'group-3'], // Only execute these groups
+  // ... other options
+}
+```
+
+```

@@ -24,7 +24,16 @@ RUN go build -o planner .
 FROM alpine:latest
 
 # Install ripgrep, git, patch, python3 for GitHub integration, diff patching, script execution, util-linux for filesystem isolation (unshare), and jq for JSON processing
-RUN apk add --no-cache ripgrep git patch python3 py3-pip util-linux jq
+# Also install nodejs and npm for agent-browser, chromium for headless browser automation
+# gcompat provides glibc compatibility for agent-browser binary (which is compiled against glibc)
+RUN apk add --no-cache ripgrep git patch python3 py3-pip util-linux jq nodejs npm chromium chromium-chromedriver gcompat
+
+# Install agent-browser globally for browser automation
+RUN npm install -g agent-browser
+
+# Set Chromium path for Playwright (used by agent-browser)
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 # Configure pip to allow system-wide packages (safe in containerized environment)
 RUN mkdir -p /root/.config/pip && \

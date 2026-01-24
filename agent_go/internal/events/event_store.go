@@ -28,12 +28,13 @@ var ADVANCED_MODE_EVENTS = map[string]bool{
 // TINY_MODE_ADDITIONAL_EVENTS contains additional event types hidden in tiny mode (beyond basic mode)
 // Tiny mode hides everything basic mode hides PLUS user messages, system prompts, and agent lifecycle events
 var TINY_MODE_ADDITIONAL_EVENTS = map[string]bool{
-	"user_message":       true,
-	"system_prompt":      true,
-	"agent_start":        true,
-	"agent_end":          true,
-	"agent_error":        true,
-	"llm_generation_end": true,
+	"user_message":             true,
+	"system_prompt":            true,
+	"agent_start":              true,
+	"agent_end":                true,
+	"agent_error":              true,
+	"llm_generation_end":       true,
+	"batch_execution_canceled": true,
 }
 
 // MaxPollingLimit is the maximum number of events returned in a single polling request

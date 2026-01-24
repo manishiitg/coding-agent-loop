@@ -96,6 +96,8 @@ export interface AgentQueryRequest {
   summary_keep_last_messages?: number // Number of recent messages to keep when summarizing (default: 8)
   // Workspace access configuration
   enable_workspace_access?: boolean // Enable/disable workspace file access tools (default: true)
+  // Browser automation access configuration
+  enable_browser_access?: boolean // Enable/disable browser automation tool (auto-enables workspace when true)
   // Selected skills to include in the chat context
   selected_skills?: string[] // Array of skill folder names
 }

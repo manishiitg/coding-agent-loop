@@ -56,6 +56,7 @@ export interface ChatTabConfig {
   fileContext: FileContextItem[]  // Files/folders in context
   enableContextSummarization?: boolean  // Context summarization setting
   enableWorkspaceAccess?: boolean  // Enable/disable workspace file access tools
+  enableBrowserAccess?: boolean  // Enable/disable browser automation tool (auto-enables workspace when true)
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
   autoRun?: boolean  // Automatically run the chat when tab is loaded
 }
@@ -115,6 +116,7 @@ const getDefaultTabConfig = (mode: 'chat' | 'workflow' = 'chat'): ChatTabConfig 
     fileContext: [],
     enableContextSummarization: false,
     enableWorkspaceAccess: true,  // Enable workspace access by default
+    enableBrowserAccess: false,  // Disable browser access by default (user must enable via checkbox)
     queuedMessages: [],  // No queued messages by default
     autoRun: false  // Do not auto-run by default
   }

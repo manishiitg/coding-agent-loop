@@ -59,26 +59,27 @@ export const ValidationNode = memo(({ data, selected }: ValidationNodeProps) => 
       />
 
       {/* Prerequisite source handles (bottom, for edges going back to previous steps) */}
+      {/* Hidden by default, only functional for edge connections */}
       <Handle
         type="source"
         position={Position.Bottom}
         id="prereq-left"
         style={{ left: '25%' }}
-        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-800"
+        className="!w-2 !h-2 !bg-transparent !border-0"
       />
       <Handle
         type="source"
         position={Position.Bottom}
         id="prereq-middle"
         style={{ left: '50%' }}
-        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-800"
+        className="!w-2 !h-2 !bg-transparent !border-0"
       />
       <Handle
         type="source"
         position={Position.Bottom}
         id="prereq-right"
         style={{ left: '75%' }}
-        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-800"
+        className="!w-2 !h-2 !bg-transparent !border-0"
       />
 
       {/* Content */}

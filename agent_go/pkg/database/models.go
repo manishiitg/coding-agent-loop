@@ -362,8 +362,9 @@ func (r *CreatePresetQueryRequest) Validate() error {
 	if r.Label == "" {
 		return fmt.Errorf("label is required")
 	}
-	if r.Query == "" {
-		return fmt.Errorf("query is required")
+	// Query is only required for non-workflow presets
+	if r.Query == "" && r.AgentMode != AgentModeWorkflow {
+		return fmt.Errorf("query is required for non-workflow presets")
 	}
 
 	// Validate agent mode

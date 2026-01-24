@@ -11,6 +11,9 @@ import { normalizeStartPoint, normalizeRunFolder } from '../utils/workflowStateN
 // Execution mode options
 export type ExecutionModeType = 'human_approval' | 'fast_execution' | 'with_learning'
 
+// Layout direction for workflow canvas
+export type LayoutDirection = 'LR' | 'TB'
+
 // Global localStorage key for temporary LLM overrides (persists across page refreshes)
 const TEMP_OVERRIDE_LLM_KEY = 'workflow_temp_override_llm'
 const TEMP_OVERRIDE_LLM2_KEY = 'workflow_temp_override_llm2'
@@ -22,6 +25,7 @@ const TEMP_LEARNING_LLM_KEY = 'workflow_temp_learning_llm'
 const SELECTED_GROUP_IDS_KEY = 'workflow_selected_group_ids'
 const CURRENT_RUNNING_GROUP_ID_KEY = 'workflow_current_running_group_id'
 const SELECTED_RUN_FOLDER_KEY = 'workflow_selected_run_folder'
+const LAYOUT_DIRECTION_KEY = 'workflow_layout_direction'
 // NOTE: Running workflows logic has been moved to useRunningWorkflowsStore.ts
 // This store now focuses on workflow execution state and configuration
 
@@ -117,6 +121,7 @@ interface WorkflowStore {
   // UI state
   activePhase: string | null // Currently running phase
   showChatArea: boolean
+  layoutDirection: LayoutDirection // Canvas layout direction ('LR' = horizontal, 'TB' = vertical)
 
   // Multi-tab chat state
   workflowChatTabs: Record<string, WorkflowChatTab>  // tabId -> tab
@@ -200,6 +205,7 @@ interface WorkflowStore {
   // UI
   setActivePhase: (phase: string | null) => void
   setShowChatArea: (show: boolean) => void
+  setLayoutDirection: (direction: LayoutDirection) => void
 
   // Workflow chat tabs
   createWorkflowTab: (phaseId: string, phaseName: string) => Promise<string>  // Returns tabId
@@ -443,6 +449,18 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // UI state
       activePhase: null,
       showChatArea: false,
+      // Layout direction (persists across page refreshes via localStorage)
+      layoutDirection: (() => {
+        try {
+          const saved = localStorage.getItem(LAYOUT_DIRECTION_KEY)
+          if (saved === 'LR' || saved === 'TB') {
+            return saved
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load layout direction from localStorage:', error)
+        }
+        return 'LR' // Default to horizontal layout
+      })() as LayoutDirection,
 
       // Multi-tab chat state
       workflowChatTabs: {},
@@ -1609,6 +1627,15 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       setShowChatArea: (show: boolean) => {
         set({ showChatArea: show })
+      },
+
+      setLayoutDirection: (direction: LayoutDirection) => {
+        try {
+          localStorage.setItem(LAYOUT_DIRECTION_KEY, direction)
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save layout direction to localStorage:', error)
+        }
+        set({ layoutDirection: direction })
       },
 
       // Workflow chat tabs

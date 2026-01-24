@@ -370,34 +370,44 @@ export const StepLegend: React.FC<StepLegendProps> = ({
     <div className="absolute bottom-4 left-4 z-10 w-72">
       <div className="bg-background/98 dark:bg-gray-900/98 backdrop-blur-md rounded-lg border border-border shadow-xl">
         {/* Header */}
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="w-full px-3 py-1.5 flex items-center justify-between text-xs font-semibold text-foreground hover:bg-muted/50 rounded-t-lg transition-colors border-b border-border"
-        >
-          <span className="flex items-center gap-1.5 min-w-0 flex-1">
-            {runningStepInfo ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin flex-shrink-0" />
-                <span className="truncate" title={runningStepInfo.title}>
-                  {runningStepInfo.title}
-                </span>
-              </>
-            ) : (
-              <>
-                <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0"></span>
-                <span>Steps ({allSteps.length})</span>
-              </>
-            )}
-          </span>
-          <div className="flex items-center gap-1">
-            <WorkflowLegend />
-            {isCollapsed ? (
-              <ChevronUp className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 ml-1" />
-            ) : (
-              <ChevronDown className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 ml-1" />
-            )}
+        <div className="w-full flex items-center justify-between rounded-t-lg border-b border-border transition-colors">
+          <button
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="flex-1 px-3 py-1.5 flex items-center gap-1.5 min-w-0 text-xs font-semibold text-foreground hover:bg-muted/50 transition-colors text-left rounded-tl-lg"
+          >
+            <span className="flex items-center gap-1.5 min-w-0 flex-1">
+              {runningStepInfo ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin flex-shrink-0" />
+                  <span className="truncate" title={runningStepInfo.title}>
+                    {runningStepInfo.title}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0"></span>
+                  <span>Steps ({allSteps.length})</span>
+                </>
+              )}
+            </span>
+          </button>
+          
+          <div className="flex items-center gap-1 pr-2 py-1.5">
+            <div onClick={(e) => e.stopPropagation()}>
+              <WorkflowLegend />
+            </div>
+            <button
+              onClick={() => setIsCollapsed(!isCollapsed)}
+              className="p-0.5 hover:bg-muted rounded text-muted-foreground transition-colors"
+            >
+              {isCollapsed ? (
+                <ChevronUp className="w-3.5 h-3.5 flex-shrink-0" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5 flex-shrink-0" />
+              )}
+            </button>
           </div>
-        </button>
+        </div>
 
         {/* Step List */}
         {!isCollapsed && (

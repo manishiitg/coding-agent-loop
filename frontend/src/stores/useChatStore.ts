@@ -51,6 +51,7 @@ export interface ChatTabConfig {
   useCodeExecutionMode: boolean  // Code execution mode toggle
   useToolSearchMode: boolean  // Tool search mode toggle (discover tools on-demand)
   selectedServers: string[]  // Selected MCP servers
+  selectedSkills: string[]  // Selected skills to include in chat
   llmConfig: ExtendedLLMConfiguration  // LLM configuration (provider, model, etc.)
   fileContext: FileContextItem[]  // Files/folders in context
   enableContextSummarization?: boolean  // Context summarization setting
@@ -102,6 +103,7 @@ const getDefaultTabConfig = (mode: 'chat' | 'workflow' = 'chat'): ChatTabConfig 
     // Default to false - user can toggle to true (tool search mode) via ChatInput
     useToolSearchMode: false,
     selectedServers,
+    selectedSkills: [],  // No skills selected by default
     llmConfig: llmConfig || {
       provider: 'openrouter',
       model_id: '',

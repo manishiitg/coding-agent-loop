@@ -223,6 +223,7 @@ type PresetQuery struct {
 	UseCodeExecutionMode bool            `json:"use_code_execution_mode" db:"use_code_execution_mode"` // MCP code execution mode
 	UseToolSearchMode    bool            `json:"use_tool_search_mode" db:"use_tool_search_mode"`       // Tool search mode
 	PreDiscoveredTools   string          `json:"pre_discovered_tools" db:"pre_discovered_tools"`       // JSON array of pre-discovered tools
+	SelectedSkills       string          `json:"selected_skills" db:"selected_skills"`                 // JSON array of skill folder names
 	IsPredefined         bool            `json:"is_predefined" db:"is_predefined"`
 	CreatedAt            time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt            time.Time       `json:"updated_at" db:"updated_at"`
@@ -243,6 +244,7 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 		UseCodeExecutionMode bool            `json:"use_code_execution_mode"`
 		UseToolSearchMode    bool            `json:"use_tool_search_mode"`
 		PreDiscoveredTools   string          `json:"pre_discovered_tools"`
+		SelectedSkills       string          `json:"selected_skills"`
 		IsPredefined         bool            `json:"is_predefined"`
 		CreatedAt            time.Time       `json:"created_at"`
 		UpdatedAt            time.Time       `json:"updated_at"`
@@ -258,6 +260,7 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 		UseCodeExecutionMode: p.UseCodeExecutionMode,
 		UseToolSearchMode:    p.UseToolSearchMode,
 		PreDiscoveredTools:   p.PreDiscoveredTools,
+		SelectedSkills:       p.SelectedSkills,
 		IsPredefined:         p.IsPredefined,
 		CreatedAt:            p.CreatedAt,
 		UpdatedAt:            p.UpdatedAt,
@@ -284,6 +287,7 @@ type CreatePresetQueryRequest struct {
 	UseCodeExecutionMode bool             `json:"use_code_execution_mode,omitempty"` // MCP code execution mode
 	UseToolSearchMode    bool             `json:"use_tool_search_mode,omitempty"`    // Tool search mode
 	PreDiscoveredTools   []string         `json:"pre_discovered_tools,omitempty"`    // Tools always available without searching
+	SelectedSkills       []string         `json:"selected_skills,omitempty"`         // Skill folder names for workflow
 	IsPredefined         bool             `json:"is_predefined,omitempty"`
 }
 
@@ -406,6 +410,7 @@ type UpdatePresetQueryRequest struct {
 	UseCodeExecutionMode *bool            `json:"use_code_execution_mode,omitempty"` // MCP code execution mode (pointer to allow false value)
 	UseToolSearchMode    *bool            `json:"use_tool_search_mode,omitempty"`    // Tool search mode (pointer to allow false value)
 	PreDiscoveredTools   []string         `json:"pre_discovered_tools,omitempty"`    // Tools always available without searching
+	SelectedSkills       []string         `json:"selected_skills,omitempty"`         // Skill folder names for workflow
 }
 
 // Validate validates the UpdatePresetQueryRequest

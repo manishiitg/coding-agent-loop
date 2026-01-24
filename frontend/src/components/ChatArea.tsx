@@ -2496,8 +2496,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         summarize_on_max_turns: selectedModeCategory === 'chat' ? true : undefined,
         summary_keep_last_messages: selectedModeCategory === 'chat' ? 8 : undefined,
         // Workspace access: Send the setting from tab config (default: true)
-        enable_workspace_access: selectedModeCategory === 'chat' 
-          ? (currentTab?.config?.enableWorkspaceAccess ?? true) 
+        enable_workspace_access: selectedModeCategory === 'chat'
+          ? (currentTab?.config?.enableWorkspaceAccess ?? true)
+          : undefined,
+        // Selected skills: Include skill folder names from tab config
+        selected_skills: selectedModeCategory === 'chat' && currentTab?.config?.selectedSkills?.length
+          ? currentTab.config.selectedSkills
           : undefined,
         // Note: Conversation history is loaded by backend from database using session ID
         // Backend will automatically load history from conversation_turn events if session exists

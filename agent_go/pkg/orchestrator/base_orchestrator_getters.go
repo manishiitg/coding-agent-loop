@@ -95,6 +95,17 @@ func (bo *BaseOrchestrator) GetSelectedTools() []string {
 	return bo.selectedTools
 }
 
+// GetSelectedSkills returns the selected skills (skill folder names)
+func (bo *BaseOrchestrator) GetSelectedSkills() []string {
+	return bo.selectedSkills
+}
+
+// SetSelectedSkills sets the selected skills (skill folder names)
+func (bo *BaseOrchestrator) SetSelectedSkills(skills []string) {
+	bo.selectedSkills = skills
+	bo.GetLogger().Info(fmt.Sprintf("🎯 Set selected skills: %v", skills))
+}
+
 // GetUseCodeExecutionMode returns the code execution mode setting
 func (bo *BaseOrchestrator) GetUseCodeExecutionMode() bool {
 	return bo.useCodeExecutionMode

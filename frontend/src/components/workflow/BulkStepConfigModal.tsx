@@ -78,6 +78,7 @@ export default function BulkStepConfigModal({
         activePreset.query,
         activePreset.selectedServers,
         activePreset.selectedTools,
+        activePreset.selectedSkills,
         activePreset.agentMode,
         activePreset.selectedFolder,
         updatedLLMConfig,

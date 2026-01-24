@@ -9,6 +9,7 @@ import { CircularProgress } from './ui/CircularProgress'
 import { getEventData, isEventType } from '../generated/event-types'
 import type { TokenUsageEvent } from '../generated/events'
 import ServerSelectionDropdown from './ServerSelectionDropdown'
+import SkillSelectionDropdown from './skills/SkillSelectionDropdown'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
 import CommandSelectionDialog from './CommandSelectionDialog'
@@ -268,7 +269,32 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       setChatSelectedServers(["NO_SERVERS"])
     }
   }, [activeTabId, setTabConfig, setChatSelectedServers])
-  
+
+  // Use tab-specific skills - memoize to prevent re-renders
+  const selectedSkills = useMemo(() => tabConfig?.selectedSkills || [], [tabConfig?.selectedSkills])
+
+  // Skill operations (update tab config)
+  const onSkillToggle = useCallback((skillFolderName: string) => {
+    if (activeTabId) {
+      const newSkills = selectedSkills.includes(skillFolderName)
+        ? selectedSkills.filter(s => s !== skillFolderName)
+        : [...selectedSkills, skillFolderName]
+      setTabConfig(activeTabId, { selectedSkills: newSkills })
+    }
+  }, [activeTabId, selectedSkills, setTabConfig])
+
+  const onSelectAllSkills = useCallback((allSkillNames: string[]) => {
+    if (activeTabId) {
+      setTabConfig(activeTabId, { selectedSkills: allSkillNames })
+    }
+  }, [activeTabId, setTabConfig])
+
+  const onClearAllSkills = useCallback(() => {
+    if (activeTabId) {
+      setTabConfig(activeTabId, { selectedSkills: [] })
+    }
+  }, [activeTabId, setTabConfig])
+
   const {
     availableLLMs,
     getCurrentLLMOption,
@@ -1028,14 +1054,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             }}
                             disabled={isStreaming || isSummarizing}
                             data-testid="agent-mode-simple"
-                            className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
+                            className={`p-1.5 transition-colors border-r border-gray-300 dark:border-gray-600 ${
                               !useCodeExecutionMode && !useToolSearchMode
                                 ? 'agent-mode-selected rounded-l-md rounded-r-none'
                                 : 'agent-mode-unselected rounded-none'
                             }`}
                           >
-                            <Sparkles className="w-3 h-3 inline mr-1" />
-                            Simple
+                            <Sparkles className="w-4 h-4" />
                           </button>
                         </TooltipTrigger>
                         <TooltipContent>
@@ -1052,18 +1077,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             }}
                             disabled={isStreaming || isSummarizing}
                             data-testid="agent-mode-code-exec"
-                            className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
+                            className={`p-1.5 transition-colors border-r border-gray-300 dark:border-gray-600 ${
                               useCodeExecutionMode && !useToolSearchMode
                                 ? 'agent-mode-selected rounded-none'
                                 : 'agent-mode-unselected rounded-none'
                             }`}
                           >
-                            <Code2 className="w-3 h-3 inline mr-1" />
-                            Code Exec
+                            <Code2 className="w-4 h-4" />
                           </button>
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>Code Exec mode - MCP tools accessed via generated Go code</p>
+                          <p>Code Exec mode - MCP tools via generated Go code</p>
                         </TooltipContent>
                       </Tooltip>
                       <Tooltip>
@@ -1076,18 +1100,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             }}
                             disabled={isStreaming || isSummarizing}
                             data-testid="agent-mode-tool-search"
-                            className={`px-2 py-1 text-xs font-medium transition-colors ${
+                            className={`p-1.5 transition-colors ${
                               useToolSearchMode
                                 ? 'agent-mode-selected rounded-r-md rounded-l-none'
                                 : 'agent-mode-unselected rounded-none'
                             }`}
                           >
-                            <Search className="w-3 h-3 inline mr-1" />
-                            Tool Search
+                            <Search className="w-4 h-4" />
                           </button>
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>Tool Search mode - Discover tools on-demand via search</p>
+                          <p>Tool Search mode - Discover tools on-demand</p>
                         </TooltipContent>
                       </Tooltip>
                     </div>
@@ -1103,6 +1126,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       onServerToggle={onManualServerToggle}
                       onSelectAll={onSelectAllServers}
                       onClearAll={onClearAllServers}
+                      disabled={isStreaming || isSummarizing}
+                    />
+                    <SkillSelectionDropdown
+                      selectedSkills={selectedSkills}
+                      onSkillToggle={onSkillToggle}
+                      onSelectAll={onSelectAllSkills}
+                      onClearAll={onClearAllSkills}
                       disabled={isStreaming || isSummarizing}
                     />
                     <LLMSelectionDropdown

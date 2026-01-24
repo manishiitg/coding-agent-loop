@@ -51,7 +51,7 @@ interface PresetQueriesProps {
   const [currentPredefinedPresetId, setCurrentPredefinedPresetId] = useState<string>('');
   const [tempSelectedServers, setTempSelectedServers] = useState<string[]>([]);
 
-  const handlePresetClick = (query: string, selectedServers?: string[], presetQueryId?: string, agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile) => {
+  const handlePresetClick = (query: string | undefined, selectedServers?: string[], presetQueryId?: string, agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile) => {
     // Find the preset object to pass to applyPreset
     const preset = [...customPresets, ...predefinedPresets].find(p => p.id === presetQueryId)
     
@@ -67,7 +67,10 @@ interface PresetQueriesProps {
       
       if (result.success) {
         // Also call the legacy callbacks for backward compatibility
-        setCurrentQuery(query);
+        // Only set query if it exists
+        if (query) {
+          setCurrentQuery(query);
+        }
         if (selectedServers && selectedServers.length > 0) {
           onPresetSelect?.(selectedServers, agentMode);
         } else {

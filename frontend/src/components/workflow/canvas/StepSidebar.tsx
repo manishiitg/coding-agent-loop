@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { X, Trash2, Edit2, Save, ChevronDown, Settings, CheckCircle2, BookOpen, Play, Eye, MoreVertical } from 'lucide-react'
 import ConfirmationDialog from '../../ui/ConfirmationDialog'
-import type { ExecutionOptions } from '../../../services/api-types'
+import type { ExecutionOptions, EvaluationStep } from '../../../services/api-types'
 import { ExecutionStrategy } from '../../../services/api-types'
 import { StepEditPanel } from '../../events/orchestrator/StepEditPanel'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
@@ -22,7 +22,8 @@ import type {
   LoopNodeData,
   OrchestratorNodeData,
   ValidationNodeData,
-  LearningNodeData
+  LearningNodeData,
+  EvaluationStepNodeData
 } from '../hooks/usePlanToFlow'
 import type { PlanStep, PlanningResponse, AgentConfigs, ValidationSchema } from '../../../utils/stepConfigMatching'
 import type { TodoStepWithConfigs } from '../../../utils/stepConfigMatching'
@@ -31,7 +32,7 @@ import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep, 
 interface StepSidebarProps {
   node: WorkflowNode | null
   onClose: () => void
-  onEditStep: (stepId: string, updates: Partial<PlanStep>) => Promise<void>
+  onEditStep: (stepId: string, updates: Partial<PlanStep> | Partial<EvaluationStep>) => Promise<void>
   onDeleteStep: (stepId: string) => void
   isRunning: boolean
   stepIndex: number
@@ -110,7 +111,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
   // Check if evaluation step
   const isEvaluationStep = useMemo(() => {
-    return (node?.data as any)?.isEvaluationStep === true
+    return (node?.data as EvaluationStepNodeData)?.isEvaluationStep === true
   }, [node])
 
   // Handle phase selection
@@ -475,6 +476,21 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     
     // Validation/learning nodes don't have step data
     if (node.type === 'validation' || node.type === 'learning') return null
+
+    if (isEvaluationStep) {
+      const evalStepData = node.data as EvaluationStepNodeData
+      const evalStep = evalStepData.step
+      // Convert EvaluationStep to TodoStepWithConfigs
+      return {
+        id: evalStep.id,
+        title: evalStep.title,
+        description: evalStep.description,
+        success_criteria: evalStep.success_criteria,
+        agent_configs: evalStep.agent_configs,
+        validation_schema: evalStep.pre_validation
+      }
+    }
+
     
     // Check if step exists (for step/conditional/loop/decision/orchestrator nodes)
     // Sub-agents are type 'step', so they should be handled here
@@ -487,7 +503,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     
     // Convert PlanStep to TodoStepWithConfigs using the helper function
     return convertPlanStepToTodoStep(planStep)
-  }, [node, convertPlanStepToTodoStep]) // node dependency ensures updates when step data changes
+  }, [node, convertPlanStepToTodoStep, isEvaluationStep]) // node dependency ensures updates when step data changes
 
   // Initialize edit fields when node changes or edit mode is enabled
   React.useEffect(() => {
@@ -628,50 +644,61 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         throw new Error(`Step ID mismatch: step data has ID "${stepDataForLogging?.id}" but using "${stepId}"`)
       }
       
-      // Deep clone agent_configs only to break any potential reference sharing
-      // (The StepEditPanel should already create new objects, but this is a safety measure)
-      const agentConfigs = updatedStep.agent_configs 
-        ? JSON.parse(JSON.stringify(updatedStep.agent_configs))
-        : undefined
-
-      // Convert TodoStepWithConfigs back to PlanStep format for updateStep
-      const updates: Partial<PlanStep> = {
-        title: updatedStep.title,
-        description: updatedStep.description,
-        success_criteria: updatedStep.success_criteria,
-        context_dependencies: updatedStep.context_dependencies,
-        context_output: updatedStep.context_output,
-        has_loop: updatedStep.has_loop,
-        loop_condition: updatedStep.loop_condition,
-        max_iterations: updatedStep.max_iterations,
-        loop_description: updatedStep.loop_description,
-        has_condition: updatedStep.has_condition,
-        condition_question: updatedStep.condition_question,
-        condition_context: updatedStep.condition_context,
-        condition_result: updatedStep.condition_result,
-        condition_reason: updatedStep.condition_reason,
-        // Include agent_configs in the update (deep cloned to avoid reference sharing)
-        agent_configs: agentConfigs
-      } as Partial<PlanStep>
-
-      // Save to parent step
-      await onEditStep(stepId, updates)
-
-      // For decision steps, also save agent_configs to the inner step
-      if (stepDataForLogging && isDecisionStep(stepDataForLogging) && stepDataForLogging.decision_step?.id) {
-        const innerStepId = stepDataForLogging.decision_step.id
-        console.log('[StepSidebar] Saving agent config to inner step of decision step:', {
-          parentStepId: stepId,
-          innerStepId: innerStepId,
-          hasAgentConfigs: !!agentConfigs
-        })
-        
-        // Save only agent_configs to the inner step (don't update other fields)
-        const innerStepUpdates: Partial<PlanStep> = {
-          agent_configs: agentConfigs
+      if (isEvaluationStep) {
+        const updates: Partial<EvaluationStep> = {
+          title: updatedStep.title,
+          description: updatedStep.description,
+          success_criteria: updatedStep.success_criteria,
+          agent_configs: updatedStep.agent_configs,
+          pre_validation: updatedStep.validation_schema
         }
-        
-        await onEditStep(innerStepId, innerStepUpdates)
+        await onEditStep(stepId, updates)
+      } else {
+        // Deep clone agent_configs only to break any potential reference sharing
+        // (The StepEditPanel should already create new objects, but this is a safety measure)
+        const agentConfigs = updatedStep.agent_configs
+          ? JSON.parse(JSON.stringify(updatedStep.agent_configs))
+          : undefined
+
+        // Convert TodoStepWithConfigs back to PlanStep format for updateStep
+        const updates: Partial<PlanStep> = {
+          title: updatedStep.title,
+          description: updatedStep.description,
+          success_criteria: updatedStep.success_criteria,
+          context_dependencies: updatedStep.context_dependencies,
+          context_output: updatedStep.context_output,
+          has_loop: updatedStep.has_loop,
+          loop_condition: updatedStep.loop_condition,
+          max_iterations: updatedStep.max_iterations,
+          loop_description: updatedStep.loop_description,
+          has_condition: updatedStep.has_condition,
+          condition_question: updatedStep.condition_question,
+          condition_context: updatedStep.condition_context,
+          condition_result: updatedStep.condition_result,
+          condition_reason: updatedStep.condition_reason,
+          // Include agent_configs in the update (deep cloned to avoid reference sharing)
+          agent_configs: agentConfigs
+        } as Partial<PlanStep>
+
+        // Save to parent step
+        await onEditStep(stepId, updates)
+
+        // For decision steps, also save agent_configs to the inner step
+        if (stepDataForLogging && isDecisionStep(stepDataForLogging) && stepDataForLogging.decision_step?.id) {
+          const innerStepId = stepDataForLogging.decision_step.id
+          console.log('[StepSidebar] Saving agent config to inner step of decision step:', {
+            parentStepId: stepId,
+            innerStepId: innerStepId,
+            hasAgentConfigs: !!agentConfigs
+          })
+
+          // Save only agent_configs to the inner step (don't update other fields)
+          const innerStepUpdates: Partial<PlanStep> = {
+            agent_configs: agentConfigs
+          }
+
+          await onEditStep(innerStepId, innerStepUpdates)
+        }
       }
       
       onClose()

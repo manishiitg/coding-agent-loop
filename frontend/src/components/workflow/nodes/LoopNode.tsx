@@ -11,7 +11,7 @@ import type { LoopNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 import { getToolsByCategory } from '../../../utils/customToolNames'
 import { NodeConfigFooter } from './NodeConfigFooter'
-import { NodeMarkdown } from './NodeMarkdown'
+
 
 interface LoopNodeProps {
   data: LoopNodeData
@@ -533,16 +533,6 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
 
       {/* Content */}
       <div className="px-4 py-3 space-y-3">
-        {/* Loop Condition */}
-        {processedLoopCondition && (
-          <div className="p-2.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
-            <div className="text-[10px] font-bold text-cyan-600 dark:text-cyan-400 uppercase tracking-wide mb-1">Until</div>
-            <div className="text-gray-700 dark:text-gray-300">
-              <NodeMarkdown content={processedLoopCondition} textSize="xs" />
-            </div>
-          </div>
-        )}
-
         {/* Context Files */}
         {hasContext && (
           <div className="space-y-1.5">
@@ -617,6 +607,10 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
 
       {/* Config Footer */}
       <NodeConfigFooter
+        description={step?.description}
+        successCriteria={step?.success_criteria}
+        loopCondition={processedLoopCondition}
+        maxIterations={max_iterations}
         executionLLM={executionLLM}
         executionMaxTurns={executionMaxTurns}
         learningLLM={learningLLM}
@@ -635,12 +629,12 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
       {/* Loop back handle */}
       <Handle type="source" position={Position.Top} id="loop-back" className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-900" />
 
-      {/* Retry Handle - for validation loop-back */}
+      {/* Retry Handle - for validation loop-back (hidden by default) */}
       <Handle
         type="target"
         position={Position.Top}
         id="retry"
-        className="!w-2 !h-2 !bg-amber-500 !border-2 !border-white dark:!border-gray-900 !left-1/3"
+        className="!w-2 !h-2 !bg-transparent !border-0 !left-1/3"
       />
 
       {/* Output handle */}

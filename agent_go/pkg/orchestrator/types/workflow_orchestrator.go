@@ -1069,11 +1069,6 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 		return "", fmt.Errorf("workspace path is required")
 	}
 
-	// Validate objective
-	if objective == "" {
-		return "", fmt.Errorf("objective cannot be empty")
-	}
-
 	// Extract stepId from options if provided
 	var stepID string
 	if stepIDVal, exists := options["stepId"]; exists {

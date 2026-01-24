@@ -413,18 +413,21 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Get plan data to map step indices to step IDs
   const { plan } = usePlanData(workspacePath)
 
+  // Reset lastProcessedEventIndexRef when switching tabs/sessions to ensure we process events for the new session
+  useEffect(() => {
+    lastProcessedEventIndexRef.current = -1
+  }, [activeTab?.sessionId])
+
   // Listen for todo_steps_extracted events to auto-refresh the canvas (with granular data from backend)
   useEffect(() => {
     if (events.length === 0) return
     
-    console.log(`[WorkflowPlanUpdate] Processing events (total: ${events.length}, last processed: ${lastProcessedEventIndexRef.current})`)
-    
     // Find new todo_steps_extracted events that we haven't processed yet
     for (let i = lastProcessedEventIndexRef.current + 1; i < events.length; i++) {
       const event = events[i]
-      console.log(`[WorkflowPlanUpdate] Event ${i}: type=${event.type}, timestamp=${event.timestamp}`)
       
       if (event.type === 'todo_steps_extracted') {
+        console.log(`[WorkflowPlanUpdate] Event ${i}: type=${event.type}, timestamp=${event.timestamp}`)
         // Use helper function to extract raw event data (handles nested structure)
         const rawData = getRawEventData(event)
         const eventData = rawData as {
@@ -482,8 +485,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         } else {
           console.warn('[WorkflowPlanUpdate] canvasRef.current is null, cannot refresh')
         }
-        lastProcessedEventIndexRef.current = i
       }
+      
+      // Update index processed - do this for ALL events to avoid re-scanning
+      lastProcessedEventIndexRef.current = i
     }
   }, [events])
 

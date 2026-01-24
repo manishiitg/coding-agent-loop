@@ -661,7 +661,7 @@ export interface PresetLLMConfig {
 export interface PresetQuery {
   id: string;
   label: string;
-  query: string;
+  query?: string;
   selected_servers: string; // JSON string
   selected_tools: string; // JSON string of "server:tool" array
   selected_folder?: string; // Single folder path (nullable)
@@ -679,7 +679,7 @@ export interface PresetQuery {
 
 export interface CreatePresetQueryRequest {
   label: string;
-  query: string;
+  query?: string;
   selected_servers?: string[];
   selected_tools?: string[]; // NEW
   selected_folder?: string; // Single folder path

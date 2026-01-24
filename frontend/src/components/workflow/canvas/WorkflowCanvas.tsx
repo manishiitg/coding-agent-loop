@@ -30,7 +30,7 @@ import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { agentApi } from '../../../services/api'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
-import type { VariablesManifest } from '../../../services/api-types'
+import type { VariablesManifest, EvaluationStep } from '../../../services/api-types'
 
 // Duration to show highlights before clearing (in ms)
 const HIGHLIGHT_DURATION = 4000
@@ -70,15 +70,17 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 }, ref) => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const { setViewport, getNode } = useReactFlow()
+  const { setViewport, getNode, updateNode } = useReactFlow()
   const hasInitializedView = React.useRef(false)
   // Store step ID to focus on after nodes update (from backend plan changes)
   const pendingFocusStepIdRef = React.useRef<string | null>(null)
   // Store current viewport state (x, y, zoom) to preserve it during refresh
   const viewportStateRef = React.useRef<{ x: number; y: number; zoom: number } | null>(null)
 
-  // Get workflow mode
+  // Get workflow mode and layout direction
   const workflowMode = useWorkflowStore(state => state.workflowMode)
+  const layoutDirection = useWorkflowStore(state => state.layoutDirection)
+  const setLayoutDirection = useWorkflowStore(state => state.setLayoutDirection)
 
   // Generate localStorage key for viewport state (workspace-specific)
   const getViewportStorageKey = React.useCallback(() => {
@@ -99,6 +101,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const loadSavedLayout = React.useCallback(async (): Promise<{
     positions: Map<string, { x: number; y: number }>;
     offsets: Map<string, { parentId: string; dx: number; dy: number }>;
+    layoutDirection?: 'LR' | 'TB';
   } | null> => {
     const layoutPath = getLayoutFilePath()
     if (!layoutPath) return null
@@ -109,9 +112,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         const layout = JSON.parse(response.data.content)
         const positions = new Map<string, { x: number; y: number }>()
         const offsets = new Map<string, { parentId: string; dx: number; dy: number }>()
+        let savedDirection: 'LR' | 'TB' | undefined
         
         if (layout.nodePositions && typeof layout.nodePositions === 'object') {
           Object.entries(layout.nodePositions).forEach(([nodeId, pos]: [string, unknown]) => {
+            // CRITICAL: Never load saved positions for header nodes
+            // They must always use the enforced horizontal layout from usePlanToFlow
+            if (nodeId === 'start' || nodeId === 'execution-settings' || nodeId === 'variables') {
+              return // Skip header nodes
+            }
             if (pos && typeof pos === 'object' && 'x' in pos && 'y' in pos) {
               positions.set(nodeId, { x: (pos as { x: number }).x, y: (pos as { x: number; y: number }).y })
             }
@@ -130,13 +139,18 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             }
           })
         }
+
+        // Load layout direction if available (version 1.2+)
+        if (layout.layoutDirection === 'LR' || layout.layoutDirection === 'TB') {
+          savedDirection = layout.layoutDirection
+        }
         
-        console.log('[WorkflowCanvas] Loaded saved layout:', positions.size, 'node positions', offsets.size, 'child offsets')
-        return { positions, offsets }
+        console.log('[WorkflowCanvas] 📂 Loaded saved layout:', positions.size, 'positions,', offsets.size, 'offsets, direction:', savedDirection)
+        return { positions, offsets, layoutDirection: savedDirection }
       }
     } catch {
       // File doesn't exist yet - that's okay
-      console.log('[WorkflowCanvas] No saved layout found (this is normal for new workspaces)')
+      // No saved layout found - this is normal for new workspaces
     }
     return null
   }, [getLayoutFilePath])
@@ -157,6 +171,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     // (all of these are now independently draggable)
     const parentPositions: Record<string, { x: number; y: number }> = {}
     nodesRef.current.forEach(node => {
+      // CRITICAL: Never save header node positions - they must always use enforced horizontal layout
+      if (node.id === 'start' || node.id === 'execution-settings' || node.id === 'variables') {
+        return // Skip header nodes
+      }
+      
       // Allow sub-agents to be saved as parent positions (they're independently draggable)
       const isSubAgent = node.id.includes('-sub-agent-')
       if (isSubAgent) {
@@ -220,11 +239,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
     console.log('[WorkflowCanvas] Parent positions to save:', Object.keys(parentPositions).length, parentPositions)
     console.log('[WorkflowCanvas] Child offsets to save:', Object.keys(childOffsets).length, childOffsets)
+    console.log('[WorkflowCanvas] Layout direction to save:', layoutDirection)
 
     const layoutData = {
       nodePositions: parentPositions,
       childOffsets: childOffsets,
-      version: '1.1',
+      layoutDirection: layoutDirection,
+      version: '1.2',
       savedAt: new Date().toISOString()
     }
 
@@ -242,7 +263,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     } finally {
       setIsSavingLayout(false)
     }
-  }, [getLayoutFilePath, workspacePath])
+  }, [getLayoutFilePath, workspacePath, layoutDirection])
 
   // Delete layout file and reset to default (auto-layout)
   const deleteLayout = React.useCallback(async (): Promise<void> => {
@@ -882,7 +903,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [stepStatusMap])
 
   // Convert plan to React Flow nodes and edges (with change highlights and run callback)
-  const planFlow = usePlanToFlow(plan, { 
+  const planFlow = usePlanToFlow(plan, {
     // Prerequisite edges are always shown (default: true in usePlanToFlow)
     changes,  // Pass changes to highlight modified nodes
     onRunFromStep: handleRunFromStepCallback,
@@ -894,7 +915,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     selectedRunFolder: selectedRunFolder ?? undefined,  // Pass selected run folder for file opening (convert null to undefined)
     variablesManifest,  // Pass variables manifest for Variables node
     onOpenVariablesSidebar: handleOpenVariablesSidebar,  // Callback for opening variables sidebar
-    isLoadingVariables  // Whether variables are loading
+    isLoadingVariables,  // Whether variables are loading
+    layoutDirection  // Layout direction: 'LR' for horizontal, 'TB' for vertical
   })
 
   // Convert evaluation plan to flow (Eval Mode)
@@ -944,8 +966,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     // The node ID might be stepId, or it might be step-${stepIndex} if stepId doesn't exist
     // We need to find the node by matching step.id in the node data
     const nodeToFocus = nodesRef.current.find(node => {
-      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
-        const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
+      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator') {
+        const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
         const nodeStepId = nodeData?.step?.id || node.id
         // Match by stepId or by stepIndex if stepId matches
         return nodeStepId === stepId || (nodeData?.stepIndex === stepIndex && node.id === stepId)
@@ -1049,6 +1071,47 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Track previous nodes/edges to detect actual changes
   const prevNodesRef = React.useRef<typeof initialNodes>([])
   const prevEdgesRef = React.useRef<typeof initialEdges>([])
+  // Track previous layout direction to skip position restoration when direction changes
+  const prevLayoutDirectionRef = React.useRef(layoutDirection)
+  
+  // CRITICAL: Force header nodes to correct positions after nodes update
+  // Ensure header nodes maintain correct positions (safety net in case something tries to override them)
+  React.useEffect(() => {
+    if (nodes.length === 0 || initialNodes.length === 0) return
+    
+    const execNode = initialNodes.find(n => n.id === 'execution-settings')
+    const varsNode = initialNodes.find(n => n.id === 'variables')
+    const startNode = initialNodes.find(n => n.id === 'start')
+    
+    if (!execNode && !varsNode && !startNode) return
+    
+    // Check if any header node position has been overridden
+    const currentExec = nodes.find(n => n.id === 'execution-settings')
+    const currentVars = nodes.find(n => n.id === 'variables')
+    const currentStart = nodes.find(n => n.id === 'start')
+    
+    let needsFix = false
+    
+    if (execNode && currentExec && 
+        (currentExec.position.x !== execNode.position.x || currentExec.position.y !== execNode.position.y)) {
+      needsFix = true
+    }
+    if (varsNode && currentVars && 
+        (currentVars.position.x !== varsNode.position.x || currentVars.position.y !== varsNode.position.y)) {
+      needsFix = true
+    }
+    if (startNode && currentStart && 
+        (currentStart.position.x !== startNode.position.x || currentStart.position.y !== startNode.position.y)) {
+      needsFix = true
+    }
+    
+    if (needsFix) {
+      // Use updateNode API to restore correct positions
+      if (execNode) updateNode('execution-settings', { position: execNode.position })
+      if (varsNode) updateNode('variables', { position: varsNode.position })
+      if (startNode) updateNode('start', { position: startNode.position })
+    }
+  }, [nodes, initialNodes, updateNode])
 
   // Rebuild node groups when nodes change
   React.useEffect(() => {
@@ -1067,13 +1130,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     // Compare by length, IDs, node data (status), and step configs to detect actual changes
     // This ensures nodes update when completedStepIndices changes (which updates status)
     // and when agent_configs are updated (e.g., when saving config in side panel)
-    const nodesChanged = 
+    const nodesChanged =
       prevNodesRef.current.length !== initialNodes.length ||
       prevNodesRef.current.some((node, i) => {
         const newNode = initialNodes[i]
         if (!newNode) return true
         // Check if ID changed
         if (node?.id !== newNode.id) return true
+        // Check if position changed (important for layout direction changes)
+        if (node?.position?.x !== newNode.position?.x || node?.position?.y !== newNode.position?.y) return true
         // Check if status changed (important for completed steps highlighting)
         if (node?.data?.status !== newNode.data?.status) return true
         
@@ -1093,8 +1158,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         
         // Check if step data changed (especially agent_configs)
         // This is important when saving config in the side panel
-        const oldData = node?.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | undefined
-        const newData = newNode?.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | undefined
+        const oldData = node?.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | undefined
+        const newData = newNode?.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | undefined
         const oldStep = oldData?.step
         const newStep = newData?.step
         if (oldStep && newStep) {
@@ -1125,10 +1190,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       prevEdgesRef.current.some((edge, i) => edge?.id !== initialEdges[i]?.id)
     
     if (nodesChanged) {
-      console.log('[WorkflowPlanUpdate] Nodes changed, updating state', {
-        prevCount: prevNodesRef.current.length,
-        newCount: initialNodes.length
-      })
+      // Nodes changed - will apply positions from usePlanToFlow
       
       // Check if we have a selected node - if so, preserve focus on it instead of resetting to start
       const currentSelectedId = selectedNodeIdRef.current
@@ -1136,12 +1198,41 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         initialNodes.some(n => n.id === currentSelectedId)
       
       setNodes(initialNodes)
-      
-      // Always try to restore positions after nodes regenerate
+
+      // Check if layout direction changed - if so, skip position restoration
+      // to allow the new auto-layout to take effect
+      const layoutDirectionChanged = prevLayoutDirectionRef.current !== layoutDirection
+      if (layoutDirectionChanged) {
+        prevLayoutDirectionRef.current = layoutDirection
+        // Clear saved positions so the new layout is used
+        currentPositionsRef.current.clear()
+        currentOffsetsRef.current.clear()
+        // Mark as having unsaved changes since positions changed
+        setHasUnsavedLayoutChanges(true)
+      }
+
+      // Always try to restore positions after nodes regenerate (unless layout direction changed)
       // Priority: 1) Saved layout from file, 2) Current positions (captured before refresh), 3) Auto-layout
-      if (initialNodes.length > 0) {
+      if (initialNodes.length > 0 && !layoutDirectionChanged) {
+        // Extract header node positions from initialNodes BEFORE any restoration
+        // These positions are calculated by usePlanToFlow and MUST be preserved
+        const headerNodePositions = new Map<string, { x: number; y: number }>()
+        initialNodes.forEach(node => {
+          if (node.id === 'start' || node.id === 'execution-settings' || node.id === 'variables') {
+            headerNodePositions.set(node.id, { x: node.position.x, y: node.position.y })
+          }
+        })
+        // Checking for saved layout...
+        
         // First try to load saved layout from file
         loadSavedLayout().then(savedLayout => {
+          // If saved layout has a different direction, update store and bail out to let re-render handle it
+          if (savedLayout?.layoutDirection && savedLayout.layoutDirection !== layoutDirection) {
+            console.log('[WorkflowCanvas] 🔄 Restoring saved layout direction:', savedLayout.layoutDirection)
+            setLayoutDirection(savedLayout.layoutDirection)
+            return
+          }
+
           // Use saved layout if available, otherwise use current positions (captured before refresh)
           const positionsToUse = savedLayout?.positions && savedLayout.positions.size > 0
             ? savedLayout.positions
@@ -1155,7 +1246,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
               // First, apply saved/current positions to parent nodes
               let updated = nds.map(node => {
                 const savedPos = positionsToUse.get(node.id)
-                if (savedPos) {
+                
+                // Header nodes are skipped from restoration (will be forced to correct positions later)
+
+                // Apply saved position unless it's a header node (start, execution-settings, variables)
+                // Header nodes MUST always use the enforced horizontal layout from usePlanToFlow
+                if (savedPos && node.id !== 'start' && node.id !== 'execution-settings' && node.id !== 'variables') {
                   return { ...node, position: savedPos }
                 }
                 return node
@@ -1249,11 +1345,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
               // Rebuild groups with final positions to ensure offsets are correct for future moves
               buildNodeGroups(updated)
               
-              console.log('[WorkflowCanvas] Restored layout:', {
-                usedSavedLayout: savedLayout?.positions && savedLayout.positions.size > 0,
-                usedCurrentPositions: !savedLayout || savedLayout.positions.size === 0,
-                positionsCount: positionsToUse.size,
-                offsetsCount: offsetsToUse.size
+              // CRITICAL: Force header nodes to correct positions
+              updated = updated.map(node => {
+                if (headerNodePositions.has(node.id)) {
+                  return { ...node, position: headerNodePositions.get(node.id)! }
+                }
+                return node
               })
               
               // Clear current positions after use (they've been applied)
@@ -1265,21 +1362,42 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
               return updated
             })
           } else {
-            console.log('[WorkflowCanvas] No saved or current positions to restore, using auto-layout')
+            // No saved layout - force header nodes immediately
+            setNodes((nds) => {
+              return nds.map(node => {
+                if (headerNodePositions.has(node.id)) {
+                  return { ...node, position: headerNodePositions.get(node.id)! }
+                }
+                return node
+              })
+            })
           }
         }).catch(err => {
           console.error('[WorkflowCanvas] Failed to load saved layout:', err)
           // If saved layout fails, try to use current positions
           if (currentPositionsRef.current.size > 0) {
             setNodes((nds) => {
-              const updated = nds.map(node => {
+              let updated = nds.map(node => {
                 const savedPos = currentPositionsRef.current.get(node.id)
-                if (savedPos) {
+                
+                // Header nodes are skipped from restoration (will be forced to correct positions later)
+
+                // Apply saved position unless it's a header node (start, execution-settings, variables)
+                if (savedPos && node.id !== 'start' && node.id !== 'execution-settings' && node.id !== 'variables') {
                   return { ...node, position: savedPos }
                 }
                 return node
               })
               buildNodeGroups(updated)
+              
+              // CRITICAL: Force header nodes to correct positions
+              updated = updated.map(node => {
+                if (headerNodePositions.has(node.id)) {
+                  return { ...node, position: headerNodePositions.get(node.id)! }
+                }
+                return node
+              })
+              
               // Clear current positions after use
               currentPositionsRef.current.clear()
               currentOffsetsRef.current.clear()
@@ -1287,6 +1405,30 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             })
           }
         })
+      } else {
+        // No saved layout or layout direction changed - ensure header nodes have correct positions from usePlanToFlow
+        const headerNodePositions = new Map<string, { x: number; y: number }>()
+        initialNodes.forEach(node => {
+          if (node.id === 'start' || node.id === 'execution-settings' || node.id === 'variables') {
+            headerNodePositions.set(node.id, { x: node.position.x, y: node.position.y })
+          }
+        })
+        
+        if (headerNodePositions.size > 0) {
+          setNodes((nds) => {
+            return nds.map(node => {
+              if (headerNodePositions.has(node.id)) {
+                return { ...node, position: headerNodePositions.get(node.id)! }
+              }
+              return node
+            })
+          })
+          
+          // Also use updateNode API to force positions
+          headerNodePositions.forEach((pos, nodeId) => {
+            updateNode(nodeId, { position: pos })
+          })
+        }
       }
       
       // Only reset view initialization flag if we don't have a selected node
@@ -1365,7 +1507,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       setEdges(initialEdges)
       prevEdgesRef.current = initialEdges
     }
-  }, [initialNodes, initialEdges, setNodes, setEdges, focusNode, buildNodeGroups, loadSavedLayout])
+  }, [initialNodes, initialEdges, setNodes, setEdges, focusNode, buildNodeGroups, loadSavedLayout, layoutDirection])
 
   // Store selected node ID in ref to track which node is selected
   const selectedNodeIdRef = React.useRef<string | null>(null)
@@ -1406,8 +1548,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
 
     // Compare step data to see if it changed
-    const oldData = currentSelected.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | undefined
-    const newData = updatedNode.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | undefined
+    const oldData = currentSelected.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | undefined
+    const newData = updatedNode.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | undefined
     const oldStep = oldData?.step
     const newStep = newData?.step
 
@@ -1529,8 +1671,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       const updatedNodes = nds.map(node => {
         // Only update status for step-type nodes (step, conditional, loop, decision)
         // Validation and learning nodes have different status types
-        if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
-          const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
+        if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator') {
+          const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
           const stepId = nodeData?.step?.id || node.id
           const stepStatus = stepStatusMap.get(stepId)
           const currentStatus = nodeData?.status
@@ -1569,6 +1711,14 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                   ...node.data, 
                   status: stepStatus
                 } as DecisionNodeData
+              } as WorkflowNode
+            } else if (node.type === 'orchestrator') {
+              return {
+                ...node,
+                data: {
+                  ...node.data,
+                  status: stepStatus
+                } as OrchestratorNodeData
               } as WorkflowNode
             }
           }
@@ -1649,8 +1799,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       console.log('[WorkflowCanvas] Updating nodes, total nodes:', nds.length)
       let hasUpdates = false
       const updatedNodes = nds.map(node => {
-        if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
-          const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
+        if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator') {
+          const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
           const stepId = nodeData?.step?.id || node.id
           const currentStatus = nodeData?.status
 
@@ -1729,13 +1879,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
 
   // Handle edit step
-  const handleEditStep = useCallback(async (stepId: string, updates: Partial<PlanStep>) => {
+  const handleEditStep = useCallback(async (stepId: string, updates: Partial<PlanStep> | Partial<EvaluationStep>) => {
     // Eval Mode
     if (workflowMode === 'eval') {
       if (!evaluationPlan) return
       const stepIndex = evaluationPlan.steps.findIndex(s => s.id === stepId)
       if (stepIndex >= 0) {
-        await evalData.updateEvaluationStep(stepIndex, updates as any) // Type cast needed as EvaluationStep is similar to PlanStep
+        await evalData.updateEvaluationStep(stepIndex, updates as Partial<EvaluationStep>) // Type cast needed as EvaluationStep is similar to PlanStep
         highlightStepNode(stepId)
       }
       return

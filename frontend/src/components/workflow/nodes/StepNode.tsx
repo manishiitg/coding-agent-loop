@@ -1,6 +1,7 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle, Lock, SkipForward, Search } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -43,6 +44,62 @@ const statusIcons: Record<string, ReactElement | null> = {
   failed: <XCircle className="w-4 h-4 text-red-500" />
 }
 
+// Provider icons and styles
+const ProviderIcon = ({ provider }: { provider: string }) => {
+  switch (provider) {
+    case 'anthropic':
+      // Anthropic/Claude - stylized "A" shape
+      return (
+        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+          <path d="M12 2L2 22h4l2-4h8l2 4h4L12 2zm0 6l3 8H9l3-8z"/>
+        </svg>
+      )
+    case 'openai':
+      // OpenAI - hexagon shape
+      return (
+        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+          <path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855l-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023l-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135l-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08-4.778 2.758a.795.795 0 0 0-.393.681zm1.097-2.365l2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z"/>
+        </svg>
+      )
+    case 'openrouter':
+      // OpenRouter - router/network symbol
+      return (
+        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+        </svg>
+      )
+    case 'bedrock':
+      // AWS Bedrock - AWS-style cloud/cube
+      return (
+        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+          <path d="M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.18l6.9 3.45L12 11.09 5.1 7.63 12 4.18zM4 8.82l7 3.5v7.36l-7-3.5V8.82zm9 10.86v-7.36l7-3.5v7.36l-7 3.5z"/>
+        </svg>
+      )
+    case 'vertex':
+      // Google Gemini - sparkle/star shape
+      return (
+        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
+          <path d="M12 0c.514 4.148 2.852 7.486 7 8-.514 4.148-2.852 7.486-7 8 .514-4.148 2.852-7.486 7-8-.514-4.148-2.852-7.486-7-8zM5 8c.257 2.074 1.426 3.743 3.5 4-.257 2.074-1.426 3.743-3.5 4 .257-2.074 1.426-3.743 3.5-4-.257-2.074-1.426-3.743-3.5-4z"/>
+        </svg>
+      )
+    default:
+      // Fallback: show first 2 letters of provider name
+      return (
+        <span className="text-[10px] font-bold uppercase">
+          {provider?.slice(0, 2) || '?'}
+        </span>
+      )
+  }
+}
+
+const providerBadgeStyles: Record<string, { bg: string; text: string }> = {
+  anthropic: { bg: 'bg-orange-100 dark:bg-orange-900/40', text: 'text-orange-700 dark:text-orange-300' },
+  openai: { bg: 'bg-emerald-100 dark:bg-emerald-900/40', text: 'text-emerald-700 dark:text-emerald-300' },
+  openrouter: { bg: 'bg-purple-100 dark:bg-purple-900/40', text: 'text-purple-700 dark:text-purple-300' },
+  bedrock: { bg: 'bg-amber-100 dark:bg-amber-900/40', text: 'text-amber-700 dark:text-amber-300' },
+  vertex: { bg: 'bg-blue-100 dark:bg-blue-900/40', text: 'text-blue-700 dark:text-blue-300' }
+}
+
 const getFileName = (path: string): string => path.split('/').pop() || path
 
 // Helper to parse tool entry: "category:tool" or "category:*"
@@ -75,9 +132,9 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
 }
 
 export const StepNode = memo(({ data, selected }: StepNodeProps) => {
-  const { id, title, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder, parentOrchestratorTitle, routeName, routeCondition } = data
+  const { id, title, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder, routeName, routeCondition } = data
   
-  const { availableLLMs } = useLLMStore()
+  const { availableLLMs, workflowPrimaryConfig, primaryConfig } = useLLMStore()
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
 
@@ -178,19 +235,44 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     return Array.isArray(output) ? output : [output]
   }, [step.context_output])
 
-  const executionLLM = useMemo(() => {
+  const { executionLLM, executionProvider } = useMemo(() => {
     const presetLLMConfig = activePreset?.llmConfig
     const stepLLMConfig = stepConfig?.agent_configs?.execution_llm
     const presetExecutionLLM = presetLLMConfig?.execution_llm
-    const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id 
+    const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id
       ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
-    
+
     const llmConfig = stepLLMConfig || presetExecutionLLM || presetDefaultLLM
-    if (!llmConfig?.provider || !llmConfig?.model_id) return null
-    
-    const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
-    return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
-  }, [stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs])
+
+    // If we have a valid config, use it
+    if (llmConfig?.provider && llmConfig?.model_id) {
+      const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
+      return {
+        executionLLM: llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`,
+        executionProvider: llmConfig.provider
+      }
+    }
+
+    // Fallback: use workflow primary config from LLM store
+    if (workflowPrimaryConfig?.provider) {
+      const llm = availableLLMs?.find(l => l.provider === workflowPrimaryConfig.provider && l.model === workflowPrimaryConfig.model_id)
+      return {
+        executionLLM: llm?.label || (workflowPrimaryConfig.model_id ? `${workflowPrimaryConfig.provider} ${workflowPrimaryConfig.model_id.split('-').slice(0, 2).join('-')}` : null),
+        executionProvider: workflowPrimaryConfig.provider
+      }
+    }
+
+    // Last fallback: use legacy primary config
+    if (primaryConfig?.provider) {
+      const llm = availableLLMs?.find(l => l.provider === primaryConfig.provider && l.model === primaryConfig.model_id)
+      return {
+        executionLLM: llm?.label || (primaryConfig.model_id ? `${primaryConfig.provider} ${primaryConfig.model_id.split('-').slice(0, 2).join('-')}` : null),
+        executionProvider: primaryConfig.provider
+      }
+    }
+
+    return { executionLLM: null, executionProvider: null }
+  }, [stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs, workflowPrimaryConfig, primaryConfig])
 
   // Learning LLM: step config > preset learning_llm > preset default
   // Always use learning_llm config (not execution_llm), even in code exec mode
@@ -525,6 +607,24 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
               <Code className="w-4 h-4" />
             </div>
           )}
+          {/* LLM Provider Badge */}
+          {executionProvider && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    className={`flex items-center justify-center w-8 h-8 rounded-md cursor-default ${providerBadgeStyles[executionProvider]?.bg || 'bg-gray-100 dark:bg-gray-800'} ${providerBadgeStyles[executionProvider]?.text || 'text-gray-600 dark:text-gray-400'} border border-gray-200 dark:border-gray-700`}
+                  >
+                    <ProviderIcon provider={executionProvider} />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs">
+                  <p className="font-medium">{executionProvider}</p>
+                  {executionLLM && <p className="text-xs text-gray-500">{executionLLM}</p>}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           {/* Prerequisite Detection Badge */}
           {prerequisiteEnabled && (
             <div 
@@ -638,44 +738,14 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
           </div>
         )}
 
-        {/* Sub-agent info: Parent orchestrator and route condition (shown at bottom for sub-agents) */}
-        {isSubAgent && (
-          <div className="px-4 py-2.5 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/30">
-            <div className="flex flex-col gap-1.5 text-[10px] text-gray-600 dark:text-gray-400">
-              {parentOrchestratorTitle ? (
-                <div className="flex items-center gap-1.5">
-                  <span className="font-medium text-gray-700 dark:text-gray-300">Parent:</span>
-                  <span className="truncate text-gray-800 dark:text-gray-200">{parentOrchestratorTitle}</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5">
-                  <span className="font-medium text-gray-700 dark:text-gray-300">Parent:</span>
-                  <span className="truncate">Orchestrator</span>
-                </div>
-              )}
-              {(routeName || routeCondition) && (
-                <div className="flex items-start gap-1.5">
-                  <span className="font-medium text-gray-700 dark:text-gray-300 flex-shrink-0">Route:</span>
-                  <div className="flex-1 min-w-0">
-                    {routeName && (
-                      <div className="truncate text-gray-800 dark:text-gray-200">{routeName}</div>
-                    )}
-                    {routeCondition && (
-                      <div className="truncate text-gray-500 dark:text-gray-500 italic mt-0.5" title={routeCondition}>
-                        {routeCondition.length > 40 ? `${routeCondition.substring(0, 40)}...` : routeCondition}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
       </div>
 
       {/* Config Footer */}
       <NodeConfigFooter
+        description={step.description}
+        successCriteria={step.success_criteria}
+        routeName={routeName}
+        routeCondition={routeCondition}
         executionLLM={executionLLM}
         executionMaxTurns={executionMaxTurns}
         learningLLM={learningLLM}
@@ -696,57 +766,59 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
       <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-900" />
       
       {/* Prerequisite source handles (bottom, for edges going back to previous steps when prerequisite is detected during execution) */}
+      {/* Hidden by default, only functional for edge connections */}
       <Handle
         type="source"
         position={Position.Bottom}
         id="prereq-left"
         style={{ left: '25%' }}
-        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-900"
+        className="!w-2 !h-2 !bg-transparent !border-0"
       />
       <Handle
         type="source"
         position={Position.Bottom}
         id="prereq-middle"
         style={{ left: '50%' }}
-        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-900"
+        className="!w-2 !h-2 !bg-transparent !border-0"
       />
       <Handle
         type="source"
         position={Position.Bottom}
         id="prereq-right"
         style={{ left: '75%' }}
-        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-900"
+        className="!w-2 !h-2 !bg-transparent !border-0"
       />
-      
+
       {/* Prerequisite target handles (bottom, for edges coming from step/learning nodes when prerequisite is detected during execution) */}
+      {/* Hidden by default, only functional for edge connections */}
       <Handle
         type="target"
         position={Position.Bottom}
         id="prereq-target-left"
         style={{ left: '25%' }}
-        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-900"
+        className="!w-2 !h-2 !bg-transparent !border-0"
       />
       <Handle
         type="target"
         position={Position.Bottom}
         id="prereq-target-middle"
         style={{ left: '50%' }}
-        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-900"
+        className="!w-2 !h-2 !bg-transparent !border-0"
       />
       <Handle
         type="target"
         position={Position.Bottom}
         id="prereq-target-right"
         style={{ left: '75%' }}
-        className="!w-2 !h-2 !bg-orange-500 !border-2 !border-white dark:!border-gray-900"
+        className="!w-2 !h-2 !bg-transparent !border-0"
       />
-      
-      {/* Retry Handle - for validation loop-back */}
+
+      {/* Retry Handle - for validation loop-back (hidden by default) */}
       <Handle
         type="target"
         position={Position.Top}
         id="retry"
-        className="!w-2 !h-2 !bg-amber-500 !border-2 !border-white dark:!border-gray-900"
+        className="!w-2 !h-2 !bg-transparent !border-0"
       />
     </div>
   )

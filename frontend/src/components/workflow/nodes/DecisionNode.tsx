@@ -548,6 +548,18 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
             </div>
           )}
 
+          {/* Verification question - what is being evaluated */}
+          {decision_evaluation_question && (
+            <div className="mt-1.5 p-2 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800/50">
+              <p className="text-[10px] text-purple-700 dark:text-purple-300">
+                <span className="font-semibold">Verifies: </span>
+                {decision_evaluation_question.length > 80
+                  ? `${decision_evaluation_question.substring(0, 80)}...`
+                  : decision_evaluation_question}
+              </p>
+            </div>
+          )}
+
           {/* Context Files - from inner step (decision_step) */}
           {hasContext && (
             <div className="space-y-1.5 mt-2">
@@ -603,12 +615,12 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
           )}
         </div>
 
-        {/* Retry handle - for validation loop-back */}
+        {/* Retry handle - for validation loop-back (hidden by default) */}
         <Handle
           type="target"
           position={Position.Top}
           id="retry"
-          className="!w-2 !h-2 !bg-amber-500 !border-2 !border-white dark:!border-gray-900"
+          className="!w-2 !h-2 !bg-transparent !border-0"
           style={{ left: '33%' }}
         />
 
@@ -631,18 +643,13 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
         />
       </div>
 
-      {/* Evaluation Question below the diamond */}
-      {decision_evaluation_question && (
-        <div className="mt-3 mx-4">
-          <p className="text-[11px] text-gray-600 dark:text-gray-400 text-center leading-relaxed p-2.5 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/50">
-            {decision_evaluation_question}
-          </p>
-        </div>
-      )}
-
       {/* Config Footer */}
       <div className="mt-2 mx-4">
         <NodeConfigFooter
+          description={step?.description}
+          successCriteria={step?.success_criteria}
+          evalLLM={conditionalLLM}
+          decisionQuestion={decision_evaluation_question}
           executionLLM={executionLLM}
           executionMaxTurns={executionMaxTurns}
           learningLLM={learningLLM}
@@ -656,16 +663,6 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
           hasHumanTools={hasHumanTools}
           hasLargeOutput={hasLargeOutput}
         />
-        {/* Conditional/Evaluation LLM badge */}
-        {conditionalLLM && (
-          <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800/30 border-t border-gray-200 dark:border-gray-700 rounded-b-lg">
-            <div className="flex flex-wrap gap-1.5 justify-center">
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300" title="LLM used for decision evaluation">
-                Eval: {conditionalLLM}
-              </span>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )

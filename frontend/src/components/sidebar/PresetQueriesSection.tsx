@@ -26,6 +26,11 @@ export default function PresetQueriesSection({
   // Store subscriptions
   const { selectedModeCategory } = useModeStore()
 
+  // Don't render anything for chat mode (presets are disabled for chat)
+  if (selectedModeCategory === 'chat') {
+    return null
+  }
+
   const toggleSection = (section: string) => {
     setExpandedSections(prev => {
       const newSet = new Set(prev)
@@ -42,7 +47,7 @@ export default function PresetQueriesSection({
   return (
     <div className="space-y-2">
       {/* Current Preset Display */}
-      {selectedModeCategory && selectedModeCategory !== 'chat' && (
+      {selectedModeCategory && (
         <div className="space-y-2">
           <ActivePresetDisplay
             modeCategory={selectedModeCategory as 'workflow'}
@@ -56,7 +61,7 @@ export default function PresetQueriesSection({
         <div className="flex items-center gap-2">
           <Settings className="w-4 h-4 text-gray-600 dark:text-gray-400" />
           <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-            {selectedModeCategory === 'chat' ? 'Preset Queries' : 'Available Presets'}
+            Available Presets
           </span>
         </div>
         <div className="flex items-center gap-1">

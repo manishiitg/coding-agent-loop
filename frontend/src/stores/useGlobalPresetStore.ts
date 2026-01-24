@@ -37,9 +37,9 @@ interface GlobalPresetState {
   
   // Actions for database management
   refreshPresets: () => Promise<void>
-  addPreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean) => Promise<CustomPreset | null>
-  updatePreset: (id: string, label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean) => Promise<void>
-  savePreset: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, useToolSearchMode?: boolean) => Promise<CustomPreset | null>
+  addPreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean) => Promise<CustomPreset | null>
+  updatePreset: (id: string, label: string, query?: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean) => Promise<void>
+  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, useToolSearchMode?: boolean) => Promise<CustomPreset | null>
   deletePreset: (id: string) => Promise<void>
   duplicatePreset: (presetId: string) => Promise<CustomPreset | null>
   updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
@@ -165,7 +165,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             return {
               id: preset.id,
               label: preset.label,
-              query: preset.query,
+              query: preset.query || '',
               createdAt: new Date(preset.created_at).getTime(),
               selectedServers,
               selectedTools, // NEW
@@ -213,7 +213,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               return {
                 id: preset.id,
                 label: preset.label,
-                query: preset.query,
+                query: preset.query || '',
                 selectedServers: [],
                 selectedTools: [], // NEW: Predefined presets don't have custom tool selection
                 agentMode: preset.agent_mode as 'simple' | 'workflow' | undefined,
@@ -271,7 +271,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
 
           const request: CreatePresetQueryRequest = {
             label,
-            query,
+            query: query || '',
             selected_servers: selectedServers,
             selected_tools: toolsForBackend, // Filtered tools (empty if tool search mode)
             agent_mode: agentMode,
@@ -309,7 +309,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           const newPreset: CustomPreset = {
             id: response.id,
             label: response.label,
-            query: response.query,
+            query: response.query || '',
             createdAt: new Date(response.created_at).getTime(),
             selectedServers,
             selectedTools, // Keep original selection for UI
@@ -401,7 +401,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           
           const request: UpdatePresetQueryRequest = {
             label,
-            query,
+            query: query || '',
             selected_servers: selectedServers,
             selected_tools: toolsForBackend, // Filtered tools (empty if tool search mode)
             agent_mode: agentMode,
@@ -505,7 +505,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           try {
             const request: UpdatePresetQueryRequest = {
               label,
-              query,
+              query: query || '',
               selected_servers: selectedServers,
               selected_tools: toolsForBackend,
               agent_mode: agentMode,
@@ -572,7 +572,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           try {
             const request: CreatePresetQueryRequest = {
               label,
-              query,
+              query: query || '',
               selected_servers: selectedServers,
               selected_tools: toolsForBackend,
               agent_mode: agentMode,
@@ -607,7 +607,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             const newPreset: CustomPreset = {
               id: response.id,
               label: response.label,
-              query: response.query,
+              query: response.query || '',
               createdAt: new Date(response.created_at).getTime(),
               selectedServers,
               selectedTools, // Keep original UI selection
@@ -619,11 +619,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               preDiscoveredTools,
               enableContextSummarization
             }
-            
+
             set(state => ({
               customPresets: [...state.customPresets, newPreset]
             }))
-            
+
             return newPreset
           } catch (error) {
             console.error('[code_execution] [PRESET_STORE] Error creating preset:', error)
@@ -876,11 +876,13 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             workflowStore.switchToPreset(preset.id)
           }
 
-          // Set the current query in both stores
-          set({ currentQuery: preset.query })
-          
-          // Also update the AppStore's currentQuery for ChatInput/ChatArea components
-          useAppStore.getState().setCurrentQuery(preset.query)
+          // Set the current query in both stores (only if query exists and is non-empty)
+          if (preset.query && preset.query.trim()) {
+            set({ currentQuery: preset.query })
+
+            // Also update the AppStore's currentQuery for ChatInput/ChatArea components
+            useAppStore.getState().setCurrentQuery(preset.query)
+          }
           
           // Set server selection (use predefined selection if not present on preset)
           const state = get()

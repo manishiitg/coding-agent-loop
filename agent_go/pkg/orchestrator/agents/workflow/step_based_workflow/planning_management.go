@@ -189,15 +189,25 @@ func (hcpo *StepBasedWorkflowOrchestrator) runPlanningPhase(ctx context.Context,
 			}
 		}
 	} else {
-		// CREATE mode: concise, action-oriented instruction for first-time plan generation.
-		// Include the objective explicitly since it's no longer shown in the system prompt.
-		var result strings.Builder
-		if err := planningCreateUserMessageTemplate.Execute(&result, map[string]interface{}{
-			"Objective": hcpo.GetObjective(),
-		}); err != nil {
-			userMessage = fmt.Sprintf("Objective: %s\n\nGenerate a comprehensive structured plan to achieve this objective.", hcpo.GetObjective())
+		// CREATE mode
+		if humanFeedback != "" && strings.TrimSpace(humanFeedback) != "" {
+			// If we have feedback (e.g. from previous iteration where user provided objective), use it
+			userMessage = humanFeedback
+		} else if hcpo.GetObjective() == "" {
+			// If objective is empty and no feedback, tell agent to ask user
+			userMessage = "I haven't defined an objective yet. Please ask me what I want to achieve."
 		} else {
-			userMessage = result.String()
+			// Standard CREATE mode with objective
+			// concise, action-oriented instruction for first-time plan generation.
+			// Include the objective explicitly since it's no longer shown in the system prompt.
+			var result strings.Builder
+			if err := planningCreateUserMessageTemplate.Execute(&result, map[string]interface{}{
+				"Objective": hcpo.GetObjective(),
+			}); err != nil {
+				userMessage = fmt.Sprintf("Objective: %s\n\nGenerate a comprehensive structured plan to achieve this objective.", hcpo.GetObjective())
+			} else {
+				userMessage = result.String()
+			}
 		}
 	}
 
@@ -1246,6 +1256,33 @@ func CheckAndEmitPlanUpdateEvent(
 // Similar to ExtractVariablesOnly in variable_management.go
 func (hcpo *StepBasedWorkflowOrchestrator) CreatePlanOnly(ctx context.Context, objective, workspacePath string) (string, error) {
 
+	// Always ask the user what they want to build (even if objective is provided, to confirm/refine)
+	requestID := fmt.Sprintf("plan_objective_inquiry_%d", time.Now().UnixNano())
+	approved, feedback, err := hcpo.RequestHumanFeedback(
+		ctx,
+		requestID,
+		"What would you like to build?",
+		"", // No additional context
+		hcpo.getSessionID(),
+		hcpo.getWorkflowID(),
+	)
+	
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to request objective from user: %v", err))
+	} else if feedback != "" {
+		// User provided feedback, use it as the objective
+		objective = feedback
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Received objective from user: %s", objective))
+	} else if approved && feedback == "" {
+		// User approved but empty feedback? Keep existing objective if any
+		hcpo.GetLogger().Info("ℹ️ User sent empty response, keeping existing objective")
+	}
+
+	// Final validation - ensure we have an objective
+	if objective == "" {
+		return "", fmt.Errorf("objective cannot be empty and user did not provide one")
+	}
+
 	// Set objective and workspace path
 	hcpo.SetObjective(objective)
 	hcpo.SetWorkspacePath(workspacePath)
@@ -1432,6 +1469,50 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreatePlanOnly(ctx context.Context, o
 			}
 
 			if len(approvedPlan.Steps) == 0 {
+				// If no steps created, check if agent asked a question (conversational flow)
+				// This handles the "empty objective" case where agent asks "What do you want to do?"
+				lastMsg := planningConversationHistory[len(planningConversationHistory)-1]
+				if lastMsg.Role == llmtypes.ChatMessageTypeAI {
+					var agentText string
+					for _, part := range lastMsg.Parts {
+						if textPart, ok := part.(llmtypes.TextContent); ok {
+							agentText += textPart.Text
+						}
+					}
+
+					if agentText != "" {
+						// Agent asked a question - request feedback from user
+						hcpo.GetLogger().Info(fmt.Sprintf("💬 Agent asked question: %s", agentText))
+						
+						// Request human feedback with agent's question
+						requestID := fmt.Sprintf("plan_clarification_%d_%d", time.Now().UnixNano(), revisionAttempt)
+						approved, feedback, err := hcpo.RequestHumanFeedback(
+							ctx,
+							requestID,
+							agentText,
+							"", // No additional context
+							hcpo.getSessionID(),
+							hcpo.getWorkflowID(),
+						)
+						
+						if err != nil {
+							return "", fmt.Errorf("failed to request feedback for agent question: %w", err)
+						}
+						
+						// Use user's feedback for next iteration
+						humanFeedback = feedback
+						if approved && feedback == "" {
+							// User approved but didn't answer? Treat as "continue" or "yes"
+							humanFeedback = "Yes, please proceed."
+						}
+						
+						if revisionAttempt >= maxPlanRevisions {
+							return "", fmt.Errorf("max plan revision attempts (%d) reached", maxPlanRevisions)
+						}
+						continue
+					}
+				}
+				
 				return "", fmt.Errorf(fmt.Sprintf("new plan has no steps: planning agent returned empty steps array"), nil)
 			}
 

@@ -53,10 +53,10 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
   const loadPresets = useCallback(async () => {
     try {
       const response = await agentApi.getPresetQueries(50, 0)
-      const presets = response.presets.map((preset: {id: string, label: string, query: string}) => ({
+      const presets = response.presets.map((preset: {id: string, label: string, query?: string}) => ({
         id: preset.id,
         name: preset.label,
-        description: preset.query || 'No description available'
+        description: preset.query || preset.label
       }))
       setAvailablePresets(presets)
     } catch (error) {
@@ -105,10 +105,10 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
           const loadPresetsAndSelect = async () => {
             try {
               const response = await agentApi.getPresetQueries(50, 0)
-              const presets = response.presets.map((preset: {id: string, label: string, query: string}) => ({
+              const presets = response.presets.map((preset: {id: string, label: string, query?: string}) => ({
                 id: preset.id,
                 name: preset.label,
-                description: preset.query || 'No description available'
+                description: preset.query || preset.label
               }))
               setAvailablePresets(presets)
               

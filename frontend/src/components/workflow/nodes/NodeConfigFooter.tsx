@@ -1,4 +1,5 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 
 interface ToolsDisplayInfo {
   server: string
@@ -17,6 +18,14 @@ interface HumanToolsInfo {
 }
 
 interface NodeConfigFooterProps {
+  description?: string
+  successCriteria?: string
+  routeName?: string
+  routeCondition?: string
+  loopCondition?: string
+  maxIterations?: number
+  evalLLM?: string | null
+  decisionQuestion?: string
   executionLLM?: string | null
   executionMaxTurns?: number
   learningLLM?: string | null
@@ -36,6 +45,14 @@ interface NodeConfigFooterProps {
 }
 
 export const NodeConfigFooter = memo(({
+  description,
+  successCriteria,
+  routeName,
+  routeCondition,
+  loopCondition,
+  maxIterations,
+  evalLLM,
+  decisionQuestion,
   executionLLM,
   executionMaxTurns = 100,
   learningLLM,
@@ -53,9 +70,18 @@ export const NodeConfigFooter = memo(({
   useToolSearchMode = false,
   preDiscoveredTools = []
 }: NodeConfigFooterProps) => {
+  const [isExpanded, setIsExpanded] = useState(false)
+
   // Determine mode: simple mode is neither code exec nor tool search
   const isSimpleMode = !useCodeExecutionMode && !useToolSearchMode
-  const hasConfig = executionLLM ||
+  const hasConfig = description ||
+    successCriteria ||
+    routeName ||
+    routeCondition ||
+    loopCondition ||
+    evalLLM ||
+    decisionQuestion ||
+    executionLLM ||
     learningLLM ||
     effectiveServers.length > 0 ||
     toolsDisplayInfo.length > 0 ||
@@ -71,7 +97,29 @@ export const NodeConfigFooter = memo(({
 
   return (
     <div className="px-4 py-2.5 bg-gray-50 dark:bg-gray-800/30 border-t border-gray-200 dark:border-gray-700">
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-1.5 items-center">
+        {/* Toggle button */}
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+          title={isExpanded ? "Collapse config" : "Expand config"}
+        >
+          {isExpanded ? (
+            <ChevronDown className="w-3 h-3" />
+          ) : (
+            <ChevronRight className="w-3 h-3" />
+          )}
+          <span>Config</span>
+        </button>
+
+        {/* Badges - only shown when expanded */}
+        {isExpanded && (
+          <>
+        {evalLLM && (
+          <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300" title="LLM used for decision evaluation">
+            Eval: {evalLLM}
+          </span>
+        )}
         {executionLLM && (
           <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
             {executionLLM}
@@ -151,7 +199,55 @@ export const NodeConfigFooter = memo(({
             Learn Each Iteration
           </span>
         )}
+          </>
+        )}
       </div>
+
+      {/* Description, Success Criteria, Route Info, Loop Condition, and Decision Question - shown when expanded */}
+      {isExpanded && (description || successCriteria || routeName || routeCondition || loopCondition || decisionQuestion) && (
+        <div className="mt-2 space-y-2">
+          {decisionQuestion && (
+            <div className="text-[10px] text-gray-600 dark:text-gray-400">
+              <span className="font-semibold text-indigo-700 dark:text-indigo-400">Evaluates: </span>
+              {decisionQuestion}
+            </div>
+          )}
+          {(routeName || routeCondition) && (
+            <div className="text-[10px] text-gray-600 dark:text-gray-400">
+              <span className="font-semibold text-cyan-700 dark:text-cyan-400">Route: </span>
+              {routeName}
+              {routeCondition && (
+                <span className="italic text-gray-500 dark:text-gray-500 ml-1" title={routeCondition}>
+                  ({routeCondition.length > 50 ? `${routeCondition.substring(0, 50)}...` : routeCondition})
+                </span>
+              )}
+            </div>
+          )}
+          {loopCondition && (
+            <div className="text-[10px] text-gray-600 dark:text-gray-400">
+              <span className="font-semibold text-cyan-700 dark:text-cyan-400">Until: </span>
+              {loopCondition}
+              {maxIterations && (
+                <span className="text-gray-500 dark:text-gray-500 ml-1">
+                  (max {maxIterations} iterations)
+                </span>
+              )}
+            </div>
+          )}
+          {description && (
+            <div className="text-[10px] text-gray-600 dark:text-gray-400">
+              <span className="font-semibold text-gray-700 dark:text-gray-300">Description: </span>
+              {description}
+            </div>
+          )}
+          {successCriteria && (
+            <div className="text-[10px] text-gray-600 dark:text-gray-400">
+              <span className="font-semibold text-green-700 dark:text-green-400">Success Criteria: </span>
+              {successCriteria}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 })

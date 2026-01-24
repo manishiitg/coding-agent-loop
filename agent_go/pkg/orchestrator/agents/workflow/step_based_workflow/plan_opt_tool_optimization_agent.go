@@ -220,7 +220,7 @@ func getUpdateStepConfigToolsSchema() string {
 						"enabled_custom_tools": {
 							"type": "array",
 							"items": {"type": "string"},
-							"description": "OPTIONAL: Updated custom tool selection. Format: ['workspace_tools:*'] for all workspace tools, ['workspace_tools:read_workspace_file'] for specific tools, ['human_tools:human_feedback'] for human tools. If omitted, existing value is preserved. NOTE: Do NOT include read_large_output, search_large_output, or query_large_output - these are context offloading virtual tools managed separately via enable_context_offloading boolean flag."
+							"description": "OPTIONAL: Updated custom tool selection. Categories: workspace_basic (file ops), workspace_git (GitHub sync), workspace_advanced (shell, image, web, PDF), human_tools. Format: ['workspace_basic:*'] for all basic tools, ['workspace_advanced:execute_shell_command'] for specific tools, ['human_tools:human_feedback'] for human tools. If omitted, existing value is preserved. NOTE: Do NOT include read_large_output, search_large_output, or query_large_output - these are context offloading virtual tools managed separately via enable_context_offloading boolean flag."
 						},
 						"enable_context_offloading": {
 							"type": "boolean",
@@ -1815,23 +1815,27 @@ For each step being converted to Tool Search Mode, present:
 
 | Tool Category | Format | Inclusion Rule | Can Infer from Description? |
 |--------------|--------|----------------|------------------------------|
-| **Basic Workspace** | workspace_tools:list/read/update/delete | Always include | No (always included) |
-| **Advanced Workspace** | workspace_tools:move/diff/regex/semantic | Learnings OR description | Yes |
-| **GitHub Tools** | workspace_tools:sync_workspace_to_github, get_workspace_github_status | Learnings OR mentions GitHub | Yes (if mentions GitHub) |
-| **Execute Shell** | workspace_tools:execute_shell_command | Learnings OR mentions scripts/commands | Yes |
-| **Read Image** | workspace_tools:read_image | Learnings OR mentions images | Yes |
+| **Basic Workspace** | workspace_basic:* (list, read, update, delete, move, diff_patch, regex_search, semantic_search, glob_discover) | Always include for file operations | No (always included) |
+| **GitHub Sync** | workspace_git:* (sync_workspace_to_github, get_workspace_github_status) | ONLY if learnings show git usage OR description mentions GitHub/sync | Yes |
+| **Execute Shell** | workspace_advanced:execute_shell_command | ONLY if learnings show shell usage OR description mentions scripts/commands/terminal | Yes |
+| **Read Image** | workspace_advanced:read_image | ONLY if learnings show image reading OR description mentions analyzing images | Yes |
+| **Fetch Web** | workspace_advanced:fetch_web_content | ONLY if learnings show web fetching OR description mentions URLs/web content | Yes |
+| **Read PDF** | workspace_advanced:read_pdf | ONLY if learnings show PDF reading OR description mentions PDF documents | Yes |
 | **MCP Tools** | server:tool | Learnings ONLY (or logs if user requested) | **NO** |
 | **NO_SERVERS** | ['NO_SERVERS'] | If no MCP tools used | Set when step only needs workspace/human tools |
-| **Human Feedback** | human_tools:human_feedback | Learnings OR needs approval | Yes |
+| **Human Feedback** | human_tools:human_feedback | RARELY needed - ONLY for OTP, manual approval, or info only humans can provide | Yes |
 
 **Key Principles**:
 - **Tool Search Mode is the PRIMARY optimization** - convert all eligible simple mode steps with learnings
 - **Learnings drive pre-discovered tools** - tools found in learnings become pre-discovered for immediate availability
 - **Learnings are the primary source** - success patterns from previous iterations
-- **Step description inference** - use step title/description to infer workspace/human tools when learnings are sparse
+- **REMOVE unnecessary advanced tools** - workspace_advanced tools (shell, image, web, PDF) and workspace_git should be REMOVED if not needed by the step
+- **Only include workspace_basic by default** - most steps only need file operations; add advanced/git tools only when justified
+- **human_feedback is RARELY needed** - only include when step requires OTP, manual approval, passwords, or information that only a human can provide; most automated steps should NOT have this tool
+- **Step description inference** - use step title/description to infer tools when learnings are sparse
 - **Execution logs are optional** - only check if user explicitly requests it
 - **Never infer MCP tools** - only include MCP tools found in learnings (or logs if user requested)
-- **Be conservative** - prefer keeping existing tools unless learnings clearly show removal is needed
+- **Be conservative with MCP tools** - but actively remove unused workspace_advanced/git/human tools
 
 ## CRITICAL RULES
 

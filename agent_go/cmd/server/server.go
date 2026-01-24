@@ -91,44 +91,87 @@ func extractRootCauseError(err error) string {
 }
 
 // createCustomTools creates workspace and human tools for orchestrator/workflow agents
-// includeHumanTools: if true, includes human tools (for workflow mode); if false, only workspace tools (for chat mode)
+// workflowMode: if true, includes all tools (basic + git + advanced + human) for workflow mode
+//
+//	if false, only workspace_advanced tools for chat mode (shell, image, web fetch, PDF)
+//
 // Returns: tools, executors, and a map of tool names to their categories
-// All tools from CreateWorkspaceTools() get category "workspace"
-// All tools from CreateHumanTools() get category "human"
-func createCustomTools(includeHumanTools bool) ([]llmtypes.Tool, map[string]interface{}, map[string]string) {
-	// Create workspace tools (always included)
-	workspaceCategory := virtualtools.GetWorkspaceToolCategory()
-	workspaceTools := virtualtools.CreateWorkspaceTools()
-	workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
-
-	// Initialize with workspace tools
-	allTools := workspaceTools
+// Tools from CreateWorkspaceBasicTools() get category "workspace_basic"
+// Tools from CreateWorkspaceGitTools() get category "workspace_git"
+// Tools from CreateWorkspaceAdvancedTools() get category "workspace_advanced"
+// All tools from CreateHumanTools() get category "human_tools"
+func createCustomTools(workflowMode bool) ([]llmtypes.Tool, map[string]interface{}, map[string]string) {
+	var allTools []llmtypes.Tool
 	allExecutors := make(map[string]interface{})
-	for name, executor := range workspaceExecutors {
+	toolCategories := make(map[string]string)
+
+	// Create workspace advanced tools (always included)
+	workspaceAdvancedCategory := virtualtools.GetWorkspaceAdvancedToolCategory()
+	workspaceAdvancedTools := virtualtools.CreateWorkspaceAdvancedTools()
+	workspaceAdvancedExecutors := virtualtools.CreateWorkspaceAdvancedToolExecutors()
+
+	// Add advanced tools
+	allTools = append(allTools, workspaceAdvancedTools...)
+	for name, executor := range workspaceAdvancedExecutors {
 		allExecutors[name] = executor
 	}
 
-	// Build category map - start with workspace tools
-	toolCategories := make(map[string]string)
-	for _, tool := range workspaceTools {
+	// Advanced tools get workspace_advanced category
+	for _, tool := range workspaceAdvancedTools {
 		if tool.Function != nil {
-			toolCategories[tool.Function.Name] = workspaceCategory
+			toolCategories[tool.Function.Name] = workspaceAdvancedCategory
 		}
 	}
 
-	// Conditionally include human tools (only for workflow mode)
-	if includeHumanTools {
+	// Workflow mode: include workspace_basic, workspace_git, and human tools
+	if workflowMode {
+		// Create workspace basic tools
+		workspaceBasicCategory := virtualtools.GetWorkspaceBasicToolCategory()
+		workspaceBasicTools := virtualtools.CreateWorkspaceBasicTools()
+		workspaceBasicExecutors := virtualtools.CreateWorkspaceBasicToolExecutors()
+
+		// Add basic tools
+		allTools = append(allTools, workspaceBasicTools...)
+		for name, executor := range workspaceBasicExecutors {
+			allExecutors[name] = executor
+		}
+
+		// Basic tools get workspace_basic category
+		for _, tool := range workspaceBasicTools {
+			if tool.Function != nil {
+				toolCategories[tool.Function.Name] = workspaceBasicCategory
+			}
+		}
+
+		// Create workspace git tools
+		workspaceGitCategory := virtualtools.GetWorkspaceGitToolCategory()
+		workspaceGitTools := virtualtools.CreateWorkspaceGitTools()
+		workspaceGitExecutors := virtualtools.CreateWorkspaceGitToolExecutors()
+
+		// Add git tools
+		allTools = append(allTools, workspaceGitTools...)
+		for name, executor := range workspaceGitExecutors {
+			allExecutors[name] = executor
+		}
+
+		// Git tools get workspace_git category
+		for _, tool := range workspaceGitTools {
+			if tool.Function != nil {
+				toolCategories[tool.Function.Name] = workspaceGitCategory
+			}
+		}
+
+		// Add human tools
 		humanCategory := virtualtools.GetHumanToolCategory()
 		humanTools := virtualtools.CreateHumanTools()
 		humanExecutors := virtualtools.CreateHumanToolExecutors()
 
-		// Combine workspace and human tools
 		allTools = append(allTools, humanTools...)
 		for name, executor := range humanExecutors {
 			allExecutors[name] = executor
 		}
 
-		// Assign category to all tools from CreateHumanTools()
+		// Assign category to human tools
 		for _, tool := range humanTools {
 			if tool.Function != nil {
 				toolCategories[tool.Function.Name] = humanCategory
@@ -1247,7 +1290,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// TODO: Memory tools removed from workflow - only needed for individual React agents
 		// memoryTools := virtualtools.CreateMemoryTools()
 		// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
-		allTools, allExecutors, toolCategories := createCustomTools(true) // Include human tools for workflow mode
+		allTools, allExecutors, toolCategories := createCustomTools(true) // Workflow mode: all tools (basic + git + advanced + human)
 
 		// Load selected tools, code execution mode, tool search mode, and preset LLM config from preset if available (for workflow agents)
 		var selectedTools []string
@@ -2079,15 +2122,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if enableWorkspaceAccess {
-				workspaceTools := virtualtools.CreateWorkspaceTools()
-				workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
-				_, _, toolCategories := createCustomTools(false) // Get toolCategories map (no human tools for chat mode)
+				// Chat mode: only workspace_advanced tools (shell, image, web fetch, PDF)
+				workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
+				workspaceExecutors := virtualtools.CreateWorkspaceAdvancedToolExecutors()
+				_, _, toolCategories := createCustomTools(false) // Get toolCategories map for chat mode (advanced only)
 
 				// Apply folder guard to block Workflow/ folder access in chat mode
 				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors)
 				log.Printf("[CHAT MODE FOLDER GUARD] Applied Workflow/ folder restriction to chat mode")
 
-				log.Printf("[WORKSPACE TOOLS] Registering %d workspace tools for simple agent (enable_workspace_access: %v)", len(workspaceTools), enableWorkspaceAccess)
+				log.Printf("[WORKSPACE TOOLS] Registering %d workspace advanced tools for chat mode (enable_workspace_access: %v)", len(workspaceTools), enableWorkspaceAccess)
 
 				underlyingAgent := llmAgent.GetUnderlyingAgent()
 				for _, tool := range workspaceTools {
@@ -2135,7 +2179,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKSPACE TOOLS] Registered workspace tool: %s (category: %s)", toolName, toolCategory)
 					}
 				}
-				log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace tools for simple agent", len(workspaceTools))
+				log.Printf("[WORKSPACE TOOLS] Successfully registered %d workspace advanced tools for chat mode", len(workspaceTools))
 			} else {
 				log.Printf("[WORKSPACE TOOLS] Skipping workspace tools registration (enable_workspace_access: false)")
 			}
@@ -2143,8 +2187,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Add custom agent instructions based on agent mode
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
-			// Create custom tools for regular agents (workspace tools only, no human tools for chat mode)
-			allTools, allExecutors, toolCategories := createCustomTools(false) // No human tools for chat mode
+			// Create custom tools for chat mode (workspace_advanced only: shell, image, web fetch, PDF)
+			allTools, allExecutors, toolCategories := createCustomTools(false) // Chat mode: workspace_advanced only
 
 			// Register each custom tool with the agent
 			// This will trigger code generation and update the registry

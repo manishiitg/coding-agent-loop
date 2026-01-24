@@ -1,65 +1,72 @@
 // Custom tool names by category
-// These should match the tool names from the backend CreateWorkspaceToolExecutors and CreateHumanToolExecutors
+// These should match the tool names from the backend CreateWorkspaceBasicToolExecutors, CreateWorkspaceGitToolExecutors, and CreateWorkspaceAdvancedToolExecutors
 
-// Workspace tool sub-categories (FRONTEND ONLY - for UI organization)
-// The backend only sees individual tool names, not sub-categories
-export const BASIC_WORKSPACE_TOOLS = [
+// workspace_basic: 9 core file/folder management and search tools
+// Maps to backend "workspace_basic" category
+export const WORKSPACE_BASIC_TOOLS = [
   'list_workspace_files',
   'read_workspace_file',
   'update_workspace_file',
-  'delete_workspace_file',
-  'move_workspace_file',
   'diff_patch_workspace_file',
-] as const;
-
-export const ADVANCED_WORKSPACE_TOOLS = [
   'regex_search_workspace_files',
   'semantic_search_workspace_files',
+  'glob_discover_workspace_files',
+  'delete_workspace_file',
+  'move_workspace_file',
+] as const;
+
+// workspace_git: 2 GitHub sync tools
+// Maps to backend "workspace_git" category
+export const WORKSPACE_GIT_TOOLS = [
   'sync_workspace_to_github',
   'get_workspace_github_status',
 ] as const;
 
-export const PLUS_TOOLS = [
+// workspace_advanced: 4 advanced tools (shell command execution, image analysis, web fetch, and PDF reading)
+// Maps to backend "workspace_advanced" category
+export const WORKSPACE_ADVANCED_TOOLS = [
   'execute_shell_command',
   'read_image',
+  'fetch_web_content',
+  'read_pdf',
 ] as const;
 
-// All workspace tools (combined)
+// All workspace tools (combined) - for backward compatibility with "workspace_tools" category
 export const WORKSPACE_TOOLS = [
-  ...BASIC_WORKSPACE_TOOLS,
-  ...ADVANCED_WORKSPACE_TOOLS,
-  ...PLUS_TOOLS,
+  ...WORKSPACE_BASIC_TOOLS,
+  ...WORKSPACE_GIT_TOOLS,
+  ...WORKSPACE_ADVANCED_TOOLS,
 ] as const;
 
 export const HUMAN_TOOLS = [
   'human_feedback',
 ] as const;
 
+export type WorkspaceBasicToolName = typeof WORKSPACE_BASIC_TOOLS[number];
+export type WorkspaceGitToolName = typeof WORKSPACE_GIT_TOOLS[number];
+export type WorkspaceAdvancedToolName = typeof WORKSPACE_ADVANCED_TOOLS[number];
 export type WorkspaceToolName = typeof WORKSPACE_TOOLS[number];
 export type HumanToolName = typeof HUMAN_TOOLS[number];
 export type CustomToolName = WorkspaceToolName | HumanToolName;
 
 // Helper to get all tools for a category
+// Supports: workspace_tools (all), workspace_basic (9), workspace_git (2), workspace_advanced (4), human_tools
 export function getToolsByCategory(category: string): string[] {
   switch (category) {
     case 'workspace_tools':
+      // Backward compatible - returns all workspace tools
       return [...WORKSPACE_TOOLS];
+    case 'workspace_basic':
+      // Basic file/folder operations (9 tools)
+      return [...WORKSPACE_BASIC_TOOLS];
+    case 'workspace_git':
+      // GitHub sync tools (2 tools)
+      return [...WORKSPACE_GIT_TOOLS];
+    case 'workspace_advanced':
+      // Advanced tools (4 tools: shell + image + web fetch + PDF)
+      return [...WORKSPACE_ADVANCED_TOOLS];
     case 'human_tools':
       return [...HUMAN_TOOLS];
-    default:
-      return [];
-  }
-}
-
-// Helper to get tools for a workspace sub-category
-export function getToolsByWorkspaceSubCategory(subCategory: string): string[] {
-  switch (subCategory) {
-    case 'basic_workspace':
-      return [...BASIC_WORKSPACE_TOOLS];
-    case 'advanced_workspace':
-      return [...ADVANCED_WORKSPACE_TOOLS];
-    case 'plus_tools':
-      return [...PLUS_TOOLS];
     default:
       return [];
   }
@@ -70,3 +77,19 @@ export function getAllCustomTools(): string[] {
   return [...WORKSPACE_TOOLS, ...HUMAN_TOOLS];
 }
 
+// Helper to get the category for a specific tool name
+export function getCategoryForTool(toolName: string): string | null {
+  if (WORKSPACE_BASIC_TOOLS.includes(toolName as WorkspaceBasicToolName)) {
+    return 'workspace_basic';
+  }
+  if (WORKSPACE_GIT_TOOLS.includes(toolName as WorkspaceGitToolName)) {
+    return 'workspace_git';
+  }
+  if (WORKSPACE_ADVANCED_TOOLS.includes(toolName as WorkspaceAdvancedToolName)) {
+    return 'workspace_advanced';
+  }
+  if (HUMAN_TOOLS.includes(toolName as HumanToolName)) {
+    return 'human_tools';
+  }
+  return null;
+}

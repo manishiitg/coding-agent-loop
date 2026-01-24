@@ -24,6 +24,8 @@ import {
   FileText,
   BarChart3,
   DollarSign,
+  ArrowRight,
+  ArrowDown,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
@@ -158,7 +160,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     clearSelectedGroupIds,
     restoreSelectionFromLocalStorage,
     workflowMode,
-    setWorkflowMode
+    setWorkflowMode,
+    layoutDirection,
+    setLayoutDirection
   } = useWorkflowStore(useShallow(state => ({
     phases: state.phases,
     isLoadingPhases: state.isLoadingPhases,
@@ -191,7 +195,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     clearSelectedGroupIds: state.clearSelectedGroupIds,
     restoreSelectionFromLocalStorage: state.restoreSelectionFromLocalStorage,
     workflowMode: state.workflowMode,
-    setWorkflowMode: state.setWorkflowMode
+    setWorkflowMode: state.setWorkflowMode,
+    layoutDirection: state.layoutDirection,
+    setLayoutDirection: state.setLayoutDirection
   })))
 
   // Reset start point when switching to eval mode
@@ -2247,11 +2253,37 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </button>
         )}
         
-        {/* Layout Controls Group - Save and Reset */}
+        {/* Layout Controls Group - Direction, Save and Reset */}
         {(onSaveLayout || onDeleteLayout) && (
           <>
             <div className="w-px h-5 bg-gray-200 dark:bg-gray-700 mx-0.5" />
             <div className="flex items-center gap-1">
+              {/* Layout Direction Toggle */}
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => {
+                        const newDirection = layoutDirection === 'LR' ? 'TB' : 'LR'
+                        console.log('[WorkflowToolbar] Layout direction toggled:', newDirection)
+                        setLayoutDirection(newDirection)
+                      }}
+                      className="p-1.5 rounded-md transition-colors hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400"
+                      title={layoutDirection === 'LR' ? 'Switch to vertical layout' : 'Switch to horizontal layout'}
+                    >
+                      {layoutDirection === 'LR' ? (
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {layoutDirection === 'LR' ? 'Horizontal layout (click for vertical)' : 'Vertical layout (click for horizontal)'}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+
               {/* Save Layout Button */}
               {onSaveLayout && (
                 <TooltipProvider>

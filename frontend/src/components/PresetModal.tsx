@@ -106,11 +106,11 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       console.log('[PresetModal] Selected tools from preset:', editingPreset.selectedTools);
       console.log('[PresetModal] Selected skills from preset:', editingPreset.selectedSkills);
       setLabel(editingPreset.label);
-      setQuery(editingPreset.query);
+      setQuery(editingPreset.query || '');
       setSelectedServers(editingPreset.selectedServers || []);
       setSelectedTools(editingPreset.selectedTools || []); // NEW
       setSelectedSkills(editingPreset.selectedSkills || []);
-      setAgentMode(editingPreset.agentMode || 'simple');
+      setAgentMode(editingPreset.agentMode || 'workflow'); // Default to workflow
       setSelectedFolder(editingPreset.selectedFolder || null);
       const presetLLM = editingPreset.llmConfig || {
         provider: primaryConfig.provider,
@@ -119,8 +119,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setLlmConfig(presetLLM);
       setUseCodeExecutionMode(editingPreset.useCodeExecutionMode || false);
       // For workflow presets, default to true if not explicitly set
-      const isWorkflow = editingPreset.agentMode === 'workflow';
-      setUseToolSearchMode(editingPreset.useToolSearchMode !== undefined ? editingPreset.useToolSearchMode : isWorkflow);
+      setUseToolSearchMode(editingPreset.useToolSearchMode !== undefined ? editingPreset.useToolSearchMode : true); // Default true for workflow
       setEnableContextSummarization(editingPreset.enableContextSummarization !== undefined ? editingPreset.enableContextSummarization : true);
       setUseKnowledgebase(presetLLM.use_knowledgebase !== false); // Default true unless explicitly false
       // Load agent-specific configs if available
@@ -134,8 +133,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setSelectedServers([]);
       setSelectedTools([]); // NEW
       setSelectedSkills([]);
-      // Default to current mode if no fixedAgentMode is provided
-      const defaultMode = fixedAgentMode || (selectedModeCategory ? (getAgentModeFromCategory(selectedModeCategory) as 'simple' | 'workflow') : 'simple');
+      // Default to workflow mode as chat presets are disabled
+      const defaultMode = 'workflow';
       setAgentMode(defaultMode);
       setSelectedFolder(null);
       // Initialize LLM config from current primary config
@@ -145,8 +144,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       };
       setLlmConfig(defaultLLM);
       setUseCodeExecutionMode(false);
-      // Default tool search mode to true for workflow presets, false for others
-      setUseToolSearchMode(defaultMode === 'workflow');
+      // Default tool search mode to true for workflow presets
+      setUseToolSearchMode(true);
       setEnableContextSummarization(true);
       setUseKnowledgebase(true); // Default true
       // Initialize agent-specific configs to null (will use legacy default)
@@ -188,7 +187,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
-    if (label.trim() && query.trim()) {
+    const isQueryRequired = effectiveAgentMode !== 'workflow';
+    if (label.trim() && (!isQueryRequired || query.trim())) {
       if (effectiveAgentMode === 'workflow' && !selectedFolder) {
         alert('Folder selection is required for workflow presets');
         return;
@@ -262,7 +262,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       
       onSave(
         label.trim(),
-        query.trim(),
+        effectiveAgentMode === 'workflow' ? '' : query.trim(),
         selectedServers,
         selectedTools,
         selectedSkills, // Skill folder names for workflow
@@ -306,7 +306,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
       onClick={handleBackdropClick}
     >
-      <Card 
+      <Card
         className="w-full max-w-6xl mx-4 p-6 max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
@@ -320,7 +320,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
               form="preset-form"
               variant="outline"
               size="sm"
-              disabled={!label.trim() || !query.trim() || (effectiveAgentMode === 'workflow' && !selectedFolder)}
+              disabled={!label.trim() || (effectiveAgentMode !== 'workflow' && !query.trim()) || (effectiveAgentMode === 'workflow' && !selectedFolder)}
             >
               {editingPreset ? 'Update' : 'Save'} Preset
             </Button>
@@ -336,458 +336,338 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         </div>
 
         <form id="preset-form" onSubmit={handleSubmit} className="space-y-6">
-          {/* Two Column Layout */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Left Column - Preset Name and Query */}
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="preset-label" className="block text-sm font-medium mb-2">
-                  Preset Name
-                </label>
-                <Input
-                  id="preset-label"
-                  value={label}
-                  onChange={(e) => setLabel(e.target.value)}
-                  placeholder="Enter preset name..."
-                  required
-                />
+          {/* Two Column Layout for both modes */}
+          {effectiveAgentMode === 'workflow' ? (
+            /* Workflow Mode: Two Column Layout with LLM Config on Left */
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Left Column - Preset Name and LLM Configuration */}
+              <div className="space-y-4">
+                {/* Preset Name */}
+                <div>
+                  <label htmlFor="preset-label" className="block text-sm font-medium mb-2">
+                    Preset Name
+                  </label>
+                  <Input
+                    id="preset-label"
+                    value={label}
+                    onChange={(e) => setLabel(e.target.value)}
+                    placeholder="Enter preset name..."
+                    required
+                  />
+                </div>
+
+                {/* LLM Configuration - in place of Query */}
+                <div>
+                  <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+                    <Settings className="w-4 h-4" />
+                    Agent LLM Configuration
+                  </label>
+                  <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md space-y-4">
+                    {/* Execution Mode Selection */}
+                    <div className="mb-4">
+                      <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                        Execution Mode
+                      </label>
+                      <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                type="button"
+                                onClick={() => setExecutionMode('simple')}
+                                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
+                                  !useCodeExecutionMode && !useToolSearchMode ? 'agent-mode-selected' : 'agent-mode-unselected'
+                                }`}
+                              >
+                                <Sparkles className="w-3.5 h-3.5 inline mr-1.5" />
+                                Simple
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs">
+                              <p className="font-medium">Simple Mode</p>
+                              <p className="text-xs mt-1">Direct MCP tool access. Agent calls tools directly without code generation.</p>
+                            </TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                type="button"
+                                onClick={() => setExecutionMode('code')}
+                                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
+                                  useCodeExecutionMode ? 'agent-mode-selected' : 'agent-mode-unselected'
+                                }`}
+                              >
+                                <Code2 className="w-3.5 h-3.5 inline mr-1.5" />
+                                Code Exec
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs">
+                              <p className="font-medium">Code Execution Mode</p>
+                              <p className="text-xs mt-1">MCP tools accessed via generated Go code. Better for complex multi-tool workflows.</p>
+                            </TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                type="button"
+                                onClick={() => setExecutionMode('search')}
+                                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+                                  useToolSearchMode ? 'agent-mode-selected' : 'agent-mode-unselected'
+                                }`}
+                              >
+                                <Search className="w-3.5 h-3.5 inline mr-1.5" />
+                                Tool Search
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs">
+                              <p className="font-medium">Tool Search Mode</p>
+                              <p className="text-xs mt-1">Dynamic tool discovery. Agent searches for tools as needed. Selected tools become pre-discovered.</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {!useCodeExecutionMode && !useToolSearchMode && 'Simple: Direct MCP tool access'}
+                        {useCodeExecutionMode && 'Code Exec: Tools accessed via generated Go code'}
+                        {useToolSearchMode && 'Tool Search: Dynamic tool discovery as needed'}
+                      </div>
+                    </div>
+
+                    {/* Execution Agent */}
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                          Execution Agent
+                        </label>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs">
+                              <p className="text-xs">Executes plan steps by calling MCP tools and performing actions.</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                      <LLMSelectionDropdown
+                        availableLLMs={availableLLMs}
+                        selectedLLM={executionLLM ? availableLLMs.find(llm =>
+                          llm.provider === executionLLM.provider && llm.model === executionLLM.model_id
+                        ) || null : currentLLMOption}
+                        onLLMSelect={(llm) => setExecutionLLM({
+                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                          model_id: llm.model
+                        })}
+                        onRefresh={refreshAvailableLLMs}
+                        disabled={false}
+                        inModal={true}
+                        openDirection="down"
+                      />
+                      <div className="text-xs text-gray-500 mt-1">
+                        Performs the actual work - calling tools, reading files, executing commands.
+                      </div>
+                    </div>
+                    {/* Validation Agent */}
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                          Validation Agent
+                        </label>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs">
+                              <p className="text-xs">Checks if step execution succeeded by evaluating success criteria.</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                      <LLMSelectionDropdown
+                        availableLLMs={availableLLMs}
+                        selectedLLM={validationLLM ? availableLLMs.find(llm =>
+                          llm.provider === validationLLM.provider && llm.model === validationLLM.model_id
+                        ) || null : currentLLMOption}
+                        onLLMSelect={(llm) => setValidationLLM({
+                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                          model_id: llm.model
+                        })}
+                        onRefresh={refreshAvailableLLMs}
+                        disabled={false}
+                        inModal={true}
+                        openDirection="down"
+                      />
+                      <div className="text-xs text-gray-500 mt-1">
+                        Evaluates execution results and determines if success criteria were met.
+                      </div>
+                    </div>
+                    {/* Learning Agent */}
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                          Learning Agent
+                        </label>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs">
+                              <p className="text-xs">Extracts patterns from successful executions for future runs.</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                      <LLMSelectionDropdown
+                        availableLLMs={availableLLMs}
+                        selectedLLM={learningLLM ? availableLLMs.find(llm =>
+                          llm.provider === learningLLM.provider && llm.model === learningLLM.model_id
+                        ) || null : currentLLMOption}
+                        onLLMSelect={(llm) => setLearningLLM({
+                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                          model_id: llm.model
+                        })}
+                        onRefresh={refreshAvailableLLMs}
+                        disabled={false}
+                        inModal={true}
+                        openDirection="down"
+                      />
+                      <div className="text-xs text-gray-500 mt-1">
+                        Analyzes execution history and extracts reusable patterns.
+                      </div>
+                    </div>
+                    {/* Phase Agent */}
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                          Phase Agent
+                        </label>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs">
+                              <p className="text-xs">Handles planning, variable extraction, and other workflow phases.</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                      <LLMSelectionDropdown
+                        availableLLMs={availableLLMs}
+                        selectedLLM={phaseLLM ? availableLLMs.find(llm =>
+                          llm.provider === phaseLLM.provider && llm.model === phaseLLM.model_id
+                        ) || null : currentLLMOption}
+                        onLLMSelect={(llm) => setPhaseLLM({
+                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                          model_id: llm.model
+                        })}
+                        onRefresh={refreshAvailableLLMs}
+                        disabled={false}
+                        inModal={true}
+                        openDirection="down"
+                      />
+                      <div className="text-xs text-gray-500 mt-1">
+                        Handles planning, variable extraction, anonymization, and other phases.
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-500 pt-2 border-t border-gray-200 dark:border-gray-700">
+                      Step-specific configs in step_config.json take priority over these defaults
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label htmlFor="preset-query" className="block text-sm font-medium mb-2">
-                  Query
-                </label>
-                <Textarea
-                  id="preset-query"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Enter your query..."
-                  rows={24}
-                  required
-                  className="resize-none"
-                />
-              </div>
-            </div>
-
-            {/* Right Column - Configuration Options */}
-            <div className="space-y-4">
-              {/* LLM Configuration */}
-              <div>
-                <label className="block text-sm font-medium mb-2 flex items-center gap-2">
-                  <Settings className="w-4 h-4" />
-                  LLM Configuration
-                </label>
-                <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
-                  <div className="space-y-3">
-                    {effectiveAgentMode === 'workflow' ? (
-                      <>
-                        {/* Workflow mode: Show agent-specific LLM selections */}
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-1.5">
-                              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                                Execution Agent Default Model
-                              </label>
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Info className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
-                                  </TooltipTrigger>
-                                  <TooltipContent className="max-w-xs">
-                                    <p className="text-xs">
-                                      <strong>Execution Agents</strong> execute plan steps by calling MCP tools and performing actions. 
-                                      They handle the actual work of your workflow (reading files, making API calls, running commands, etc.).
-                                    </p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            </div>
-                            {/* Execution Mode Toggle - Only for Execution Agent */}
-                            <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
-                              <TooltipProvider>
-                                {/* Simple Mode */}
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <button
-                                      type="button"
-                                      onClick={() => setExecutionMode('simple')}
-                                      className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
-                                        !useCodeExecutionMode && !useToolSearchMode
-                                          ? 'agent-mode-selected'
-                                          : 'agent-mode-unselected'
-                                      }`}
-                                    >
-                                      <Sparkles className="w-3 h-3 inline mr-1" />
-                                      Simple
-                                    </button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <p>Simple mode - Direct MCP tool access</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                                
-                                {/* Code Execution Mode */}
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <button
-                                      type="button"
-                                      onClick={() => setExecutionMode('code')}
-                                      className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
-                                        useCodeExecutionMode
-                                          ? 'agent-mode-selected'
-                                          : 'agent-mode-unselected'
-                                      }`}
-                                    >
-                                      <Code2 className="w-3 h-3 inline mr-1" />
-                                      Code Exec
-                                    </button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <p>Code Exec mode - MCP tools accessed via generated Go code</p>
-                                  </TooltipContent>
-                                </Tooltip>
-
-                                {/* Tool Search Mode */}
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <button
-                                      type="button"
-                                      onClick={() => setExecutionMode('search')}
-                                      className={`px-2 py-1 text-xs font-medium transition-colors ${
-                                        useToolSearchMode
-                                          ? 'agent-mode-selected'
-                                          : 'agent-mode-unselected'
-                                      }`}
-                                    >
-                                      <Search className="w-3 h-3 inline mr-1" />
-                                      Tool Search
-                                    </button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <p>Tool Search mode - Dynamic tool discovery. Selected tools become pre-discovered.</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            </div>
-                          </div>
-                          <LLMSelectionDropdown
-                            availableLLMs={availableLLMs}
-                            selectedLLM={executionLLM ? availableLLMs.find(llm => 
-                              llm.provider === executionLLM.provider && llm.model === executionLLM.model_id
-                            ) || null : currentLLMOption}
-                            onLLMSelect={(llm) => setExecutionLLM({
-                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
-                              model_id: llm.model
-                            })}
-                            onRefresh={refreshAvailableLLMs}
-                            disabled={false}
-                            inModal={true}
-                            openDirection="down"
-                          />
-                          <div className="text-xs text-gray-500 mt-1">
-                            Default model for execution agents (used when step config doesn't specify). 
-                            Execution agents perform the actual work - calling tools, reading files, executing commands.
-                          </div>
+              {/* Right Column - Folder, Tools, and Options */}
+              <div className="space-y-4">
+                {/* Folder Selection - Required for workflow */}
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Workflow Folder <span className="text-red-500">*</span>
+                  </label>
+                  <div className="space-y-2">
+                    {selectedFolder && (
+                      <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-md">
+                        <div className="flex items-center gap-2">
+                          <Folder className="w-5 h-5 text-blue-600" />
+                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{selectedFolder.filepath}</span>
                         </div>
-                        <div>
-                          <div className="flex items-center gap-1.5 mb-2">
-                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                              Validation Agent Default Model
-                            </label>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Info className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
-                                </TooltipTrigger>
-                                <TooltipContent className="max-w-xs">
-                                  <p className="text-xs">
-                                    <strong>Validation Agents</strong> check if step execution succeeded by evaluating success criteria. 
-                                    They analyze execution results and determine if the step met its goals (Success/Partial/Failed).
-                                  </p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
-                          <LLMSelectionDropdown
-                            availableLLMs={availableLLMs}
-                            selectedLLM={validationLLM ? availableLLMs.find(llm => 
-                              llm.provider === validationLLM.provider && llm.model === validationLLM.model_id
-                            ) || null : currentLLMOption}
-                            onLLMSelect={(llm) => setValidationLLM({
-                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
-                              model_id: llm.model
-                            })}
-                            onRefresh={refreshAvailableLLMs}
-                            disabled={false}
-                            inModal={true}
-                            openDirection="down"
-                          />
-                          <div className="text-xs text-gray-500 mt-1">
-                            Default model for validation agents (used when step config doesn't specify). 
-                            Validation agents evaluate execution results and determine if success criteria were met.
-                          </div>
+                        <button
+                          type="button"
+                          onClick={handleRemoveFolder}
+                          className="p-1 text-gray-500 hover:text-red-600 transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                    {!selectedFolder && (
+                      <button
+                        type="button"
+                        data-folder-button
+                        onClick={handleSelectFolders}
+                        className="w-full p-4 border-2 border-dashed border-red-300 dark:border-red-600 text-red-500 dark:text-red-400 hover:border-red-500 rounded-md transition-colors"
+                      >
+                        <div className="flex items-center justify-center gap-2">
+                          <Folder className="w-5 h-5" />
+                          <span className="font-medium">Select Workflow Folder</span>
                         </div>
-                        <div>
-                          <div className="flex items-center gap-1.5 mb-2">
-                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                              Learning Agent Default Model
-                            </label>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Info className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
-                                </TooltipTrigger>
-                                <TooltipContent className="max-w-xs">
-                                  <p className="text-xs">
-                                    <strong>Learning Agents</strong> extract patterns from successful executions and save them to learnings files. 
-                                    These patterns help future executions work better by capturing what worked and what didn't.
-                                  </p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
-                          <LLMSelectionDropdown
-                            availableLLMs={availableLLMs}
-                            selectedLLM={learningLLM ? availableLLMs.find(llm => 
-                              llm.provider === learningLLM.provider && llm.model === learningLLM.model_id
-                            ) || null : currentLLMOption}
-                            onLLMSelect={(llm) => setLearningLLM({
-                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
-                              model_id: llm.model
-                            })}
-                            onRefresh={refreshAvailableLLMs}
-                            disabled={false}
-                            inModal={true}
-                            openDirection="down"
-                          />
-                          <div className="text-xs text-gray-500 mt-1">
-                            Default model for learning agents (used when step config doesn't specify). 
-                            Learning agents analyze execution history and extract reusable patterns for future runs.
-                          </div>
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-1.5 mb-2">
-                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                              Phase Agent Default Model
-                            </label>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Info className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
-                                </TooltipTrigger>
-                                <TooltipContent className="max-w-xs">
-                                  <p className="text-xs">
-                                    <strong>Phase Agents</strong> handle workflow phases: Planning (creates execution plans), 
-                                    Variable Extraction (extracts dynamic values), Anonymization (replaces values with placeholders), 
-                                    Plan Improvement (analyzes execution for feedback), Plan Tool Optimization (optimizes tool selections), 
-                                    Learning Consolidation (consolidates learning files), and Plan Learnings Alignment (aligns plans with learnings).
-                                  </p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
-                          <LLMSelectionDropdown
-                            availableLLMs={availableLLMs}
-                            selectedLLM={phaseLLM ? availableLLMs.find(llm => 
-                              llm.provider === phaseLLM.provider && llm.model === phaseLLM.model_id
-                            ) || null : currentLLMOption}
-                            onLLMSelect={(llm) => setPhaseLLM({
-                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
-                              model_id: llm.model
-                            })}
-                            onRefresh={refreshAvailableLLMs}
-                            disabled={false}
-                            inModal={true}
-                            openDirection="down"
-                          />
-                          <div className="text-xs text-gray-500 mt-1">
-                            Default model for all phase agents (used when step config doesn't specify). 
-                            Phase agents handle workflow phases: planning, variable extraction, anonymization, plan improvement, 
-                            plan tool optimization, learning consolidation, and plan learnings alignment.
-                          </div>
-                        </div>
-                        <div className="text-xs text-gray-500 pt-2 border-t border-gray-200 dark:border-gray-700">
-                          Step-specific configs in step_config.json take priority over these defaults
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        {/* Simple mode: Show single LLM selection */}
-                        <div>
-                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                            Select LLM for this preset
-                          </label>
-                          <LLMSelectionDropdown
-                            availableLLMs={availableLLMs}
-                            selectedLLM={currentLLMOption}
-                            onLLMSelect={handleLLMSelect}
-                            onRefresh={refreshAvailableLLMs}
-                            disabled={false}
-                            inModal={true}
-                            openDirection="down"
-                          />
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          This preset will use the selected LLM configuration
-                        </div>
-                      </>
+                        <p className="text-xs mt-1 text-red-400">Required for workflow presets</p>
+                      </button>
                     )}
                   </div>
                 </div>
-              </div>
 
-              {/* MCP Servers and Tools Selection */}
-              {availableServers.length > 0 && (
-                <ToolSelectionSection
-                  availableServers={availableServers}
-                  selectedServers={selectedServers}
-                  selectedTools={selectedTools}
-                  onServerChange={setSelectedServers}
-                  onToolChange={setSelectedTools}
-                />
-              )}
-
-              {/* Skills Selection - Workflow mode only */}
-              {effectiveAgentMode === 'workflow' && (
-                <SkillSelectionSection
-                  selectedSkills={selectedSkills}
-                  onSkillChange={setSelectedSkills}
-                />
-              )}
-
-              {/* Folder Selection */}
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  Folder {effectiveAgentMode === 'workflow' ? '(Required)' : '(Optional)'} - Attach workspace folder to this preset
-                </label>
-                <div className="space-y-2">
-                  {selectedFolder && (
-                    <div className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
-                      <div className="flex items-center gap-2">
-                        <Folder className="w-4 h-4 text-blue-600" />
-                        <span className="text-sm text-gray-900 dark:text-gray-100">{selectedFolder.filepath}</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleRemoveFolder}
-                        className="p-1 text-gray-500 hover:text-red-600 transition-colors"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    data-folder-button
-                    onClick={handleSelectFolders}
-                    className={`w-full p-3 border-2 border-dashed rounded-md transition-colors ${
-                      effectiveAgentMode === 'workflow' && !selectedFolder
-                        ? 'border-red-300 dark:border-red-600 text-red-500 dark:text-red-400 hover:border-red-500'
-                        : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-blue-500'
-                    }`}
-                  >
-                    <div className="flex items-center justify-center gap-2">
-                      <Plus className="w-4 h-4" />
-                      <span>{selectedFolder ? 'Change Folder' : 'Select Folder'}</span>
-                    </div>
-                  </button>
-                </div>
-                {selectedFolder && (
-                  <p className="text-xs text-gray-500 mt-1">
-                    Selected: {selectedFolder.filepath}
-                  </p>
+                {/* MCP Server Selection */}
+                {availableServers.length > 0 && (
+                  <ToolSelectionSection
+                    availableServers={availableServers}
+                    selectedServers={selectedServers}
+                    selectedTools={selectedTools}
+                    onServerChange={setSelectedServers}
+                    onToolChange={setSelectedTools}
+                  />
                 )}
-                {effectiveAgentMode === 'workflow' && !selectedFolder && (
-                  <p className="text-xs text-red-500 mt-1">
-                    ⚠️ Folder selection is required for {effectiveAgentMode} presets
-                  </p>
-                )}
-              </div>
 
-              {/* Agent Mode Selection */}
-              {!hideAgentModeSelection && (
+                {/* Skills Selection - Workflow mode only */}
+                {effectiveAgentMode === 'workflow' && (
+                  <SkillSelectionSection
+                    selectedSkills={selectedSkills}
+                    onSkillChange={setSelectedSkills}
+                  />
+                )}
+
+                {/* Context Summarization Toggle */}
                 <div>
                   <label className="block text-sm font-medium mb-2">
-                    Agent Mode
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {[
-                      { value: 'simple', label: 'Simple', description: 'Ask simple questions' },
-                      { value: 'workflow', label: 'Workflow', description: 'Todo-list execution' }
-                    ].map((mode) => (
-                      <div key={mode.value} className="flex items-center space-x-2">
-                        <input
-                          type="radio"
-                          id={`agent-mode-${mode.value}`}
-                          name="agentMode"
-                          value={mode.value}
-                          checked={agentMode === mode.value}
-                          onChange={(e) => setAgentMode(e.target.value as 'simple' | 'workflow')}
-                          className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500"
-                        />
-                        <label
-                          htmlFor={`agent-mode-${mode.value}`}
-                          className="text-sm cursor-pointer flex-1"
-                        >
-                          <div className="font-medium">{mode.label}</div>
-                          <div className="text-xs text-gray-500">{mode.description}</div>
-                        </label>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {hideAgentModeSelection && fixedAgentMode && (
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Agent Mode
+                    Context Summarization
                   </label>
                   <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
-                    <div className="flex items-center gap-2">
-                      <div className="font-medium text-gray-900 dark:text-white">
-                        {fixedAgentMode === 'simple' ? 'Simple' :
-                         'Workflow'}
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-gray-900 dark:text-white">
+                          Enable Context Summarization
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          Auto-summarize when token usage exceeds 80% of context window
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                        {fixedAgentMode === 'simple' ? 'Ask simple questions' :
-                         'Todo-list execution'}
-                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer ml-3">
+                        <input
+                          type="checkbox"
+                          checked={enableContextSummarization}
+                          onChange={(e) => setEnableContextSummarization(e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                      </label>
                     </div>
                   </div>
                 </div>
-              )}
 
-              {/* Context Summarization Toggle */}
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  Context Summarization
-                </label>
-                <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <div className="text-sm font-medium text-gray-900 dark:text-white">
-                        Enable Context Summarization
-                      </div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        Automatically summarize conversation history when token usage exceeds 80% of context window
-                      </div>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={enableContextSummarization}
-                        onChange={(e) => setEnableContextSummarization(e.target.checked)}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              {/* Knowledgebase Toggle (Workflow mode only) */}
-              {effectiveAgentMode === 'workflow' && (
+                {/* Knowledgebase Toggle */}
                 <div>
                   <label className="block text-sm font-medium mb-2">
                     Knowledgebase
@@ -799,10 +679,10 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           Enable Knowledgebase
                         </div>
                         <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          Persistent folder shared across all runs for templates, reference data, and configurations
+                          Persistent folder shared across all runs for templates and configs
                         </div>
                       </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
+                      <label className="relative inline-flex items-center cursor-pointer ml-3">
                         <input
                           type="checkbox"
                           checked={useKnowledgebase}
@@ -814,9 +694,213 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     </div>
                   </div>
                 </div>
-              )}
+
+                {/* Agent Mode Display (read-only for workflow) */}
+                {hideAgentModeSelection && fixedAgentMode && (
+                  <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-600 dark:text-gray-400">Mode:</span>
+                      <span className="text-sm font-medium text-gray-900 dark:text-white">Workflow</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">- Todo-list execution</span>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          ) : (
+            /* Simple/Chat Mode: Two Column Layout */
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Left Column - Preset Name and Query */}
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="preset-label" className="block text-sm font-medium mb-2">
+                    Preset Name
+                  </label>
+                  <Input
+                    id="preset-label"
+                    value={label}
+                    onChange={(e) => setLabel(e.target.value)}
+                    placeholder="Enter preset name..."
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="preset-query" className="block text-sm font-medium mb-2">
+                    Query
+                  </label>
+                  <Textarea
+                    id="preset-query"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Enter your query..."
+                    rows={24}
+                    required
+                    className="resize-none"
+                  />
+                </div>
+              </div>
+
+              {/* Right Column - Configuration Options */}
+              <div className="space-y-4">
+                {/* LLM Configuration */}
+                <div>
+                  <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+                    <Settings className="w-4 h-4" />
+                    LLM Configuration
+                  </label>
+                  <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                          Select LLM for this preset
+                        </label>
+                        <LLMSelectionDropdown
+                          availableLLMs={availableLLMs}
+                          selectedLLM={currentLLMOption}
+                          onLLMSelect={handleLLMSelect}
+                          onRefresh={refreshAvailableLLMs}
+                          disabled={false}
+                          inModal={true}
+                          openDirection="down"
+                        />
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        This preset will use the selected LLM configuration
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* MCP Servers and Tools Selection */}
+                {availableServers.length > 0 && (
+                  <ToolSelectionSection
+                    availableServers={availableServers}
+                    selectedServers={selectedServers}
+                    selectedTools={selectedTools}
+                    onServerChange={setSelectedServers}
+                    onToolChange={setSelectedTools}
+                  />
+                )}
+
+                {/* Folder Selection (Optional for simple mode) */}
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Folder (Optional) - Attach workspace folder to this preset
+                  </label>
+                  <div className="space-y-2">
+                    {selectedFolder && (
+                      <div className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
+                        <div className="flex items-center gap-2">
+                          <Folder className="w-4 h-4 text-blue-600" />
+                          <span className="text-sm text-gray-900 dark:text-gray-100">{selectedFolder.filepath}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleRemoveFolder}
+                          className="p-1 text-gray-500 hover:text-red-600 transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      data-folder-button
+                      onClick={handleSelectFolders}
+                      className="w-full p-3 border-2 border-dashed border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-blue-500 rounded-md transition-colors"
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        <Plus className="w-4 h-4" />
+                        <span>{selectedFolder ? 'Change Folder' : 'Select Folder'}</span>
+                      </div>
+                    </button>
+                  </div>
+                  {selectedFolder && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Selected: {selectedFolder.filepath}
+                    </p>
+                  )}
+                </div>
+
+                {/* Agent Mode Selection */}
+                {!hideAgentModeSelection && (
+                  <div>
+                    <label className="block text-sm font-medium mb-2">
+                      Agent Mode
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { value: 'simple', label: 'Simple', description: 'Ask simple questions' },
+                        { value: 'workflow', label: 'Workflow', description: 'Todo-list execution' }
+                      ].map((mode) => (
+                        <div key={mode.value} className="flex items-center space-x-2">
+                          <input
+                            type="radio"
+                            id={`agent-mode-${mode.value}`}
+                            name="agentMode"
+                            value={mode.value}
+                            checked={agentMode === mode.value}
+                            onChange={(e) => setAgentMode(e.target.value as 'simple' | 'workflow')}
+                            className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500"
+                          />
+                          <label
+                            htmlFor={`agent-mode-${mode.value}`}
+                            className="text-sm cursor-pointer flex-1"
+                          >
+                            <div className="font-medium">{mode.label}</div>
+                            <div className="text-xs text-gray-500">{mode.description}</div>
+                          </label>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {hideAgentModeSelection && fixedAgentMode && (
+                  <div>
+                    <label className="block text-sm font-medium mb-2">
+                      Agent Mode
+                    </label>
+                    <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
+                      <div className="flex items-center gap-2">
+                        <div className="font-medium text-gray-900 dark:text-white">Simple</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">Ask simple questions</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Context Summarization Toggle */}
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Context Summarization
+                  </label>
+                  <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-gray-900 dark:text-white">
+                          Enable Context Summarization
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          Automatically summarize conversation history when token usage exceeds 80% of context window
+                        </div>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={enableContextSummarization}
+                          onChange={(e) => setEnableContextSummarization(e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </form>
 
         {/* Folder Selection Dialog */}

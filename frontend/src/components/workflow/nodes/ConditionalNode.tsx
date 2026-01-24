@@ -6,7 +6,7 @@ import { useLLMStore } from '../../../stores/useLLMStore'
 import { agentApi } from '../../../services/api'
 import { getToolsByCategory } from '../../../utils/customToolNames'
 import { NodeConfigFooter } from './NodeConfigFooter'
-import { NodeMarkdown } from './NodeMarkdown'
+
 import type { ConditionalNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 import type { ConditionalPlanStep } from '../../../utils/stepConfigMatching'
@@ -508,12 +508,15 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
         />
       </div>
 
-      {/* Question below the diamond */}
+      {/* Condition question - what is being evaluated */}
       {processedConditionQuestion && (
-        <div className="mx-4 mt-3">
-          <div className="p-2.5 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800/50 text-center">
-            <NodeMarkdown content={processedConditionQuestion} textSize="tiny" />
-          </div>
+        <div className="mx-4 mt-2 p-2 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800/50">
+          <p className="text-[10px] text-purple-700 dark:text-purple-300 text-center">
+            <span className="font-semibold">Evaluates: </span>
+            {processedConditionQuestion.length > 60
+              ? `${processedConditionQuestion.substring(0, 60)}...`
+              : processedConditionQuestion}
+          </p>
         </div>
       )}
 
@@ -522,7 +525,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
         // Type guard: check if step is a conditional step
         const conditionalStep = step.type === 'conditional' ? step as ConditionalPlanStep : null
         if (!conditionalStep) return null
-        
+
         const hasRoutingInfo = conditionalStep.if_true_next_step_id || 
                                conditionalStep.if_false_next_step_id || 
                                (conditionalStep.if_true_steps && conditionalStep.if_true_steps.length > 0) || 
@@ -583,6 +586,10 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
       {/* Config Footer - Show all configs including conditional LLM */}
       <div className="mt-2 mx-4">
         <NodeConfigFooter
+          description={step?.description}
+          successCriteria={step?.success_criteria}
+          evalLLM={conditionalLLM}
+          decisionQuestion={processedConditionQuestion}
           executionLLM={executionLLM}
           executionMaxTurns={executionMaxTurns}
           learningLLM={learningLLM}
@@ -596,16 +603,6 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
           hasHumanTools={hasHumanTools}
           hasLargeOutput={hasLargeOutput}
         />
-        {/* Conditional LLM badge (separate from execution LLM) */}
-        {conditionalLLM && (
-          <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800/30 border-t border-gray-200 dark:border-gray-700 rounded-b-lg">
-            <div className="flex flex-wrap gap-1.5 justify-center">
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300" title="LLM used for condition evaluation">
-                Cond: {conditionalLLM}
-              </span>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { MessageCircle, Workflow, Settings, ExternalLink, Trash2, Copy } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
-import { usePresetApplication, usePresetManagement, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
+import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import PresetModal from './PresetModal'
@@ -311,10 +311,11 @@ export const ModePresetBar: React.FC = () => {
             
             {/* Center: Preset Information */}
             <div className="flex items-center gap-3">
-              {/* Preset Information - Show for chat and workflow modes even when no preset is selected */}
+              {/* Preset Information - Show ONLY for workflow mode */}
               {(() => {
-                // For chat and workflow modes, always show preset selector
-                if (selectedModeCategory === 'chat' || selectedModeCategory === 'workflow' || activePreset) {
+                // For workflow mode only, always show preset selector
+                // Chat mode no longer supports presets
+                if (selectedModeCategory === 'workflow') {
                   return (
                     <div className="relative flex items-center">
                       <div className="flex items-center bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md overflow-hidden">
@@ -328,17 +329,6 @@ export const ModePresetBar: React.FC = () => {
                               <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
                                 {activePreset.label}
                               </span>
-                              {/* Show folder path and agent mode only for chat mode, not workflow mode */}
-                              {selectedModeCategory === 'chat' && activePreset.selectedFolder && (
-                                <span className="text-xs text-gray-500 dark:text-gray-400">
-                                  ({activePreset.selectedFolder.filepath})
-                                </span>
-                              )}
-                              {selectedModeCategory === 'chat' && activePreset.agentMode && (
-                                <span className="text-xs bg-gray-100 dark:bg-gray-600 text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded">
-                                  {activePreset.agentMode}
-                                </span>
-                              )}
                             </>
                           ) : (
                             <>
@@ -377,26 +367,6 @@ export const ModePresetBar: React.FC = () => {
                       {showPresetDropdown && (
                         <div className="preset-dropdown absolute top-full left-0 mt-1 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-50">
                           <div className="p-2 space-y-1 max-h-96 overflow-y-auto">
-                            {/* No Preset Option - only show for chat mode */}
-                            {selectedModeCategory === 'chat' && (
-                              <button
-                                onClick={() => {
-                                  useGlobalPresetStore.getState().clearActivePreset('chat')
-                                  setShowPresetDropdown(false)
-                                }}
-                                className={`w-full text-left p-2 rounded-md text-sm transition-colors ${
-                                  !activePreset
-                                    ? 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
-                                    : 'hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300'
-                                }`}
-                              >
-                                <div className="flex items-center gap-2">
-                                  <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
-                                  <span className="font-medium">No Preset</span>
-                                </div>
-                              </button>
-                            )}
-                            
                             {/* Add New Preset Option */}
                             <button
                               onClick={() => {
@@ -404,7 +374,7 @@ export const ModePresetBar: React.FC = () => {
                                 setShowPresetModal(true)
                                 setShowPresetDropdown(false)
                               }}
-                              className="w-full text-left p-2 rounded-md text-sm hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300 border-t border-gray-200 dark:border-gray-600 mt-2 pt-2"
+                              className="w-full text-left p-2 rounded-md text-sm hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300"
                             >
                               <div className="flex items-center gap-2">
                                 <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
@@ -422,9 +392,7 @@ export const ModePresetBar: React.FC = () => {
                             {/* No presets message */}
                             {!presetsLoading && presetsForMode.length === 0 && (
                               <div className="p-2 text-sm text-gray-500 dark:text-gray-400 text-center">
-                                {selectedModeCategory === 'workflow' 
-                                  ? 'No workflow presets available. Create one to get started.'
-                                  : 'No chat presets available. Create one to get started.'}
+                                No workflow presets available. Create one to get started.
                               </div>
                             )}
                             
@@ -447,11 +415,6 @@ export const ModePresetBar: React.FC = () => {
                                       <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                                       <div className="flex-1">
                                         <div className="font-medium">{preset.label}</div>
-                                        {preset.agentMode && (
-                                          <div className="text-xs text-gray-500 dark:text-gray-400">
-                                            {preset.agentMode}
-                                          </div>
-                                        )}
                                       </div>
                                     </div>
                                   </button>
@@ -480,15 +443,13 @@ export const ModePresetBar: React.FC = () => {
                                       >
                                         <Copy className="w-3 h-3" />
                                       </button>
-                                      {(selectedModeCategory === 'workflow' || preset.agentMode === 'workflow') && (
-                                        <button
-                                          onClick={(e) => handleDeletePreset(preset.id, e)}
-                                          className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
-                                          title="Delete workflow preset"
-                                        >
-                                          <Trash2 className="w-3 h-3" />
-                                        </button>
-                                      )}
+                                      <button
+                                        onClick={(e) => handleDeletePreset(preset.id, e)}
+                                        className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                                        title="Delete workflow preset"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                      </button>
                                     </div>
                                   )}
                                 </div>

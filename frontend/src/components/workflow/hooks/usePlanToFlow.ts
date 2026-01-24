@@ -44,7 +44,7 @@ export interface ConditionalNodeData extends Record<string, unknown> {
   description?: string
   condition_question?: string
   condition_context?: string
-  status: 'pending' | 'evaluating' | 'decided_true' | 'decided_false'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'evaluating' | 'decided_true' | 'decided_false'
   stepIndex: number
   step: PlanStep
   changeType?: ChangeType  // Highlight type for visual feedback
@@ -62,7 +62,7 @@ export interface DecisionNodeData extends Record<string, unknown> {
   title: string
   decision_evaluation_question?: string
   decision_step?: PlanStep
-  status: 'pending' | 'executing' | 'evaluating' | 'decided_true' | 'decided_false'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'executing' | 'evaluating' | 'decided_true' | 'decided_false'
   stepIndex: number
   step: PlanStep
   changeType?: ChangeType  // Highlight type for visual feedback
@@ -98,7 +98,7 @@ export interface OrchestratorNodeData extends Record<string, unknown> {
   title: string
   orchestration_step?: PlanStep
   orchestration_routes?: Array<{ route_id: string; route_name: string; condition: string; sub_agent_step: PlanStep; context_to_pass?: string }>
-  status: 'pending' | 'executing' | 'evaluating' | 'orchestrating' | 'completed'
+  status: 'pending' | 'running' | 'failed' | 'executing' | 'evaluating' | 'orchestrating' | 'completed'
   stepIndex: number
   step: PlanStep
   changeType?: ChangeType  // Highlight type for visual feedback
@@ -198,16 +198,19 @@ interface UsePlanToFlowOptions {
   variablesManifest?: VariablesManifest | null  // Variables manifest for Variables node
   onOpenVariablesSidebar?: () => void  // Callback for opening variables sidebar
   isLoadingVariables?: boolean  // Whether variables are being loaded
+  layoutDirection?: 'LR' | 'TB'  // Layout direction: 'LR' = horizontal, 'TB' = vertical
 }
 
-// Dagre layout configuration
-const DAGRE_CONFIG = {
-  rankdir: 'LR', // Left to right (tree layout)
-  nodesep: 500,  // Vertical spacing between nodes in same rank (increased for general spacing)
-  ranksep: 200,  // Horizontal spacing between ranks (columns)
+// Dagre layout configuration - returns config based on layout direction
+const getDagreConfig = (direction: 'LR' | 'TB') => ({
+  rankdir: direction,
+  // For LR: nodesep = vertical spacing, ranksep = horizontal spacing
+  // For TB: nodesep = horizontal spacing, ranksep = vertical spacing
+  nodesep: direction === 'LR' ? 200 : 150,
+  ranksep: direction === 'LR' ? 150 : 200,
   marginx: 80,
   marginy: 80
-}
+})
 
 // Node dimensions for layout calculation (base dimensions) - smaller since content is simplified
 const NODE_DIMENSIONS = {
@@ -310,92 +313,89 @@ function calculateTopologyMetrics(nodes: WorkflowNode[]): { hasOrchestrator: boo
 
 /**
  * Reposition branch nodes for conditional and decision nodes
- * After Dagre layout, adjust Y positions so:
- * - TRUE branch: positioned ABOVE the parent conditional
- * - FALSE branch: positioned BELOW the parent conditional
- * X positions from Dagre are kept (horizontal flow preserved)
+ * Uses Subtree Translation: Moves the entire branch structure together to preserve relative layout.
+ * - Finds the branch root (e.g. -true-0)
+ * - Calculates delta to move root to desired position
+ * - Applies delta to ALL nodes in that branch (descendants)
  */
-function positionBranchNodes(nodes: WorkflowNode[]): WorkflowNode[] {
+function positionBranchNodes(nodes: WorkflowNode[], direction: 'LR' | 'TB'): WorkflowNode[] {
   const adjustedNodes = [...nodes]
-  const nodeMap = new Map(adjustedNodes.map((n, i) => [n.id, { node: n, index: i }]))
+  const nodeMap = new Map(adjustedNodes.map((n, i) => [n.id, i]))
 
-  // Find conditional and decision nodes (both have TRUE/FALSE branches)
+  // Find branching nodes (conditional/decision)
   const branchingNodes = adjustedNodes.filter(n =>
     n.type === 'conditional' || n.type === 'decision'
   )
 
   branchingNodes.forEach(parent => {
-    const parentDims = NODE_DIMENSIONS[parent.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-    const parentCenterY = parent.position.y + parentDims.height / 2
+    // Get up-to-date parent node
+    const parentIndex = nodeMap.get(parent.id)
+    if (parentIndex === undefined) return
+    const currentParent = adjustedNodes[parentIndex]
 
-    // Find TRUE branch nodes (direct children only, not nested)
-    const trueBranch = adjustedNodes.filter(n => {
-      if (!n.id.startsWith(`${parent.id}-true-`)) return false
-      // Check it's a direct child (no additional -true- or -false- after the first)
-      const suffix = n.id.substring(`${parent.id}-true-`.length)
-      return !suffix.includes('-true-') && !suffix.includes('-false-')
-    })
+    const parentDims = NODE_DIMENSIONS[currentParent.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+    const parentCenterX = currentParent.position.x + parentDims.width / 2
+    const parentCenterY = currentParent.position.y + parentDims.height / 2
 
-    // Find FALSE branch nodes (direct children only)
-    const falseBranch = adjustedNodes.filter(n => {
-      if (!n.id.startsWith(`${parent.id}-false-`)) return false
-      const suffix = n.id.substring(`${parent.id}-false-`.length)
-      return !suffix.includes('-true-') && !suffix.includes('-false-')
-    })
-
-    // Calculate dynamic offset based on branch content
-    // Check if either branch contains orchestrator nodes (which need more vertical space)
-    const trueHasOrchestrator = trueBranch.some(n => n.type === 'orchestrator')
-    const falseHasOrchestrator = falseBranch.some(n => n.type === 'orchestrator')
+    // Check for orchestrators in branches to determine spacing
+    // We look at all nodes in the branch to be safe, or just direct children?
+    // Looking at all nodes in branch is better for spacing safety.
+    const trueBranchPrefix = `${currentParent.id}-true-`
+    const falseBranchPrefix = `${currentParent.id}-false-`
     
+    const trueHasOrchestrator = adjustedNodes.some(n => n.id.startsWith(trueBranchPrefix) && n.type === 'orchestrator')
+    const falseHasOrchestrator = adjustedNodes.some(n => n.id.startsWith(falseBranchPrefix) && n.type === 'orchestrator')
+
     // Base offset
-    let verticalOffset = 450
-    
-    // Increase offset if orchestrators are present in branches
-    // Orchestrators have sub-agents below them, requiring more vertical clearance
+    let branchOffset = 200
     if (trueHasOrchestrator || falseHasOrchestrator) {
-      verticalOffset = 600 // Increased from 450 to 600 for orchestrators
+      branchOffset = 350
     }
 
-    console.log(`[Layout Debug] Repositioning branches for ${parent.id}: ${trueBranch.length} true, ${falseBranch.length} false. Offset: ${verticalOffset}`)
-
-    // Reposition TRUE branch ABOVE the parent (adjust Y only, keep X from Dagre)
-    if (trueBranch.length > 0) {
-      const targetY = parentCenterY - verticalOffset
-
-      trueBranch.forEach(node => {
-        const info = nodeMap.get(node.id)
-        if (info) {
-          const dims = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-          adjustedNodes[info.index] = {
-            ...adjustedNodes[info.index],
-            position: {
-              x: adjustedNodes[info.index].position.x, // Keep X from Dagre
-              y: targetY - dims.height / 2
-            }
-          }
+    // Helper to shift a branch subtree
+    const shiftBranch = (prefix: string, offsetMult: number) => {
+      // Find root of the branch (index 0)
+      const rootId = `${prefix}0`
+      const rootIndex = nodeMap.get(rootId)
+      
+      if (rootIndex !== undefined) {
+        const rootNode = adjustedNodes[rootIndex]
+        const rootDims = NODE_DIMENSIONS[rootNode.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+        
+        let dx = 0, dy = 0
+        
+        if (direction === 'LR') {
+          // LR: Shift Y. Target Y is parentCenter +/- offset
+          const targetY = parentCenterY + (branchOffset * offsetMult) - (rootDims.height / 2)
+          dy = targetY - rootNode.position.y
+        } else {
+          // TB: Shift X. Target X is parentCenter +/- offset
+          const targetX = parentCenterX + (branchOffset * offsetMult) - (rootDims.width / 2)
+          dx = targetX - rootNode.position.x
         }
-      })
-    }
-
-    // Reposition FALSE branch BELOW the parent (adjust Y only, keep X from Dagre)
-    if (falseBranch.length > 0) {
-      const targetY = parentCenterY + verticalOffset
-
-      falseBranch.forEach(node => {
-        const info = nodeMap.get(node.id)
-        if (info) {
-          const dims = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-          adjustedNodes[info.index] = {
-            ...adjustedNodes[info.index],
-            position: {
-              x: adjustedNodes[info.index].position.x, // Keep X from Dagre
-              y: targetY - dims.height / 2
+        
+        // Apply shift to ALL nodes in this branch
+        if (dx !== 0 || dy !== 0) {
+          adjustedNodes.forEach((n, i) => {
+            if (n.id.startsWith(prefix)) {
+              adjustedNodes[i] = {
+                ...n,
+                position: {
+                  x: n.position.x + dx,
+                  y: n.position.y + dy
+                }
+              }
             }
-          }
+          })
         }
-      })
+      }
     }
+
+    // Shift True Branch (Offset Multiplier: -1 for Top/Left)
+    shiftBranch(trueBranchPrefix, -1)
+
+    // Shift False Branch (Offset Multiplier: 1 for Bottom/Right)
+    shiftBranch(falseBranchPrefix, 1)
   })
 
   return adjustedNodes
@@ -405,9 +405,10 @@ function positionBranchNodes(nodes: WorkflowNode[]): WorkflowNode[] {
  * Global collision detection and resolution
  * Detects overlaps between all nodes and resolves them by shifting nodes
  * This handles overlaps from orchestrator sub-agents, conditional branches, loops, etc.
+ * For LR layout: prefer vertical shifts. For TB layout: prefer horizontal shifts.
  */
-function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
-  const MIN_SEPARATION = 40 // Minimum gap between nodes
+function detectAndResolveCollisions(nodes: WorkflowNode[], direction: 'LR' | 'TB'): WorkflowNode[] {
+  const MIN_SEPARATION = 40 // Restored to 40 to prevent overlaps
   const adjustedNodes = [...nodes]
 
   // Get bounding box for a node (using estimated height based on content)
@@ -448,6 +449,7 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
   }
 
   // Calculate how much to shift node 'a' to resolve overlap with node 'b'
+  // For LR layout: prefer vertical shifts. For TB layout: prefer horizontal shifts.
   const calculateShift = (
     a: { left: number; right: number; top: number; bottom: number },
     b: { left: number; right: number; top: number; bottom: number }
@@ -464,41 +466,60 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
     const hOverlapAmount = horizontalOverlap > 0 ? horizontalOverlap : 0
     const vOverlapAmount = verticalOverlap > 0 ? verticalOverlap : 0
 
-    // If fully overlapping (both dimensions overlap), prefer vertical shift for LR layout
+    // If fully overlapping (both dimensions overlap), prefer perpendicular shift to flow direction
     if (hOverlapAmount > 0 && vOverlapAmount > 0) {
-      // Full overlap - shift vertically (prefer moving down for nodes that come later)
-      const shiftY = a.top < b.top
-        ? -(vOverlapAmount + MIN_SEPARATION)  // Move a up
-        : (vOverlapAmount + MIN_SEPARATION)   // Move a down
-      return { dx: 0, dy: shiftY }
-    }
-
-    // Partial overlap or too close - determine best direction
-    if (vOverlapAmount > 0) {
-      // Vertical overlap - shift vertically
-      const shiftY = a.top < b.top
-        ? -(vOverlapAmount + MIN_SEPARATION)  // Move a up
-        : (vOverlapAmount + MIN_SEPARATION)   // Move a down
-      return { dx: 0, dy: shiftY }
-    } else if (hOverlapAmount > 0) {
-      // Horizontal overlap - shift horizontally
-      const shiftX = a.left < b.left
-        ? -(hOverlapAmount + MIN_SEPARATION)  // Move a left
-        : (hOverlapAmount + MIN_SEPARATION)   // Move a right
-      return { dx: shiftX, dy: 0 }
-    } else if (hDistance < MIN_SEPARATION && vDistance < MIN_SEPARATION) {
-      // Too close but not overlapping - shift in direction that needs more space
-      if (vDistance < hDistance) {
-        // Need more vertical separation
+      if (direction === 'LR') {
+        // LR layout - prefer vertical shift (perpendicular to horizontal flow)
         const shiftY = a.top < b.top
-          ? -(MIN_SEPARATION - vDistance)  // Move a up
-          : (MIN_SEPARATION - vDistance)   // Move a down
+          ? -(vOverlapAmount + MIN_SEPARATION)  // Move a up
+          : (vOverlapAmount + MIN_SEPARATION)   // Move a down
         return { dx: 0, dy: shiftY }
       } else {
-        // Need more horizontal separation
+        // TB layout - prefer horizontal shift (perpendicular to vertical flow)
         const shiftX = a.left < b.left
-          ? -(MIN_SEPARATION - hDistance)  // Move a left
-          : (MIN_SEPARATION - hDistance)   // Move a right
+          ? -(hOverlapAmount + MIN_SEPARATION)  // Move a left
+          : (hOverlapAmount + MIN_SEPARATION)   // Move a right
+        return { dx: shiftX, dy: 0 }
+      }
+    }
+
+    // Partial overlap or too close - determine best direction based on overlap axis
+    // Ideally, we want to separate in the direction that they are closest/overlapping to preserve alignment
+    
+    // Case 1: Overlapping/aligned horizontally (share X range), but separated vertically
+    // We should separate them vertically to maintain column/stack alignment
+    // ONLY if they are too close vertically
+    if (hOverlapAmount > 0 && vDistance < MIN_SEPARATION) {
+      const shiftY = a.top < b.top
+        ? -(MIN_SEPARATION - vDistance) // Shift only by needed amount
+        : (MIN_SEPARATION - vDistance)
+      return { dx: 0, dy: shiftY }
+    } 
+    
+    // Case 2: Overlapping/aligned vertically (share Y range), but separated horizontally
+    // We should separate them horizontally to maintain row alignment
+    // ONLY if they are too close horizontally
+    else if (vOverlapAmount > 0 && hDistance < MIN_SEPARATION) {
+      const shiftX = a.left < b.left
+        ? -(MIN_SEPARATION - hDistance) // Shift only by needed amount
+        : (MIN_SEPARATION - hDistance)
+      return { dx: shiftX, dy: 0 }
+    } 
+    
+    // Case 3: Corner-to-corner (too close diagonally)
+    // Use layout preference to decide separation direction
+    else if (hDistance < MIN_SEPARATION && vDistance < MIN_SEPARATION) {
+      if (direction === 'LR') {
+        // LR layout - prefer vertical separation
+        const shiftY = a.top < b.top
+          ? -(MIN_SEPARATION - vDistance)
+          : (MIN_SEPARATION - vDistance)
+        return { dx: 0, dy: shiftY }
+      } else {
+        // TB layout - prefer horizontal separation
+        const shiftX = a.left < b.left
+          ? -(MIN_SEPARATION - hDistance)
+          : (MIN_SEPARATION - hDistance)
         return { dx: shiftX, dy: 0 }
       }
     }
@@ -555,7 +576,7 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
         const shift = calculateShift(adjustedCurrentBounds, adjustedOtherBounds)
 
         if (shift.dx !== 0 || shift.dy !== 0) {
-          // Log collision details for debugging (removed to reduce console noise)
+          // Log collision details for debugging
 
           // Update shift for current node
           const currentShiftValue = shifts.get(currentNode.id) || { dx: 0, dy: 0 }
@@ -576,7 +597,6 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
     }
   }
 
-  // Log collision detection results (removed to reduce console noise)
 
   // Apply all shifts to nodes
   const shiftedNodes = adjustedNodes.map(node => {
@@ -599,29 +619,27 @@ function detectAndResolveCollisions(nodes: WorkflowNode[]): WorkflowNode[] {
 /**
  * Auto-layout nodes using Dagre algorithm
  */
-function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[]): { nodes: WorkflowNode[], edges: WorkflowEdge[] } {
-  console.log('[Layout Debug] === Starting Dagre Layout ===')
-  
+function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction: 'LR' | 'TB'): { nodes: WorkflowNode[], edges: WorkflowEdge[] } {
   // Calculate topology metrics to determine spacing requirements
-  const { hasOrchestrator } = calculateTopologyMetrics(nodes)
-  
+  calculateTopologyMetrics(nodes)
+
+  // Get config based on layout direction
+  const baseConfig = getDagreConfig(direction)
+
   // Dynamic config based on topology
   const dynamicConfig = {
-    ...DAGRE_CONFIG,
-    // Vertical spacing is now handled by the increased default nodesep (500)
-    // Horizontal spacing defaults to 150. Specific offsets are handled via minlen on edges.
+    ...baseConfig,
+    // Spacing is now handled by getDagreConfig based on direction
+    // Specific offsets are handled via minlen on edges.
   }
-  
-  console.log('[Layout Debug] Input nodes:', nodes.length, 'edges:', edges.length)
-  console.log('[Layout Debug] Topology:', { hasOrchestrator })
-  console.log('[Layout Debug] Dynamic Config:', dynamicConfig)
-  console.log('[Layout Debug] NODE_DIMENSIONS:', NODE_DIMENSIONS)
 
   const g = new dagre.graphlib.Graph()
   g.setGraph(dynamicConfig)
   g.setDefaultEdgeLabel(() => ({}))
 
-  // Only exclude SUB-AGENT nodes from Dagre (they're positioned manually below orchestrators)
+  // Exclude SUB-AGENT nodes and HEADER nodes from Dagre
+  // Sub-agents are positioned manually below orchestrators
+  // Header nodes (start, execution-settings, variables) are positioned manually in a horizontal row
   // Branch nodes MUST be in Dagre to maintain graph connectivity
   const excludedNodeIds = new Set<string>()
 
@@ -629,77 +647,72 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[]): { nodes:
     if (node.id.includes('-sub-agent-')) {
       excludedNodeIds.add(node.id)
     }
+    // Exclude header nodes - they're positioned manually before Dagre runs
+    if (node.id === 'start' || node.id === 'execution-settings' || node.id === 'variables') {
+      excludedNodeIds.add(node.id)
+    }
   })
 
-  console.log(`[Layout Debug] Excluding ${excludedNodeIds.size} sub-agent nodes from Dagre`)
+  // Log excluded nodes for debugging
+  if (excludedNodeIds.size > 0) {
+    const headerNodes = Array.from(excludedNodeIds).filter(id => id === 'start' || id === 'execution-settings' || id === 'variables')
+    if (headerNodes.length > 0) {
+      // console.log('[LAYOUT BUG] Excluding header nodes from Dagre:', headerNodes.join(', '))
+    }
+  }
 
-  // Add all nodes except sub-agents to Dagre graph
+  // Add all nodes except excluded nodes to Dagre graph
   nodes.forEach(node => {
     if (!excludedNodeIds.has(node.id)) {
-      const dimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-      g.setNode(node.id, { width: dimensions.width, height: dimensions.height })
+      let width = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS]?.width || NODE_DIMENSIONS.step.width
+      let height = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS]?.height || NODE_DIMENSIONS.step.height
+
+      // For orchestrators, use compound dimensions to reserve space for sub-agents
+      if (node.type === 'orchestrator') {
+        const data = node.data as OrchestratorNodeData
+        const numSubAgents = data.orchestration_routes?.length || 0
+        
+        if (numSubAgents > 0) {
+          const GAP = 60
+          const SUB_AGENT_GAP = 20
+          
+          if (direction === 'LR') {
+            // LR: Row Below
+            // Compound Height = Orch + Gap + SubAgents
+            // Compound Width = Max(Orch, SubAgents)
+            const subAgentRowWidth = (numSubAgents * 280) + ((numSubAgents - 1) * SUB_AGENT_GAP)
+            const subAgentRowHeight = 120 // standard step height
+            
+            height = height + GAP + subAgentRowHeight
+            width = Math.max(width, subAgentRowWidth)
+            console.log(`[Orchestrator Layout] Node ${node.id} (LR): Compound Size ${width}x${height} (SubAgents: ${numSubAgents}, RowWidth: ${subAgentRowWidth})`)
+          } else {
+            // TB: Column Right
+            // Compound Width = Orch + Gap + SubAgents
+            // Compound Height = Max(Orch, SubAgents)
+            const subAgentColWidth = 280 // standard step width
+            const subAgentColHeight = (numSubAgents * 120) + ((numSubAgents - 1) * SUB_AGENT_GAP)
+            
+            width = width + GAP + subAgentColWidth
+            height = Math.max(height, subAgentColHeight)
+            console.log(`[Orchestrator Layout] Node ${node.id} (TB): Compound Size ${width}x${height} (SubAgents: ${numSubAgents}, ColHeight: ${subAgentColHeight})`)
+          }
+        }
+      }
+
+      g.setNode(node.id, { width, height })
     }
   })
 
   // Add all edges except those involving sub-agents
   edges.forEach(edge => {
     if (!excludedNodeIds.has(edge.source) && !excludedNodeIds.has(edge.target)) {
-      // Find if source is an orchestrator to apply dynamic horizontal spacing (AFTER orchestrator)
-      const sourceNode = nodes.find(n => n.id === edge.source)
-      // Find if target is an orchestrator to apply dynamic horizontal spacing (BEFORE orchestrator)
-      const targetNode = nodes.find(n => n.id === edge.target)
+
       
-      let minlen = 1
+      const minlen = 1
 
-      // Case 1: Source is Orchestrator (Space AFTER)
-      if (sourceNode?.type === 'orchestrator') {
-        const data = sourceNode.data as OrchestratorNodeData
-        const numSubAgents = data.orchestration_routes?.length || 0
-        
-        if (numSubAgents > 0) {
-          const SUB_AGENT_WIDTH = 280
-          const GAP = 40
-          // Total width of sub-agent row
-          const totalRowWidth = (numSubAgents * SUB_AGENT_WIDTH) + ((numSubAgents - 1) * GAP)
-          // Half width (extension to the right from orchestrator center)
-          const halfWidth = totalRowWidth / 2
-          
-          // Calculate minlen: number of rank separations needed to clear the sub-agents
-          // We want at least halfWidth + 200px of clearance (symmetric with BEFORE).
-          // Total horizontal distance = ranksep * minlen
-          const requiredClearance = halfWidth + 200
-          const sourceMinLen = Math.ceil(requiredClearance / dynamicConfig.ranksep)
-          
-          minlen = Math.max(minlen, sourceMinLen)
-          console.log(`[Layout Debug] Edge ${edge.source} -> ${edge.target}: Source Orchestrator has ${numSubAgents} sub-agents. Increasing minlen to ${minlen} for clearance AFTER.`)
-        }
-      }
-
-      // Case 2: Target is Orchestrator (Space BEFORE)
-      if (targetNode?.type === 'orchestrator') {
-        const data = targetNode.data as OrchestratorNodeData
-        const numSubAgents = data.orchestration_routes?.length || 0
-        
-        if (numSubAgents > 0) {
-          const SUB_AGENT_WIDTH = 280
-          const GAP = 40
-          // Total width of sub-agent row
-          const totalRowWidth = (numSubAgents * SUB_AGENT_WIDTH) + ((numSubAgents - 1) * GAP)
-          // Half width (extension to the left from orchestrator center)
-          const halfWidth = totalRowWidth / 2
-          
-          // Calculate minlen needed before the orchestrator
-          // We need to account for the sub-agents extending to the left.
-          // halfWidth is the extension to the left.
-          // We also need to clear the previous node's width and have some margin.
-          // Using symmetric buffer of 200px.
-          const requiredClearance = halfWidth + 200
-          const targetMinLen = Math.ceil(requiredClearance / dynamicConfig.ranksep)
-          
-          minlen = Math.max(minlen, targetMinLen)
-          console.log(`[Layout Debug] Edge ${edge.source} -> ${edge.target}: Target Orchestrator has ${numSubAgents} sub-agents (halfWidth=${halfWidth}). Increasing minlen to ${minlen} for clearance BEFORE.`)
-        }
-      }
+      // Note: With compound dimensions, minlen logic is less critical but still useful for extra safety
+      // We keep a simplified version to ensure connections don't look cramped
 
       // Apply the calculated minlen (if > 1)
       if (minlen > 1) {
@@ -712,7 +725,6 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[]): { nodes:
 
   // Run layout
   dagre.layout(g)
-  console.log('[Layout Debug] Dagre layout complete')
 
   // Apply positions to nodes (only for nodes that were in Dagre)
   const layoutedNodes = nodes.map(node => {
@@ -727,26 +739,73 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[]): { nodes:
       return node
     }
 
-    const dimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+    const dims = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+    
+    // Calculate position based on Compound vs Standard dimensions
+    let x = nodeWithPosition.x
+    let y = nodeWithPosition.y
+    
+    // Default centering (Dagre returns center)
+    x -= dims.width / 2
+    y -= dims.height / 2
+
+    // Adjust for Orchestrator Compound positioning
+    if (node.type === 'orchestrator') {
+      const data = node.data as OrchestratorNodeData
+      const numSubAgents = data.orchestration_routes?.length || 0
+      
+              
+      
+              if (numSubAgents > 0) {
+      
+                          const GAP = 60
+      
+                          
+      
+                          if (direction === 'LR') {
+          // LR: Orchestrator is at Top Center of compound block
+          // Dagre Center Y is center of (Orch + Gap + Subs)
+          // We want Orch Top to be at Compound Top
+          const subAgentRowHeight = 120
+          const compoundHeight = dims.height + GAP + subAgentRowHeight
+          
+          // Re-calculate Y: Top of compound
+          const compoundTop = nodeWithPosition.y - (compoundHeight / 2)
+          y = compoundTop // Orch is at top
+          
+          console.log(`[Orchestrator Layout] Adjusting ${node.id} (LR): DagreY=${nodeWithPosition.y}, CompoundH=${compoundHeight}, NewY=${y}`)
+          
+          // X is still centered (Standard Centering is correct if Width = MaxWidth)
+          // If CompoundWidth > OrchWidth, Dagre center is Compound center
+          // We want Orch to be centered in Compound. So x is fine.
+        } else {
+          // TB: Orchestrator is at Left Center of compound block
+          // Dagre Center X is center of (Orch + Gap + Subs)
+          // We want Orch Left to be at Compound Left
+          const subAgentColWidth = 280
+          const compoundWidth = dims.width + GAP + subAgentColWidth
+          
+          // Re-calculate X: Left of compound
+          const compoundLeft = nodeWithPosition.x - (compoundWidth / 2)
+          x = compoundLeft // Orch is at left
+          
+          console.log(`[Orchestrator Layout] Adjusting ${node.id} (TB): DagreX=${nodeWithPosition.x}, CompoundW=${compoundWidth}, NewX=${x}`)
+          
+          // Y is still centered (Standard Centering is correct if Height = MaxHeight)
+        }
+      }
+    }
 
     return {
       ...node,
-      position: {
-        x: nodeWithPosition.x - dimensions.width / 2,
-        y: nodeWithPosition.y - dimensions.height / 2
-      }
+      position: { x, y }
     }
   })
 
-  // Position branch nodes: TRUE above, FALSE below their parent conditional/decision
-  const withBranches = positionBranchNodes(layoutedNodes)
-
-  // Log final positions
-  console.log('[Layout Debug] === Final Node Positions ===')
-  withBranches.forEach(n => {
-    console.log(`[Layout Debug] ${n.id} (${n.type}): x=${Math.round(n.position.x)}, y=${Math.round(n.position.y)}`)
-  })
-  console.log('[Layout Debug] === End Layout ===')
+  // Position branch nodes based on direction:
+  // LR: TRUE above, FALSE below
+  // TB: TRUE left, FALSE right
+  const withBranches = positionBranchNodes(layoutedNodes, direction)
 
   return { nodes: withBranches, edges }
 }
@@ -959,14 +1018,7 @@ function getLLMProviderAndModel(
  * Returns empty nodes and edges, with the step itself as the exit node
  */
 function createValidationLearningNodes(
-  _step: PlanStep,
-  stepNodeId: string,
-  _presetUseCodeExecutionMode: boolean,
-  _presetLLMConfig: AgentLLMConfig | undefined,
-  _presetValidationLLM: AgentLLMConfig | undefined,
-  _presetLearningLLM: AgentLLMConfig | undefined,
-  _availableLLMs: Array<{ provider: string; model: string; label: string }>,
-  _nodeType?: 'step' | 'conditional' | 'decision' | 'loop' | 'orchestrator'
+  stepNodeId: string
 ): { nodes: WorkflowNode[], edges: WorkflowEdge[], exitNodeId: string } {
   // Validation and learning nodes are no longer displayed in the workflow canvas
   // Simply return the step itself as the exit node
@@ -1079,14 +1131,7 @@ function processSteps(
     // Human input steps don't have validation/learning (they just ask questions)
     if (!isConditionalStep(step) && !isHumanInputStep(step)) {
       const vlResult = createValidationLearningNodes(
-        step,
-        node.id,
-        presetUseCodeExecutionMode,
-        presetLLMConfig,
-        presetValidationLLM,
-        presetLearningLLM,
-        availableLLMs,
-        node.type as 'step' | 'conditional' | 'decision' | 'loop' | 'orchestrator'
+        node.id
       )
       nodes.push(...vlResult.nodes)
       edges.push(...vlResult.edges)
@@ -1604,18 +1649,6 @@ function processSteps(
 
           // Handle "end" route - create edge to end node but skip sub-agent node creation
           if (isEndRoute) {
-            // Helper to truncate condition to 10 words
-            const truncateToWords = (text: string, maxWords: number): string => {
-              if (!text) return ''
-              const words = text.trim().split(/\s+/)
-              if (words.length <= maxWords) return text
-              return words.slice(0, maxWords).join(' ') + '...'
-            }
-
-            const conditionLabel = route.condition
-              ? truncateToWords(route.condition, 10)
-              : route.route_name || route.route_id || "End"
-
             // Create edge from orchestrator to "end" node
             orchestratorEdges.push({
               id: `${node.id}-route-${route.route_id}-to-end`,
@@ -1623,11 +1656,6 @@ function processSteps(
               sourceHandle: route.route_id, // Use route_id as handle (on bottom)
               target: 'end',
               type: 'smoothstep',
-              label: conditionLabel,
-              labelStyle: { fill: '#ef4444', fontWeight: 600, fontSize: 11 },
-              labelBgStyle: { fill: '#fef2f2', fillOpacity: 0.9 },
-              labelBgPadding: [4, 4] as [number, number],
-              labelBgBorderRadius: 4,
               style: { stroke: '#ef4444', strokeWidth: 2 }, // Solid red line for end route
               animated: false
             })
@@ -1686,20 +1714,7 @@ function processSteps(
             // Learning nodes are no longer displayed in the workflow canvas
             const subAgentExitNodeId = subAgentNodeId
 
-            // Helper to truncate condition to 10 words
-            const truncateToWords = (text: string, maxWords: number): string => {
-              if (!text) return ''
-              const words = text.trim().split(/\s+/)
-              if (words.length <= maxWords) return text
-              return words.slice(0, maxWords).join(' ') + '...'
-            }
-
             // Connect orchestrator node to sub-agent (from orchestrator node's bottom handle to sub-agent's top)
-            // Show condition on edge (truncated to 10 words)
-            const conditionLabel = route.condition
-              ? truncateToWords(route.condition, 10)
-              : route.route_name || route.route_id
-
             orchestratorEdges.push({
               id: `${node.id}-route-${route.route_id}-to-sub-agent`,
               source: node.id,
@@ -1707,11 +1722,6 @@ function processSteps(
               target: subAgentNodeId,
               targetHandle: 'top', // Connect to top of sub-agent
               type: 'smoothstep',
-              label: conditionLabel,
-              labelStyle: { fill: '#3b82f6', fontWeight: 600, fontSize: 10 },
-              labelBgStyle: { fill: '#eff6ff', fillOpacity: 0.9 },
-              labelBgPadding: [3, 3] as [number, number],
-              labelBgBorderRadius: 3,
               style: { stroke: '#3b82f6', strokeWidth: 2, strokeDasharray: '5,5' }, // Dashed to show it's conditional
               animated: false
             })
@@ -2101,7 +2111,8 @@ export function usePlanToFlow(
     stepStatusMap,
     variablesManifest = null,
     onOpenVariablesSidebar,
-    isLoadingVariables = false
+    isLoadingVariables = false,
+    layoutDirection = 'LR'
   } = options
 
   // Get preset for code execution mode default
@@ -2448,70 +2459,260 @@ export function usePlanToFlow(
       }
     }
 
-    // Apply dagre layout
-    const layoutedResult = layoutWithDagre(nodes, edges)
+    // CRITICAL: Position header nodes BEFORE Dagre runs
+    // This ensures they're excluded from Dagre and maintain horizontal layout
+    const HEADER_GAP = 100 // Increased further to prevent overlap
+    const HEADER_START_X = 80 // Increased further
+    const HEADER_Y = 80 // Increased further
+    
+    // Position header nodes horizontally BEFORE Dagre
+    const headerNodesWithPositions = nodes.map(node => {
+      if (node.id === 'start') {
+        return { ...node, position: { x: HEADER_START_X, y: HEADER_Y } }
+      }
+      if (node.id === 'execution-settings') {
+        const startDims = NODE_DIMENSIONS.start
+        const execX = HEADER_START_X + startDims.width + HEADER_GAP
+        return { ...node, position: { x: execX, y: HEADER_Y } }
+      }
+      if (node.id === 'variables') {
+        const startDims = NODE_DIMENSIONS.start
+        const execDims = NODE_DIMENSIONS['execution-settings']
+        const varsX = HEADER_START_X + startDims.width + HEADER_GAP + execDims.width + HEADER_GAP
+        return { ...node, position: { x: varsX, y: HEADER_Y } }
+      }
+      return node
+    })
 
-    // Position sub-agents vertically below their parent orchestrator nodes
-    console.log('[Layout Debug] === Sub-agent Positioning ===')
+    // Apply dagre layout (header nodes are excluded from Dagre)
+    const layoutedResult = layoutWithDagre(headerNodesWithPositions, edges, layoutDirection)
+
+    // Header nodes are already positioned correctly above, but verify and ensure they stay horizontal
+    const HEADER_TO_WORKFLOW_GAP = 150 // Increased further to prevent overlap with step1
+
+    const startNodeIndex = layoutedResult.nodes.findIndex(n => n.id === 'start')
+    const execSettingsNodeIndex = layoutedResult.nodes.findIndex(n => n.id === 'execution-settings')
+    const variablesNodeIndex = layoutedResult.nodes.findIndex(n => n.id === 'variables')
+
+    if (startNodeIndex !== -1 && execSettingsNodeIndex !== -1 && variablesNodeIndex !== -1) {
+      const startDims = NODE_DIMENSIONS.start
+      const execSettingsDims = NODE_DIMENSIONS['execution-settings']
+      const variablesDims = NODE_DIMENSIONS.variables
+
+      // Calculate max height for vertical centering
+      const maxHeaderHeight = Math.max(startDims.height, execSettingsDims.height, variablesDims.height)
+
+      // CRITICAL: Enforce header node positions (they were set before Dagre, but ensure they're still correct)
+      // Since header nodes are excluded from Dagre, they should already have correct positions
+      // But we enforce them here to be absolutely sure
+      // TEST: Using same large gaps as above
+      const startPos = { x: HEADER_START_X, y: HEADER_Y }
+      const execPos = { x: HEADER_START_X + startDims.width + HEADER_GAP, y: HEADER_Y }
+      const varsPos = { x: HEADER_START_X + startDims.width + HEADER_GAP + execSettingsDims.width + HEADER_GAP, y: HEADER_Y }
+
+      // Enforce positions (even though they should already be correct since header nodes are excluded from Dagre)
+      layoutedResult.nodes[startNodeIndex] = {
+        ...layoutedResult.nodes[startNodeIndex],
+        position: startPos
+      }
+      layoutedResult.nodes[execSettingsNodeIndex] = {
+        ...layoutedResult.nodes[execSettingsNodeIndex],
+        position: execPos
+      }
+      layoutedResult.nodes[variablesNodeIndex] = {
+        ...layoutedResult.nodes[variablesNodeIndex],
+        position: varsPos
+      }
+
+      // Header positions are now correctly set horizontally
+
+      // Calculate where the workflow should start (after the header row)
+      const headerRowEndX = varsPos.x + variablesDims.width
+      const headerRowBottom = HEADER_Y + maxHeaderHeight
+
+      // Find the first step node (step-0 or the first non-header node connected to variables)
+      const firstStepNode = layoutedResult.nodes.find(n =>
+        n.id === 'step-0' ||
+        (n.type === 'step' && !n.id.includes('-true-') && !n.id.includes('-false-') && !n.id.includes('-sub-agent-'))
+      )
+
+      if (firstStepNode) {
+        if (layoutDirection === 'TB') {
+          // TB mode: workflow flows vertically, so first step should be below the header row
+          // Start from the right edge of the header row
+          const firstStepTargetX = headerRowEndX + HEADER_TO_WORKFLOW_GAP
+          const firstStepTargetY = headerRowBottom + HEADER_TO_WORKFLOW_GAP
+
+          // Calculate offset to shift all workflow nodes
+          const offsetX = firstStepTargetX - firstStepNode.position.x
+          const offsetY = firstStepTargetY - firstStepNode.position.y
+
+          // Shift all non-header nodes by this offset
+          layoutedResult.nodes = layoutedResult.nodes.map((node, index) => {
+            // CRITICAL: Never shift header nodes - check by ID, not just index
+            if (node.id === 'start' || node.id === 'execution-settings' || node.id === 'variables') {
+              return node // Keep header nodes in place
+            }
+            if (index === startNodeIndex || index === execSettingsNodeIndex || index === variablesNodeIndex) {
+              return node // Also check by index as backup
+            }
+            if (node.type === 'end') {
+              // End node - will be repositioned later
+              return node
+            }
+            return {
+              ...node,
+              position: {
+                x: node.position.x + offsetX,
+                y: node.position.y + offsetY
+              }
+            }
+          })
+        } else {
+          // LR mode: workflow flows horizontally, so first step should be to the right of header
+          const firstStepTargetX = headerRowEndX + HEADER_TO_WORKFLOW_GAP
+          // Align the first step vertically with the center of the header row
+          const firstStepTargetY = HEADER_Y + maxHeaderHeight / 2
+
+          // Calculate offset to shift all workflow nodes
+          const offsetX = firstStepTargetX - firstStepNode.position.x
+          const offsetY = firstStepTargetY - firstStepNode.position.y
+
+          // Shift all non-header nodes by this offset
+          layoutedResult.nodes = layoutedResult.nodes.map((node, index) => {
+            // CRITICAL: Never shift header nodes - check by ID, not just index
+            if (node.id === 'start' || node.id === 'execution-settings' || node.id === 'variables') {
+              return node // Keep header nodes in place
+            }
+            if (index === startNodeIndex || index === execSettingsNodeIndex || index === variablesNodeIndex) {
+              return node // Also check by index as backup
+            }
+            if (node.type === 'end') {
+              // End node - will be repositioned later
+              return node
+            }
+            return {
+              ...node,
+              position: {
+                x: node.position.x + offsetX,
+                y: node.position.y + offsetY
+              }
+            }
+          })
+        }
+      }
+
+    }
+
+    // Position sub-agents relative to their parent orchestrator nodes
+    // LR layout: horizontal row BELOW orchestrator
+    // TB layout: vertical column to the RIGHT of orchestrator
     const orchestratorNodeMap = new Map<string, { nodeIndex: number; subAgentIndices: number[] }>()
 
-    // Find all orchestrator nodes and their sub-agents by index
+    // Pass 1: Find all orchestrator nodes first to initialize map
     layoutedResult.nodes.forEach((node, index) => {
       if (node.type === 'orchestrator') {
         orchestratorNodeMap.set(node.id, { nodeIndex: index, subAgentIndices: [] })
-      } else if (node.id.includes('-sub-agent-')) {
+      }
+    })
+    console.log(`[SubAgent Mapping] Pass 1: Found ${orchestratorNodeMap.size} orchestrators`)
+
+    // Pass 2: Find all sub-agents and attach to parent orchestrator
+    let subAgentsFound = 0
+    layoutedResult.nodes.forEach((node, index) => {
+      if (node.id.includes('-sub-agent-')) {
         // Extract parent orchestrator node ID from sub-agent ID
         const parentId = node.id.split('-sub-agent-')[0]
         const orchestratorInfo = orchestratorNodeMap.get(parentId)
         if (orchestratorInfo) {
           orchestratorInfo.subAgentIndices.push(index)
+          subAgentsFound++
+        } else {
+          console.warn(`[SubAgent Mapping] Orphan sub-agent found: ${node.id} (Parent ${parentId} not found)`)
         }
       }
     })
+    console.log(`[SubAgent Mapping] Pass 2: Mapped ${subAgentsFound} sub-agents to parents`)
 
-    // Position sub-agents in HORIZONTAL ROW below their parent orchestrator node
+    // Position sub-agents based on layout direction
     orchestratorNodeMap.forEach(({ nodeIndex: orchestratorNodeIndex, subAgentIndices }) => {
       const orchestratorNode = layoutedResult.nodes[orchestratorNodeIndex]
       const orchestratorDimensions = NODE_DIMENSIONS.orchestrator || NODE_DIMENSIONS.step
-      console.log(`[Layout Debug] Orchestrator "${orchestratorNode.id}" at y=${Math.round(orchestratorNode.position.y)}, has ${subAgentIndices.length} sub-agents`)
 
       if (subAgentIndices.length === 0) return
 
-      const VERTICAL_GAP = 200  // Gap between orchestrator and sub-agents row
-      const HORIZONTAL_GAP = 40 // Gap between sub-agents
+      const GAP = 60  // Reduced from 100
+      const SUB_AGENT_GAP = 20 // Reduced from 30
+      
+      console.log(`[SubAgent Positioning] Processing ${orchestratorNode.id} (${layoutDirection}) at ${Math.round(orchestratorNode.position.x)},${Math.round(orchestratorNode.position.y)} with ${subAgentIndices.length} subs`)
 
-      // Calculate total width needed for all sub-agents
-      let totalWidth = 0
-      subAgentIndices.forEach((idx, i) => {
-        const dims = NODE_DIMENSIONS[layoutedResult.nodes[idx].type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-        totalWidth += dims.width
-        if (i < subAgentIndices.length - 1) {
-          totalWidth += HORIZONTAL_GAP
-        }
-      })
-
-      // Center sub-agents under orchestrator
-      const startX = orchestratorNode.position.x + (orchestratorDimensions.width - totalWidth) / 2
-      const subAgentY = orchestratorNode.position.y + orchestratorDimensions.height + VERTICAL_GAP
-
-      console.log(`[Layout Debug] Sub-agents will be arranged horizontally at y=${Math.round(subAgentY)}, starting x=${Math.round(startX)}`)
-
-      let currentX = startX
-      subAgentIndices.forEach((subAgentIndex) => {
-        const subAgent = layoutedResult.nodes[subAgentIndex]
-        const subAgentDimensions = NODE_DIMENSIONS[subAgent.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
-
-        // Update position - same Y, different X (horizontal row)
-        layoutedResult.nodes[subAgentIndex] = {
-          ...subAgent,
-          position: {
-            x: currentX,
-            y: subAgentY
+      if (layoutDirection === 'LR') {
+        // LR layout: Horizontal row BELOW orchestrator
+        // Calculate total width needed for all sub-agents
+        let totalWidth = 0
+        subAgentIndices.forEach((idx, i) => {
+          const dims = NODE_DIMENSIONS[layoutedResult.nodes[idx].type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+          totalWidth += dims.width
+          if (i < subAgentIndices.length - 1) {
+            totalWidth += SUB_AGENT_GAP
           }
-        }
+        })
 
-        currentX += subAgentDimensions.width + HORIZONTAL_GAP
-      })
+        // Center sub-agents under orchestrator
+        const startX = orchestratorNode.position.x + (orchestratorDimensions.width - totalWidth) / 2
+        const subAgentY = orchestratorNode.position.y + orchestratorDimensions.height + GAP
+
+        let currentX = startX
+        subAgentIndices.forEach((subAgentIndex) => {
+          const subAgent = layoutedResult.nodes[subAgentIndex]
+          const subAgentDimensions = NODE_DIMENSIONS[subAgent.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+
+          // Update position - same Y, different X (horizontal row)
+          layoutedResult.nodes[subAgentIndex] = {
+            ...subAgent,
+            position: {
+              x: currentX,
+              y: subAgentY
+            }
+          }
+
+          currentX += subAgentDimensions.width + SUB_AGENT_GAP
+        })
+      } else {
+        // TB layout: Vertical column to the RIGHT of orchestrator
+        // Calculate total height needed for all sub-agents
+        let totalHeight = 0
+        subAgentIndices.forEach((idx, i) => {
+          const dims = NODE_DIMENSIONS[layoutedResult.nodes[idx].type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+          totalHeight += dims.height
+          if (i < subAgentIndices.length - 1) {
+            totalHeight += SUB_AGENT_GAP
+          }
+        })
+
+        // Center sub-agents vertically relative to orchestrator
+        const subAgentX = orchestratorNode.position.x + orchestratorDimensions.width + GAP
+        const startY = orchestratorNode.position.y + (orchestratorDimensions.height - totalHeight) / 2
+        
+        console.log(`[SubAgent Positioning] TB: OrchWidth=${orchestratorDimensions.width}, GAP=${GAP}, SubAgentX=${subAgentX}, StartY=${startY}`)
+
+        let currentY = startY
+        subAgentIndices.forEach((subAgentIndex) => {
+          const subAgent = layoutedResult.nodes[subAgentIndex]
+          const subAgentDimensions = NODE_DIMENSIONS[subAgent.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+
+          // Update position - same X, different Y (vertical column)
+          layoutedResult.nodes[subAgentIndex] = {
+            ...subAgent,
+            position: {
+              x: subAgentX,
+              y: currentY
+            }
+          }
+
+          currentY += subAgentDimensions.height + SUB_AGENT_GAP
+        })
+      }
     })
 
     // After Dagre + orchestrator positioning, keep validation/learning/evaluation nodes
@@ -2653,10 +2854,64 @@ export function usePlanToFlow(
     // Replace nodes with the adjusted positions
     layoutedResult.nodes = positionedNodes
 
+    // Position the end node at the end of the workflow
+    const endNodeIndex = layoutedResult.nodes.findIndex(n => n.id === 'end')
+    if (endNodeIndex !== -1) {
+      const endDims = NODE_DIMENSIONS.end
+      // Find all workflow nodes (exclude header and end nodes)
+      const workflowNodes = layoutedResult.nodes.filter(n =>
+        n.id !== 'start' && n.id !== 'execution-settings' && n.id !== 'variables' && n.id !== 'end'
+      )
+
+      if (workflowNodes.length > 0) {
+        if (layoutDirection === 'TB') {
+          // TB mode: end node at the bottom, centered horizontally
+          const maxY = Math.max(...workflowNodes.map(n => {
+            const dims = NODE_DIMENSIONS[n.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+            return n.position.y + dims.height
+          }))
+          const avgX = workflowNodes.reduce((sum, n) => sum + n.position.x, 0) / workflowNodes.length
+          const workflowWidth = workflowNodes.reduce((max, n) => {
+            const dims = NODE_DIMENSIONS[n.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+            return Math.max(max, dims.width)
+          }, 0)
+
+          layoutedResult.nodes[endNodeIndex] = {
+            ...layoutedResult.nodes[endNodeIndex],
+            position: {
+              x: avgX + (workflowWidth - endDims.width) / 2,
+              y: maxY + 100
+            }
+          }
+        } else {
+          // LR mode: end node at the right, centered vertically with the workflow
+          const maxX = Math.max(...workflowNodes.map(n => {
+            const dims = NODE_DIMENSIONS[n.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+            return n.position.x + dims.width
+          }))
+          const minY = Math.min(...workflowNodes.map(n => n.position.y))
+          const maxY = Math.max(...workflowNodes.map(n => {
+            const dims = NODE_DIMENSIONS[n.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+            return n.position.y + dims.height
+          }))
+          const centerY = (minY + maxY) / 2
+
+          layoutedResult.nodes[endNodeIndex] = {
+            ...layoutedResult.nodes[endNodeIndex],
+            position: {
+              x: maxX + 100,
+              y: centerY - endDims.height / 2
+            }
+          }
+        }
+      }
+    }
+
     // Apply global collision detection and resolution to fix any remaining overlaps
     // This handles overlaps from orchestrator sub-agents, conditional branches, loops, etc.
+    // For LR layout: prefer vertical shifts. For TB layout: prefer horizontal shifts.
     const nodesBeforeCollision = layoutedResult.nodes.length
-    layoutedResult.nodes = detectAndResolveCollisions(layoutedResult.nodes)
+    layoutedResult.nodes = detectAndResolveCollisions(layoutedResult.nodes, layoutDirection)
     const nodesAfterCollision = layoutedResult.nodes.length
     if (nodesBeforeCollision !== nodesAfterCollision) {
       // Node count changed during collision detection (log removed to reduce console noise)
@@ -2695,8 +2950,10 @@ export function usePlanToFlow(
       return node
     }) as WorkflowNode[]
 
+    // Log critical nodes only
+
     return layoutedResult
-  }, [plan, showDependencyEdges, showPrerequisiteEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetValidationLLM, presetLearningLLM, availableLLMs, onRunFromStep, onOpenSidebar, isExecuting, completedStepIndices, stepStatusMapAsMap, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables])
+  }, [plan, showDependencyEdges, showPrerequisiteEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetValidationLLM, presetLearningLLM, availableLLMs, onRunFromStep, onOpenSidebar, isExecuting, completedStepIndices, stepStatusMapAsMap, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables, layoutDirection])
 }
 
 export default usePlanToFlow

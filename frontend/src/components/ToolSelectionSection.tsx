@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import { Checkbox } from './ui/checkbox';
 import { Check, Loader2 } from 'lucide-react';
 import { useToolSelectionStore } from '../stores/useToolSelectionStore';
@@ -43,8 +43,6 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
     getInstanceState: useToolSelectionStore.getState().getInstanceState,
   }), []);
   
-  const toolDetails = useToolSelectionStore((state) => state.toolDetails);
-  
   // Use fallback instance to avoid null checks everywhere
   // Create a stable default instance that won't change
   const defaultInstance = useMemo(() => ({
@@ -54,9 +52,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
   }), []);
   
   const instance = rawInstance || defaultInstance;
-  
-  const [showDebug, setShowDebug] = useState(false);
-  
+
   // Initialize instance if it doesn't exist
   useEffect(() => {
     if (!rawInstance) {
@@ -266,7 +262,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
   return (
     <div className="space-y-3">
       <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
-        Tools Selection
+        MCP Server Selection
       </label>
 
       <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">
@@ -469,55 +465,6 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
         </div>
       )}
 
-      {/* Debug Panel */}
-      <div className="mt-4 pt-4 border-t border-gray-300 dark:border-gray-600">
-        <button
-          type="button"
-          onClick={() => setShowDebug(!showDebug)}
-          className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-1"
-        >
-          {showDebug ? '▼' : '▶'} Debug Info
-        </button>
-        {showDebug && (
-          <div className="mt-2 p-3 bg-gray-100 dark:bg-gray-800 rounded-md border border-gray-300 dark:border-gray-700">
-            <pre className="text-xs text-gray-700 dark:text-gray-300 overflow-auto max-h-96">
-              {JSON.stringify({
-                instanceId,
-                stepId: stepId || 'N/A',
-                selectedServers,
-                selectedTools,
-                selectedToolsLength: selectedTools.length,
-                selectedToolsDetails: selectedTools.map(t => {
-                  const [server, tool] = t.split(':');
-                  return { server, tool, full: t };
-                }),
-                serverToolMode: instance.serverToolMode,
-                expandedServers: Array.from(instance.expandedServers),
-                loadingServers: Array.from(instance.loadingServers),
-                toolDetailsKeys: Object.keys(toolDetails),
-                toolDetailsCounts: Object.entries(toolDetails).reduce((acc, [server, tools]) => {
-                  acc[server] = tools.length;
-                  return acc;
-                }, {} as Record<string, number>),
-                // Calculate mode for each server
-                calculatedModes: selectedServers.reduce((acc, server) => {
-                  const hasAllToolsMarker = selectedTools.includes(`${server}:*`);
-                  const serverTools = selectedTools.filter(t => 
-                    t.startsWith(`${server}:`) && !t.endsWith(':*')
-                  );
-                  acc[server] = {
-                    mode: hasAllToolsMarker ? 'all' : (serverTools.length > 0 ? 'specific' : 'all'),
-                    hasAllToolsMarker,
-                    specificTools: serverTools,
-                    specificToolsCount: serverTools.length
-                  };
-                  return acc;
-                }, {} as Record<string, { mode: 'all' | 'specific'; hasAllToolsMarker: boolean; specificTools: string[]; specificToolsCount: number }>)
-              }, null, 2)}
-            </pre>
-          </div>
-        )}
-      </div>
     </div>
   );
 };

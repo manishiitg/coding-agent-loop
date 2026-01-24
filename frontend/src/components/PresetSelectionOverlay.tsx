@@ -53,13 +53,13 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     if (selectedPresetId && modeCategory === 'workflow') {
       // Find the selected preset
       const selectedPreset = presets.find(preset => preset.id === selectedPresetId)
-      
+
       if (selectedPreset) {
-        // Set the query in the chat input for immediate UI feedback
-        if (setCurrentQuery) {
+        // Set the query in the chat input for immediate UI feedback (only if query exists)
+        if (setCurrentQuery && selectedPreset.query) {
           setCurrentQuery(selectedPreset.query)
         }
-        
+
         // Call the original callback - let parent handle preset application
         onPresetSelected(selectedPresetId)
         onClose()
@@ -112,12 +112,12 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
       
       // Use the returned preset directly instead of searching for it
       setSelectedPresetId(newPreset.id)
-      
-      // Set the query in the chat input for immediate UI feedback
-      if (setCurrentQuery) {
+
+      // Set the query in the chat input for immediate UI feedback (only if query exists)
+      if (setCurrentQuery && newPreset.query) {
         setCurrentQuery(newPreset.query)
       }
-      
+
       // Automatically confirm the selection - let parent handle preset application
       if (modeCategory === 'workflow') {
         onPresetSelected(newPreset.id)
@@ -240,9 +240,11 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
                         <div className="font-medium text-gray-900 dark:text-white text-left">
                           {preset.label}
                         </div>
-                        <div className="text-sm text-gray-600 dark:text-gray-400 mt-1 text-left">
-                          {preset.query.length > 100 ? `${preset.query.substring(0, 100)}...` : preset.query}
-                        </div>
+                        {preset.query && (
+                          <div className="text-sm text-gray-600 dark:text-gray-400 mt-1 text-left">
+                            {preset.query.length > 100 ? `${preset.query.substring(0, 100)}...` : preset.query}
+                          </div>
+                        )}
                         <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 text-left">
                           {preset.selectedFolder ? `Folder: ${preset.selectedFolder.filepath}` : 'No folder selected'}
                         </div>

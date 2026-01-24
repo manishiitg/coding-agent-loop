@@ -677,6 +677,8 @@ export const OrchestratorNode = memo(({ data, selected }: OrchestratorNodeProps)
       {/* Config Footer */}
       <div className="mt-2 mx-4">
         <NodeConfigFooter
+          description={step?.description}
+          successCriteria={step?.success_criteria}
           executionLLM={executionLLM}
           executionMaxTurns={executionMaxTurns}
           learningLLM={learningLLM}

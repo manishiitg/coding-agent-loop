@@ -150,7 +150,12 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
         if (file.type === 'folder') {
           // If this folder starts with target prefix, include it and its children
           if (file.filepath.startsWith(targetPrefix)) {
-            const filteredChildren = file.children ? filterHierarchy(file.children) : []
+            // For workflow mode, we only want 1 level inside Workflow/
+            // So we don't recurse into children of matching folders
+            const filteredChildren = (agentMode === 'workflow') 
+              ? [] 
+              : (file.children ? filterHierarchy(file.children) : [])
+              
             result.push({
               ...file,
               children: filteredChildren
@@ -304,6 +309,12 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
       if (workflowPrefix) {
         const folderPathLower = folder.filepath.toLowerCase()
         if (!folderPathLower.startsWith(workflowPrefix)) {
+          return false
+        }
+        
+        // For workflow mode, only allow direct subfolders of Workflow/ (1 level deep)
+        const relativePath = folder.filepath.substring(workflowPrefix.length)
+        if (relativePath.includes('/')) {
           return false
         }
       }

@@ -4,7 +4,7 @@ import type { PresetLLMConfig } from '../services/api-types';
 export interface CustomPreset {
   id: string;
   label: string;
-  query: string;
+  query?: string;
   createdAt: number;
   selectedServers?: string[];
   selectedTools?: string[]; // NEW: Array of "server:tool" strings
@@ -21,7 +21,7 @@ export interface CustomPreset {
 export interface PredefinedPreset {
   id: string
   label: string
-  query: string
+  query?: string
   selectedServers?: string[];
   selectedTools?: string[]; // NEW: Array of "server:tool" strings
   selectedSkills?: string[]; // Skill folder names for workflow

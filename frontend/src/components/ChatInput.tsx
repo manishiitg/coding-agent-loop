@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
-import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import { Checkbox } from './ui/checkbox'
@@ -151,6 +151,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const useCodeExecutionMode = useMemo(() => tabConfig?.useCodeExecutionMode ?? false, [tabConfig?.useCodeExecutionMode])
   const useToolSearchMode = useMemo(() => tabConfig?.useToolSearchMode ?? false, [tabConfig?.useToolSearchMode])
   const enableWorkspaceAccess = useMemo(() => tabConfig?.enableWorkspaceAccess ?? true, [tabConfig?.enableWorkspaceAccess])
+  const enableBrowserAccess = useMemo(() => tabConfig?.enableBrowserAccess ?? false, [tabConfig?.enableBrowserAccess])
   
   // File context operations (always update tab config)
   const removeFileFromContext = useCallback((path: string) => {
@@ -194,7 +195,19 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }
   }, [activeTabId, setTabConfig, setWorkspaceMinimized])
-  
+
+  const setEnableBrowserAccess = useCallback((enabled: boolean) => {
+    if (activeTabId) {
+      // When browser is enabled, also enable workspace (browser tool lives in workspace category)
+      const updates: { enableBrowserAccess: boolean; enableWorkspaceAccess?: boolean } = { enableBrowserAccess: enabled }
+      if (enabled) {
+        updates.enableWorkspaceAccess = true
+        setWorkspaceMinimized(false) // Open workspace sidebar
+      }
+      setTabConfig(activeTabId, updates)
+    }
+  }, [activeTabId, setTabConfig, setWorkspaceMinimized])
+
   // Get preset info for chat mode
   const { getActivePreset, activePresetIds, customPresets, predefinedPresets } = usePresetApplication()
   
@@ -1151,7 +1164,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             id="workspace-access"
                             checked={enableWorkspaceAccess}
                             onCheckedChange={(checked) => setEnableWorkspaceAccess(checked === true)}
-                            disabled={isStreaming || isSummarizing}
+                            disabled={isStreaming || isSummarizing || enableBrowserAccess}
                             className="h-3.5 w-3.5"
                           />
                           <label
@@ -1164,7 +1177,31 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </div>
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p>{enableWorkspaceAccess ? 'Workspace file access enabled' : 'Workspace file access disabled'}</p>
+                        <p>{enableWorkspaceAccess ? 'Workspace file access enabled' : 'Workspace file access disabled'}{enableBrowserAccess ? ' (required by Browser)' : ''}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    {/* Browser Access Toggle */}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1.5 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md">
+                          <Checkbox
+                            id="browser-access"
+                            checked={enableBrowserAccess}
+                            onCheckedChange={(checked) => setEnableBrowserAccess(checked === true)}
+                            disabled={isStreaming || isSummarizing}
+                            className="h-3.5 w-3.5"
+                          />
+                          <label
+                            htmlFor="browser-access"
+                            className="text-xs font-medium cursor-pointer flex items-center gap-1 text-gray-700 dark:text-gray-300"
+                          >
+                            <Globe className="w-3 h-3" />
+                            Browser
+                          </label>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>{enableBrowserAccess ? 'Browser automation enabled (uses agent-browser)' : 'Browser automation disabled'}</p>
                       </TooltipContent>
                     </Tooltip>
                   </div>

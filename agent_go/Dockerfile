@@ -22,8 +22,17 @@ RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o mcp-agent .
 # Runtime stage
 FROM alpine:latest
 
-# Install ca-certificates for HTTPS requests, Node.js for MCP servers, C libraries for CGO, Python for uvx, jq for JSON processing, and ripgrep for text searching
-RUN apk --no-cache add ca-certificates nodejs npm gcc musl-dev python3 py3-pip jq ripgrep
+# Install ca-certificates for HTTPS requests, Node.js for MCP servers, C libraries for CGO, Python for uvx, jq for JSON processing, ripgrep for text searching
+# Also install chromium for agent-browser headless browser automation
+# gcompat provides glibc compatibility for agent-browser binary
+RUN apk --no-cache add ca-certificates nodejs npm gcc musl-dev python3 py3-pip jq ripgrep chromium chromium-chromedriver gcompat
+
+# Install agent-browser globally for browser automation
+RUN npm install -g agent-browser
+
+# Set Chromium path for Playwright (used by agent-browser)
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 # Install uvx (uv package manager) with system packages override
 RUN pip3 install --break-system-packages uv

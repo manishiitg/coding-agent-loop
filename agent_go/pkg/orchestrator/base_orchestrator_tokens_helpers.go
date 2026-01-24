@@ -1,7 +1,7 @@
 package orchestrator
 
 import (
-	"mcpagent/events"
+	"github.com/manishiitg/mcpagent/events"
 )
 
 // CacheTokens holds separated cache read and write token counts

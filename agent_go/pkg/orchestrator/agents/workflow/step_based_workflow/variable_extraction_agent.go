@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	loggerv2 "mcpagent/logger/v2"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 // Variable represents a single variable definition

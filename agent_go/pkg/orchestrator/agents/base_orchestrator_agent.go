@@ -5,15 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	loggerv2 "mcpagent/logger/v2"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"reflect"
 	"regexp"
 	"time"
 
-	mcpagent "mcpagent/agent"
-	baseevents "mcpagent/events"
-	"mcpagent/llm"
-	"mcpagent/observability"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	baseevents "github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/llm"
+	"github.com/manishiitg/mcpagent/observability"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 

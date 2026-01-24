@@ -3,7 +3,7 @@ package eventbridge
 import (
 	"context"
 
-	pkgevents "mcpagent/events"
+	pkgevents "github.com/manishiitg/mcpagent/events"
 )
 
 // WorkflowEventBridge bridges workflow events to the main server event system

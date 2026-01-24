@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"mcpagent/mcpcache"
-	"mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/mcpcache"
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 // MCPConfigRequest represents a request to save MCP config

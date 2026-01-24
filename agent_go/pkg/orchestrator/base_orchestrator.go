@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	mcpagent "mcpagent/agent"
-	loggerv2 "mcpagent/logger/v2"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )

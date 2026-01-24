@@ -11,9 +11,9 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"mcpagent/mcpcache"
-	"mcpagent/mcpclient"
-	"mcpagent/oauth"
+	"github.com/manishiitg/mcpagent/mcpcache"
+	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/oauth"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )

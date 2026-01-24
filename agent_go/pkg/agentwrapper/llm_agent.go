@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	mcpagent "mcpagent/agent"
-	"mcpagent/events"
-	"mcpagent/llm"
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/observability"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/llm"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/observability"
 
 	agentlogger "mcp-agent-builder-go/agent_go/pkg/logger"
 

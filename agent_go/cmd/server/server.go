@@ -25,12 +25,12 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	orchtypes "mcp-agent-builder-go/agent_go/pkg/orchestrator/types"
-	unifiedevents "mcpagent/events"
-	"mcpagent/executor"
-	"mcpagent/llm"
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/mcpclient"
-	"mcpagent/observability"
+	unifiedevents "github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/executor"
+	"github.com/manishiitg/mcpagent/llm"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
@@ -42,7 +42,7 @@ import (
 	eventbridge "mcp-agent-builder-go/agent_go/cmd/server/event_bridge"
 	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	mcpagent "mcpagent/agent"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"strconv"
 )
 

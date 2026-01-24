@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	"mcpagent/events"
+	"github.com/manishiitg/mcpagent/events"
 )
 
 // Database interface for chat history storage

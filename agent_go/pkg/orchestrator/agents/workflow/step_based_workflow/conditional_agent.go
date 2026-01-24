@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
-	mcpagent "mcpagent/agent"
-	loggerv2 "mcpagent/logger/v2"
-	"mcpagent/observability"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )

@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 // OrchestratorAgent defines the interface for all orchestrator agents

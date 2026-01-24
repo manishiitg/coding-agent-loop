@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	baseevents "mcpagent/events"
+	baseevents "github.com/manishiitg/mcpagent/events"
 )
 
 // getStepsProgressPath returns the RELATIVE path to steps_done.json file in the run folder

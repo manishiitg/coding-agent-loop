@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	mcpagent "mcpagent/agent"
-	"mcpagent/llm"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/llm"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

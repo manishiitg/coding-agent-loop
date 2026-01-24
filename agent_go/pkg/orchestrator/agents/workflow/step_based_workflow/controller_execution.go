@@ -18,7 +18,7 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/shared"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	baseevents "mcpagent/events"
+	baseevents "github.com/manishiitg/mcpagent/events"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )

@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	mcpagent "mcpagent/agent"
-	baseevents "mcpagent/events"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	baseevents "github.com/manishiitg/mcpagent/events"
 )
 
 // BatchExecutionResult contains the result of batch execution

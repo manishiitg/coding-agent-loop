@@ -51,11 +51,11 @@ i) prompt tempaltes, need to check variables on compile time
 58. run multiple workflows together -- test
 
 
-2. for a new plan step, we should disable validation by default
+2. for a new plan step, we should disable validation by default (done)
 
-3. all workflows don't require a knowledgebase
+3. all workflows don't require a knowledgebase (done)
 
-4. typing in chatinput is very slow
+4. typing in chatinput is very slow (done)
 
 5. make large tool output optional in chat agent
 
@@ -71,4 +71,4 @@ i) prompt tempaltes, need to check variables on compile time
 
 11. if sheel tool is enabled in workspace/ do we need other list tools etc
 
-12. the success learning agents should not have human tools
+12. the success learning agents should not have human tools (done)

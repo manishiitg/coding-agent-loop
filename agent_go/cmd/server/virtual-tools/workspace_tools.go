@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 
+	md "github.com/JohannesKaufmann/html-to-markdown"
+	"github.com/ledongthuc/pdf"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	"mcpagent/events"
@@ -359,392 +361,32 @@ func parseWorkspaceFileData(data interface{}) (filepath, content string, err err
 	return filepath, content, nil
 }
 
-// CreateWorkspaceTools creates workspace-related virtual tools
+// CreateWorkspaceTools creates all workspace-related virtual tools (basic + git + advanced)
+// This is the backward-compatible function that returns all 15 tools
 func CreateWorkspaceTools() []llmtypes.Tool {
-	var workspaceTools []llmtypes.Tool
-
-	// Add list_workspace_files tool
-	listFilesTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "list_workspace_files",
-			Description: "List all files and folders in the workspace.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"folder": map[string]interface{}{
-						"type":        "string",
-						"description": "Folder path to filter results (e.g., 'docs', 'examples', 'folder/subfolder')",
-					},
-					"max_depth": map[string]interface{}{
-						"type":        "integer",
-						"description": "Maximum depth of hierarchical structure to return (default: 3, max: 10)",
-					},
-				},
-				"required": []string{"folder"},
-			}),
-		},
-	}
-	workspaceTools = append(workspaceTools, listFilesTool)
-
-	// Add read_workspace_file tool
-	readFileTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "read_workspace_file",
-			Description: "Read the content of a specific file from the workspace by filepath",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"filepath": map[string]interface{}{
-						"type":        "string",
-						"description": "Full file path (e.g., 'docs/example.md', 'configs/settings.json', 'README.md')",
-					},
-				},
-				"required": []string{"filepath"},
-			}),
-		},
-	}
-	workspaceTools = append(workspaceTools, readFileTool)
-
-	// Add update_workspace_file tool
-	updateFileTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "update_workspace_file",
-			Description: "Create a new file or update/replace the entire content of an existing file in the workspace (upsert behavior). If you are using existing file prefer to use diff_patch_workspace_file instead",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"filepath": map[string]interface{}{
-						"type":        "string",
-						"description": "Full file path of the file to create or update (e.g., 'docs/guide.md', 'configs/settings.json')",
-					},
-					"content": map[string]interface{}{
-						"type":        "string",
-						"description": "Content to write to the file (will create new file or replace entire existing file)",
-					},
-					"commit_message": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional commit message for version control",
-					},
-				},
-				"required": []string{"filepath", "content"},
-			}),
-		},
-	}
-	workspaceTools = append(workspaceTools, updateFileTool)
-
-	// Add diff_patch_workspace_file tool (unified diff patching)
-	diffPatchFileTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "diff_patch_workspace_file",
-			Description: "🚨 CRITICAL WORKFLOW: 1) MANDATORY - Use read_workspace_file first to see exact current content 2) Generate diff using 'diff -U0' format with perfect context matching 3) Apply patch. This tool requires precise unified diff format - context lines must match file exactly. Use for targeted, surgical changes to specific file sections. ⚠️ FAILURE TO FOLLOW WORKFLOW WILL RESULT IN PATCH FAILURES.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"filepath": map[string]interface{}{
-						"type":        "string",
-						"description": "Full file path of the file to patch (e.g., 'docs/guide.md', 'configs/settings.json')",
-					},
-					"diff": map[string]interface{}{
-						"type":        "string",
-						"description": "🚨 CRITICAL REQUIREMENTS - Unified diff format string to apply:\n\n**MANDATORY FORMAT (like 'diff -U0'):**\n- Headers: --- a/file.md\\n+++ b/file.md\n- Hunk headers: @@ -startLine,lineCount +startLine,lineCount @@\n- Context lines: ' ' prefix (SPACE + content - MUST match file exactly)\n- Removals: '-' prefix (MINUS + content)\n- Additions: '+' prefix (PLUS + content)\n- MUST end with newline character\n\n🚨 CRITICAL: Context lines start with SPACE ( ), NOT minus (-)!\n   Correct: ' # Header' (space + content)\n   Wrong:   '- # Header' (minus + content)\n\n**PERFECT EXAMPLE:**\n--- a/todo.md\n+++ b/todo.md\n@@ -1,3 +1,4 @@\n # Todo List\n+**New addition**: Added via unified diff\n \n ## Objective\n@@ -4,3 +5,4 @@\n ## Notes\n - Leverages tavily-search for comprehensive research\n+- Added new methodology note\n\n**🚨 CRITICAL VALIDATION CHECKLIST:**\n- ✅ File exists and was read with read_workspace_file\n- ✅ Context lines copied EXACTLY from file content (including whitespace)\n- ✅ Hunk headers show correct line numbers\n- ✅ Diff ends with newline character\n- ✅ Proper unified diff format (---/+++ headers)\n- ✅ No truncated or malformed lines\n- ✅ Test with simple single-line addition first",
-					},
-					"commit_message": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional commit message for version control",
-					},
-				},
-				"required": []string{"filepath", "diff"},
-			}),
-		},
-	}
-	workspaceTools = append(workspaceTools, diffPatchFileTool)
-
-	// get_workspace_file_nested tool removed - no longer needed
-
-	// Add regex_search_workspace_files tool
-	regexSearchTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "regex_search_workspace_files",
-			Description: "Search files in the workspace using regex patterns across full content. Searches text-based files within the specified folder only. Requires 'folder' parameter.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"query": map[string]interface{}{
-						"type":        "string",
-						"description": "Regex search query to find in files (e.g., 'docker', 'test.*file', \\d{4}-\\d{2}-\\d{2}', '(error|exception)', 'markdown')",
-					},
-					"folder": map[string]interface{}{
-						"type":        "string",
-						"description": "Folder path to search within (e.g., 'docs', 'src', 'configs'). Required.",
-					},
-					"limit": map[string]interface{}{
-						"type":        "integer",
-						"description": "Maximum number of results to return (default: 20, max: 100)",
-					},
-				},
-				"required": []string{"query", "folder"},
-			}),
-		},
-	}
-	workspaceTools = append(workspaceTools, regexSearchTool)
-
-	// Add semantic_search_workspace_files tool only if enabled via environment variable
-	if isSemanticSearchEnabled() {
-		semanticSearchTool := llmtypes.Tool{
-			Type: "function",
-			Function: &llmtypes.FunctionDefinition{
-				Name:        "semantic_search_workspace_files",
-				Description: "Search files using AI-powered semantic similarity. Finds content by meaning, not just exact text matches. Uses embeddings to understand context and relationships between concepts. For exact text matches, use search_workspace_files tool instead.",
-				Parameters: llmtypes.NewParameters(map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"query": map[string]interface{}{
-							"type":        "string",
-							"description": "Natural language search query (e.g., 'docker configuration', 'error handling', 'API endpoints', 'authentication setup', 'database connection')",
-						},
-						"folder": map[string]interface{}{
-							"type":        "string",
-							"description": "Folder path to search within (e.g., 'docs', 'src', 'configs'). Required parameter for semantic search.",
-						},
-						"limit": map[string]interface{}{
-							"type":        "integer",
-							"description": "Maximum number of semantic results to return (default: 10, max: 50)",
-						},
-					},
-					"required": []string{"query", "folder"},
-				}),
-			},
-		}
-		workspaceTools = append(workspaceTools, semanticSearchTool)
-	}
-
-	// Add glob_discover_workspace_files tool
-	globDiscoverTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "glob_discover_workspace_files",
-			Description: "Discover files in the workspace using glob patterns. Supports standard glob syntax: * (matches any characters), ? (matches single character), [chars] (matches character set), and ** (matches zero or more directories recursively). Examples: '*.go' finds all Go files, '**/*.md' finds all Markdown files recursively, 'docs/**/*.txt' finds all text files in docs and subdirectories.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"pattern": map[string]interface{}{
-						"type":        "string",
-						"description": "Glob pattern to match files (e.g., '*.go', '**/*.md', 'docs/**/*.txt', 'test_*.py'). Supports * for any characters, ? for single character, [chars] for character set, and ** for recursive directory matching.",
-					},
-					"folder": map[string]interface{}{
-						"type":        "string",
-						"description": "Folder path to search within (e.g., 'docs', 'src', 'configs'). If not specified, searches from workspace root.",
-					},
-					"max_depth": map[string]interface{}{
-						"type":        "integer",
-						"description": "Maximum depth of directories to search recursively (default: unlimited, -1 for unlimited)",
-					},
-					"include_dirs": map[string]interface{}{
-						"type":        "boolean",
-						"description": "Include directories in results (default: false, only files are returned)",
-					},
-				},
-				"required": []string{"pattern"},
-			}),
-		},
-	}
-	workspaceTools = append(workspaceTools, globDiscoverTool)
-
-	// Add sync_workspace_to_github tool
-	syncGitHubTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "sync_workspace_to_github",
-			Description: "Sync all workspace files to GitHub repository using standard git workflow: commit → pull → push. Always pulls first to ensure synchronization. Fails if merge conflicts are detected (requires manual resolution).",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"force": map[string]interface{}{
-						"type":        "boolean",
-						"description": "Force sync even if there are conflicts (not recommended, default: false)",
-					},
-					"commit_message": map[string]interface{}{
-						"type":        "string",
-						"description": "Custom commit message for the sync operation (optional)",
-					},
-				},
-			}),
-		},
-	}
-	workspaceTools = append(workspaceTools, syncGitHubTool)
-
-	// Add get_workspace_github_status tool
-	gitHubStatusTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "get_workspace_github_status",
-			Description: "Get the current GitHub sync status including pending changes, conflicts, and repository information. Uses git commands to check local repository status and connection to GitHub remote.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"show_pending": map[string]interface{}{
-						"type":        "boolean",
-						"description": "Show pending changes (default: true)",
-					},
-					"show_conflicts": map[string]interface{}{
-						"type":        "boolean",
-						"description": "Show conflicts if any (default: true)",
-					},
-				},
-			}),
-		},
-	}
-	workspaceTools = append(workspaceTools, gitHubStatusTool)
-
-	// Add delete_workspace_file tool
-	deleteFileTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "delete_workspace_file",
-			Description: "Delete a specific file from the workspace permanently. This action cannot be undone. Use with caution.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"filepath": map[string]interface{}{
-						"type":        "string",
-						"description": "Full file path of the file to delete (e.g., 'docs/example.md', 'configs/settings.json')",
-					},
-					"commit_message": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional commit message for version control",
-					},
-				},
-				"required": []string{"filepath"},
-			}),
-		},
-	}
-	workspaceTools = append(workspaceTools, deleteFileTool)
-
-	// Add move_workspace_file tool
-	moveFileTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "move_workspace_file",
-			Description: "Move a file from one location to another in the workspace. Can be used to move files between folders or rename files.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"source_filepath": map[string]interface{}{
-						"type":        "string",
-						"description": "Current file path of the file to move (e.g., 'docs/old-file.md', 'configs/settings.json')",
-					},
-					"destination_filepath": map[string]interface{}{
-						"type":        "string",
-						"description": "New file path where the file should be moved (e.g., 'archive/old-file.md', 'settings/config.json')",
-					},
-					"commit_message": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional commit message for version control",
-					},
-				},
-				"required": []string{"source_filepath", "destination_filepath"},
-			}),
-		},
-	}
-	workspaceTools = append(workspaceTools, moveFileTool)
-
-	// Add execute_shell_command tool
-	executeShellTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "execute_shell_command",
-			Description: "Execute shell commands and scripts within the workspace directory. Commands run with a 60-second timeout (configurable up to 300 seconds) and are restricted to the workspace boundary (/app/workspace-docs).\n\n**PATH USAGE RULES:**\n- **Tool Parameters**: Use relative paths (e.g., 'working_directory: \"scripts\"' resolves to '/app/workspace-docs/scripts')\n- **Inside Scripts**: When writing Python/shell scripts that reference files, use absolute paths starting with '/app/workspace-docs' (e.g., '/app/workspace-docs/script.py', '/app/workspace-docs/data/file.csv'). This ensures scripts work regardless of the working_directory setting.\n\nReturns stdout, stderr, and exit code. Use 'use_shell: true' for complex commands with pipes (|), redirects (>), chaining (&&, ||), environment variables, or wildcards.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"command": map[string]interface{}{
-						"type":        "string",
-						"description": "Shell command to execute. If use_shell is true, this can be a complex command with pipes, redirects, etc. (e.g., 'ls', 'grep', 'find', './script.sh', 'ls | grep .md', 'cd dir && ls', 'VAR=value command')",
-					},
-					"args": map[string]interface{}{
-						"type":        "array",
-						"items":       map[string]interface{}{"type": "string"},
-						"description": "Command arguments as an array of strings (e.g., ['-l', '-a'] for 'ls -l -a'). Ignored if use_shell is true - include arguments in command string instead.",
-					},
-					"working_directory": map[string]interface{}{
-						"type":        "string",
-						"description": "Relative directory path within workspace to execute command (default: root of workspace). Example: 'scripts' resolves to '/app/workspace-docs/scripts'. Sets the current working directory (CWD) for command execution, allowing relative paths in commands to resolve relative to this directory.",
-					},
-					"timeout": map[string]interface{}{
-						"type":        "integer",
-						"description": "Timeout in seconds (default: 60, max: 300)",
-					},
-					"use_shell": map[string]interface{}{
-						"type":        "boolean",
-						"description": "Execute through shell interpreter (sh -c). Enables complex commands with pipes (|), redirects (>), chaining (&&, ||), environment variables, wildcards, etc. Default: false (direct execution, more secure). Set to true for complex commands.",
-					},
-				},
-				"required": []string{"command"},
-			}),
-		},
-	}
-	workspaceTools = append(workspaceTools, executeShellTool)
-
-	// Add read_image tool
-	readImageTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "read_image",
-			Description: "Read an image file from workspace and ask a question about it. This tool will process the image and your question together.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"filepath": map[string]interface{}{
-						"type":        "string",
-						"description": "Path to the image file. Must always be workspace-relative (e.g., 'Downloads/hdfc_login.png', 'images/photo.jpg', 'screenshots/screen.png'). Do not use absolute paths.",
-					},
-					"query": map[string]interface{}{
-						"type":        "string",
-						"description": "Question to ask about the image (e.g., 'What is in this image?', 'Describe this image', 'What text is written here?')",
-					},
-				},
-				"required": []string{"filepath", "query"},
-			}),
-		},
-	}
-	workspaceTools = append(workspaceTools, readImageTool)
-
-	return workspaceTools
+	// Combine basic, git, and advanced tools for backward compatibility
+	tools := CreateWorkspaceBasicTools()
+	tools = append(tools, CreateWorkspaceGitTools()...)
+	tools = append(tools, CreateWorkspaceAdvancedTools()...)
+	return tools
 }
 
-// GetToolCategory returns the category name for workspace tools
+// GetWorkspaceToolCategory returns the category name for all workspace tools (backward compatible)
 func GetWorkspaceToolCategory() string {
-	return "workspace"
+	return "workspace_tools"
 }
 
-// CreateWorkspaceToolExecutors creates the execution functions for workspace tools
+// CreateWorkspaceToolExecutors creates the execution functions for all workspace tools (basic + advanced)
+// This is the backward-compatible function that returns all executors
 func CreateWorkspaceToolExecutors() map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
-	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
-
-	executors["list_workspace_files"] = handleListWorkspaceFiles
-	executors["read_workspace_file"] = handleReadWorkspaceFile
-	executors["update_workspace_file"] = handleUpdateWorkspaceFile
-	// executors["patch_workspace_file"] = handlePatchWorkspaceFile // REMOVED - no longer needed
-	executors["diff_patch_workspace_file"] = handleDiffPatchWorkspaceFile
-	// executors["get_workspace_file_nested"] = handleGetWorkspaceFileNested // REMOVED - no longer needed
-	executors["regex_search_workspace_files"] = handleRegexSearchWorkspaceFiles
-	// Only register semantic search executor if enabled
-	if isSemanticSearchEnabled() {
-		executors["semantic_search_workspace_files"] = handleSemanticSearchWorkspaceFiles
+	// Combine basic, git, and advanced executors for backward compatibility
+	executors := CreateWorkspaceBasicToolExecutors()
+	for k, v := range CreateWorkspaceGitToolExecutors() {
+		executors[k] = v
 	}
-	executors["glob_discover_workspace_files"] = handleGlobDiscoverWorkspaceFiles
-	executors["sync_workspace_to_github"] = handleSyncWorkspaceToGitHub
-	executors["get_workspace_github_status"] = handleGetWorkspaceGitHubStatus
-	executors["delete_workspace_file"] = handleDeleteWorkspaceFile
-	executors["move_workspace_file"] = handleMoveWorkspaceFile
-	executors["execute_shell_command"] = handleExecuteShellCommand
-	executors["read_image"] = handleReadImage
-
+	for k, v := range CreateWorkspaceAdvancedToolExecutors() {
+		executors[k] = v
+	}
 	return executors
 }
 
@@ -2483,4 +2125,380 @@ func formatSemanticSearchResults(data interface{}, query string) (string, error)
 	}
 
 	return result.String(), nil
+}
+
+// handleFetchWebContent handles the fetch_web_content tool execution
+func handleFetchWebContent(ctx context.Context, args map[string]interface{}) (string, error) {
+	// Extract URL parameter (required)
+	urlStr, ok := args["url"].(string)
+	if !ok || urlStr == "" {
+		return "", fmt.Errorf("url is required and must be a string")
+	}
+
+	// Validate URL format
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL format: %w", err)
+	}
+
+	// Only allow http and https schemes
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return "", fmt.Errorf("URL must use http:// or https:// scheme, got: %s", parsedURL.Scheme)
+	}
+
+	// Extract timeout parameter (optional, default: 30, max: 120)
+	timeout := 30
+	if t, ok := args["timeout"].(float64); ok {
+		timeout = int(t)
+	}
+	if timeout < 1 {
+		timeout = 1
+	}
+	if timeout > 120 {
+		timeout = 120
+	}
+
+	// Extract convert_to_markdown parameter (optional, default: true)
+	convertToMarkdown := true
+	if c, ok := args["convert_to_markdown"].(bool); ok {
+		convertToMarkdown = c
+	}
+
+	// Extract custom headers (optional)
+	customHeaders := make(map[string]string)
+	if h, ok := args["headers"].(map[string]interface{}); ok {
+		for k, v := range h {
+			if strVal, ok := v.(string); ok {
+				customHeaders[k] = strVal
+			}
+		}
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set default headers
+	req.Header.Set("User-Agent", "MCP-Agent-Builder/1.0 (Web Fetch Tool)")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+
+	// Apply custom headers
+	for k, v := range customHeaders {
+		req.Header.Set(k, v)
+	}
+
+	// Create HTTP client with timeout
+	client := &http.Client{
+		Timeout: time.Duration(timeout) * time.Second,
+	}
+
+	// Execute request
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch URL: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Limit response size to 10MB to prevent memory issues
+	const maxSize = 10 * 1024 * 1024
+	limitedReader := io.LimitReader(resp.Body, maxSize)
+
+	// Read response body
+	body, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Get content type
+	contentType := resp.Header.Get("Content-Type")
+
+	// Convert HTML to markdown if requested and content is HTML
+	content := string(body)
+	isHTML := strings.Contains(strings.ToLower(contentType), "text/html") ||
+		strings.Contains(strings.ToLower(contentType), "application/xhtml")
+
+	if convertToMarkdown && isHTML {
+		converter := md.NewConverter("", true, nil)
+		markdown, err := converter.ConvertString(content)
+		if err == nil {
+			content = markdown
+		}
+		// If conversion fails, keep original HTML content
+	}
+
+	// Truncate content if too large (keep first 100KB for LLM processing)
+	const maxContentSize = 100 * 1024
+	truncated := false
+	if len(content) > maxContentSize {
+		content = content[:maxContentSize]
+		truncated = true
+	}
+
+	// Build response
+	response := map[string]interface{}{
+		"url":          urlStr,
+		"status_code":  resp.StatusCode,
+		"content_type": contentType,
+		"content":      content,
+	}
+
+	if truncated {
+		response["truncated"] = true
+		response["truncated_message"] = "Content was truncated to 100KB for LLM processing"
+	}
+
+	if resp.StatusCode >= 400 {
+		response["error"] = fmt.Sprintf("HTTP error: %s", resp.Status)
+	}
+
+	// Marshal response to JSON
+	responseJSON, err := json.Marshal(response)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal response: %w", err)
+	}
+
+	return string(responseJSON), nil
+}
+
+// handleReadPDF handles the read_pdf tool execution
+func handleReadPDF(ctx context.Context, args map[string]interface{}) (string, error) {
+	// Extract filepath parameter (required)
+	filepathStr, ok := args["filepath"].(string)
+	if !ok || filepathStr == "" {
+		return "", fmt.Errorf("filepath is required and must be a string")
+	}
+
+	// Validate file extension
+	ext := strings.ToLower(filepath.Ext(filepathStr))
+	if ext != ".pdf" {
+		return "", fmt.Errorf("file must be a PDF (got extension: %s)", ext)
+	}
+
+	// Extract max_pages parameter (optional, default: 50, max: 100)
+	maxPages := 50
+	if mp, ok := args["max_pages"].(float64); ok {
+		maxPages = int(mp)
+	}
+	if maxPages < 1 {
+		maxPages = 1
+	}
+	if maxPages > 100 {
+		maxPages = 100
+	}
+
+	// Extract page_range parameter (optional, default: "all")
+	pageRange := "all"
+	if pr, ok := args["page_range"].(string); ok && pr != "" {
+		pageRange = pr
+	}
+
+	// URL-encode the filepath segments
+	pathSegments := strings.Split(filepathStr, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	// Build API URL to get raw file content
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath + "/raw"
+
+	// Create HTTP request with context
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set timeout
+	client := &http.Client{
+		Timeout: 60 * time.Second, // Longer timeout for PDF files
+	}
+
+	// Make the request
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check HTTP status
+	if resp.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("PDF file not found: %s. Use 'list_workspace_files' to find the correct path", filepathStr)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Read the PDF content into memory (limit to 50MB)
+	const maxPDFSize = 50 * 1024 * 1024
+	limitedReader := io.LimitReader(resp.Body, maxPDFSize)
+	pdfData, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return "", fmt.Errorf("failed to read PDF data: %w", err)
+	}
+
+	// Parse the PDF using the ledongthuc/pdf library
+	pdfReader, err := pdf.NewReader(bytes.NewReader(pdfData), int64(len(pdfData)))
+	if err != nil {
+		return "", fmt.Errorf("failed to parse PDF: %w", err)
+	}
+
+	totalPages := pdfReader.NumPage()
+	if totalPages == 0 {
+		return "", fmt.Errorf("PDF has no pages")
+	}
+
+	// Parse page range
+	pagesToExtract, err := parsePageRange(pageRange, totalPages, maxPages)
+	if err != nil {
+		return "", fmt.Errorf("invalid page_range: %w", err)
+	}
+
+	// Extract text from specified pages
+	var textContent strings.Builder
+	extractedPages := 0
+
+	for _, pageNum := range pagesToExtract {
+		if pageNum < 1 || pageNum > totalPages {
+			continue
+		}
+
+		page := pdfReader.Page(pageNum)
+		if page.V.IsNull() {
+			continue
+		}
+
+		pageText, err := page.GetPlainText(nil)
+		if err != nil {
+			// Skip pages that can't be read
+			continue
+		}
+
+		if pageText != "" {
+			textContent.WriteString(fmt.Sprintf("\n--- Page %d ---\n", pageNum))
+			textContent.WriteString(pageText)
+			extractedPages++
+		}
+	}
+
+	content := strings.TrimSpace(textContent.String())
+	if content == "" {
+		content = "(No text content could be extracted from this PDF. It may contain only images or scanned content.)"
+	}
+
+	// Truncate if content is too large for LLM (keep first 100KB)
+	const maxContentSize = 100 * 1024
+	truncated := false
+	if len(content) > maxContentSize {
+		content = content[:maxContentSize]
+		truncated = true
+	}
+
+	// Build response
+	response := map[string]interface{}{
+		"filepath":        filepathStr,
+		"total_pages":     totalPages,
+		"extracted_pages": extractedPages,
+		"page_range":      pageRange,
+		"content":         content,
+	}
+
+	if truncated {
+		response["truncated"] = true
+		response["truncated_message"] = "Content was truncated to 100KB for LLM processing"
+	}
+
+	// Emit workspace file operation event for read operation
+	emitWorkspaceFileOperation(ctx, "read", filepathStr, "")
+
+	// Marshal response to JSON
+	responseJSON, err := json.Marshal(response)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal response: %w", err)
+	}
+
+	return string(responseJSON), nil
+}
+
+// parsePageRange parses a page range string and returns a slice of page numbers
+// Supports formats: "all", "1-5", "1,3,5", "1-3,5,7-9"
+func parsePageRange(rangeStr string, totalPages, maxPages int) ([]int, error) {
+	rangeStr = strings.TrimSpace(strings.ToLower(rangeStr))
+
+	if rangeStr == "all" || rangeStr == "" {
+		// Return all pages up to maxPages
+		pages := make([]int, 0, min(totalPages, maxPages))
+		for i := 1; i <= totalPages && len(pages) < maxPages; i++ {
+			pages = append(pages, i)
+		}
+		return pages, nil
+	}
+
+	pageSet := make(map[int]bool)
+	parts := strings.Split(rangeStr, ",")
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		// Check if it's a range (e.g., "1-5")
+		if strings.Contains(part, "-") {
+			rangeParts := strings.Split(part, "-")
+			if len(rangeParts) != 2 {
+				return nil, fmt.Errorf("invalid range format: %s", part)
+			}
+
+			start, err := strconv.Atoi(strings.TrimSpace(rangeParts[0]))
+			if err != nil {
+				return nil, fmt.Errorf("invalid start page in range: %s", part)
+			}
+
+			end, err := strconv.Atoi(strings.TrimSpace(rangeParts[1]))
+			if err != nil {
+				return nil, fmt.Errorf("invalid end page in range: %s", part)
+			}
+
+			if start > end {
+				start, end = end, start // Swap if reversed
+			}
+
+			for i := start; i <= end; i++ {
+				if i >= 1 && i <= totalPages {
+					pageSet[i] = true
+				}
+			}
+		} else {
+			// Single page number
+			pageNum, err := strconv.Atoi(part)
+			if err != nil {
+				return nil, fmt.Errorf("invalid page number: %s", part)
+			}
+			if pageNum >= 1 && pageNum <= totalPages {
+				pageSet[pageNum] = true
+			}
+		}
+	}
+
+	// Convert set to sorted slice
+	pages := make([]int, 0, len(pageSet))
+	for page := range pageSet {
+		pages = append(pages, page)
+	}
+	sort.Ints(pages)
+
+	// Limit to maxPages
+	if len(pages) > maxPages {
+		pages = pages[:maxPages]
+	}
+
+	if len(pages) == 0 {
+		return nil, fmt.Errorf("no valid pages in range")
+	}
+
+	return pages, nil
 }

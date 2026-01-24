@@ -3,12 +3,14 @@ module mcp-agent-builder-go/agent_go
 go 1.24.4
 
 require (
+	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/PaesslerAG/jsonpath v0.1.1
 	github.com/gin-gonic/gin v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/invopop/jsonschema v0.13.0
 	github.com/joho/godotenv v1.5.1
+	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/lib/pq v1.10.9
 	github.com/manishiitg/multi-llm-provider-go v0.2.1-0.20260111071343-fdc495291dc6
 	github.com/mark3labs/mcp-go v0.44.0-beta.1
@@ -35,6 +37,8 @@ require (
 	cloud.google.com/go/auth v0.18.0 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	github.com/PaesslerAG/gval v1.0.0 // indirect
+	github.com/PuerkitoBio/goquery v1.9.2 // indirect
+	github.com/andybalholm/cascadia v1.3.2 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.19.0 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.41.1 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.4 // indirect

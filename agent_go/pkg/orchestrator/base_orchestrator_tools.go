@@ -15,8 +15,20 @@ func getToolNamesByCategory(category string) map[string]bool {
 
 	switch category {
 	case "workspace_tools":
-		// Get tool names from workspace tool executors (source of truth)
+		// Backward compatible - returns all workspace tools (basic + advanced)
 		executors := virtualtools.CreateWorkspaceToolExecutors()
+		for toolName := range executors {
+			toolNames[toolName] = true
+		}
+	case "workspace_basic":
+		// New category - returns only basic workspace tools (11 tools)
+		executors := virtualtools.CreateWorkspaceBasicToolExecutors()
+		for toolName := range executors {
+			toolNames[toolName] = true
+		}
+	case "workspace_advanced":
+		// New category - returns only advanced workspace tools (2 tools: shell + image)
+		executors := virtualtools.CreateWorkspaceAdvancedToolExecutors()
 		for toolName := range executors {
 			toolNames[toolName] = true
 		}

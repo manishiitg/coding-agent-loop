@@ -610,6 +610,33 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 	return toolsToRegister, executorsToUse
 }
 
+// prepareWorkspaceToolsOnly prepares workspace tools excluding human tools
+// This is used for learning agents which should NOT have access to human tools (like human_feedback)
+// Learning agents are pure LLM analysis agents that should not block on human input
+func (hcpo *StepBasedWorkflowOrchestrator) prepareWorkspaceToolsOnly() ([]llmtypes.Tool, map[string]interface{}) {
+	var filteredTools []llmtypes.Tool
+	filteredExecutors := make(map[string]interface{})
+
+	for _, tool := range hcpo.WorkspaceTools {
+		toolName := tool.Function.Name
+		// Check if this tool is a human tool by looking at its category
+		if hcpo.ToolCategories != nil {
+			if category, exists := hcpo.ToolCategories[toolName]; exists && category == "human" {
+				// Skip human tools for learning agents
+				hcpo.GetLogger().Info(fmt.Sprintf("🔧 Excluding human tool '%s' from learning agent (learning agents should not have human tools)", toolName))
+				continue
+			}
+		}
+		filteredTools = append(filteredTools, tool)
+		// Also include corresponding executor
+		if executor, exists := hcpo.WorkspaceToolExecutors[toolName]; exists {
+			filteredExecutors[toolName] = executor
+		}
+	}
+
+	return filteredTools, filteredExecutors
+}
+
 // addPrerequisiteDetectionTool adds prerequisite detection tool if prerequisite detection is enabled
 // This must be called AFTER the agent is created, as it directly registers the tool on the mcpAgent
 func (hcpo *StepBasedWorkflowOrchestrator) addPrerequisiteDetectionTool(
@@ -1198,8 +1225,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 	// Note: Learning agents typically use NoServers, but we call this for consistency and safety
 	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
 
-	// 4. Prepare custom tools (filtered by step config)
-	toolsToRegister, executorsToUse := hcpo.prepareCustomTools(stepConfig)
+	// 4. Prepare workspace tools EXCLUDING human tools
+	// Learning agents are pure LLM analysis agents and should NOT have human tools (like human_feedback)
+	// They should not block on human input - they only read execution history and write learnings
+	toolsToRegister, executorsToUse := hcpo.prepareWorkspaceToolsOnly()
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using workspace-only tools for %s: %d tools (human tools excluded)", agentType, len(toolsToRegister)))
 
 	// 5. Use base factory! (This handles all setup automatically)
 	// Use stepIndex directly (passed from runSuccessLearningPhase/runFailureLearningPhase) instead of parsing from stepPath
@@ -1786,9 +1816,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationLearningAgent(ctx 
 	// Note: Orchestration learning agents use NoServers, but we call this for consistency and safety
 	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
 
-	// Prepare tools (learning agents need workspace tools for file operations)
-	toolsToRegister := hcpo.WorkspaceTools
-	executorsToUse := hcpo.WorkspaceToolExecutors
+	// Prepare workspace tools EXCLUDING human tools
+	// Orchestration learning agents are pure LLM analysis agents and should NOT have human tools
+	// They should not block on human input - they only analyze orchestration decisions and write learnings
+	toolsToRegister, executorsToUse := hcpo.prepareWorkspaceToolsOnly()
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using workspace-only tools for orchestration learning agent: %d tools (human tools excluded)", len(toolsToRegister)))
 
 	// Use base factory to create agent
 	// Use stepIndex directly (passed from orchestration controller) instead of hardcoding to 0

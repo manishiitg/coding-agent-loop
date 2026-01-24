@@ -53,7 +53,7 @@ Both frontend and backend **read and write** only the object format with `steps`
       "agent_configs": {
         "selected_servers": ["server1", "server2"],
         "selected_tools": ["server1:tool1", "server1:tool2", "server2:*"],
-        "enabled_custom_tools": ["workspace_tools:read_file", "workspace_tools:write_file", "workspace_tools:*"],
+        "enabled_custom_tools": ["workspace_basic:*", "workspace_advanced:execute_shell_command", "human_tools:*"],
         "execution_llm": {
           "provider": "openai",
           "model_id": "gpt-4o"
@@ -186,7 +186,7 @@ content, err := json.MarshalIndent(file, "", "  ")
 |-------|------|---------|---------|
 | `selected_servers` | `string[]` | `[]` | MCP servers to use for this step (subset of preset servers) |
 | `selected_tools` | `string[]` | `[]` | Specific tools (format: `"server:tool"` or `"server:*"` for all tools) |
-| `enabled_custom_tools` | `string[]` | `[]` | **Unified format**: Custom tools to enable (format: `"category:tool"` or `"category:*"`, e.g., `"workspace_tools:read_file"`, `"workspace_tools:*"`) |
+| `enabled_custom_tools` | `string[]` | `[]` | **Unified format**: Custom tools to enable (format: `"category:tool"` or `"category:*"`). Categories: `workspace_basic` (11 basic tools), `workspace_advanced` (shell + image), `workspace_tools` (all, backward compat), `human_tools`. Examples: `"workspace_basic:*"`, `"workspace_advanced:execute_shell_command"` |
 | `enabled_custom_tool_categories` | `string[]` | `[]` | **Legacy format**: Tool categories (e.g., `["workspace_tools", "human_tools"]`) - deprecated, use `enabled_custom_tools` instead |
 
 ### Validation Configuration
@@ -278,7 +278,7 @@ content, err := json.MarshalIndent(file, "", "  ")
 
 **Field Notes:**
 - All boolean fields use `nil` (undefined) to mean "use default/preset value"
-- `enabled_custom_tools` uses unified format: `"category:tool"` or `"category:*"` (e.g., `"workspace_tools:*"` enables all workspace tools)
+- `enabled_custom_tools` uses unified format: `"category:tool"` or `"category:*"`. Available categories: `workspace_basic` (11 tools), `workspace_advanced` (2 tools: shell + image), `workspace_tools` (all, backward compat), `human_tools`
 - `learning_detail_level` accepts `"exact"`, `"general"`, or `"none"` (default: `"exact"`)
 - `orchestration_max_iterations` only applies to orchestration step types
 

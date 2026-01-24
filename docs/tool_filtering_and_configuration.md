@@ -93,7 +93,8 @@ if len(config.SelectedServers) > 0 {
       "github:list_issues"
     ],
     "enabled_custom_tools": [
-      "workspace_tools:read_workspace_file",
+      "workspace_basic:*",
+      "workspace_advanced:execute_shell_command",
       "human_tools:*"
     ]
   }
@@ -111,7 +112,10 @@ if len(config.SelectedServers) > 0 {
 | `enabled_custom_tools` | `string[]` | `[]` | Granular internal tools. Format: `category:tool` or `category:*`. |
 
 **Internal Category Names:**
-- `workspace_tools`: File operations (read, write, list, etc.)
+- `workspace_tools`: All workspace tools (backward compatible - includes basic + git + advanced)
+- `workspace_basic`: Basic file/folder operations (9 tools: list, read, update, diff_patch, regex_search, semantic_search, glob_discover, delete, move)
+- `workspace_git`: GitHub sync tools (2 tools: sync_workspace_to_github, get_workspace_github_status)
+- `workspace_advanced`: Advanced workspace tools (4 tools: execute_shell_command, read_image, fetch_web_content, read_pdf)
 - `human_tools`: Interaction tools (human_feedback)
 
 ---

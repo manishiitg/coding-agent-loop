@@ -1,6 +1,7 @@
-import React, { useRef, useEffect } from 'react'
+import React, { useRef, useEffect, useCallback } from 'react'
 import Editor from '@monaco-editor/react'
 import type { OnChange, OnMount } from '@monaco-editor/react'
+import type { editor } from 'monaco-editor'
 import { useTheme } from '../../hooks/useTheme'
 
 interface FileEditorProps {
@@ -9,7 +10,7 @@ interface FileEditorProps {
   readOnly?: boolean
   onChange?: (value: string) => void
   height?: string
-  onMount?: (editor: any) => void
+  onMount?: (editor: editor.IStandaloneCodeEditor) => void
 }
 
 export const FileEditor: React.FC<FileEditorProps> = ({
@@ -20,7 +21,7 @@ export const FileEditor: React.FC<FileEditorProps> = ({
   height = '100%',
   onMount
 }) => {
-  const editorRef = useRef<any>(null)
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
   const { theme } = useTheme()
 
   // Detect language from file extension
@@ -64,7 +65,7 @@ export const FileEditor: React.FC<FileEditorProps> = ({
     return 'vs'
   }
 
-  const handleEditorDidMount: OnMount = (editor, _monaco) => {
+  const handleEditorDidMount: OnMount = (editor) => {
     editorRef.current = editor
 
     // Configure editor options
@@ -92,7 +93,7 @@ export const FileEditor: React.FC<FileEditorProps> = ({
   }
 
   // Format JSON helper
-  const formatJSON = () => {
+  const formatJSON = useCallback(() => {
     if (editorRef.current && getLanguage(filepath) === 'json') {
       try {
         const currentValue = editorRef.current.getValue()
@@ -106,15 +107,16 @@ export const FileEditor: React.FC<FileEditorProps> = ({
         console.error('Failed to format JSON:', error)
       }
     }
-  }
+  }, [filepath])
 
   // Expose format function via ref
   useEffect(() => {
     if (editorRef.current) {
       // Store format function on editor instance
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(editorRef.current as any).formatJSON = formatJSON
     }
-  }, [filepath])
+  }, [formatJSON])
 
   return (
     <div className="h-full w-full">

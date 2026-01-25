@@ -115,6 +115,7 @@ export function useEvaluationPlanToFlow(
         title: 'Start',
         status: 'completed',
         stepIndex: -1,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         step: {} as any,
         isEvaluationStep: true
       }
@@ -169,6 +170,7 @@ export function useEvaluationPlanToFlow(
           title: 'End',
           status: 'pending',
           stepIndex: -1,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           step: {} as any,
           isEvaluationStep: true
         }
@@ -192,6 +194,7 @@ export function useEvaluationPlanToFlow(
           title: 'End',
           status: 'pending',
           stepIndex: -1,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           step: {} as any,
           isEvaluationStep: true
         }

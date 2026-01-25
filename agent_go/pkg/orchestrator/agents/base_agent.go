@@ -181,21 +181,8 @@ func NewBaseAgent(
 		agentOptions = append(agentOptions, mcpagent.WithLLMConfig(mcpConfig))
 	}
 
-	// Add API keys if provided
-	if apiKeys != nil {
-		mcpAPIKeys := &mcpagent.AgentAPIKeys{
-			OpenRouter: apiKeys.OpenRouter,
-			OpenAI:     apiKeys.OpenAI,
-			Anthropic:  apiKeys.Anthropic,
-			Vertex:     apiKeys.Vertex,
-		}
-		if apiKeys.Bedrock != nil {
-			mcpAPIKeys.Bedrock = &mcpagent.AgentBedrockConfig{
-				Region: apiKeys.Bedrock.Region,
-			}
-		}
-		agentOptions = append(agentOptions, mcpagent.WithAPIKeys(mcpAPIKeys))
-	}
+	// Note: API keys are now extracted directly from the LLM instance
+	// via extractAPIKeysFromLLM() in mcpagent, so no need to pass them explicitly
 
 	// Add selected servers for "all tools" mode determination
 	if len(serverNames) > 0 {

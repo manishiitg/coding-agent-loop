@@ -656,6 +656,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             const persistData = {
               groupIds: state.selectedGroupIds,
               runFolder: normalized,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               presetId: (state as any)._currentPresetId
             }
             localStorage.setItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
@@ -1351,6 +1352,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           const persistData = {
             groupIds: newIds,
             runFolder: state.selectedRunFolder,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             presetId: (state as any)._currentPresetId
           }
           localStorage.setItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
@@ -1370,6 +1372,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           const persistData = {
             groupIds: groupIds,
             runFolder: state.selectedRunFolder,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             presetId: (state as any)._currentPresetId
           }
           localStorage.setItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
@@ -1989,7 +1992,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
               storedPresetId = parsed.presetId
             }
           }
-        } catch (e) {
+        } catch {
           // Ignore parse errors
         }
 

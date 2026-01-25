@@ -53,7 +53,8 @@ export function FallbacksTab({ config, onUpdate, metadata }: FallbacksTabProps) 
     // Find the original savedLLM to get all its data
     const saved = savedLLMs.find(l => l.provider === llmOption.provider && l.model_id === llmOption.model)
     if (saved) {
-      const { id, name, created_at, ...modelData } = saved
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { id: _id, name: _name, created_at: _created_at, ...modelData } = saved
       const updatedFallbacks = [...config.fallbacks, modelData]
       onUpdate({ ...config, fallbacks: updatedFallbacks })
     }

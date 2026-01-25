@@ -188,11 +188,12 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   });
 
   // State for expanded tool categories (to show individual tools)
-  const [expandedToolCategories, setExpandedToolCategories] = useState<Set<string>>(new Set());
+  // workspace_tools expanded by default to show tool configuration
+  const [expandedToolCategories, setExpandedToolCategories] = useState<Set<string>>(new Set(['workspace_tools']));
   // State for expanded workspace sub-categories (expanded by default to show tools)
-  // Maps to backend categories: workspace_basic (9 tools), workspace_git (2 tools), workspace_advanced (4 tools)
+  // Maps to backend categories: workspace_basic (9 tools), workspace_git (2 tools), workspace_advanced (4 tools), workspace_browser (1 tool)
   const [expandedWorkspaceSubCategories, setExpandedWorkspaceSubCategories] = useState<Set<string>>(
-    new Set(['workspace_basic', 'workspace_git', 'workspace_advanced'])
+    new Set(['workspace_basic', 'workspace_git', 'workspace_advanced', 'workspace_browser'])
   );
 
   // Track the step to detect when step changes (using title + index as stable identifier)
@@ -291,9 +292,9 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
         setEnabledCustomTools([]);
       }
 
-      // Reset expanded categories when step changes
-      setExpandedToolCategories(new Set());
-      setExpandedWorkspaceSubCategories(new Set(['workspace_basic', 'workspace_git', 'workspace_advanced']));
+      // Reset expanded categories when step changes (keep workspace_tools expanded by default)
+      setExpandedToolCategories(new Set(['workspace_tools']));
+      setExpandedWorkspaceSubCategories(new Set(['workspace_basic', 'workspace_git', 'workspace_advanced', 'workspace_browser']));
 
       // Update refs for next comparison
       prevStepIdentifierRef.current = stepIdentifier;
@@ -370,7 +371,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   };
 
   // Sub-categories that belong to workspace_tools parent
-  const WORKSPACE_SUB_CATEGORIES = ['workspace_basic', 'workspace_git', 'workspace_advanced'];
+  const WORKSPACE_SUB_CATEGORIES = ['workspace_basic', 'workspace_git', 'workspace_advanced', 'workspace_browser'];
 
   const isCategoryEnabled = (category: string, enabledTools: string[]): boolean => {
     // Empty array means all tools enabled by default
@@ -1894,7 +1895,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 
                         // Count enabled tools from all sub-categories
                         let enabledCount = 0;
-                        for (const subCat of ['workspace_basic', 'workspace_git', 'workspace_advanced']) {
+                        for (const subCat of ['workspace_basic', 'workspace_git', 'workspace_advanced', 'workspace_browser']) {
                           // Check if sub-category:* is enabled
                           if (isCategoryEnabled(subCat, enabledCustomTools)) {
                             enabledCount += getToolsByCategory(subCat).length;
@@ -1935,7 +1936,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 
                         // Count enabled tools from all sub-categories
                         let enabledCount = 0;
-                        for (const subCat of ['workspace_basic', 'workspace_git', 'workspace_advanced']) {
+                        for (const subCat of ['workspace_basic', 'workspace_git', 'workspace_advanced', 'workspace_browser']) {
                           // Check if sub-category:* is enabled
                           if (isCategoryEnabled(subCat, enabledCustomTools)) {
                             enabledCount += getToolsByCategory(subCat).length;
@@ -2175,6 +2176,78 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                                           setEnabledCustomTools(prev => enableTool('workspace_advanced', toolName, prev));
                                         } else {
                                           setEnabledCustomTools(prev => disableTool('workspace_advanced', toolName, prev));
+                                        }
+                                      }}
+                                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                    />
+                                    <span className="text-xs text-gray-600 dark:text-gray-400">{toolName}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Browser Tools Sub-category (1 tool: browser automation) */}
+                    {(() => {
+                      const subCategoryName = 'workspace_browser';
+                      const subCategoryTools = getToolsByCategory(subCategoryName);
+                      const isSubCategoryChecked = isSubCategoryEnabled('workspace_browser', subCategoryTools, enabledCustomTools);
+                      const enabledInSubCategory = subCategoryTools.filter((toolName: string) =>
+                        isToolEnabled('workspace_browser', toolName, enabledCustomTools)
+                      );
+
+                      return (
+                        <div key={subCategoryName} className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <label className="flex items-center gap-2 cursor-pointer flex-1">
+                              <input
+                                type="checkbox"
+                                checked={isSubCategoryChecked}
+                                onChange={(e) => {
+                                  setEnabledCustomTools(prev =>
+                                    toggleSubCategory('workspace_browser', subCategoryTools, e.target.checked, prev)
+                                  );
+                                }}
+                                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                              />
+                              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Browser Tools</span>
+                              <span className="text-xs text-gray-500 dark:text-gray-500">
+                                ({enabledInSubCategory.length}/{subCategoryTools.length} tools)
+                              </span>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newExpanded = new Set(expandedWorkspaceSubCategories);
+                                if (newExpanded.has(subCategoryName)) {
+                                  newExpanded.delete(subCategoryName);
+                                } else {
+                                  newExpanded.add(subCategoryName);
+                                }
+                                setExpandedWorkspaceSubCategories(newExpanded);
+                              }}
+                              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+                            >
+                              {expandedWorkspaceSubCategories.has(subCategoryName) ? 'Hide' : 'Show'}
+                            </button>
+                          </div>
+                          {expandedWorkspaceSubCategories.has(subCategoryName) && (
+                            <div className="ml-6 space-y-1.5 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
+                              {subCategoryTools.map((toolName: string) => {
+                                const toolIsEnabled = isToolEnabled('workspace_browser', toolName, enabledCustomTools);
+                                return (
+                                  <label key={toolName} className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={toolIsEnabled}
+                                      onChange={(e) => {
+                                        if (e.target.checked) {
+                                          setEnabledCustomTools(prev => enableTool('workspace_browser', toolName, prev));
+                                        } else {
+                                          setEnabledCustomTools(prev => disableTool('workspace_browser', toolName, prev));
                                         }
                                       }}
                                       className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"

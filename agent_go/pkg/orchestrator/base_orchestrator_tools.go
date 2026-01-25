@@ -38,6 +38,12 @@ func getToolNamesByCategory(category string) map[string]bool {
 		for toolName := range executors {
 			toolNames[toolName] = true
 		}
+	case "workspace_browser":
+		// Browser automation tools (1 tool: agent_browser)
+		executors := virtualtools.CreateWorkspaceBrowserToolExecutors()
+		for toolName := range executors {
+			toolNames[toolName] = true
+		}
 		// Future categories can be added here:
 		// case "memory_tools":
 		//     executors := virtualtools.CreateMemoryToolExecutors()

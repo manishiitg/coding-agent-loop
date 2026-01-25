@@ -224,6 +224,7 @@ type PresetQuery struct {
 	UseToolSearchMode    bool            `json:"use_tool_search_mode" db:"use_tool_search_mode"`       // Tool search mode
 	PreDiscoveredTools   string          `json:"pre_discovered_tools" db:"pre_discovered_tools"`       // JSON array of pre-discovered tools
 	SelectedSkills       string          `json:"selected_skills" db:"selected_skills"`                 // JSON array of skill folder names
+	EnableBrowserAccess  bool            `json:"enable_browser_access" db:"enable_browser_access"`     // Browser automation access
 	IsPredefined         bool            `json:"is_predefined" db:"is_predefined"`
 	CreatedAt            time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt            time.Time       `json:"updated_at" db:"updated_at"`
@@ -245,6 +246,7 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 		UseToolSearchMode    bool            `json:"use_tool_search_mode"`
 		PreDiscoveredTools   string          `json:"pre_discovered_tools"`
 		SelectedSkills       string          `json:"selected_skills"`
+		EnableBrowserAccess  bool            `json:"enable_browser_access"`
 		IsPredefined         bool            `json:"is_predefined"`
 		CreatedAt            time.Time       `json:"created_at"`
 		UpdatedAt            time.Time       `json:"updated_at"`
@@ -261,6 +263,7 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 		UseToolSearchMode:    p.UseToolSearchMode,
 		PreDiscoveredTools:   p.PreDiscoveredTools,
 		SelectedSkills:       p.SelectedSkills,
+		EnableBrowserAccess:  p.EnableBrowserAccess,
 		IsPredefined:         p.IsPredefined,
 		CreatedAt:            p.CreatedAt,
 		UpdatedAt:            p.UpdatedAt,
@@ -288,6 +291,7 @@ type CreatePresetQueryRequest struct {
 	UseToolSearchMode    bool             `json:"use_tool_search_mode,omitempty"`    // Tool search mode
 	PreDiscoveredTools   []string         `json:"pre_discovered_tools,omitempty"`    // Tools always available without searching
 	SelectedSkills       []string         `json:"selected_skills,omitempty"`         // Skill folder names for workflow
+	EnableBrowserAccess  bool             `json:"enable_browser_access,omitempty"`   // Browser automation access
 	IsPredefined         bool             `json:"is_predefined,omitempty"`
 }
 
@@ -412,6 +416,7 @@ type UpdatePresetQueryRequest struct {
 	UseToolSearchMode    *bool            `json:"use_tool_search_mode,omitempty"`    // Tool search mode (pointer to allow false value)
 	PreDiscoveredTools   []string         `json:"pre_discovered_tools,omitempty"`    // Tools always available without searching
 	SelectedSkills       []string         `json:"selected_skills,omitempty"`         // Skill folder names for workflow
+	EnableBrowserAccess  *bool            `json:"enable_browser_access,omitempty"`   // Browser automation access (pointer to allow false value)
 }
 
 // Validate validates the UpdatePresetQueryRequest

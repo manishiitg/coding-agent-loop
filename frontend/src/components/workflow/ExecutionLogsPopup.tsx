@@ -351,6 +351,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   }
 
   // Recursive render function for step content
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const renderStepContent = (stepId: string, stepLogs: any) => {
       const validations = stepLogs.validations || []
       
@@ -366,6 +367,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
             <div className="p-4 bg-background">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Execution Logs</h4>
               <div className="space-y-3">
+                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                 {stepLogs.executions.map((exec: any, idx: number) => {
                   const execId = `${stepId}-exec-${exec.attempt}-${exec.iteration}`
                   const isExecExpanded = expandedExecutions.has(execId)
@@ -493,6 +495,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                 Artifacts & Files
               </h4>
               <div className="space-y-2">
+                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                 {stepLogs.artifacts.map((artifact: any, idx: number) => {
                   const isFileExpanded = expandedFiles.has(artifact.file_path)
                   return (
@@ -536,6 +539,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
             <div className="p-4 bg-muted/30">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Validations</h4>
               <div className="space-y-3">
+                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                 {validations.map((val: any, idx: number) => {
                   const valId = `${stepId}-val-${val.attempt}`
                   const isValExpanded = expandedValidations.has(valId)
@@ -599,6 +603,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                 <BookOpen className="w-4 h-4" /> Learning Logs
               </h4>
               <div className="space-y-3">
+                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                 {stepLogs.learnings.map((log: any, idx: number) => (
                   <div key={idx} className="bg-background rounded border border-border p-3 text-sm">
                     <div className="flex items-center gap-2 mb-2">
@@ -679,6 +684,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
               </h4>
               <div className="space-y-6">
                 {Object.entries(
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   stepLogs.orchestration.reduce((acc: Record<number, any[]>, log: any) => {
                     const iter = log.iteration || 1
                     if (!acc[iter]) acc[iter] = []
@@ -701,6 +707,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                     </div>
                     
                     <div className="space-y-3 pl-2.5 border-l-2 border-border/50 ml-2.5 pb-2">
+                      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                       {(iterLogs as any[]).map((log, idx) => (
                         <div key={idx} className="pl-4 relative">
                           {/* Timeline dot */}
@@ -845,6 +852,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                 <GitBranch className="w-4 h-4" /> Conditional Logs
               </h4>
               <div className="space-y-3">
+                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                 {stepLogs.conditionals.map((cond: any, idx: number) => (
                   <div key={idx} className="bg-background rounded border border-border p-3 text-sm">
                     <div className="flex items-center gap-2 mb-2">
@@ -871,6 +879,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                 <GitBranch className="w-4 h-4" /> Decision Logs
               </h4>
               <div className="space-y-3">
+                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                 {stepLogs.decisions.map((dec: any, idx: number) => (
                   <div key={idx} className="bg-background rounded border border-border p-3 text-sm">
                     <div className="flex items-center gap-2 mb-2">
@@ -893,6 +902,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                 <History className="w-4 h-4" /> Previous Runs ({stepLogs.archived_logs.length})
               </h4>
               <div className="space-y-3">
+                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                 {stepLogs.archived_logs.map((archive: any, archiveIdx: number) => {
                   const archiveId = `${stepId}-archive-${archiveIdx}`
                   const isArchiveExpanded = expandedArchived.has(archiveId)
@@ -937,6 +947,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                                                         <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
                                                                           <Terminal className="w-3 h-3" /> Executions ({archive.executions.length})
                                                                         </div>
+                                                                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                                                                         {archive.executions.map((exec: any, idx: number) => (
                                                                           <div key={idx} className="text-xs bg-background border border-border rounded p-2 mb-2">
                                                                             <div className="flex items-center justify-between mb-1">
@@ -986,6 +997,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                                                         <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
                                                                           <CheckCircle className="w-3 h-3" /> Validations ({archive.validations.length})
                                                                         </div>
+                                                                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                                                                         {archive.validations.map((val: any, idx: number) => {
                                                                           const valStatus = val.content?.execution_status
                                                                           return (
@@ -1012,6 +1024,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                                                         <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
                                                                           <BookOpen className="w-3 h-3" /> Learnings ({archive.learnings.length})
                                                                         </div>
+                                                                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                                                                         {archive.learnings.map((learning: any, idx: number) => (
                                                                           <div key={idx} className="text-xs bg-background border border-border rounded p-2 mb-2">
                                                                             <div className="flex items-center justify-between">
@@ -1053,6 +1066,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                               <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
                                 <Network className="w-3 h-3" /> Orchestration ({archive.orchestration.length})
                               </div>
+                              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                               {archive.orchestration.map((orch: any, idx: number) => (
                                 <div key={idx} className="text-xs bg-background border border-border rounded p-2 mb-1">
                                   <span className="font-medium">{orch.type}</span>
@@ -1070,6 +1084,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                               <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
                                 <GitBranch className="w-3 h-3" /> Conditionals ({archive.conditionals.length})
                               </div>
+                              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                               {archive.conditionals.map((cond: any, idx: number) => (
                                 <div key={idx} className="text-xs bg-background border border-border rounded p-2 mb-1">
                                   <div className="flex items-center gap-2">
@@ -1089,6 +1104,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                               <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
                                 <GitBranch className="w-3 h-3" /> Decisions ({archive.decisions.length})
                               </div>
+                              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                               {archive.decisions.map((dec: any, idx: number) => (
                                 <div key={idx} className="text-xs bg-background border border-border rounded p-2 mb-1">
                                   <div className="flex items-center gap-2">

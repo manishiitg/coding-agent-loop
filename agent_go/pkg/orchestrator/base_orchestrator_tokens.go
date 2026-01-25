@@ -13,6 +13,7 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/anthropic"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/azure"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/bedrock"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/vertex"
@@ -62,6 +63,8 @@ func getModelMetadata(provider, modelID string) (*llmtypes.ModelMetadata, error)
 		return vertex.GetVertexGeminiModelMetadata(modelID)
 	case "bedrock":
 		return bedrock.GetBedrockModelMetadata(modelID)
+	case "azure":
+		return azure.GetAzureModelMetadata(modelID)
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}

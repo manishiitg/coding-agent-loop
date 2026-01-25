@@ -149,11 +149,20 @@ type AgentAPIKeys struct {
 	Anthropic  *string
 	Vertex     *string
 	Bedrock    *BedrockAgentConfig
+	Azure      *AzureAgentConfig
 }
 
 // BedrockAgentConfig represents Bedrock-specific configuration (for agent config)
 type BedrockAgentConfig struct {
 	Region string
+}
+
+// AzureAgentConfig represents Azure-specific configuration (for agent config)
+type AzureAgentConfig struct {
+	Endpoint   string
+	APIKey     string
+	APIVersion string
+	Region     string
 }
 
 // NewOrchestratorAgentConfig creates a new agent configuration with minimal defaults

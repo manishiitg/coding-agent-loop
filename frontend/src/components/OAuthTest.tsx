@@ -20,23 +20,23 @@ export const OAuthTest: React.FC<OAuthTestProps> = ({ serverName = 'Notion' }) =
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
+  const checkTokenStatus = React.useCallback(async () => {
+    try {
+      const status = await oauthApi.getOAuthStatus(serverName);
+      setTokenStatus(status);
+      setError(null);
+    } catch {
+      // Token might not exist yet, which is fine
+      setTokenStatus(null);
+    }
+  }, [serverName]);
+
   // Check token status on mount and every 5 seconds
   useEffect(() => {
     checkTokenStatus();
     const interval = setInterval(checkTokenStatus, 5000);
     return () => clearInterval(interval);
-  }, [serverName]);
-
-  const checkTokenStatus = async () => {
-    try {
-      const status = await oauthApi.getOAuthStatus(serverName);
-      setTokenStatus(status);
-      setError(null);
-    } catch (err) {
-      // Token might not exist yet, which is fine
-      setTokenStatus(null);
-    }
-  };
+  }, [checkTokenStatus]);
 
   const handleLogin = async () => {
     setLoading(true);
@@ -57,7 +57,7 @@ export const OAuthTest: React.FC<OAuthTestProps> = ({ serverName = 'Notion' }) =
             setMessage('✅ Successfully authenticated!');
             setLoading(false);
           }
-        } catch (err) {
+        } catch {
           // Still waiting for token
         }
       }, 2000);

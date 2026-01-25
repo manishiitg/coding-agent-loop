@@ -225,6 +225,7 @@ export function extractWorkflowInfo(events: PollingEvent[]): WorkflowEventInfo {
  * @returns True if events contain workflow completion
  */
 export function hasWorkflowCompletion(events: PollingEvent[]): boolean {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return events.some(e => e.type && EVENT_TYPES.COMPLETION.includes(e.type as any))
 }
 
@@ -239,6 +240,7 @@ export function hasWorkflowCompletion(events: PollingEvent[]): boolean {
  * @returns True if events contain workflow errors
  */
 export function hasWorkflowError(events: PollingEvent[]): boolean {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return events.some(e => e.type && EVENT_TYPES.ERROR.includes(e.type as any))
 }
 
@@ -253,6 +255,7 @@ export function hasWorkflowError(events: PollingEvent[]): boolean {
  */
 export function shouldRetainEvent(event: PollingEvent): boolean {
   if (!event.type) return false
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return EVENT_TYPES.IMPORTANT.includes(event.type as any)
 }
 

@@ -39,6 +39,7 @@ export const ToolSearchToolCallEndDisplay: React.FC<ToolSearchToolCallEndDisplay
   const toolName = event.tool_name || ''
 
   if (toolName === 'search_tools') {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let resultData: any = null
     try {
       resultData = JSON.parse(event.result)
@@ -89,6 +90,7 @@ export const ToolSearchToolCallEndDisplay: React.FC<ToolSearchToolCallEndDisplay
                  Found Tools ({foundTools.length}):
                </div>
                <div className="grid grid-cols-1 gap-2 max-h-80 overflow-y-auto px-1">
+                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                  {foundTools.map((tool: any, idx: number) => (
                    <div key={idx} className="bg-white dark:bg-gray-900 border border-blue-200 dark:border-blue-800 rounded-md p-3 hover:border-blue-400 dark:hover:border-blue-500 transition-colors group shadow-sm">
                      <div className="flex items-center justify-between gap-2 mb-2">

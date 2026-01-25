@@ -26,11 +26,20 @@ type APIKeys struct {
 	Anthropic  *string     `json:"anthropic,omitempty"`
 	Vertex     *string     `json:"vertex,omitempty"`
 	Bedrock    *BedrockKey `json:"bedrock,omitempty"`
+	Azure      *AzureKey   `json:"azure,omitempty"`
 }
 
 // BedrockKey represents Bedrock configuration
 type BedrockKey struct {
 	Region string `json:"region"`
+}
+
+// AzureKey represents Azure configuration
+type AzureKey struct {
+	Endpoint   string `json:"endpoint"`
+	APIKey     string `json:"api_key"`
+	APIVersion string `json:"api_version,omitempty"`
+	Region     string `json:"region,omitempty"`
 }
 
 // OrchestratorType represents the type of orchestrator

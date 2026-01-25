@@ -14,7 +14,7 @@ import (
 //   - TRACING_PROVIDER: Set to "langfuse" to enable Langfuse tracing
 //   - LANGFUSE_PUBLIC_KEY: Your Langfuse public key
 //   - LANGFUSE_SECRET_KEY: Your Langfuse secret key
-//   - LANGFUSE_HOST: Langfuse host (optional, defaults to https://cloud.langfuse.com)
+//   - LANGFUSE_BASE_URL: Langfuse host (optional, defaults to https://cloud.langfuse.com)
 //
 // Behavior:
 //   - If TRACING_PROVIDER=langfuse and credentials are available: Uses Langfuse tracer
@@ -57,17 +57,17 @@ func GetTracingInfo() map[string]interface{} {
 	tracingProvider := os.Getenv("TRACING_PROVIDER")
 	publicKey := os.Getenv("LANGFUSE_PUBLIC_KEY")
 	secretKey := os.Getenv("LANGFUSE_SECRET_KEY")
-	host := os.Getenv("LANGFUSE_HOST")
+	host := os.Getenv("LANGFUSE_BASE_URL")
 
 	if host == "" {
 		host = "https://cloud.langfuse.com"
 	}
 
 	return map[string]interface{}{
-		"tracing_provider": tracingProvider,
-		"langfuse_enabled": tracingProvider == "langfuse" && publicKey != "" && secretKey != "",
-		"langfuse_host":    host,
-		"has_credentials":  publicKey != "" && secretKey != "",
+		"tracing_provider":  tracingProvider,
+		"langfuse_enabled":  tracingProvider == "langfuse" && publicKey != "" && secretKey != "",
+		"langfuse_base_url": host,
+		"has_credentials":   publicKey != "" && secretKey != "",
 	}
 }
 

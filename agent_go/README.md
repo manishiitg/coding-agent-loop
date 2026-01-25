@@ -282,7 +282,7 @@ For production observability, configure Langfuse credentials:
 # Set Langfuse credentials
 export LANGFUSE_PUBLIC_KEY=pk-lf-your-public-key
 export LANGFUSE_SECRET_KEY=sk-lf-your-secret-key
-export LANGFUSE_HOST=https://cloud.langfuse.com  # optional
+export LANGFUSE_BASE_URL=https://cloud.langfuse.com  # optional
 export TRACING_PROVIDER=langfuse
 
 # Run with Langfuse tracing
@@ -298,7 +298,7 @@ The agent supports automatic `.env` file loading:
 cat > .env << EOF
 LANGFUSE_PUBLIC_KEY=pk-lf-your-public-key
 LANGFUSE_SECRET_KEY=sk-lf-your-secret-key
-LANGFUSE_HOST=https://cloud.langfuse.com
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
 TRACING_PROVIDER=langfuse
 LANGFUSE_DEBUG=true
 EOF

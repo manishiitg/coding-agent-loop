@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS preset_queries (
     use_code_execution_mode INTEGER DEFAULT 0, -- MCP code execution mode (0 = disabled, 1 = enabled)
     use_tool_search_mode INTEGER DEFAULT 0, -- Tool search mode (0 = disabled, 1 = enabled)
     pre_discovered_tools TEXT DEFAULT '[]', -- JSON array of pre-discovered tools
+    enable_browser_access INTEGER DEFAULT 0, -- Browser automation access (0 = disabled, 1 = enabled)
     is_predefined BOOLEAN DEFAULT FALSE, -- Whether this is a built-in preset
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,

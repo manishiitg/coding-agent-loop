@@ -28,6 +28,7 @@ interface MCPState extends StoreActions {
   showMCPDetails: boolean
   showRegistryModal: boolean
   showConfigEditor: boolean
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   showApiTester: { serverName: string; toolName: string; toolDetail?: any } | null
   
   // Loading states
@@ -57,6 +58,7 @@ interface MCPState extends StoreActions {
   setShowMCPDetails: (show: boolean) => void
   setShowRegistryModal: (show: boolean) => void
   setShowConfigEditor: (show: boolean) => void
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   setShowApiTester: (value: { serverName: string; toolName: string; toolDetail?: any } | null) => void
   
   // Helper methods

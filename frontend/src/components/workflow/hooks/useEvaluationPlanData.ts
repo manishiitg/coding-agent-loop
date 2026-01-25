@@ -170,7 +170,8 @@ export function useEvaluationPlanData(workspacePath: string | null): UseEvaluati
       const planToSave = {
         ...updatedPlan,
         steps: updatedPlan.steps.map(step => {
-          const { agent_configs, ...rest } = step
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { agent_configs: _agent_configs, ...rest } = step
           return rest
         })
       }

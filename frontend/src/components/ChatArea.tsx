@@ -85,20 +85,22 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     return agentMode // Fallback to agentMode if selectedModeCategory is null
   }, [selectedModeCategory, agentMode, getAgentModeFromCategory])
   
-  const { 
+  const {
     primaryConfig: llmConfig,
     openrouterConfig,
     openaiConfig,
     anthropicConfig,
     vertexConfig,
-    bedrockConfig
+    bedrockConfig,
+    azureConfig
   } = useLLMStore(useShallow(state => ({
     primaryConfig: state.primaryConfig,
     openrouterConfig: state.openrouterConfig,
     openaiConfig: state.openaiConfig,
     anthropicConfig: state.anthropicConfig,
     vertexConfig: state.vertexConfig,
-    bedrockConfig: state.bedrockConfig
+    bedrockConfig: state.bedrockConfig,
+    azureConfig: state.azureConfig
   })))
   
   const { 
@@ -2459,6 +2461,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           ...(anthropicConfig.api_key ? { anthropic: anthropicConfig.api_key } : {}),
           ...(vertexConfig.api_key ? { vertex: vertexConfig.api_key } : {}),
           ...(bedrockConfig.region ? { bedrock: { region: bedrockConfig.region } } : {}),
+          ...(azureConfig.endpoint && azureConfig.api_key ? { azure: { endpoint: azureConfig.endpoint, api_key: azureConfig.api_key, api_version: (azureConfig.options?.api_version as string) || undefined, region: azureConfig.region || undefined } } : {}),
         }
       }
       

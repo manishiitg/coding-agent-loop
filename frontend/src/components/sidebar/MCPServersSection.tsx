@@ -152,6 +152,7 @@ export default function MCPServersSection() {
                     {/* OAuth Status Badge - auto-detects if server requires OAuth */}
                     <OAuthStatusBadge
                       serverName={serverName}
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
                       requiresOAuth={(tools[0] as any).requires_oauth}
                       onAuthChange={(valid) => {
                         if (valid) {

@@ -186,9 +186,11 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
               is_minimized: true,
               minimized_at: minimizedAt,
               step_progress: params.progress,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               current_step_title: (params.progress as any)?.last_completed_step_title
             }
           }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any).catch(error => {
           console.warn('[RunningWorkflowsStore] Failed to update session metadata:', error)
         })
@@ -226,6 +228,7 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
               current_step_title: runningWorkflow.currentStepTitle
             }
           }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any).catch(error => {
           console.warn('[RunningWorkflowsStore] Failed to clear session metadata:', error)
         })
@@ -606,7 +609,7 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
             } else {
               removedIds.push(bg.id)
             }
-          } catch (error) {
+          } catch {
             console.warn(`[RunningWorkflowsStore] Session ${bg.sessionId} not found, removing`)
             removedIds.push(bg.id)
           }

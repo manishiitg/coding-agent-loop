@@ -476,6 +476,120 @@ These settings are configured at the preset level in `PresetLLMConfig`:
 | **Execution** | 5 retries | [`controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go) |
 | **Planning** | 20 revisions | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go) |
 
+### Custom Tool Configuration
+
+Custom tools are configured per-step in `step_config.json` via `enabled_custom_tools`. Understanding tool relationships helps optimize token usage and avoid redundancy.
+
+#### Tool Categories
+
+| Category | Format | Tools | Description |
+|----------|--------|-------|-------------|
+| **workspace_basic** | `workspace_basic:*` | `list_workspace_files`, `read_workspace_file`, `update_workspace_file`, `delete_workspace_file`, `move_workspace_file`, `diff_patch_workspace_file`, `regex_search_workspace_files`, `glob_discover_workspace_files` | Basic file operations |
+| **workspace_advanced** | `workspace_advanced:*` | `execute_shell_command`, `read_image`, `read_pdf`, `fetch_web_content` | Advanced operations |
+| **workspace_browser** | `workspace_browser:*` | `agent_browser` | Browser automation via Playwright |
+| **workspace_git** | `workspace_git:*` | `sync_workspace_to_github`, `get_workspace_github_status` | GitHub sync operations |
+| **human_tools** | `human_tools:*` | `human_feedback` | Human-in-the-loop interactions |
+
+#### ⚠️ Important Tool Relationships
+
+**1. Shell Command Replaces Basic Workspace Tools**
+
+When `execute_shell_command` is enabled, **DO NOT include `workspace_basic` tools**. Shell commands can perform all basic file operations:
+
+| workspace_basic Tool | Shell Equivalent |
+|---------------------|------------------|
+| `read_workspace_file` | `cat file.txt` |
+| `update_workspace_file` | `echo "content" > file.txt` |
+| `list_workspace_files` | `ls -la` |
+| `delete_workspace_file` | `rm file.txt` |
+| `move_workspace_file` | `mv src dest` |
+
+**Correct Configuration (shell-based step):**
+```json
+{
+  "enabled_custom_tools": [
+    "workspace_advanced:execute_shell_command"
+  ]
+}
+```
+
+**Incorrect Configuration (redundant):**
+```json
+{
+  "enabled_custom_tools": [
+    "workspace_basic:*",
+    "workspace_advanced:execute_shell_command"
+  ]
+}
+```
+
+**2. Human Feedback - Disabled by Default**
+
+`human_feedback` should be **DISABLED by default**. Only enable for steps that genuinely require human input:
+
+| ✅ Enable human_feedback | ❌ Do NOT enable |
+|-------------------------|------------------|
+| OTP/password entry | Automated file operations |
+| Manual approval for sensitive actions | API calls |
+| Visual verification by human | Data processing |
+| Information only humans know | Reading/writing files |
+
+**3. Read Image / Read PDF - Conditional**
+
+Only include `read_image` or `read_pdf` when the step needs to **analyze content**, not just copy/move files:
+
+| Scenario | Tool Needed? |
+|----------|--------------|
+| Extract text from PDF | ✅ `read_pdf` |
+| Analyze image content | ✅ `read_image` |
+| Copy PDF to another folder | ❌ Use shell or basic tools |
+| Move image file | ❌ Use shell or basic tools |
+
+#### Example step_config.json
+
+```json
+{
+  "steps": [
+    {
+      "id": "extract-data",
+      "agent_configs": {
+        "enabled_custom_tools": [
+          "workspace_advanced:execute_shell_command"
+        ],
+        "use_tool_search_mode": true,
+        "pre_discovered_tools": ["execute_shell_command"]
+      }
+    },
+    {
+      "id": "get-otp",
+      "agent_configs": {
+        "enabled_custom_tools": [
+          "workspace_basic:*",
+          "human_tools:human_feedback"
+        ],
+        "use_tool_search_mode": true,
+        "pre_discovered_tools": ["read_workspace_file", "human_feedback"]
+      }
+    },
+    {
+      "id": "analyze-screenshot",
+      "agent_configs": {
+        "enabled_custom_tools": [
+          "workspace_advanced:execute_shell_command",
+          "workspace_advanced:read_image"
+        ],
+        "use_tool_search_mode": true,
+        "pre_discovered_tools": ["execute_shell_command", "read_image"]
+      }
+    }
+  ]
+}
+```
+
+**Files:**
+- Backend: [`plan_opt_tool_optimization_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/plan_opt_tool_optimization_agent.go) - Tool optimization logic
+- Frontend: [`StepEditPanel.tsx`](../frontend/src/components/events/orchestrator/StepEditPanel.tsx) - Step tool configuration UI
+
 ---
 
 ## 🛠️ Common Issues & Solutions

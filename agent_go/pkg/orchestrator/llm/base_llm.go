@@ -137,6 +137,14 @@ func CreateLLMInstance(
 				Region: config.APIKeys.Bedrock.Region,
 			}
 		}
+		if config.APIKeys.Azure != nil {
+			llmAPIKeys.Azure = &llm.AzureAPIConfig{
+				Endpoint:   config.APIKeys.Azure.Endpoint,
+				APIKey:     config.APIKeys.Azure.APIKey,
+				APIVersion: config.APIKeys.Azure.APIVersion,
+				Region:     config.APIKeys.Azure.Region,
+			}
+		}
 	}
 
 	// Check for per-model API key (takes priority over global if set)
@@ -155,6 +163,19 @@ func CreateLLMInstance(
 			llmAPIKeys.Anthropic = config.LLMConfig.Primary.APIKey
 		case "openrouter":
 			llmAPIKeys.OpenRouter = config.LLMConfig.Primary.APIKey
+		case "azure":
+			// For Azure, per-model API key only sets the key, not endpoint/version
+			// If Azure config exists, update just the key
+			if llmAPIKeys.Azure != nil {
+				llmAPIKeys.Azure.APIKey = *config.LLMConfig.Primary.APIKey
+			} else {
+				// If no Azure config exists, we can't create one with just an API key
+				// But we can create a partial one if needed, though endpoint is mandatory
+				// For now, assume endpoint comes from env var if not in config
+				llmAPIKeys.Azure = &llm.AzureAPIConfig{
+					APIKey: *config.LLMConfig.Primary.APIKey,
+				}
+			}
 		}
 		logger.Info(fmt.Sprintf("🔑 Using per-model API key for %s provider", primaryProvider))
 	}

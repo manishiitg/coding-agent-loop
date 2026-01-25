@@ -25,6 +25,7 @@ export default function MCPToolApiTester({
   toolDetail
 }: MCPToolApiTesterProps) {
   const [args, setArgs] = useState('{}')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [response, setResponse] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -34,6 +35,7 @@ export default function MCPToolApiTester({
   const generateExampleArgs = () => {
     if (!toolDetail?.parameters) return '{}'
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const example: Record<string, any> = {}
     Object.entries(toolDetail.parameters).forEach(([name, info]) => {
       if (info.type === 'string') {
@@ -91,6 +93,7 @@ export default function MCPToolApiTester({
       const data = await res.json()
       console.log('[MCPToolApiTester] Response data:', data)
       setResponse(data)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       console.error('[MCPToolApiTester] Error:', err)
       setError(err.message)

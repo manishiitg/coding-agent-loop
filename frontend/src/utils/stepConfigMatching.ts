@@ -2,7 +2,7 @@ import type { TodoStep } from '../generated/event-types';
 
 // AgentLLMConfig represents LLM configuration for an agent
 export interface AgentLLMConfig {
-  provider?: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic';
+  provider?: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic' | 'azure';
   model_id?: string;
 }
 

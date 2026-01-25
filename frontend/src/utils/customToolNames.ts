@@ -31,11 +31,18 @@ export const WORKSPACE_ADVANCED_TOOLS = [
   'read_pdf',
 ] as const;
 
+// workspace_browser: 1 browser automation tool
+// Maps to backend "workspace_browser" category
+export const WORKSPACE_BROWSER_TOOLS = [
+  'agent_browser',
+] as const;
+
 // All workspace tools (combined) - for backward compatibility with "workspace_tools" category
 export const WORKSPACE_TOOLS = [
   ...WORKSPACE_BASIC_TOOLS,
   ...WORKSPACE_GIT_TOOLS,
   ...WORKSPACE_ADVANCED_TOOLS,
+  ...WORKSPACE_BROWSER_TOOLS,
 ] as const;
 
 export const HUMAN_TOOLS = [
@@ -45,6 +52,7 @@ export const HUMAN_TOOLS = [
 export type WorkspaceBasicToolName = typeof WORKSPACE_BASIC_TOOLS[number];
 export type WorkspaceGitToolName = typeof WORKSPACE_GIT_TOOLS[number];
 export type WorkspaceAdvancedToolName = typeof WORKSPACE_ADVANCED_TOOLS[number];
+export type WorkspaceBrowserToolName = typeof WORKSPACE_BROWSER_TOOLS[number];
 export type WorkspaceToolName = typeof WORKSPACE_TOOLS[number];
 export type HumanToolName = typeof HUMAN_TOOLS[number];
 export type CustomToolName = WorkspaceToolName | HumanToolName;
@@ -65,6 +73,9 @@ export function getToolsByCategory(category: string): string[] {
     case 'workspace_advanced':
       // Advanced tools (4 tools: shell + image + web fetch + PDF)
       return [...WORKSPACE_ADVANCED_TOOLS];
+    case 'workspace_browser':
+      // Browser automation tool (1 tool)
+      return [...WORKSPACE_BROWSER_TOOLS];
     case 'human_tools':
       return [...HUMAN_TOOLS];
     default:
@@ -87,6 +98,9 @@ export function getCategoryForTool(toolName: string): string | null {
   }
   if (WORKSPACE_ADVANCED_TOOLS.includes(toolName as WorkspaceAdvancedToolName)) {
     return 'workspace_advanced';
+  }
+  if (WORKSPACE_BROWSER_TOOLS.includes(toolName as WorkspaceBrowserToolName)) {
+    return 'workspace_browser';
   }
   if (HUMAN_TOOLS.includes(toolName as HumanToolName)) {
     return 'human_tools';

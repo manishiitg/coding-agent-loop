@@ -8,7 +8,7 @@ interface StartEndNodeProps {
   selected?: boolean
 }
 
-export const StartNode = memo((_props: StartEndNodeProps) => {
+export const StartNode = memo(() => {
   return (
     <div className="flex items-center justify-center w-24 h-10 rounded-full bg-green-100 dark:bg-green-900/40 border-2 border-green-400 dark:border-green-500 shadow-sm">
       <div className="flex items-center gap-1.5">

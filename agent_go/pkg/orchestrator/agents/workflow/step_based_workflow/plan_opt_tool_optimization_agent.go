@@ -1736,10 +1736,11 @@ This is the DEFAULT optimization - all steps with learnings should be evaluated 
 }
 ` + "```" + `
 
-#### Basic Workspace Tools (ALWAYS INCLUDE)
+#### Basic Workspace Tools (CONDITIONAL - NOT WITH SHELL)
 - **Tools**: list_workspace_files, read_workspace_file, update_workspace_file, delete_workspace_file
-- **Rule**: ALWAYS include these 4 tools unless learnings clearly show they weren't used
-- **Reasoning**: Essential for most file operations
+- **Rule**: Include for file operations **UNLESS execute_shell_command is enabled**
+- **⚠️ IMPORTANT**: If step has execute_shell_command, DO NOT include these tools - shell can do cat, echo, ls, rm, mv, etc.
+- **Reasoning**: Shell commands are more powerful and can replace all basic file operations
 
 #### MCP Tools (EVIDENCE-BASED ONLY)
 - **Format**: server:tool (e.g., aws-s3:list_buckets, google-sheets:read_sheet)
@@ -1762,23 +1763,41 @@ This is the DEFAULT optimization - all steps with learnings should be evaluated 
   - Found in learnings (or execution logs if user requested), OR
   - Step description mentions: GitHub, sync, commit, push, repository
 
-#### Execute Shell Command (CONDITIONAL)
+#### Execute Shell Command (CONDITIONAL - REPLACES BASIC WORKSPACE TOOLS)
 - **Tool**: execute_shell_command
 - **Rule**: Include if:
   - Found in learnings (or execution logs if user requested), OR
   - Step description mentions: executing scripts, running commands, shell, bash, terminal, command line
+- **⚠️ IMPORTANT**: When execute_shell_command is enabled, **DO NOT include workspace_basic tools** (read_workspace_file, update_workspace_file, list_workspace_files, delete_workspace_file). Shell commands can do everything these tools do (cat, echo, ls, rm) and more. Having both is redundant and wastes tokens.
+- **Exception**: Keep workspace_basic ONLY if learnings explicitly show the step uses both shell AND workspace file tools
 
 #### Read Image (CONDITIONAL)
 - **Tool**: read_image
 - **Rule**: Include if:
   - Found in learnings (or execution logs if user requested), OR
-  - Step description mentions: images, pictures, photos, visual content, image processing
+  - Step description mentions: images, pictures, photos, visual content, screenshots, analyzing images, image analysis
+- **Note**: Only needed when step must analyze/understand image content, not just copy/move image files
 
-#### Human Feedback (CONDITIONAL)
-- **Tool**: human_feedback
+#### Read PDF (CONDITIONAL)
+- **Tool**: read_pdf
 - **Rule**: Include if:
   - Found in learnings (or execution logs if user requested), OR
-  - Step description mentions: approval, confirmation, decision-making, asking user, human input, requires judgment
+  - Step description mentions: PDF documents, extracting text from PDF, reading PDF content
+- **Note**: Only needed when step must extract/analyze PDF text content, not just copy/move PDF files
+
+#### Human Feedback (DISABLED BY DEFAULT)
+- **Tool**: human_feedback
+- **⚠️ DISABLED BY DEFAULT**: Do NOT include unless explicitly required
+- **Rule**: Include ONLY if:
+  - Step explicitly requires OTP, passwords, or credentials that only humans can provide
+  - Step requires manual approval/confirmation for sensitive actions (e.g., payment, deletion of important data)
+  - Step needs information that cannot be automated (e.g., visual verification by human)
+  - Learnings clearly show human_feedback was used successfully
+- **DO NOT include if**:
+  - Step is fully automated
+  - Step description doesn't mention human interaction
+  - Step is just reading/writing files or calling APIs
+- **Reasoning**: Most workflow steps should be fully automated. Human feedback interrupts automation and should only be used for steps that genuinely cannot proceed without human input.
 
 ### Step 6: Prepare Proposal with Clear Reasoning
 For each tool in your proposal, provide explicit reasoning:
@@ -1815,23 +1834,35 @@ For each step being converted to Tool Search Mode, present:
 
 | Tool Category | Format | Inclusion Rule | Can Infer from Description? |
 |--------------|--------|----------------|------------------------------|
-| **Basic Workspace** | workspace_basic:* (list, read, update, delete, move, diff_patch, regex_search, semantic_search, glob_discover) | Always include for file operations | No (always included) |
-| **GitHub Sync** | workspace_git:* (sync_workspace_to_github, get_workspace_github_status) | ONLY if learnings show git usage OR description mentions GitHub/sync | Yes |
-| **Execute Shell** | workspace_advanced:execute_shell_command | ONLY if learnings show shell usage OR description mentions scripts/commands/terminal | Yes |
-| **Read Image** | workspace_advanced:read_image | ONLY if learnings show image reading OR description mentions analyzing images | Yes |
+| **Basic Workspace** | workspace_basic:* (list, read, update, delete, move, diff_patch, regex_search, semantic_search, glob_discover) | Include for file operations **UNLESS shell is enabled** (shell can do all this) | No |
+| **Execute Shell** | workspace_advanced:execute_shell_command | If shell enabled, **REMOVE workspace_basic** (shell replaces file tools). Include if learnings show shell OR description mentions scripts/commands | Yes |
+| **Read Image** | workspace_advanced:read_image | ONLY if step needs to ANALYZE image content (not just move files) | Yes |
+| **Read PDF** | workspace_advanced:read_pdf | ONLY if step needs to EXTRACT/ANALYZE PDF text (not just move files) | Yes |
 | **Fetch Web** | workspace_advanced:fetch_web_content | ONLY if learnings show web fetching OR description mentions URLs/web content | Yes |
-| **Read PDF** | workspace_advanced:read_pdf | ONLY if learnings show PDF reading OR description mentions PDF documents | Yes |
+| **GitHub Sync** | workspace_git:* (sync_workspace_to_github, get_workspace_github_status) | ONLY if learnings show git usage OR description mentions GitHub/sync | Yes |
 | **MCP Tools** | server:tool | Learnings ONLY (or logs if user requested) | **NO** |
 | **NO_SERVERS** | ['NO_SERVERS'] | If no MCP tools used | Set when step only needs workspace/human tools |
-| **Human Feedback** | human_tools:human_feedback | RARELY needed - ONLY for OTP, manual approval, or info only humans can provide | Yes |
+| **Human Feedback** | human_tools:human_feedback | **DISABLED BY DEFAULT** - ONLY for OTP, passwords, manual approval of sensitive actions | Yes (but rarely enable) |
+
+### ⚠️ IMPORTANT TOOL RELATIONSHIPS
+
+1. **Shell vs Basic Workspace Tools**: If ` + "`execute_shell_command`" + ` is enabled, **DO NOT include workspace_basic tools**. Shell commands (cat, echo, ls, rm, mv, etc.) can do everything workspace_basic tools do. Having both is redundant.
+
+2. **Human Feedback Default**: human_feedback is **DISABLED by default**. Only enable for:
+   - OTP/password entry that only humans know
+   - Manual approval for irreversible/sensitive actions
+   - Information that cannot be automated
+
+3. **Image/PDF Tools**: Only needed when step must **analyze content**, not just copy/move files.
 
 **Key Principles**:
 - **Tool Search Mode is the PRIMARY optimization** - convert all eligible simple mode steps with learnings
 - **Learnings drive pre-discovered tools** - tools found in learnings become pre-discovered for immediate availability
 - **Learnings are the primary source** - success patterns from previous iterations
 - **REMOVE unnecessary advanced tools** - workspace_advanced tools (shell, image, web, PDF) and workspace_git should be REMOVED if not needed by the step
-- **Only include workspace_basic by default** - most steps only need file operations; add advanced/git tools only when justified
-- **human_feedback is RARELY needed** - only include when step requires OTP, manual approval, passwords, or information that only a human can provide; most automated steps should NOT have this tool
+- **Shell replaces basic workspace tools** - if execute_shell_command is enabled, DO NOT include workspace_basic tools (shell can do cat, echo, ls, rm, etc.)
+- **human_feedback is DISABLED by default** - only include when step requires OTP, manual approval, passwords, or information that only a human can provide; MOST steps should NOT have this tool
+- **read_image/read_pdf are conditional** - only include when step needs to ANALYZE content of images/PDFs, not just move files
 - **Step description inference** - use step title/description to infer tools when learnings are sparse
 - **Execution logs are optional** - only check if user explicitly requests it
 - **Never infer MCP tools** - only include MCP tools found in learnings (or logs if user requested)

@@ -398,6 +398,14 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 				Region: config.APIKeys.Bedrock.Region,
 			}
 		}
+		if config.APIKeys.Azure != nil {
+			agentAPIKeys.Azure = &mcpagent.AgentAzureConfig{
+				Endpoint:   config.APIKeys.Azure.Endpoint,
+				APIKey:     config.APIKeys.Azure.APIKey,
+				APIVersion: config.APIKeys.Azure.APIVersion,
+				Region:     config.APIKeys.Azure.Region,
+			}
+		}
 		agent.APIKeys = agentAPIKeys
 		logger.Info("🔑 API keys configured for agent fallback LLM creation")
 	}

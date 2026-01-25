@@ -179,22 +179,9 @@ func createCustomTools(workflowMode bool) ([]llmtypes.Tool, map[string]interface
 			}
 		}
 
-		// Add browser tools for browser automation via agent-browser
-		browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
-		browserTools := virtualtools.CreateWorkspaceBrowserTools()
-		browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors()
-
-		allTools = append(allTools, browserTools...)
-		for name, executor := range browserExecutors {
-			allExecutors[name] = executor
-		}
-
-		// Assign category to browser tools
-		for _, tool := range browserTools {
-			if tool.Function != nil {
-				toolCategories[tool.Function.Name] = browserCategory
-			}
-		}
+		// Note: Browser tools are NOT added unconditionally here.
+		// They are added conditionally based on preset.EnableBrowserAccess in workflow initialization.
+		// See the workflow initialization section where browser tools are added if enabled.
 	}
 
 	return allTools, allExecutors, toolCategories
@@ -841,6 +828,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/capabilities", api.handleCapabilities).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/defaults", api.handleGetLLMDefaults).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/models/metadata", api.handleGetModelMetadata).Methods("GET")
+	apiRouter.HandleFunc("/llm-config/azure/deployments", api.handleGetAzureDeployedModels).Methods("POST")
 	apiRouter.HandleFunc("/llm-config/validate-key", api.handleValidateAPIKey).Methods("POST")
 	apiRouter.HandleFunc("/session/stop", api.handleStopSession).Methods("POST")
 	apiRouter.HandleFunc("/session/clear", api.handleClearSession).Methods("POST")
@@ -1478,6 +1466,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[SKILLS] Loaded %d skills from preset: %v", len(skills), skills)
 					}
 				}
+				// Load browser access mode from preset
+				if preset.EnableBrowserAccess {
+					// Add browser tools to the available tools pool
+					browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
+					browserTools := virtualtools.CreateWorkspaceBrowserTools()
+					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors()
+
+					allTools = append(allTools, browserTools...)
+					for name, executor := range browserExecutors {
+						allExecutors[name] = executor
+					}
+
+					// Assign category to browser tools
+					for _, tool := range browserTools {
+						if tool.Function != nil {
+							toolCategories[tool.Function.Name] = browserCategory
+						}
+					}
+					log.Printf("[WORKFLOW] Added browser tools (enable_browser_access: true)")
+				}
 			}
 		}
 
@@ -2073,6 +2081,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if req.LLMConfig.APIKeys.Bedrock != nil {
 						llmKeys.Bedrock = &llm.BedrockConfig{
 							Region: req.LLMConfig.APIKeys.Bedrock.Region,
+						}
+					}
+					if req.LLMConfig.APIKeys.Azure != nil {
+						llmKeys.Azure = &llm.AzureAPIConfig{
+							Endpoint:   req.LLMConfig.APIKeys.Azure.Endpoint,
+							APIKey:     req.LLMConfig.APIKeys.Azure.APIKey,
+							APIVersion: req.LLMConfig.APIKeys.Azure.APIVersion,
+							Region:     req.LLMConfig.APIKeys.Azure.Region,
 						}
 					}
 					return llmKeys

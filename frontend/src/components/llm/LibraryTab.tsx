@@ -48,7 +48,7 @@ interface LibraryTabProps {
 }
 
 export function LibraryTab({ onSelect }: LibraryTabProps) {
-  const { savedLLMs, deleteSavedLLM, agentConfig, setShowLLMModal } = useLLMStore()
+  const { savedLLMs, deleteSavedLLM, agentConfig, setShowLLMModal, setAzureConfig, azureConfig } = useLLMStore()
   const { createChatTab, setTabConfig } = useChatStore()
   const { setAgentMode } = useAppStore()
   const [metadataMap, setMetadataMap] = useState<Record<string, ModelMetadata>>({})
@@ -81,9 +81,24 @@ export function LibraryTab({ onSelect }: LibraryTabProps) {
   const handleTestComplexPrompt = async (llm: SavedLLM) => {
     // Show message
     setTestStatus(`Initiating complex agent task with ${llm.name}...`)
-    
+
     // Switch to Simple/Chat Mode
     setAgentMode('simple')
+
+    // If testing an Azure model, update the store's azureConfig with the saved credentials
+    // This is needed because ChatArea.tsx pulls api_keys from the store, not from the tab config
+    if (llm.provider === 'azure' && llm.endpoint && llm.api_key) {
+      setAzureConfig({
+        ...azureConfig,
+        provider: 'azure',
+        model_id: llm.model_id,
+        api_key: llm.api_key,
+        endpoint: llm.endpoint,
+        region: llm.region,
+        options: llm.options,
+        temperature: llm.temperature
+      })
+    }
 
     // Create a new tab
     const tabId = await createChatTab(`Test: ${llm.name}`, { mode: 'chat' })
@@ -108,11 +123,11 @@ export function LibraryTab({ onSelect }: LibraryTabProps) {
       }
     })
 
-    // Wait 2-3 seconds then close
+    // Close quickly after setting up the tab
     setTimeout(() => {
         setShowLLMModal(false)
         setTestStatus(null)
-    }, 2500)
+    }, 500)
   }
 
   return (

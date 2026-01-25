@@ -5,16 +5,17 @@ import type { ValidationSchema, AgentConfigs } from '../utils/stepConfigMatching
 
 // New LLM Configuration types (Tiered Fallback System)
 export interface LLMModel {
-  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
+  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure'
   model_id: string
 
   // Auth per model (each model carries its own credentials)
-  api_key?: string      // For OpenRouter, OpenAI, Anthropic, Vertex
-  region?: string       // For Bedrock
-  
+  api_key?: string      // For OpenRouter, OpenAI, Anthropic, Vertex, Azure
+  region?: string       // For Bedrock, Azure
+  endpoint?: string     // For Azure (endpoint URL)
+
   // Model-specific options (reasoning_effort, thinking_level, thinking_budget, etc.)
   options?: Record<string, unknown>
-  
+
   // Model-specific temperature (0.0 - 1.0)
   temperature?: number
 }
@@ -38,11 +39,11 @@ export interface AgentLLMConfiguration {
 
 // Legacy LLM Configuration types (kept for backward compatibility)
 export interface LLMConfiguration {
-  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
+  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure'
   model_id: string
   fallback_models: string[]
   cross_provider_fallback?: {
-    provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic'
+    provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic' | 'azure'
     models: string[]
   }
   // API keys for each provider
@@ -55,6 +56,12 @@ export interface LLMConfiguration {
     }
     anthropic?: string
     vertex?: string
+    azure?: {
+      endpoint: string
+      api_key: string
+      api_version?: string
+      region?: string
+    }
   }
 }
 
@@ -62,6 +69,7 @@ export interface LLMConfiguration {
 export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
   api_key?: string
   region?: string
+  endpoint?: string  // Azure endpoint URL
   options?: Record<string, unknown>
   temperature?: number
 }
@@ -71,7 +79,7 @@ export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
 // Agent streaming types
 export interface AgentQueryRequest {
   query: string
-  provider?: 'bedrock' | 'openai' | 'openrouter' | 'vertex' | 'anthropic'
+  provider?: 'bedrock' | 'openai' | 'openrouter' | 'vertex' | 'anthropic' | 'azure'
   model_id?: string
   temperature?: number
   max_turns?: number
@@ -118,20 +126,23 @@ export interface LLMDefaultsResponse {
   openai_config: ExtendedLLMConfiguration
   vertex_config?: ExtendedLLMConfiguration
   anthropic_config?: ExtendedLLMConfiguration
+  azure_config?: ExtendedLLMConfiguration
   available_models: {
     bedrock: string[]
     openrouter: string[]
     openai: string[]
     vertex?: string[]
     anthropic?: string[]
+    azure?: string[]
   }
 }
 
 // API Key Validation Request/Response
 export interface APIKeyValidationRequest {
-  provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic'
+  provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure'
   api_key?: string // Optional for Bedrock (uses IAM credentials)
   model_id?: string // Optional model ID for Bedrock validation
+  endpoint?: string // Azure endpoint URL
   options?: Record<string, unknown> // Model options like reasoning_effort, thinking_level, etc.
 }
 
@@ -139,6 +150,12 @@ export interface APIKeyValidationResponse {
   valid: boolean
   message?: string
   error?: string
+  corrected_options?: {
+    endpoint?: string
+    model_id?: string
+    api_version?: string
+    [key: string]: unknown
+  }
 }
 
 // LLM Guidance types
@@ -641,13 +658,13 @@ export interface UpdateChatSessionRequest {
 
 // Preset LLM Configuration types
 export interface AgentLLMConfig {
-  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
+  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure'
   model_id: string
 }
 
 export interface PresetLLMConfig {
   // Legacy: Single default model (for backward compatibility)
-  provider?: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
+  provider?: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure'
   model_id?: string
 
   // New: Agent-specific default models (takes priority over legacy fields)
@@ -676,6 +693,7 @@ export interface PresetQuery {
   pre_discovered_tools?: string; // JSON string of tools array
   selected_skills?: string; // JSON string of skill folder names
   enable_context_summarization?: boolean; // Enable context summarization
+  enable_browser_access?: boolean; // Browser automation access
   is_predefined: boolean;
   created_at: string;
   updated_at: string;
@@ -695,6 +713,7 @@ export interface CreatePresetQueryRequest {
   pre_discovered_tools?: string[]; // Tools always available without searching
   selected_skills?: string[]; // Skill folder names for workflow
   enable_context_summarization?: boolean; // Enable context summarization
+  enable_browser_access?: boolean; // Browser automation access
   is_predefined?: boolean;
 }
 
@@ -711,6 +730,7 @@ export interface UpdatePresetQueryRequest {
   pre_discovered_tools?: string[]; // Tools always available without searching
   selected_skills?: string[]; // Skill folder names for workflow
   enable_context_summarization?: boolean; // Enable context summarization
+  enable_browser_access?: boolean; // Browser automation access
 }
 
 export interface ListPresetQueriesResponse {
@@ -939,6 +959,7 @@ export interface VariableGroupsResponse {
 export interface ValidationLog {
   attempt: number;
   file_path: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   content: any; // Full JSON content of validation log
 }
 
@@ -947,6 +968,7 @@ export interface ExecutionAttemptLog {
   iteration: number;
   file_path: string;
   conversation_path: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   content?: any; // Full JSON content of execution result
 }
 
@@ -960,6 +982,7 @@ export interface DecisionLog {
 export interface OrchestrationLog {
   type: string;
   timestamp: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   orchestration_response?: any;
   selected_route_id?: string;
   success_criteria_met?: boolean;

@@ -53,6 +53,15 @@ export const llmConfigService = {
     const response = await llmConfigApi.get('/api/llm-config/models/metadata')
     return response.data
   },
+
+  // Get deployed models from Azure (requires endpoint and API key)
+  getAzureDeployedModels: async (endpoint: string, apiKey: string): Promise<GetModelMetadataResponse & { error?: string }> => {
+    const response = await llmConfigApi.post('/api/llm-config/azure/deployments', {
+      endpoint,
+      api_key: apiKey
+    })
+    return response.data
+  },
 }
 
 export default llmConfigService

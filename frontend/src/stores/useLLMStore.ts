@@ -30,19 +30,22 @@ interface LLMState extends StoreActions {
   openaiConfig: ExtendedLLMConfiguration
   vertexConfig: ExtendedLLMConfiguration
   anthropicConfig: ExtendedLLMConfiguration
-  
+  azureConfig: ExtendedLLMConfiguration
+
   // Custom models for each provider
   customBedrockModels: string[]
   customOpenRouterModels: string[]
   customOpenAIModels: string[]
   customVertexModels: string[]
-  
+  customAzureModels: string[]
+
   // Available models from backend
   availableBedrockModels: string[]
   availableOpenRouterModels: string[]
   availableOpenAIModels: string[]
   availableVertexModels: string[]
   availableAnthropicModels: string[]
+  availableAzureModels: string[]
   
   // Modal state
   showLLMModal: boolean
@@ -70,6 +73,7 @@ interface LLMState extends StoreActions {
   setOpenaiConfig: (config: ExtendedLLMConfiguration) => void
   setVertexConfig: (config: ExtendedLLMConfiguration) => void
   setAnthropicConfig: (config: ExtendedLLMConfiguration) => void
+  setAzureConfig: (config: ExtendedLLMConfiguration) => void
   setShowLLMModal: (show: boolean) => void
   loadDefaultsFromBackend: () => Promise<void>
   
@@ -86,16 +90,18 @@ interface LLMState extends StoreActions {
   removeCustomOpenAIModel: (model: string) => void
   addCustomVertexModel: (model: string) => void
   removeCustomVertexModel: (model: string) => void
-  
+  addCustomAzureModel: (model: string) => void
+  removeCustomAzureModel: (model: string) => void
+
   // Legacy actions (for backward compatibility)
-  updateProvider: (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic') => void
+  updateProvider: (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure') => void
   updateModel: (modelId: string) => void
   updateFallbacks: (fallbacks: string[]) => void
   updateCrossProviderFallback: (fallback: LLMConfiguration['cross_provider_fallback']) => void
   refreshAvailableLLMs: () => Promise<void>
   
   // API key management
-  testAPIKey: (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic', apiKey: string, modelId?: string, options?: Record<string, unknown>) => Promise<{valid: boolean, error: string | null}>
+  testAPIKey: (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure', apiKey: string, modelId?: string, options?: Record<string, unknown>) => Promise<{valid: boolean, error: string | null}>
   
   // Helper methods
   getCurrentLLMOption: () => LLMOption | null
@@ -173,19 +179,29 @@ export const useLLMStore = create<LLMState>()(
           cross_provider_fallback: undefined,
           api_key: ''
         },
-        
+        azureConfig: {
+          provider: 'azure',
+          model_id: '',
+          fallback_models: [],
+          cross_provider_fallback: undefined,
+          api_key: '',
+          endpoint: ''
+        },
+
         // Custom models for each provider
         customBedrockModels: [],
         customOpenRouterModels: [],
         customOpenAIModels: [],
         customVertexModels: [],
-        
+        customAzureModels: [],
+
         // Available models from backend
         availableBedrockModels: [],
         availableOpenRouterModels: [],
         availableOpenAIModels: [],
         availableVertexModels: [],
         availableAnthropicModels: [],
+        availableAzureModels: [],
         
         // Modal state
         showLLMModal: false,
@@ -253,6 +269,10 @@ export const useLLMStore = create<LLMState>()(
 
         setAnthropicConfig: (config) => {
           set({ anthropicConfig: config, error: null })
+        },
+
+        setAzureConfig: (config) => {
+          set({ azureConfig: config, error: null })
         },
 
         setShowLLMModal: (show) => {
@@ -331,6 +351,18 @@ export const useLLMStore = create<LLMState>()(
           set({ customVertexModels: customVertexModels.filter(m => m !== model) })
         },
 
+        addCustomAzureModel: (model) => {
+          const { customAzureModels } = get()
+          if (!customAzureModels.includes(model)) {
+            set({ customAzureModels: [...customAzureModels, model] })
+          }
+        },
+
+        removeCustomAzureModel: (model) => {
+          const { customAzureModels } = get()
+          set({ customAzureModels: customAzureModels.filter(m => m !== model) })
+        },
+
         // Load defaults from backend
         loadDefaultsFromBackend: async () => {
           try {
@@ -351,7 +383,7 @@ export const useLLMStore = create<LLMState>()(
               // Check if savedConfig has meaningful values (not just initial empty state)
               const hasSavedModel = savedConfig?.model_id && savedConfig.model_id.trim() !== ''
               const hasSavedFallbacks = savedConfig?.fallback_models && savedConfig.fallback_models.length > 0
-              
+
               return {
                 provider: savedConfig?.provider || defaultConfig?.provider || 'openrouter',
                 // Preserve model_id from saved config (including custom models) if it exists
@@ -363,8 +395,14 @@ export const useLLMStore = create<LLMState>()(
                 cross_provider_fallback: savedConfig?.cross_provider_fallback || defaultConfig?.cross_provider_fallback,
                 // Preserve API key if it exists in saved config
                 api_key: savedConfig?.api_key || defaultConfig?.api_key || '',
-                // Preserve region for Bedrock
-                region: savedConfig?.region || defaultConfig?.region
+                // Preserve region for Bedrock and Azure
+                region: savedConfig?.region || defaultConfig?.region,
+                // Preserve endpoint for Azure
+                endpoint: savedConfig?.endpoint || defaultConfig?.endpoint,
+                // Preserve options (includes api_version for Azure, reasoning settings, etc.)
+                options: savedConfig?.options || defaultConfig?.options,
+                // Preserve temperature
+                temperature: savedConfig?.temperature ?? defaultConfig?.temperature
               }
             }
             
@@ -397,11 +435,23 @@ export const useLLMStore = create<LLMState>()(
                 api_key: ''
                 }
               ),
+              azureConfig: preserveUserConfig(
+                currentState.azureConfig,
+                defaults.azure_config || {
+                provider: 'azure',
+                model_id: '',
+                fallback_models: [],
+                cross_provider_fallback: undefined,
+                api_key: '',
+                endpoint: ''
+                }
+              ),
               availableBedrockModels: defaults.available_models.bedrock,
               availableOpenRouterModels: defaults.available_models.openrouter,
               availableOpenAIModels: defaults.available_models.openai,
               availableVertexModels: defaults.available_models.vertex || [],
               availableAnthropicModels: defaults.available_models.anthropic || [],
+              availableAzureModels: defaults.available_models.azure || [],
               defaultsLoaded: true,
               error: null,
               isLoadingLLMs: false
@@ -425,14 +475,14 @@ export const useLLMStore = create<LLMState>()(
             // Only check for empty API key for providers that require it (not bedrock, not vertex)
             // Vertex supports OAuth fallback, so API key is optional
             if (provider !== 'bedrock' && provider !== 'vertex' && !apiKey.trim()) {
-              return { valid: false, error: 'API key is empty' }
+              return { valid: false, error: 'API key is empty', correctedOptions: undefined }
             }
-            
+
             const request: APIKeyValidationRequest = {
               provider,
               options
             }
-            
+
             // Only include api_key for providers that need it (not bedrock, optional for vertex)
             if (provider !== 'bedrock') {
               // For vertex, only include api_key if provided (OAuth fallback will be used if not)
@@ -442,23 +492,26 @@ export const useLLMStore = create<LLMState>()(
               request.api_key = apiKey
               }
             }
-            
+
             // Add model ID for all providers when validating
             if (modelId) {
               request.model_id = modelId
             }
-            
+
             const response = await llmConfigService.validateAPIKey(request)
-            
-            return { 
-              valid: response.valid, 
-              error: response.valid ? null : (response.message || response.error || 'Validation failed')
+
+            return {
+              valid: response.valid,
+              error: response.valid ? null : (response.message || response.error || 'Validation failed'),
+              correctedOptions: response.corrected_options,
+              message: response.message
             }
           } catch (error) {
             console.error('API key validation failed:', error)
-            return { 
-              valid: false, 
-              error: error instanceof Error ? error.message : 'Unknown error occurred'
+            return {
+              valid: false,
+              error: error instanceof Error ? error.message : 'Unknown error occurred',
+              correctedOptions: undefined
             }
           }
         },
@@ -468,20 +521,23 @@ export const useLLMStore = create<LLMState>()(
           let availableModels: string[] = []
           
           switch(provider) {
-            case 'openrouter': 
+            case 'openrouter':
               availableModels = [...state.availableOpenRouterModels, ...state.customOpenRouterModels];
               break;
-            case 'bedrock': 
-              availableModels = [...state.availableBedrockModels, ...state.customBedrockModels]; 
+            case 'bedrock':
+              availableModels = [...state.availableBedrockModels, ...state.customBedrockModels];
               break;
-            case 'openai': 
-              availableModels = [...state.availableOpenAIModels, ...state.customOpenAIModels]; 
+            case 'openai':
+              availableModels = [...state.availableOpenAIModels, ...state.customOpenAIModels];
               break;
-            case 'vertex': 
-              availableModels = [...state.availableVertexModels, ...state.customVertexModels]; 
+            case 'vertex':
+              availableModels = [...state.availableVertexModels, ...state.customVertexModels];
               break;
-            case 'anthropic': 
-              availableModels = state.availableAnthropicModels; 
+            case 'anthropic':
+              availableModels = state.availableAnthropicModels;
+              break;
+            case 'azure':
+              availableModels = [...state.availableAzureModels, ...state.customAzureModels];
               break;
           }
           
@@ -536,7 +592,7 @@ export const useLLMStore = create<LLMState>()(
             const availableLLMs: LLMOption[] = []
 
             // Fetch model metadata for cost/context info
-            let metadataMap: Record<string, { contextWindow: number; inputCost: number; outputCost: number }> = {}
+            const metadataMap: Record<string, { contextWindow: number; inputCost: number; outputCost: number }> = {}
             try {
               const metadataResponse = await llmConfigService.getModelMetadata()
               metadataResponse.models.forEach(m => {
@@ -669,6 +725,14 @@ export const useLLMStore = create<LLMState>()(
               cross_provider_fallback: undefined,
               api_key: ''
             },
+            azureConfig: {
+              provider: 'azure',
+              model_id: '',
+              fallback_models: [],
+              cross_provider_fallback: undefined,
+              api_key: '',
+              endpoint: ''
+            },
             showLLMModal: false,
             availableLLMs: [],
             isLoadingLLMs: false,
@@ -703,10 +767,12 @@ export const useLLMStore = create<LLMState>()(
           openaiConfig: state.openaiConfig,
           vertexConfig: state.vertexConfig,
           anthropicConfig: state.anthropicConfig,
+          azureConfig: state.azureConfig,
           customBedrockModels: state.customBedrockModels,
           customOpenRouterModels: state.customOpenRouterModels,
           customOpenAIModels: state.customOpenAIModels,
           customVertexModels: state.customVertexModels,
+          customAzureModels: state.customAzureModels,
           showLLMModal: state.showLLMModal,
           // DO NOT persist availableBedrockModels, availableOpenRouterModels, availableOpenAIModels
           // These should always be loaded fresh from backend

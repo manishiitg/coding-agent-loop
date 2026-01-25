@@ -9,6 +9,7 @@ import { OpenRouterSection } from './OpenRouterSection'
 import { BedrockSection } from './BedrockSection'
 import { OpenAISection } from './OpenAISection'
 import { VertexSection } from './VertexSection'
+import { AzureSection } from './AzureSection'
 import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
 import { FallbacksTab } from './llm/FallbacksTab'
 import { LibraryTab } from './llm/LibraryTab'
@@ -19,7 +20,7 @@ interface LLMConfigurationModalProps {
 }
 
 // Provider type for reuse
-type ProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic'
+type ProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure'
 
 // Tab type for the modal
 type TabType = 'fallbacks' | 'library' | ProviderType
@@ -38,8 +39,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
 
   const {
     // Legacy configs (kept for backward compatibility)
-    primaryConfig: _primaryConfig,
-    agentConfig: _agentConfig,
     setAgentConfig,
     setPrimaryConfig,
     // Mode-specific configs
@@ -54,11 +53,13 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     openaiConfig,
     vertexConfig,
     anthropicConfig,
+    azureConfig,
     setOpenrouterConfig,
     setBedrockConfig,
     setOpenaiConfig,
     setVertexConfig,
     setAnthropicConfig,
+    setAzureConfig,
     testAPIKey,
     defaultsLoaded,
     loadDefaultsFromBackend,
@@ -97,9 +98,10 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     bedrock: { config: bedrockConfig, setConfig: setBedrockConfig },
     openai: { config: openaiConfig, setConfig: setOpenaiConfig },
     vertex: { config: vertexConfig, setConfig: setVertexConfig },
-    anthropic: { config: anthropicConfig, setConfig: setAnthropicConfig }
-  }), [openrouterConfig, bedrockConfig, openaiConfig, vertexConfig, anthropicConfig,
-      setOpenrouterConfig, setBedrockConfig, setOpenaiConfig, setVertexConfig, setAnthropicConfig])
+    anthropic: { config: anthropicConfig, setConfig: setAnthropicConfig },
+    azure: { config: azureConfig, setConfig: setAzureConfig }
+  }), [openrouterConfig, bedrockConfig, openaiConfig, vertexConfig, anthropicConfig, azureConfig,
+      setOpenrouterConfig, setBedrockConfig, setOpenaiConfig, setVertexConfig, setAnthropicConfig, setAzureConfig])
 
   // Metadata state - Driven purely by backend
   const [metadata, setMetadata] = useState<ModelMetadata[]>([])
@@ -166,15 +168,17 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     openai: 'idle',
     bedrock: 'idle',
     vertex: 'idle',
-    anthropic: 'idle'
+    anthropic: 'idle',
+    azure: 'idle'
   })
-  
+
   const [apiKeyErrors, setApiKeyErrors] = useState<APIKeyError>({
     openrouter: null,
     openai: null,
     bedrock: null,
     vertex: null,
-    anthropic: null
+    anthropic: null,
+    azure: null
   })
 
   const [activeTab, setActiveTab] = useState<TabType>('library')
@@ -187,7 +191,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   }, [isOpen, defaultsLoaded, loadDefaultsFromBackend])
 
   // Handle API key testing
-  const handleTestAPIKey = useCallback(async (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic', apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => {
+  const handleTestAPIKey = useCallback(async (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure', apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => {
     // Allow testing without API key for Bedrock and Vertex (they support OAuth/credentials)
     if (provider !== 'bedrock' && provider !== 'vertex' && !apiKey.trim()) {
       return
@@ -365,7 +369,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 </button>
 
                 <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">Providers</h3>
-                {['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic'].map((provider) => (
+                {['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure'].map((provider) => (
                   <button
                     key={provider}
                     onClick={() => setActiveTab(provider as typeof activeTab)}
@@ -374,9 +378,9 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                     }`}
                   >
                     <div className="flex-1">
-                      <div className="font-medium capitalize">{provider === 'openrouter' ? 'OpenRouter' : provider === 'openai' ? 'OpenAI' : provider}</div>
+                      <div className="font-medium capitalize">{provider === 'openrouter' ? 'OpenRouter' : provider === 'openai' ? 'OpenAI' : provider === 'azure' ? 'Azure AI' : provider}</div>
                       <div className="text-xs opacity-75">
-                        {provider === 'bedrock' ? 'AWS IAM' : 'API Key'}
+                        {provider === 'bedrock' ? 'AWS IAM' : provider === 'azure' ? 'Endpoint + API Key' : 'API Key'}
                       </div>
                     </div>
                   </button>
@@ -450,6 +454,17 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('anthropic', apiKey, modelId, options, temperature)}
                   apiKeyStatus={apiKeyStatus.anthropic}
                   apiKeyError={apiKeyErrors.anthropic}
+                  metadata={metadata}
+                />
+              )}
+
+              {activeTab === 'azure' && (
+                <AzureSection
+                  config={azureConfig}
+                  onUpdate={(config) => handleProviderConfigUpdate('azure', config)}
+                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('azure', apiKey, modelId, options, temperature)}
+                  apiKeyStatus={apiKeyStatus.azure}
+                  apiKeyError={apiKeyErrors.azure}
                   metadata={metadata}
                 />
               )}

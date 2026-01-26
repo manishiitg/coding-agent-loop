@@ -988,6 +988,28 @@ export interface OrchestrationLog {
   success_criteria_met?: boolean;
 }
 
+export interface TodoTaskLog {
+  type: string;  // 'routing', 'evaluation'
+  timestamp: string;
+  iteration?: number;
+  model?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  todo_task_response?: {
+    next_action?: string;  // 'delegate', 'complete', 'continue'
+    selected_route_id?: string;
+    selected_route_name?: string;
+    use_generic_agent?: boolean;
+    todo_id_to_execute?: string;
+    todo_title?: string;
+    instructions_to_sub_agent?: string;
+    success_criteria_for_sub_agent?: string;
+    selection_reasoning?: string;
+    all_tasks_complete?: boolean;
+    progress_summary?: string;
+  };
+  all_tasks_complete?: boolean;
+}
+
 export interface ConditionalLog {
   condition_result: boolean;
   condition_reason: string;
@@ -1015,6 +1037,7 @@ export interface ArchivedLogEntry {
   executions: ExecutionAttemptLog[];
   decisions?: DecisionLog[];
   orchestration?: OrchestrationLog[];
+  todo_task?: TodoTaskLog[];
   conditionals?: ConditionalLog[];
   learnings?: LearningLog[];
 }
@@ -1040,6 +1063,7 @@ export interface StepExecutionLogs {
   executions: ExecutionAttemptLog[];
   decisions?: DecisionLog[];
   orchestration?: OrchestrationLog[];
+  todo_task?: TodoTaskLog[];
   conditionals?: ConditionalLog[];
   learnings?: LearningLog[];
   archived_logs?: ArchivedLogEntry[];  // Logs from previous runs

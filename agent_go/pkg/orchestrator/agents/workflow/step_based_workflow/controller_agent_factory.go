@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
@@ -1341,33 +1342,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 	maxTurns := hcpo.GetMaxTurns()
 	// Note: ConditionalMaxTurns doesn't exist in AgentConfigs - using orchestrator default
 
-	// For conditional agents, skip tempLLM and use step/preset ExecutionLLM directly
-	// Fallback order: ExecutionLLM → preset ExecutionLLM
-	// Determine LLM config: Priority: step execution_llm > preset execution_llm
-	var llmConfig *orchestrator.LLMConfig
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
-	if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
-		// Use step-specific execution LLM config
-		executionLLMConfig := stepConfig.ExecutionLLM
-		llmConfig = &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: executionLLMConfig.Provider,
-				ModelID:  executionLLMConfig.ModelID,
-			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution LLM for conditional agent: %s/%s", executionLLMConfig.Provider, executionLLMConfig.ModelID))
-	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
-		// Use preset execution LLM as fallback
-		llmConfig = &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: hcpo.presetExecutionLLM.Provider,
-				ModelID:  hcpo.presetExecutionLLM.ModelID,
-			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution LLM for conditional agent: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
-	} else {
+	// Use the LLM config passed from caller (which handles ConditionalLLM > ExecutionLLM > preset > orchestrator priority)
+	// Note: conditionalLLMConfig is selected by the caller with proper priority including ConditionalLLM
+	llmConfig := conditionalLLMConfig
+	if llmConfig == nil {
 		return nil, fmt.Errorf("no valid LLM configuration found for conditional agent: step config and preset execution LLM are both empty or invalid")
 	}
 
@@ -1627,6 +1605,439 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created orchestration orchestrator agent using standard factory pattern: %s (step %d, phase %s)", agentName, step+1, phase))
 	return agent, nil
+}
+
+// SubAgentExecutionContext holds the context needed for sub-agent execution from tools
+type SubAgentExecutionContext struct {
+	TodoTaskStep *TodoTaskPlanStep
+	StepIndex    int
+	StepPath     string
+	AllSteps     []PlanStepInterface
+	Progress     *StepProgress
+	// StepCompleted is set to true when mark_step_complete is called
+	StepCompleted bool
+	// CompletionReason is the reason provided when mark_step_complete is called
+	CompletionReason string
+}
+
+// createTodoTaskOrchestratorAgent creates a todo task orchestrator agent using the standard factory pattern
+// This agent manages todo lists, creates tasks, and delegates to predefined or generic sub-agents
+// Note: Folder guard paths should be set by the caller before calling this function (see controller_todo_task.go)
+// The stepPath parameter is used to inject context for todo tools (e.g., "step-1")
+// The subAgentExecCtx contains context for sub-agent tool execution (can be nil for simple cases)
+func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx context.Context, phase string, step, iteration int, stepID string, stepPath string, agentName string, stepConfig *AgentConfigs, todoTaskLLMConfig *orchestrator.LLMConfig, subAgentExecCtx *SubAgentExecutionContext) (agents.OrchestratorAgent, error) {
+	// Todo task orchestrator agent needs folder guard (can write files)
+	// Note: Folder guard is set by caller in controller_todo_task.go before agent creation
+	// We apply it to the agent here via post-setup
+
+	// Determine max turns: use orchestrator default
+	maxTurns := hcpo.GetMaxTurns()
+
+	// Determine LLM config: Priority: step config > preset default
+	var llmConfig *orchestrator.LLMConfig
+	orchestratorLLMConfig := hcpo.GetLLMConfig()
+	if todoTaskLLMConfig != nil && todoTaskLLMConfig.Primary.Provider != "" && todoTaskLLMConfig.Primary.ModelID != "" {
+		llmConfig = &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: todoTaskLLMConfig.Primary.Provider,
+				ModelID:  todoTaskLLMConfig.Primary.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific todo task orchestrator LLM: %s/%s", todoTaskLLMConfig.Primary.Provider, todoTaskLLMConfig.Primary.ModelID))
+	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
+		llmConfig = &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: hcpo.presetExecutionLLM.Provider,
+				ModelID:  hcpo.presetExecutionLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default ExecutionLLM for todo task orchestrator: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
+	} else {
+		return nil, fmt.Errorf("no valid LLM configuration found for todo task orchestrator agent: step config and preset execution LLM are both empty or invalid")
+	}
+
+	// Create agent config with custom LLM if needed
+	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+
+	// Use step-specific servers if provided, otherwise use orchestrator defaults
+	// NO_SERVERS is a valid config value - if step explicitly sets it, use it
+	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
+		// Step has explicit server selection (including NO_SERVERS) - use it
+		config.ServerNames = stepConfig.SelectedServers
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific todo task orchestrator servers: %v", stepConfig.SelectedServers))
+	} else {
+		// Use orchestrator defaults when stepConfig is nil or SelectedServers is empty
+		config.ServerNames = hcpo.GetSelectedServers()
+		if stepConfig != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but SelectedServers is empty - using orchestrator defaults: %v", config.ServerNames))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config not found - using orchestrator defaults: %v", config.ServerNames))
+		}
+	}
+	if stepConfig != nil && len(stepConfig.SelectedTools) > 0 {
+		config.SelectedTools = stepConfig.SelectedTools
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific todo task orchestrator tools: %v", stepConfig.SelectedTools))
+	} else {
+		config.SelectedTools = hcpo.GetSelectedTools()
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default todo task orchestrator tools: %v", config.SelectedTools))
+	}
+
+	// Code execution mode: Priority: step config > orchestrator default
+	// Use helper method for consistency
+	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
+	config.UseCodeExecutionMode = isCodeExecutionMode
+
+	// Tool search mode: Priority: step config > orchestrator default
+	isToolSearchMode := hcpo.getToolSearchMode(stepConfig)
+	config.UseToolSearchMode = isToolSearchMode
+	config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
+
+	// Set EnableContextOffloading if specified
+	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
+		config.EnableContextOffloading = stepConfig.EnableContextOffloading
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
+	}
+
+	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
+
+	// Prepare custom tools and executors
+	var toolsToRegister []llmtypes.Tool
+	var executorsToUse map[string]interface{}
+
+	if stepConfig != nil && len(stepConfig.EnabledCustomTools) > 0 {
+		// Filter tools based on unified format (category:tool or category:*)
+		toolsToRegister, executorsToUse = orchestrator.FilterCustomToolsByCategory(
+			hcpo.WorkspaceTools,
+			hcpo.WorkspaceToolExecutors,
+			stepConfig.EnabledCustomTools,
+		)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools for todo task orchestrator agent: %d tools enabled from %d entries: %v", len(toolsToRegister), len(stepConfig.EnabledCustomTools), stepConfig.EnabledCustomTools))
+	} else {
+		toolsToRegister = hcpo.WorkspaceTools
+		executorsToUse = hcpo.WorkspaceToolExecutors
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using all workspace tools for todo task orchestrator agent: %d tools", len(toolsToRegister)))
+	}
+
+	// IMPORTANT: Always inject todo tools for todo task orchestrator - they are essential for its operation
+	// Even if step config filters tools, todo tools must be available
+	todoToolsToInject := []string{"create_todo", "update_todo", "complete_todo", "list_todos", "get_todo"}
+	for _, todoToolName := range todoToolsToInject {
+		// Check if tool already exists in toolsToRegister
+		toolExists := false
+		for _, tool := range toolsToRegister {
+			if tool.Function != nil && tool.Function.Name == todoToolName {
+				toolExists = true
+				break
+			}
+		}
+		if !toolExists {
+			// Find and add the todo tool from WorkspaceTools
+			for _, tool := range hcpo.WorkspaceTools {
+				if tool.Function != nil && tool.Function.Name == todoToolName {
+					toolsToRegister = append(toolsToRegister, tool)
+					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Injected required todo tool '%s' for todo task orchestrator", todoToolName))
+					break
+				}
+			}
+		}
+		// Ensure executor exists
+		if _, exists := executorsToUse[todoToolName]; !exists {
+			if executor, exists := hcpo.WorkspaceToolExecutors[todoToolName]; exists {
+				if executorsToUse == nil {
+					executorsToUse = make(map[string]interface{})
+				}
+				executorsToUse[todoToolName] = executor
+			}
+		}
+	}
+
+	// Filter out human tools if "no human" execution mode is active
+	execOpts := hcpo.GetExecutionOptions()
+	if execOpts != nil && (execOpts.ExecutionStrategy == ExecutionStrategyStartFromBeginningNoHuman || execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStepNoHuman || execOpts.ExecutionStrategy == ExecutionStrategyFastExecuteAll) {
+		var filteredTools []llmtypes.Tool
+		filteredExecutors := make(map[string]interface{})
+
+		for _, tool := range toolsToRegister {
+			// Check if this tool is a human tool by looking at its category
+			if hcpo.ToolCategories != nil {
+				if category, exists := hcpo.ToolCategories[tool.Function.Name]; exists && category == "human" {
+					// Skip human tools in "no human" mode
+					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Excluding human tool '%s' from todo task orchestrator agent (no human mode)", tool.Function.Name))
+					continue
+				}
+			}
+			filteredTools = append(filteredTools, tool)
+			// Also filter executors
+			if executor, exists := executorsToUse[tool.Function.Name]; exists {
+				filteredExecutors[tool.Function.Name] = executor
+			}
+		}
+
+		toolsToRegister = filteredTools
+		executorsToUse = filteredExecutors
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered out human tools for todo task orchestrator agent (no human mode): %d tools remaining", len(toolsToRegister)))
+	}
+
+	// Wrap todo tool executors to inject context values they need
+	// The todo tools require: step_execution_path, read_workspace_file, write_workspace_file
+	// IMPORTANT: Create a copy of executorsToUse to avoid modifying the original WorkspaceToolExecutors map
+	wrappedExecutors := make(map[string]interface{})
+	for k, v := range executorsToUse {
+		wrappedExecutors[k] = v
+	}
+	executorsToUse = wrappedExecutors
+
+	todoToolNames := map[string]bool{
+		"create_todo":   true,
+		"update_todo":   true,
+		"complete_todo": true,
+		"list_todos":    true,
+		"get_todo":      true,
+	}
+
+	// Build the step execution path (e.g., "execution/step-1")
+	todoStepExecutionPath := filepath.Join("execution", stepPath)
+
+	for toolName := range todoToolNames {
+		if originalExecutor, exists := executorsToUse[toolName]; exists {
+			// Create wrapper that injects context values
+			wrappedExecutor := hcpo.wrapTodoToolExecutor(originalExecutor, todoStepExecutionPath)
+			executorsToUse[toolName] = wrappedExecutor
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Wrapped todo tool '%s' with context injection (step path: %s)", toolName, todoStepExecutionPath))
+		} else {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Todo tool '%s' not found in executors - tool will not be available", toolName))
+		}
+	}
+
+	// IMPORTANT: Inject sub-agent tools for tool-based delegation
+	// These tools allow the orchestrator to delegate work to sub-agents directly via tool calls
+	if subAgentExecCtx != nil {
+		subAgentTools := virtualtools.CreateSubAgentTools()
+		subAgentExecutors := virtualtools.CreateSubAgentToolExecutors()
+
+		// Add sub-agent tools to the tools list
+		for _, tool := range subAgentTools {
+			toolsToRegister = append(toolsToRegister, tool)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Added sub-agent tool '%s' to todo task orchestrator", tool.Function.Name))
+		}
+
+		// Wrap sub-agent executors with context injection
+		for toolName, executor := range subAgentExecutors {
+			wrappedExecutor := hcpo.wrapSubAgentToolExecutor(executor, subAgentExecCtx)
+			executorsToUse[toolName] = wrappedExecutor
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Wrapped sub-agent tool '%s' with execution context injection", toolName))
+		}
+	} else {
+		hcpo.GetLogger().Info("🔧 Sub-agent execution context not provided - sub-agent tools will not be available")
+	}
+
+	// Use standard factory pattern - this handles initialization, event bridge connection, and tool registration
+	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
+		ctx,
+		config,
+		phase,
+		step,
+		iteration,
+		stepID, // Step ID
+		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+			return NewWorkflowTodoTaskOrchestratorAgent(cfg, logger, tracer, eventBridge)
+		},
+		toolsToRegister, // Pass workspace tools (filtered by step config if specified)
+		executorsToUse,  // Pass workspace tool executors
+		false,           // Don't overwrite system prompt - todo task orchestrator agent manages its own prompt
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create todo task orchestrator agent: %w", err)
+	}
+
+	// Post-setup: folder guard paths (todo task orchestrator agent may use code execution mode, so registry update may be needed)
+	// Note: Folder guard paths are already set on orchestrator by caller, but we need to apply them to the agent
+	if err := hcpo.applyPostSetupToAgent(agent, agentName, isCodeExecutionMode); err != nil {
+		return nil, fmt.Errorf("failed to apply post-setup to todo task orchestrator agent: %w", err)
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created todo task orchestrator agent using standard factory pattern: %s (step %d, phase %s)", agentName, step+1, phase))
+	return agent, nil
+}
+
+// wrapTodoToolExecutor wraps a todo tool executor to inject required context values
+// The wrapper adds: step_execution_path, read_workspace_file, write_workspace_file
+func (hcpo *StepBasedWorkflowOrchestrator) wrapTodoToolExecutor(originalExecutor interface{}, stepExecutionPath string) func(ctx context.Context, args map[string]interface{}) (string, error) {
+	// Cast original executor to the expected function type
+	origFunc, ok := originalExecutor.(func(ctx context.Context, args map[string]interface{}) (string, error))
+	if !ok {
+		// If cast fails, return a function that returns an error
+		return func(ctx context.Context, args map[string]interface{}) (string, error) {
+			return "", fmt.Errorf("invalid todo tool executor type")
+		}
+	}
+
+	// Return wrapper function that injects context values
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Create new context with required values for todo tools
+		// Note: Using string keys as defined in todo_tools.go
+		ctx = context.WithValue(ctx, "step_execution_path", stepExecutionPath)
+		ctx = context.WithValue(ctx, "read_workspace_file", hcpo.readWorkspaceFileFunc())
+		ctx = context.WithValue(ctx, "write_workspace_file", hcpo.writeWorkspaceFileFunc())
+
+		// Call original executor with enriched context
+		return origFunc(ctx, args)
+	}
+}
+
+// readWorkspaceFileFunc returns a function that reads a workspace file
+// This is used to inject into the context for todo tools
+func (hcpo *StepBasedWorkflowOrchestrator) readWorkspaceFileFunc() func(ctx context.Context, path string) (string, error) {
+	return func(ctx context.Context, path string) (string, error) {
+		return hcpo.ReadWorkspaceFile(ctx, path)
+	}
+}
+
+// writeWorkspaceFileFunc returns a function that writes a workspace file
+// This is used to inject into the context for todo tools
+func (hcpo *StepBasedWorkflowOrchestrator) writeWorkspaceFileFunc() func(ctx context.Context, path string, content string) error {
+	return func(ctx context.Context, path string, content string) error {
+		return hcpo.WriteWorkspaceFile(ctx, path, content)
+	}
+}
+
+// wrapSubAgentToolExecutor wraps a sub-agent tool executor to inject execution functions
+// The wrapper adds: execute_predefined_sub_agent, execute_generic_agent, mark_step_complete, predefined_routes
+func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
+	originalExecutor func(ctx context.Context, args map[string]interface{}) (string, error),
+	execCtx *SubAgentExecutionContext,
+) func(ctx context.Context, args map[string]interface{}) (string, error) {
+	// Return wrapper function that injects execution functions into context
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Inject execute_predefined_sub_agent function
+		executePredefinedFunc := hcpo.createExecutePredefinedSubAgentFunc(execCtx)
+		ctx = context.WithValue(ctx, virtualtools.ExecutePredefinedSubAgentKey, executePredefinedFunc)
+
+		// Inject execute_generic_agent function
+		executeGenericFunc := hcpo.createExecuteGenericAgentFunc(execCtx)
+		ctx = context.WithValue(ctx, virtualtools.ExecuteGenericAgentKey, executeGenericFunc)
+
+		// Inject mark_step_complete function
+		markCompleteFunc := hcpo.createMarkStepCompleteFunc(execCtx)
+		ctx = context.WithValue(ctx, virtualtools.MarkStepCompleteKey, markCompleteFunc)
+
+		// Inject predefined routes for route lookup
+		if execCtx.TodoTaskStep != nil {
+			ctx = context.WithValue(ctx, virtualtools.PredefinedRoutesKey, execCtx.TodoTaskStep.PredefinedRoutes)
+		}
+
+		// Call original executor with enriched context
+		return originalExecutor(ctx, args)
+	}
+}
+
+// createExecutePredefinedSubAgentFunc creates a function that executes predefined sub-agents
+// This function is injected into context for the call_sub_agent tool to use
+func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
+	execCtx *SubAgentExecutionContext,
+) virtualtools.ExecutePredefinedSubAgentFunc {
+	return func(ctx context.Context, routeID, todoID, instructions, successCriteria string) (string, error) {
+		hcpo.GetLogger().Info(fmt.Sprintf("🤖 [TOOL] Executing predefined sub-agent via tool: route=%s, todo=%s", routeID, todoID))
+
+		// Build a TodoTaskResponse to reuse existing execution logic
+		response := &TodoTaskResponse{
+			NextAction:                 "delegate",
+			SelectedRouteID:            routeID,
+			TodoIDToExecute:            todoID,
+			InstructionsToSubAgent:     instructions,
+			SuccessCriteriaForSubAgent: successCriteria,
+		}
+
+		// Execute using existing method
+		result, err := hcpo.executePredefinedSubAgent(
+			ctx,
+			execCtx.TodoTaskStep,
+			execCtx.StepIndex,
+			execCtx.StepPath,
+			response,
+			execCtx.AllSteps,
+			execCtx.Progress,
+		)
+
+		if err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [TOOL] Predefined sub-agent execution failed: %v", err))
+			return fmt.Sprintf("ERROR: %v", err), nil // Return error as result, not as error (agent can handle)
+		}
+
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ [TOOL] Predefined sub-agent completed successfully: route=%s, todo=%s", routeID, todoID))
+		return result, nil
+	}
+}
+
+// createExecuteGenericAgentFunc creates a function that executes generic agents
+// This function is injected into context for the call_generic_agent tool to use
+func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
+	execCtx *SubAgentExecutionContext,
+) virtualtools.ExecuteGenericAgentFunc {
+	return func(ctx context.Context, todoID, instructions, successCriteria string) (string, error) {
+		hcpo.GetLogger().Info(fmt.Sprintf("🤖 [TOOL] Executing generic agent via tool: todo=%s", todoID))
+
+		// Load the current todos file to find the todo item
+		var todosFilePath string
+		if hcpo.selectedRunFolder != "" {
+			todosFilePath = filepath.Join("runs", hcpo.selectedRunFolder, "execution", execCtx.StepPath, "todos.json")
+		} else {
+			todosFilePath = filepath.Join("execution", execCtx.StepPath, "todos.json")
+		}
+
+		todoFile, err := hcpo.loadOrCreateTodosFile(ctx, todosFilePath, execCtx.TodoTaskStep)
+		if err != nil {
+			return "", fmt.Errorf("failed to load todos file: %w", err)
+		}
+
+		// Build a TodoTaskResponse to reuse existing execution logic
+		response := &TodoTaskResponse{
+			NextAction:                 "delegate",
+			UseGenericAgent:            true,
+			TodoIDToExecute:            todoID,
+			InstructionsToSubAgent:     instructions,
+			SuccessCriteriaForSubAgent: successCriteria,
+		}
+
+		// Execute using existing method
+		result, err := hcpo.executeGenericAgent(
+			ctx,
+			execCtx.TodoTaskStep,
+			execCtx.StepIndex,
+			execCtx.StepPath,
+			response,
+			todoFile,
+			execCtx.AllSteps,
+			execCtx.Progress,
+		)
+
+		if err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [TOOL] Generic agent execution failed: %v", err))
+			return fmt.Sprintf("ERROR: %v", err), nil // Return error as result, not as error (agent can handle)
+		}
+
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ [TOOL] Generic agent completed successfully: todo=%s", todoID))
+		return result, nil
+	}
+}
+
+// createMarkStepCompleteFunc creates a function that marks the step as complete
+// This function is injected into context for the mark_step_complete tool to use
+func (hcpo *StepBasedWorkflowOrchestrator) createMarkStepCompleteFunc(
+	execCtx *SubAgentExecutionContext,
+) virtualtools.MarkStepCompleteFunc {
+	return func(ctx context.Context, reason string) error {
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ [TOOL] Step marked complete via tool: %s", reason))
+
+		// Set the completion flag and reason on the execution context
+		execCtx.StepCompleted = true
+		execCtx.CompletionReason = reason
+
+		return nil
+	}
 }
 
 // selectEvaluationScoringLLM selects the LLM config for evaluation scoring agents

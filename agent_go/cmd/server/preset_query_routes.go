@@ -31,6 +31,11 @@ func createPresetQueryHandler(db database.Database) http.HandlerFunc {
 			return
 		}
 
+		if err := req.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
 		preset, err := db.CreatePresetQuery(r.Context(), &req)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -119,6 +124,11 @@ func updatePresetQueryHandler(db database.Database) http.HandlerFunc {
 
 		var req database.UpdatePresetQueryRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if err := req.Validate(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

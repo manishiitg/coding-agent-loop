@@ -11,6 +11,11 @@ import {
   type WorkflowProgressEventData,
   type WorkflowEndEventData,
   type PrerequisiteNavigationEvent,
+  type TodoTaskRouteSelectedEvent,
+  type TodoTaskItemCreatedEvent,
+  type TodoTaskItemUpdatedEvent,
+  type TodoTaskItemCompletedEvent,
+  type TodoTaskStepCompletedEvent,
 } from '../../generated/event-types'
 
 // Import from the new organized component structure
@@ -65,7 +70,12 @@ import {
   StepProgressUpdatedEventDisplay,
   DecisionEvaluatedEventDisplay,
   PreValidationCompletedEventDisplay,
-  PrerequisiteNavigationEventDisplay
+  PrerequisiteNavigationEventDisplay,
+  TodoTaskRouteSelectedEventDisplay,
+  TodoTaskItemCreatedEventDisplay,
+  TodoTaskItemUpdatedEventDisplay,
+  TodoTaskItemCompletedEventDisplay,
+  TodoTaskStepCompletedEventDisplay
 } from './orchestrator'
 import { StepTokenUsageEventDisplay } from './orchestrator/StepTokenUsageEvent'
 import { VariablesExtractedEventDisplay } from './orchestrator/VariablesExtractedEvent'
@@ -75,7 +85,9 @@ import {
   WorkflowProgressEvent,
   WorkflowEndEvent,
   BatchGroupStartEvent,
-  BatchGroupEndEvent
+  BatchGroupEndEvent,
+  BatchExecutionStartEventDisplay,
+  BatchExecutionEndEventDisplay
 } from './workflow'
 
 import {
@@ -383,6 +395,179 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'batch_group_end')) {
     return <CompactWrapper><BatchGroupEndEvent event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
+  if (isEventType(event, 'batch_execution_start')) {
+    return <CompactWrapper><BatchExecutionStartEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+  }
+  if (isEventType(event, 'batch_execution_end')) {
+    return <CompactWrapper><BatchExecutionEndEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+  }
+
+  // Todo Task Events
+  if (isEventType(event, 'todo_task_route_selected')) {
+    const data = getEventData(event) as TodoTaskRouteSelectedEvent
+    const actionColors: Record<string, string> = {
+      delegate: 'text-blue-600 dark:text-blue-400',
+      complete: 'text-green-600 dark:text-green-400',
+      continue: 'text-yellow-600 dark:text-yellow-400',
+    }
+    return (
+      <CompactWrapper>
+        <div className={`bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg ${compact ? 'p-2' : 'p-3'}`}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-lg">📋</span>
+            <span className={`font-medium ${compact ? 'text-xs' : 'text-sm'} text-purple-700 dark:text-purple-300`}>
+              Todo Task: Route Selected
+            </span>
+            {data.iteration && (
+              <span className={`${compact ? 'text-[10px]' : 'text-xs'} bg-purple-200 dark:bg-purple-800 px-1.5 py-0.5 rounded text-purple-700 dark:text-purple-300`}>
+                Iteration {data.iteration}
+              </span>
+            )}
+          </div>
+          <div className={`space-y-1 ${compact ? 'text-xs' : 'text-sm'}`}>
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 dark:text-gray-400">Action:</span>
+              <span className={`font-medium ${actionColors[data.next_action || ''] || 'text-gray-700 dark:text-gray-300'}`}>
+                {data.next_action || 'unknown'}
+              </span>
+            </div>
+            {data.selected_route_name && (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500 dark:text-gray-400">Agent:</span>
+                <span className="text-purple-600 dark:text-purple-400">{data.selected_route_name}</span>
+              </div>
+            )}
+            {data.use_generic_agent && (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500 dark:text-gray-400">Agent:</span>
+                <span className="text-purple-600 dark:text-purple-400">Generic Agent</span>
+              </div>
+            )}
+            {data.todo_title && (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500 dark:text-gray-400">Todo:</span>
+                <span className="text-gray-700 dark:text-gray-300">{data.todo_title}</span>
+              </div>
+            )}
+            {data.progress_summary && (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500 dark:text-gray-400">Progress:</span>
+                <span className="text-gray-700 dark:text-gray-300">{data.progress_summary}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </CompactWrapper>
+    )
+  }
+
+  if (isEventType(event, 'todo_task_item_created')) {
+    const data = getEventData(event) as TodoTaskItemCreatedEvent
+    return (
+      <CompactWrapper>
+        <div className={`bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg ${compact ? 'p-2' : 'p-3'}`}>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-lg">➕</span>
+            <span className={`font-medium ${compact ? 'text-xs' : 'text-sm'} text-green-700 dark:text-green-300`}>
+              Todo Created: {data.title}
+            </span>
+            {data.priority && (
+              <span className={`${compact ? 'text-[10px]' : 'text-xs'} px-1.5 py-0.5 rounded ${
+                data.priority === 'high' ? 'bg-red-200 dark:bg-red-800 text-red-700 dark:text-red-300' :
+                data.priority === 'medium' ? 'bg-yellow-200 dark:bg-yellow-800 text-yellow-700 dark:text-yellow-300' :
+                'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
+              }`}>
+                {data.priority}
+              </span>
+            )}
+          </div>
+          {data.description && (
+            <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-green-600 dark:text-green-400 mt-1`}>
+              {data.description}
+            </div>
+          )}
+        </div>
+      </CompactWrapper>
+    )
+  }
+
+  if (isEventType(event, 'todo_task_item_updated')) {
+    const data = getEventData(event) as TodoTaskItemUpdatedEvent
+    return (
+      <CompactWrapper>
+        <div className={`bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg ${compact ? 'p-2' : 'p-3'}`}>
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🔄</span>
+            <span className={`font-medium ${compact ? 'text-xs' : 'text-sm'} text-blue-700 dark:text-blue-300`}>
+              Todo Updated: {data.title}
+            </span>
+            <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-gray-500 dark:text-gray-400`}>
+              {data.old_status} → {data.new_status}
+            </span>
+          </div>
+          {data.notes && (
+            <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-blue-600 dark:text-blue-400 mt-1`}>
+              {data.notes}
+            </div>
+          )}
+        </div>
+      </CompactWrapper>
+    )
+  }
+
+  if (isEventType(event, 'todo_task_item_completed')) {
+    const data = getEventData(event) as TodoTaskItemCompletedEvent
+    return (
+      <CompactWrapper>
+        <div className={`bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg ${compact ? 'p-2' : 'p-3'}`}>
+          <div className="flex items-center gap-2">
+            <span className="text-lg">✅</span>
+            <span className={`font-medium ${compact ? 'text-xs' : 'text-sm'} text-green-700 dark:text-green-300`}>
+              Todo Completed: {data.title}
+            </span>
+          </div>
+          {data.result && (
+            <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-green-600 dark:text-green-400 mt-1`}>
+              {data.result}
+            </div>
+          )}
+        </div>
+      </CompactWrapper>
+    )
+  }
+
+  if (isEventType(event, 'todo_task_step_completed')) {
+    const data = getEventData(event) as TodoTaskStepCompletedEvent
+    return (
+      <CompactWrapper>
+        <div className={`bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg ${compact ? 'p-2' : 'p-3'}`}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-lg">🎉</span>
+            <span className={`font-medium ${compact ? 'text-xs' : 'text-sm'} text-purple-700 dark:text-purple-300`}>
+              Todo Task Step Completed: {data.step_title}
+            </span>
+          </div>
+          <div className={`space-y-1 ${compact ? 'text-xs' : 'text-sm'}`}>
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 dark:text-gray-400">Todos:</span>
+              <span className="text-purple-600 dark:text-purple-400">
+                {data.completed_count}/{data.total_todos_count} completed
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 dark:text-gray-400">Iterations:</span>
+              <span className="text-purple-600 dark:text-purple-400">{data.total_iterations}</span>
+            </div>
+            {data.completion_reason && (
+              <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-gray-600 dark:text-gray-400 italic mt-1`}>
+                {data.completion_reason}
+              </div>
+            )}
+          </div>
+        </div>
+      </CompactWrapper>
+    )
+  }
 
   // Debug Events
   if (isEventType(event, 'token_usage')) {
@@ -564,6 +749,58 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     return (
       <CompactWrapper>
         <DecisionEvaluatedEventDisplay 
+          event={getEventData(event)} 
+          compact={compact}
+        />
+      </CompactWrapper>
+    )
+  }
+
+  // Todo Task Events
+  if (isEventType(event, 'todo_task_route_selected')) {
+    return (
+      <CompactWrapper>
+        <TodoTaskRouteSelectedEventDisplay 
+          event={getEventData(event)} 
+          compact={compact}
+        />
+      </CompactWrapper>
+    )
+  }
+  if (isEventType(event, 'todo_task_item_created')) {
+    return (
+      <CompactWrapper>
+        <TodoTaskItemCreatedEventDisplay 
+          event={getEventData(event)} 
+          compact={compact}
+        />
+      </CompactWrapper>
+    )
+  }
+  if (isEventType(event, 'todo_task_item_updated')) {
+    return (
+      <CompactWrapper>
+        <TodoTaskItemUpdatedEventDisplay 
+          event={getEventData(event)} 
+          compact={compact}
+        />
+      </CompactWrapper>
+    )
+  }
+  if (isEventType(event, 'todo_task_item_completed')) {
+    return (
+      <CompactWrapper>
+        <TodoTaskItemCompletedEventDisplay 
+          event={getEventData(event)} 
+          compact={compact}
+        />
+      </CompactWrapper>
+    )
+  }
+  if (isEventType(event, 'todo_task_step_completed')) {
+    return (
+      <CompactWrapper>
+        <TodoTaskStepCompletedEventDisplay 
           event={getEventData(event)} 
           compact={compact}
         />

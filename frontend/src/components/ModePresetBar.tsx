@@ -113,7 +113,8 @@ export const ModePresetBar: React.FC = () => {
     llmConfig?: PresetLLMConfig,
     useCodeExecutionMode?: boolean,
     enableContextSummarization?: boolean,
-    useToolSearchMode?: boolean
+    useToolSearchMode?: boolean,
+    enableBrowserAccess?: boolean
   ) => {
     try {
       // Use consolidated savePreset function - pass id if editing, undefined if creating
@@ -129,7 +130,8 @@ export const ModePresetBar: React.FC = () => {
         useCodeExecutionMode,
         editingPreset?.id,
         enableContextSummarization,
-        useToolSearchMode
+        useToolSearchMode,
+        enableBrowserAccess
       )
       
       // Apply the preset immediately if it's a new one

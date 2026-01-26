@@ -254,7 +254,13 @@ export const StepLegend: React.FC<StepLegendProps> = ({
     return result
   }, [plan, nodes])
 
-  // Check learnings existence for all steps when workspacePath or allSteps change
+  // Generate a stable key for allSteps to prevent infinite loops in useEffect
+  // The allSteps array is recreated on every render because it depends on 'nodes' from parent
+  const allStepsKey = useMemo(() => {
+    return allSteps.map(s => s.step.id).join(',')
+  }, [allSteps])
+
+  // Check learnings existence for all steps when workspacePath or step list changes
   useEffect(() => {
     if (!workspacePath || allSteps.length === 0) {
       setLearningsExistCache(new Map())
@@ -309,7 +315,7 @@ export const StepLegend: React.FC<StepLegendProps> = ({
         return newCache
       })
     })
-  }, [workspacePath, allSteps, learningsExistCache])
+  }, [workspacePath, allStepsKey]) // Depend on stable key instead of allSteps object
 
   const handleStepClick = useCallback((nodeId: string) => {
     onStepClick(nodeId)

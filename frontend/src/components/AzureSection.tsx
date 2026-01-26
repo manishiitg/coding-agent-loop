@@ -206,7 +206,7 @@ export function AzureSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, api
 
       if (testResult.valid) {
         // Check if backend returned a corrected/optimized endpoint
-        const finalEndpoint = testResult.correctedOptions?.endpoint || endpoint
+        const finalEndpoint = (testResult.correctedOptions?.endpoint as string) || endpoint
         const finalModelId = (testResult.correctedOptions?.model_id as string) || config.model_id
 
         // If endpoint was corrected, update the UI state and show message

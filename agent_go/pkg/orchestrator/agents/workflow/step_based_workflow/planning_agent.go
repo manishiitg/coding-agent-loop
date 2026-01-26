@@ -40,7 +40,8 @@ var planningUpdateSystemTemplate = MustRegisterTemplate("planningUpdateSystem", 
 - **Regular**: Standard task. 'context_output' is the result file.
 - **Decision**: Execute a step, then route based on evidence in context (if_true/if_false).
 - **Conditional**: Inspection-only branch (no execution).
-- **Orchestration**: Iterative routing between sub-agents until success.
+- **Orchestration**: Iterative routing between sub-agents until success criteria met.
+- **Todo Task**: Manages a dynamic todo list with trackable tasks. Main orchestrator creates/assigns tasks, then delegates to predefined sub-agents (with learning) or generic agent (no learning). Use when: work can be broken into trackable tasks, multiple specialized agents needed, or detailed progress tracking required.
 - **Loop**: Repeat until criteria met (polled progress).
 
 {{if eq .UseKnowledgebase "true"}}### 📁 Persistent Storage (Knowledgebase)
@@ -321,6 +322,7 @@ const (
 	StepTypeDecision      StepType = "decision"
 	StepTypeOrchestration StepType = "orchestration"
 	StepTypeHumanInput    StepType = "human_input"
+	StepTypeTodoTask      StepType = "todo_task"
 )
 
 // CommonStepFields contains fields shared by all step types
@@ -825,6 +827,207 @@ func (h *HumanInputPlanStep) MarshalJSON() ([]byte, error) {
 	return json.Marshal((*Alias)(h))
 }
 
+// TodoTaskPlanStep represents a todo task orchestrator step that manages a dynamic todo list
+// It combines predefined sub-agents (with learning/prevalidation) and an optional generic execution agent
+// The main orchestrator creates/assigns tasks, then delegates to appropriate agents
+// NOTE: Todo task steps are orchestration-like wrappers that manage todo lists instead of success criteria.
+// Loops are NOT supported on todo task wrappers - the step completes when all todos are done.
+type TodoTaskPlanStep struct {
+	Type               StepType                 `json:"type"`                            // Always "todo_task" - required for JSON marshaling/unmarshaling
+	ID                 string                   `json:"id"`                              // Stable step ID - required for identification
+	Title              string                   `json:"title"`                           // Display title for the todo task step wrapper
+	TodoTaskStep       PlanStepInterface        `json:"todo_task_step,omitempty"`        // The main orchestrator step metadata (Description, SuccessCriteria, etc.)
+	PredefinedRoutes   []PlanOrchestrationRoute `json:"predefined_routes,omitempty"`     // Predefined sub-agents (with learning/prevalidation)
+	EnableGenericAgent bool                     `json:"enable_generic_agent,omitempty"`  // Allow generic execution agent (no learning/prevalidation)
+	NextStepID         string                   `json:"next_step_id,omitempty"`          // ID of step after todo task completes (or "end")
+	TodoTaskResponse   *TodoTaskResponse        `json:"-"`                               // runtime: stores orchestrator decisions - not stored in plan.json
+	AgentConfigs       *AgentConfigs            `json:"-"`                               // runtime: per-agent configuration - not stored in plan.json
+}
+
+// TodoTaskResponse represents the structured output from the TodoTask orchestrator agent
+type TodoTaskResponse struct {
+	// Task management (via tools, not structured output - these are for reference)
+	TasksCreated   []string `json:"tasks_created,omitempty"`   // IDs of tasks created this turn
+	TasksUpdated   []string `json:"tasks_updated,omitempty"`   // IDs of tasks updated this turn
+	TasksCompleted []string `json:"tasks_completed,omitempty"` // IDs of tasks completed this turn
+
+	// Agent assignment decision
+	NextAction      string `json:"next_action"`                 // "delegate", "complete", "continue"
+	SelectedRouteID string `json:"selected_route_id,omitempty"` // Route ID for predefined agent
+	UseGenericAgent bool   `json:"use_generic_agent,omitempty"` // Use generic agent instead
+
+	// Delegation instructions
+	TodoIDToExecute            string `json:"todo_id_to_execute,omitempty"`             // Which todo to work on
+	InstructionsToSubAgent     string `json:"instructions_to_sub_agent,omitempty"`      // Detailed instructions
+	SuccessCriteriaForSubAgent string `json:"success_criteria_for_sub_agent,omitempty"` // Measurable criteria
+
+	// Overall status
+	AllTasksComplete bool   `json:"all_tasks_complete"`  // True when all todos are completed
+	ProgressSummary  string `json:"progress_summary"`    // Human-readable progress
+	CompletionReason string `json:"completion_reason,omitempty"` // Why the step is complete
+}
+
+// Implement PlanStepInterface for TodoTaskPlanStep
+func (t *TodoTaskPlanStep) GetID() string    { return t.ID }
+func (t *TodoTaskPlanStep) GetTitle() string { return t.Title }
+func (t *TodoTaskPlanStep) GetDescription() string {
+	if t.TodoTaskStep != nil {
+		return t.TodoTaskStep.GetDescription()
+	}
+	return ""
+}
+func (t *TodoTaskPlanStep) GetSuccessCriteria() string {
+	if t.TodoTaskStep != nil {
+		return t.TodoTaskStep.GetSuccessCriteria()
+	}
+	return ""
+}
+func (t *TodoTaskPlanStep) GetContextDependencies() []string {
+	if t.TodoTaskStep != nil {
+		return t.TodoTaskStep.GetContextDependencies()
+	}
+	return nil
+}
+func (t *TodoTaskPlanStep) GetContextOutput() FlexibleContextOutput {
+	if t.TodoTaskStep != nil {
+		return t.TodoTaskStep.GetContextOutput()
+	}
+	return ""
+}
+func (t *TodoTaskPlanStep) GetEnablePrerequisiteDetection() *bool {
+	return nil // Not supported on todo task wrappers
+}
+func (t *TodoTaskPlanStep) GetPrerequisiteRules() []PrerequisiteRule {
+	return nil // Not supported on todo task wrappers
+}
+func (t *TodoTaskPlanStep) GetValidationSchema() *ValidationSchema {
+	if t.TodoTaskStep != nil {
+		return t.TodoTaskStep.GetValidationSchema()
+	}
+	return nil
+}
+func (t *TodoTaskPlanStep) StepType() StepType { return StepTypeTodoTask }
+func (t *TodoTaskPlanStep) GetCommonFields() CommonStepFields {
+	return CommonStepFields{
+		ID:                          t.ID,
+		Title:                       t.Title,
+		Description:                 t.GetDescription(),
+		SuccessCriteria:             t.GetSuccessCriteria(),
+		ContextDependencies:         t.GetContextDependencies(),
+		ContextOutput:               t.GetContextOutput(),
+		EnablePrerequisiteDetection: nil,
+		PrerequisiteRules:           nil,
+		ValidationSchema:            t.GetValidationSchema(),
+	}
+}
+
+// MarshalJSON ensures the type field is always set when marshaling TodoTaskPlanStep
+func (t *TodoTaskPlanStep) MarshalJSON() ([]byte, error) {
+	// Ensure type is set
+	t.Type = StepTypeTodoTask
+
+	type todoTaskJSON struct {
+		Type               StepType                 `json:"type"`
+		ID                 string                   `json:"id"`
+		Title              string                   `json:"title"`
+		TodoTaskStep       json.RawMessage          `json:"todo_task_step,omitempty"`
+		PredefinedRoutes   []PlanOrchestrationRoute `json:"predefined_routes,omitempty"`
+		EnableGenericAgent bool                     `json:"enable_generic_agent,omitempty"`
+		NextStepID         string                   `json:"next_step_id,omitempty"`
+	}
+
+	result := todoTaskJSON{
+		Type:               t.Type,
+		ID:                 t.ID,
+		Title:              t.Title,
+		PredefinedRoutes:   t.PredefinedRoutes,
+		EnableGenericAgent: t.EnableGenericAgent,
+		NextStepID:         t.NextStepID,
+	}
+
+	// Marshal TodoTaskStep if it exists
+	if t.TodoTaskStep != nil {
+		stepJSON, err := json.Marshal(t.TodoTaskStep)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal todo_task_step: %w", err)
+		}
+		result.TodoTaskStep = stepJSON
+	} else {
+		result.TodoTaskStep = []byte("null")
+	}
+
+	return json.Marshal(result)
+}
+
+// UnmarshalJSON implements custom unmarshaling for TodoTaskPlanStep
+// This is needed to properly handle nested todo_task_step and predefined_routes[].sub_agent_step
+func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
+	// First, unmarshal into a temporary struct to extract nested steps as raw JSON
+	var temp struct {
+		Type             StepType        `json:"type"`
+		ID               string          `json:"id"`
+		Title            string          `json:"title"`
+		TodoTaskStep     json.RawMessage `json:"todo_task_step,omitempty"`
+		PredefinedRoutes []struct {
+			RouteID       string          `json:"route_id"`
+			RouteName     string          `json:"route_name"`
+			Condition     string          `json:"condition"`
+			SubAgentStep  json.RawMessage `json:"sub_agent_step"`
+			ContextToPass string          `json:"context_to_pass,omitempty"`
+		} `json:"predefined_routes,omitempty"`
+		EnableGenericAgent bool   `json:"enable_generic_agent,omitempty"`
+		NextStepID         string `json:"next_step_id,omitempty"`
+	}
+
+	if err := json.Unmarshal(data, &temp); err != nil {
+		return fmt.Errorf("failed to unmarshal todo_task step: %w", err)
+	}
+
+	// Copy basic fields
+	t.Type = temp.Type
+	t.ID = temp.ID
+	t.Title = temp.Title
+	t.EnableGenericAgent = temp.EnableGenericAgent
+	t.NextStepID = temp.NextStepID
+
+	// Unmarshal nested todo_task_step
+	if len(temp.TodoTaskStep) > 0 && string(temp.TodoTaskStep) != "null" {
+		step, err := unmarshalStepFromJSON(temp.TodoTaskStep)
+		if err != nil {
+			return fmt.Errorf("failed to unmarshal todo_task_step: %w", err)
+		}
+		t.TodoTaskStep = step
+	} else {
+		t.TodoTaskStep = nil
+	}
+
+	// Unmarshal predefined_routes with nested sub_agent_step
+	if len(temp.PredefinedRoutes) > 0 {
+		t.PredefinedRoutes = make([]PlanOrchestrationRoute, len(temp.PredefinedRoutes))
+		for i, route := range temp.PredefinedRoutes {
+			t.PredefinedRoutes[i].RouteID = route.RouteID
+			t.PredefinedRoutes[i].RouteName = route.RouteName
+			t.PredefinedRoutes[i].Condition = route.Condition
+			t.PredefinedRoutes[i].ContextToPass = route.ContextToPass
+
+			// Unmarshal nested sub_agent_step
+			if len(route.SubAgentStep) > 0 && string(route.SubAgentStep) != "null" {
+				step, err := unmarshalStepFromJSON(route.SubAgentStep)
+				if err != nil {
+					return fmt.Errorf("failed to unmarshal sub_agent_step in predefined route %d: %w", i, err)
+				}
+				t.PredefinedRoutes[i].SubAgentStep = step
+			} else {
+				t.PredefinedRoutes[i].SubAgentStep = nil
+			}
+		}
+	} else {
+		t.PredefinedRoutes = nil
+	}
+
+	return nil
+}
+
 // UnmarshalJSON implements custom unmarshaling for OrchestrationPlanStep
 // This is needed to properly handle nested orchestration_step and orchestration_routes[].sub_agent_step
 func (o *OrchestrationPlanStep) UnmarshalJSON(data []byte) error {
@@ -924,7 +1127,7 @@ func (pr *PlanningResponse) UnmarshalJSON(data []byte) error {
 		}
 
 		if stepWithType.Type == "" {
-			return fmt.Errorf("step %d is missing required 'type' field (must be: regular, conditional, decision, orchestration, or human_input)", i)
+			return fmt.Errorf("step %d is missing required 'type' field (must be: regular, conditional, decision, orchestration, human_input, or todo_task)", i)
 		}
 
 		// Unmarshal based on type
@@ -960,8 +1163,14 @@ func (pr *PlanningResponse) UnmarshalJSON(data []byte) error {
 				return fmt.Errorf("failed to parse human_input step %d: %w", i, err)
 			}
 			typedStep = &step
+		case "todo_task":
+			var step TodoTaskPlanStep
+			if err := json.Unmarshal(stepData, &step); err != nil {
+				return fmt.Errorf("failed to parse todo_task step %d: %w", i, err)
+			}
+			typedStep = &step
 		default:
-			return fmt.Errorf("unknown step type %q in step %d (must be: regular, conditional, decision, orchestration, or human_input)", stepWithType.Type, i)
+			return fmt.Errorf("unknown step type %q in step %d (must be: regular, conditional, decision, orchestration, human_input, or todo_task)", stepWithType.Type, i)
 		}
 
 		pr.Steps[i] = typedStep
@@ -2004,6 +2213,105 @@ func getAddHumanInputStepSchema() string {
 	}`
 }
 
+// getAddTodoTaskStepSchema returns the JSON schema for add_todo_task_step tool
+func getAddTodoTaskStepSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"id": {
+				"type": "string",
+				"description": "REQUIRED: Stable step ID for this todo task step. Generate a unique, URL-friendly ID based on the step title (e.g., 'process-data-tasks' from 'Process Data Tasks')."
+			},
+			"title": {
+				"type": "string",
+				"description": "REQUIRED: Short, clear title for the todo task step"
+			},
+			"todo_task_step": {
+				"type": "object",
+				"description": "REQUIRED: The main todo task orchestrator step metadata. This provides the overall context for the todo task management.",
+				"properties": {
+					"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular' for the inner orchestrator step."},
+					"id": {"type": "string", "description": "REQUIRED: Stable step ID for the todo task orchestrator step"},
+					"title": {"type": "string", "description": "REQUIRED: Title of the todo task orchestrator step"},
+					"description": {"type": "string", "description": "REQUIRED: Description of the overall objective - the orchestrator will break this into tasks"},
+					"success_criteria": {"type": "string", "description": "REQUIRED: How to verify the overall objective is complete (all todos done)"},
+					"context_dependencies": {"type": "array", "items": {"type": "string"}, "description": "REQUIRED: List of context files from previous steps. Use empty array [] if no dependencies."},
+					"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create with final summary."},
+					"has_loop": {"type": "boolean", "description": "REQUIRED: Always set to false for todo task steps."}
+				},
+				"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output"]
+			},
+			"predefined_routes": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"route_id": {
+							"type": "string",
+							"description": "REQUIRED: Unique ID for this predefined route (e.g., 'api-fetcher', 'data-transformer')"
+						},
+						"route_name": {
+							"type": "string",
+							"description": "REQUIRED: Human-readable name for this route (e.g., 'API Data Fetcher', 'Data Transformer')"
+						},
+						"condition": {
+							"type": "string",
+							"description": "REQUIRED: Description of when to use this predefined agent (e.g., 'For tasks requiring API calls', 'For data transformation tasks')"
+						},
+						"sub_agent_step": {
+							"type": "object",
+							"description": "REQUIRED: The sub-agent step definition. This agent has learning and prevalidation.",
+							"properties": {
+								"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular' for sub-agent steps."},
+								"id": {"type": "string", "description": "REQUIRED: Stable step ID for the sub-agent step"},
+								"title": {"type": "string", "description": "REQUIRED: Title of the sub-agent step"},
+								"description": {"type": "string", "description": "REQUIRED: Description of what this specialized agent does"},
+								"success_criteria": {"type": "string", "description": "REQUIRED: How to verify sub-agent completed successfully"},
+								"context_dependencies": {"type": "array", "items": {"type": "string"}},
+								"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create."},
+								"has_loop": {"type": "boolean", "description": "REQUIRED: Always set to false."},
+								"validation_schema": {
+									"type": "object",
+									"description": "REQUIRED: Validation schema for the sub-agent output",
+									"properties": {
+										"files": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"file_name": {"type": "string"},
+													"must_exist": {"type": "boolean"},
+													"json_checks": {"type": "array", "items": {"type": "object"}}
+												}
+											}
+										}
+									}
+								}
+							},
+							"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output", "validation_schema"]
+						}
+					},
+					"required": ["route_id", "route_name", "condition", "sub_agent_step"]
+				},
+				"description": "OPTIONAL: Array of predefined routes for specialized sub-agents. These agents have learning and prevalidation. Use for tasks that benefit from specialized handling and accumulated learnings."
+			},
+			"enable_generic_agent": {
+				"type": "boolean",
+				"description": "REQUIRED: Whether to enable the generic execution agent for ad-hoc tasks. The generic agent has workspace tools only (no MCP), no learning, and no prevalidation. Set to true for simple, one-off tasks that don't need specialized handling. Set to false if all tasks should use predefined routes only."
+			},
+			"next_step_id": {
+				"type": "string",
+				"description": "REQUIRED: ID of step to connect to after all todos are complete, or 'end' to end the workflow."
+			},
+			"insert_after_step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string to insert at the beginning."
+			}
+		},
+		"required": ["id", "title", "todo_task_step", "enable_generic_agent", "next_step_id", "insert_after_step_id"]
+	}`
+}
+
 // getConvertStepToConditionalSchema returns the JSON schema for convert_step_to_conditional tool
 func getConvertStepToConditionalSchema() string {
 	return `{
@@ -2951,6 +3259,12 @@ func convertMapToStep(stepMap map[string]interface{}) (PlanStepInterface, error)
 			return nil, fmt.Errorf("failed to parse human_input step: %w", err)
 		}
 		typedStep = &step
+	case "todo_task":
+		var step TodoTaskPlanStep
+		if err := json.Unmarshal(stepJSON, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse todo_task step: %w", err)
+		}
+		typedStep = &step
 	default:
 		return nil, fmt.Errorf("unknown step type %q", stepType)
 	}
@@ -2969,39 +3283,60 @@ func unmarshalStepFromJSON(stepData json.RawMessage) (PlanStepInterface, error) 
 		return nil, fmt.Errorf("failed to parse step type: %w", err)
 	}
 
-	if stepWithType.Type == "" {
-		return nil, fmt.Errorf("step is missing required 'type' field (must be: regular, conditional, decision, or orchestration)")
+	// Default to "regular" type if not specified (common for sub_agent_steps in routes)
+	stepType := stepWithType.Type
+	if stepType == "" {
+		stepType = "regular"
 	}
 
 	// Unmarshal based on type
 	var typedStep PlanStepInterface
-	switch stepWithType.Type {
+	switch stepType {
 	case "regular":
 		var step RegularPlanStep
 		if err := json.Unmarshal(stepData, &step); err != nil {
 			return nil, fmt.Errorf("failed to parse regular step: %w", err)
 		}
+		// Ensure Type field is set (may be empty if not in JSON)
+		step.Type = StepTypeRegular
 		typedStep = &step
 	case "conditional":
 		var step ConditionalPlanStep
 		if err := json.Unmarshal(stepData, &step); err != nil {
 			return nil, fmt.Errorf("failed to parse conditional step: %w", err)
 		}
+		step.Type = StepTypeConditional
 		typedStep = &step
 	case "decision":
 		var step DecisionPlanStep
 		if err := json.Unmarshal(stepData, &step); err != nil {
 			return nil, fmt.Errorf("failed to parse decision step: %w", err)
 		}
+		step.Type = StepTypeDecision
 		typedStep = &step
 	case "orchestration":
 		var step OrchestrationPlanStep
 		if err := json.Unmarshal(stepData, &step); err != nil {
 			return nil, fmt.Errorf("failed to parse orchestration step: %w", err)
 		}
+		step.Type = StepTypeOrchestration
+		typedStep = &step
+	case "human_input":
+		var step HumanInputPlanStep
+		if err := json.Unmarshal(stepData, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse human_input step: %w", err)
+		}
+		step.Type = StepTypeHumanInput
+		typedStep = &step
+	case "todo_task":
+		var step TodoTaskPlanStep
+		if err := json.Unmarshal(stepData, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse todo_task step: %w", err)
+		}
+		step.Type = StepTypeTodoTask
 		typedStep = &step
 	default:
-		return nil, fmt.Errorf("unknown step type %q (must be: regular, conditional, decision, or orchestration)", stepWithType.Type)
+		return nil, fmt.Errorf("unknown step type %q (must be: regular, conditional, decision, orchestration, human_input, or todo_task)", stepType)
 	}
 
 	return typedStep, nil
@@ -4947,6 +5282,11 @@ func createAddHumanInputStepExecutor(workspacePath string, logger loggerv2.Logge
 	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "human_input", unlockLearningsFunc)
 }
 
+// createAddTodoTaskStepExecutor creates an executor function for add_todo_task_step tool
+func createAddTodoTaskStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
+	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "todo_task", unlockLearningsFunc)
+}
+
 // validateDecisionStepFieldsTyped validates that a DecisionPlanStep has all required fields
 // Returns an error message suitable for returning as a tool response if validation fails
 // DecisionPlanStep is now flattened - fields are directly on the step
@@ -4992,6 +5332,40 @@ func validateOrchestrationStepFieldsTyped(step *OrchestrationPlanStep) error {
 	}
 	if step.NextStepID == "" {
 		return fmt.Errorf("step (title: %q, ID: %s) has orchestration step type but is missing required next_step_id field. Please provide the ID of the step to connect to after orchestration completes, or 'end' to terminate the workflow", step.Title, step.ID)
+	}
+	return nil
+}
+
+// validateTodoTaskStepFieldsTyped validates that a TodoTaskPlanStep has all required fields
+// Returns an error message suitable for returning as a tool response if validation fails
+func validateTodoTaskStepFieldsTyped(step *TodoTaskPlanStep) error {
+	if step.TodoTaskStep == nil {
+		return fmt.Errorf("step (title: %q, ID: %s) has todo_task step type but is missing required todo_task_step field. Please provide the todo_task_step object with all required fields (id, title, description, success_criteria, has_loop, context_output)", step.Title, step.ID)
+	}
+	if step.TodoTaskStep.GetID() == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) has todo_task_step with missing required ID field. Please provide an ID for the todo_task_step", step.Title, step.ID)
+	}
+	if step.TodoTaskStep.GetDescription() == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) has todo_task_step with missing required description field. Please provide a description for the todo_task_step", step.Title, step.ID)
+	}
+	if step.TodoTaskStep.GetSuccessCriteria() == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) has todo_task_step with missing required success_criteria field. Please provide success_criteria for the todo_task_step", step.Title, step.ID)
+	}
+	if step.NextStepID == "" {
+		return fmt.Errorf("step (title: %q, ID: %s) has todo_task step type but is missing required next_step_id field. Please provide the ID of the step to connect to after all todos are complete, or 'end' to terminate the workflow", step.Title, step.ID)
+	}
+	// Predefined routes are optional (enable_generic_agent can be used alone)
+	// If predefined routes exist, validate them
+	for i, route := range step.PredefinedRoutes {
+		if route.RouteID == "" {
+			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] with missing required route_id field", step.Title, step.ID, i)
+		}
+		if route.RouteName == "" {
+			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] (route_id: %s) with missing required route_name field", step.Title, step.ID, i, route.RouteID)
+		}
+		if route.SubAgentStep == nil {
+			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] (route_id: %s) with missing required sub_agent_step field", step.Title, step.ID, i, route.RouteID)
+		}
 	}
 	return nil
 }
@@ -5046,6 +5420,12 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		case "orchestration":
 			if orchestrationStep, ok := typedStep.(*OrchestrationPlanStep); ok {
 				if err := validateOrchestrationStepFieldsTyped(orchestrationStep); err != nil {
+					return "", fmt.Errorf("validation failed: %w", err)
+				}
+			}
+		case "todo_task":
+			if todoTaskStep, ok := typedStep.(*TodoTaskPlanStep); ok {
+				if err := validateTodoTaskStepFieldsTyped(todoTaskStep); err != nil {
 					return "", fmt.Errorf("validation failed: %w", err)
 				}
 			}
@@ -5365,6 +5745,21 @@ func registerPlanModificationTools(
 		"workflow",
 	); err != nil {
 		return fmt.Errorf("failed to register add_human_input_step tool: %w", err)
+	}
+
+	todoTaskSchema := getAddTodoTaskStepSchema()
+	todoTaskParams, err := parseSchemaForToolParameters(todoTaskSchema)
+	if err != nil {
+		return fmt.Errorf("failed to parse todo task step schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"add_todo_task_step",
+		"Add a todo task orchestration step to the plan. Use this when you need to manage a dynamic todo list with trackable tasks. The main orchestrator creates/assigns tasks, then delegates to predefined sub-agents (with learning and prevalidation) or a generic agent (workspace tools only, no learning). Predefined routes have MCP tool access and accumulate learnings. The generic agent is for simple, ad-hoc tasks. Provide: id, title, todo_task_step (main orchestrator metadata), predefined_routes (optional, specialized sub-agents), enable_generic_agent (optional, default true), next_step_id, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
+		todoTaskParams,
+		createAddTodoTaskStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register add_todo_task_step tool: %w", err)
 	}
 
 	// Register conditional step tools

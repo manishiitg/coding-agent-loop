@@ -3723,6 +3723,33 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 							entry["orchestration"] = orchLogs
 						}
 
+						// Handle todo-task-execution.json (similar to orchestration)
+						if !childIsDir && childName == "todo-task-execution.json" {
+							logPath := child.FilePath
+							if processedPaths[logPath] {
+								continue
+							}
+							processedPaths[logPath] = true
+
+							entry := getStepEntry(stepId)
+							todoTaskLogs, _ := entry["todo_task"].([]map[string]interface{})
+
+							content, exists, _ := readFileFromWorkspace(r.Context(), logPath)
+							if exists {
+								lines := strings.Split(content, "\n")
+								for _, line := range lines {
+									if strings.TrimSpace(line) == "" {
+										continue
+									}
+									var logEntry map[string]interface{}
+									if err := json.Unmarshal([]byte(line), &logEntry); err == nil {
+										todoTaskLogs = append(todoTaskLogs, logEntry)
+									}
+								}
+							}
+							entry["todo_task"] = todoTaskLogs
+						}
+
 						if childIsDir && childName == "execution" {
 							if len(child.Children) > 0 {
 								for _, execChild := range child.Children {
@@ -3872,6 +3899,26 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 											"content":   learningData,
 										})
 										archiveEntry["learnings"] = learnings
+									} else if archivedFileName == "todo-task-execution.json" {
+										// Handle todo task archived logs (JSONL format)
+										todoTaskLogs, _ := archiveEntry["todo_task"].([]map[string]interface{})
+										if todoTaskLogs == nil {
+											todoTaskLogs = []map[string]interface{}{}
+										}
+										content, exists, _ := readFileFromWorkspace(r.Context(), archivedFilePath)
+										if exists {
+											lines := strings.Split(content, "\n")
+											for _, line := range lines {
+												if strings.TrimSpace(line) == "" {
+													continue
+												}
+												var logEntry map[string]interface{}
+												if err := json.Unmarshal([]byte(line), &logEntry); err == nil {
+													todoTaskLogs = append(todoTaskLogs, logEntry)
+												}
+											}
+										}
+										archiveEntry["todo_task"] = todoTaskLogs
 									}
 								}
 

@@ -226,6 +226,15 @@ export interface OrchestrationPlanStep extends CommonStepFields {
   next_step_id?: string;              // ID of step after orchestration completes (or "end")
 }
 
+// Todo task step (orchestrator with todo list management + predefined routes + generic agent)
+export interface TodoTaskPlanStep extends CommonStepFields {
+  type: 'todo_task';
+  todo_task_step?: PlanStep;                // The main orchestrator step metadata
+  predefined_routes?: PlanRoutingRoute[];   // Predefined sub-agents with learning/prevalidation
+  enable_generic_agent?: boolean;           // Allow generic execution agent (no learning/prevalidation)
+  next_step_id?: string;                    // ID of step after todo task completes (or "end")
+}
+
 // Human input step (asks question to human and blocks for input)
 export interface HumanInputPlanStep extends CommonStepFields {
   type: 'human_input';
@@ -240,7 +249,7 @@ export interface HumanInputPlanStep extends CommonStepFields {
 }
 
 // Discriminated union type for all step types
-export type PlanStep = RegularPlanStep | ConditionalPlanStep | DecisionPlanStep | OrchestrationPlanStep | HumanInputPlanStep;
+export type PlanStep = RegularPlanStep | ConditionalPlanStep | DecisionPlanStep | OrchestrationPlanStep | HumanInputPlanStep | TodoTaskPlanStep;
 
 // PlanRoutingRoute represents a possible route/sub-agent for planning
 export interface PlanRoutingRoute {
@@ -277,6 +286,10 @@ export function isOrchestrationStep(step: PlanStep): step is OrchestrationPlanSt
 
 export function isHumanInputStep(step: PlanStep): step is HumanInputPlanStep {
   return step.type === 'human_input';
+}
+
+export function isTodoTaskStep(step: PlanStep): step is TodoTaskPlanStep {
+  return step.type === 'todo_task';
 }
 
 

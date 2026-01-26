@@ -2862,6 +2862,12 @@ func isHumanInputStep(step PlanStepInterface) bool {
 	return ok
 }
 
+// isTodoTaskStep returns true if the step is a todo task step (orchestrator with todo list management)
+func isTodoTaskStep(step PlanStepInterface) bool {
+	_, ok := step.(*TodoTaskPlanStep)
+	return ok
+}
+
 // hasLoop returns true if the step has loop mode enabled
 func hasLoop(step PlanStepInterface) bool {
 	switch s := step.(type) {
@@ -2882,6 +2888,10 @@ func getAgentConfigs(step PlanStepInterface) *AgentConfigs {
 	case *DecisionPlanStep:
 		return s.AgentConfigs
 	case *OrchestrationPlanStep:
+		return s.AgentConfigs
+	case *TodoTaskPlanStep:
+		return s.AgentConfigs
+	case *HumanInputPlanStep:
 		return s.AgentConfigs
 	case *EvaluationStep:
 		return s.AgentConfigs
@@ -3432,6 +3442,83 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 				} else {
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Target step ID '%s' not found in plan - defaulting to next sequential step", nextStepID))
 					// Fall through to default behavior (continue to next step)
+				}
+			}
+
+			// Default: continue to next sequential step
+			continue
+		}
+
+		// Check if this is a todo task step
+		if isTodoTaskStep(step) {
+			// Execute todo task step - manages todo list and delegates to sub-agents
+			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Starting todo task step execution: %s", step.GetTitle()))
+			// Generate step path for todo task step
+			todoTaskStepPath := fmt.Sprintf("step-%d", i+1)
+			successCriteriaMet, nextStepID, err := hcpo.executeTodoTaskStep(ctx, step, i, progress, previousContextFiles, previousExecutionResults, iteration, execCtx, breakdownSteps, todoTaskStepPath)
+			if err != nil {
+				hcpo.GetLogger().Error(fmt.Sprintf("❌ Todo task step %d execution failed: %v", i+1, err), nil)
+				// Emit error event using centralized method
+				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "todo-task-step-execution", fmt.Sprintf("Execute todo task step: %s", step.GetTitle()), err.Error(), i, iteration)
+				return fmt.Errorf("todo task step %d execution failed: %w", i+1, err)
+			}
+
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Todo task step %d completed successfully: %s (SuccessCriteriaMet: %t)", i+1, step.GetTitle(), successCriteriaMet))
+
+			// Mark todo task step as completed
+			hcpo.addCompletedStepIndex(progress, i)
+			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after todo task step: %v", err))
+			} else {
+				hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved progress: todo task step %d marked as completed", i+1))
+			}
+
+			// Check if we're in single step mode and should stop
+			if hcpo.runSingleStepOnly && i == hcpo.singleStepTarget {
+				hcpo.GetLogger().Info(fmt.Sprintf("🎯 Single step mode: completed target step %d, stopping execution", i+1))
+				hcpo.SetRunSingleStepMode(false, -1) // Reset mode
+				break
+			}
+
+			// Handle next step navigation
+			if nextStepID == "end" {
+				// End workflow
+				hcpo.GetLogger().Info(fmt.Sprintf("🏁 Todo task step %d specified 'end' - terminating workflow", i+1))
+				break
+			} else if nextStepID != "" {
+				// Find target step by ID and jump to it
+				targetStepIndex := -1
+				for idx, s := range breakdownSteps {
+					if s.GetID() == nextStepID {
+						targetStepIndex = idx
+						break
+					}
+				}
+				if targetStepIndex >= 0 {
+					hcpo.GetLogger().Info(fmt.Sprintf("🔗 Jumping to step %d (ID: %s) as specified by next_step_id", targetStepIndex+1, nextStepID))
+
+					// Clean up progress and execution folders for target step and subsequent steps
+					if err := hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress); err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup progress from step %d: %v (continuing anyway)", targetStepIndex+1, err))
+					}
+
+					// Delete execution folders for target step and all subsequent steps
+					for stepNum := targetStepIndex + 1; stepNum <= len(breakdownSteps); stepNum++ {
+						if err := hcpo.deleteStepExecutionFolder(ctx, stepNum); err != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete execution folder for step %d: %v (continuing)", stepNum, err))
+						}
+					}
+
+					// Update startFromStep to allow execution from target step
+					if targetStepIndex < startFromStep {
+						startFromStep = targetStepIndex
+					}
+
+					// Set loop index to jump to target step (subtract 1 because loop will increment)
+					i = targetStepIndex - 1
+					continue
+				} else {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Target step ID '%s' not found in plan - defaulting to next sequential step", nextStepID))
 				}
 			}
 

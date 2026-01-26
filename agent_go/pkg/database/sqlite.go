@@ -61,6 +61,7 @@ var allowedUpdateFields = map[string]bool{
 	"use_tool_search_mode":    true,
 	"pre_discovered_tools":    true,
 	"selected_skills":         true,
+	"enable_browser_access":   true,
 	"workflow_status":         true,
 	"selected_options":        true,
 	"updated_at":              true,

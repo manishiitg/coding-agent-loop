@@ -148,13 +148,13 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             }
             
             // Parse LLM config safely
-            let llmConfig: { provider: 'openrouter' | 'bedrock' | 'openai'; model_id: string } | undefined
+            let llmConfig: PresetLLMConfig | undefined
             try {
               if (preset.llm_config) {
                 if (typeof preset.llm_config === 'string') {
                   llmConfig = JSON.parse(preset.llm_config)
                 } else {
-                  llmConfig = preset.llm_config
+                  llmConfig = preset.llm_config as unknown as PresetLLMConfig
                 }
               }
             } catch (error) {
@@ -196,13 +196,13 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             .filter(preset => preset.is_predefined)
             .map((preset: PresetQuery) => {
               // Parse LLM config safely
-              let llmConfig: { provider: 'openrouter' | 'bedrock' | 'openai'; model_id: string } | undefined
+              let llmConfig: PresetLLMConfig | undefined
               try {
                 if (preset.llm_config) {
                   if (typeof preset.llm_config === 'string') {
                     llmConfig = JSON.parse(preset.llm_config)
                   } else {
-                    llmConfig = preset.llm_config
+                    llmConfig = preset.llm_config as unknown as PresetLLMConfig
                   }
                 }
               } catch (error) {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 )
 
 // Workflow status constants
@@ -191,7 +192,7 @@ type GetEventsResponse struct {
 // Supports both legacy single default model and new agent-specific defaults
 type PresetLLMConfig struct {
 	// Legacy: Single default model (for backward compatibility)
-	Provider string `json:"provider,omitempty"` // openrouter, bedrock, openai, vertex, anthropic
+	Provider string `json:"provider,omitempty"` // openrouter, bedrock, openai, vertex, anthropic, azure
 	ModelID  string `json:"model_id,omitempty"`
 
 	// New: Agent-specific default models (takes priority over legacy fields)
@@ -206,7 +207,7 @@ type PresetLLMConfig struct {
 
 // AgentLLMConfig represents LLM configuration for a specific agent type
 type AgentLLMConfig struct {
-	Provider string `json:"provider"` // openrouter, bedrock, openai, vertex, anthropic
+	Provider string `json:"provider"` // openrouter, bedrock, openai, vertex, anthropic, azure
 	ModelID  string `json:"model_id"`
 }
 
@@ -298,22 +299,13 @@ type CreatePresetQueryRequest struct {
 // validatePresetLLMConfig validates a PresetLLMConfig, accepting either legacy Provider+ModelID
 // or at least one non-nil AgentLLMConfig with valid provider and model_id
 func validatePresetLLMConfig(config *PresetLLMConfig) error {
-	validProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic"}
-
 	// Check if legacy config is provided
 	hasLegacyConfig := config.Provider != "" && config.ModelID != ""
 
 	// Validate legacy config if present
 	if hasLegacyConfig {
-		valid := false
-		for _, provider := range validProviders {
-			if config.Provider == provider {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return fmt.Errorf("invalid provider: %s, must be one of: %v", config.Provider, validProviders)
+		if _, err := llmproviders.ValidateProvider(config.Provider); err != nil {
+			return fmt.Errorf("invalid provider: %w", err)
 		}
 	}
 
@@ -325,6 +317,7 @@ func validatePresetLLMConfig(config *PresetLLMConfig) error {
 		{config.ExecutionLLM, "execution_llm"},
 		{config.ValidationLLM, "validation_llm"},
 		{config.LearningLLM, "learning_llm"},
+		{config.PhaseLLM, "phase_llm"},
 	}
 
 	// Validate each non-nil AgentLLMConfig
@@ -336,16 +329,9 @@ func validatePresetLLMConfig(config *PresetLLMConfig) error {
 				return fmt.Errorf("model_id is required for %s", agentConfig.name)
 			}
 
-			// Validate provider is in valid set
-			valid := false
-			for _, provider := range validProviders {
-				if agentConfig.config.Provider == provider {
-					valid = true
-					break
-				}
-			}
-			if !valid {
-				return fmt.Errorf("invalid provider for %s: %s, must be one of: %v", agentConfig.name, agentConfig.config.Provider, validProviders)
+			// Validate provider using centralized validation
+			if _, err := llmproviders.ValidateProvider(agentConfig.config.Provider); err != nil {
+				return fmt.Errorf("invalid provider for %s: %w", agentConfig.name, err)
 			}
 
 			hasValidAgentConfig = true

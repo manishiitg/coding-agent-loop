@@ -1,10 +1,11 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle, Lock, SkipForward, Search } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle, Lock, SkipForward, Search, Bot } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
+import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { useAppStore } from '../../../stores'
 import { agentApi } from '../../../services/api'
 import { isValidJSON } from '../../../utils/event-helpers'
@@ -137,6 +138,10 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
   const { availableLLMs, workflowPrimaryConfig, primaryConfig } = useLLMStore()
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
+  const layoutDirection = useWorkflowStore(state => state.layoutDirection)
+
+  // Determine handle positions based on layout direction
+  const isHorizontal = layoutDirection === 'LR'
 
   // Check if this is a sub-agent (part of a routing step)
   const isSubAgent = useMemo(() => id.includes('-sub-agent-'), [id])
@@ -531,23 +536,31 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
 
       <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-900" />
       
-      {/* Top handle for sub-agents (to receive connections from routing node bottom) */}
+      {/* Top/Left handle for sub-agents (to receive connections from routing node) */}
+      {/* In LR mode: receives from Right side of parent (so position on Left) */}
+      {/* In TB mode: receives from Bottom side of parent (so position on Top) */}
       {/* Always create the handle but only show it for sub-agents to avoid React Flow warnings */}
-      <Handle 
-        type="target" 
-        position={Position.Top} 
+      <Handle
+        type="target"
+        position={isHorizontal ? Position.Left : Position.Top}
         id="top"
         className={`!w-3 !h-3 !border-2 !border-white dark:!border-gray-900 ${isSubAgent ? '!bg-cyan-400 dark:!bg-cyan-600' : '!bg-transparent pointer-events-none opacity-0'}`}
-        style={{ top: '-6px', left: '50%' }}
+        style={isHorizontal ? { left: '-6px', top: '30%' } : { top: '-6px', left: '50%' }}
       />
 
       {/* Header */}
       <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700">
-        {/* First row: Step number and title */}
+        {/* First row: Step number (or sub-agent indicator) and title */}
         <div className="flex items-start gap-3 mb-2">
-          <div className="flex items-center justify-center w-8 h-8 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-sm font-bold flex-shrink-0">
-            {stepIndex + 1}
-          </div>
+          {isSubAgent ? (
+            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 flex-shrink-0" title="Sub-agent">
+              <Bot className="w-4 h-4" />
+            </div>
+          ) : (
+            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-sm font-bold flex-shrink-0">
+              {stepIndex + 1}
+            </div>
+          )}
           <div className="flex-1 min-w-0">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white leading-relaxed">
               {title}

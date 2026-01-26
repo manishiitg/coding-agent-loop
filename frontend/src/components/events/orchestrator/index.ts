@@ -10,6 +10,7 @@ export { StepProgressUpdatedEventDisplay } from './StepProgressUpdatedEvent'
 export { DecisionEvaluatedEventDisplay } from './DecisionEvaluatedEvent'
 export { PreValidationCompletedEventDisplay } from './PreValidationCompletedEvent'
 export { PrerequisiteNavigationEventDisplay } from './PrerequisiteNavigationEvent'
+export * from './TodoTaskEvents'
 
 // Unified Orchestrator Agent Event Components
 export { OrchestratorAgentStartEventDisplay } from '../system/OrchestratorAgentStartEvent'

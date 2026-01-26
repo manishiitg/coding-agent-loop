@@ -45,6 +45,8 @@ const (
 	ConditionalAgentType                     AgentType = "conditional"                         // Conditional decision agent for evaluating step conditions
 	OrchestrationAgentType                   AgentType = "orchestration"                       // DEPRECATED: Legacy orchestration agent type (no longer used). Current orchestration uses OrchestrationOrchestratorAgent which handles execution, evaluation, and routing in one step.
 	EvaluationScoringAgentType               AgentType = "evaluation_scoring"                  // Calculates scores for evaluation steps based on success criteria
+	TodoTaskOrchestratorAgentType            AgentType = "todo_task_orchestrator"              // TodoTask orchestrator agent that manages todo lists and delegates to sub-agents
+	GenericExecutionAgentType                AgentType = "generic_execution"                   // Generic execution agent for todo task steps (no learning, no prevalidation)
 )
 
 // BaseAgentInterface defines the interface for base agent operations

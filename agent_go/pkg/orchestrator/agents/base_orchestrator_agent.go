@@ -621,6 +621,14 @@ func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 				Region: boa.config.APIKeys.Bedrock.Region,
 			}
 		}
+		if boa.config.APIKeys.Azure != nil {
+			llmAPIKeys.Azure = &llm.AzureAPIConfig{
+				Endpoint:   boa.config.APIKeys.Azure.Endpoint,
+				APIKey:     boa.config.APIKeys.Azure.APIKey,
+				APIVersion: boa.config.APIKeys.Azure.APIVersion,
+				Region:     boa.config.APIKeys.Azure.Region,
+			}
+		}
 	}
 
 	// Create a separate LLM logger that writes to llm_debug.log

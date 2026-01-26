@@ -119,13 +119,15 @@ interface PresetQueriesProps {
     setIsModalOpen(false);
   }, []);
 
-  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean) => {
+  const handleSavePreset = async (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean) => {
     console.log('[code_execution] [PresetQueries] handleSavePreset called with:', {
       label,
       editingPreset: editingPreset?.id,
       useCodeExecutionMode,
       selectedSkills,
-      type: typeof useCodeExecutionMode
+      type: typeof useCodeExecutionMode,
+      useToolSearchMode,
+      enableBrowserAccess
     })
 
     try {
@@ -141,7 +143,9 @@ interface PresetQueriesProps {
         llmConfig,
         useCodeExecutionMode,
         editingPreset?.id, // Pass id if editing, undefined if creating
-        enableContextSummarization
+        enableContextSummarization,
+        useToolSearchMode,
+        enableBrowserAccess
       );
       
       // Call the callback to refresh workflow presets when a preset is saved

@@ -252,7 +252,13 @@ export type EventTypeString =
   | 'batch_execution_start'
   | 'batch_group_start'
   | 'batch_group_end'
-  | 'batch_execution_end';
+  | 'batch_execution_end'
+  // Todo Task Events
+  | 'todo_task_route_selected'
+  | 'todo_task_item_created'
+  | 'todo_task_item_updated'
+  | 'todo_task_item_completed'
+  | 'todo_task_step_completed';
 
 // =============================================================================
 // EVENT TYPE TO DATA TYPE MAPPING
@@ -370,6 +376,142 @@ export interface EventTypeToDataMap {
   'batch_group_start': BatchGroupStartEvent;
   'batch_group_end': BatchGroupEndEvent;
   'batch_execution_end': BatchExecutionEndEvent;
+  // Todo Task Events
+  'todo_task_route_selected': TodoTaskRouteSelectedEvent;
+  'todo_task_item_created': TodoTaskItemCreatedEvent;
+  'todo_task_item_updated': TodoTaskItemUpdatedEvent;
+  'todo_task_item_completed': TodoTaskItemCompletedEvent;
+  'todo_task_step_completed': TodoTaskStepCompletedEvent;
+}
+
+// Todo Task event data types (not in generated schema)
+export interface TodoTaskRouteSelectedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  step_index?: number;
+  step_path?: string;
+  step_id?: string;
+  step_title?: string;
+  iteration?: number;
+  next_action?: string; // "delegate", "complete", "continue"
+  selected_route_id?: string;
+  selected_route_name?: string;
+  use_generic_agent?: boolean;
+  todo_id_to_execute?: string;
+  todo_title?: string;
+  instructions_to_sub_agent?: string;
+  selection_reasoning?: string;
+  all_tasks_complete?: boolean;
+  progress_summary?: string;
+  model?: string;
+}
+
+export interface TodoTaskItemCreatedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  step_index?: number;
+  step_path?: string;
+  step_id?: string;
+  todo_id?: string;
+  title?: string;
+  description?: string;
+  priority?: string;
+  created_by?: string;
+}
+
+export interface TodoTaskItemUpdatedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  step_index?: number;
+  step_path?: string;
+  step_id?: string;
+  todo_id?: string;
+  title?: string;
+  old_status?: string;
+  new_status?: string;
+  updated_by?: string;
+  notes?: string;
+}
+
+export interface TodoTaskItemCompletedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  step_index?: number;
+  step_path?: string;
+  step_id?: string;
+  todo_id?: string;
+  title?: string;
+  result?: string;
+  completed_by?: string;
+}
+
+export interface TodoTaskStepCompletedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  step_index?: number;
+  step_path?: string;
+  step_id?: string;
+  step_title?: string;
+  total_iterations?: number;
+  total_todos_count?: number;
+  completed_count?: number;
+  completion_reason?: string;
+  next_step_id?: string;
 }
 
 // Workflow event data types (not in generated schema)

@@ -317,6 +317,10 @@ func ApplyStepConfigFromFile(
 			s.AgentConfigs = matchedConfig
 		case *OrchestrationPlanStep:
 			s.AgentConfigs = matchedConfig
+		case *TodoTaskPlanStep:
+			s.AgentConfigs = matchedConfig
+		case *HumanInputPlanStep:
+			s.AgentConfigs = matchedConfig
 		case *EvaluationStep:
 			s.AgentConfigs = matchedConfig
 		default:

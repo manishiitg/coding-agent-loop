@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import dagre from 'dagre'
 import type { PlanStep, PlanningResponse, AgentConfigs, AgentLLMConfig, PrerequisiteRule, ValidationSchema } from '../../../utils/stepConfigMatching'
-import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep, isHumanInputStep } from '../../../utils/stepConfigMatching'
+import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep, isHumanInputStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
 import type { VariablesManifest, EvaluationStep } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
@@ -111,6 +111,25 @@ export interface OrchestratorNodeData extends Record<string, unknown> {
   validation_schema?: ValidationSchema  // Validation schema from plan.json (from orchestration_step)
 }
 
+export interface TodoTaskNodeData extends Record<string, unknown> {
+  id: string
+  title: string
+  todo_task_step?: PlanStep
+  predefined_routes?: Array<{ route_id: string; route_name: string; condition: string; sub_agent_step: PlanStep; context_to_pass?: string }>
+  enable_generic_agent?: boolean
+  status: 'pending' | 'running' | 'failed' | 'executing' | 'evaluating' | 'orchestrating' | 'completed'
+  stepIndex: number
+  step: PlanStep
+  changeType?: ChangeType  // Highlight type for visual feedback
+  onRunFromStep?: OnRunFromStepCallback  // Callback to run from this step
+  onOpenSidebar?: OnOpenSidebarCallback  // Callback to open sidebar for editing
+  isExecuting?: boolean  // Whether execution is in progress
+  canRun?: boolean  // Deprecated: always true
+  workspacePath?: string | null  // Workspace path for file opening
+  selectedRunFolder?: string  // Selected iteration folder for file opening
+  validation_schema?: ValidationSchema  // Validation schema from plan.json (from todo_task_step)
+}
+
 export interface HumanInputNodeData extends Record<string, unknown> {
   id: string
   title: string
@@ -173,7 +192,7 @@ export interface EvaluationStepNodeData extends Record<string, unknown> {
   isEvaluationStep: boolean
 }
 
-export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | HumanInputNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData | EvaluationStepNodeData
+export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | TodoTaskNodeData | HumanInputNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData | EvaluationStepNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -218,6 +237,7 @@ const NODE_DIMENSIONS = {
   conditional: { width: 240, height: 100 },
   decision: { width: 260, height: 120 },
   orchestrator: { width: 300, height: 120 },
+  todo_task: { width: 300, height: 120 },
   human_input: { width: 260, height: 120 },
   loop: { width: 300, height: 140 },
   start: { width: 80, height: 36 },
@@ -274,6 +294,17 @@ function estimateNodeHeight(node: WorkflowNode): number {
     }
   }
 
+  // For todo_task nodes, add height for predefined routes and generic agent indicator
+  if (node.type === 'todo_task') {
+    const todoData = data as TodoTaskNodeData
+    if (todoData.predefined_routes && todoData.predefined_routes.length > 0) {
+      contentHeight += 25
+    }
+    if (todoData.enable_generic_agent) {
+      contentHeight += 20
+    }
+  }
+
   // Calculate total estimated height
   estimatedHeight = headerHeight + padding + contentHeight + footerHeight
 
@@ -295,16 +326,18 @@ function calculateTopologyMetrics(nodes: WorkflowNode[]): { hasOrchestrator: boo
   let maxOrchestratorSubAgents = 0
 
   nodes.forEach(node => {
-    if (node.type === 'orchestrator') {
+    if (node.type === 'orchestrator' || node.type === 'todo_task') {
       hasOrchestrator = true
-      const data = node.data as OrchestratorNodeData
-      const routes = data.orchestration_routes?.length || 0
+      const data = node.data as OrchestratorNodeData | TodoTaskNodeData
+      const routes = node.type === 'orchestrator' 
+        ? (data as OrchestratorNodeData).orchestration_routes 
+        : (data as TodoTaskNodeData).predefined_routes
+      const numRoutes = routes?.length || 0
       
-      // Count actual sub-agents (excluding "end" route if strictly just counting agent steps, 
-      // but usually routes map to sub-agents. We'll count all routes for spacing safety).
-      maxOrchestratorSubAgents = Math.max(maxOrchestratorSubAgents, routes)
+      // Count actual sub-agents
+      maxOrchestratorSubAgents = Math.max(maxOrchestratorSubAgents, numRoutes)
       
-      maxOrchestratorDepth = Math.max(maxOrchestratorDepth, routes)
+      maxOrchestratorDepth = Math.max(maxOrchestratorDepth, numRoutes)
     }
   })
 
@@ -621,16 +654,19 @@ function detectAndResolveCollisions(nodes: WorkflowNode[], direction: 'LR' | 'TB
  */
 function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction: 'LR' | 'TB'): { nodes: WorkflowNode[], edges: WorkflowEdge[] } {
   // Calculate topology metrics to determine spacing requirements
-  calculateTopologyMetrics(nodes)
+  const { maxOrchestratorSubAgents } = calculateTopologyMetrics(nodes)
 
   // Get config based on layout direction
   const baseConfig = getDagreConfig(direction)
 
   // Dynamic config based on topology
+  // Increase spacing if we have orchestrators/todo tasks with many sub-agents
+  const spacingMultiplier = maxOrchestratorSubAgents > 2 ? 1.5 : 1
+  
   const dynamicConfig = {
     ...baseConfig,
-    // Spacing is now handled by getDagreConfig based on direction
-    // Specific offsets are handled via minlen on edges.
+    nodesep: baseConfig.nodesep * spacingMultiplier,
+    ranksep: baseConfig.ranksep * spacingMultiplier
   }
 
   const g = new dagre.graphlib.Graph()
@@ -667,10 +703,13 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
       let width = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS]?.width || NODE_DIMENSIONS.step.width
       let height = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS]?.height || NODE_DIMENSIONS.step.height
 
-      // For orchestrators, use compound dimensions to reserve space for sub-agents
-      if (node.type === 'orchestrator') {
-        const data = node.data as OrchestratorNodeData
-        const numSubAgents = data.orchestration_routes?.length || 0
+      // For orchestrators and todo tasks, use compound dimensions to reserve space for sub-agents
+      if (node.type === 'orchestrator' || node.type === 'todo_task') {
+        const data = node.data as OrchestratorNodeData | TodoTaskNodeData
+        const routes = node.type === 'orchestrator' 
+          ? (data as OrchestratorNodeData).orchestration_routes 
+          : (data as TodoTaskNodeData).predefined_routes
+        const numSubAgents = routes?.length || 0
         
         if (numSubAgents > 0) {
           const GAP = 60
@@ -679,13 +718,16 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
           if (direction === 'LR') {
             // LR: Row Below
             // Compound Height = Orch + Gap + SubAgents
-            // Compound Width = Max(Orch, SubAgents)
+            // Compound Width = Max(Orch, SubAgents) - Actually, for LR we want the node to be centered 
+            // relative to its sub-agents. So the compound node's width effectively covers the whole sub-agent row.
             const subAgentRowWidth = (numSubAgents * 280) + ((numSubAgents - 1) * SUB_AGENT_GAP)
             const subAgentRowHeight = 120 // standard step height
             
             height = height + GAP + subAgentRowHeight
+            // Use full sub-agent row width for the compound node in Dagre
+            // This forces Dagre to leave enough space on left/right for the sub-agents
             width = Math.max(width, subAgentRowWidth)
-            console.log(`[Orchestrator Layout] Node ${node.id} (LR): Compound Size ${width}x${height} (SubAgents: ${numSubAgents}, RowWidth: ${subAgentRowWidth})`)
+            console.log(`[Compound Layout] Node ${node.id} (${node.type}, LR): Compound Size ${width}x${height} (SubAgents: ${numSubAgents}, RowWidth: ${subAgentRowWidth})`)
           } else {
             // TB: Column Right
             // Compound Width = Orch + Gap + SubAgents
@@ -695,7 +737,7 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
             
             width = width + GAP + subAgentColWidth
             height = Math.max(height, subAgentColHeight)
-            console.log(`[Orchestrator Layout] Node ${node.id} (TB): Compound Size ${width}x${height} (SubAgents: ${numSubAgents}, ColHeight: ${subAgentColHeight})`)
+            console.log(`[Compound Layout] Node ${node.id} (${node.type}, TB): Compound Size ${width}x${height} (SubAgents: ${numSubAgents}, ColHeight: ${subAgentColHeight})`)
           }
         }
       }
@@ -749,49 +791,46 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
     x -= dims.width / 2
     y -= dims.height / 2
 
-    // Adjust for Orchestrator Compound positioning
-    if (node.type === 'orchestrator') {
-      const data = node.data as OrchestratorNodeData
-      const numSubAgents = data.orchestration_routes?.length || 0
+    // Adjust for Orchestrator/TodoTask Compound positioning
+    if (node.type === 'orchestrator' || node.type === 'todo_task') {
+      const data = node.data as OrchestratorNodeData | TodoTaskNodeData
+      const routes = node.type === 'orchestrator' 
+        ? (data as OrchestratorNodeData).orchestration_routes 
+        : (data as TodoTaskNodeData).predefined_routes
+      const numSubAgents = routes?.length || 0
       
-              
-      
-              if (numSubAgents > 0) {
-      
-                          const GAP = 60
-      
-                          
-      
-                          if (direction === 'LR') {
+      if (numSubAgents > 0) {
+        const GAP = 60
+        
+        if (direction === 'LR') {
           // LR: Orchestrator is at Top Center of compound block
-          // Dagre Center Y is center of (Orch + Gap + Subs)
-          // We want Orch Top to be at Compound Top
           const subAgentRowHeight = 120
           const compoundHeight = dims.height + GAP + subAgentRowHeight
+          const SUB_AGENT_GAP = 20
+          const subAgentRowWidth = (numSubAgents * 280) + ((numSubAgents - 1) * SUB_AGENT_GAP)
+          const compoundWidth = Math.max(dims.width, subAgentRowWidth)
           
           // Re-calculate Y: Top of compound
           const compoundTop = nodeWithPosition.y - (compoundHeight / 2)
-          y = compoundTop // Orch is at top
+          y = compoundTop // Orch/Todo is at top
+
+          // Re-calculate X: Center of compound
+          // If sub-agents are wider than parent, Dagre center is center of sub-agents
+          // We want parent to be centered relative to sub-agents
+          // nodeWithPosition.x is center of compound block
+          x = nodeWithPosition.x - (dims.width / 2)
           
-          console.log(`[Orchestrator Layout] Adjusting ${node.id} (LR): DagreY=${nodeWithPosition.y}, CompoundH=${compoundHeight}, NewY=${y}`)
-          
-          // X is still centered (Standard Centering is correct if Width = MaxWidth)
-          // If CompoundWidth > OrchWidth, Dagre center is Compound center
-          // We want Orch to be centered in Compound. So x is fine.
+          console.log(`[Compound Layout] Adjusting ${node.id} (${node.type}, LR): DagreY=${nodeWithPosition.y}, CompoundH=${compoundHeight}, NewY=${y}, NewX=${x}`)
         } else {
           // TB: Orchestrator is at Left Center of compound block
-          // Dagre Center X is center of (Orch + Gap + Subs)
-          // We want Orch Left to be at Compound Left
           const subAgentColWidth = 280
           const compoundWidth = dims.width + GAP + subAgentColWidth
           
           // Re-calculate X: Left of compound
           const compoundLeft = nodeWithPosition.x - (compoundWidth / 2)
-          x = compoundLeft // Orch is at left
+          x = compoundLeft // Orch/Todo is at left
           
-          console.log(`[Orchestrator Layout] Adjusting ${node.id} (TB): DagreX=${nodeWithPosition.x}, CompoundW=${compoundWidth}, NewX=${x}`)
-          
-          // Y is still centered (Standard Centering is correct if Height = MaxHeight)
+          console.log(`[Compound Layout] Adjusting ${node.id} (${node.type}, TB): DagreX=${nodeWithPosition.x}, CompoundW=${compoundWidth}, NewX=${x}`)
         }
       }
     }
@@ -873,6 +912,10 @@ function stepToNode(
       // For orchestration nodes, use step title or fallback
       return step.title || `Orchestrator ${stepIndex + 1}`
     }
+    if (isTodoTaskStep(step)) {
+      // For todo task nodes, use step title or fallback
+      return step.title || `Todo Task ${stepIndex + 1}`
+    }
     if (isHumanInputStep(step)) {
       // For human input nodes, prefer question over generic title
       return step.title || step.question || `Human Input ${stepIndex + 1}`
@@ -943,6 +986,23 @@ function stepToNode(
         validation_schema: step.orchestration_step?.validation_schema || step.validation_schema
         // Note: status is inherited from baseData (computed based on completedStepIndices)
       } as OrchestratorNodeData
+    }
+  }
+
+  if (isTodoTaskStep(step)) {
+    return {
+      id: nodeId,
+      type: 'todo_task',
+      position: { x: 0, y: 0 },
+      data: {
+        ...baseData,
+        todo_task_step: step.todo_task_step,
+        predefined_routes: step.predefined_routes,
+        enable_generic_agent: step.enable_generic_agent,
+        // Use validation_schema from todo_task_step (inner step) if available, otherwise from wrapper
+        validation_schema: step.todo_task_step?.validation_schema || step.validation_schema
+        // Note: status is inherited from baseData (computed based on completedStepIndices)
+      } as TodoTaskNodeData
     }
   }
 
@@ -1784,6 +1844,232 @@ function processSteps(
       // Orchestrator steps handle their own routing - don't connect to next sequential step
       lastExitNodeId = null
     }
+
+    // Handle todo_task step edge routing
+    // Todo task steps are similar to orchestrator steps - they have predefined routes (sub-agents)
+    // and optionally a generic agent. After sub-agents complete, they return to the main orchestrator.
+    // The todo task step connects to next_step_id when all tasks are complete.
+    if (isTodoTaskStep(step)) {
+      const todoTaskEdges: WorkflowEdge[] = []
+      const todoTaskSubAgentNodes: WorkflowNode[] = []
+
+      // Use the todo_task node as source
+      const sourceNodeId = node.id
+
+      // Create nodes for predefined sub-agents (similar to orchestration routes)
+      if (step.predefined_routes && step.predefined_routes.length > 0) {
+        step.predefined_routes.forEach((route) => {
+          const isEndRoute = route.route_id?.toLowerCase() === "end"
+
+          // Handle "end" route - create edge to end node but skip sub-agent node creation
+          if (isEndRoute) {
+            todoTaskEdges.push({
+              id: `${node.id}-route-${route.route_id}-to-end`,
+              source: node.id,
+              sourceHandle: route.route_id,
+              target: 'end',
+              type: 'smoothstep',
+              style: { stroke: '#ef4444', strokeWidth: 2 },
+              animated: false
+            })
+            return
+          }
+
+          if (route.sub_agent_step) {
+            const routeId = route.route_id || route.sub_agent_step.id || String(step.predefined_routes?.indexOf(route) ?? 0)
+            const subAgentNodeId = `${node.id}-sub-agent-${routeId}`
+
+            const parentStepIndex = (node.data as TodoTaskNodeData).stepIndex
+            const todoTaskNodeData = node.data as TodoTaskNodeData
+            const todoTaskTitle = todoTaskNodeData.title || step.title || `Todo Task ${parentStepIndex + 1}`
+
+            const subAgentStep = route.sub_agent_step
+            const stepId = subAgentStep.id || subAgentNodeId
+
+            // Determine status
+            let status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
+            if (stepStatusMap && stepStatusMap.has(stepId)) {
+              status = stepStatusMap.get(stepId)!
+            }
+
+            // Determine change type
+            const changeType = getChangeType(stepId, changes)
+
+            // Create the sub-agent node
+            const subAgentNode: WorkflowNode = {
+              id: subAgentNodeId,
+              type: 'step',
+              position: { x: 0, y: 0 },
+              data: {
+                id: subAgentNodeId,
+                title: subAgentStep.title || `${route.route_name || route.route_id || routeId}`,
+                description: subAgentStep.description,
+                success_criteria: subAgentStep.success_criteria,
+                status,
+                stepIndex: parentStepIndex,
+                step: subAgentStep,
+                changeType,
+                validation_schema: subAgentStep.validation_schema,
+                workspacePath,
+                selectedRunFolder,
+                parentOrchestratorTitle: todoTaskTitle,
+                routeName: route.route_name || undefined,
+                routeCondition: route.condition || undefined
+              } as StepNodeData
+            }
+
+            todoTaskSubAgentNodes.push(subAgentNode)
+
+            const subAgentExitNodeId = subAgentNodeId
+
+            // Connect todo task node to sub-agent
+            todoTaskEdges.push({
+              id: `${node.id}-route-${route.route_id}-to-sub-agent`,
+              source: node.id,
+              sourceHandle: route.route_id,
+              target: subAgentNodeId,
+              targetHandle: 'top',
+              type: 'smoothstep',
+              style: { stroke: '#8b5cf6', strokeWidth: 2, strokeDasharray: '5,5' }, // Purple for todo_task
+              animated: false
+            })
+
+            // Connect sub-agent back to todo task node
+            todoTaskEdges.push({
+              id: `${subAgentExitNodeId}-return-to-${node.id}`,
+              source: subAgentExitNodeId,
+              target: node.id,
+              type: 'smoothstep',
+              label: 'Return',
+              labelStyle: { fill: '#6b7280', fontWeight: 500, fontSize: 9 },
+              labelBgStyle: { fill: '#f9fafb', fillOpacity: 0.9 },
+              labelBgPadding: [2, 2] as [number, number],
+              labelBgBorderRadius: 3,
+              style: { stroke: '#6b7280', strokeWidth: 1.5, strokeDasharray: '3,3' },
+              animated: false
+            })
+          }
+        })
+      }
+
+      // Create synthetic node for Generic Agent if enabled
+      if (step.enable_generic_agent) {
+        const routeId = 'generic'
+        const subAgentNodeId = `${node.id}-sub-agent-${routeId}`
+
+        const parentStepIndex = (node.data as TodoTaskNodeData).stepIndex
+        const todoTaskNodeData = node.data as TodoTaskNodeData
+        const todoTaskTitle = todoTaskNodeData.title || step.title || `Todo Task ${parentStepIndex + 1}`
+
+        // Determine status
+        let status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
+        // Generic agent status is tricky since it's transient. 
+        // We can check if parent is running and use_generic_agent was selected in recent event?
+        // For now, default to pending or match parent status if executing
+        // Or check if there's a status entry for this specific sub-agent ID (unlikely for synthetic)
+        
+        // Use parent status if we can't find specific status
+        if (stepStatusMap && stepStatusMap.has(subAgentNodeId)) {
+          status = stepStatusMap.get(subAgentNodeId)!
+        }
+
+        const subAgentNode: WorkflowNode = {
+          id: subAgentNodeId,
+          type: 'step',
+          position: { x: 0, y: 0 },
+          data: {
+            id: subAgentNodeId,
+            title: 'Generic Agent',
+            description: 'Executes ad-hoc tasks using workspace tools',
+            success_criteria: 'Task completion verified by orchestrator',
+            status,
+            stepIndex: parentStepIndex,
+            step: { 
+              // Minimal step data for display
+              id: subAgentNodeId,
+              title: 'Generic Agent',
+              description: 'Executes ad-hoc tasks using workspace tools',
+              type: 'regular',
+              agent_configs: {
+                disable_learning: true,
+                disable_validation: true
+              }
+            } as PlanStep,
+            changeType: undefined,
+            workspacePath,
+            selectedRunFolder,
+            parentOrchestratorTitle: todoTaskTitle,
+            routeName: 'Generic Execution',
+            routeCondition: 'Ad-hoc tasks'
+          } as StepNodeData
+        }
+
+        todoTaskSubAgentNodes.push(subAgentNode)
+
+        // Connect todo task node to generic agent
+        todoTaskEdges.push({
+          id: `${node.id}-route-generic-to-sub-agent`,
+          source: node.id,
+          target: subAgentNodeId,
+          targetHandle: 'top',
+          type: 'smoothstep',
+          style: { stroke: '#8b5cf6', strokeWidth: 2, strokeDasharray: '5,5' }, // Purple dashed
+          animated: false
+        })
+
+        // Connect generic agent back to todo task node
+        todoTaskEdges.push({
+          id: `${subAgentNodeId}-return-to-${node.id}`,
+          source: subAgentNodeId,
+          target: node.id,
+          type: 'smoothstep',
+          label: 'Return',
+          labelStyle: { fill: '#6b7280', fontWeight: 500, fontSize: 9 },
+          labelBgStyle: { fill: '#f9fafb', fillOpacity: 0.9 },
+          labelBgPadding: [2, 2] as [number, number],
+          labelBgBorderRadius: 3,
+          style: { stroke: '#6b7280', strokeWidth: 1.5, strokeDasharray: '3,3' },
+          animated: false
+        })
+      }
+
+      // Add sub-agent nodes to the nodes array
+      nodes.push(...todoTaskSubAgentNodes)
+
+      // Todo task steps connect to next_step_id when all tasks are complete
+      if (step.next_step_id) {
+        const targetNodeId = stepIdToNodeIdMap?.get(step.next_step_id)
+        if (targetNodeId) {
+          todoTaskEdges.push({
+            id: `${sourceNodeId}-todo-task-to-${targetNodeId}`,
+            source: sourceNodeId,
+            target: targetNodeId,
+            type: 'smoothstep',
+            style: { stroke: '#8b5cf6', strokeWidth: 2 }, // Purple for todo_task
+            animated: false
+          })
+        } else if (step.next_step_id === 'end') {
+          todoTaskEdges.push({
+            id: `${sourceNodeId}-todo-task-to-end`,
+            source: sourceNodeId,
+            target: 'end',
+            type: 'smoothstep',
+            label: 'Complete',
+            labelStyle: { fill: '#8b5cf6', fontWeight: 600, fontSize: 11 },
+            labelBgStyle: { fill: '#f5f3ff', fillOpacity: 0.9 },
+            labelBgPadding: [4, 4] as [number, number],
+            labelBgBorderRadius: 4,
+            style: { stroke: '#8b5cf6', strokeWidth: 2 },
+            animated: false
+          })
+        }
+      }
+
+      edges.push(...todoTaskEdges)
+
+      // Todo task steps handle their own routing - don't connect to next sequential step
+      lastExitNodeId = null
+    }
   })
 
   return { nodes, edges }
@@ -1792,8 +2078,8 @@ function processSteps(
 /**
  * Check if a node is a step-type node (has step data)
  */
-function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | HumanInputNodeData } {
-  return node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator' || node.type === 'human_input'
+function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | TodoTaskNodeData | HumanInputNodeData } {
+  return node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator' || node.type === 'todo_task' || node.type === 'human_input'
 }
 
 /**
@@ -2533,10 +2819,31 @@ export function usePlanToFlow(
       // Find the first step node (step-0 or the first non-header node connected to variables)
       const firstStepNode = layoutedResult.nodes.find(n =>
         n.id === 'step-0' ||
-        (n.type === 'step' && !n.id.includes('-true-') && !n.id.includes('-false-') && !n.id.includes('-sub-agent-'))
+        (isStepTypeNode(n) && !n.id.includes('-true-') && !n.id.includes('-false-') && !n.id.includes('-sub-agent-'))
       )
 
       if (firstStepNode) {
+        // Calculate the leftmost point of this node (accounting for sub-agent overflow if it's a compound node)
+        let firstStepLeftEdge = firstStepNode.position.x
+        if (firstStepNode.type === 'orchestrator' || firstStepNode.type === 'todo_task') {
+          const data = firstStepNode.data as OrchestratorNodeData | TodoTaskNodeData
+          const routes = firstStepNode.type === 'orchestrator' 
+            ? (data as OrchestratorNodeData).orchestration_routes 
+            : (data as TodoTaskNodeData).predefined_routes
+          const numSubAgents = routes?.length || 0
+          
+          if (numSubAgents > 0 && layoutDirection === 'LR') {
+            const SUB_AGENT_GAP = 20
+            const subAgentRowWidth = (numSubAgents * 280) + ((numSubAgents - 1) * SUB_AGENT_GAP)
+            const parentWidth = 300
+            if (subAgentRowWidth > parentWidth) {
+              // Sub-agents extend further left than the parent card
+              const overflow = (subAgentRowWidth - parentWidth) / 2
+              firstStepLeftEdge -= overflow
+            }
+          }
+        }
+
         if (layoutDirection === 'TB') {
           // TB mode: workflow flows vertically, so first step should be below the header row
           // Start from the right edge of the header row
@@ -2544,7 +2851,8 @@ export function usePlanToFlow(
           const firstStepTargetY = headerRowBottom + HEADER_TO_WORKFLOW_GAP
 
           // Calculate offset to shift all workflow nodes
-          const offsetX = firstStepTargetX - firstStepNode.position.x
+          // Use firstStepLeftEdge to ensure sub-agents don't overlap with header
+          const offsetX = firstStepTargetX - firstStepLeftEdge
           const offsetY = firstStepTargetY - firstStepNode.position.y
 
           // Shift all non-header nodes by this offset
@@ -2575,7 +2883,8 @@ export function usePlanToFlow(
           const firstStepTargetY = HEADER_Y + maxHeaderHeight / 2
 
           // Calculate offset to shift all workflow nodes
-          const offsetX = firstStepTargetX - firstStepNode.position.x
+          // Use firstStepLeftEdge to ensure sub-agents don't overlap with header
+          const offsetX = firstStepTargetX - firstStepLeftEdge
           const offsetY = firstStepTargetY - firstStepNode.position.y
 
           // Shift all non-header nodes by this offset
@@ -2604,28 +2913,28 @@ export function usePlanToFlow(
 
     }
 
-    // Position sub-agents relative to their parent orchestrator nodes
-    // LR layout: horizontal row BELOW orchestrator
-    // TB layout: vertical column to the RIGHT of orchestrator
-    const orchestratorNodeMap = new Map<string, { nodeIndex: number; subAgentIndices: number[] }>()
+    // Position sub-agents relative to their parent nodes (orchestrator or todo_task)
+    // LR layout: horizontal row BELOW parent
+    // TB layout: vertical column to the RIGHT of parent
+    const parentNodeMap = new Map<string, { nodeIndex: number; subAgentIndices: number[] }>()
 
-    // Pass 1: Find all orchestrator nodes first to initialize map
+    // Pass 1: Find all orchestrator and todo task nodes first to initialize map
     layoutedResult.nodes.forEach((node, index) => {
-      if (node.type === 'orchestrator') {
-        orchestratorNodeMap.set(node.id, { nodeIndex: index, subAgentIndices: [] })
+      if (node.type === 'orchestrator' || node.type === 'todo_task') {
+        parentNodeMap.set(node.id, { nodeIndex: index, subAgentIndices: [] })
       }
     })
-    console.log(`[SubAgent Mapping] Pass 1: Found ${orchestratorNodeMap.size} orchestrators`)
+    console.log(`[SubAgent Mapping] Pass 1: Found ${parentNodeMap.size} parents`)
 
-    // Pass 2: Find all sub-agents and attach to parent orchestrator
+    // Pass 2: Find all sub-agents and attach to parent
     let subAgentsFound = 0
     layoutedResult.nodes.forEach((node, index) => {
       if (node.id.includes('-sub-agent-')) {
-        // Extract parent orchestrator node ID from sub-agent ID
+        // Extract parent node ID from sub-agent ID
         const parentId = node.id.split('-sub-agent-')[0]
-        const orchestratorInfo = orchestratorNodeMap.get(parentId)
-        if (orchestratorInfo) {
-          orchestratorInfo.subAgentIndices.push(index)
+        const parentInfo = parentNodeMap.get(parentId)
+        if (parentInfo) {
+          parentInfo.subAgentIndices.push(index)
           subAgentsFound++
         } else {
           console.warn(`[SubAgent Mapping] Orphan sub-agent found: ${node.id} (Parent ${parentId} not found)`)
@@ -2635,19 +2944,19 @@ export function usePlanToFlow(
     console.log(`[SubAgent Mapping] Pass 2: Mapped ${subAgentsFound} sub-agents to parents`)
 
     // Position sub-agents based on layout direction
-    orchestratorNodeMap.forEach(({ nodeIndex: orchestratorNodeIndex, subAgentIndices }) => {
-      const orchestratorNode = layoutedResult.nodes[orchestratorNodeIndex]
-      const orchestratorDimensions = NODE_DIMENSIONS.orchestrator || NODE_DIMENSIONS.step
+    parentNodeMap.forEach(({ nodeIndex: parentNodeIndex, subAgentIndices }) => {
+      const parentNode = layoutedResult.nodes[parentNodeIndex]
+      const parentDimensions = (NODE_DIMENSIONS[parentNode.type as keyof typeof NODE_DIMENSIONS]) || NODE_DIMENSIONS.step
 
       if (subAgentIndices.length === 0) return
 
-      const GAP = 60  // Reduced from 100
-      const SUB_AGENT_GAP = 20 // Reduced from 30
+      const GAP = 60
+      const SUB_AGENT_GAP = 20
       
-      console.log(`[SubAgent Positioning] Processing ${orchestratorNode.id} (${layoutDirection}) at ${Math.round(orchestratorNode.position.x)},${Math.round(orchestratorNode.position.y)} with ${subAgentIndices.length} subs`)
+      console.log(`[SubAgent Positioning] Processing ${parentNode.id} (${layoutDirection}) at ${Math.round(parentNode.position.x)},${Math.round(parentNode.position.y)} with ${subAgentIndices.length} subs`)
 
       if (layoutDirection === 'LR') {
-        // LR layout: Horizontal row BELOW orchestrator
+        // LR layout: Horizontal row BELOW parent
         // Calculate total width needed for all sub-agents
         let totalWidth = 0
         subAgentIndices.forEach((idx, i) => {
@@ -2658,9 +2967,9 @@ export function usePlanToFlow(
           }
         })
 
-        // Center sub-agents under orchestrator
-        const startX = orchestratorNode.position.x + (orchestratorDimensions.width - totalWidth) / 2
-        const subAgentY = orchestratorNode.position.y + orchestratorDimensions.height + GAP
+        // Center sub-agents under parent
+        const startX = parentNode.position.x + (parentDimensions.width - totalWidth) / 2
+        const subAgentY = parentNode.position.y + parentDimensions.height + GAP
 
         let currentX = startX
         subAgentIndices.forEach((subAgentIndex) => {
@@ -2679,7 +2988,7 @@ export function usePlanToFlow(
           currentX += subAgentDimensions.width + SUB_AGENT_GAP
         })
       } else {
-        // TB layout: Vertical column to the RIGHT of orchestrator
+        // TB layout: Vertical column to the RIGHT of parent
         // Calculate total height needed for all sub-agents
         let totalHeight = 0
         subAgentIndices.forEach((idx, i) => {
@@ -2690,11 +2999,11 @@ export function usePlanToFlow(
           }
         })
 
-        // Center sub-agents vertically relative to orchestrator
-        const subAgentX = orchestratorNode.position.x + orchestratorDimensions.width + GAP
-        const startY = orchestratorNode.position.y + (orchestratorDimensions.height - totalHeight) / 2
+        // Center sub-agents vertically relative to parent
+        const subAgentX = parentNode.position.x + parentDimensions.width + GAP
+        const startY = parentNode.position.y + (parentDimensions.height - totalHeight) / 2
         
-        console.log(`[SubAgent Positioning] TB: OrchWidth=${orchestratorDimensions.width}, GAP=${GAP}, SubAgentX=${subAgentX}, StartY=${startY}`)
+        console.log(`[SubAgent Positioning] TB: ParentWidth=${parentDimensions.width}, GAP=${GAP}, SubAgentX=${subAgentX}, StartY=${startY}`)
 
         let currentY = startY
         subAgentIndices.forEach((subAgentIndex) => {
@@ -2926,16 +3235,17 @@ export function usePlanToFlow(
     // Inject onRunFromStep callback, onOpenSidebar callback, isExecuting state, canRun, workspacePath, and selectedRunFolder into step-type nodes
     // Also make validation, learning, and evaluation nodes non-draggable
     layoutedResult.nodes = layoutedResult.nodes.map(node => {
-      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator' || node.type === 'human_input') {
+      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator' || node.type === 'human_input' || node.type === 'todo_task') {
         const canRun = canStepRun()
         // Sub-agents cannot be run independently (they are part of routing steps)
+        // We pass onRunFromStep even for sub-agents so the UI shows a disabled button instead of a warning icon
+        // The node component (StepNode) handles disabling the button via isSubAgent check
         const isSubAgent = node.id.includes('-sub-agent-')
         return {
           ...node,
           data: {
             ...node.data,
-            // Don't allow running sub-agents independently
-            onRunFromStep: isSubAgent ? undefined : onRunFromStep,
+            onRunFromStep,
             onOpenSidebar,
             isExecuting,
             canRun,

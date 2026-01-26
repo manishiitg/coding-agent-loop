@@ -66,6 +66,14 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 					Region: llmConfig.APIKeys.Bedrock.Region,
 				}
 			}
+			if llmConfig.APIKeys.Azure != nil {
+				config.APIKeys.Azure = &agents.AzureAgentConfig{
+					Endpoint:   llmConfig.APIKeys.Azure.Endpoint,
+					APIKey:     llmConfig.APIKeys.Azure.APIKey,
+					APIVersion: llmConfig.APIKeys.Azure.APIVersion,
+					Region:     llmConfig.APIKeys.Azure.Region,
+				}
+			}
 		}
 	} else {
 		// No fallback to orchestrator defaults - llmConfig must be provided

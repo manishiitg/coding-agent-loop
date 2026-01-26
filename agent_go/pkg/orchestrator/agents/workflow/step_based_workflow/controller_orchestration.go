@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/shared"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -1279,44 +1278,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) getOrchestrationOrchestratorAgentForS
 		}
 	}
 
-	// For orchestration orchestrator, skip tempLLM and use step/preset ExecutionLLM directly
-	// Fallback order: step ExecutionLLM → orchestrator default (preset is already merged into step config by ApplyStepConfigFromFile)
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
-	var llmConfig *orchestrator.LLMConfig
-
-	// Debug: Log presetExecutionLLM availability
-	if hcpo.presetExecutionLLM != nil {
-		hcpo.GetLogger().Info(fmt.Sprintf("[PRESET_EXECUTION_LLM_DEBUG] [getOrchestrationOrchestratorAgentForStep] presetExecutionLLM available: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
-	} else {
-		hcpo.GetLogger().Info("[PRESET_EXECUTION_LLM_DEBUG] [getOrchestrationOrchestratorAgentForStep] presetExecutionLLM is nil")
-	}
-
-	// Try step ExecutionLLM first (includes merged preset config)
-	if orchestrationStepConfig != nil && orchestrationStepConfig.ExecutionLLM != nil &&
-		orchestrationStepConfig.ExecutionLLM.Provider != "" && orchestrationStepConfig.ExecutionLLM.ModelID != "" {
-		llmConfig = &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: orchestrationStepConfig.ExecutionLLM.Provider,
-				ModelID:  orchestrationStepConfig.ExecutionLLM.ModelID,
-			},
-			APIKeys: orchestratorLLMConfig.APIKeys,
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step/preset ExecutionLLM for orchestration orchestrator: %s/%s",
-			orchestrationStepConfig.ExecutionLLM.Provider, orchestrationStepConfig.ExecutionLLM.ModelID))
-	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
-		// Use preset default if available and step config didn't specify one
-		llmConfig = &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: hcpo.presetExecutionLLM.Provider,
-				ModelID:  hcpo.presetExecutionLLM.ModelID,
-			},
-			APIKeys: orchestratorLLMConfig.APIKeys,
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default ExecutionLLM for orchestration orchestrator: %s/%s",
-			hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
-	} else {
+	// Use selectExecutionLLM helper with learningsFolderEmpty=true since orchestrators don't accumulate learnings
+	// This will skip tempLLM logic and use step config > preset > orchestrator fallback
+	llmConfig := hcpo.selectExecutionLLM(
+		ctx,
+		orchestrationStepConfig,
+		isRetryAfterValidationFailure,
+		retryAttempt,
+		stepID,
+		stepPath,
+		true, // learningsFolderEmpty - orchestrator has no learnings, skip tempLLM
+	)
+	if llmConfig == nil {
 		err := fmt.Errorf("no valid LLM configuration found for orchestration orchestrator: step config and preset execution LLM are both empty or invalid")
-		hcpo.GetLogger().Error("❌ No valid LLM configuration found for orchestration orchestrator: step config and preset execution LLM are both empty or invalid", err)
+		hcpo.GetLogger().Error("❌ No valid LLM configuration found for orchestration orchestrator", err)
 		return nil, err
 	}
 

@@ -50,6 +50,13 @@ const (
 	// Pre-validation events
 	PreValidationCompleted events.EventType = "pre_validation_completed"
 
+	// Todo task orchestration events
+	TodoTaskRouteSelected  events.EventType = "todo_task_route_selected"  // When orchestrator selects a route/sub-agent
+	TodoTaskItemCreated    events.EventType = "todo_task_item_created"    // When a todo item is created
+	TodoTaskItemUpdated    events.EventType = "todo_task_item_updated"    // When a todo item is updated
+	TodoTaskItemCompleted  events.EventType = "todo_task_item_completed"  // When a todo item is completed
+	TodoTaskStepCompleted  events.EventType = "todo_task_step_completed"  // When the entire todo task step is completed
+
 	// Step execution events
 	StepExecutionStart  events.EventType = "step_execution_start"
 	StepExecutionEnd    events.EventType = "step_execution_end"
@@ -67,7 +74,8 @@ func GetComponentFromEventType(eventType events.EventType) string {
 		HumanVerificationResponse, RequestHumanFeedback, BlockingHumanFeedback,
 		LearningSkipped, TempLLMSkipped,
 		DecisionEvaluated, PreValidationCompleted,
-		StepExecutionStart, StepExecutionEnd, StepExecutionFailed:
+		StepExecutionStart, StepExecutionEnd, StepExecutionFailed,
+		TodoTaskRouteSelected, TodoTaskItemCreated, TodoTaskItemUpdated, TodoTaskItemCompleted, TodoTaskStepCompleted:
 		return "orchestrator"
 	default:
 		return "system"

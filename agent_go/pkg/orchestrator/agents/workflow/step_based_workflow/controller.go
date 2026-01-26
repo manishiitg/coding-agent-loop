@@ -206,14 +206,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 		isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
 	}
 
-	// For conditional/decision agents, skip tempLLM and use step/preset LLM directly
-	// Fallback order: ConditionalLLM → ExecutionLLM → preset ExecutionLLM → orchestrator default
-	// Create LLM config: use conditional LLM if specified, otherwise use execution LLM
+	// LLM selection: ConditionalLLM (highest priority) > selectExecutionLLM helper (step > preset > orchestrator)
 	var llmConfig *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
+	stepPath := fmt.Sprintf("step-%d", stepIndex+1)
 
 	if hasStepSpecificConfig {
-		// Step has specific config - use step-specific LLM
+		// Step has specific config - check for ConditionalLLM first (special case)
 		if hasValidConditionalLLM {
 			conditionalLLMConfig := agentConfigs.ConditionalLLM
 			llmConfig = &orchestrator.LLMConfig{
@@ -223,26 +222,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 				},
 				APIKeys: orchestratorLLMConfig.APIKeys,
 			}
-		} else if agentConfigs.ExecutionLLM != nil && agentConfigs.ExecutionLLM.Provider != "" && agentConfigs.ExecutionLLM.ModelID != "" {
-			executionLLMConfig := agentConfigs.ExecutionLLM
-			llmConfig = &orchestrator.LLMConfig{
-				Primary: orchestrator.LLMModel{
-					Provider: executionLLMConfig.Provider,
-					ModelID:  executionLLMConfig.ModelID,
-				},
-				APIKeys: orchestratorLLMConfig.APIKeys,
-			}
-		} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
-			llmConfig = &orchestrator.LLMConfig{
-				Primary: orchestrator.LLMModel{
-					Provider: hcpo.presetExecutionLLM.Provider,
-					ModelID:  hcpo.presetExecutionLLM.ModelID,
-				},
-				APIKeys: orchestratorLLMConfig.APIKeys,
-			}
-		} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
-			llmConfig = orchestratorLLMConfig
 		} else {
+			// Use selectExecutionLLM helper for standard fallback (step ExecutionLLM > preset > orchestrator)
+			// learningsFolderEmpty=true since conditional agents don't accumulate learnings
+			llmConfig = hcpo.selectExecutionLLM(ctx, agentConfigs, false, 1, stepID, stepPath, true)
+		}
+		if llmConfig == nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ No valid LLM configuration found for conditional agent step '%s'", step.GetTitle()))
 			return nil
 		}
@@ -259,10 +244,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 			actualPhase = "conditional_evaluation"
 		}
 
-		// Construct stepPath from stepIndex (e.g., "step-3" for stepIndex=2)
-		stepPath := fmt.Sprintf("step-%d", stepIndex+1)
-
 		// Create fresh step-specific conditional agent (no caching)
+		// stepPath already defined above
 		agent, err := hcpo.createConditionalAgent(
 			ctx,
 			actualPhase,     // phase (from parameter)
@@ -294,19 +277,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 		return stepConditionalAgent
 	}
 
-	// No step-specific config - create default conditional agent fresh (no caching)
-	// Fallback order: preset ExecutionLLM → orchestrator default
-	if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
-		llmConfig = &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: hcpo.presetExecutionLLM.Provider,
-				ModelID:  hcpo.presetExecutionLLM.ModelID,
-			},
-			APIKeys: orchestratorLLMConfig.APIKeys,
-		}
-	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
-		llmConfig = orchestratorLLMConfig
-	} else {
+	// No step-specific config - use selectExecutionLLM helper for standard fallback
+	// learningsFolderEmpty=true since conditional agents don't accumulate learnings
+	llmConfig = hcpo.selectExecutionLLM(ctx, nil, false, 1, stepID, stepPath, true)
+	if llmConfig == nil {
 		hcpo.GetLogger().Error("❌ No valid LLM configuration found for default conditional agent", nil)
 		return nil
 	}
@@ -322,9 +296,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 	if actualPhase == "" {
 		actualPhase = "conditional_evaluation"
 	}
-
-	// Construct stepPath from stepIndex (e.g., "step-3" for stepIndex=2)
-	stepPath := fmt.Sprintf("step-%d", stepIndex+1)
 
 	// Create fresh default conditional agent (no caching, matches execution/learning agent pattern)
 	agent, err := hcpo.createConditionalAgent(

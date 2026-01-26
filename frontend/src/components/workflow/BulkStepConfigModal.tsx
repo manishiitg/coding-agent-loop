@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { X, Settings, AlertCircle, CheckCircle2, Loader2, Code2, Sparkles, Brain, Shield, BookOpen, Wrench, Info, Book, FileStack } from "lucide-react";
+import { X, Settings, AlertCircle, CheckCircle2, Loader2, Code2, Sparkles, Brain, Shield, BookOpen, Wrench, Info, Book, FileStack, Search } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "../ui/accordion";
 import { useLLMStore } from "../../stores";
@@ -13,7 +13,7 @@ import type {
   PlanningResponse,
   PlanStep,
 } from "../../utils/stepConfigMatching";
-import { isConditionalStep, isDecisionStep, isOrchestrationStep } from "../../utils/stepConfigMatching";
+import { isConditionalStep, isDecisionStep, isOrchestrationStep, isTodoTaskStep } from "../../utils/stepConfigMatching";
 import { getToolsByCategory } from "../../utils/customToolNames";
 
 interface BulkStepConfigModalProps {
@@ -238,6 +238,31 @@ export default function BulkStepConfigModal({
             });
           }
         }
+
+        // Collect todo task step's inner step and predefined routes
+        if (isTodoTaskStep(step)) {
+          // Collect main todo task step
+          if (step.todo_task_step) {
+            allSteps.push({
+              stepId: step.todo_task_step.id,
+              step: step.todo_task_step,
+              path: `${stepPath}.todo_task_step`,
+            });
+          }
+
+          // Collect sub-agents from predefined routes
+          if (step.predefined_routes && step.predefined_routes.length > 0) {
+            step.predefined_routes.forEach((route, routeIndex) => {
+              if (route.sub_agent_step) {
+                allSteps.push({
+                  stepId: route.sub_agent_step.id,
+                  step: route.sub_agent_step,
+                  path: `${stepPath}.predefined_routes[${routeIndex}].sub_agent_step`,
+                });
+              }
+            });
+          }
+        }
       });
     };
 
@@ -317,7 +342,8 @@ export default function BulkStepConfigModal({
       | "set_learning_detail_level_exact"
       | "set_learning_detail_level_general"
       | "set_code_execution_mode"
-      | "set_simple_mode",
+      | "set_simple_mode"
+      | "set_tool_search_mode",
     llm?: LLMOption | null,
     maxTurns?: number
   ) => {
@@ -545,13 +571,20 @@ export default function BulkStepConfigModal({
           case "set_code_execution_mode":
             // Set code execution mode and auto-enable learning/validation
             newAgentConfigs.use_code_execution_mode = true;
+            newAgentConfigs.use_tool_search_mode = false;
             newAgentConfigs.disable_learning = false;
             newAgentConfigs.disable_validation = false;
             newAgentConfigs.learning_detail_level = "exact";
             break;
+          case "set_tool_search_mode":
+            // Set tool search mode
+            newAgentConfigs.use_tool_search_mode = true;
+            newAgentConfigs.use_code_execution_mode = false;
+            break;
           case "set_simple_mode":
             // Set simple mode (disable code execution)
             newAgentConfigs.use_code_execution_mode = false;
+            newAgentConfigs.use_tool_search_mode = false;
             break;
         }
 
@@ -794,140 +827,95 @@ export default function BulkStepConfigModal({
                 <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
                   Control validation behavior for all steps. Validation ensures step outputs meet quality standards.
                 </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Disable Validation */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleImmediateAction("disable_validation")}
-                      disabled={applyingAction !== null}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800 transition-all"
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "disable_validation" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <X className="w-4 h-4 text-red-500" />
-                            <span className="font-medium text-sm">Disable Validation</span>
-                          </>
-                        )}
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Turns off the validation phase entirely. Steps will proceed without quality checks, which is faster but may allow incorrect outputs.
-                    </p>
+                <div className="space-y-6">
+                  {/* Status Group */}
+                  <div>
+                    <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
+                      Global Status
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => handleImmediateAction("disable_validation")}
+                        disabled={applyingAction !== null}
+                        className="h-auto py-3 px-4 hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800 transition-all justify-start"
+                      >
+                         <div className="flex items-center gap-3">
+                           {applyingAction === "disable_validation" ? <Loader2 className="w-4 h-4 animate-spin text-red-500" /> : <X className="w-4 h-4 text-red-500" />}
+                           <div className="text-left">
+                             <div className="font-medium text-sm">Disable</div>
+                             <div className="text-[10px] text-muted-foreground font-normal">Skip quality checks</div>
+                           </div>
+                         </div>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleImmediateAction("enable_validation")}
+                        disabled={applyingAction !== null}
+                        className="h-auto py-3 px-4 hover:bg-green-50 dark:hover:bg-green-950/20 hover:border-green-300 dark:hover:border-green-800 transition-all justify-start"
+                      >
+                         <div className="flex items-center gap-3">
+                           {applyingAction === "enable_validation" ? <Loader2 className="w-4 h-4 animate-spin text-green-500" /> : <CheckCircle2 className="w-4 h-4 text-green-500" />}
+                           <div className="text-left">
+                             <div className="font-medium text-sm">Enable</div>
+                             <div className="text-[10px] text-muted-foreground font-normal">Verify all outputs</div>
+                           </div>
+                         </div>
+                      </Button>
+                    </div>
                   </div>
 
-                  {/* Enable Validation */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleImmediateAction("enable_validation")}
-                      disabled={applyingAction !== null}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-green-50 dark:hover:bg-green-950/20 hover:border-green-300 dark:hover:border-green-800 transition-all"
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "enable_validation" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle2 className="w-4 h-4 text-green-500" />
-                            <span className="font-medium text-sm">Enable Validation</span>
-                          </>
-                        )}
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Enables the validation phase to verify step outputs meet success criteria. This ensures quality but adds execution time.
-                    </p>
-                  </div>
-
-                  {/* Set Validation Mode: Auto */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleImmediateAction("set_validation_mode_auto")}
-                      disabled={applyingAction !== null}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-800 transition-all"
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "set_validation_mode_auto" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Settings className="w-4 h-4 text-blue-500" />
-                            <span className="font-medium text-sm">Set Mode: Auto</span>
-                          </>
-                        )}
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Runs LLM validation for the first 3 successful executions, then skips (assuming stability).
-                    </p>
-                  </div>
-
-                  {/* Set Validation Mode: Always */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleImmediateAction("set_validation_mode_always")}
-                      disabled={applyingAction !== null}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-800 transition-all"
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "set_validation_mode_always" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Shield className="w-4 h-4 text-blue-500" />
-                            <span className="font-medium text-sm">Set Mode: Always</span>
-                          </>
-                        )}
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Ensures LLM validation always runs, even when pre-validation passes.
-                    </p>
-                  </div>
-
-                  {/* Set Validation Mode: Skip */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleImmediateAction("set_validation_mode_skip")}
-                      disabled={applyingAction !== null}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-orange-50 dark:hover:bg-orange-950/20 hover:border-orange-300 dark:hover:border-orange-800 transition-all"
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "set_validation_mode_skip" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Shield className="w-4 h-4 text-orange-500" />
-                            <span className="font-medium text-sm">Set Mode: Skip</span>
-                          </>
-                        )}
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Skips LLM validation if code-based pre-validation passes.
-                    </p>
+                  {/* Mode Group */}
+                  <div>
+                    <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-purple-500"></div>
+                      Validation Strategy
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => handleImmediateAction("set_validation_mode_auto")}
+                        disabled={applyingAction !== null}
+                        className="h-auto py-3 px-3 hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-800 transition-all justify-start"
+                      >
+                         <div className="flex items-center gap-3">
+                           {applyingAction === "set_validation_mode_auto" ? <Loader2 className="w-4 h-4 animate-spin text-blue-500" /> : <Settings className="w-4 h-4 text-blue-500" />}
+                           <div className="text-left">
+                             <div className="font-medium text-sm">Auto</div>
+                             <div className="text-[10px] text-muted-foreground font-normal">Check first 3</div>
+                           </div>
+                         </div>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleImmediateAction("set_validation_mode_always")}
+                        disabled={applyingAction !== null}
+                        className="h-auto py-3 px-3 hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-800 transition-all justify-start"
+                      >
+                         <div className="flex items-center gap-3">
+                           {applyingAction === "set_validation_mode_always" ? <Loader2 className="w-4 h-4 animate-spin text-blue-500" /> : <Shield className="w-4 h-4 text-blue-500" />}
+                           <div className="text-left">
+                             <div className="font-medium text-sm">Always</div>
+                             <div className="text-[10px] text-muted-foreground font-normal">Never skip</div>
+                           </div>
+                         </div>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleImmediateAction("set_validation_mode_skip")}
+                        disabled={applyingAction !== null}
+                        className="h-auto py-3 px-3 hover:bg-orange-50 dark:hover:bg-orange-950/20 hover:border-orange-300 dark:hover:border-orange-800 transition-all justify-start"
+                      >
+                         <div className="flex items-center gap-3">
+                           {applyingAction === "set_validation_mode_skip" ? <Loader2 className="w-4 h-4 animate-spin text-orange-500" /> : <Shield className="w-4 h-4 text-orange-500" />}
+                           <div className="text-left">
+                             <div className="font-medium text-sm">Skip</div>
+                             <div className="text-[10px] text-muted-foreground font-normal">If code passes</div>
+                           </div>
+                         </div>
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </AccordionContent>
@@ -947,167 +935,119 @@ export default function BulkStepConfigModal({
                 <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
                   Control learning behavior. Learning agents extract insights and patterns from step execution to improve future performance.
                 </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Disable Learning */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleImmediateAction("disable_learning")}
-                      disabled={applyingAction !== null}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800 transition-all"
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "disable_learning" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <X className="w-4 h-4 text-red-500" />
-                            <span className="font-medium text-sm">Disable Learning</span>
-                          </>
-                        )}
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Turns off the learning phase entirely. No insights will be extracted from step execution, which speeds up execution but prevents knowledge accumulation.
-                    </p>
+                <div className="space-y-6">
+                  {/* Status Group */}
+                  <div>
+                    <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+                      Global Status
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => handleImmediateAction("disable_learning")}
+                        disabled={applyingAction !== null}
+                        className="h-auto py-3 px-4 hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800 transition-all justify-start"
+                      >
+                         <div className="flex items-center gap-3">
+                           {applyingAction === "disable_learning" ? <Loader2 className="w-4 h-4 animate-spin text-red-500" /> : <X className="w-4 h-4 text-red-500" />}
+                           <div className="text-left">
+                             <div className="font-medium text-sm">Disable</div>
+                             <div className="text-[10px] text-muted-foreground font-normal">Stop learning</div>
+                           </div>
+                         </div>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleImmediateAction("enable_learning")}
+                        disabled={applyingAction !== null}
+                        className="h-auto py-3 px-4 hover:bg-green-50 dark:hover:bg-green-950/20 hover:border-green-300 dark:hover:border-green-800 transition-all justify-start"
+                      >
+                         <div className="flex items-center gap-3">
+                           {applyingAction === "enable_learning" ? <Loader2 className="w-4 h-4 animate-spin text-green-500" /> : <CheckCircle2 className="w-4 h-4 text-green-500" />}
+                           <div className="text-left">
+                             <div className="font-medium text-sm">Enable</div>
+                             <div className="text-[10px] text-muted-foreground font-normal">Extract insights</div>
+                           </div>
+                         </div>
+                      </Button>
+                    </div>
                   </div>
 
-                  {/* Enable Learning */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleImmediateAction("enable_learning")}
-                      disabled={applyingAction !== null}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-green-50 dark:hover:bg-green-950/20 hover:border-green-300 dark:hover:border-green-800 transition-all"
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "enable_learning" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle2 className="w-4 h-4 text-green-500" />
-                            <span className="font-medium text-sm">Enable Learning</span>
-                          </>
-                        )}
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Enables the learning phase to extract insights and patterns from step execution. These insights help improve future step performance.
-                    </p>
+                  {/* Knowledge State Group */}
+                  <div>
+                    <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-yellow-500"></div>
+                      Knowledge State
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => handleImmediateAction("lock_learnings")}
+                        disabled={applyingAction !== null}
+                        className="h-auto py-3 px-4 hover:bg-yellow-50 dark:hover:bg-yellow-950/20 hover:border-yellow-300 dark:hover:border-yellow-800 transition-all justify-start"
+                      >
+                         <div className="flex items-center gap-3">
+                           {applyingAction === "lock_learnings" ? <Loader2 className="w-4 h-4 animate-spin text-yellow-600" /> : <Settings className="w-4 h-4 text-yellow-600" />}
+                           <div className="text-left">
+                             <div className="font-medium text-sm">Lock</div>
+                             <div className="text-[10px] text-muted-foreground font-normal">Read-only mode</div>
+                           </div>
+                         </div>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleImmediateAction("unlock_learnings")}
+                        disabled={applyingAction !== null}
+                        className="h-auto py-3 px-4 hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-800 transition-all justify-start"
+                      >
+                         <div className="flex items-center gap-3">
+                           {applyingAction === "unlock_learnings" ? <Loader2 className="w-4 h-4 animate-spin text-blue-500" /> : <Settings className="w-4 h-4 text-blue-500" />}
+                           <div className="text-left">
+                             <div className="font-medium text-sm">Unlock</div>
+                             <div className="text-[10px] text-muted-foreground font-normal">Read & Write</div>
+                           </div>
+                         </div>
+                      </Button>
+                    </div>
                   </div>
 
-                  {/* Lock Learnings */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleImmediateAction("lock_learnings")}
-                      disabled={applyingAction !== null}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-yellow-50 dark:hover:bg-yellow-950/20 hover:border-yellow-300 dark:hover:border-yellow-800 transition-all"
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "lock_learnings" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Settings className="w-4 h-4 text-yellow-500" />
-                            <span className="font-medium text-sm">Lock Learnings</span>
-                          </>
-                        )}
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Prevents new learning from being generated but still uses existing learnings. Useful when you want to preserve current knowledge without modification.
-                    </p>
-                  </div>
-
-                  {/* Unlock Learnings */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleImmediateAction("unlock_learnings")}
-                      disabled={applyingAction !== null}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-800 transition-all"
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "unlock_learnings" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Settings className="w-4 h-4 text-blue-500" />
-                            <span className="font-medium text-sm">Unlock Learnings</span>
-                          </>
-                        )}
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Allows learning agents to generate new insights from step execution. Enables continuous improvement of workflow knowledge.
-                    </p>
-                  </div>
-
-                  {/* Set Learning Detail Level to Exact */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleImmediateAction("set_learning_detail_level_exact")}
-                      disabled={applyingAction !== null}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-primary/5 hover:border-primary/50 transition-all"
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "set_learning_detail_level_exact" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Info className="w-4 h-4 text-primary" />
-                            <span className="font-medium text-sm">Set Detail: Exact</span>
-                          </>
-                        )}
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Learning agents will extract precise, step-specific insights. More detailed and specific to each step, useful for complex workflows.
-                    </p>
-                  </div>
-
-                  {/* Set Learning Detail Level to General */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleImmediateAction("set_learning_detail_level_general")}
-                      disabled={applyingAction !== null}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-primary/5 hover:border-primary/50 transition-all"
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "set_learning_detail_level_general" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Info className="w-4 h-4 text-primary" />
-                            <span className="font-medium text-sm">Set Detail: General</span>
-                          </>
-                        )}
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Learning agents will extract high-level, reusable patterns. Broader insights that can be applied across multiple steps.
-                    </p>
+                  {/* Detail Level Group */}
+                  <div>
+                    <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
+                      Detail Level
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => handleImmediateAction("set_learning_detail_level_exact")}
+                        disabled={applyingAction !== null}
+                        className="h-auto py-3 px-4 hover:bg-primary/5 hover:border-primary/50 transition-all justify-start"
+                      >
+                         <div className="flex items-center gap-3">
+                           {applyingAction === "set_learning_detail_level_exact" ? <Loader2 className="w-4 h-4 animate-spin text-primary" /> : <Info className="w-4 h-4 text-primary" />}
+                           <div className="text-left">
+                             <div className="font-medium text-sm">Exact</div>
+                             <div className="text-[10px] text-muted-foreground font-normal">Step-specific</div>
+                           </div>
+                         </div>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleImmediateAction("set_learning_detail_level_general")}
+                        disabled={applyingAction !== null}
+                        className="h-auto py-3 px-4 hover:bg-primary/5 hover:border-primary/50 transition-all justify-start"
+                      >
+                         <div className="flex items-center gap-3">
+                           {applyingAction === "set_learning_detail_level_general" ? <Loader2 className="w-4 h-4 animate-spin text-primary" /> : <Info className="w-4 h-4 text-primary" />}
+                           <div className="text-left">
+                             <div className="font-medium text-sm">General</div>
+                             <div className="text-[10px] text-muted-foreground font-normal">High-level patterns</div>
+                           </div>
+                         </div>
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </AccordionContent>
@@ -1127,59 +1067,57 @@ export default function BulkStepConfigModal({
                 <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
                   Choose the execution mode for agents. Code execution mode enables code generation and execution capabilities.
                 </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Set Agent Mode to Code Exec */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleImmediateAction("set_code_execution_mode")}
-                      disabled={applyingAction !== null}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-indigo-50 dark:hover:bg-indigo-950/20 hover:border-indigo-300 dark:hover:border-indigo-800 transition-all"
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "set_code_execution_mode" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Code2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                            <span className="font-medium text-sm">Code Execution Mode</span>
-                          </>
-                        )}
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Enables code generation and execution capabilities. Agents can write and run code to complete tasks. Automatically enables learning and validation.
-                    </p>
-                  </div>
-
-                  {/* Set Agent Mode to Simple */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleImmediateAction("set_simple_mode")}
-                      disabled={applyingAction !== null}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-purple-50 dark:hover:bg-purple-950/20 hover:border-purple-300 dark:hover:border-purple-800 transition-all"
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "set_simple_mode" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                            <span className="font-medium text-sm">Simple Mode</span>
-                          </>
-                        )}
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Disables code execution. Agents use only tools and natural language. Faster and simpler execution, suitable for straightforward tasks.
-                    </p>
+                <div className="space-y-6">
+                  {/* Execution Mode Group */}
+                  <div>
+                    <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
+                      Execution Mode
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => handleImmediateAction("set_code_execution_mode")}
+                        disabled={applyingAction !== null}
+                        className="h-auto py-3 px-3 hover:bg-indigo-50 dark:hover:bg-indigo-950/20 hover:border-indigo-300 dark:hover:border-indigo-800 transition-all justify-start"
+                      >
+                         <div className="flex items-center gap-3">
+                           {applyingAction === "set_code_execution_mode" ? <Loader2 className="w-4 h-4 animate-spin text-indigo-600" /> : <Code2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />}
+                           <div className="text-left">
+                             <div className="font-medium text-sm">Code Exec</div>
+                             <div className="text-[10px] text-muted-foreground font-normal">Write & run code</div>
+                           </div>
+                         </div>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleImmediateAction("set_tool_search_mode")}
+                        disabled={applyingAction !== null}
+                        className="h-auto py-3 px-3 hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-800 transition-all justify-start"
+                      >
+                         <div className="flex items-center gap-3">
+                           {applyingAction === "set_tool_search_mode" ? <Loader2 className="w-4 h-4 animate-spin text-blue-600" /> : <Search className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
+                           <div className="text-left">
+                             <div className="font-medium text-sm">Tool Search</div>
+                             <div className="text-[10px] text-muted-foreground font-normal">Dynamic discovery</div>
+                           </div>
+                         </div>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleImmediateAction("set_simple_mode")}
+                        disabled={applyingAction !== null}
+                        className="h-auto py-3 px-3 hover:bg-purple-50 dark:hover:bg-purple-950/20 hover:border-purple-300 dark:hover:border-purple-800 transition-all justify-start"
+                      >
+                         <div className="flex items-center gap-3">
+                           {applyingAction === "set_simple_mode" ? <Loader2 className="w-4 h-4 animate-spin text-purple-600" /> : <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />}
+                           <div className="text-left">
+                             <div className="font-medium text-sm">Simple</div>
+                             <div className="text-[10px] text-muted-foreground font-normal">Standard chat</div>
+                           </div>
+                         </div>
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </AccordionContent>

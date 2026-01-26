@@ -729,9 +729,9 @@ func (s *SupabaseDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQue
 	}
 
 	query := `
-		INSERT INTO preset_queries (label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, is_predefined, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, is_predefined, created_at, updated_at, created_by
+		INSERT INTO preset_queries (label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_at, updated_at, created_by
 	`
 
 	var preset PresetQuery
@@ -739,8 +739,44 @@ func (s *SupabaseDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQue
 	var selectedToolsStr string
 	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
-	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, selectedToolsJSON, req.SelectedFolder, agentMode, llmConfigParam, req.UseCodeExecutionMode, req.IsPredefined, "user").Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+	var preDiscoveredToolsStr sql.NullString
+	var selectedSkillsStr sql.NullString
+
+	preDiscoveredToolsJSON := "[]"
+	if len(req.PreDiscoveredTools) > 0 {
+		toolsJSON, err := json.Marshal(req.PreDiscoveredTools)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal pre-discovered tools: %w", err)
+		}
+		preDiscoveredToolsJSON = string(toolsJSON)
+	}
+
+	selectedSkillsJSON := "[]"
+	if len(req.SelectedSkills) > 0 {
+		skillsJSON, err := json.Marshal(req.SelectedSkills)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal selected skills: %w", err)
+		}
+		selectedSkillsJSON = string(skillsJSON)
+	}
+
+	err := s.db.QueryRowContext(ctx, query,
+		req.Label,
+		req.Query,
+		selectedServersJSON,
+		selectedToolsJSON,
+		req.SelectedFolder,
+		agentMode,
+		llmConfigParam,
+		req.UseCodeExecutionMode,
+		req.UseToolSearchMode,
+		preDiscoveredToolsJSON,
+		selectedSkillsJSON,
+		req.EnableBrowserAccess,
+		req.IsPredefined,
+		"user",
+	).Scan(
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create preset query: %w", err)
@@ -749,6 +785,8 @@ func (s *SupabaseDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQue
 	preset.SelectedServers = selectedServersStr
 	preset.SelectedTools = selectedToolsStr
 	preset.SelectedFolder = selectedFolderStr
+	preset.PreDiscoveredTools = preDiscoveredToolsStr.String
+	preset.SelectedSkills = selectedSkillsStr.String
 	if llmConfigNullStr.Valid {
 		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
 	} else {
@@ -761,7 +799,7 @@ func (s *SupabaseDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQue
 // GetPresetQuery retrieves a preset query by ID
 func (s *SupabaseDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery, error) {
 	query := `
-		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, is_predefined, created_at, updated_at, created_by
+		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_at, updated_at, created_by
 		FROM preset_queries
 		WHERE id = $1
 	`
@@ -771,8 +809,11 @@ func (s *SupabaseDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuer
 	var selectedToolsStr string
 	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
+	var preDiscoveredToolsStr sql.NullString
+	var selectedSkillsStr sql.NullString
+
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -784,6 +825,8 @@ func (s *SupabaseDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuer
 	preset.SelectedServers = selectedServersStr
 	preset.SelectedTools = selectedToolsStr
 	preset.SelectedFolder = selectedFolderStr
+	preset.PreDiscoveredTools = preDiscoveredToolsStr.String
+	preset.SelectedSkills = selectedSkillsStr.String
 	if llmConfigNullStr.Valid {
 		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
 	} else {
@@ -871,6 +914,46 @@ func (s *SupabaseDB) UpdatePresetQuery(ctx context.Context, id string, req *Upda
 		args = append(args, *req.UseCodeExecutionMode)
 	}
 
+	if req.UseToolSearchMode != nil {
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("use_tool_search_mode = $%d", argCount))
+		args = append(args, *req.UseToolSearchMode)
+	}
+
+	if req.PreDiscoveredTools != nil {
+		preDiscoveredToolsJSON := "[]"
+		if len(req.PreDiscoveredTools) > 0 {
+			toolsJSON, err := json.Marshal(req.PreDiscoveredTools)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal pre-discovered tools: %w", err)
+			}
+			preDiscoveredToolsJSON = string(toolsJSON)
+		}
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("pre_discovered_tools = $%d", argCount))
+		args = append(args, preDiscoveredToolsJSON)
+	}
+
+	if req.SelectedSkills != nil {
+		selectedSkillsJSON := "[]"
+		if len(req.SelectedSkills) > 0 {
+			skillsJSON, err := json.Marshal(req.SelectedSkills)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal selected skills: %w", err)
+			}
+			selectedSkillsJSON = string(skillsJSON)
+		}
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("selected_skills = $%d", argCount))
+		args = append(args, selectedSkillsJSON)
+	}
+
+	if req.EnableBrowserAccess != nil {
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("enable_browser_access = $%d", argCount))
+		args = append(args, *req.EnableBrowserAccess)
+	}
+
 	if len(updateFields) == 0 {
 		return nil, fmt.Errorf("no fields to update")
 	}
@@ -884,7 +967,7 @@ func (s *SupabaseDB) UpdatePresetQuery(ctx context.Context, id string, req *Upda
 		UPDATE preset_queries
 		SET %s
 		WHERE id = $%d
-		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, is_predefined, created_at, updated_at, created_by
+		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_at, updated_at, created_by
 	`, strings.Join(updateFields, ", "), argCount)
 
 	var preset PresetQuery
@@ -892,8 +975,10 @@ func (s *SupabaseDB) UpdatePresetQuery(ctx context.Context, id string, req *Upda
 	var selectedToolsStr string
 	var selectedFolderStr sql.NullString
 	var llmConfigNullStr sql.NullString
+	var preDiscoveredToolsStr sql.NullString
+	var selectedSkillsStr sql.NullString
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -905,6 +990,8 @@ func (s *SupabaseDB) UpdatePresetQuery(ctx context.Context, id string, req *Upda
 	preset.SelectedServers = selectedServersStr
 	preset.SelectedTools = selectedToolsStr
 	preset.SelectedFolder = selectedFolderStr
+	preset.PreDiscoveredTools = preDiscoveredToolsStr.String
+	preset.SelectedSkills = selectedSkillsStr.String
 	if llmConfigNullStr.Valid {
 		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
 	} else {
@@ -945,42 +1032,85 @@ func (s *SupabaseDB) ListPresetQueries(ctx context.Context, limit, offset int) (
 	}
 
 	query := `
-		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, is_predefined, created_at, updated_at, created_by
+		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_at, updated_at, created_by
 		FROM preset_queries
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
 	`
 
-	rows, err := s.db.QueryContext(ctx, query, limit, offset)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to list preset queries: %w", err)
-	}
-	defer rows.Close()
+	
 
-	presets := make([]PresetQuery, 0)
-	for rows.Next() {
-		var preset PresetQuery
-		var selectedServersStr string
-		var selectedToolsStr string
-		var selectedFolderStr sql.NullString
-		var llmConfigNullStr sql.NullString
-		err := rows.Scan(
-			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
-		)
+		rows, err := s.db.QueryContext(ctx, query, limit, offset)
+
 		if err != nil {
-			return nil, 0, fmt.Errorf("failed to scan preset query: %w", err)
+
+			return nil, 0, fmt.Errorf("failed to list preset queries: %w", err)
+
 		}
 
-		preset.SelectedServers = selectedServersStr
-		preset.SelectedTools = selectedToolsStr
-		if llmConfigNullStr.Valid {
-			preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
-		} else {
-			preset.LLMConfig = json.RawMessage("null")
+		defer rows.Close()
+
+	
+
+		presets := make([]PresetQuery, 0)
+
+		for rows.Next() {
+
+			var preset PresetQuery
+
+			var selectedServersStr string
+
+			var selectedToolsStr string
+
+			var selectedFolderStr sql.NullString
+
+			var llmConfigNullStr sql.NullString
+
+			var preDiscoveredToolsStr sql.NullString
+
+			var selectedSkillsStr sql.NullString
+
+			err := rows.Scan(
+
+				&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+
+			)
+
+			if err != nil {
+
+				return nil, 0, fmt.Errorf("failed to scan preset query: %w", err)
+
+			}
+
+	
+
+			preset.SelectedServers = selectedServersStr
+
+			preset.SelectedTools = selectedToolsStr
+
+			preset.PreDiscoveredTools = preDiscoveredToolsStr.String
+
+			preset.SelectedSkills = selectedSkillsStr.String
+
+	
+
+			if llmConfigNullStr.Valid {
+
+				preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
+
+			} else {
+
+				preset.LLMConfig = json.RawMessage("null")
+
+			}
+
+	
+
+			preset.SelectedFolder = selectedFolderStr
+
+			presets = append(presets, preset)
+
 		}
-		preset.SelectedFolder = selectedFolderStr
-		presets = append(presets, preset)
-	}
 
 	return presets, total, nil
 }

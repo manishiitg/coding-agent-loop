@@ -693,6 +693,43 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		step.AgentConfigs = agentConfigs
 		return nil
 
+	case *TodoTaskPlanStep:
+		// Todo task step: populate inner TodoTaskStep recursively
+		if step.TodoTaskStep != nil {
+			if err := populateRuntimeFields(step.TodoTaskStep, stepConfigs); err != nil {
+				return fmt.Errorf("failed to populate todo task inner step: %w", err)
+			}
+		}
+
+		// Populate sub-agent steps in predefined routes recursively
+		for i := range step.PredefinedRoutes {
+			route := &step.PredefinedRoutes[i]
+			if route.SubAgentStep != nil {
+				if err := populateRuntimeFields(route.SubAgentStep, stepConfigs); err != nil {
+					return fmt.Errorf("failed to populate sub-agent step for route '%s': %w", route.RouteID, err)
+				}
+				// Sub-agents should have validation disabled
+				switch subStep := route.SubAgentStep.(type) {
+				case *RegularPlanStep:
+					if subStep.AgentConfigs == nil {
+						val := true
+						subStep.AgentConfigs = &AgentConfigs{
+							DisableValidation: &val,
+						}
+					} else if subStep.AgentConfigs.DisableValidation == nil || !*subStep.AgentConfigs.DisableValidation {
+						val := true
+						disabledConfigs := *subStep.AgentConfigs
+						disabledConfigs.DisableValidation = &val
+						subStep.AgentConfigs = &disabledConfigs
+					}
+				}
+			}
+		}
+
+		// Populate runtime field directly on plan step
+		step.AgentConfigs = agentConfigs
+		return nil
+
 	default:
 		return fmt.Errorf("unknown step type: %T", typedStep)
 	}
@@ -1256,36 +1293,41 @@ func CheckAndEmitPlanUpdateEvent(
 // Similar to ExtractVariablesOnly in variable_management.go
 func (hcpo *StepBasedWorkflowOrchestrator) CreatePlanOnly(ctx context.Context, objective, workspacePath string) (string, error) {
 
-	// Always ask the user what they want to build (even if objective is provided, to confirm/refine)
-	requestID := fmt.Sprintf("plan_objective_inquiry_%d", time.Now().UnixNano())
-	approved, feedback, err := hcpo.RequestHumanFeedback(
-		ctx,
-		requestID,
-		"What would you like to build?",
-		"", // No additional context
-		hcpo.getSessionID(),
-		hcpo.getWorkflowID(),
-	)
-	
-	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to request objective from user: %v", err))
-	} else if feedback != "" {
-		// User provided feedback, use it as the objective
-		objective = feedback
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Received objective from user: %s", objective))
-	} else if approved && feedback == "" {
-		// User approved but empty feedback? Keep existing objective if any
-		hcpo.GetLogger().Info("ℹ️ User sent empty response, keeping existing objective")
-	}
-
-	// Final validation - ensure we have an objective
-	if objective == "" {
-		return "", fmt.Errorf("objective cannot be empty and user did not provide one")
-	}
-
-	// Set objective and workspace path
-	hcpo.SetObjective(objective)
+	// Set workspace path early (needed for checking plan)
 	hcpo.SetWorkspacePath(workspacePath)
+
+	// Check if plan.json exists - if so, skip asking what to build
+	checkPlanPath := "planning/plan.json"
+	initialPlanExists, _, _ := hcpo.checkExistingPlan(ctx, checkPlanPath)
+
+	if !initialPlanExists {
+		// Ask the user what they want to build (even if objective is provided, to confirm/refine)
+		requestID := fmt.Sprintf("plan_objective_inquiry_%d", time.Now().UnixNano())
+		approved, feedback, err := hcpo.RequestHumanFeedback(
+			ctx,
+			requestID,
+			"What would you like to build?",
+			"", // No additional context
+			hcpo.getSessionID(),
+			hcpo.getWorkflowID(),
+		)
+
+		if err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to request objective from user: %v", err))
+		} else if feedback != "" {
+			// User provided feedback, use it as the objective
+			objective = feedback
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Received objective from user: %s", objective))
+		} else if approved && feedback == "" {
+			// User approved but empty feedback? Keep existing objective if any
+			hcpo.GetLogger().Info("ℹ️ User sent empty response, keeping existing objective")
+		}
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Plan exists at %s - skipping objective inquiry", checkPlanPath))
+	}
+
+	// Set objective
+	hcpo.SetObjective(objective)
 
 	// Check if variables.json exists - OPTIONAL for planning (can proceed without it)
 	variablesPath := fmt.Sprintf("%s/variables/variables.json", hcpo.GetWorkspacePath())

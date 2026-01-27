@@ -39,13 +39,13 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 	readExecutorInterface, exists := bo.WorkspaceToolExecutors["read_workspace_file"]
 	if !exists {
 		bo.GetLogger().Warn(fmt.Sprintf("ReadWorkspaceFile(%s) failed: executor not found", filePath))
-		return "", fmt.Errorf(fmt.Sprintf("read_workspace_file tool executor not found"), nil)
+		return "", fmt.Errorf("read_workspace_file tool executor not found")
 	}
 
 	readExecutor, ok := readExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
 		bo.GetLogger().Warn(fmt.Sprintf("ReadWorkspaceFile(%s) failed: executor wrong type", filePath))
-		return "", fmt.Errorf(fmt.Sprintf("read_workspace_file tool executor has wrong type"), nil)
+		return "", fmt.Errorf("read_workspace_file tool executor has wrong type")
 	}
 
 	// Inject event emitter into context before calling executor
@@ -55,14 +55,14 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 	readResult, err := readExecutor(ctx, readArgs)
 	if err != nil {
 		bo.GetLogger().Warn(fmt.Sprintf("ReadWorkspaceFile(%s) failed: %v", filePath, err))
-		return "", fmt.Errorf(fmt.Sprintf("failed to read file %s: %v", filePath, err), nil)
+		return "", fmt.Errorf("failed to read file %s: %w", filePath, err)
 	}
 
 	// Parse the response using proper type from virtualtools
 	var fileData virtualtools.WorkspaceFileContent
 	if err := json.Unmarshal([]byte(readResult), &fileData); err != nil {
 		bo.GetLogger().Warn(fmt.Sprintf("ReadWorkspaceFile(%s) failed: parse error %v", filePath, err))
-		return "", fmt.Errorf(fmt.Sprintf("failed to parse workspace response: %v", err), nil)
+		return "", fmt.Errorf("failed to parse workspace response: %w", err)
 	}
 
 	// Extract content directly from the parsed data
@@ -70,7 +70,7 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 
 	if fileContent == "" {
 		bo.GetLogger().Warn(fmt.Sprintf("ReadWorkspaceFile(%s) failed: no content found", filePath))
-		return "", fmt.Errorf(fmt.Sprintf("no content found in workspace response"), nil)
+		return "", fmt.Errorf("no content found in workspace response")
 	}
 
 	return fileContent, nil
@@ -128,14 +128,14 @@ func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath str
 	if !exists {
 		duration := time.Since(startTime)
 		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] WriteWorkspaceFile(%s, %d bytes) failed: executor not found (took %v)", filePath, contentSize, duration))
-		return fmt.Errorf(fmt.Sprintf("update_workspace_file tool executor not found"), nil)
+		return fmt.Errorf("update_workspace_file tool executor not found")
 	}
 
 	writeExecutor, ok := writeExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
 		duration := time.Since(startTime)
 		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] WriteWorkspaceFile(%s, %d bytes) failed: executor wrong type (took %v)", filePath, contentSize, duration))
-		return fmt.Errorf(fmt.Sprintf("update_workspace_file tool executor has wrong type"), nil)
+		return fmt.Errorf("update_workspace_file tool executor has wrong type")
 	}
 
 	// Inject event emitter into context before calling executor
@@ -146,7 +146,7 @@ func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath str
 	if err != nil {
 		duration := time.Since(startTime)
 		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] WriteWorkspaceFile(%s, %d bytes) failed: %v (took %v)", filePath, contentSize, err, duration))
-		return fmt.Errorf(fmt.Sprintf("failed to write file %s: %v", filePath, err), nil)
+		return fmt.Errorf("failed to write file %s: %w", filePath, err)
 	}
 
 	duration := time.Since(startTime)
@@ -168,14 +168,14 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 	if !exists {
 		duration := time.Since(startTime)
 		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] DeleteWorkspaceFile(%s) failed: executor not found (took %v)", filePath, duration))
-		return fmt.Errorf(fmt.Sprintf("delete_workspace_file tool executor not found"), nil)
+		return fmt.Errorf("delete_workspace_file tool executor not found")
 	}
 
 	deleteExecutor, ok := deleteExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
 		duration := time.Since(startTime)
 		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] DeleteWorkspaceFile(%s) failed: executor wrong type (took %v)", filePath, duration))
-		return fmt.Errorf(fmt.Sprintf("delete_workspace_file tool executor has wrong type"), nil)
+		return fmt.Errorf("delete_workspace_file tool executor has wrong type")
 	}
 
 	// Inject event emitter into context before calling executor
@@ -186,7 +186,7 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 	if err != nil {
 		duration := time.Since(startTime)
 		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] DeleteWorkspaceFile(%s) failed: %v (took %v)", filePath, err, duration))
-		return fmt.Errorf(fmt.Sprintf("failed to delete file %s: %v", filePath, err), nil)
+		return fmt.Errorf("failed to delete file %s: %w", filePath, err)
 	}
 
 	duration := time.Since(startTime)
@@ -209,14 +209,14 @@ func (bo *BaseOrchestrator) MoveWorkspaceFile(ctx context.Context, sourcePath st
 	if !exists {
 		duration := time.Since(startTime)
 		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] MoveWorkspaceFile(%s -> %s) failed: executor not found (took %v)", sourcePath, destinationPath, duration))
-		return fmt.Errorf(fmt.Sprintf("move_workspace_file tool executor not found"), nil)
+		return fmt.Errorf("move_workspace_file tool executor not found")
 	}
 
 	moveExecutor, ok := moveExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
 	if !ok {
 		duration := time.Since(startTime)
 		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] MoveWorkspaceFile(%s -> %s) failed: executor wrong type (took %v)", sourcePath, destinationPath, duration))
-		return fmt.Errorf(fmt.Sprintf("move_workspace_file tool executor has wrong type"), nil)
+		return fmt.Errorf("move_workspace_file tool executor has wrong type")
 	}
 
 	// Inject event emitter into context before calling executor
@@ -227,7 +227,7 @@ func (bo *BaseOrchestrator) MoveWorkspaceFile(ctx context.Context, sourcePath st
 	if err != nil {
 		duration := time.Since(startTime)
 		bo.GetLogger().Warn(fmt.Sprintf("⏱️ [WORKSPACE] MoveWorkspaceFile(%s -> %s) failed: %v (took %v)", sourcePath, destinationPath, err, duration))
-		return fmt.Errorf(fmt.Sprintf("failed to move %s to %s: %v", sourcePath, destinationPath, err), nil)
+		return fmt.Errorf("failed to move %s to %s: %w", sourcePath, destinationPath, err)
 	}
 
 	duration := time.Since(startTime)

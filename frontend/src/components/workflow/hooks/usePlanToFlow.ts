@@ -807,8 +807,8 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
           const subAgentRowHeight = 120
           const compoundHeight = dims.height + GAP + subAgentRowHeight
           const SUB_AGENT_GAP = 20
-          const subAgentRowWidth = (numSubAgents * 280) + ((numSubAgents - 1) * SUB_AGENT_GAP)
-          const compoundWidth = Math.max(dims.width, subAgentRowWidth)
+          // Calculate compound width for potential future layout adjustments
+          void ((numSubAgents * 280) + ((numSubAgents - 1) * SUB_AGENT_GAP))
           
           // Re-calculate Y: Top of compound
           const compoundTop = nodeWithPosition.y - (compoundHeight / 2)
@@ -3239,8 +3239,7 @@ export function usePlanToFlow(
         const canRun = canStepRun()
         // Sub-agents cannot be run independently (they are part of routing steps)
         // We pass onRunFromStep even for sub-agents so the UI shows a disabled button instead of a warning icon
-        // The node component (StepNode) handles disabling the button via isSubAgent check
-        const isSubAgent = node.id.includes('-sub-agent-')
+        // The node component (StepNode) handles disabling the button via isSubAgent check (node.id.includes('-sub-agent-'))
         return {
           ...node,
           data: {

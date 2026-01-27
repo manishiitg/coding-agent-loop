@@ -1,0 +1,131 @@
+package browser
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// Client handles communication with the workspace API for browser automation
+type Client struct {
+	WorkspaceAPIURL string
+	HTTPClient      *http.Client
+}
+
+// NewClient creates a new browser client
+func NewClient(workspaceAPIURL string) *Client {
+	return &Client{
+		WorkspaceAPIURL: strings.TrimRight(workspaceAPIURL, "/"),
+		HTTPClient:      &http.Client{},
+	}
+}
+
+// ExecuteOptions contains optional configuration for command execution
+type ExecuteOptions struct {
+	Timeout     time.Duration
+	FolderGuard *FolderGuardConfig
+}
+
+// ExecuteCommand executes an agent-browser command via the workspace API
+func (c *Client) ExecuteCommand(ctx context.Context, args []string, opts *ExecuteOptions) (string, error) {
+	timeout := 60 * time.Second
+	if opts != nil && opts.Timeout > 0 {
+		timeout = opts.Timeout
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Build the shell command: agent-browser [args...] with proper quoting
+	quotedArgs := make([]string, len(args))
+	for i, arg := range args {
+		quotedArgs[i] = quoteShellArg(arg)
+	}
+	fullCommand := "agent-browser " + strings.Join(quotedArgs, " ")
+
+	// Prepare request body
+	reqBody := ShellExecuteRequest{
+		Command: fullCommand,
+		Timeout: int(timeout.Seconds()),
+	}
+
+	if opts != nil && opts.FolderGuard != nil {
+		reqBody.FolderGuard = opts.FolderGuard
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Make HTTP request to workspace-api
+	apiURL := c.WorkspaceAPIURL + "/api/execute"
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("command timed out after %v", timeout)
+		}
+		return "", fmt.Errorf("failed to execute command via workspace-api: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Parse response
+	var apiResp APIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return "", fmt.Errorf("failed to parse response: %w (body: %s)", err, string(body))
+	}
+
+	// Check for errors
+	if !apiResp.Success {
+		errMsg := apiResp.Message
+		if apiResp.Error != "" {
+			errMsg = apiResp.Error
+		}
+		// Include stderr if available
+		if apiResp.Data.Stderr != "" {
+			return "", fmt.Errorf("command failed: %s\nStderr: %s", errMsg, apiResp.Data.Stderr)
+		}
+		return "", fmt.Errorf("command failed: %s", errMsg)
+	}
+
+	// Check exit code
+	if apiResp.Data.ExitCode != 0 {
+		output := apiResp.Data.Stdout
+		if apiResp.Data.Stderr != "" {
+			output = apiResp.Data.Stderr
+		}
+		return "", fmt.Errorf("command exited with code %d: %s", apiResp.Data.ExitCode, strings.TrimSpace(output))
+	}
+
+	// Return stdout (which contains JSON output from agent-browser)
+	return apiResp.Data.Stdout, nil
+}
+
+// quoteShellArg quotes a shell argument if it contains special characters
+func quoteShellArg(arg string) string {
+	// If arg contains spaces, parentheses, or other special shell chars, quote it
+	if strings.ContainsAny(arg, " \t\n()[]{}|&;'\"<>*?!`$") {
+		// Use single quotes and escape any single quotes within
+		// Replace ' with '"'"' (which is ' then " then ' then " then ')
+		escaped := strings.ReplaceAll(arg, "\x27", "\x27\x22\x27\x22\x27")
+		return "\x27" + escaped + "\x27"
+	}
+	return arg
+}

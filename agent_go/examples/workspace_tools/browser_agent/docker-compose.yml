@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  workspace-api:
+    build: 
+      context: ../../../workspace
+      dockerfile: Dockerfile
+    ports:
+      - "8083:8080"
+    environment:
+      - ALLOWED_ORIGINS=*
+      - PORT=8080
+      - WORKSPACE_ENABLE_SEMANTIC_SEARCH=false
+    volumes:
+      - ./workspace-docs:/app/workspace-docs
+    working_dir: /app

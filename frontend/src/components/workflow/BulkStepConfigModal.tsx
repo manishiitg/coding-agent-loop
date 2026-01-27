@@ -15,6 +15,7 @@ import type {
 } from "../../utils/stepConfigMatching";
 import { isConditionalStep, isDecisionStep, isOrchestrationStep, isTodoTaskStep } from "../../utils/stepConfigMatching";
 import { getToolsByCategory } from "../../utils/customToolNames";
+import LLMSelectionDropdown from "../LLMSelectionDropdown";
 
 interface BulkStepConfigModalProps {
   isOpen: boolean;
@@ -31,7 +32,7 @@ export default function BulkStepConfigModal({
   plan,
   onBulkUpdate,
 }: BulkStepConfigModalProps) {
-  const { availableLLMs } = useLLMStore();
+  const { availableLLMs, refreshAvailableLLMs } = useLLMStore();
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -150,6 +151,24 @@ export default function BulkStepConfigModal({
   // Individual action states (for immediate application)
   const [applyingAction, setApplyingAction] = useState<string | null>(null);
   const [selectedMaxTurns, setSelectedMaxTurns] = useState<number>(100);
+
+  // Local state for selected LLMs
+  const [selectedExecutionLLM, setSelectedExecutionLLM] = useState<LLMOption | null>(null);
+  const [selectedValidationLLM, setSelectedValidationLLM] = useState<LLMOption | null>(null);
+  const [selectedLearningLLM, setSelectedLearningLLM] = useState<LLMOption | null>(null);
+
+  // Initialize selections from preset defaults
+  useEffect(() => {
+    if (presetExecutionLLM) {
+      setSelectedExecutionLLM(presetExecutionLLM);
+    }
+    if (presetValidationLLM) {
+      setSelectedValidationLLM(presetValidationLLM);
+    }
+    if (presetLearningLLM) {
+      setSelectedLearningLLM(presetLearningLLM);
+    }
+  }, [presetExecutionLLM, presetValidationLLM, presetLearningLLM, isOpen]);
 
   // Reset form when modal opens/closes
   useEffect(() => {
@@ -689,125 +708,101 @@ export default function BulkStepConfigModal({
                 <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
                   Configure which LLM models to use for execution, validation, and learning phases across all steps.
                 </p>
-                <div className="grid grid-cols-1 gap-3">
-                  {/* Set Execution LLM from Preset */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() =>
-                        handleImmediateAction("set_execution_llm", presetExecutionLLM)
-                      }
-                      disabled={applyingAction !== null || !presetExecutionLLM}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-primary/5 hover:border-primary/50 transition-all"
-                      title={
-                        presetExecutionLLM
-                          ? `Set to preset default: ${presetExecutionLLM.label}`
-                          : "No preset execution LLM configured"
-                      }
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "set_execution_llm" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Brain className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                            <div className="flex-1 text-left">
-                              <div className="font-medium text-sm">Set Execution LLM</div>
-                              {presetExecutionLLM && (
-                                <div className="text-xs text-muted-foreground mt-0.5">{presetExecutionLLM.label}</div>
-                              )}
-                            </div>
-                          </>
-                        )}
+                <div className="space-y-4">
+                  {/* Execution LLM Selector */}
+                  <div className="p-4 rounded-xl border border-border bg-card shadow-sm">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                          <Brain className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="font-semibold text-sm">Execution LLM</div>
+                          <div className="text-[10px] text-muted-foreground">Primary model for performing step tasks</div>
+                        </div>
                       </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Sets the LLM model used by execution agents to perform step tasks. This is the primary model that will attempt to complete each step's objectives.
-                    </p>
+                      <Button
+                        size="sm"
+                        onClick={() => handleImmediateAction("set_execution_llm", selectedExecutionLLM)}
+                        disabled={!selectedExecutionLLM || applyingAction !== null}
+                        className="px-4 h-8"
+                      >
+                        {applyingAction === "set_execution_llm" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Apply"}
+                      </Button>
+                    </div>
+                    <LLMSelectionDropdown
+                      availableLLMs={availableLLMs}
+                      selectedLLM={selectedExecutionLLM}
+                      onLLMSelect={setSelectedExecutionLLM}
+                      onRefresh={refreshAvailableLLMs}
+                      inModal={true}
+                      openDirection="down"
+                      title="Select Execution LLM"
+                    />
                   </div>
 
-                  {/* Set Validation LLM from Preset */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() =>
-                        handleImmediateAction(
-                          "set_validation_llm",
-                          presetValidationLLM
-                        )
-                      }
-                      disabled={applyingAction !== null || !presetValidationLLM}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-primary/5 hover:border-primary/50 transition-all"
-                      title={
-                        presetValidationLLM
-                          ? `Set to preset default: ${presetValidationLLM.label}`
-                          : "No preset validation LLM configured"
-                      }
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "set_validation_llm" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Shield className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                            <div className="flex-1 text-left">
-                              <div className="font-medium text-sm">Set Validation LLM</div>
-                              {presetValidationLLM && (
-                                <div className="text-xs text-muted-foreground mt-0.5">{presetValidationLLM.label}</div>
-                              )}
-                            </div>
-                          </>
-                        )}
+                  {/* Validation LLM Selector */}
+                  <div className="p-4 rounded-xl border border-border bg-card shadow-sm">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                          <Shield className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="font-semibold text-sm">Validation LLM</div>
+                          <div className="text-[10px] text-muted-foreground">Model used to verify outputs</div>
+                        </div>
                       </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Sets the LLM model used by validation agents to verify step outputs meet success criteria. This model checks if the execution results are correct and complete.
-                    </p>
+                      <Button
+                        size="sm"
+                        onClick={() => handleImmediateAction("set_validation_llm", selectedValidationLLM)}
+                        disabled={!selectedValidationLLM || applyingAction !== null}
+                        className="px-4 h-8"
+                      >
+                        {applyingAction === "set_validation_llm" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Apply"}
+                      </Button>
+                    </div>
+                    <LLMSelectionDropdown
+                      availableLLMs={availableLLMs}
+                      selectedLLM={selectedValidationLLM}
+                      onLLMSelect={setSelectedValidationLLM}
+                      onRefresh={refreshAvailableLLMs}
+                      inModal={true}
+                      openDirection="down"
+                      title="Select Validation LLM"
+                    />
                   </div>
 
-                  {/* Set Learning LLM from Preset */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() =>
-                        handleImmediateAction("set_learning_llm", presetLearningLLM)
-                      }
-                      disabled={applyingAction !== null || !presetLearningLLM}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-primary/5 hover:border-primary/50 transition-all"
-                      title={
-                        presetLearningLLM
-                          ? `Set to preset default: ${presetLearningLLM.label}`
-                          : "No preset learning LLM configured"
-                      }
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "set_learning_llm" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <BookOpen className="w-4 h-4 text-green-600 dark:text-green-400" />
-                            <div className="flex-1 text-left">
-                              <div className="font-medium text-sm">Set Learning LLM</div>
-                              {presetLearningLLM && (
-                                <div className="text-xs text-muted-foreground mt-0.5">{presetLearningLLM.label}</div>
-                              )}
-                            </div>
-                          </>
-                        )}
+                  {/* Learning LLM Selector */}
+                  <div className="p-4 rounded-xl border border-border bg-card shadow-sm">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 rounded-lg bg-green-500/10 text-green-600 dark:text-green-400">
+                          <BookOpen className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="font-semibold text-sm">Learning LLM</div>
+                          <div className="text-[10px] text-muted-foreground">Model used for pattern extraction</div>
+                        </div>
                       </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Sets the LLM model used by learning agents to extract insights and patterns from step execution. These insights help improve future step performance.
-                    </p>
+                      <Button
+                        size="sm"
+                        onClick={() => handleImmediateAction("set_learning_llm", selectedLearningLLM)}
+                        disabled={!selectedLearningLLM || applyingAction !== null}
+                        className="px-4 h-8"
+                      >
+                        {applyingAction === "set_learning_llm" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Apply"}
+                      </Button>
+                    </div>
+                    <LLMSelectionDropdown
+                      availableLLMs={availableLLMs}
+                      selectedLLM={selectedLearningLLM}
+                      onLLMSelect={setSelectedLearningLLM}
+                      onRefresh={refreshAvailableLLMs}
+                      inModal={true}
+                      openDirection="down"
+                      title="Select Learning LLM"
+                    />
                   </div>
                 </div>
               </AccordionContent>

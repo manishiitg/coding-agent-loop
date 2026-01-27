@@ -1,6 +1,6 @@
 import { memo, useState, useRef, useEffect, useCallback } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { Settings, Play, Zap, SkipForward, ChevronDown, Check } from 'lucide-react'
+import { Settings, Play, Zap, SkipForward, ChevronDown, Check, FolderX } from 'lucide-react'
 import { useWorkflowStore, type ExecutionModeType } from '../../../stores/useWorkflowStore'
 
 export type ExecutionSettingsNodeData = Record<string, unknown>
@@ -20,7 +20,9 @@ const EXECUTION_MODE_OPTIONS: { id: ExecutionModeType; label: string; icon: type
 export const ExecutionSettingsNode = memo(({ selected }: ExecutionSettingsNodeProps) => {
   const selectedExecutionMode = useWorkflowStore(state => state.selectedExecutionMode)
   const setExecutionMode = useWorkflowStore(state => state.setExecutionMode)
-  
+  const skipExecutionCleanup = useWorkflowStore(state => state.skipExecutionCleanup)
+  const setSkipExecutionCleanup = useWorkflowStore(state => state.setSkipExecutionCleanup)
+
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
   
@@ -103,8 +105,8 @@ export const ExecutionSettingsNode = memo(({ selected }: ExecutionSettingsNodePr
                       onClick={() => handleSelectExecutionMode(mode.id)}
                       className={`
                         w-full text-left px-3 py-2.5 rounded-md transition-colors
-                        ${isSelected 
-                          ? 'bg-purple-100 dark:bg-purple-900/30' 
+                        ${isSelected
+                          ? 'bg-purple-100 dark:bg-purple-900/30'
                           : 'hover:bg-gray-100 dark:hover:bg-gray-700'
                         }
                       `}
@@ -127,6 +129,43 @@ export const ExecutionSettingsNode = memo(({ selected }: ExecutionSettingsNodePr
               </div>
             </div>
           )}
+        </div>
+
+        {/* Skip Execution Cleanup Toggle */}
+        <div className="mt-3 pt-3 border-t border-purple-200 dark:border-purple-800">
+          <button
+            onClick={() => setSkipExecutionCleanup(!skipExecutionCleanup)}
+            className={`
+              w-full flex items-center gap-2 px-3 py-2 rounded-md transition-all text-sm
+              ${skipExecutionCleanup
+                ? 'bg-stone-200 dark:bg-stone-700/50 border border-stone-400 dark:border-stone-500'
+                : 'bg-white dark:bg-gray-800 border border-purple-200 dark:border-purple-800 hover:bg-gray-50 dark:hover:bg-gray-700'
+              }
+            `}
+            title={skipExecutionCleanup
+              ? "Execution output folders will be preserved"
+              : "Execution output folders will be deleted before running"
+            }
+          >
+            <FolderX className={`w-4 h-4 ${skipExecutionCleanup ? 'text-stone-600 dark:text-stone-400' : 'text-gray-400 dark:text-gray-500'}`} />
+            <div className="flex-1 text-left">
+              <div className={`font-medium ${skipExecutionCleanup ? 'text-stone-700 dark:text-stone-300' : 'text-gray-700 dark:text-gray-300'}`}>
+                Skip Cleanup
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                {skipExecutionCleanup ? "Keep existing outputs" : "Delete outputs before run"}
+              </div>
+            </div>
+            <div className={`
+              w-8 h-5 rounded-full transition-colors relative
+              ${skipExecutionCleanup ? 'bg-stone-500' : 'bg-gray-300 dark:bg-gray-600'}
+            `}>
+              <div className={`
+                absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform
+                ${skipExecutionCleanup ? 'translate-x-3.5' : 'translate-x-0.5'}
+              `} />
+            </div>
+          </button>
         </div>
       </div>
       

@@ -8,6 +8,7 @@ import GitSyncStatus from './workspace/GitSyncStatus'
 import SemanticSearchSync from './workspace/SemanticSearchSync'
 import CreateFolderDialog from './workspace/CreateFolderDialog'
 import MoveFileDialog from './workspace/MoveFileDialog'
+import RenameFileDialog from './workspace/RenameFileDialog'
 import ConfirmationDialog from './ui/ConfirmationDialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
@@ -25,6 +26,7 @@ import {
   adjustFilePathsRecursive,
   findFileByPath
 } from '../utils/workspacePathUtils'
+import { isTextBasedFile } from '../utils/fileUtils'
 import { useIterationExpansion } from './workspace/useIterationExpansion'
 
 interface WorkspaceProps {
@@ -139,10 +141,6 @@ export default function Workspace({
     setDeleteAllFilesDialog,
     openDeleteAllFilesDialog,
     closeDeleteAllFilesDialog,
-    moveDialog,
-    setMoveDialog,
-    openMoveDialog,
-    closeMoveDialog,
     showActionsDropdown,
     setShowActionsDropdown,
     expandedFolders,
@@ -157,6 +155,71 @@ export default function Workspace({
     setShowFileContent,
     fetchFiles
   } = useWorkspaceStore()
+
+  // Note: moveDialog from store is shadowed by local state below
+  // We should rename the local one to avoid confusion or remove the one from store if unused
+  // But for now, we'll keep the local one as it was added for the rename feature
+  // and the store one might be used by other components or hooks
+  
+  // Local Move Dialog State (overrides store state for this component)
+  const [localMoveDialog, setLocalMoveDialog] = useState<{
+    isOpen: boolean
+    isLoading: boolean
+    item: PlannerFile | null
+    destinationPath: string
+    commitMessage: string
+  }>({
+    isOpen: false,
+    isLoading: false,
+    item: null,
+    destinationPath: '',
+    commitMessage: ''
+  })
+  const openLocalMoveDialog = (item: PlannerFile) => {
+    setLocalMoveDialog({
+      isOpen: true,
+      isLoading: false,
+      item,
+      destinationPath: '', // Will be set in dialog
+      commitMessage: ''
+    })
+  }
+  const closeLocalMoveDialog = () => {
+    setLocalMoveDialog({
+      isOpen: false,
+      isLoading: false,
+      item: null,
+      destinationPath: '',
+      commitMessage: ''
+    })
+  }
+
+  // Rename Dialog State
+  const [renameDialog, setRenameDialog] = useState<{
+    isOpen: boolean
+    isLoading: boolean
+    item: PlannerFile | null
+  }>({
+    isOpen: false,
+    isLoading: false,
+    item: null
+  })
+  
+  const openRenameDialog = (item: PlannerFile) => {
+    setRenameDialog({
+      isOpen: true,
+      isLoading: false,
+      item
+    })
+  }
+  
+  const closeRenameDialog = () => {
+    setRenameDialog({
+      isOpen: false,
+      isLoading: false,
+      item: null
+    })
+  }
   
   // Ref for the workspace scrollable container
   const workspaceScrollRef = useRef<HTMLDivElement>(null)
@@ -535,14 +598,19 @@ export default function Workspace({
   // Handle file click - fetch content and show in chat area
   const handleFileClick = async (file: PlannerFile) => {
     if (file.type === 'file' || !file.type) {
+      // Reconstruct the original full path if we're in workflow mode with filtered files
+      const fullFilePath = getOriginalFilePath(file)
+      const fileName = fullFilePath.split('/').pop() || fullFilePath
+
+      // Check if file is viewable
+      if (!isTextBasedFile(fileName) && !file.is_image) {
+        setError(`File "${fileName}" is a binary file and cannot be viewed in the editor.`)
+        return
+      }
+
       try {
         setLoadingFileContent(true)
         
-        // Reconstruct the original full path if we're in workflow mode with filtered files
-        // Use original filepath if available (when path was adjusted for display)
-        const fullFilePath = getOriginalFilePath(file)
-        
-        const fileName = fullFilePath.split('/').pop() || fullFilePath
         setSelectedFile({ name: fileName, path: fullFilePath })
         
         // Use the reconstructed full filepath for the API call
@@ -891,16 +959,6 @@ export default function Workspace({
     closeDeleteAllFilesDialog()
   }
 
-  // Handle file move
-  const handleFileMove = (file: PlannerFile) => {
-    openMoveDialog(file)
-  }
-
-  // Handle folder move
-  const handleFolderMove = (folder: PlannerFile) => {
-    openMoveDialog(folder)
-  }
-
   // Handle file download
   const handleFileDownload = async (file: PlannerFile) => {
     try {
@@ -1102,13 +1160,13 @@ export default function Workspace({
 
   // Confirm move
   const confirmMove = async (destinationPath: string, commitMessage?: string) => {
-    if (!moveDialog.item) return
+    if (!localMoveDialog.item) return
 
-    setMoveDialog({ isLoading: true })
+    setLocalMoveDialog(prev => ({ ...prev, isLoading: true }))
 
     try {
       // Use original filepath if available (when path was adjusted for display)
-      const fullFilePath = getOriginalFilePath(moveDialog.item)
+      const fullFilePath = getOriginalFilePath(localMoveDialog.item)
       
       // Reconstruct destination path using getFullFilePath to handle workflow mode correctly
       // This ensures paths like "HRMS PR Review/itemName" become "Workflow/HRMS PR Review/itemName"
@@ -1120,7 +1178,7 @@ export default function Workspace({
       await fetchFiles()
       
       // Update selected file if it was moved
-      if (moveDialog.item.filepath === highlightedFile) {
+      if (localMoveDialog.item.filepath === highlightedFile) {
         // Clear highlight since file moved
         setSelectedFile(null)
         setFileContent('')
@@ -1128,18 +1186,78 @@ export default function Workspace({
       }
       
       // Close dialog
-      closeMoveDialog()
+      closeLocalMoveDialog()
     } catch (err) {
       console.error('Failed to move item:', err)
       setError(err instanceof Error ? err.message : 'Failed to move item')
-      setMoveDialog({ isLoading: false })
+      setLocalMoveDialog(prev => ({ ...prev, isLoading: false }))
       throw err // Re-throw to let dialog handle the error
     }
   }
 
   // Cancel move
   const cancelMove = () => {
-    closeMoveDialog()
+    closeLocalMoveDialog()
+  }
+
+  // Confirm rename
+  const confirmRename = async (newName: string, commitMessage?: string) => {
+    if (!renameDialog.item) return
+
+    setRenameDialog(prev => ({ ...prev, isLoading: true }))
+
+    try {
+      // Use original filepath if available (when path was adjusted for display)
+      const fullFilePath = getOriginalFilePath(renameDialog.item)
+      
+      // Calculate new path
+      // Handle root level files correctly
+      const pathParts = fullFilePath.split('/')
+      const parentPath = pathParts.length > 1 ? pathParts.slice(0, -1).join('/') : ''
+      const destinationPath = parentPath ? `${parentPath}/${newName}` : newName
+      
+      await agentApi.movePlannerFile(fullFilePath, destinationPath, commitMessage)
+      
+      // Refresh the file list to show updated state
+      await fetchFiles()
+      
+      // Update selected file if it was renamed
+      if (renameDialog.item.filepath === highlightedFile) {
+        // Clear highlight since file renamed (or maybe we should update it to new name?)
+        // For now, let's just clear selection to avoid errors
+        setSelectedFile(null)
+        setFileContent('')
+        setShowFileContent(false)
+      }
+      
+      // Close dialog
+      closeRenameDialog()
+    } catch (err) {
+      console.error('Failed to rename item:', err)
+      setError(err instanceof Error ? err.message : 'Failed to rename item')
+      setRenameDialog(prev => ({ ...prev, isLoading: false }))
+      throw err // Re-throw to let dialog handle the error
+    }
+  }
+
+  // Handle file rename
+  const handleFileRename = (file: PlannerFile) => {
+    openRenameDialog(file)
+  }
+
+  // Handle folder rename
+  const handleFolderRename = (folder: PlannerFile) => {
+    openRenameDialog(folder)
+  }
+
+  // Handle file move
+  const handleFileMove = (file: PlannerFile) => {
+    openLocalMoveDialog(file)
+  }
+
+  // Handle folder move
+  const handleFolderMove = (folder: PlannerFile) => {
+    openLocalMoveDialog(folder)
   }
 
   // Upload functionality
@@ -1158,17 +1276,14 @@ export default function Workspace({
     const file = event.target.files?.[0]
     if (!file) return
 
-    // Validate file type (text-based files only)
-    const allowedTypes = [
-      'text/plain', 'text/markdown', 'application/json', 'text/csv',
-      'text/yaml', 'text/xml', 'text/html', 'text/css', 'text/javascript',
-      'application/javascript', 'text/x-python', 'text/x-go', 'text/x-java',
-      'text/x-c', 'text/x-c++', 'text/x-csharp', 'text/x-php', 'text/x-ruby',
-      'text/x-sql', 'text/x-typescript', 'text/x-vue', 'text/x-svelte'
+    // Validate file type (block executables and system files)
+    const blockedExtensions = [
+      'exe', 'dll', 'so', 'dylib', 'bin', 'msi', 'dmg', 'iso', 'jar', 'bat', 'cmd', 'com', 'scr'
     ]
-
-    if (!allowedTypes.includes(file.type) && !file.name.match(/\.(txt|md|json|csv|yaml|yml|xml|html|css|js|py|go|java|c|cpp|cs|php|rb|sql|ts|vue|svelte)$/i)) {
-      setError('Only text-based files are allowed (txt, md, json, csv, yaml, xml, html, css, js, py, go, etc.)')
+    
+    const fileExt = file.name.split('.').pop()?.toLowerCase() || ''
+    if (blockedExtensions.includes(fileExt)) {
+      setError('Executables and system files are not allowed for security reasons.')
       return
     }
 
@@ -1715,6 +1830,8 @@ export default function Workspace({
                 onCreateFolder={handleCreateFolder}
                 onFileMove={handleFileMove}
                 onFolderMove={handleFolderMove}
+                onFileRename={handleFileRename}
+                onFolderRename={handleFolderRename}
                 onFileDownload={handleFileDownload}
                 hideAddToChat={selectedModeCategory === 'workflow' && !!workflowFolderPath}
                 onExportBackup={selectedModeCategory === 'workflow' && activeWorkflowPreset?.selectedFolder?.filepath ? handleExportBackup : undefined}
@@ -1926,15 +2043,24 @@ export default function Workspace({
 
       {/* Move File/Folder Dialog */}
       <MoveFileDialog
-        isOpen={moveDialog.isOpen}
+        isOpen={localMoveDialog.isOpen}
         onClose={cancelMove}
         onMove={confirmMove}
-        item={moveDialog.item}
-        destinationPath={moveDialog.destinationPath}
-        setDestinationPath={(path) => setMoveDialog({ destinationPath: path })}
-        commitMessage={moveDialog.commitMessage}
-        setCommitMessage={(message) => setMoveDialog({ commitMessage: message })}
-        isLoading={moveDialog.isLoading}
+        item={localMoveDialog.item}
+        destinationPath={localMoveDialog.destinationPath}
+        setDestinationPath={(path) => setLocalMoveDialog(prev => ({ ...prev, destinationPath: path }))}
+        commitMessage={localMoveDialog.commitMessage}
+        setCommitMessage={(message) => setLocalMoveDialog(prev => ({ ...prev, commitMessage: message }))}
+        isLoading={localMoveDialog.isLoading}
+      />
+
+      {/* Rename File/Folder Dialog */}
+      <RenameFileDialog
+        isOpen={renameDialog.isOpen}
+        onClose={closeRenameDialog}
+        onRename={confirmRename}
+        item={renameDialog.item}
+        isLoading={renameDialog.isLoading}
       />
 
       {/* Hidden file input for backup import */}

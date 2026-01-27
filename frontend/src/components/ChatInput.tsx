@@ -256,9 +256,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // This ensures new chat tabs inherit the user's manual server selection
   const onManualServerToggle = useCallback((server: string) => {
     if (activeTabId) {
-      const newServers = manualSelectedServers.includes(server)
-        ? manualSelectedServers.filter(s => s !== server)
-        : [...manualSelectedServers, server]
+      // Remove "NO_SERVERS" if it exists (when selecting a real server)
+      const serversWithoutNoServers = manualSelectedServers.filter(s => s !== "NO_SERVERS")
+      
+      const newServers = serversWithoutNoServers.includes(server)
+        ? serversWithoutNoServers.filter(s => s !== server)
+        : [...serversWithoutNoServers, server]
+      
       setTabConfig(activeTabId, { selectedServers: newServers })
       // Sync to chat-specific MCP store so new chat tabs inherit this selection
       setChatSelectedServers(newServers)

@@ -96,6 +96,24 @@ export const extractFolderPaths = (filepath: string): string[] => {
 }
 
 /**
+ * Checks if a file is text-based based on its extension
+ * @param filename - Name of the file
+ * @returns true if the file is text-based and viewable
+ */
+export const isTextBasedFile = (filename: string): boolean => {
+  const ext = filename.split('.').pop()?.toLowerCase() || ''
+  const textExtensions = [
+    'txt', 'md', 'markdown', 'json', 'csv', 'yaml', 'yml', 'xml', 'html', 'htm',
+    'css', 'js', 'ts', 'py', 'go', 'java', 'cpp', 'c', 'h', 'hpp', 'php', 'rb',
+    'sh', 'bash', 'zsh', 'fish', 'sql', 'log', 'conf', 'config', 'ini', 'toml',
+    'env', 'gitignore', 'dockerfile', 'makefile', 'cmake', 'gradle', 'maven',
+    'pom', 'sbt', 'scala', 'kt', 'swift', 'rs', 'dart', 'r', 'm', 'pl', 'lua',
+    'vim', 'emacs', 'tex', 'latex', 'rst', 'adoc', 'asciidoc', 'org', 'wiki', 'svg'
+  ]
+  return textExtensions.includes(ext)
+}
+
+/**
  * Checks if a file path represents a new file creation
  * @param toolName - Name of the tool being called
  * @returns true if this is a file creation operation

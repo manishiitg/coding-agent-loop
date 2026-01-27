@@ -17,6 +17,9 @@ func BuildSafeEnvironment() []string {
 		// Browser automation (agent-browser uses system chromium on Alpine)
 		"AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser",
 
+		// Allow pip install when Python is externally managed (PEP 668); avoids "break system packages" errors in LLM-run shells
+		"PIP_BREAK_SYSTEM_PACKAGES=1",
+
 		// DO NOT include:
 		// - DATABASE_URL
 		// - API_KEYS

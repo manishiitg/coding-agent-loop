@@ -26,7 +26,9 @@ FROM alpine:latest
 # Install ripgrep, git, patch, python3 for GitHub integration, diff patching, script execution, util-linux for filesystem isolation (unshare), and jq for JSON processing
 # Also install nodejs and npm for agent-browser, chromium for headless browser automation
 # gcompat provides glibc compatibility for agent-browser binary (which is compiled against glibc)
-RUN apk add --no-cache ripgrep git patch python3 py3-pip util-linux jq nodejs npm chromium chromium-chromedriver gcompat
+# build-base (gcc, g++, make) so venv pip installs (e.g. matplotlib from source) work in execute_shell_command
+RUN apk add --no-cache ripgrep git patch python3 py3-pip util-linux jq nodejs npm chromium chromium-chromedriver gcompat \
+    py3-matplotlib py3-pandas build-base python3-dev
 
 # Install agent-browser globally for browser automation
 RUN npm install -g agent-browser
@@ -35,10 +37,10 @@ RUN npm install -g agent-browser
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
-# Configure pip to allow system-wide packages (safe in containerized environment)
-RUN mkdir -p /root/.config/pip && \
-    echo "[global]" > /root/.config/pip/pip.conf && \
-    echo "break-system-packages = true" >> /root/.config/pip/pip.conf
+# Configure pip: allow installs when Python is "externally managed" (PEP 668)
+# Shell runs with HOME=/tmp so /root/.config is unused; use /etc/pip.conf so all pip invocations see it
+RUN echo "[global]" > /etc/pip.conf && \
+    echo "break-system-packages = true" >> /etc/pip.conf
 
 # Set working directory
 WORKDIR /app

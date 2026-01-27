@@ -19,6 +19,14 @@ type PhaseTokenPersister interface {
 	PersistPhaseTokenUsage(ctx context.Context, phaseTokenData *PhaseTokenData, modelTokenData *ModelTokenData) error
 }
 
+// orchestratorContext holds a snapshot of orchestrator context for stack operations
+type orchestratorContext struct {
+	phase     string
+	step      int
+	stepID    string
+	agentName string
+}
+
 // ContextAwareEventBridge wraps an existing AgentEventListener and adds orchestrator context
 type ContextAwareEventBridge struct {
 	underlyingBridge mcpagent.AgentEventListener
@@ -32,8 +40,10 @@ type ContextAwareEventBridge struct {
 	currentGroupID  string // Current group ID being executed
 	currentGroupIdx int    // 0-based index of current group
 	totalGroups     int    // Total number of groups in batch
-	mu              sync.RWMutex
-	logger          loggerv2.Logger
+	// Context stack for nested agent execution (e.g., orchestrator -> sub-agent)
+	contextStack []orchestratorContext
+	mu           sync.RWMutex
+	logger       loggerv2.Logger
 }
 
 // Name implements the EventBridge interface
@@ -75,6 +85,61 @@ func (c *ContextAwareEventBridge) SetOrchestratorContext(phase string, step int,
 	c.currentAgentName = agentName
 
 	c.logger.Info(fmt.Sprintf("🎯 Set orchestrator context: %s (step %d, ID: %s)", phase, step+1, stepID))
+}
+
+// PushContext saves the current context to the stack and sets a new context
+// Use this before executing a sub-agent to preserve the parent context
+func (c *ContextAwareEventBridge) PushContext(phase string, step int, stepID string, agentName string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Save current context to stack
+	c.contextStack = append(c.contextStack, orchestratorContext{
+		phase:     c.currentPhase,
+		step:      c.currentStep,
+		stepID:    c.currentStepID,
+		agentName: c.currentAgentName,
+	})
+
+	// Set new context
+	c.currentPhase = phase
+	c.currentStep = step
+	c.currentStepID = stepID
+	c.currentAgentName = agentName
+
+	c.logger.Info(fmt.Sprintf("📥 Pushed context (stack depth: %d): %s (step %d, ID: %s)", len(c.contextStack), phase, step+1, stepID))
+}
+
+// PopContext restores the previous context from the stack
+// Use this after a sub-agent completes to restore the parent context
+func (c *ContextAwareEventBridge) PopContext() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(c.contextStack) == 0 {
+		c.logger.Warn("⚠️ PopContext called but context stack is empty - no context to restore")
+		return
+	}
+
+	// Pop the last context from stack
+	lastIdx := len(c.contextStack) - 1
+	prevContext := c.contextStack[lastIdx]
+	c.contextStack = c.contextStack[:lastIdx]
+
+	// Restore previous context
+	c.currentPhase = prevContext.phase
+	c.currentStep = prevContext.step
+	c.currentStepID = prevContext.stepID
+	c.currentAgentName = prevContext.agentName
+
+	c.logger.Info(fmt.Sprintf("📤 Popped context (stack depth: %d): restored to %s (step %d, ID: %s)", len(c.contextStack), c.currentPhase, c.currentStep+1, c.currentStepID))
+}
+
+// GetCurrentStepID returns the current step ID (for external use)
+func (c *ContextAwareEventBridge) GetCurrentStepID() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.currentStepID
 }
 
 // ClearOrchestratorContext clears the orchestrator context

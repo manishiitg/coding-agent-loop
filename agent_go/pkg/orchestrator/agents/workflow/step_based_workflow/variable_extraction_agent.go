@@ -29,7 +29,6 @@ type VariableGroup struct {
 // VariablesManifest contains all extracted variables
 // Supports both single-group (backward compatible) and multi-group modes
 type VariablesManifest struct {
-	Objective      string          `json:"objective"`        // Templated objective with {{VARS}}
 	Variables      []Variable      `json:"variables"`        // List of variable definitions
 	Groups         []VariableGroup `json:"groups,omitempty"` // Array of variable groups (multi-group mode)
 	ExtractionDate string          `json:"extraction_date"`
@@ -165,7 +164,7 @@ var variableChangelogSessionStartTime time.Time
 // VariableChangeLogEntry represents a single change entry in the variable changelog
 type VariableChangeLogEntry struct {
 	Timestamp    string                `json:"timestamp"`               // ISO 8601 timestamp
-	ChangeType   string                `json:"change_type"`             // "add", "update", "delete", "objective_update", "extraction"
+	ChangeType   string                `json:"change_type"`             // "add", "update", "delete", "extraction"
 	VariableName string                `json:"variable_name,omitempty"` // Affected variable name (if applicable)
 	Description  string                `json:"description"`             // Human-readable description of the change
 	Details      string                `json:"details"`                 // Additional details (JSON string of what changed)
@@ -173,8 +172,6 @@ type VariableChangeLogEntry struct {
 	// For revert support: store complete variable snapshots
 	AddedVariable   *Variable `json:"added_variable,omitempty"`   // Complete variable data for "add" operations (to restore on revert)
 	DeletedVariable *Variable `json:"deleted_variable,omitempty"` // Complete variable data for "delete" operations (to restore on revert)
-	OldObjective    string    `json:"old_objective,omitempty"`    // Old objective value for "objective_update"
-	NewObjective    string    `json:"new_objective,omitempty"`    // New objective value for "objective_update"
 }
 
 // VariableFieldChange represents a single field change with old and new values

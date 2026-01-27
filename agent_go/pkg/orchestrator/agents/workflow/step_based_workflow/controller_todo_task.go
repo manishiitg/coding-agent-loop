@@ -17,14 +17,19 @@ import (
 )
 
 // executeTodoTaskStep executes a todo task step by:
-//  1. Loading/initializing todos.json
+//  1. The orchestrator LLM manages tasks.md (markdown format) via shell commands
 //  2. Executing TodoTaskOrchestratorAgent in a loop
-//  3. Processing responses:
-//     - Create/update tasks via todo tools
-//     - Delegate to predefined sub-agents (with learning/prevalidation)
-//     - Delegate to generic agent (no learning/prevalidation)
-//     - Complete when all tasks done
-//  4. Return success status and next step ID
+//  3. Processing tool calls:
+//     - call_sub_agent: Delegate to predefined sub-agents (with learning/prevalidation)
+//     - call_generic_agent: Delegate to generic agent (no learning/prevalidation)
+//  4. Completion detection: LLM writes completed.txt via shell when done
+//  5. Return success status and next step ID
+//
+// Task Management:
+//   - LLM creates/updates tasks.md directly using execute_shell_command
+//   - LLM writes completed.txt when step objective is met
+//   - Sub-agents receive instructions via tool parameters (NOT by reading files)
+//   - Validation reads tasks.md to ensure tasks exist before delegation
 //
 // Returns: (successCriteriaMet bool, nextStepID string, error)
 func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
@@ -54,7 +59,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	}
 
 	// Setup folder guard for todo task orchestrator agent
-	// The orchestrator needs to read/write todos.json and access workspace files
+	// The orchestrator needs to read/write tasks.md and access workspace files
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	stepID := step.GetID()
 	if stepID == "" {
@@ -62,19 +67,28 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	}
 
 	// Build paths for folder guard
-	// Step execution path: execution/{stepPath}/
-	stepExecutionPath := filepath.Join("execution", todoTaskStepPath)
-	// Execution workspace path: execution/ (to read previous step results)
-	executionWorkspacePath := "execution"
+	// All paths should include the workspace prefix (e.g., Workflow/codeanalysis/...)
+	// This matches what the LLM uses in execute_shell_command's working_directory parameter
+	var stepExecutionPath string
+	var executionWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		// Include run folder: Workflow/codeanalysis/runs/iteration-X/group-Y/execution/step-Z/
+		stepExecutionPath = filepath.Join(baseWorkspacePath, "runs", hcpo.selectedRunFolder, "execution", todoTaskStepPath)
+		executionWorkspacePath = filepath.Join(baseWorkspacePath, "runs", hcpo.selectedRunFolder, "execution")
+	} else {
+		stepExecutionPath = filepath.Join(baseWorkspacePath, "execution", todoTaskStepPath)
+		executionWorkspacePath = filepath.Join(baseWorkspacePath, "execution")
+	}
 	// Run workspace path: the base workspace (e.g., Workflow/codeanalysis)
 	runWorkspacePath := baseWorkspacePath
-	// Step-specific learnings folder: learnings/{stepID}/
-	stepLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepID)
-	// Knowledgebase folder: knowledgebase/ (persistent files across runs, at workspace root)
+	// Step-specific learnings folder: Workflow/codeanalysis/learnings/{stepID}/
+	stepLearningsPath := filepath.Join(baseWorkspacePath, "learnings", stepID)
+	// Knowledgebase folder: Workflow/codeanalysis/knowledgebase/ (persistent files across runs)
 	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 
 	// READ: step-specific learnings folder + execution folder + run folder + knowledgebase folder
 	// WRITE: step execution path + knowledgebase folder
+	// All paths include workspace prefix to match shell working_directory parameter
 	readPaths := []string{stepLearningsPath, executionWorkspacePath, runWorkspacePath, knowledgebasePath}
 	writePaths := []string{stepExecutionPath, knowledgebasePath}
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
@@ -83,20 +97,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	// Emit step_started event
 	hcpo.emitStepStartedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
 
-	// Initialize or load todos.json
-	// Path must include the run folder (iteration/group) and execution/ prefix to match what the agent is told in prompts
-	var todosFilePath string
-	if hcpo.selectedRunFolder != "" {
-		// Include run folder: runs/iteration-X/group-Y/execution/step-Z/todos.json
-		todosFilePath = filepath.Join("runs", hcpo.selectedRunFolder, "execution", todoTaskStepPath, "todos.json")
-	} else {
-		// Fallback for legacy/test scenarios without run folder
-		todosFilePath = filepath.Join("execution", todoTaskStepPath, "todos.json")
-	}
-	todoFile, err := hcpo.loadOrCreateTodosFile(ctx, todosFilePath, todoTaskStep)
-	if err != nil {
-		return false, "", fmt.Errorf("failed to load/create todos file: %w", err)
-	}
+	// Note: Task management is now handled via shell commands with tasks.md
+	// The LLM creates and updates tasks.md directly using execute_shell_command
+	// Sub-agents receive instructions via tool parameters (NOT by reading files)
 
 	// Keep conversation history in-memory
 	var conversationHistory []llmtypes.MessageContent
@@ -131,14 +134,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			stepIndex,
 			todoTaskStepPath,
 			previousContextFiles,
-			todoFile,
 			lastSubAgentResult,
 			lastSubAgentName,
 			lastTodoID,
 		)
 
 		// Execute TodoTaskOrchestratorAgent
-		response, updatedHistory, executionLLM, subAgentExecCtx, err := hcpo.executeTodoTaskOrchestratorAgent(
+		response, updatedHistory, executionLLM, _, err := hcpo.executeTodoTaskOrchestratorAgent(
 			ctx,
 			todoTaskStep,
 			stepIndex,
@@ -156,47 +158,54 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		// Store response in step
 		todoTaskStep.TodoTaskResponse = response
 
-		// Check if step was completed via mark_step_complete tool (new tool-based approach)
-		if subAgentExecCtx != nil && subAgentExecCtx.StepCompleted {
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Todo task step complete (via tool): %s", subAgentExecCtx.CompletionReason))
-			// Reload todos file for final state
-			todoFile, _ = hcpo.loadOrCreateTodosFile(ctx, todosFilePath, todoTaskStep)
-			// Emit todo task step completed event
-			hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration+1, todoFile, subAgentExecCtx.CompletionReason, todoTaskStep.NextStepID)
-			// Emit step finished event
-			hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
-			return true, todoTaskStep.NextStepID, nil
-		}
-
 		hcpo.GetLogger().Info(fmt.Sprintf("📋 Todo task response: action=%s, all_complete=%v, progress=%s",
 			response.NextAction, response.AllTasksComplete, response.ProgressSummary))
 
-		// Detect and emit todo item change events by comparing before/after state
-		previousTodoFile := todoFile
-		updatedTodoFile, err := hcpo.loadOrCreateTodosFile(ctx, todosFilePath, todoTaskStep)
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to reload todos file for change detection: %v", err))
-		} else {
-			hcpo.emitTodoItemChangeEvents(ctx, step, stepIndex, todoTaskStepPath, previousTodoFile, updatedTodoFile)
-			todoFile = updatedTodoFile // Use updated state going forward
-		}
-
 		// Log routing decision to file (similar to orchestration step)
-		hcpo.logTodoTaskRoutingDecision(ctx, step, stepIndex, todoTaskStepPath, taskIteration, response, todoFile, executionLLM)
+		hcpo.logTodoTaskRoutingDecision(ctx, step, stepIndex, todoTaskStepPath, taskIteration, response, nil, executionLLM)
+
+		// Save execution log for this iteration (so UI can show full execution history)
+		hcpo.saveTodoTaskExecutionLog(ctx, todoTaskStepPath, taskIteration, executionLLM, updatedHistory)
 
 		// Emit route selected event
-		hcpo.emitTodoTaskRouteSelectedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration, response, todoFile, executionLLM)
+		hcpo.emitTodoTaskRouteSelectedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration, response, nil, executionLLM)
 
-		// Process the response based on next_action (backward compatibility with structured output approach)
-		// Note: In the new tool-based approach, the agent calls sub-agent tools directly and step completion
-		// is handled via mark_step_complete. The structured output is maintained for backward compatibility.
+		// Run pre-validation after each agent execution (if validation schema exists)
+		// This is the PRIMARY completion check - step completes when validation passes
+		validationSchema := step.GetValidationSchema()
+		if validationSchema != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔍 Running pre-validation after agent execution (iteration %d)", taskIteration+1))
+			preValidationPassed, preValidationReason := hcpo.runTodoTaskPreValidation(ctx, step, stepIndex, todoTaskStepPath, stepExecutionPath)
+
+			if preValidationPassed {
+				// Pre-validation passed - step is complete!
+				completionReason := fmt.Sprintf("Pre-validation passed after iteration %d. %s", taskIteration+1, response.ProgressSummary)
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Todo task step complete (pre-validation passed): %s", completionReason))
+				// Emit todo task step completed event
+				hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration+1, nil, completionReason, todoTaskStep.NextStepID)
+				// Emit step finished event
+				hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
+				return true, todoTaskStep.NextStepID, nil
+			}
+
+			// Pre-validation failed - continue with feedback
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation failed for todo task step (iteration %d): continuing with feedback", taskIteration+1))
+			lastSubAgentResult = fmt.Sprintf("PRE-VALIDATION FAILED:\n%s\n\nPlease fix the validation issues before the step can complete.", preValidationReason)
+			lastSubAgentName = "pre-validation"
+			lastTodoID = "validation-failure"
+			// Continue to next iteration with feedback
+			continue
+		}
+
+		// No validation schema - use legacy completion detection
+		// Process the response based on next_action
 		switch response.NextAction {
 		case "complete":
 			if response.AllTasksComplete {
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Todo task step complete (via structured output): %s", response.CompletionReason))
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Todo task step complete (no validation schema): %s", response.CompletionReason))
 				// Emit todo task step completed event
-				hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration+1, todoFile, response.CompletionReason, todoTaskStep.NextStepID)
-				// Emit step finished event (use existing method from controller_progress.go)
+				hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration+1, nil, response.CompletionReason, todoTaskStep.NextStepID)
+				// Emit step finished event
 				hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
 				return true, todoTaskStep.NextStepID, nil
 			}
@@ -204,28 +213,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			hcpo.GetLogger().Warn("⚠️ Agent said complete but all_tasks_complete is false, continuing...")
 
 		case "delegate":
-			// Delegate to sub-agent (backward compatibility - in new approach, agent calls tools directly)
-			// This path is taken when agent uses structured output for delegation
+			// Delegate to sub-agent via structured output (legacy path)
+			// In the new approach, agent calls call_sub_agent/call_generic_agent tools directly
 			var subAgentResult string
 			var subAgentName string
 
 			if response.UseGenericAgent {
 				// Execute via generic agent
-				hcpo.GetLogger().Info(fmt.Sprintf("🤖 Delegating todo %s to generic agent (via structured output)", response.TodoIDToExecute))
+				hcpo.GetLogger().Info(fmt.Sprintf("🤖 Delegating task %s to generic agent", response.TodoIDToExecute))
 				subAgentResult, err = hcpo.executeGenericAgent(
 					ctx,
 					todoTaskStep,
 					stepIndex,
 					todoTaskStepPath,
 					response,
-					todoFile,
 					allSteps,
 					progress,
 				)
 				subAgentName = "generic"
 			} else if response.SelectedRouteID != "" {
 				// Execute via predefined sub-agent
-				hcpo.GetLogger().Info(fmt.Sprintf("🤖 Delegating todo %s to predefined agent: %s (via structured output)", response.TodoIDToExecute, response.SelectedRouteID))
+				hcpo.GetLogger().Info(fmt.Sprintf("🤖 Delegating task %s to predefined agent: %s", response.TodoIDToExecute, response.SelectedRouteID))
 				subAgentResult, err = hcpo.executePredefinedSubAgent(
 					ctx,
 					todoTaskStep,
@@ -251,22 +259,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			lastTodoID = response.TodoIDToExecute
 
 		case "continue":
-			// Continue managing todos without delegation
-			hcpo.GetLogger().Info("📝 Continuing todo management...")
-			// The orchestrator has made todo tool calls, reload the file
-			todoFile, err = hcpo.loadOrCreateTodosFile(ctx, todosFilePath, todoTaskStep)
-			if err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to reload todos file: %v", err))
-			}
+			// Continue - agent is managing tasks via shell commands
+			hcpo.GetLogger().Info("📝 Continuing task management...")
 
 		default:
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Unknown next_action: %s, continuing...", response.NextAction))
-		}
-
-		// Reload todos file after any action
-		todoFile, err = hcpo.loadOrCreateTodosFile(ctx, todosFilePath, todoTaskStep)
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to reload todos file: %v", err))
 		}
 	}
 
@@ -275,53 +272,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	return false, todoTaskStep.NextStepID, nil
 }
 
-// loadOrCreateTodosFile loads an existing todos.json or creates a new one
-func (hcpo *StepBasedWorkflowOrchestrator) loadOrCreateTodosFile(
-	ctx context.Context,
-	todosFilePath string,
-	step *TodoTaskPlanStep,
-) (*virtualtools.TodoFile, error) {
-	// Try to read existing file
-	content, err := hcpo.ReadWorkspaceFile(ctx, todosFilePath)
-	if err == nil && content != "" {
-		var todoFile virtualtools.TodoFile
-		if err := json.Unmarshal([]byte(content), &todoFile); err != nil {
-			return nil, fmt.Errorf("failed to parse todos.json: %w", err)
-		}
-		return &todoFile, nil
-	}
-
-	// Create new todos file
-	todoFile := &virtualtools.TodoFile{
-		StepID:    step.GetID(),
-		Objective: step.GetDescription(),
-		Todos:     []virtualtools.TodoItem{},
-		Summary: virtualtools.TodoSummary{
-			Total: 0,
-		},
-	}
-
-	// Save initial file
-	content2, err := json.MarshalIndent(todoFile, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal initial todos: %w", err)
-	}
-
-	if err := hcpo.WriteWorkspaceFile(ctx, todosFilePath, string(content2)); err != nil {
-		return nil, fmt.Errorf("failed to write initial todos.json: %w", err)
-	}
-
-	return todoFile, nil
-}
-
 // buildTodoTaskOrchestratorTemplateVars builds template variables for the orchestrator agent
+// Note: Task management is handled via shell commands with tasks.md - the LLM reads it directly
 func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars(
 	ctx context.Context,
 	step *TodoTaskPlanStep,
 	stepIndex int,
 	stepPath string,
 	previousContextFiles []string,
-	todoFile *virtualtools.TodoFile,
 	lastSubAgentResult string,
 	lastSubAgentName string,
 	lastTodoID string,
@@ -332,22 +290,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		if i > 0 {
 			routesBuilder.WriteString("\n")
 		}
-		routesBuilder.WriteString(fmt.Sprintf("- **%s** (%s): %s", route.RouteName, route.RouteID, route.Condition))
+		fmt.Fprintf(&routesBuilder, "- **%s** (%s): %s", route.RouteName, route.RouteID, route.Condition)
 		if route.SubAgentStep != nil {
-			routesBuilder.WriteString(fmt.Sprintf("\n  Description: %s", route.SubAgentStep.GetDescription()))
+			fmt.Fprintf(&routesBuilder, "\n  Description: %s", route.SubAgentStep.GetDescription())
 		}
 	}
 
-	// Build current todos JSON
-	todosJSON, _ := json.MarshalIndent(todoFile.Todos, "", "  ")
+	// Get step execution path (include run folder if set)
+	var executionPath string
+	if hcpo.selectedRunFolder != "" {
+		executionPath = filepath.Join("runs", hcpo.selectedRunFolder, "execution", stepPath)
+	} else {
+		executionPath = filepath.Join("execution", stepPath)
+	}
 
-	// Build progress summary
-	progressSummary := fmt.Sprintf("%d of %d tasks completed (%d open, %d in progress, %d blocked)",
-		todoFile.Summary.Completed, todoFile.Summary.Total,
-		todoFile.Summary.Open, todoFile.Summary.InProgress, todoFile.Summary.Blocked)
-
-	// Get step execution path
-	executionPath := filepath.Join("execution", stepPath)
+	// Build shell working directory (WorkspacePath + StepExecutionPath)
+	// This is the path to use in execute_shell_command's working_directory parameter
+	shellWorkingDirectory := filepath.Join(hcpo.GetWorkspacePath(), executionPath)
 
 	// Get step config for code execution mode
 	stepConfig := getAgentConfigs(step)
@@ -356,6 +315,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	// Get knowledgebase setting
 	useKnowledgebase := hcpo.UseKnowledgebase()
 
+	// Note: CurrentTodos and ProgressSummary are not populated here because
+	// the LLM manages tasks.md directly via shell commands and reads it directly
 	templateVars := map[string]string{
 		// Resolve variables in step metadata
 		"StepTitle":               ResolveVariables(step.GetTitle(), hcpo.variableValues),
@@ -365,10 +326,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"WorkspacePath":           hcpo.GetWorkspacePath(),
 		"StepNumber":              fmt.Sprintf("step-%d", stepIndex+1),
 		"StepExecutionPath":       executionPath,
+		"ShellWorkingDirectory":   shellWorkingDirectory,
 		"PredefinedRoutes":        routesBuilder.String(),
 		"EnableGenericAgent":      fmt.Sprintf("%t", step.EnableGenericAgent),
-		"CurrentTodos":            string(todosJSON),
-		"ProgressSummary":         progressSummary,
+		"CurrentTodos":            "(Read tasks.md using shell command)",
+		"ProgressSummary":         "(Check tasks.md for current progress)",
 		"SubAgentResult":          lastSubAgentResult,
 		"LastSubAgentName":        lastSubAgentName,
 		"LastTodoID":              lastTodoID,
@@ -473,16 +435,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 	}
 	defer agent.Close()
 
-	// Cast to the specific type to access ExecuteStructured
-	todoTaskAgent, ok := agent.(*WorkflowTodoTaskOrchestratorAgent)
-	if !ok {
-		return nil, nil, "", nil, fmt.Errorf("agent is not a WorkflowTodoTaskOrchestratorAgent")
-	}
-
-	// Execute with structured output
-	response, updatedHistory, err := todoTaskAgent.ExecuteStructured(ctx, templateVars, conversationHistory)
+	// Execute with tool-based approach (no structured output)
+	// The agent manages tasks via shell (tasks.md) and delegates via call_sub_agent/call_generic_agent
+	// Completion is detected by checking for completed.txt file
+	_, updatedHistory, err := agent.Execute(ctx, templateVars, conversationHistory)
 	if err != nil {
 		return nil, nil, "", subAgentExecCtx, fmt.Errorf("todo task orchestrator execution failed: %w", err)
+	}
+
+	// Return a default response - actual state is tracked via files (tasks.md, completed.txt)
+	// The controller checks for completed.txt file for completion detection
+	response := &TodoTaskResponse{
+		NextAction:       "continue",
+		AllTasksComplete: false,
+		ProgressSummary:  "Execution completed via tools",
 	}
 
 	return response, updatedHistory, executionLLM, subAgentExecCtx, nil
@@ -515,29 +481,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskExecutionLLM(
 // - Learning DISABLED (no learnings accumulated)
 // - Validation DISABLED (no validation schema required)
 // - Full MCP server access (same as predefined sub-agents)
+// All task input comes from response (tool parameters), not from files
 func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	ctx context.Context,
 	step *TodoTaskPlanStep,
 	stepIndex int,
 	stepPath string,
 	response *TodoTaskResponse,
-	todoFile *virtualtools.TodoFile,
 	allSteps []PlanStepInterface,
 	progress *StepProgress,
 ) (string, error) {
-	// Find the todo item
-	var todoItem *virtualtools.TodoItem
-	for i, item := range todoFile.Todos {
-		if item.ID == response.TodoIDToExecute {
-			todoItem = &todoFile.Todos[i]
-			break
-		}
-	}
-	if todoItem == nil {
-		return "", fmt.Errorf("todo item %s not found", response.TodoIDToExecute)
-	}
+	// Use todoID as the task title
+	// All actual task content comes from response.InstructionsToSubAgent
+	taskTitle := response.TodoIDToExecute
 
-	hcpo.GetLogger().Info(fmt.Sprintf("🤖 Executing generic agent for todo: %s (%s)", todoItem.Title, todoItem.ID))
+	hcpo.GetLogger().Info(fmt.Sprintf("🤖 Executing generic agent for task: %s", taskTitle))
 
 	// Get parent step config to inherit execution modes
 	parentConfig := getAgentConfigs(step)
@@ -555,7 +513,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		Type: StepTypeRegular,
 		CommonStepFields: CommonStepFields{
 			ID:              genericStepID,
-			Title:           todoItem.Title,
+			Title:           taskTitle,
 			Description:     response.InstructionsToSubAgent,
 			SuccessCriteria: response.SuccessCriteriaForSubAgent,
 			ContextOutput:   FlexibleContextOutput(fmt.Sprintf("%s-result.json", response.TodoIDToExecute)),
@@ -592,6 +550,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		IsEvaluationMode:   false,
 	}
 
+	// Push context before sub-agent execution (preserve orchestrator context)
+	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+		cab.PushContext("execution", stepIndex, genericStep.GetID(), genericStep.GetTitle())
+	}
+
 	// Execute using executeSingleStep (reuses standard execution infrastructure)
 	executionResult, _, err := hcpo.executeSingleStep(
 		ctx,
@@ -612,6 +575,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		[]string{response.InstructionsToSubAgent}, // previousExecutionResults - pass instructions
 		nil,              // orchestrationRoutes - none for generic agent
 	)
+
+	// Pop context after sub-agent execution (restore orchestrator context)
+	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+		cab.PopContext()
+	}
 
 	if err != nil {
 		return fmt.Sprintf("Generic agent failed: %v", err), err
@@ -695,6 +663,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 		IsEvaluationMode:   false,
 	}
 
+	// Push context before sub-agent execution (preserve orchestrator context)
+	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+		cab.PushContext("execution", stepIndex, subAgentStep.GetID(), subAgentStep.GetTitle())
+	}
+
 	executionResult, _, err := hcpo.executeSingleStep(
 		ctx,
 		subAgentStep,
@@ -715,77 +688,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 		orchestrationRoutesForSubAgent,          // orchestrationRoutes
 	)
 
+	// Pop context after sub-agent execution (restore orchestrator context)
+	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+		cab.PopContext()
+	}
+
 	if err != nil {
 		return fmt.Sprintf("Sub-agent %s failed: %v", route.RouteName, err), err
 	}
 
 	result := fmt.Sprintf("Sub-agent %s completed: %s", route.RouteName, executionResult)
 	return result, nil
-}
-
-// updateTodoStatus updates a todo item's status in the todos.json file
-func (hcpo *StepBasedWorkflowOrchestrator) updateTodoStatus(
-	ctx context.Context,
-	todosFilePath string,
-	todoID string,
-	status string,
-	result string,
-) error {
-	// Read current todos
-	content, err := hcpo.ReadWorkspaceFile(ctx, todosFilePath)
-	if err != nil {
-		return fmt.Errorf("failed to read todos file: %w", err)
-	}
-
-	var todoFile virtualtools.TodoFile
-	if err := json.Unmarshal([]byte(content), &todoFile); err != nil {
-		return fmt.Errorf("failed to parse todos file: %w", err)
-	}
-
-	// Find and update the todo
-	found := false
-	for i, item := range todoFile.Todos {
-		if item.ID == todoID {
-			todoFile.Todos[i].Status = status
-			if result != "" {
-				todoFile.Todos[i].Result = result
-			}
-			todoFile.Todos[i].UpdatedAt = time.Now()
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		return fmt.Errorf("todo %s not found", todoID)
-	}
-
-	// Update summary
-	todoFile.Summary = virtualtools.TodoSummary{Total: len(todoFile.Todos)}
-	for _, item := range todoFile.Todos {
-		switch item.Status {
-		case "open":
-			todoFile.Summary.Open++
-		case "in_progress":
-			todoFile.Summary.InProgress++
-		case "completed":
-			todoFile.Summary.Completed++
-		case "blocked":
-			todoFile.Summary.Blocked++
-		}
-	}
-
-	// Write back
-	content2, err := json.MarshalIndent(todoFile, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal todos: %w", err)
-	}
-
-	if err := hcpo.WriteWorkspaceFile(ctx, todosFilePath, string(content2)); err != nil {
-		return fmt.Errorf("failed to write todos file: %w", err)
-	}
-
-	return nil
 }
 
 // emitTodoTaskRouteSelectedEvent emits an event when the todo task orchestrator selects a route/sub-agent
@@ -1082,6 +995,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) logTodoTaskRoutingDecision(
 		}
 	}
 
+	// Build todo summary (handle nil todoFile - tasks now managed via tasks.md)
+	todoSummary := map[string]interface{}{
+		"total":       0,
+		"completed":   0,
+		"in_progress": 0,
+		"open":        0,
+		"blocked":     0,
+	}
+	if todoFile != nil {
+		todoSummary["total"] = todoFile.Summary.Total
+		todoSummary["completed"] = todoFile.Summary.Completed
+		todoSummary["in_progress"] = todoFile.Summary.InProgress
+		todoSummary["open"] = todoFile.Summary.Open
+		todoSummary["blocked"] = todoFile.Summary.Blocked
+	}
+
 	// Build log entry
 	routingEntry := map[string]interface{}{
 		"type":         "routing",
@@ -1104,14 +1033,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) logTodoTaskRoutingDecision(
 			"progress_summary":                response.ProgressSummary,
 			"completion_reason":               response.CompletionReason,
 		},
-		"todo_summary": map[string]interface{}{
-			"total":       todoFile.Summary.Total,
-			"completed":   todoFile.Summary.Completed,
-			"in_progress": todoFile.Summary.InProgress,
-			"open":        todoFile.Summary.Open,
-			"blocked":     todoFile.Summary.Blocked,
-		},
-		"timestamp": time.Now().Format(time.RFC3339),
+		"todo_summary": todoSummary,
+		"timestamp":    time.Now().Format(time.RFC3339),
 	}
 
 	// Append to log file using the same pattern as orchestration step
@@ -1151,4 +1074,133 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendTodoTaskLogEntry(ctx context.Co
 	}
 
 	return nil
+}
+
+// saveTodoTaskExecutionLog saves the execution log for a todo task iteration
+// This allows the UI to show the full execution history (conversation, tool calls) for each iteration
+func (hcpo *StepBasedWorkflowOrchestrator) saveTodoTaskExecutionLog(
+	ctx context.Context,
+	stepPath string,
+	iteration int,
+	executionLLM string,
+	conversationHistory []llmtypes.MessageContent,
+) {
+	// Get workspace path for logs folder
+	var validationWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	} else {
+		validationWorkspacePath = hcpo.GetWorkspacePath()
+	}
+
+	// Get execution logs folder path
+	executionLogsFolderPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepPath)
+
+	// Create filename: execution-attempt-1-iteration-{iteration}.json
+	// Use attempt=1 since todo task orchestrator doesn't have retry attempts like regular steps
+	filename := fmt.Sprintf("execution-attempt-1-iteration-%d.json", iteration)
+	filePath := fmt.Sprintf("%s/%s", executionLogsFolderPath, filename)
+
+	// Extract execution summary from conversation history
+	var executionSummary string
+	for _, msg := range conversationHistory {
+		if msg.Role == llmtypes.ChatMessageTypeAI {
+			// Get assistant's text content from Parts
+			for _, part := range msg.Parts {
+				if textContent, ok := part.(llmtypes.TextContent); ok {
+					if len(executionSummary) < 2000 { // Limit summary size
+						executionSummary += textContent.Text + "\n"
+					}
+				}
+			}
+		}
+	}
+
+	// Build execution log entry
+	executionLog := map[string]interface{}{
+		"step_path":        stepPath,
+		"attempt":          1,
+		"iteration":        iteration,
+		"model":            executionLLM,
+		"execution_result": executionSummary,
+		"message_count":    len(conversationHistory),
+		"timestamp":        time.Now().Format(time.RFC3339),
+	}
+
+	// Marshal to JSON
+	logJSON, err := json.MarshalIndent(executionLog, "", "  ")
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to marshal todo task execution log: %v", err))
+		return
+	}
+
+	// Write to file
+	if err := hcpo.WriteWorkspaceFile(ctx, filePath, string(logJSON)); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save todo task execution log to %s: %v", filePath, err))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("💾 Todo task execution log saved to: %s", filePath))
+	}
+}
+
+// runTodoTaskPreValidation runs pre-validation for a todo task step if validation schema exists
+// Returns (passed bool, reason string) - reason contains formatted validation results if failed
+func (hcpo *StepBasedWorkflowOrchestrator) runTodoTaskPreValidation(
+	ctx context.Context,
+	step PlanStepInterface,
+	stepIndex int,
+	stepPath string,
+	stepExecutionPath string,
+) (bool, string) {
+	// Get validation schema from step
+	validationSchema := step.GetValidationSchema()
+	if validationSchema == nil {
+		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Pre-validation skipped for todo task step %d (no validation schema)", stepIndex+1))
+		return true, ""
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 Running pre-validation for todo task step %d with %d file checks", stepIndex+1, len(validationSchema.Files)))
+
+	// Run pre-validation
+	workspaceResults, err := RunPreValidation(ctx, validationSchema, stepExecutionPath, hcpo.BaseOrchestrator)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation error for todo task step %d: %v", stepIndex+1, err))
+		// Pre-validation error means we can't verify structure - treat as failure
+		workspaceResults = &WorkspaceVerificationResult{
+			OverallPass:  false,
+			FilesChecked: []FileCheckResult{},
+			Summary: ValidationSummary{
+				TotalChecks:  0,
+				PassedChecks: 0,
+				FailedChecks: 1,
+				SchemaErrors: 0,
+				Errors: []ValidationError{
+					{
+						File:      "",
+						Path:      "",
+						CheckType: "pre_validation_error",
+						Expected:  "pre-validation to run successfully",
+						Actual:    "error occurred",
+						Message:   fmt.Sprintf("Pre-validation failed to run: %v", err),
+					},
+				},
+				SchemaWarnings: []ValidationError{},
+			},
+		}
+	}
+
+	// Emit pre-validation completed event
+	hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, false, workspaceResults)
+
+	// Format results for feedback
+	formattedResults := formatWorkspaceResults(workspaceResults)
+
+	if workspaceResults.OverallPass {
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Pre-validation passed for todo task step %d: %d/%d checks passed",
+			stepIndex+1, workspaceResults.Summary.PassedChecks, workspaceResults.Summary.TotalChecks))
+		return true, formattedResults
+	}
+
+	hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation failed for todo task step %d: %d/%d checks passed",
+		stepIndex+1, workspaceResults.Summary.PassedChecks, workspaceResults.Summary.TotalChecks))
+	return false, formattedResults
 }

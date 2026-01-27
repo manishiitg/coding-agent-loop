@@ -1728,6 +1728,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					SkipLearningWhenTempLLM2:       req.ExecutionOptions.SkipLearningWhenTempLLM2,
 					EnabledGroupIDs:                req.ExecutionOptions.EnabledGroupIDs,
 					SaveValidationResponses:        req.ExecutionOptions.SaveValidationResponses,
+					SkipExecutionCleanup:           req.ExecutionOptions.SkipExecutionCleanup,
 				}
 
 				// Convert TempOverrideLLM if present

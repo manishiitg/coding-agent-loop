@@ -21,33 +21,24 @@ func CreateWorkspaceAdvancedTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "execute_shell_command",
-			Description: "Execute shell commands and scripts within the workspace directory. Commands run with a 60-second timeout (configurable up to 300 seconds) and are restricted to the workspace boundary (/app/workspace-docs).\n\n**PATH USAGE RULES:**\n- **Tool Parameters**: Use relative paths (e.g., 'working_directory: \"scripts\"' resolves to '/app/workspace-docs/scripts')\n- **Inside Scripts**: When writing Python/shell scripts that reference files, use absolute paths starting with '/app/workspace-docs' (e.g., '/app/workspace-docs/script.py', '/app/workspace-docs/data/file.csv'). This ensures scripts work regardless of the working_directory setting.\n\nReturns stdout, stderr, and exit code. Use 'use_shell: true' for complex commands with pipes (|), redirects (>), chaining (&&, ||), environment variables, or wildcards.",
+			Description: "Execute shell commands and scripts within the workspace directory. Commands are executed through a shell interpreter (sh -c), enabling pipes (|), redirects (>), chaining (&&, ||), environment variables, wildcards, and heredocs. Commands run with a 60-second timeout (configurable up to 300 seconds) and are restricted to the workspace boundary (/app/workspace-docs).\n\n**PATH USAGE RULES:**\n- **Tool Parameters**: Use relative paths (e.g., 'working_directory: \"scripts\"' resolves to '/app/workspace-docs/scripts')\n- **Inside Scripts**: When writing Python/shell scripts that reference files, use absolute paths starting with '/app/workspace-docs' (e.g., '/app/workspace-docs/script.py', '/app/workspace-docs/data/file.csv'). This ensures scripts work regardless of the working_directory setting.\n\nReturns stdout, stderr, and exit code.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"command": map[string]interface{}{
 						"type":        "string",
-						"description": "Shell command to execute. If use_shell is true, this can be a complex command with pipes, redirects, etc. (e.g., 'ls', 'grep', 'find', './script.sh', 'ls | grep .md', 'cd dir && ls', 'VAR=value command')",
-					},
-					"args": map[string]interface{}{
-						"type":        "array",
-						"items":       map[string]interface{}{"type": "string"},
-						"description": "Command arguments as an array of strings (e.g., ['-l', '-a'] for 'ls -l -a'). Ignored if use_shell is true - include arguments in command string instead.",
+						"description": "Shell command to execute. Supports complex commands with pipes, redirects, chaining, env vars, wildcards, and heredocs (e.g., 'ls -la', 'cat file.txt | grep pattern', 'echo \"content\" > file.txt', 'cmd1 && cmd2'). Include all arguments directly in the command string.",
 					},
 					"working_directory": map[string]interface{}{
 						"type":        "string",
-						"description": "Relative directory path within workspace to execute command (default: root of workspace). Example: 'scripts' resolves to '/app/workspace-docs/scripts'. Sets the current working directory (CWD) for command execution, allowing relative paths in commands to resolve relative to this directory.",
+						"description": "REQUIRED. Relative directory path within workspace to execute command. Example: 'Workflow/MyProject/runs/initial/execution/step-1' resolves to '/app/workspace-docs/Workflow/MyProject/runs/initial/execution/step-1'. Sets the current working directory (CWD) for command execution, allowing relative paths in commands to resolve relative to this directory.",
 					},
 					"timeout": map[string]interface{}{
 						"type":        "integer",
 						"description": "Timeout in seconds (default: 60, max: 300)",
 					},
-					"use_shell": map[string]interface{}{
-						"type":        "boolean",
-						"description": "Execute through shell interpreter (sh -c). Enables complex commands with pipes (|), redirects (>), chaining (&&, ||), environment variables, wildcards, etc. Default: false (direct execution, more secure). Set to true for complex commands.",
-					},
 				},
-				"required": []string{"command"},
+				"required": []string{"command", "working_directory"},
 			}),
 		},
 	}

@@ -80,6 +80,9 @@ type ExecutionSetup struct {
 
 	// VariableValues are the variable values for this execution (for batch: group-specific)
 	VariableValues map[string]string
+
+	// SkipExecutionCleanup skips all execution folder cleanup when true
+	SkipExecutionCleanup bool
 }
 
 // HasCleanup returns true if any cleanup is needed
@@ -105,11 +108,12 @@ func (es *ExecutionSetup) Clone() *ExecutionSetup {
 	}
 
 	clone := &ExecutionSetup{
-		Mode:          es.Mode,
-		Cleanup:       es.Cleanup, // CleanupScope is a value type, so this copies
-		StartFromStep: es.StartFromStep,
-		RunFolder:     es.RunFolder,
-		GroupID:       es.GroupID,
+		Mode:                 es.Mode,
+		Cleanup:              es.Cleanup, // CleanupScope is a value type, so this copies
+		StartFromStep:        es.StartFromStep,
+		RunFolder:            es.RunFolder,
+		GroupID:              es.GroupID,
+		SkipExecutionCleanup: es.SkipExecutionCleanup,
 	}
 
 	// Deep copy Context

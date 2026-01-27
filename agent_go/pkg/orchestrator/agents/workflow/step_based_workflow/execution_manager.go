@@ -498,8 +498,13 @@ func (em *ExecutionManager) PrepareExecution(
 		orch.GetLogger().Warn(fmt.Sprintf("⚠️ Unknown execution strategy '%s', defaulting to mode: %s", opts.ExecutionStrategy, setup.Mode))
 	}
 
-	orch.GetLogger().Info(fmt.Sprintf("📋 Prepared execution: mode=%s, startFrom=%d, cleanup=%s",
-		setup.Mode, setup.StartFromStep+1, em.GetCleanupDescription(setup.Cleanup)))
+	// Copy SkipExecutionCleanup flag from options
+	if opts != nil {
+		setup.SkipExecutionCleanup = opts.SkipExecutionCleanup
+	}
+
+	orch.GetLogger().Info(fmt.Sprintf("📋 Prepared execution: mode=%s, startFrom=%d, cleanup=%s, skipCleanup=%v",
+		setup.Mode, setup.StartFromStep+1, em.GetCleanupDescription(setup.Cleanup), setup.SkipExecutionCleanup))
 
 	return setup, nil
 }
@@ -604,14 +609,21 @@ func (em *ExecutionManager) PrepareForBatchGroup(
 		orch.GetLogger().Info(fmt.Sprintf("🔧 Batch group execution: will start from step %d (0-based index: %d) in resume mode", resumeStep, startFromStep))
 	}
 
+	// Check for SkipExecutionCleanup from execution options
+	skipCleanup := false
+	if orch.executionOptions != nil {
+		skipCleanup = orch.executionOptions.SkipExecutionCleanup
+	}
+
 	setup := &ExecutionSetup{
-		Mode:           executionMode,
-		GroupID:        groupID,
-		RunFolder:      runFolder,
-		VariableValues: variableValues,
-		Context:        execCtx,
-		StartFromStep:  startFromStep, // Start from resume step if resuming, otherwise from beginning
-		Cleanup:        cleanup,
+		Mode:                 executionMode,
+		GroupID:              groupID,
+		RunFolder:            runFolder,
+		VariableValues:       variableValues,
+		Context:              execCtx,
+		StartFromStep:        startFromStep, // Start from resume step if resuming, otherwise from beginning
+		Cleanup:              cleanup,
+		SkipExecutionCleanup: skipCleanup,
 	}
 
 	return setup, nil
@@ -662,55 +674,58 @@ func (em *ExecutionManager) ApplyCleanup(ctx context.Context, setup *ExecutionSe
 	}
 
 	// 2. Handle execution folder cleanup
-	// Log cleanup scope for debugging
-
-	// Safety check: CleanAllSteps should never be true when resuming from a specific step
-	if scope.CleanAllSteps {
-		if setup.Mode == ExecutionModeResumeFromStep || (setup.StartFromStep > 0 && setup.Mode != ExecutionModeFresh) {
-			orch.GetLogger().Warn(fmt.Sprintf("🚨 BUG: CleanAllSteps=true but mode=%s, startFromStep=%d! This should never happen when resuming. Falling back to CleanFromStep=%d",
-				setup.Mode, setup.StartFromStep, setup.StartFromStep+1))
-			// Fall back to cleaning only from the resume step
-			scope.CleanAllSteps = false
-			if setup.StartFromStep >= 0 {
-				scope.CleanFromStep = setup.StartFromStep + 1 // Convert to 1-based
-				scope.UpdateProgress = true
-			}
-		} else {
-			// Delete entire execution/ folder (only for fresh starts)
-			executionDir := fmt.Sprintf("%s/runs/%s/execution", orch.GetWorkspacePath(), setup.RunFolder)
-			orch.GetLogger().Info(fmt.Sprintf("🗑️ CleanAllSteps=true: Deleting entire execution/ folder (mode=%s, startFromStep=%d)", setup.Mode, setup.StartFromStep))
-			if err := orch.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
-				orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to clean all steps: %v (continuing)", err))
+	// Skip folder cleanup if SkipExecutionCleanup is enabled
+	if setup.SkipExecutionCleanup {
+		orch.GetLogger().Info("⏭️ Skipping execution folder cleanup (skip_execution_cleanup enabled)")
+	} else {
+		// Safety check: CleanAllSteps should never be true when resuming from a specific step
+		if scope.CleanAllSteps {
+			if setup.Mode == ExecutionModeResumeFromStep || (setup.StartFromStep > 0 && setup.Mode != ExecutionModeFresh) {
+				orch.GetLogger().Warn(fmt.Sprintf("🚨 BUG: CleanAllSteps=true but mode=%s, startFromStep=%d! This should never happen when resuming. Falling back to CleanFromStep=%d",
+					setup.Mode, setup.StartFromStep, setup.StartFromStep+1))
+				// Fall back to cleaning only from the resume step
+				scope.CleanAllSteps = false
+				if setup.StartFromStep >= 0 {
+					scope.CleanFromStep = setup.StartFromStep + 1 // Convert to 1-based
+					scope.UpdateProgress = true
+				}
 			} else {
-				orch.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned entire execution/ folder"))
-			}
-			// Also delete logs/ folder
-			logsDir := fmt.Sprintf("%s/runs/%s/logs", orch.GetWorkspacePath(), setup.RunFolder)
-			if err := orch.CleanupDirectory(ctx, logsDir, "logs"); err != nil {
-				orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to clean logs folder: %v (continuing)", err))
-			} else {
-				orch.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned entire logs/ folder"))
+				// Delete entire execution/ folder (only for fresh starts)
+				executionDir := fmt.Sprintf("%s/runs/%s/execution", orch.GetWorkspacePath(), setup.RunFolder)
+				orch.GetLogger().Info(fmt.Sprintf("🗑️ CleanAllSteps=true: Deleting entire execution/ folder (mode=%s, startFromStep=%d)", setup.Mode, setup.StartFromStep))
+				if err := orch.CleanupDirectory(ctx, executionDir, "execution"); err != nil {
+					orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to clean all steps: %v (continuing)", err))
+				} else {
+					orch.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned entire execution/ folder"))
+				}
+				// Also delete logs/ folder
+				logsDir := fmt.Sprintf("%s/runs/%s/logs", orch.GetWorkspacePath(), setup.RunFolder)
+				if err := orch.CleanupDirectory(ctx, logsDir, "logs"); err != nil {
+					orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to clean logs folder: %v (continuing)", err))
+				} else {
+					orch.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned entire logs/ folder"))
+				}
 			}
 		}
-	}
 
-	if scope.CleanFromStep > 0 {
-		// Delete step-N through step-Total
-		cleanedCount := 0
-		for stepNum := scope.CleanFromStep; stepNum <= scope.NewTotalSteps; stepNum++ {
-			if err := orch.deleteStepExecutionFolder(ctx, stepNum); err != nil {
-				orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete step %d: %v (continuing)", stepNum, err))
-			} else {
-				cleanedCount++
+		if scope.CleanFromStep > 0 {
+			// Delete step-N through step-Total
+			cleanedCount := 0
+			for stepNum := scope.CleanFromStep; stepNum <= scope.NewTotalSteps; stepNum++ {
+				if err := orch.deleteStepExecutionFolder(ctx, stepNum); err != nil {
+					orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete step %d: %v (continuing)", stepNum, err))
+				} else {
+					cleanedCount++
+				}
 			}
-		}
-		orch.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned %d step folders (step-%d to step-%d)", cleanedCount, scope.CleanFromStep, scope.NewTotalSteps))
-	} else if scope.CleanSpecificStep > 0 {
-		// Delete only specific step
-		if err := orch.deleteStepExecutionFolder(ctx, scope.CleanSpecificStep); err != nil {
-			orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete step %d: %v (continuing)", scope.CleanSpecificStep, err))
-		} else {
-			orch.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned step-%d folder", scope.CleanSpecificStep))
+			orch.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned %d step folders (step-%d to step-%d)", cleanedCount, scope.CleanFromStep, scope.NewTotalSteps))
+		} else if scope.CleanSpecificStep > 0 {
+			// Delete only specific step
+			if err := orch.deleteStepExecutionFolder(ctx, scope.CleanSpecificStep); err != nil {
+				orch.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete step %d: %v (continuing)", scope.CleanSpecificStep, err))
+			} else {
+				orch.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned step-%d folder", scope.CleanSpecificStep))
+			}
 		}
 	}
 

@@ -352,7 +352,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) shouldAskDeleteOldProgress(ctx contex
 
 // cleanupExecutionArtifactsForFreshStart cleans execution and validation artifacts based on run mode
 // This handles both new runs folder structure and old structure for backward compatibility
+// If SkipExecutionCleanup is enabled in executionOptions, folder cleanup is skipped
 func (hcpo *StepBasedWorkflowOrchestrator) cleanupExecutionArtifactsForFreshStart(ctx context.Context, workspacePath, runMode string) {
+	// Check if cleanup should be skipped based on execution options
+	if hcpo.executionOptions != nil && hcpo.executionOptions.SkipExecutionCleanup {
+		hcpo.GetLogger().Info("⏭️ Skipping fresh start cleanup (skip_execution_cleanup enabled)")
+		return
+	}
+
 	hcpo.GetLogger().Info(fmt.Sprintf("🧹 Starting cleanup of execution artifacts for fresh start (run_mode: %s)", runMode))
 
 	// Check if a specific run folder was already selected (from frontend or earlier resolution)

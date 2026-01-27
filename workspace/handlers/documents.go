@@ -1962,12 +1962,12 @@ func UploadFile(c *gin.Context) {
 		return
 	}
 
-	// Validate file type - only allow text-based files
-	if !isTextBasedFile(header.Filename, header.Header.Get("Content-Type")) {
+	// Validate file type - only allow text-based files and common documents/images
+	if !isAllowedFile(header.Filename, header.Header.Get("Content-Type")) {
 		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
 			Success: false,
 			Message: "Invalid file type",
-			Error:   "Only text-based files are allowed (txt, md, json, csv, yaml, xml, etc.). Binary files like images, videos, and executables are not permitted.",
+			Error:   "File type not allowed. Executables and system files are blocked for security.",
 		})
 		return
 	}
@@ -2284,6 +2284,28 @@ func validateFolderPath(folderPath string) error {
 	return nil
 }
 
+// isAllowedFile checks if a file is allowed to be uploaded (allows almost everything except executables)
+func isAllowedFile(filename, contentType string) bool {
+	// Get file extension
+	ext := strings.ToLower(filepath.Ext(filename))
+	if ext != "" {
+		ext = ext[1:] // Remove the dot
+	}
+
+	// Blocked extensions (executables, system files)
+	blockedExtensions := map[string]bool{
+		"exe": true, "dll": true, "so": true, "dylib": true, "bin": true,
+		"msi": true, "dmg": true, "iso": true, "jar": true, "bat": true,
+		"cmd": true, "com": true, "scr": true,
+	}
+
+	if blockedExtensions[ext] {
+		return false
+	}
+
+	return true
+}
+
 // isTextBasedFile checks if a file is text-based based on extension and MIME type
 func isTextBasedFile(filename, contentType string) bool {
 	// Get file extension
@@ -2454,55 +2476,11 @@ func isTextBasedFile(filename, contentType string) bool {
 		"text/x-emacs":              true,
 		"text/x-tex":                true,
 		"text/x-latex":              true,
-		"text/x-rst":                true,
-		"text/x-asciidoc":           true,
-		"text/x-org":                true,
-		"text/x-wiki":               true,
-		"image/svg+xml":             true,  // SVG is text-based
-		"application/pdf":           false, // PDF is binary
-		"application/msword":        false, // Word docs are binary
-		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": false,
-		"application/vnd.ms-excel": false, // Excel files are binary
-		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         false,
-		"application/vnd.ms-powerpoint":                                             false, // PowerPoint files are binary
-		"application/vnd.openxmlformats-officedocument.presentationml.presentation": false,
-		"application/zip":               false, // Archives are binary
-		"application/x-rar-compressed":  false,
-		"application/x-7z-compressed":   false,
-		"application/x-tar":             false,
-		"application/gzip":              false,
-		"application/x-bzip2":           false,
-		"application/x-xz":              false,
-		"image/jpeg":                    false, // Images are binary
-		"image/png":                     false,
-		"image/gif":                     false,
-		"image/bmp":                     false,
-		"image/tiff":                    false,
-		"image/webp":                    false,
-		"image/x-icon":                  false,
-		"video/mp4":                     false, // Videos are binary
-		"video/avi":                     false,
-		"video/quicktime":               false,
-		"video/x-msvideo":               false,
-		"video/x-flv":                   false,
-		"video/webm":                    false,
-		"audio/mpeg":                    false, // Audio files are binary
-		"audio/wav":                     false,
-		"audio/flac":                    false,
-		"audio/aac":                     false,
-		"audio/ogg":                     false,
-		"application/x-executable":      false, // Executables are binary
-		"application/x-msdownload":      false,
-		"application/x-sharedlib":       false,
-		"application/x-archive":         false,
-		"application/x-debian-package":  false,
-		"application/x-rpm":             false,
-		"application/x-msi":             false,
-		"application/x-apple-diskimage": false,
-		"application/x-iso9660-image":   false,
-	}
-
-	// Check MIME type
+		        		"text/x-rst":                true,
+		        		"text/x-adoc":               true,
+		        		"text/x-asciidoc":           true,
+		        		"text/x-org":                true,
+		        	}	// Check MIME type
 	if allowed, exists := allowedMimeTypes[contentType]; exists {
 		return allowed
 	}

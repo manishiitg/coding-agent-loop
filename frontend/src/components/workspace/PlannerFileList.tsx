@@ -1,7 +1,8 @@
-import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move, Download, Archive, CheckSquare } from 'lucide-react'
+import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move, Download, Archive, CheckSquare, Edit2 } from 'lucide-react'
 import type { PlannerFile } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/tooltip'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
+import { isTextBasedFile } from '../../utils/fileUtils'
 
 interface PlannerFileListProps {
   files: PlannerFile[]
@@ -22,6 +23,8 @@ interface PlannerFileListProps {
   onCreateFolder?: (parentFolder?: PlannerFile | string) => void
   onFileMove?: (file: PlannerFile) => void
   onFolderMove?: (folder: PlannerFile) => void
+  onFileRename?: (file: PlannerFile) => void
+  onFolderRename?: (folder: PlannerFile) => void
   onFileDownload?: (file: PlannerFile) => void
   hideAddToChat?: boolean
   onExportBackup?: (folderPath: string) => void
@@ -54,6 +57,8 @@ export default function PlannerFileList({
   onCreateFolder,
   onFileMove,
   onFolderMove,
+  onFileRename,
+  onFolderRename,
   onFileDownload,
   hideAddToChat = false,
   onExportBackup,
@@ -72,7 +77,8 @@ export default function PlannerFileList({
   const renderFileItem = (file: PlannerFile, depth: number = 0) => {
     const isExpanded = expandedFolders.has(file.filepath)
     const isLoadingChildren = loadingChildren.has(file.filepath)
-    const isClickable = file.type === 'folder' || file.type === 'file' || !file.type
+    const isViewable = file.type === 'folder' || file.is_image || isTextBasedFile(file.filepath)
+    const isClickable = file.type === 'folder' || isViewable
     const fileName = file.filepath.split('/').pop() || file.filepath
     // Check both filepath (adjusted for display) and originalFilepath (original path)
     // This ensures workspace tool events can highlight files even when paths are adjusted in workflow mode
@@ -114,7 +120,7 @@ export default function PlannerFileList({
             } else {
               if (file.type === 'folder') {
                 onFolderClick(file)
-              } else if (file.type === 'file' || !file.type) {
+              } else if (isViewable) {
                 onFileClick(file)
               }
             }
@@ -149,8 +155,8 @@ export default function PlannerFileList({
 
           {/* File Name - with reserved space for icons */}
           <div className="flex-1 min-w-0 max-w-[calc(100%-80px)]">
-            <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate block">
-              {fileName}
+            <span className={`text-sm font-medium truncate block ${!isViewable ? 'text-gray-400 dark:text-gray-500' : 'text-gray-900 dark:text-gray-100'}`}>
+              {fileName} {!isViewable && <span className="text-[10px] font-normal italic ml-1">(Binary)</span>}
             </span>
           </div>
 
@@ -246,6 +252,18 @@ export default function PlannerFileList({
                       >
                         <Move className="w-3 h-3" />
                         Move
+                      </button>
+                    )}
+                    {onFolderRename && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onFolderRename(file)
+                        }}
+                        className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                        Rename
                       </button>
                     )}
                     {/* Export/Import Backup - Only show for workflow folder */}
@@ -371,6 +389,18 @@ export default function PlannerFileList({
                       >
                         <Move className="w-3 h-3" />
                         Move
+                      </button>
+                    )}
+                    {onFileRename && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onFileRename(file)
+                        }}
+                        className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                        Rename
                       </button>
                     )}
                     {onSelectFileAndEnterSelectionMode && (

@@ -863,7 +863,16 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                     acc[iter].push(log)
                     return acc
                   }, {})
-                ).sort(([a], [b]) => Number(a) - Number(b)).map(([iteration, iterLogs]) => (
+                ).sort(([a], [b]) => Number(a) - Number(b)).map(([iteration, iterLogs]) => {
+                  // Extract sub-agent info from logs in this iteration
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  const routingLog = (iterLogs as any[]).find((l: any) => l.type === 'routing' && l.todo_task_response)
+                  const subAgentName = routingLog?.todo_task_response?.selected_route_name ||
+                                      (routingLog?.todo_task_response?.use_generic_agent ? 'Generic Agent' : null) ||
+                                      routingLog?.todo_task_response?.selected_route_id
+                  const todoTitle = routingLog?.todo_task_response?.todo_title || routingLog?.todo_task_response?.todo_id_to_execute
+
+                  return (
                   <div key={iteration} className="relative">
                     <div className="flex items-center gap-2 mb-3">
                       <span className="flex items-center justify-center w-5 h-5 rounded-full bg-purple-500/10 text-purple-600 text-[10px] font-bold ring-4 ring-muted/30">
@@ -872,6 +881,16 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                       <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                         Iteration {iteration}
                       </span>
+                      {subAgentName && (
+                        <span className="text-xs font-medium px-2 py-0.5 rounded bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
+                          → {subAgentName}
+                        </span>
+                      )}
+                      {todoTitle && (
+                        <span className="text-xs text-muted-foreground truncate max-w-[200px]" title={todoTitle}>
+                          ({todoTitle})
+                        </span>
+                      )}
                       <div className="h-px bg-border flex-1 ml-2" />
                     </div>
 
@@ -1049,7 +1068,8 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                       ))}
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}

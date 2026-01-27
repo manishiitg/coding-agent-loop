@@ -17,7 +17,7 @@ A comprehensive REST API for managing markdown documents and text-based files wi
 | `GET` | `/api/documents/*filepath/nested` | Get nested content | ✅ Input sanitized |
 | `GET` | `/api/versions/*filepath` | Get file version history | ✅ Input sanitized |
 | `POST` | `/api/restore/*filepath` | Restore file version | ✅ Input sanitized |
-| `POST` | `/api/upload` | Upload text-based file | ✅ Input/Output sanitized |
+| `POST` | `/api/upload` | Upload files (any non-executable) | ✅ Input/Output sanitized |
 | `DELETE` | `/api/folders/*folderpath` | Delete folder | ✅ Input sanitized |
 | `GET` | `/api/search` | Search documents | - |
 | `POST` | `/api/sync/github` | Sync with GitHub | - |
@@ -674,7 +674,7 @@ Upload any file to a specified folder
   - `folder_path`* - Target folder path
   - `commit_message` - Commit message for the upload (optional)
 - **File Size Limit:** 10MB maximum
-- **File Type Restrictions:** Only text-based files allowed (txt, md, json, csv, yaml, xml, html, css, js, py, go, etc.)
+- **File Type Restrictions:** Most file types allowed. Executables and system files (exe, dll, so, dylib, bin, msi, dmg, iso, jar, bat, cmd, com, scr) are blocked.
 - **Security:** File names are sanitized and paths are validated
 
 ### Folder Management

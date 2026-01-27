@@ -1185,11 +1185,16 @@ func MoveDocument(c *gin.Context) {
 		return
 	}
 
-	// Handle git operations if commit message provided
+	// Handle git operations if commit message provided and git is initialized
 	if req.CommitMessage != "" {
-		if err := utils.SyncWithGitHub(docsDir, "main", req.CommitMessage); err != nil {
-			// Log error but don't fail the request
-			fmt.Printf("Warning: Git operation failed: %v\n", err)
+		gitDir := filepath.Join(docsDir, ".git")
+		if _, err := os.Stat(gitDir); err == nil {
+			if err := utils.SyncWithGitHub(docsDir, "main", req.CommitMessage); err != nil {
+				// Log error but don't fail the request
+				fmt.Printf("Warning: Git operation failed: %v\n", err)
+			}
+		} else {
+			fmt.Println("Warning: Git sync skipped - not a git repository")
 		}
 	}
 
@@ -1431,11 +1436,16 @@ func CreateFolder(c *gin.Context) {
 		return
 	}
 
-	// Handle git operations if commit message provided
+	// Handle git operations if commit message provided and git is initialized
 	if req.CommitMessage != "" {
-		if err := utils.SyncWithGitHub(docsDir, "main", req.CommitMessage); err != nil {
-			// Log error but don't fail the request
-			fmt.Printf("Warning: Git operation failed: %v\n", err)
+		gitDir := filepath.Join(docsDir, ".git")
+		if _, err := os.Stat(gitDir); err == nil {
+			if err := utils.SyncWithGitHub(docsDir, "main", req.CommitMessage); err != nil {
+				// Log error but don't fail the request
+				fmt.Printf("Warning: Git operation failed: %v\n", err)
+			}
+		} else {
+			fmt.Println("Warning: Git sync skipped - not a git repository")
 		}
 	}
 
@@ -1752,11 +1762,16 @@ func DeleteFolder(c *gin.Context) {
 		return
 	}
 
-	// If commit message provided, commit the deletion
+	// If commit message provided and git is initialized, commit the deletion
 	if commitMessage != "" {
-		if err := utils.SyncWithGitHub(docsDir, "main", commitMessage); err != nil {
-			// Log error but don't fail the request
-			fmt.Printf("Warning: Git operation failed: %v\n", err)
+		gitDir := filepath.Join(docsDir, ".git")
+		if _, err := os.Stat(gitDir); err == nil {
+			if err := utils.SyncWithGitHub(docsDir, "main", commitMessage); err != nil {
+				// Log error but don't fail the request
+				fmt.Printf("Warning: Git operation failed: %v\n", err)
+			}
+		} else {
+			fmt.Println("Warning: Git sync skipped - not a git repository")
 		}
 	}
 
@@ -2075,11 +2090,16 @@ func UploadFile(c *gin.Context) {
 		contentType = "application/octet-stream"
 	}
 
-	// If commit message provided, commit the upload
+	// If commit message provided and git is initialized, commit the upload
 	if req.CommitMessage != "" {
-		if err := utils.SyncWithGitHub(docsDir, "main", req.CommitMessage); err != nil {
-			// Log error but don't fail the request
-			fmt.Printf("Warning: Git operation failed: %v\n", err)
+		gitDir := filepath.Join(docsDir, ".git")
+		if _, err := os.Stat(gitDir); err == nil {
+			if err := utils.SyncWithGitHub(docsDir, "main", req.CommitMessage); err != nil {
+				// Log error but don't fail the request
+				fmt.Printf("Warning: Git operation failed: %v\n", err)
+			}
+		} else {
+			fmt.Println("Warning: Git sync skipped - not a git repository")
 		}
 	}
 

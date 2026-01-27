@@ -498,10 +498,8 @@ func (em *ExecutionManager) PrepareExecution(
 		orch.GetLogger().Warn(fmt.Sprintf("⚠️ Unknown execution strategy '%s', defaulting to mode: %s", opts.ExecutionStrategy, setup.Mode))
 	}
 
-	// Copy SkipExecutionCleanup flag from options
-	if opts != nil {
-		setup.SkipExecutionCleanup = opts.SkipExecutionCleanup
-	}
+	// Copy SkipExecutionCleanup flag from options (opts is guaranteed non-nil after line 53-65)
+	setup.SkipExecutionCleanup = opts.SkipExecutionCleanup
 
 	orch.GetLogger().Info(fmt.Sprintf("📋 Prepared execution: mode=%s, startFrom=%d, cleanup=%s, skipCleanup=%v",
 		setup.Mode, setup.StartFromStep+1, em.GetCleanupDescription(setup.Cleanup), setup.SkipExecutionCleanup))

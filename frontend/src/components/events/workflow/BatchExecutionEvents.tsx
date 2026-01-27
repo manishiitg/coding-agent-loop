@@ -54,8 +54,8 @@ export const BatchExecutionStartEventDisplay: React.FC<BatchExecutionEventProps<
 
 export const BatchExecutionEndEventDisplay: React.FC<BatchExecutionEventProps<BatchExecutionEndEvent>> = ({ event, compact }) => {
   const isSuccess = event.success
-  const hasFailures = event.failed_groups > 0
-  const hasCancellations = event.canceled_groups > 0
+  const hasFailures = (event.failed_groups ?? 0) > 0
+  const hasCancellations = (event.canceled_groups ?? 0) > 0
   
   // Determine color scheme based on outcome
   let colorClass = 'border-green-500 bg-green-50/30 dark:bg-green-900/20'
@@ -112,19 +112,19 @@ export const BatchExecutionEndEventDisplay: React.FC<BatchExecutionEventProps<Ba
         <div className={`p-2.5 rounded bg-white/60 dark:bg-gray-800/40 border ${borderColor}`}>
           <div className="text-[10px] uppercase tracking-wider opacity-60 mb-1 font-semibold dark:text-gray-300">Outcome</div>
           <div className="text-xs space-y-1">
-            {event.failed_groups > 0 && (
+            {(event.failed_groups ?? 0) > 0 && (
               <div className="text-red-600 dark:text-red-400 font-bold flex items-center gap-1.5">
                 <XCircle className="w-3 h-3" />
                 {event.failed_groups} failed
               </div>
             )}
-            {event.canceled_groups > 0 && (
+            {(event.canceled_groups ?? 0) > 0 && (
               <div className="text-blue-600 dark:text-blue-400 font-bold flex items-center gap-1.5">
                 <Ban className="w-3 h-3" />
                 {event.canceled_groups} canceled
               </div>
             )}
-            {event.failed_groups === 0 && event.canceled_groups === 0 && (
+            {(event.failed_groups ?? 0) === 0 && (event.canceled_groups ?? 0) === 0 && (
               <div className="text-green-600 dark:text-green-400 font-bold flex items-center gap-1.5">
                 <CheckCircle className="w-3 h-3" />
                 All successful

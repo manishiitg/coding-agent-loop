@@ -436,6 +436,7 @@ export interface TodoTaskRouteSelectedEvent {
   instructions_to_sub_agent?: string;
   selection_reasoning?: string;
   all_tasks_complete?: boolean;
+  completion_reason?: string;
   progress_summary?: string;
   model?: string;
 }

@@ -632,7 +632,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
 
           {!isLoading && !error && stepsWithLearnings.length > 0 && (
             <div className="space-y-3">
-              {stepsWithLearnings.map(({ stepId, stepNumber, stepType, branchType, parentStepId }) => {
+              {stepsWithLearnings.map(({ stepId, stepNumber, stepType, branchType }) => {
                 const metadata = learnings[stepId]
                 // Check lock status from both sources: auto_locked_at (metadata) OR lock_learnings (from step config via API)
                 const isAutoLocked = metadata?.auto_locked_at !== undefined && metadata.auto_locked_at !== ''

@@ -403,7 +403,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 
 	// Capture execution LLM for logging before creating agent
 	var executionLLM string
-	if llmConfig != nil && llmConfig.Primary.ModelID != "" {
+	if llmConfig.Primary.ModelID != "" {
 		executionLLM = fmt.Sprintf("%s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID)
 	}
 
@@ -452,28 +452,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 	}
 
 	return response, updatedHistory, executionLLM, subAgentExecCtx, nil
-}
-
-// selectTodoTaskExecutionLLM selects the LLM config for todo task execution (generic agent)
-// Uses selectExecutionLLM helper with learningsFolderEmpty=true to skip tempLLM logic
-// Priority: step config > preset default > orchestrator config
-func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskExecutionLLM(
-	ctx context.Context,
-	stepConfig *AgentConfigs,
-	stepID string,
-	stepPath string,
-) *orchestrator.LLMConfig {
-	// Use selectExecutionLLM with learningsFolderEmpty=true since generic agents don't accumulate learnings
-	// This will skip tempLLM logic and use step config > preset > orchestrator fallback
-	return hcpo.selectExecutionLLM(
-		ctx,
-		stepConfig,
-		false, // isRetryAfterValidationFailure - generic agent doesn't retry
-		1,     // retryAttempt - first attempt
-		stepID,
-		stepPath,
-		true, // learningsFolderEmpty - generic agent has no learnings, skip tempLLM
-	)
 }
 
 // executeGenericAgent executes a generic task using the standard execution agent
@@ -829,122 +807,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitTodoTaskStepCompletedEvent(
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("📢 Emitted todo task step completed event: step=%s, iterations=%d, todos=%d/%d",
 			stepPath, totalIterations, completedCount, totalTodos))
-	}
-}
-
-// emitTodoItemChangeEvents compares before/after todo states and emits events for changes
-func (hcpo *StepBasedWorkflowOrchestrator) emitTodoItemChangeEvents(
-	ctx context.Context,
-	step PlanStepInterface,
-	stepIndex int,
-	stepPath string,
-	before *virtualtools.TodoFile,
-	after *virtualtools.TodoFile,
-) {
-	bridge := hcpo.GetContextAwareBridge()
-	if bridge == nil {
-		return
-	}
-
-	if before == nil || after == nil {
-		return
-	}
-
-	// Build map of previous todos by ID for comparison
-	previousTodos := make(map[string]virtualtools.TodoItem)
-	for _, todo := range before.Todos {
-		previousTodos[todo.ID] = todo
-	}
-
-	// Check for created, updated, and completed todos
-	for _, todo := range after.Todos {
-		prevTodo, existed := previousTodos[todo.ID]
-
-		if !existed {
-			// New todo created
-			event := &TodoTaskItemCreatedEvent{
-				BaseEventData: baseevents.BaseEventData{
-					Timestamp: time.Now(),
-					Component: "orchestrator",
-				},
-				StepIndex:   stepIndex,
-				StepPath:    stepPath,
-				StepID:      step.GetID(),
-				TodoID:      todo.ID,
-				Title:       todo.Title,
-				Description: todo.Description,
-				Priority:    todo.Priority,
-				CreatedBy:   "orchestrator",
-			}
-
-			agentEvent := &baseevents.AgentEvent{
-				Type:      events.TodoTaskItemCreated,
-				Timestamp: time.Now(),
-				Data:      event,
-			}
-
-			if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit todo item created event: %v", err))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("📢 Todo item created: %s - %s", todo.ID, todo.Title))
-			}
-		} else if todo.Status == "completed" && prevTodo.Status != "completed" {
-			// Todo was completed
-			event := &TodoTaskItemCompletedEvent{
-				BaseEventData: baseevents.BaseEventData{
-					Timestamp: time.Now(),
-					Component: "orchestrator",
-				},
-				StepIndex:   stepIndex,
-				StepPath:    stepPath,
-				StepID:      step.GetID(),
-				TodoID:      todo.ID,
-				Title:       todo.Title,
-				Result:      todo.Result,
-				CompletedBy: "orchestrator",
-			}
-
-			agentEvent := &baseevents.AgentEvent{
-				Type:      events.TodoTaskItemCompleted,
-				Timestamp: time.Now(),
-				Data:      event,
-			}
-
-			if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit todo item completed event: %v", err))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("📢 Todo item completed: %s - %s", todo.ID, todo.Title))
-			}
-		} else if todo.Status != prevTodo.Status {
-			// Todo status changed (but not to completed - that's handled above)
-			event := &TodoTaskItemUpdatedEvent{
-				BaseEventData: baseevents.BaseEventData{
-					Timestamp: time.Now(),
-					Component: "orchestrator",
-				},
-				StepIndex: stepIndex,
-				StepPath:  stepPath,
-				StepID:    step.GetID(),
-				TodoID:    todo.ID,
-				Title:     todo.Title,
-				OldStatus: prevTodo.Status,
-				NewStatus: todo.Status,
-				UpdatedBy: "orchestrator",
-				Notes:     todo.Notes,
-			}
-
-			agentEvent := &baseevents.AgentEvent{
-				Type:      events.TodoTaskItemUpdated,
-				Timestamp: time.Now(),
-				Data:      event,
-			}
-
-			if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit todo item updated event: %v", err))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("📢 Todo item updated: %s - %s -> %s", todo.ID, prevTodo.Status, todo.Status))
-			}
-		}
 	}
 }
 

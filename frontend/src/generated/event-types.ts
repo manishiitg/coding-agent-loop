@@ -131,6 +131,27 @@ import type {
   BatchExecutionEndEvent,
 } from './events-bridge';
 
+export interface BatchExecutionCanceledEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  total_groups?: number;
+  completed_groups?: number;
+  canceled_group_id?: string;
+  remaining_group_ids?: string[];
+  reason?: string;
+}
+
 // Import event types that exist in events.ts but not in events-bridge.ts
 import type {
   PreValidationCompletedEvent,
@@ -253,6 +274,7 @@ export type EventTypeString =
   | 'batch_group_start'
   | 'batch_group_end'
   | 'batch_execution_end'
+  | 'batch_execution_canceled'
   // Todo Task Events
   | 'todo_task_route_selected'
   | 'todo_task_item_created'
@@ -376,6 +398,7 @@ export interface EventTypeToDataMap {
   'batch_group_start': BatchGroupStartEvent;
   'batch_group_end': BatchGroupEndEvent;
   'batch_execution_end': BatchExecutionEndEvent;
+  'batch_execution_canceled': BatchExecutionCanceledEvent;
   // Todo Task Events
   'todo_task_route_selected': TodoTaskRouteSelectedEvent;
   'todo_task_item_created': TodoTaskItemCreatedEvent;

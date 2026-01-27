@@ -14,20 +14,21 @@ import LLMSelectionDropdown from '../../LLMSelectionDropdown'
 import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 import type { LLMOption } from '../../../types/llm'
 import type { AgentLLMConfig } from '../../../utils/stepConfigMatching'
-import type { 
-  WorkflowNode, 
-  StepNodeData, 
-  ConditionalNodeData, 
+import type {
+  WorkflowNode,
+  StepNodeData,
+  ConditionalNodeData,
   DecisionNodeData,
   LoopNodeData,
   OrchestratorNodeData,
+  TodoTaskNodeData,
   ValidationNodeData,
   LearningNodeData,
   EvaluationStepNodeData
 } from '../hooks/usePlanToFlow'
 import type { PlanStep, PlanningResponse, AgentConfigs, ValidationSchema } from '../../../utils/stepConfigMatching'
 import type { TodoStepWithConfigs } from '../../../utils/stepConfigMatching'
-import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep, isHumanInputStep } from '../../../utils/stepConfigMatching'
+import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep, isHumanInputStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
 
 interface StepSidebarProps {
   node: WorkflowNode | null
@@ -228,13 +229,17 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
     // Get step ID from node data
     // For orchestration steps, use orchestration_step.ID (backend uses orchestration_step.ID for learnings)
+    // For todo_task steps, use todo_task_step.ID (backend uses todo_task_step.ID for learnings)
     // For other steps, use step.ID
-    const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
+    const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | TodoTaskNodeData
     let stepId: string | undefined
-    
+
     if (node.type === 'orchestrator') {
       const orchestratorData = stepData as OrchestratorNodeData
       stepId = orchestratorData.orchestration_step?.id ?? orchestratorData.step?.id
+    } else if (node.type === 'todo_task') {
+      const todoTaskData = stepData as TodoTaskNodeData
+      stepId = todoTaskData.todo_task_step?.id ?? todoTaskData.step?.id
     } else {
       stepId = stepData.step?.id
     }
@@ -507,7 +512,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
   // Initialize edit fields when node changes or edit mode is enabled
   React.useEffect(() => {
-    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator')) {
+    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator' || node.type === 'todo_task')) {
       const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
       if (stepData.step) {
         const step = stepData.step
@@ -526,7 +531,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
   // Handle start edit
   const handleStartEdit = () => {
-    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator')) {
+    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator' || node.type === 'todo_task')) {
       const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
       if (stepData.step) {
         const step = stepData.step
@@ -584,7 +589,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   const handleCancelEdit = () => {
     setIsEditing(false)
     // Reset to original values
-    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator')) {
+    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator' || node.type === 'todo_task')) {
       const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
       if (stepData.step) {
         const step = stepData.step
@@ -1785,8 +1790,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                           <div key={route.route_id || 'unknown'} className="p-2 bg-white dark:bg-gray-800 rounded border border-blue-100 dark:border-blue-900">
                             <div className="flex items-center gap-2 mb-1">
                               <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                                isEndRoute 
-                                  ? "bg-red-500 dark:bg-red-400" 
+                                isEndRoute
+                                  ? "bg-red-500 dark:bg-red-400"
                                   : "bg-blue-500 dark:bg-blue-400"
                               }`} />
                               <span className={`text-xs font-medium ${
@@ -1811,6 +1816,93 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                         )
                       })}
                     </div>
+                  </div>
+                )}
+              </div>
+              <StepEditPanel
+                step={stepWithConfigs}
+                stepIndex={stepIndex}
+                onSave={handleSave}
+                onCancel={() => {}}
+                isSaving={isSaving}
+                presetServers={presetServers}
+                presetLLMConfig={presetLLMConfig}
+                presetUseCodeExecutionMode={presetUseCodeExecutionMode}
+                isExpanded={true}
+                onToggleExpanded={() => {}}
+                planSteps={plan?.steps || []}
+              />
+            </div>
+          ) : isTodoTaskStep(step) && node.type === 'todo_task' ? (
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+              {/* Todo Task Step Info */}
+              <div className="mb-3 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+                <p className="text-xs text-purple-700 dark:text-purple-300 mb-2">
+                  <strong>Todo Task Step:</strong> Manages a dynamic task list with trackable todos. The orchestrator creates tasks, delegates to sub-agents, and tracks progress until the objective is achieved.
+                </p>
+
+                {/* Main Task Step Details */}
+                {step.todo_task_step && (
+                  <div className="mt-3 p-2 bg-white dark:bg-gray-800 rounded border border-purple-100 dark:border-purple-900">
+                    <p className="text-xs font-semibold text-purple-700 dark:text-purple-300 uppercase tracking-wide mb-1">
+                      Main Orchestrator Task:
+                    </p>
+                    <p className="text-xs text-gray-700 dark:text-gray-300 font-medium">
+                      {step.todo_task_step.title || 'Untitled Task'}
+                    </p>
+                    {step.todo_task_step.description && (
+                      <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                        {step.todo_task_step.description}
+                      </p>
+                    )}
+                    {step.todo_task_step.success_criteria && (
+                      <p className="text-xs text-gray-500 dark:text-gray-500 mt-1 italic">
+                        Success: {step.todo_task_step.success_criteria}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Generic Agent Indicator */}
+                <div className="mt-3 p-2 bg-white dark:bg-gray-800 rounded border border-purple-100 dark:border-purple-900">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full flex-shrink-0 bg-green-500 dark:bg-green-400" />
+                    <span className="text-xs font-medium text-green-700 dark:text-green-300">
+                      Generic Agent: Always Available
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-500 ml-4 mt-1">
+                    Handles any task that doesn't match a predefined route
+                  </p>
+                </div>
+
+                {/* Predefined Routes Summary */}
+                {step.predefined_routes && step.predefined_routes.length > 0 && (
+                  <div className="mt-3 p-2 bg-white dark:bg-gray-800 rounded border border-purple-100 dark:border-purple-900">
+                    <p className="text-xs font-semibold text-purple-700 dark:text-purple-300 uppercase tracking-wide mb-1">
+                      Predefined Routes ({step.predefined_routes.length}):
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                      {step.predefined_routes.map((route) => (
+                        <span
+                          key={route.route_id || 'unknown'}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-purple-100 dark:bg-purple-800/50 text-purple-700 dark:text-purple-300 rounded"
+                        >
+                          <div className="w-1.5 h-1.5 rounded-full bg-purple-500 dark:bg-purple-400" />
+                          {route.route_name || route.route_id}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-500 mt-2 italic">
+                      Click on sub-agent nodes to see their details
+                    </p>
+                  </div>
+                )}
+
+                {/* Next Step */}
+                {step.next_step_id && (
+                  <div className="mt-3 text-xs text-purple-600 dark:text-purple-400">
+                    Next Step: {step.next_step_id === 'end' ? 'End workflow' : step.next_step_id}
                   </div>
                 )}
               </div>
@@ -1876,7 +1968,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         }}
         title="Delete Step"
         message={
-          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator')
+          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator' || node.type === 'todo_task')
             ? (() => {
                 const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
@@ -1896,16 +1988,20 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         onConfirm={handleDeleteLearnings}
         title="Delete Learnings"
         message={
-          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator')
+          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator' || node.type === 'todo_task')
             ? (() => {
-                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
+                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | TodoTaskNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
                 // For orchestration steps, use orchestration_step.ID (backend uses orchestration_step.ID for learnings)
+                // For todo_task steps, use todo_task_step.ID
                 // For other steps, use step.ID
                 let stepId: string
                 if (node.type === 'orchestrator') {
                   const orchestratorData = stepData as OrchestratorNodeData
                   stepId = orchestratorData.orchestration_step?.id ?? orchestratorData.step?.id ?? `step-${stepIndex + 1}`
+                } else if (node.type === 'todo_task') {
+                  const todoTaskData = stepData as TodoTaskNodeData
+                  stepId = todoTaskData.todo_task_step?.id ?? todoTaskData.step?.id ?? `step-${stepIndex + 1}`
                 } else {
                   stepId = stepData.step?.id || `step-${stepIndex + 1}`
                 }

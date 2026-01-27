@@ -191,7 +191,7 @@ func (em *ExecutionManager) CleanupForFreshStart(...) error {
 | Agent | Purpose | Input | Output | Tools | LLM Config |
 |-------|---------|-------|--------|-------|------------|
 | **Variable Extraction** | Extracts variables from objective | Objective (raw text) | `variables.json`, templated objective | `update_variable`, `update_objective`, `human_feedback` | `phase_llm` |
-| **Planning** | Creates execution plan | Objective (templated), existing plan | `plan.json` with structured steps | `update_plan_steps`, `add_plan_steps`, `delete_plan_steps`, `human_feedback` | `phase_llm` |
+| **Planning** | Creates execution plan | Objective (templated), existing plan | `plan.json` with structured steps | `update_regular_step`, `add_plan_step`, `delete_plan_steps`, `update_todo_task_route`, `human_feedback` | `phase_llm` |
 | **Evaluation Designer** | Creates evaluation plan | Objective, execution results (runs/) | `evaluation_plan.json` | `add_evaluation_step`, `update_evaluation_step`, `delete_evaluation_step`, `human_feedback` | `phase_llm` |
 | **Execution** | Executes plan steps | Step details, context, variables | Execution result, conversation history | Full MCP Tool Access | `execution_llm` |
 | **Execution-Only** | Executes with pre-discovered learnings | Step details + learning history | Execution result | Full MCP Tool Access | `execution_llm` |
@@ -200,10 +200,230 @@ func (em *ExecutionManager) CleanupForFreshStart(...) error {
 | **Code Execution Learning** | Captures Go code patterns | Execution history (code execution mode) | Go code patterns, imports | Code Pattern Extraction | `learning_llm` |
 | **Conditional** | Evaluates branching decisions | Condition question, step output | `ConditionalResponse` (Boolean, Reasoning) | Tool-Based Verification | `execution_llm` |
 | **Anonymization** | Replaces values with placeholders | Workspace path, variables JSON | Anonymized learning files | Fuzzy Matching | `phase_llm` |
-| **Plan Improvement** | Analyzes execution for plan feedback | Workspace path, plan JSON | `plan_improvement_feedback.md` | Execution Analysis | `phase_llm` |
+| **Plan Improvement** | Analyzes execution for plan feedback | Workspace path, plan JSON | Updated `plan.json` | `update_regular_step`, `update_todo_task_route`, `human_feedback` | `phase_llm` |
 | **Plan Tool Optimization** | Optimizes tool selections | Workspace path, plan JSON | Optimized `step_config.json` | Tool Analysis | `phase_llm` |
 | **Learning Consolidation** | Consolidates learning files | Workspace path | Consolidated learnings | File Consolidation | `phase_llm` |
 | **Plan Learnings Alignment** | Aligns plan with learnings | Workspace path, plan JSON | Alignment report | Alignment Analysis | `phase_llm` |
+| **TodoTask Orchestrator** | Manages todo lists and delegates to sub-agents | Step details, todo list, predefined routes | Todo management, sub-agent results | Todo tools, Sub-agent tools | `execution_llm` |
+
+---
+
+## 📋 TodoTask Orchestrator
+
+The TodoTask Orchestrator is a specialized step type that manages complex work through a todo-list paradigm. It breaks down objectives into trackable tasks and delegates work to predefined or generic sub-agents using a **tool-based calling architecture**.
+
+### Key Files
+
+| Component | File | Description |
+|-----------|------|-------------|
+| **Controller** | [`controller_todo_task.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_todo_task.go) | Main execution loop, sub-agent dispatch |
+| **Agent** | [`todo_task_orchestrator_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/todo_task_orchestrator_agent.go) | Orchestrator agent with prompts |
+| **Sub-Agent Tools** | [`sub_agent_tools.go`](../agent_go/cmd/server/virtual-tools/sub_agent_tools.go) | Tool definitions for sub-agent calling |
+| **Todo Tools** | [`todo_tools.go`](../agent_go/cmd/server/virtual-tools/todo_tools.go) | Todo management tools |
+| **Agent Factory** | [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go) | Agent creation with context injection |
+
+### Architecture: Tool-Based Sub-Agent Calling
+
+The TodoTask Orchestrator uses **tool-based sub-agent calling** where the orchestrator agent calls tools directly to delegate work:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              TodoTaskOrchestratorAgent                       │
+│                                                              │
+│  Tools available:                                            │
+│  ├── Todo tools: create_todo, update_todo, complete_todo,   │
+│  │                list_todos, get_todo                       │
+│  ├── Sub-agent tools:                                        │
+│  │   ├── call_sub_agent(route_id, todo_id, instructions)    │
+│  │   ├── call_generic_agent(todo_id, instructions)          │
+│  │   └── mark_step_complete(reason)                         │
+│  └── Workspace tools (filtered by step config)               │
+│                                                              │
+│  Flow:                                                       │
+│  1. Agent creates todos using todo tools                    │
+│  2. Agent calls call_sub_agent() → executes synchronously   │
+│  3. Sub-agent result returns as tool output                 │
+│  4. Agent updates todos and calls mark_step_complete()      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Sub-Agent Tools
+
+| Tool | Parameters | Description |
+|------|------------|-------------|
+| **call_sub_agent** | `route_id`, `todo_id`, `instructions`, `success_criteria` | Execute a predefined sub-agent from the step's routes |
+| **call_generic_agent** | `todo_id`, `instructions`, `success_criteria` | Execute a generic agent for ad-hoc tasks |
+| **mark_step_complete** | `reason` | Signal that all todos are done and objective is met |
+
+### Execution Flow
+
+1. **Planning Phase**: On first iteration with empty todo list, orchestrator creates all tasks using `create_todo`
+2. **Execution Phase**: For each todo:
+   - Pick highest priority open task
+   - Either do it directly (using workspace tools) or delegate via `call_sub_agent`/`call_generic_agent`
+   - Update todo status after completion using `complete_todo`
+3. **Completion Phase**: When all todos are done, call `mark_step_complete`
+
+### Context Injection
+
+Sub-agent tools require execution context to function. This is injected via context wrapping:
+
+```go
+// SubAgentExecutionContext holds context for sub-agent execution
+type SubAgentExecutionContext struct {
+    TodoTaskStep *TodoTaskPlanStep  // Step with predefined routes
+    StepIndex    int
+    StepPath     string
+    AllSteps     []PlanStepInterface
+    Progress     *StepProgress
+    StepCompleted    bool    // Set by mark_step_complete tool
+    CompletionReason string  // Reason from mark_step_complete
+}
+```
+
+### Tool Timeout Configuration
+
+Sub-agent tools (`call_sub_agent`, `call_generic_agent`) have **no timeout** since sub-agent execution can take arbitrary time. This is achieved via per-tool timeout support in mcpagent:
+
+```go
+// Register with NO timeout (0 = runs indefinitely)
+agent.RegisterCustomToolWithTimeout(
+    "call_sub_agent",
+    "Execute a predefined sub-agent",
+    parameters,
+    handleCallSubAgent,
+    0,  // No timeout
+    "sub_agent_tools",
+)
+```
+
+### Predefined Routes vs Generic Agent
+
+| Feature | Predefined Route | Generic Agent |
+|---------|------------------|---------------|
+| **Learning** | Accumulates learnings over time | No learning |
+| **Pre-validation** | Has pre-validation checks | No validation |
+| **Context** | Route-specific system prompt | General execution context |
+| **Use Case** | Repeated tasks matching route specialty | Ad-hoc tasks, custom operations |
+
+### todos.json Format
+
+```json
+{
+  "step_id": "step-1",
+  "objective": "Process customer data",
+  "todos": [
+    {
+      "id": "todo_abc123",
+      "title": "Fetch data from API",
+      "description": "Call customer API to retrieve data",
+      "priority": "high",
+      "status": "completed",
+      "assigned_agent": "api-route",
+      "result": "Successfully fetched 100 records",
+      "created_at": "2025-01-27T10:00:00Z",
+      "updated_at": "2025-01-27T10:05:00Z"
+    }
+  ],
+  "summary": {
+    "total": 3,
+    "open": 1,
+    "in_progress": 0,
+    "completed": 2,
+    "blocked": 0
+  }
+}
+```
+
+---
+
+## 🛠️ Plan Modification Tools
+
+The planning and plan improvement agents have access to tools for modifying the execution plan. These tools are registered via `registerPlanModificationTools()` in [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go).
+
+### Tool Categories
+
+#### Top-Level Step Tools
+
+These tools operate on **top-level steps** (steps at the root of `plan.json`):
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `add_plan_step` | Add a new step to the plan | `step` (full step definition) |
+| `delete_plan_steps` | Remove steps from the plan | `step_ids` (array of IDs to delete) |
+| `update_regular_step` | Update a regular step | `step_id`, `title`, `description`, `success_criteria`, `validation_schema` |
+| `update_todo_task_step` | Update a todo_task step | `step_id`, `title`, `description`, `todo_task_step` |
+| `update_decision_step` | Update a decision step | `step_id`, `decision_evaluation_question`, etc. |
+| `convert_step_to_conditional` | Convert a step to conditional | `step_id`, `condition_question` |
+
+#### Nested Sub-Agent Tools (TodoTask & Orchestration Steps)
+
+**IMPORTANT**: Sub-agent steps inside `predefined_routes` are NOT top-level steps. You cannot use `update_regular_step` on them.
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `add_todo_task_route` | Add a route to a todo_task step | `parent_step_id`, `route_id`, `route_name`, `condition`, `sub_agent_step` |
+| `update_todo_task_route` | Update a route and its sub-agent | `parent_step_id`, `existing_route_id`, `sub_agent_step` |
+| `delete_todo_task_route` | Remove a route from a todo_task step | `parent_step_id`, `deleted_route_id` |
+
+### Updating Nested Sub-Agent Steps
+
+When you need to update a sub-agent step inside a `todo_task` step's `predefined_routes`, use `update_todo_task_route`:
+
+```json
+{
+  "parent_step_id": "codebase-inventory-tasks",
+  "existing_route_id": "publish-notion-report",
+  "sub_agent_step": {
+    "type": "regular",
+    "id": "publish-notion-report",
+    "title": "Publish Report to Notion",
+    "description": "Updated description with more details...",
+    "success_criteria": "Report published successfully with all sections",
+    "context_dependencies": ["codebase-analysis-output.json"],
+    "context_output": "notion-publish-result.json",
+    "has_loop": false,
+    "validation_schema": {
+      "files": [
+        {
+          "path": "notion-publish-result.json",
+          "checks": [
+            {"type": "file_exists"},
+            {"type": "json_valid"}
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+**Key Points**:
+- `parent_step_id`: The ID of the todo_task step containing the route
+- `existing_route_id`: The route_id to update (not the sub-agent step ID)
+- `sub_agent_step`: Full step definition (must include all required fields)
+
+### Plan Structure Reference
+
+```
+plan.json
+├── steps[]                              # Top-level steps (use update_regular_step, etc.)
+│   ├── Regular Step (type: "regular")
+│   ├── Decision Step (type: "decision")
+│   ├── Conditional Step (type: "conditional")
+│   ├── Orchestration Step (type: "orchestration")
+│   │   └── orchestration_routes[]       # Nested routes
+│   │       └── sub_agent_step           # Use update_orchestration_route (if available)
+│   └── TodoTask Step (type: "todo_task")
+│       └── predefined_routes[]          # Nested routes
+│           └── sub_agent_step           # Use update_todo_task_route
+```
+
+### Auto-Unlock Learnings
+
+When plan modification tools update a step, learnings for that step are automatically unlocked. This ensures that if you change a step's description or success criteria, the step will re-learn from scratch rather than using stale learnings.
+
+**Location**: `createUnlockLearningsFunctionFromBase()` in [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go)
 
 ---
 
@@ -1041,11 +1261,25 @@ Decision step fields are included in:
 
 ### Planning Tools
 
-The following tools support decision steps:
-- `add_decision_step` - Add a new decision step
-- `update_decision_step` - Update decision step properties
+The planning agent has access to comprehensive plan modification tools:
 
-**Location**: `planning_agent.go` - tool registration
+**Top-Level Step Tools**:
+- `add_plan_step` - Add a new step to the plan
+- `delete_plan_steps` - Remove steps from the plan
+- `update_regular_step` - Update a regular step
+- `update_todo_task_step` - Update a todo_task step
+- `update_decision_step` - Update a decision step
+- `add_decision_step` - Add a new decision step
+- `convert_step_to_conditional` - Convert a step to conditional
+
+**Nested Sub-Agent Tools (for routes inside todo_task/orchestration steps)**:
+- `add_todo_task_route` - Add a route with sub-agent to a todo_task step
+- `update_todo_task_route` - Update a route and its nested sub_agent_step
+- `delete_todo_task_route` - Remove a route from a todo_task step
+
+> **See also**: [Plan Modification Tools](#-plan-modification-tools) for detailed usage and examples.
+
+**Location**: `planning_agent.go` - `registerPlanModificationTools()`
 
 ## Frontend Integration
 

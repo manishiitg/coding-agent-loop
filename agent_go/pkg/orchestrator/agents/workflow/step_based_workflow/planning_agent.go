@@ -63,8 +63,39 @@ var planningUpdateSystemTemplate = MustRegisterTemplate("planningUpdateSystem", 
 
 ### 🔍 Validation Schemas
 Every step MUST have a 'validation_schema' to enable fast code-based pre-validation.
-- Target files/fields/types mentioned in success criteria.
-- Use Go regex for 'pattern' checks (e.g., "^\\d{4}-\\d{2}-\\d{2}$").
+**CRITICAL for todo_task steps**: Validation passing is the PRIMARY completion signal. The step completes when validation passes.
+
+**Structure:**
+'''json
+{
+  "validation_schema": {
+    "files": [
+      {
+        "file_name": "output.json",
+        "must_exist": true,
+        "json_checks": [
+          {
+            "path": "$.field_name",
+            "must_exist": true,
+            "value_type": "string",
+            "min_length": 1,
+            "pattern": "^[a-z]+$"
+          }
+        ]
+      }
+    ]
+  }
+}
+'''
+
+**Available JSON checks:**
+- 'path': JSONPath to the field (e.g., "$.status", "$.items[0].name", "$.data[*].id")
+- 'must_exist': Field must exist (boolean)
+- 'value_type': "string", "number", "boolean", "array", "object"
+- 'min_length' / 'max_length': For strings and arrays
+- 'min_value' / 'max_value': For numbers
+- 'pattern': Go regex for string format (e.g., "^\\d{4}-\\d{2}-\\d{2}$")
+- 'consistency_check': Compare fields (type: "equals", "greater_than", "less_than", "array_length", "in_array")
 
 ---
 
@@ -926,23 +957,22 @@ func (t *TodoTaskPlanStep) MarshalJSON() ([]byte, error) {
 	// Ensure type is set
 	t.Type = StepTypeTodoTask
 
+	// Note: enable_generic_agent is not included in JSON output as it's always true for todo task steps
 	type todoTaskJSON struct {
-		Type               StepType                 `json:"type"`
-		ID                 string                   `json:"id"`
-		Title              string                   `json:"title"`
-		TodoTaskStep       json.RawMessage          `json:"todo_task_step,omitempty"`
-		PredefinedRoutes   []PlanOrchestrationRoute `json:"predefined_routes,omitempty"`
-		EnableGenericAgent bool                     `json:"enable_generic_agent,omitempty"`
-		NextStepID         string                   `json:"next_step_id,omitempty"`
+		Type             StepType                 `json:"type"`
+		ID               string                   `json:"id"`
+		Title            string                   `json:"title"`
+		TodoTaskStep     json.RawMessage          `json:"todo_task_step,omitempty"`
+		PredefinedRoutes []PlanOrchestrationRoute `json:"predefined_routes,omitempty"`
+		NextStepID       string                   `json:"next_step_id,omitempty"`
 	}
 
 	result := todoTaskJSON{
-		Type:               t.Type,
-		ID:                 t.ID,
-		Title:              t.Title,
-		PredefinedRoutes:   t.PredefinedRoutes,
-		EnableGenericAgent: t.EnableGenericAgent,
-		NextStepID:         t.NextStepID,
+		Type:             t.Type,
+		ID:               t.ID,
+		Title:            t.Title,
+		PredefinedRoutes: t.PredefinedRoutes,
+		NextStepID:       t.NextStepID,
 	}
 
 	// Marshal TodoTaskStep if it exists
@@ -987,7 +1017,7 @@ func (t *TodoTaskPlanStep) UnmarshalJSON(data []byte) error {
 	t.Type = temp.Type
 	t.ID = temp.ID
 	t.Title = temp.Title
-	t.EnableGenericAgent = temp.EnableGenericAgent
+	t.EnableGenericAgent = true // Generic agent is always enabled for todo task steps
 	t.NextStepID = temp.NextStepID
 
 	// Unmarshal nested todo_task_step
@@ -1225,6 +1255,9 @@ type PartialPlanStep struct {
 	// Orchestration step fields
 	OrchestrationStep   map[string]interface{}   `json:"orchestration_step,omitempty"`   // Optional: Updated orchestration step - will be converted to PlanStepInterface
 	OrchestrationRoutes []PlanOrchestrationRoute `json:"orchestration_routes,omitempty"` // Optional: Updated orchestration routes
+	// Todo task step fields
+	TodoTaskStep     map[string]interface{}   `json:"todo_task_step,omitempty"`     // Optional: Updated todo task step - will be converted to PlanStepInterface
+	PredefinedRoutes []PlanOrchestrationRoute `json:"predefined_routes,omitempty"` // Optional: Updated predefined routes for todo task steps
 	// Routing fields (used by both conditional, decision, and routing steps)
 	IfTrueNextStepID  string `json:"if_true_next_step_id,omitempty"`  // Optional: Updated if_true_next_step_id
 	IfFalseNextStepID string `json:"if_false_next_step_id,omitempty"` // Optional: Updated if_false_next_step_id
@@ -2295,10 +2328,6 @@ func getAddTodoTaskStepSchema() string {
 				},
 				"description": "OPTIONAL: Array of predefined routes for specialized sub-agents. These agents have learning and prevalidation. Use for tasks that benefit from specialized handling and accumulated learnings."
 			},
-			"enable_generic_agent": {
-				"type": "boolean",
-				"description": "REQUIRED: Whether to enable the generic execution agent for ad-hoc tasks. The generic agent has workspace tools only (no MCP), no learning, and no prevalidation. Set to true for simple, one-off tasks that don't need specialized handling. Set to false if all tasks should use predefined routes only."
-			},
 			"next_step_id": {
 				"type": "string",
 				"description": "REQUIRED: ID of step to connect to after all todos are complete, or 'end' to end the workflow."
@@ -2308,7 +2337,199 @@ func getAddTodoTaskStepSchema() string {
 				"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string to insert at the beginning."
 			}
 		},
-		"required": ["id", "title", "todo_task_step", "enable_generic_agent", "next_step_id", "insert_after_step_id"]
+		"required": ["id", "title", "todo_task_step", "next_step_id", "insert_after_step_id"]
+	}`
+}
+
+// getUpdateTodoTaskStepSchema returns the JSON schema for update_todo_task_step tool
+func getUpdateTodoTaskStepSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"existing_step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the todo task step to update. Use the step's id field from the plan."
+			},
+			"title": {
+				"type": "string",
+				"description": "OPTIONAL: New title for the todo task step"
+			},
+			"todo_task_step": {
+				"type": "object",
+				"description": "OPTIONAL: Updated main todo task orchestrator step metadata. Only include fields you want to change.",
+				"properties": {
+					"type": {"type": "string", "description": "Step type - must be 'regular' for the inner orchestrator step."},
+					"id": {"type": "string", "description": "Stable step ID for the todo task orchestrator step"},
+					"title": {"type": "string", "description": "Title of the todo task orchestrator step"},
+					"description": {"type": "string", "description": "Description of the overall objective"},
+					"success_criteria": {"type": "string", "description": "How to verify the overall objective is complete"},
+					"context_dependencies": {"type": "array", "items": {"type": "string"}, "description": "List of context files from previous steps"},
+					"context_output": {"type": "string", "description": "Context file this step will create with final summary"},
+					"has_loop": {"type": "boolean", "description": "Always set to false for todo task steps"}
+				}
+			},
+			"predefined_routes": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"properties": {
+						"route_id": {
+							"type": "string",
+							"description": "Unique ID for this predefined route"
+						},
+						"route_name": {
+							"type": "string",
+							"description": "Human-readable name for this route"
+						},
+						"condition": {
+							"type": "string",
+							"description": "Description of when to use this predefined agent"
+						},
+						"sub_agent_step": {
+							"type": "object",
+							"description": "The sub-agent step definition",
+							"properties": {
+								"type": {"type": "string"},
+								"id": {"type": "string"},
+								"title": {"type": "string"},
+								"description": {"type": "string"},
+								"success_criteria": {"type": "string"},
+								"context_dependencies": {"type": "array", "items": {"type": "string"}},
+								"context_output": {"type": "string"},
+								"has_loop": {"type": "boolean"},
+								"validation_schema": {"type": "object"}
+							}
+						}
+					}
+				},
+				"description": "OPTIONAL: Updated array of predefined routes. This REPLACES the existing routes."
+			},
+			"next_step_id": {
+				"type": "string",
+				"description": "OPTIONAL: ID of step to connect to after all todos are complete, or 'end'"
+			}
+		},
+		"required": ["existing_step_id"]
+	}`
+}
+
+// getAddTodoTaskRouteSchema returns the JSON schema for add_todo_task_route tool
+func getAddTodoTaskRouteSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"parent_step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the todo task step (parent step). Use the step's id field from the plan."
+			},
+			"new_route": {
+				"type": "object",
+				"description": "REQUIRED: The new predefined route to add. Must include all required fields.",
+				"properties": {
+					"route_id": {
+						"type": "string",
+						"description": "REQUIRED: Unique ID for this route (e.g., 'api-fetcher', 'data-transformer')"
+					},
+					"route_name": {
+						"type": "string",
+						"description": "REQUIRED: Human-readable name for this route (e.g., 'API Data Fetcher', 'Data Transformer')"
+					},
+					"condition": {
+						"type": "string",
+						"description": "REQUIRED: Description of when to use this predefined agent (e.g., 'For tasks requiring API calls')"
+					},
+					"sub_agent_step": {
+						"type": "object",
+						"description": "REQUIRED: The sub-agent step definition. This agent has learning and prevalidation.",
+						"properties": {
+							"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular' for sub-agent steps."},
+							"id": {"type": "string", "description": "REQUIRED: Stable step ID for the sub-agent step"},
+							"title": {"type": "string", "description": "REQUIRED: Title of the sub-agent step"},
+							"description": {"type": "string", "description": "REQUIRED: Description of what this specialized agent does"},
+							"success_criteria": {"type": "string", "description": "REQUIRED: How to verify sub-agent completed successfully"},
+							"context_dependencies": {"type": "array", "items": {"type": "string"}},
+							"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create."},
+							"has_loop": {"type": "boolean", "description": "REQUIRED: Always set to false."},
+							"validation_schema": {
+								"type": "object",
+								"description": "OPTIONAL: Validation schema for the sub-agent output"
+							}
+						},
+						"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output"]
+					},
+					"context_to_pass": {
+						"type": "string",
+						"description": "OPTIONAL: Specific context to pass to the sub-agent"
+					}
+				},
+				"required": ["route_id", "route_name", "condition", "sub_agent_step"]
+			}
+		},
+		"required": ["parent_step_id", "new_route"]
+	}`
+}
+
+// getUpdateTodoTaskRouteSchema returns the JSON schema for update_todo_task_route tool
+func getUpdateTodoTaskRouteSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"parent_step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the todo task step (parent step). Use the step's id field from the plan."
+			},
+			"existing_route_id": {
+				"type": "string",
+				"description": "REQUIRED: The route_id of the route to update. Use the route's route_id field from the plan."
+			},
+			"route_name": {
+				"type": "string",
+				"description": "OPTIONAL: Updated route name. Only include if you want to change it."
+			},
+			"condition": {
+				"type": "string",
+				"description": "OPTIONAL: Updated condition description. Only include if you want to change it."
+			},
+			"sub_agent_step": {
+				"type": "object",
+				"description": "OPTIONAL: Updated sub-agent step. Must include all required fields if provided.",
+				"properties": {
+					"type": {"type": "string"},
+					"id": {"type": "string"},
+					"title": {"type": "string"},
+					"description": {"type": "string"},
+					"success_criteria": {"type": "string"},
+					"context_dependencies": {"type": "array", "items": {"type": "string"}},
+					"context_output": {"type": "string"},
+					"has_loop": {"type": "boolean"},
+					"validation_schema": {"type": "object"}
+				},
+				"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output"]
+			},
+			"context_to_pass": {
+				"type": "string",
+				"description": "OPTIONAL: Updated context to pass to the sub-agent."
+			}
+		},
+		"required": ["parent_step_id", "existing_route_id"]
+	}`
+}
+
+// getDeleteTodoTaskRouteSchema returns the JSON schema for delete_todo_task_route tool
+func getDeleteTodoTaskRouteSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"parent_step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the todo task step (parent step). Use the step's id field from the plan."
+			},
+			"deleted_route_id": {
+				"type": "string",
+				"description": "REQUIRED: The route_id of the route to delete. Use the route's route_id field from the plan."
+			}
+		},
+		"required": ["parent_step_id", "deleted_route_id"]
 	}`
 }
 
@@ -3421,12 +3642,25 @@ func validateJSONPathSyntax(schema *ValidationSchema) error {
 				}
 			}
 
-			// Validate compare_with_path if it exists
+			// Validate consistency_check if it exists and is actually specified
+			// Skip validation if both Type and CompareWithPath are empty (treat as not specified)
 			if check.ConsistencyCheck != nil {
 				comparePath := strings.TrimSpace(check.ConsistencyCheck.CompareWithPath)
-				if comparePath == "" {
-					errors = append(errors, fmt.Sprintf("File '%s': Empty compare_with_path is not allowed in consistency check", fileRule.FileName))
+				checkType := strings.TrimSpace(check.ConsistencyCheck.Type)
+
+				// Only validate if at least one field is specified
+				if comparePath == "" && checkType == "" {
+					// Both empty - treat as if consistency_check wasn't specified, skip validation
+				} else if comparePath == "" || checkType == "" {
+					// One is specified but not the other - error
+					if comparePath == "" {
+						errors = append(errors, fmt.Sprintf("File '%s': compare_with_path is required when consistency check type is specified", fileRule.FileName))
+					}
+					if checkType == "" {
+						errors = append(errors, fmt.Sprintf("File '%s': type is required when consistency check compare_with_path is specified", fileRule.FileName))
+					}
 				} else {
+					// Both specified - validate the path syntax
 					if !strings.HasPrefix(comparePath, "$.") {
 						errors = append(errors, fmt.Sprintf("File '%s': compare_with_path '%s' must start with '$.'", fileRule.FileName, comparePath))
 					} else {
@@ -3557,6 +3791,11 @@ func updateValidationSchemaOnStep(step PlanStepInterface, schema *ValidationSche
 		}
 	case *HumanInputPlanStep:
 		s.ValidationSchema = schema
+	case *TodoTaskPlanStep:
+		// For TodoTaskPlanStep, validation schema is on the inner TodoTaskStep
+		if s.TodoTaskStep != nil {
+			updateValidationSchemaOnStep(s.TodoTaskStep, schema)
+		}
 	}
 }
 
@@ -4190,6 +4429,79 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		}
 		return &updated
 
+	case *TodoTaskPlanStep:
+		updated := *step
+		if partialUpdate.Title != "" {
+			updated.Title = partialUpdate.Title
+		}
+		if partialUpdate.TodoTaskStep != nil {
+			// If we have an existing nested step, merge the partial update into it to preserve fields
+			// that weren't in the update (like context_dependencies, validation_schema, etc.)
+			if updated.TodoTaskStep != nil {
+				// Create a PartialPlanStep from the map by extracting fields directly
+				nestedPartial := PartialPlanStep{}
+				// Extract common fields from the map
+				if desc, ok := partialUpdate.TodoTaskStep["description"].(string); ok {
+					nestedPartial.Description = desc
+				}
+				if title, ok := partialUpdate.TodoTaskStep["title"].(string); ok {
+					nestedPartial.Title = title
+				}
+				if successCriteria, ok := partialUpdate.TodoTaskStep["success_criteria"].(string); ok {
+					nestedPartial.SuccessCriteria = successCriteria
+				}
+				if contextDeps, ok := partialUpdate.TodoTaskStep["context_dependencies"].([]interface{}); ok {
+					nestedPartial.ContextDependencies = make([]string, 0, len(contextDeps))
+					for _, dep := range contextDeps {
+						if depStr, ok := dep.(string); ok {
+							nestedPartial.ContextDependencies = append(nestedPartial.ContextDependencies, depStr)
+						}
+					}
+				}
+				if contextOutput, ok := partialUpdate.TodoTaskStep["context_output"]; ok {
+					if contextOutputMap, ok := contextOutput.(map[string]interface{}); ok {
+						contextOutputJSON, _ := json.Marshal(contextOutputMap)
+						json.Unmarshal(contextOutputJSON, &nestedPartial.ContextOutput)
+					} else if contextOutputStr, ok := contextOutput.(string); ok {
+						nestedPartial.ContextOutput = FlexibleContextOutput(contextOutputStr)
+					}
+				}
+				if validationSchema, ok := partialUpdate.TodoTaskStep["validation_schema"]; ok {
+					if validationSchemaMap, ok := validationSchema.(map[string]interface{}); ok {
+						validationSchemaJSON, _ := json.Marshal(validationSchemaMap)
+						var vs ValidationSchema
+						if json.Unmarshal(validationSchemaJSON, &vs) == nil {
+							nestedPartial.ValidationSchema = &vs
+						}
+					}
+				}
+				// Merge the nested partial update into the existing nested step
+				updated.TodoTaskStep = mergePartialStepUpdate(updated.TodoTaskStep, nestedPartial)
+			} else {
+				// No existing nested step - convert and assign directly
+				converted, err := convertMapToStep(partialUpdate.TodoTaskStep)
+				if err != nil {
+					return existingStep
+				}
+				updated.TodoTaskStep = converted
+			}
+		}
+		if partialUpdate.PredefinedRoutes != nil {
+			// Convert routes - SubAgentStep needs conversion
+			updated.PredefinedRoutes = make([]PlanOrchestrationRoute, len(partialUpdate.PredefinedRoutes))
+			for i, route := range partialUpdate.PredefinedRoutes {
+				updated.PredefinedRoutes[i] = route
+			}
+		}
+		if partialUpdate.NextStepID != "" {
+			updated.NextStepID = partialUpdate.NextStepID
+		}
+		if partialUpdate.ValidationSchema != nil && updated.TodoTaskStep != nil {
+			// Update validation schema on the inner TodoTaskStep
+			updateValidationSchemaOnStep(updated.TodoTaskStep, partialUpdate.ValidationSchema)
+		}
+		return &updated
+
 	default:
 		// Unknown type - return original
 		return existingStep
@@ -4656,11 +4968,137 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 			}
 		}
 	}
+	// Todo task step fields
+	if partialUpdate.TodoTaskStep != nil {
+		changedFields = append(changedFields, "todo_task_step")
+		// Convert new todo task step from map to PlanStepInterface
+		newTodoTaskStep, err := convertMapToStep(partialUpdate.TodoTaskStep)
+		if err == nil {
+			// Get old todo task step
+			var oldTodoTaskStep PlanStepInterface
+			if todoTaskStep, ok := existingStep.(*TodoTaskPlanStep); ok {
+				oldTodoTaskStep = todoTaskStep.TodoTaskStep
+			}
+			// Compare nested step fields in detail
+			compareNestedStepFields(oldTodoTaskStep, newTodoTaskStep, partialUpdate.ExistingStepID, "todo_task_step", fieldChanges)
+		} else {
+			// Fallback to ID-only tracking if conversion fails
+			oldTodoTaskStep := "nil"
+			if todoTaskStep, ok := existingStep.(*TodoTaskPlanStep); ok && todoTaskStep.TodoTaskStep != nil {
+				oldTodoTaskStep = todoTaskStep.TodoTaskStep.GetID()
+			}
+			newTodoTaskStepID := ""
+			if id, ok := partialUpdate.TodoTaskStep["id"].(string); ok {
+				newTodoTaskStepID = id
+			}
+			*fieldChanges = append(*fieldChanges, PlanFieldChange{
+				StepID:   partialUpdate.ExistingStepID,
+				Field:    "todo_task_step",
+				OldValue: oldTodoTaskStep,
+				NewValue: newTodoTaskStepID,
+			})
+		}
+	}
+	if partialUpdate.PredefinedRoutes != nil {
+		changedFields = append(changedFields, "predefined_routes")
+		// Get old routes
+		var oldRoutes []PlanOrchestrationRoute
+		if todoTaskStep, ok := existingStep.(*TodoTaskPlanStep); ok {
+			oldRoutes = todoTaskStep.PredefinedRoutes
+		}
+		// Compare routes in detail
+		if !equalOrchestrationRoutes(oldRoutes, partialUpdate.PredefinedRoutes) {
+			// Track detailed changes for each route
+			maxLen := len(oldRoutes)
+			if len(partialUpdate.PredefinedRoutes) > maxLen {
+				maxLen = len(partialUpdate.PredefinedRoutes)
+			}
+			for i := 0; i < maxLen; i++ {
+				routePrefix := fmt.Sprintf("predefined_routes[%d]", i)
+				if i >= len(oldRoutes) {
+					// New route added
+					newRouteJSON, _ := json.Marshal(partialUpdate.PredefinedRoutes[i])
+					*fieldChanges = append(*fieldChanges, PlanFieldChange{
+						StepID:   partialUpdate.ExistingStepID,
+						Field:    routePrefix,
+						OldValue: nil,
+						NewValue: string(newRouteJSON),
+					})
+				} else if i >= len(partialUpdate.PredefinedRoutes) {
+					// Route removed
+					oldRouteJSON, _ := json.Marshal(oldRoutes[i])
+					*fieldChanges = append(*fieldChanges, PlanFieldChange{
+						StepID:   partialUpdate.ExistingStepID,
+						Field:    routePrefix,
+						OldValue: string(oldRouteJSON),
+						NewValue: nil,
+					})
+				} else {
+					// Route modified - compare fields
+					oldRoute := oldRoutes[i]
+					newRoute := partialUpdate.PredefinedRoutes[i]
+					if oldRoute.RouteID != newRoute.RouteID {
+						*fieldChanges = append(*fieldChanges, PlanFieldChange{
+							StepID:   partialUpdate.ExistingStepID,
+							Field:    routePrefix + ".route_id",
+							OldValue: oldRoute.RouteID,
+							NewValue: newRoute.RouteID,
+						})
+					}
+					if oldRoute.RouteName != newRoute.RouteName {
+						*fieldChanges = append(*fieldChanges, PlanFieldChange{
+							StepID:   partialUpdate.ExistingStepID,
+							Field:    routePrefix + ".route_name",
+							OldValue: oldRoute.RouteName,
+							NewValue: newRoute.RouteName,
+						})
+					}
+					if oldRoute.Condition != newRoute.Condition {
+						*fieldChanges = append(*fieldChanges, PlanFieldChange{
+							StepID:   partialUpdate.ExistingStepID,
+							Field:    routePrefix + ".condition",
+							OldValue: oldRoute.Condition,
+							NewValue: newRoute.Condition,
+						})
+					}
+					if oldRoute.ContextToPass != newRoute.ContextToPass {
+						*fieldChanges = append(*fieldChanges, PlanFieldChange{
+							StepID:   partialUpdate.ExistingStepID,
+							Field:    routePrefix + ".context_to_pass",
+							OldValue: oldRoute.ContextToPass,
+							NewValue: newRoute.ContextToPass,
+						})
+					}
+					// Compare nested sub-agent step
+					if oldRoute.SubAgentStep != nil && newRoute.SubAgentStep != nil {
+						compareNestedStepFields(oldRoute.SubAgentStep, newRoute.SubAgentStep, partialUpdate.ExistingStepID, routePrefix+".sub_agent_step", fieldChanges)
+					} else if oldRoute.SubAgentStep != nil || newRoute.SubAgentStep != nil {
+						oldID := "nil"
+						if oldRoute.SubAgentStep != nil {
+							oldID = oldRoute.SubAgentStep.GetID()
+						}
+						newID := "nil"
+						if newRoute.SubAgentStep != nil {
+							newID = newRoute.SubAgentStep.GetID()
+						}
+						*fieldChanges = append(*fieldChanges, PlanFieldChange{
+							StepID:   partialUpdate.ExistingStepID,
+							Field:    routePrefix + ".sub_agent_step",
+							OldValue: oldID,
+							NewValue: newID,
+						})
+					}
+				}
+			}
+		}
+	}
 	if partialUpdate.NextStepID != "" {
 		changedFields = append(changedFields, "next_step_id")
 		oldNextStepID := ""
 		if orchestrationStep, ok := existingStep.(*OrchestrationPlanStep); ok {
 			oldNextStepID = orchestrationStep.NextStepID
+		} else if todoTaskStep, ok := existingStep.(*TodoTaskPlanStep); ok {
+			oldNextStepID = todoTaskStep.NextStepID
 		}
 		*fieldChanges = append(*fieldChanges, PlanFieldChange{
 			StepID:   partialUpdate.ExistingStepID,
@@ -5249,6 +5687,96 @@ func createUpdateHumanInputStepExecutor(workspacePath string, logger loggerv2.Lo
 
 		logger.Info(fmt.Sprintf("✅ Updated human input step '%s' in plan", partialUpdate.ExistingStepID))
 		return fmt.Sprintf("Successfully updated human input step '%s' in the plan", partialUpdate.ExistingStepID), nil
+	}
+}
+
+// createUpdateTodoTaskStepExecutor creates an executor function for update_todo_task_step tool
+func createUpdateTodoTaskStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Convert args to JSON and unmarshal to PartialPlanStep
+		stepJSON, err := json.Marshal(args)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal step: %w", err)
+		}
+
+		var partialUpdate PartialPlanStep
+		if err := json.Unmarshal(stepJSON, &partialUpdate); err != nil {
+			return "", fmt.Errorf("failed to parse step: %w", err)
+		}
+
+		// Read current plan
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read plan: %w", err)
+		}
+
+		// Find the todo task step
+		var existingStep PlanStepInterface
+		for _, step := range plan.Steps {
+			if step.GetID() == partialUpdate.ExistingStepID {
+				existingStep = step
+				break
+			}
+		}
+		if existingStep == nil {
+			availableIDs := make([]string, 0, len(plan.Steps))
+			for _, step := range plan.Steps {
+				availableIDs = append(availableIDs, step.GetID())
+			}
+			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs)
+		}
+
+		// Validate it's a todo task step before updating
+		todoTaskStep, ok := existingStep.(*TodoTaskPlanStep)
+		if !ok {
+			return "", fmt.Errorf("step with ID '%s' is not a todo task step", partialUpdate.ExistingStepID)
+		}
+
+		// Track changes for changelog
+		fieldChanges := make([]PlanFieldChange, 0)
+
+		// Update the step
+		// Note: Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
+		var stepIndex int
+		stepIndex, _, err = updateSingleStep(plan, partialUpdate, &fieldChanges)
+		if err != nil {
+			return "", err
+		}
+
+		// Get the updated step from the plan
+		updatedStep := plan.Steps[stepIndex]
+		updatedTodoTaskStep, ok := updatedStep.(*TodoTaskPlanStep)
+		if !ok {
+			return "", fmt.Errorf("updated step is not a todo task step")
+		}
+
+		// Validate the updated step has all required fields
+		if err := validateTodoTaskStepFieldsTyped(updatedTodoTaskStep); err != nil {
+			return "", fmt.Errorf("validation failed after update: %w", err)
+		}
+
+		// Validate all steps after update
+		if err := validatePlanStepIDs(plan.Steps); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
+
+		// Write updated plan
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf("failed to write plan: %w", err)
+		}
+
+		// Unlock learnings for updated step
+		if unlockLearningsFunc != nil && stepIndex >= 0 {
+			if err := unlockLearningsFunc(ctx, partialUpdate.ExistingStepID, stepIndex); err != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Failed to unlock learnings for updated step %s: %v", partialUpdate.ExistingStepID, err))
+			} else {
+				logger.Info(fmt.Sprintf("🔓 Unlocked learnings for updated step %s (plan was modified)", partialUpdate.ExistingStepID))
+			}
+		}
+
+		_ = todoTaskStep // Suppress unused variable warning
+		logger.Info(fmt.Sprintf("✅ Updated todo task step '%s' in plan", partialUpdate.ExistingStepID))
+		return fmt.Sprintf("Successfully updated todo task step '%s' in the plan", partialUpdate.ExistingStepID), nil
 	}
 }
 
@@ -5884,6 +6412,68 @@ func registerPlanModificationTools(
 		return fmt.Errorf("failed to register delete_orchestration_route tool: %w", err)
 	}
 
+	// Register todo task step update tool
+	todoTaskUpdateSchema := getUpdateTodoTaskStepSchema()
+	todoTaskUpdateParams, err := parseSchemaForToolParameters(todoTaskUpdateSchema)
+	if err != nil {
+		return fmt.Errorf("failed to parse update_todo_task_step schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"update_todo_task_step",
+		"Update a todo task step in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change (title, todo_task_step, predefined_routes, enable_generic_agent, next_step_id). The plan.json file is updated immediately when this tool is called.",
+		todoTaskUpdateParams,
+		createUpdateTodoTaskStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register update_todo_task_step tool: %w", err)
+	}
+
+	// Register todo task route management tools
+	addTodoTaskRouteSchema := getAddTodoTaskRouteSchema()
+	addTodoTaskRouteParams, err := parseSchemaForToolParameters(addTodoTaskRouteSchema)
+	if err != nil {
+		return fmt.Errorf("failed to parse add_todo_task_route schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"add_todo_task_route",
+		"Add a new predefined route (sub-agent) to a todo task step. Provide parent_step_id and new_route with all required fields (route_id, route_name, condition, sub_agent_step). The plan.json file is updated immediately when this tool is called.",
+		addTodoTaskRouteParams,
+		createAddTodoTaskRouteExecutor(workspacePath, logger, readFile, writeFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register add_todo_task_route tool: %w", err)
+	}
+
+	updateTodoTaskRouteSchema := getUpdateTodoTaskRouteSchema()
+	updateTodoTaskRouteParams, err := parseSchemaForToolParameters(updateTodoTaskRouteSchema)
+	if err != nil {
+		return fmt.Errorf("failed to parse update_todo_task_route schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"update_todo_task_route",
+		"Update an existing predefined route (sub-agent) within a todo task step. Provide parent_step_id, existing_route_id, and only include the fields you want to change (route_name, condition, sub_agent_step, context_to_pass). The plan.json file is updated immediately when this tool is called.",
+		updateTodoTaskRouteParams,
+		createUpdateTodoTaskRouteExecutor(workspacePath, logger, readFile, writeFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register update_todo_task_route tool: %w", err)
+	}
+
+	deleteTodoTaskRouteSchema := getDeleteTodoTaskRouteSchema()
+	deleteTodoTaskRouteParams, err := parseSchemaForToolParameters(deleteTodoTaskRouteSchema)
+	if err != nil {
+		return fmt.Errorf("failed to parse delete_todo_task_route schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"delete_todo_task_route",
+		"Delete a predefined route (sub-agent) from a todo task step. Provide parent_step_id and deleted_route_id. Unlike orchestration steps, todo task steps can have 0 predefined routes if enable_generic_agent is true. The plan.json file is updated immediately when this tool is called.",
+		deleteTodoTaskRouteParams,
+		createDeleteTodoTaskRouteExecutor(workspacePath, logger, readFile, writeFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register delete_todo_task_route tool: %w", err)
+	}
+
 	// Register validation schema and success criteria update tools
 	updateValidationSchemaSchema := getUpdateValidationSchemaSchema()
 	updateValidationSchemaParams, err := parseSchemaForToolParameters(updateValidationSchemaSchema)
@@ -5954,7 +6544,6 @@ func createExtractVariablesExecutor(workspacePath string, logger loggerv2.Logger
 				Variables:      []Variable{},
 				Groups:         []VariableGroup{},
 				ExtractionDate: time.Now().Format(time.RFC3339),
-				Objective:      "", // Not important anymore, but keep for backward compatibility
 			}
 			// Write the new manifest
 			if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
@@ -6874,6 +7463,265 @@ func createDeleteOrchestrationRouteExecutor(workspacePath string, logger loggerv
 
 		logger.Info(fmt.Sprintf("✅ Deleted route '%s' (ID: %s) from orchestration step '%s'", deletedRoute.RouteName, deletedRouteID, orchestrationStep.Title))
 		return fmt.Sprintf("Successfully deleted route '%s' (ID: %s) from orchestration step '%s'", deletedRoute.RouteName, deletedRouteID, orchestrationStep.Title), nil
+	}
+}
+
+// createAddTodoTaskRouteExecutor creates an executor function for add_todo_task_route tool
+func createAddTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		parentStepID, ok := args["parent_step_id"].(string)
+		if !ok || parentStepID == "" {
+			return "", fmt.Errorf("invalid or missing parent_step_id")
+		}
+
+		newRouteRaw, ok := args["new_route"].(map[string]interface{})
+		if !ok {
+			return "", fmt.Errorf("invalid new_route argument")
+		}
+
+		// Convert to JSON and unmarshal to PlanOrchestrationRoute
+		newRouteJSON, err := json.Marshal(newRouteRaw)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal new_route: %w", err)
+		}
+		var newRoute PlanOrchestrationRoute
+		if err := json.Unmarshal(newRouteJSON, &newRoute); err != nil {
+			return "", fmt.Errorf("failed to parse new_route: %w", err)
+		}
+
+		// Read current plan
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read plan: %w", err)
+		}
+
+		// Find the parent todo task step by ID
+		var parentStep PlanStepInterface
+		parentStepIndex := -1
+		for i, step := range plan.Steps {
+			if step.GetID() == parentStepID {
+				parentStep = step
+				parentStepIndex = i
+				break
+			}
+		}
+		if parentStep == nil {
+			availableIDs := make([]string, 0, len(plan.Steps))
+			for _, step := range plan.Steps {
+				availableIDs = append(availableIDs, step.GetID())
+			}
+			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
+		}
+
+		todoTaskStep, ok := parentStep.(*TodoTaskPlanStep)
+		if !ok {
+			return "", fmt.Errorf("step with ID '%s' is not a todo task step", parentStepID)
+		}
+
+		// Validate that the new route has a route_id
+		if newRoute.RouteID == "" {
+			return "", fmt.Errorf("new route is missing required route_id field")
+		}
+
+		// Check if route_id already exists
+		for _, existingRoute := range todoTaskStep.PredefinedRoutes {
+			if existingRoute.RouteID == newRoute.RouteID {
+				return "", fmt.Errorf("route with route_id '%s' already exists in todo task step '%s'", newRoute.RouteID, parentStepID)
+			}
+		}
+
+		// Validate that sub_agent_step has required fields
+		if newRoute.SubAgentStep != nil && newRoute.SubAgentStep.GetID() == "" {
+			return "", fmt.Errorf("sub_agent_step is missing required ID field")
+		}
+
+		// Add new route
+		todoTaskStep.PredefinedRoutes = append(todoTaskStep.PredefinedRoutes, newRoute)
+		plan.Steps[parentStepIndex] = todoTaskStep
+
+		// Write updated plan
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf("failed to write plan: %w", err)
+		}
+
+		logger.Info(fmt.Sprintf("✅ Added route '%s' (ID: %s) to todo task step '%s'", newRoute.RouteName, newRoute.RouteID, todoTaskStep.Title))
+		return fmt.Sprintf("Successfully added route '%s' (ID: %s) to todo task step '%s'", newRoute.RouteName, newRoute.RouteID, todoTaskStep.Title), nil
+	}
+}
+
+// createUpdateTodoTaskRouteExecutor creates an executor function for update_todo_task_route tool
+func createUpdateTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		parentStepID, ok := args["parent_step_id"].(string)
+		if !ok || parentStepID == "" {
+			return "", fmt.Errorf("invalid or missing parent_step_id")
+		}
+
+		existingRouteID, ok := args["existing_route_id"].(string)
+		if !ok || existingRouteID == "" {
+			return "", fmt.Errorf("invalid or missing existing_route_id")
+		}
+
+		// Read current plan
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read plan: %w", err)
+		}
+
+		// Find the parent todo task step by ID
+		var parentStep PlanStepInterface
+		parentStepIndex := -1
+		for i, step := range plan.Steps {
+			if step.GetID() == parentStepID {
+				parentStep = step
+				parentStepIndex = i
+				break
+			}
+		}
+		if parentStep == nil {
+			availableIDs := make([]string, 0, len(plan.Steps))
+			for _, step := range plan.Steps {
+				availableIDs = append(availableIDs, step.GetID())
+			}
+			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
+		}
+
+		todoTaskStep, ok := parentStep.(*TodoTaskPlanStep)
+		if !ok {
+			return "", fmt.Errorf("step with ID '%s' is not a todo task step", parentStepID)
+		}
+
+		// Find the route to update
+		var routeToUpdate *PlanOrchestrationRoute
+		for i := range todoTaskStep.PredefinedRoutes {
+			if todoTaskStep.PredefinedRoutes[i].RouteID == existingRouteID {
+				routeToUpdate = &todoTaskStep.PredefinedRoutes[i]
+				break
+			}
+		}
+		if routeToUpdate == nil {
+			availableRouteIDs := make([]string, 0, len(todoTaskStep.PredefinedRoutes))
+			for _, route := range todoTaskStep.PredefinedRoutes {
+				availableRouteIDs = append(availableRouteIDs, route.RouteID)
+			}
+			return "", fmt.Errorf("route with route_id '%s' not found in todo task step '%s'. Available route IDs: %v", existingRouteID, parentStepID, availableRouteIDs)
+		}
+
+		// Update fields if provided
+		if routeName, ok := args["route_name"].(string); ok && routeName != "" {
+			routeToUpdate.RouteName = routeName
+		}
+
+		if condition, ok := args["condition"].(string); ok && condition != "" {
+			routeToUpdate.Condition = condition
+		}
+
+		if contextToPass, ok := args["context_to_pass"].(string); ok {
+			routeToUpdate.ContextToPass = contextToPass
+		}
+
+		// Handle sub_agent_step update
+		if subAgentStepRaw, ok := args["sub_agent_step"].(map[string]interface{}); ok {
+			// Ensure type field is set
+			if _, hasType := subAgentStepRaw["type"]; !hasType {
+				subAgentStepRaw["type"] = "regular" // Default to regular if not specified
+			}
+			updatedSubAgentStep, err := convertMapToStep(subAgentStepRaw)
+			if err != nil {
+				return "", fmt.Errorf("failed to parse sub_agent_step: %w", err)
+			}
+			routeToUpdate.SubAgentStep = updatedSubAgentStep
+		}
+
+		// Update the todo task step in the plan
+		plan.Steps[parentStepIndex] = todoTaskStep
+
+		// Write updated plan
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf("failed to write plan: %w", err)
+		}
+
+		logger.Info(fmt.Sprintf("✅ Updated route '%s' (ID: %s) in todo task step '%s'", routeToUpdate.RouteName, existingRouteID, todoTaskStep.Title))
+		return fmt.Sprintf("Successfully updated route '%s' (ID: %s) in todo task step '%s'", routeToUpdate.RouteName, existingRouteID, todoTaskStep.Title), nil
+	}
+}
+
+// createDeleteTodoTaskRouteExecutor creates an executor function for delete_todo_task_route tool
+func createDeleteTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		parentStepID, ok := args["parent_step_id"].(string)
+		if !ok || parentStepID == "" {
+			return "", fmt.Errorf("invalid or missing parent_step_id")
+		}
+
+		deletedRouteID, ok := args["deleted_route_id"].(string)
+		if !ok || deletedRouteID == "" {
+			return "", fmt.Errorf("invalid or missing deleted_route_id")
+		}
+
+		// Read current plan
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read plan: %w", err)
+		}
+
+		// Find the parent todo task step by ID
+		var parentStep PlanStepInterface
+		parentStepIndex := -1
+		for i, step := range plan.Steps {
+			if step.GetID() == parentStepID {
+				parentStep = step
+				parentStepIndex = i
+				break
+			}
+		}
+		if parentStep == nil {
+			availableIDs := make([]string, 0, len(plan.Steps))
+			for _, step := range plan.Steps {
+				availableIDs = append(availableIDs, step.GetID())
+			}
+			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
+		}
+
+		todoTaskStep, ok := parentStep.(*TodoTaskPlanStep)
+		if !ok {
+			return "", fmt.Errorf("step with ID '%s' is not a todo task step", parentStepID)
+		}
+
+		// Find the route to delete
+		var deletedRoute *PlanOrchestrationRoute
+		routeIndex := -1
+		for i, route := range todoTaskStep.PredefinedRoutes {
+			if route.RouteID == deletedRouteID {
+				deletedRoute = &todoTaskStep.PredefinedRoutes[i]
+				routeIndex = i
+				break
+			}
+		}
+		if deletedRoute == nil {
+			availableRouteIDs := make([]string, 0, len(todoTaskStep.PredefinedRoutes))
+			for _, route := range todoTaskStep.PredefinedRoutes {
+				availableRouteIDs = append(availableRouteIDs, route.RouteID)
+			}
+			return "", fmt.Errorf("route with route_id '%s' not found in todo task step '%s'. Available route IDs: %v", deletedRouteID, parentStepID, availableRouteIDs)
+		}
+
+		// Note: Unlike orchestration steps, todo task steps can have 0 predefined routes if enable_generic_agent is true
+
+		// Remove the route
+		todoTaskStep.PredefinedRoutes = append(
+			todoTaskStep.PredefinedRoutes[:routeIndex],
+			todoTaskStep.PredefinedRoutes[routeIndex+1:]...,
+		)
+		plan.Steps[parentStepIndex] = todoTaskStep
+
+		// Write updated plan
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf("failed to write plan: %w", err)
+		}
+
+		logger.Info(fmt.Sprintf("✅ Deleted route '%s' (ID: %s) from todo task step '%s'", deletedRoute.RouteName, deletedRouteID, todoTaskStep.Title))
+		return fmt.Sprintf("Successfully deleted route '%s' (ID: %s) from todo task step '%s'", deletedRoute.RouteName, deletedRouteID, todoTaskStep.Title), nil
 	}
 }
 

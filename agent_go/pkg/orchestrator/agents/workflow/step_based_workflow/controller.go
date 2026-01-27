@@ -357,8 +357,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	if variablesExist && existingVariablesManifest != nil {
 		// Variables exist - use them
 		hcpo.variablesManifest = existingVariablesManifest // Store in orchestrator so formatVariableNames/Values can access it
-		templatedObjective = existingVariablesManifest.Objective
-		hcpo.SetObjective(templatedObjective)
+		templatedObjective = hcpo.GetObjective()
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Using existing variables.json with %d variables", len(existingVariablesManifest.Variables)))
 	} else {
 		// No variables.json - planning agent can extract variables if needed
@@ -1066,6 +1065,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetExecutionOptions(options *Executio
 		// Store save validation responses flag (always enabled)
 		hcpo.saveValidationResponses = true
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Save validation responses enabled - validation responses will be saved to workspace"))
+
+		// Log skip execution cleanup flag
+		if options.SkipExecutionCleanup {
+			hcpo.GetLogger().Info("🔧 Skip execution cleanup enabled - execution folders will NOT be deleted before running steps")
+		}
 
 	} else {
 		// Clear temporary overrides when options are cleared

@@ -198,7 +198,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
   const isMultiGroup = groups.length > 1
 
   return (
-    <div className={`absolute right-0 top-0 bottom-0 w-[450px] bg-background border-l border-border flex flex-col shadow-lg ${showChatArea ? 'z-10' : 'z-50'}`}>
+    <div className={`absolute right-0 top-0 bottom-0 w-[450px] bg-background border-l border-border flex flex-col shadow-lg ${showChatArea ? 'z-30' : 'z-50'}`}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-background">
         <div className="flex items-center gap-2">

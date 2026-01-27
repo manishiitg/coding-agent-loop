@@ -567,6 +567,8 @@ type ExecutionOptions struct {
 	// Logging options
 	SaveValidationResponses bool `json:"save_validation_responses,omitempty"` // If true, save validation responses and execution logs to workspace (default: true)
 
+	// Cleanup control
+	SkipExecutionCleanup bool `json:"skip_execution_cleanup,omitempty"` // If true, skip deleting execution folders before running steps
 }
 
 // AgentLLMConfig represents LLM configuration for an agent (matches controller type)
@@ -1157,7 +1159,6 @@ type Variable struct {
 
 // VariablesManifest represents the variables.json structure
 type VariablesManifest struct {
-	Objective      string          `json:"objective"`
 	Variables      []Variable      `json:"variables"`
 	Groups         []VariableGroup `json:"groups,omitempty"`
 	ExtractionDate string          `json:"extraction_date"`
@@ -1814,6 +1815,18 @@ func collectAllStepIDs(steps []todo_creation_human.PlanStepInterface) []string {
 			}
 			// Collect sub-agent step IDs from routes
 			for _, route := range orchestrationStep.OrchestrationRoutes {
+				if route.SubAgentStep != nil {
+					if subAgentStepID := route.SubAgentStep.GetID(); subAgentStepID != "" {
+						stepIDs = append(stepIDs, subAgentStepID)
+					}
+				}
+			}
+		}
+
+		// Handle todo_task steps - collect sub-agent step IDs from predefined_routes
+		if todoTaskStep, ok := step.(*todo_creation_human.TodoTaskPlanStep); ok {
+			// Collect sub-agent step IDs from predefined routes
+			for _, route := range todoTaskStep.PredefinedRoutes {
 				if route.SubAgentStep != nil {
 					if subAgentStepID := route.SubAgentStep.GetID(); subAgentStepID != "" {
 						stepIDs = append(stepIDs, subAgentStepID)

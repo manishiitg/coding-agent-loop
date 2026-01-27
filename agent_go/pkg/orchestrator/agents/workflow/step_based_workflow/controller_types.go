@@ -92,6 +92,9 @@ type ExecutionOptions struct {
 
 	// Variable group execution options (for batch execution with multiple groups)
 	EnabledGroupIDs []string `json:"enabled_group_ids,omitempty"` // Group IDs to execute (if empty, uses groups' enabled flags)
+
+	// Cleanup control
+	SkipExecutionCleanup bool `json:"skip_execution_cleanup,omitempty"` // If true, skip deleting execution folders before running steps
 }
 
 // BatchExecutionProgress tracks execution progress across multiple variable groups

@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { X, BookOpen, Lock, Unlock, Loader2, AlertCircle, ChevronDown, ChevronRight, Code, FileText, Trash2 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { PlanningResponse, PlanStep } from '../../utils/stepConfigMatching'
-import { isConditionalStep, isDecisionStep, isOrchestrationStep } from '../../utils/stepConfigMatching'
+import { isConditionalStep, isDecisionStep, isOrchestrationStep, isTodoTaskStep } from '../../utils/stepConfigMatching'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import type { PlannerFile } from '../../services/api-types'
@@ -126,7 +126,7 @@ function parseLearningsResponse(learningsData: Record<string, unknown>): Record<
 // Get step title from plan
 function getStepTitle(plan: PlanningResponse | null, stepId: string): string {
   if (!plan?.steps) return stepId
-  
+
   const findStep = (steps: PlanStep[], id: string): PlanStep | null => {
     for (const step of steps) {
       if (step.id === id) return step
@@ -143,14 +143,29 @@ function getStepTitle(plan: PlanningResponse | null, stepId: string): string {
       if ('decision_step' in step && step.decision_step && step.decision_step.id === id) {
         return step.decision_step
       }
-      // Check orchestration step
+      // Check orchestration step and its routes
       if ('orchestration_step' in step && step.orchestration_step && step.orchestration_step.id === id) {
         return step.orchestration_step
+      }
+      if ('orchestration_routes' in step && step.orchestration_routes) {
+        for (const route of step.orchestration_routes) {
+          if (route.sub_agent_step && route.sub_agent_step.id === id) {
+            return route.sub_agent_step
+          }
+        }
+      }
+      // Check todo_task predefined_routes
+      if ('predefined_routes' in step && step.predefined_routes) {
+        for (const route of step.predefined_routes) {
+          if (route.sub_agent_step && route.sub_agent_step.id === id) {
+            return route.sub_agent_step
+          }
+        }
       }
     }
     return null
   }
-  
+
   const step = findStep(plan.steps, stepId)
   return step?.title || stepId
 }
@@ -449,10 +464,10 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
   }
 
   // Collect all step IDs in execution order from plan with metadata
-  const getStepsInExecutionOrder = useCallback((): Array<{ stepId: string; stepNumber: number; stepType: string; branchType?: string }> => {
+  const getStepsInExecutionOrder = useCallback((): Array<{ stepId: string; stepNumber: number; stepType: string; branchType?: string; parentStepId?: string }> => {
     if (!plan || !plan.steps) return []
 
-    const stepsWithMetadata: Array<{ stepId: string; stepNumber: number; stepType: string; branchType?: string }> = []
+    const stepsWithMetadata: Array<{ stepId: string; stepNumber: number; stepType: string; branchType?: string; parentStepId?: string }> = []
     let stepCounter = 0
 
     const collectSteps = (steps: PlanStep[], branchType?: string) => {
@@ -511,7 +526,26 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                   stepId: route.sub_agent_step.id,
                   stepNumber: stepCounter,
                   stepType: 'sub_agent',
-                  branchType: `sub-agent-${routeIdx}`
+                  branchType: `sub-agent-${routeIdx}`,
+                  parentStepId: step.orchestration_step?.id || step.id // Track parent for nesting
+                })
+              }
+            })
+          }
+        }
+
+        // Handle todo_task steps - collect sub-agent step IDs from predefined_routes
+        if (isTodoTaskStep(step)) {
+          if (step.predefined_routes) {
+            step.predefined_routes.forEach((route, routeIdx) => {
+              if (route.sub_agent_step && route.sub_agent_step.id) {
+                stepCounter++
+                stepsWithMetadata.push({
+                  stepId: route.sub_agent_step.id,
+                  stepNumber: stepCounter,
+                  stepType: 'todo_sub_agent',
+                  branchType: `todo-sub-agent-${route.route_id || routeIdx}`,
+                  parentStepId: step.id // Track parent for nesting
                 })
               }
             })
@@ -598,7 +632,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
 
           {!isLoading && !error && stepsWithLearnings.length > 0 && (
             <div className="space-y-3">
-              {stepsWithLearnings.map(({ stepId, stepNumber, stepType, branchType }) => {
+              {stepsWithLearnings.map(({ stepId, stepNumber, stepType, branchType, parentStepId }) => {
                 const metadata = learnings[stepId]
                 // Check lock status from both sources: auto_locked_at (metadata) OR lock_learnings (from step config via API)
                 const isAutoLocked = metadata?.auto_locked_at !== undefined && metadata.auto_locked_at !== ''
@@ -619,7 +653,9 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                 const getStepTypeLabel = () => {
                   if (branchType === 'true') return 'If True'
                   if (branchType === 'false') return 'If False'
-                  if (branchType?.startsWith('sub-agent')) return 'Sub-Agent'
+                  // Use same "Sub-Agent" label for both orchestration and todo_task sub-agents
+                  if (branchType?.startsWith('todo-sub-agent') || stepType === 'todo_sub_agent') return 'Sub-Agent'
+                  if (branchType?.startsWith('sub-agent') || stepType === 'sub_agent') return 'Sub-Agent'
                   if (stepType === 'decision_inner') return 'Decision'
                   if (stepType === 'orchestration_inner') return 'Orchestration'
                   return stepType.charAt(0).toUpperCase() + stepType.slice(1)
@@ -628,10 +664,15 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                 const getStepTypeBadgeColor = () => {
                   if (branchType === 'true') return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
                   if (branchType === 'false') return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-                  if (branchType?.startsWith('sub-agent')) return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
+                  // Use same orange color for both orchestration and todo_task sub-agents
+                  if (branchType?.startsWith('todo-sub-agent') || stepType === 'todo_sub_agent') return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
+                  if (branchType?.startsWith('sub-agent') || stepType === 'sub_agent') return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
                   if (stepType === 'decision_inner' || stepType === 'orchestration_inner') return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'
                   return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
                 }
+
+                // Check if this is a sub-agent (should be indented)
+                const isSubAgent = stepType === 'sub_agent' || stepType === 'todo_sub_agent'
 
                 // Determine effective code execution mode: step config > preset default
                 const effectiveUseCodeExecutionMode = metadata?.use_code_execution_mode !== undefined
@@ -641,7 +682,9 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                 return (
                   <div
                     key={stepId}
-                    className="border border-border rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
+                    className={`border border-border rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors ${
+                      isSubAgent ? 'ml-6 border-l-4 border-l-orange-400 dark:border-l-orange-500' : ''
+                    }`}
                   >
                     <div 
                       className="p-4 cursor-pointer"

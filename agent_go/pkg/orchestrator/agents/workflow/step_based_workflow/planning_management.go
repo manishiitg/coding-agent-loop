@@ -967,10 +967,11 @@ func getMetadataKeys(metadata map[string]interface{}) []string {
 
 // IsPlanModificationTool checks if a tool name is a plan modification tool
 func IsPlanModificationTool(name string) bool {
-	return name == "update_regular_step" || name == "update_conditional_step" || name == "update_decision_step" || name == "update_routing_step" || name == "update_orchestration_step" || name == "delete_plan_steps" || name == "add_regular_step" || name == "add_conditional_step" || name == "add_decision_step" || name == "add_routing_step" || name == "add_orchestration_step" || name == "add_loop_step" ||
+	return name == "update_regular_step" || name == "update_conditional_step" || name == "update_decision_step" || name == "update_routing_step" || name == "update_orchestration_step" || name == "update_human_input_step" || name == "update_todo_task_step" || name == "delete_plan_steps" || name == "add_regular_step" || name == "add_conditional_step" || name == "add_decision_step" || name == "add_routing_step" || name == "add_orchestration_step" || name == "add_loop_step" || name == "add_human_input_step" || name == "add_todo_task_step" ||
 		name == "convert_step_to_conditional" || name == "add_branch_steps" || name == "update_branch_steps" ||
 		name == "delete_branch_steps" || name == "convert_conditional_to_regular" || name == "update_validation_schema" || name == "update_success_criteria" ||
-		name == "add_orchestration_route" || name == "update_orchestration_route" || name == "delete_orchestration_route"
+		name == "add_orchestration_route" || name == "update_orchestration_route" || name == "delete_orchestration_route" ||
+		name == "add_todo_task_route" || name == "update_todo_task_route" || name == "delete_todo_task_route"
 }
 
 // IsStepConfigModificationTool checks if a tool name is a step_config modification tool
@@ -1341,15 +1342,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreatePlanOnly(ctx context.Context, o
 	if variablesExist && existingVariablesManifest != nil {
 		// Variables exist - use them
 		hcpo.variablesManifest = existingVariablesManifest
-		templatedObjective := existingVariablesManifest.Objective
-		hcpo.SetObjective(templatedObjective)
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Using templated objective with {{VARIABLES}}: %s", templatedObjective))
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Loaded existing variables from variables.json"))
 	} else {
 		// No variables.json - create it with empty variables and the original objective
 
 		// Create new VariablesManifest with original objective and empty variables
 		newManifest := &VariablesManifest{
-			Objective:      objective,         // Use the original objective from preset
 			Variables:      []Variable{},      // Empty variables array
 			Groups:         []VariableGroup{}, // Empty groups
 			ExtractionDate: time.Now().Format(time.RFC3339),

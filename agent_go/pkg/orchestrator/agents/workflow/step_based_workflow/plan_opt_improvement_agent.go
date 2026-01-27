@@ -60,6 +60,36 @@ Answer user questions directly. Only analyze logs/files when the user specifical
 ## 🛠️ PLAN MODIFICATION TOOLS
 Use 'update_*', 'add_*', 'delete_plan_steps', etc. ONLY after user approval via 'human_feedback'.
 
+### Top-Level Steps
+- 'update_regular_step': Update regular steps by step_id (title, description, success_criteria, validation_schema, etc.)
+- 'update_todo_task_step': Update todo_task steps by step_id (title, description, todo_task_step fields)
+- 'add_plan_step', 'delete_plan_steps': Add/remove top-level steps
+
+### Nested Sub-Agent Steps (inside todo_task or orchestration steps)
+**IMPORTANT**: Sub-agent steps inside 'predefined_routes' are NOT top-level steps. Use route-specific tools:
+- 'update_todo_task_route': Update a route AND its nested sub_agent_step
+  - Parameters: parent_step_id (the todo_task step), existing_route_id, sub_agent_step (full step definition)
+- 'add_todo_task_route': Add a new route with sub_agent_step to a todo_task step
+- 'delete_todo_task_route': Remove a route from a todo_task step
+
+Example: To update 'publish-notion-report' inside todo_task step 'codebase-inventory-tasks':
+'''json
+{
+  "parent_step_id": "codebase-inventory-tasks",
+  "existing_route_id": "publish-notion-report",
+  "sub_agent_step": {
+    "type": "regular",
+    "id": "publish-notion-report",
+    "title": "Updated Title",
+    "description": "Updated description...",
+    "success_criteria": "Updated criteria...",
+    "context_dependencies": [],
+    "context_output": "result.json",
+    "has_loop": false
+  }
+}
+'''
+
 ---
 
 ## 📖 REFERENCE: Analysis Checklists (use when debugging)
@@ -74,6 +104,26 @@ Use 'update_*', 'add_*', 'delete_plan_steps', etc. ONLY after user approval via 
 <summary>Validation Failures</summary>
 - Pre-Validation (Structural): Update 'validation_schema' (file exists, JSON format)
 - LLM Validation (Authenticity): Update 'success_criteria' to focus on execution history
+
+**validation_schema structure:**
+'''json
+{
+  "validation_schema": {
+    "files": [{
+      "file_name": "output.json",
+      "must_exist": true,
+      "json_checks": [{
+        "path": "$.field",
+        "must_exist": true,
+        "value_type": "string|number|boolean|array|object",
+        "min_length": 1, "max_length": 100,
+        "pattern": "^regex$"
+      }]
+    }]
+  }
+}
+'''
+**CRITICAL for todo_task steps**: validation_schema is the PRIMARY completion signal. Step completes when validation passes.
 </details>
 
 <details>

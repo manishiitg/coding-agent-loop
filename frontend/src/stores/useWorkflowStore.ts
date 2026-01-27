@@ -26,6 +26,7 @@ const SELECTED_GROUP_IDS_KEY = 'workflow_selected_group_ids'
 const CURRENT_RUNNING_GROUP_ID_KEY = 'workflow_current_running_group_id'
 const SELECTED_RUN_FOLDER_KEY = 'workflow_selected_run_folder'
 const LAYOUT_DIRECTION_KEY = 'workflow_layout_direction'
+const SKIP_EXECUTION_CLEANUP_KEY = 'workflow_skip_execution_cleanup'
 // NOTE: Running workflows logic has been moved to useRunningWorkflowsStore.ts
 // This store now focuses on workflow execution state and configuration
 
@@ -87,6 +88,7 @@ interface WorkflowStore {
       saveValidationResponses: boolean  // If true, save validation responses to workspace validation folder
       disableShellExecAccess: boolean  // If true, disable all execute_shell_command tool access globally
       disableReadImageAccess: boolean  // If true, disable all read_image tool access globally
+      skipExecutionCleanup: boolean  // If true, skip deleting execution folders before running steps
 
   // Variables manifest (for batch execution with multiple groups)
   variablesManifest: VariablesManifest | null
@@ -173,6 +175,7 @@ interface WorkflowStore {
   setSaveValidationResponses: () => void
   setDisableShellExecAccess: (enabled: boolean) => void
   setDisableReadImageAccess: (enabled: boolean) => void
+  setSkipExecutionCleanup: (enabled: boolean) => void
 
   // Variables manifest
   setVariablesManifest: (manifest: VariablesManifest | null) => void
@@ -393,6 +396,18 @@ export const useWorkflowStore = create<WorkflowStore>()(
       disableShellExecAccess: false,
       // Disable read image access (defaults to false, not persisted)
       disableReadImageAccess: false,
+      // Skip execution cleanup (persists across page refreshes via localStorage)
+      skipExecutionCleanup: (() => {
+        try {
+          const saved = localStorage.getItem(SKIP_EXECUTION_CLEANUP_KEY)
+          if (saved !== null) {
+            return JSON.parse(saved) as boolean
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load skip execution cleanup from localStorage:', error)
+        }
+        return false // Default to false
+      })(),
 
       // Variables manifest
       variablesManifest: null,
@@ -1168,13 +1183,21 @@ export const useWorkflowStore = create<WorkflowStore>()(
           options.enable_context_summarization = false
         }
 
+        // Include skip execution cleanup flag
+        console.log('[SKIP_CLEANUP_DEBUG] state.skipExecutionCleanup =', state.skipExecutionCleanup)
+        if (state.skipExecutionCleanup) {
+          options.skip_execution_cleanup = true
+          console.log('[SKIP_CLEANUP_DEBUG] Setting options.skip_execution_cleanup = true')
+        }
+
         console.log('[RESUME_DEBUG] ✅ Final execution options:', JSON.stringify({
           execution_strategy: options.execution_strategy,
           resume_from_step: options.resume_from_step,
           resume_from_branch_step: options.resume_from_branch_step,
           run_mode: options.run_mode,
           selected_run_folder: options.selected_run_folder,
-          enabled_group_ids: options.enabled_group_ids
+          enabled_group_ids: options.enabled_group_ids,
+          skip_execution_cleanup: options.skip_execution_cleanup
         }, null, 2))
 
         console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] buildExecutionOptions returning:', JSON.stringify(options, null, 2))
@@ -1319,6 +1342,17 @@ export const useWorkflowStore = create<WorkflowStore>()(
       setDisableReadImageAccess: (enabled: boolean) => {
         set({ disableReadImageAccess: enabled })
         // No longer persisted to localStorage
+      },
+
+      setSkipExecutionCleanup: (enabled: boolean) => {
+        console.log('[SKIP_CLEANUP_DEBUG] setSkipExecutionCleanup called with:', enabled)
+        set({ skipExecutionCleanup: enabled })
+        try {
+          localStorage.setItem(SKIP_EXECUTION_CLEANUP_KEY, JSON.stringify(enabled))
+          console.log(`[WorkflowStore] Skip execution cleanup set: ${enabled}`)
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save skip execution cleanup to localStorage:', error)
+        }
       },
 
       setVariablesManifest: (manifest: VariablesManifest | null) => {

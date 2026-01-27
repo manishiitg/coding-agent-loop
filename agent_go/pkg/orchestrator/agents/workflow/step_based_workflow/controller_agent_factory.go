@@ -86,28 +86,28 @@ func getWorkspaceDocsRoot() string {
 	return ""
 }
 
-// setupPlaywrightDownloadsPathOverride configures the Downloads path runtime override for Playwright MCP.
+// setupBrowserDownloadsPathOverride configures the Downloads path for browser automation tools.
 // This shared function is used by both execution agents and orchestrator agents to ensure
-// Playwright downloads go to the correct group-specific folder.
+// browser downloads go to the correct group-specific folder.
 //
-// CRITICAL FIX (Jan 2026): This function was extracted to fix a bug where orchestrator agents
-// were creating Playwright connections with the default Downloads path before execution agents
-// could set the correct override. Now both agent types set the override before creating connections.
+// Supports both:
+// - Playwright MCP server (checked via selectedServers)
+// - agent-browser skill/virtual tool (checked via selectedSkills)
 //
 // The function:
-// 1. Checks if Playwright is in the effective servers (step config or orchestrator defaults)
+// 1. Checks if any browser tool is available (Playwright server OR agent-browser skill)
 // 2. Validates that selectedRunFolder is set (logs error if not)
 // 3. Creates the Downloads folder via API
 // 4. Resolves the absolute path relative to workspace-docs root (not CWD)
-// 5. Sets the runtime override on the config before agent creation
+// 5. Sets the runtime override on the config before agent creation (for Playwright)
 //
-// This ensures the first agent (whether execution or orchestrator) that creates a Playwright
-// connection will use the correct Downloads path, and all subsequent agents will reuse it.
-func (hcpo *StepBasedWorkflowOrchestrator) setupPlaywrightDownloadsPathOverride(ctx context.Context, config *agents.OrchestratorAgentConfig, stepConfig *AgentConfigs) {
+// This ensures the first agent that creates a browser connection will use the correct
+// Downloads path, and all subsequent agents will reuse it.
+func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx context.Context, config *agents.OrchestratorAgentConfig, stepConfig *AgentConfigs) {
+	// Check if any browser tool is available (Playwright server OR agent-browser skill)
+	// Downloads folder is needed for any browser automation tool
+
 	// Check effective servers (step config takes precedence over orchestrator defaults)
-	// CRITICAL FIX (Jan 2026): Must check step-specific servers too!
-	// Previously only checked hcpo.GetSelectedServers(), missing cases where Playwright
-	// was added via stepConfig.SelectedServers but wasn't in global defaults.
 	var effectiveServers []string
 	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
 		effectiveServers = stepConfig.SelectedServers
@@ -115,26 +115,42 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupPlaywrightDownloadsPathOverride(
 		effectiveServers = hcpo.GetSelectedServers()
 	}
 
-	isPlaywrightAvailable := false
+	// Check for Playwright MCP server
+	hasPlaywright := false
 	for _, server := range effectiveServers {
 		if server == "playwright" {
-			isPlaywrightAvailable = true
+			hasPlaywright = true
 			break
 		}
 	}
 
-	if !isPlaywrightAvailable {
-		return // No Playwright, nothing to configure
+	// Check for agent-browser skill
+	hasAgentBrowser := false
+	for _, skill := range hcpo.GetSelectedSkills() {
+		if skill == "agent-browser" {
+			hasAgentBrowser = true
+			break
+		}
+	}
+
+	if !hasPlaywright && !hasAgentBrowser {
+		return // No browser tool, nothing to configure
+	}
+
+	// Track which browser tool triggered this for later use
+	browserToolType := "agent-browser"
+	if hasPlaywright {
+		browserToolType = "playwright"
 	}
 
 	// CRITICAL: Ensure selectedRunFolder is set before configuring Downloads path
 	// If it's empty, all agents in this group will share a connection with wrong Downloads path
 	if hcpo.selectedRunFolder == "" {
-		hcpo.GetLogger().Error("❌ [CRITICAL] selectedRunFolder is EMPTY when configuring Playwright Downloads path! This will cause all downloads to go to the wrong location. Ensure ApplyExecutionContext is called before creating agents.", nil)
+		hcpo.GetLogger().Error(fmt.Sprintf("❌ [CRITICAL] selectedRunFolder is EMPTY when configuring %s Downloads path! This will cause all downloads to go to the wrong location. Ensure ApplyExecutionContext is called before creating agents.", browserToolType), nil)
 		// Don't return error - continue with default path but log the issue
 	}
 
-	// Route playwright downloads to execution/Downloads folder in the run directory
+	// Route browser downloads to execution/Downloads folder in the run directory
 	workspacePath := hcpo.GetWorkspacePath()
 
 	// Build the relative path to Downloads folder
@@ -199,36 +215,39 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupPlaywrightDownloadsPathOverride(
 		}
 	}
 
-	// Configure Playwright to use the downloads path via runtime override
-	// IMPORTANT: This override is set on the config BEFORE agent creation, so it will be
-	// applied when the MCP connection is created.
-	//
-	// CRITICAL: If a Playwright connection already exists for this session, it will be REUSED
-	// without applying the new override. This can happen if:
-	// 1. Another agent in the same group already created the connection (this is OK - they should share)
-	// 2. A connection exists from a previous run that wasn't cleaned up (this is BAD)
-	//
-	// To ensure the first agent in a group creates the connection with the correct override,
-	// we rely on:
-	// - Closing the previous session before starting a new group (in batch execution)
-	// - Setting selectedRunFolder before setting session ID
-	// - Setting the override before agent creation
-	//
-	// If another agent in the SAME group already created the connection, that's fine - they share it.
-	// But if the connection was created with wrong config, all agents will share the wrong connection.
-	if config.RuntimeOverrides == nil {
-		config.RuntimeOverrides = make(mcpclient.RuntimeOverrides)
-	}
-	playwrightOverride := config.RuntimeOverrides["playwright"]
-	if playwrightOverride.ArgsReplace == nil {
-		playwrightOverride.ArgsReplace = make(map[string]string)
-	}
-	playwrightOverride.ArgsReplace["--output-dir"] = absDownloadsPath
-	config.RuntimeOverrides["playwright"] = playwrightOverride
+	// Configure Playwright runtime override (only needed for Playwright MCP server, not agent-browser)
+	// agent-browser uses its own download handling via workspace-api
+	if hasPlaywright {
+		// IMPORTANT: This override is set on the config BEFORE agent creation, so it will be
+		// applied when the MCP connection is created.
+		//
+		// CRITICAL: If a Playwright connection already exists for this session, it will be REUSED
+		// without applying the new override. This can happen if:
+		// 1. Another agent in the same group already created the connection (this is OK - they should share)
+		// 2. A connection exists from a previous run that wasn't cleaned up (this is BAD)
+		//
+		// To ensure the first agent in a group creates the connection with the correct override,
+		// we rely on:
+		// - Closing the previous session before starting a new group (in batch execution)
+		// - Setting selectedRunFolder before setting session ID
+		// - Setting the override before agent creation
+		if config.RuntimeOverrides == nil {
+			config.RuntimeOverrides = make(mcpclient.RuntimeOverrides)
+		}
+		playwrightOverride := config.RuntimeOverrides["playwright"]
+		if playwrightOverride.ArgsReplace == nil {
+			playwrightOverride.ArgsReplace = make(map[string]string)
+		}
+		playwrightOverride.ArgsReplace["--output-dir"] = absDownloadsPath
+		config.RuntimeOverrides["playwright"] = playwrightOverride
 
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Configured Playwright downloads path to: %s (override will be applied when connection is created)", absDownloadsPath))
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Runtime override for playwright: ArgsReplace=%+v", playwrightOverride.ArgsReplace))
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Session ID: %s, selectedRunFolder: '%s', absDownloadsPath: '%s'", hcpo.getSessionID(), hcpo.selectedRunFolder, absDownloadsPath))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Configured Playwright downloads path to: %s (override will be applied when connection is created)", absDownloadsPath))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Runtime override for playwright: ArgsReplace=%+v", playwrightOverride.ArgsReplace))
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created Downloads folder for agent-browser: %s", absDownloadsPath))
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Browser tool: %s, Session ID: %s, selectedRunFolder: '%s', absDownloadsPath: '%s'", browserToolType, hcpo.getSessionID(), hcpo.selectedRunFolder, absDownloadsPath))
 }
 
 // setupExecutionFolderGuard sets up folder guard paths for execution agents
@@ -1045,9 +1064,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// 4. Create config
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 
-	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	// Setup Downloads folder for browser tools (Playwright or agent-browser)
 	// Use shared function to ensure both execution and orchestrator agents set the override correctly
-	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
+	hcpo.setupBrowserDownloadsPathOverride(ctx, config, stepConfig)
 
 	// Apply step-specific overrides
 	hcpo.applyStepConfigToAgentConfig(config, stepConfig, isCodeExecutionMode)
@@ -1148,9 +1167,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Con
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
 	}
 
-	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	// Setup Downloads folder for browser tools (Playwright or agent-browser)
 	// Use shared function to ensure all agent types set the override correctly if they use Playwright
-	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
+	hcpo.setupBrowserDownloadsPathOverride(ctx, config, stepConfig)
 
 	// 4. Prepare custom tools (filtered by step config)
 	toolsToRegister, executorsToUse := hcpo.prepareCustomTools(stepConfig)
@@ -1239,10 +1258,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 	config.EnableContextOffloading = &disabled
 	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling large output virtual tools (context offloading) for %s", agentType))
 
-	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	// Setup Downloads folder for browser tools (Playwright or agent-browser)
 	// Use shared function to ensure all agent types set the override correctly if they use Playwright
 	// Note: Learning agents typically use NoServers, but we call this for consistency and safety
-	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
+	hcpo.setupBrowserDownloadsPathOverride(ctx, config, stepConfig)
 
 	// 4. Prepare workspace tools EXCLUDING human tools
 	// Learning agents are pure LLM analysis agents and should NOT have human tools (like human_feedback)
@@ -1392,12 +1411,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
 	}
 
-	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	// Setup Downloads folder for browser tools (Playwright or agent-browser)
 	// CRITICAL FIX (Jan 2026): Conditional agents can use Playwright (via step-specific servers or orchestrator defaults).
 	// If the conditional agent creates the Playwright connection first, it must set the correct Downloads path override
 	// before creating the connection, otherwise all subsequent agents will reuse the wrong connection.
 	// Use shared function to ensure all agent types set the override correctly.
-	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
+	hcpo.setupBrowserDownloadsPathOverride(ctx, config, stepConfig)
 
 	// Prepare custom tools and executors (same as execution agent)
 	// Filter by enabled categories and/or specific tools if specified
@@ -1526,12 +1545,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
 	}
 
-	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	// Setup Downloads folder for browser tools (Playwright or agent-browser)
 	// CRITICAL FIX (Jan 2026): Orchestrator agents can also use Playwright (e.g., step 3 has SelectedServers: [playwright]).
 	// If the orchestrator agent creates the Playwright connection first, it must set the correct Downloads path override
 	// before creating the connection, otherwise all subsequent agents will reuse the wrong connection.
 	// Use shared function to ensure both execution and orchestrator agents set the override correctly.
-	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
+	hcpo.setupBrowserDownloadsPathOverride(ctx, config, stepConfig)
 
 	// Prepare custom tools and executors
 	var toolsToRegister []llmtypes.Tool
@@ -1614,10 +1633,6 @@ type SubAgentExecutionContext struct {
 	StepPath     string
 	AllSteps     []PlanStepInterface
 	Progress     *StepProgress
-	// StepCompleted is set to true when mark_step_complete is called
-	StepCompleted bool
-	// CompletionReason is the reason provided when mark_step_complete is called
-	CompletionReason string
 }
 
 // createTodoTaskOrchestratorAgent creates a todo task orchestrator agent using the standard factory pattern
@@ -1700,8 +1715,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
 	}
 
-	// Setup Runtime Overrides (specifically for Playwright Downloads)
-	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
+	// Setup Downloads folder for browser tools (Playwright or agent-browser)
+	hcpo.setupBrowserDownloadsPathOverride(ctx, config, stepConfig)
 
 	// Prepare custom tools and executors
 	var toolsToRegister []llmtypes.Tool
@@ -1721,38 +1736,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using all workspace tools for todo task orchestrator agent: %d tools", len(toolsToRegister)))
 	}
 
-	// IMPORTANT: Always inject todo tools for todo task orchestrator - they are essential for its operation
-	// Even if step config filters tools, todo tools must be available
-	todoToolsToInject := []string{"create_todo", "update_todo", "complete_todo", "list_todos", "get_todo"}
-	for _, todoToolName := range todoToolsToInject {
-		// Check if tool already exists in toolsToRegister
-		toolExists := false
-		for _, tool := range toolsToRegister {
-			if tool.Function != nil && tool.Function.Name == todoToolName {
-				toolExists = true
-				break
-			}
-		}
-		if !toolExists {
-			// Find and add the todo tool from WorkspaceTools
-			for _, tool := range hcpo.WorkspaceTools {
-				if tool.Function != nil && tool.Function.Name == todoToolName {
-					toolsToRegister = append(toolsToRegister, tool)
-					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Injected required todo tool '%s' for todo task orchestrator", todoToolName))
-					break
-				}
-			}
-		}
-		// Ensure executor exists
-		if _, exists := executorsToUse[todoToolName]; !exists {
-			if executor, exists := hcpo.WorkspaceToolExecutors[todoToolName]; exists {
-				if executorsToUse == nil {
-					executorsToUse = make(map[string]interface{})
-				}
-				executorsToUse[todoToolName] = executor
-			}
-		}
-	}
+	// NOTE: Task management is handled via shell commands (execute_shell_command)
+	// The LLM manages tasks.md (markdown format) using shell tools like cat, sed, heredoc
 
 	// Filter out human tools if "no human" execution mode is active
 	execOpts := hcpo.GetExecutionOptions()
@@ -1781,47 +1766,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered out human tools for todo task orchestrator agent (no human mode): %d tools remaining", len(toolsToRegister)))
 	}
 
-	// Wrap todo tool executors to inject context values they need
-	// The todo tools require: step_execution_path, read_workspace_file, write_workspace_file
-	// IMPORTANT: Create a copy of executorsToUse to avoid modifying the original WorkspaceToolExecutors map
-	wrappedExecutors := make(map[string]interface{})
-	for k, v := range executorsToUse {
-		wrappedExecutors[k] = v
-	}
-	executorsToUse = wrappedExecutors
-
-	todoToolNames := map[string]bool{
-		"create_todo":   true,
-		"update_todo":   true,
-		"complete_todo": true,
-		"list_todos":    true,
-		"get_todo":      true,
-	}
-
-	// Build the step execution path (e.g., "execution/step-1")
-	todoStepExecutionPath := filepath.Join("execution", stepPath)
-
-	for toolName := range todoToolNames {
-		if originalExecutor, exists := executorsToUse[toolName]; exists {
-			// Create wrapper that injects context values
-			wrappedExecutor := hcpo.wrapTodoToolExecutor(originalExecutor, todoStepExecutionPath)
-			executorsToUse[toolName] = wrappedExecutor
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Wrapped todo tool '%s' with context injection (step path: %s)", toolName, todoStepExecutionPath))
-		} else {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Todo tool '%s' not found in executors - tool will not be available", toolName))
-		}
-	}
-
 	// IMPORTANT: Inject sub-agent tools for tool-based delegation
 	// These tools allow the orchestrator to delegate work to sub-agents directly via tool calls
 	if subAgentExecCtx != nil {
 		subAgentTools := virtualtools.CreateSubAgentTools()
 		subAgentExecutors := virtualtools.CreateSubAgentToolExecutors()
+		subAgentCategory := virtualtools.GetSubAgentToolCategory()
 
-		// Add sub-agent tools to the tools list
+		// Add sub-agent tools to the tools list and register their category
 		for _, tool := range subAgentTools {
 			toolsToRegister = append(toolsToRegister, tool)
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Added sub-agent tool '%s' to todo task orchestrator", tool.Function.Name))
+			// CRITICAL: Add to ToolCategories map so the tool passes validation
+			if hcpo.ToolCategories != nil {
+				hcpo.ToolCategories[tool.Function.Name] = subAgentCategory
+			}
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Added sub-agent tool '%s' to todo task orchestrator (category: %s)", tool.Function.Name, subAgentCategory))
 		}
 
 		// Wrap sub-agent executors with context injection
@@ -1863,55 +1822,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	return agent, nil
 }
 
-// wrapTodoToolExecutor wraps a todo tool executor to inject required context values
-// The wrapper adds: step_execution_path, read_workspace_file, write_workspace_file
-func (hcpo *StepBasedWorkflowOrchestrator) wrapTodoToolExecutor(originalExecutor interface{}, stepExecutionPath string) func(ctx context.Context, args map[string]interface{}) (string, error) {
-	// Cast original executor to the expected function type
-	origFunc, ok := originalExecutor.(func(ctx context.Context, args map[string]interface{}) (string, error))
-	if !ok {
-		// If cast fails, return a function that returns an error
-		return func(ctx context.Context, args map[string]interface{}) (string, error) {
-			return "", fmt.Errorf("invalid todo tool executor type")
-		}
-	}
-
-	// Return wrapper function that injects context values
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		// Create new context with required values for todo tools
-		// Note: Using string keys as defined in todo_tools.go
-		ctx = context.WithValue(ctx, "step_execution_path", stepExecutionPath)
-		ctx = context.WithValue(ctx, "read_workspace_file", hcpo.readWorkspaceFileFunc())
-		ctx = context.WithValue(ctx, "write_workspace_file", hcpo.writeWorkspaceFileFunc())
-
-		// Call original executor with enriched context
-		return origFunc(ctx, args)
-	}
-}
-
-// readWorkspaceFileFunc returns a function that reads a workspace file
-// This is used to inject into the context for todo tools
-func (hcpo *StepBasedWorkflowOrchestrator) readWorkspaceFileFunc() func(ctx context.Context, path string) (string, error) {
-	return func(ctx context.Context, path string) (string, error) {
-		return hcpo.ReadWorkspaceFile(ctx, path)
-	}
-}
-
-// writeWorkspaceFileFunc returns a function that writes a workspace file
-// This is used to inject into the context for todo tools
-func (hcpo *StepBasedWorkflowOrchestrator) writeWorkspaceFileFunc() func(ctx context.Context, path string, content string) error {
-	return func(ctx context.Context, path string, content string) error {
-		return hcpo.WriteWorkspaceFile(ctx, path, content)
-	}
-}
-
 // wrapSubAgentToolExecutor wraps a sub-agent tool executor to inject execution functions
-// The wrapper adds: execute_predefined_sub_agent, execute_generic_agent, mark_step_complete, predefined_routes
+// The wrapper adds: execute_predefined_sub_agent, execute_generic_agent, mark_step_complete, predefined_routes, validate_todo_exists
 func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 	originalExecutor func(ctx context.Context, args map[string]interface{}) (string, error),
 	execCtx *SubAgentExecutionContext,
 ) func(ctx context.Context, args map[string]interface{}) (string, error) {
 	// Return wrapper function that injects execution functions into context
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Inject validate_todo_exists function for validation before delegation
+		validateTodoFunc := hcpo.createValidateTodoExistsFunc(execCtx)
+		ctx = context.WithValue(ctx, virtualtools.ValidateTodoExistsKey, validateTodoFunc)
+
 		// Inject execute_predefined_sub_agent function
 		executePredefinedFunc := hcpo.createExecutePredefinedSubAgentFunc(execCtx)
 		ctx = context.WithValue(ctx, virtualtools.ExecutePredefinedSubAgentKey, executePredefinedFunc)
@@ -1920,10 +1842,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 		executeGenericFunc := hcpo.createExecuteGenericAgentFunc(execCtx)
 		ctx = context.WithValue(ctx, virtualtools.ExecuteGenericAgentKey, executeGenericFunc)
 
-		// Inject mark_step_complete function
-		markCompleteFunc := hcpo.createMarkStepCompleteFunc(execCtx)
-		ctx = context.WithValue(ctx, virtualtools.MarkStepCompleteKey, markCompleteFunc)
-
 		// Inject predefined routes for route lookup
 		if execCtx.TodoTaskStep != nil {
 			ctx = context.WithValue(ctx, virtualtools.PredefinedRoutesKey, execCtx.TodoTaskStep.PredefinedRoutes)
@@ -1931,6 +1849,68 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 
 		// Call original executor with enriched context
 		return originalExecutor(ctx, args)
+	}
+}
+
+// createValidateTodoExistsFunc creates a function that validates if a task exists
+// This function is injected into context for call_sub_agent/call_generic_agent to use
+// Reads tasks.md and parses markdown checkboxes to find tasks
+// Returns (exists, totalTasks, fullTasksFilePath, error) - fullTasksFilePath includes workspace path
+func (hcpo *StepBasedWorkflowOrchestrator) createValidateTodoExistsFunc(
+	execCtx *SubAgentExecutionContext,
+) virtualtools.ValidateTodoExistsFunc {
+	return func(ctx context.Context, todoID string) (bool, int, string, error) {
+		// Build the tasks file path (relative to workspace)
+		var tasksFilePathRelative string
+		if hcpo.selectedRunFolder != "" {
+			tasksFilePathRelative = filepath.Join("runs", hcpo.selectedRunFolder, "execution", execCtx.StepPath, "tasks.md")
+		} else {
+			tasksFilePathRelative = filepath.Join("execution", execCtx.StepPath, "tasks.md")
+		}
+
+		// Build full path including workspace for error messages
+		fullTasksFilePath := filepath.Join(hcpo.GetWorkspacePath(), tasksFilePathRelative)
+
+		// Read the tasks file
+		content, err := hcpo.ReadWorkspaceFile(ctx, tasksFilePathRelative)
+		if err != nil {
+			// File doesn't exist means no tasks
+			return false, 0, fullTasksFilePath, nil
+		}
+
+		// Parse markdown to find tasks
+		// Format: - [ ] task_id: description  OR  - [x] task_id: description  OR  - [~] task_id: description
+		lines := strings.Split(content, "\n")
+		var taskIDs []string
+
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			// Match checkbox patterns: - [ ], - [x], - [~]
+			if strings.HasPrefix(line, "- [ ]") || strings.HasPrefix(line, "- [x]") || strings.HasPrefix(line, "- [~]") {
+				// Extract task ID (text after checkbox up to colon)
+				// Format: "- [ ] task_id: description"
+				checkboxEnd := 6 // Length of "- [ ] " or "- [x] " or "- [~] "
+				if len(line) > checkboxEnd {
+					remainder := line[checkboxEnd:]
+					// Find the colon separator
+					colonIdx := strings.Index(remainder, ":")
+					if colonIdx > 0 {
+						taskID := strings.TrimSpace(remainder[:colonIdx])
+						taskIDs = append(taskIDs, taskID)
+					}
+				}
+			}
+		}
+
+		// Check if task exists
+		totalTasks := len(taskIDs)
+		for _, id := range taskIDs {
+			if id == todoID {
+				return true, totalTasks, fullTasksFilePath, nil
+			}
+		}
+
+		return false, totalTasks, fullTasksFilePath, nil
 	}
 }
 
@@ -1974,26 +1954,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 
 // createExecuteGenericAgentFunc creates a function that executes generic agents
 // This function is injected into context for the call_generic_agent tool to use
+// Sub-agents get all their input from the tool parameters (instructions, successCriteria)
+// They do NOT read the tasks.md file - the orchestrator provides everything via the tool call
 func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 	execCtx *SubAgentExecutionContext,
 ) virtualtools.ExecuteGenericAgentFunc {
 	return func(ctx context.Context, todoID, instructions, successCriteria string) (string, error) {
 		hcpo.GetLogger().Info(fmt.Sprintf("🤖 [TOOL] Executing generic agent via tool: todo=%s", todoID))
 
-		// Load the current todos file to find the todo item
-		var todosFilePath string
-		if hcpo.selectedRunFolder != "" {
-			todosFilePath = filepath.Join("runs", hcpo.selectedRunFolder, "execution", execCtx.StepPath, "todos.json")
-		} else {
-			todosFilePath = filepath.Join("execution", execCtx.StepPath, "todos.json")
-		}
-
-		todoFile, err := hcpo.loadOrCreateTodosFile(ctx, todosFilePath, execCtx.TodoTaskStep)
-		if err != nil {
-			return "", fmt.Errorf("failed to load todos file: %w", err)
-		}
-
 		// Build a TodoTaskResponse to reuse existing execution logic
+		// All task info comes from the tool parameters, not from a file
 		response := &TodoTaskResponse{
 			NextAction:                 "delegate",
 			UseGenericAgent:            true,
@@ -2003,13 +1973,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 		}
 
 		// Execute using existing method
+		// All task info comes from tool parameters
 		result, err := hcpo.executeGenericAgent(
 			ctx,
 			execCtx.TodoTaskStep,
 			execCtx.StepIndex,
 			execCtx.StepPath,
 			response,
-			todoFile,
 			execCtx.AllSteps,
 			execCtx.Progress,
 		)
@@ -2021,22 +1991,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ [TOOL] Generic agent completed successfully: todo=%s", todoID))
 		return result, nil
-	}
-}
-
-// createMarkStepCompleteFunc creates a function that marks the step as complete
-// This function is injected into context for the mark_step_complete tool to use
-func (hcpo *StepBasedWorkflowOrchestrator) createMarkStepCompleteFunc(
-	execCtx *SubAgentExecutionContext,
-) virtualtools.MarkStepCompleteFunc {
-	return func(ctx context.Context, reason string) error {
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ [TOOL] Step marked complete via tool: %s", reason))
-
-		// Set the completion flag and reason on the execution context
-		execCtx.StepCompleted = true
-		execCtx.CompletionReason = reason
-
-		return nil
 	}
 }
 
@@ -2078,10 +2032,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 	config.ServerNames = []string{mcpclient.NoServers}
 	config.UseCodeExecutionMode = false
 
-	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	// Setup Downloads folder for browser tools (Playwright or agent-browser)
 	// Use shared function to ensure all agent types set the override correctly if they use Playwright
 	// Note: Evaluation scoring agents use NoServers, but we call this for consistency and safety
-	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, nil)
+	hcpo.setupBrowserDownloadsPathOverride(ctx, config, nil)
 
 	// Variable to capture the score from the tool
 	var capturedScore *EvaluationStepScore
@@ -2240,10 +2194,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationLearningAgent(ctx 
 	// Code execution mode doesn't apply to learning agents
 	config.UseCodeExecutionMode = false
 
-	// Setup Runtime Overrides (specifically for Playwright Downloads)
+	// Setup Downloads folder for browser tools (Playwright or agent-browser)
 	// Use shared function to ensure all agent types set the override correctly if they use Playwright
 	// Note: Orchestration learning agents use NoServers, but we call this for consistency and safety
-	hcpo.setupPlaywrightDownloadsPathOverride(ctx, config, stepConfig)
+	hcpo.setupBrowserDownloadsPathOverride(ctx, config, stepConfig)
 
 	// Prepare workspace tools EXCLUDING human tools
 	// Orchestration learning agents are pure LLM analysis agents and should NOT have human tools

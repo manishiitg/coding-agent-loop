@@ -1415,20 +1415,11 @@ func handleExecuteShellCommand(ctx context.Context, args map[string]interface{})
 		return "", fmt.Errorf("command is required and must be a string")
 	}
 
-	// Extract args parameter (optional)
-	var argsArray []string
-	if argsVal, exists := args["args"]; exists {
-		if argsList, ok := argsVal.([]interface{}); ok {
-			for _, arg := range argsList {
-				if str, ok := arg.(string); ok {
-					argsArray = append(argsArray, str)
-				}
-			}
-		}
-	}
-
-	// Extract working_directory parameter (optional)
+	// Extract working_directory parameter (required)
 	workingDirectory := getStringValue(args, "working_directory")
+	if workingDirectory == "" {
+		return "", fmt.Errorf("working_directory is required and must be a string. Specify the relative path within workspace where the command should execute (e.g., 'Workflow/MyProject/runs/initial/execution/step-1')")
+	}
 
 	// Extract timeout parameter (optional)
 	timeout := getIntValue(args, "timeout")
@@ -1439,9 +1430,6 @@ func handleExecuteShellCommand(ctx context.Context, args map[string]interface{})
 		timeout = 300 // Max timeout
 	}
 
-	// Extract use_shell parameter (optional)
-	useShell := getBoolValue(args, "use_shell")
-
 	// Build API URL
 	apiURL := getWorkspaceAPIURL() + "/api/execute"
 
@@ -1449,18 +1437,14 @@ func handleExecuteShellCommand(ctx context.Context, args map[string]interface{})
 	requestBody := map[string]interface{}{
 		"command": command,
 	}
-	if len(argsArray) > 0 {
-		requestBody["args"] = argsArray
-	}
 	if workingDirectory != "" {
 		requestBody["working_directory"] = workingDirectory
 	}
 	if timeout > 0 {
 		requestBody["timeout"] = timeout
 	}
-	if useShell {
-		requestBody["use_shell"] = true
-	}
+	// Always use shell execution to support pipes, redirects, chaining, env vars, wildcards, heredocs
+	requestBody["use_shell"] = true
 
 	// NEW: Extract folder guard paths from context
 	var folderGuardReadPaths []string
@@ -2304,14 +2288,17 @@ func handleReadPDF(ctx context.Context, args map[string]interface{}) (string, er
 	}
 	encodedPath := strings.Join(encodedSegments, "/")
 
-	// Build API URL to get raw file content
-	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath + "/raw"
+	// Build API URL to get raw file content using download query parameter
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath + "?download=true"
 
 	// Create HTTP request with context
 	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
+
+	// Set Accept header to request raw binary content
+	req.Header.Set("Accept", "application/octet-stream")
 
 	// Set timeout
 	client := &http.Client{

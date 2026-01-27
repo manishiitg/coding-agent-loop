@@ -22,11 +22,15 @@ const (
 	ExecutePredefinedSubAgentKey subAgentContextKey = "execute_predefined_sub_agent"
 	// ExecuteGenericAgentKey is the context key for the generic agent execution function
 	ExecuteGenericAgentKey subAgentContextKey = "execute_generic_agent"
-	// MarkStepCompleteKey is the context key for the step completion function
-	MarkStepCompleteKey subAgentContextKey = "mark_step_complete"
 	// PredefinedRoutesKey is the context key for available predefined routes
 	PredefinedRoutesKey subAgentContextKey = "predefined_routes"
+	// ValidateTodoExistsKey is the context key for the todo validation function
+	ValidateTodoExistsKey subAgentContextKey = "validate_todo_exists"
 )
+
+// ValidateTodoExistsFunc is the function signature for validating if a task exists in tasks.md
+// Returns (exists bool, totalTasks int, tasksFilePath string, error)
+type ValidateTodoExistsFunc func(ctx context.Context, todoID string) (bool, int, string, error)
 
 // SubAgentResult represents the result of a sub-agent execution
 type SubAgentResult struct {
@@ -40,13 +44,6 @@ type SubAgentResult struct {
 	CompletedAt   time.Time `json:"completed_at"`
 }
 
-// StepCompletionResult represents the result of marking a step complete
-type StepCompletionResult struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-	Reason  string `json:"reason"`
-}
-
 // ExecutePredefinedSubAgentFunc is the function signature for executing predefined sub-agents
 // Injected via context by the controller
 type ExecutePredefinedSubAgentFunc func(ctx context.Context, routeID, todoID, instructions, successCriteria string) (string, error)
@@ -54,10 +51,6 @@ type ExecutePredefinedSubAgentFunc func(ctx context.Context, routeID, todoID, in
 // ExecuteGenericAgentFunc is the function signature for executing generic agents
 // Injected via context by the controller
 type ExecuteGenericAgentFunc func(ctx context.Context, todoID, instructions, successCriteria string) (string, error)
-
-// MarkStepCompleteFunc is the function signature for marking the step complete
-// Injected via context by the controller
-type MarkStepCompleteFunc func(ctx context.Context, reason string) error
 
 // CreateSubAgentTools creates the sub-agent calling virtual tools
 func CreateSubAgentTools() []llmtypes.Tool {
@@ -123,26 +116,6 @@ func CreateSubAgentTools() []llmtypes.Tool {
 	}
 	tools = append(tools, callGenericAgentTool)
 
-	// mark_step_complete tool - Signal that the entire step is complete
-	markStepCompleteTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "mark_step_complete",
-			Description: "Call this when ALL todos for this step have been completed and the step's objective has been met. This signals the controller that no more work is needed for this step.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"reason": map[string]interface{}{
-						"type":        "string",
-						"description": "Explanation of why the step is complete. Summarize what was accomplished and how the objective was met.",
-					},
-				},
-				"required": []string{"reason"},
-			}),
-		},
-	}
-	tools = append(tools, markStepCompleteTool)
-
 	return tools
 }
 
@@ -153,7 +126,6 @@ func CreateSubAgentToolExecutors() map[string]func(ctx context.Context, args map
 
 	executors["call_sub_agent"] = handleCallSubAgent
 	executors["call_generic_agent"] = handleCallGenericAgent
-	executors["mark_step_complete"] = handleMarkStepComplete
 
 	return executors
 }
@@ -179,6 +151,20 @@ func handleCallSubAgent(ctx context.Context, args map[string]interface{}) (strin
 	successCriteria, ok := args["success_criteria"].(string)
 	if !ok || successCriteria == "" {
 		return "", fmt.Errorf("success_criteria is required")
+	}
+
+	// VALIDATION: Check if task exists in tasks.md before delegation
+	if validateFunc, ok := ctx.Value(ValidateTodoExistsKey).(ValidateTodoExistsFunc); ok && validateFunc != nil {
+		exists, totalTasks, tasksFilePath, err := validateFunc(ctx, todoID)
+		if err != nil {
+			return "", fmt.Errorf("failed to validate task: %w", err)
+		}
+		if totalTasks == 0 {
+			return "", fmt.Errorf("VALIDATION ERROR: Cannot delegate - tasks.md is EMPTY or does not exist. You MUST create tasks.md with task entries first using execute_shell_command before delegating. Expected path: %s", tasksFilePath)
+		}
+		if !exists {
+			return "", fmt.Errorf("VALIDATION ERROR: Task '%s' does not exist in tasks.md. Create it first using execute_shell_command, or use an existing task_id from tasks.md. File path: %s", todoID, tasksFilePath)
+		}
 	}
 
 	// Get the execution function from context
@@ -231,6 +217,20 @@ func handleCallGenericAgent(ctx context.Context, args map[string]interface{}) (s
 		return "", fmt.Errorf("success_criteria is required")
 	}
 
+	// VALIDATION: Check if task exists in tasks.md before delegation
+	if validateFunc, ok := ctx.Value(ValidateTodoExistsKey).(ValidateTodoExistsFunc); ok && validateFunc != nil {
+		exists, totalTasks, tasksFilePath, err := validateFunc(ctx, todoID)
+		if err != nil {
+			return "", fmt.Errorf("failed to validate task: %w", err)
+		}
+		if totalTasks == 0 {
+			return "", fmt.Errorf("VALIDATION ERROR: Cannot delegate - tasks.md is EMPTY or does not exist. You MUST create tasks.md with task entries first using execute_shell_command before delegating. Expected path: %s", tasksFilePath)
+		}
+		if !exists {
+			return "", fmt.Errorf("VALIDATION ERROR: Task '%s' does not exist in tasks.md. Create it first using execute_shell_command, or use an existing task_id from tasks.md. File path: %s", todoID, tasksFilePath)
+		}
+	}
+
 	// Get the execution function from context
 	executeFunc, ok := ctx.Value(ExecuteGenericAgentKey).(ExecuteGenericAgentFunc)
 	if !ok || executeFunc == nil {
@@ -259,37 +259,5 @@ func handleCallGenericAgent(ctx context.Context, args map[string]interface{}) (s
 	}
 
 	resultJSON, _ := json.MarshalIndent(subAgentResult, "", "  ")
-	return string(resultJSON), nil
-}
-
-// handleMarkStepComplete signals that the step is complete
-func handleMarkStepComplete(ctx context.Context, args map[string]interface{}) (string, error) {
-	// Extract arguments
-	reason, ok := args["reason"].(string)
-	if !ok || reason == "" {
-		return "", fmt.Errorf("reason is required")
-	}
-
-	// Get the completion function from context
-	completeFunc, ok := ctx.Value(MarkStepCompleteKey).(MarkStepCompleteFunc)
-	if !ok || completeFunc == nil {
-		return "", fmt.Errorf("step completion function not available in context - this tool can only be used within a todo task orchestrator")
-	}
-
-	// Mark the step as complete
-	err := completeFunc(ctx, reason)
-
-	result := StepCompletionResult{
-		Success: err == nil,
-		Reason:  reason,
-	}
-
-	if err != nil {
-		result.Message = fmt.Sprintf("Failed to mark step complete: %v", err)
-	} else {
-		result.Message = "Step marked as complete successfully"
-	}
-
-	resultJSON, _ := json.MarshalIndent(result, "", "  ")
 	return string(resultJSON), nil
 }

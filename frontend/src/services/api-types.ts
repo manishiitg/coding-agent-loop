@@ -889,6 +889,9 @@ export interface ExecutionOptions {
   // Feature toggles (runtime configuration)
   enable_knowledgebase?: boolean;  // Enable knowledgebase (default: true)
   enable_context_summarization?: boolean;  // Enable context summarization (default: true)
+
+  // Cleanup control
+  skip_execution_cleanup?: boolean;  // If true, skip deleting execution folders before running steps
 }
 
 // Execution strategy constants (matching backend)

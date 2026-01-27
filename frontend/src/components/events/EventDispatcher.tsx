@@ -87,7 +87,8 @@ import {
   BatchGroupStartEvent,
   BatchGroupEndEvent,
   BatchExecutionStartEventDisplay,
-  BatchExecutionEndEventDisplay
+  BatchExecutionEndEventDisplay,
+  BatchExecutionCanceledEventDisplay
 } from './workflow'
 
 import {
@@ -400,6 +401,9 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
   if (isEventType(event, 'batch_execution_end')) {
     return <CompactWrapper><BatchExecutionEndEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+  }
+  if (isEventType(event, 'batch_execution_canceled')) {
+    return <CompactWrapper><BatchExecutionCanceledEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
 
   // Todo Task Events

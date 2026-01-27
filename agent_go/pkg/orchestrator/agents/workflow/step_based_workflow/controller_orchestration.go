@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/shared"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -892,6 +893,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 				SubAgentStep:  route.SubAgentStep,
 			}
 		}
+
+		// Push context before sub-agent execution (preserve orchestrator context)
+		if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+			cab.PushContext("execution", stepIndex, subAgentStepPlan.GetID(), subAgentStepPlan.GetTitle())
+		}
+
 		subAgentExecutionResult, updatedSubAgentContextFiles, err := hcpo.executeSingleStep(
 			ctx,
 			subAgentStepPlan, // Use PlanStepInterface for executeSingleStep
@@ -911,6 +918,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 			[]string{},                     // previousExecutionResults - empty for sub-agents (they don't need previous execution outputs)
 			orchestrationRoutesForSubAgent, // Pass orchestration routes so sub-agent knows about other agents
 		)
+		// Pop context after sub-agent execution (restore orchestrator context)
+		if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+			cab.PopContext()
+		}
+
 		if err != nil {
 			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute sub-agent '%s': %v", subAgentStepPlan.GetTitle(), err), nil)
 			return false, "", fmt.Errorf("failed to execute sub-agent '%s': %w", subAgentStepPlan.GetTitle(), err)

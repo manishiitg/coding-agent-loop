@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   planner-api:
-    build: ../../../workspace
+    image: manishiitg/workspace-api:latest
     ports:
       - "8083:8080"
     environment: 

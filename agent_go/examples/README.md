@@ -29,6 +29,7 @@ docker-compose up -d
 | **[basic_agent](workspace_tools/basic_agent/)** | Basic file (list, read, write) | Lists workspace files and describes them; uses `workspace.GetBasicToolDefinitions()`. |
 | **[agent_with_tools](workspace_tools/agent_with_tools/)** | Basic file | Creates dummy files and lists them; same basic tools, different prompt. |
 | **[browser_agent](workspace_tools/browser_agent/)** | Shell, image, PDF, browser | Multimodal: shell, browse, screenshot, read image/PDF; uses granular tool getters. |
+| **[folder_guard_agent](workspace_tools/folder_guard_agent/)** | Basic file, shell | Restricts agent to read from `docs/`, write to `output/` via `FolderGuardConfig` and `WithFolderGuard`. |
 
 Each subfolder has its own `README.md`, `docker-compose.yml`, and `main.go`.
 

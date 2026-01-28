@@ -52,20 +52,13 @@ func main() {
 	// 2. Initialize Workspace Client & Tools
 	wsClient := workspace.NewClient(workspaceAPIURL)
 	
-	// Construct tool list manually to exclude Git tools and potentially irrelevant others
-	// to avoid overloading the context or hitting stability limits.
+	// Construct tool list: pick only the tool categories needed (no duplication in workspace package).
 	var allTools []llmtypes.Tool
-	
-	// Basic tools (File IO) - REMOVED
-	// allTools = append(allTools, workspace.GetBasicToolDefinitions()...)
-	
-	// Advanced tools (Shell, Image, etc.)
-	allTools = append(allTools, workspace.GetAdvancedToolDefinitions()...)
-	
-	// Browser tool
+	allTools = append(allTools, workspace.GetShellToolDefinitions()...)
+	allTools = append(allTools, workspace.GetImageToolDefinitions()...)
+	allTools = append(allTools, workspace.GetPDFToolDefinitions()...)
 	allTools = append(allTools, browser.GetToolDefinition())
-
-	// Note: We are EXCLUDING Git tools here.
+	// Omit workspace.GetWebToolDefinitions() and Git tools unless needed.
 
 	// Initialize Executor (handles all tool types including browser/shell)
 	executors := workspace.NewBasicExecutor(wsClient)

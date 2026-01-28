@@ -4,12 +4,9 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// GetAdvancedToolDefinitions returns the tool definitions for the advanced workspace tools
-func GetAdvancedToolDefinitions() []llmtypes.Tool {
-	var tools []llmtypes.Tool
-
-	// Add execute_shell_command tool
-	executeShellTool := llmtypes.Tool{
+// shellToolDef returns the execute_shell_command tool definition (single source of truth).
+func shellToolDef() llmtypes.Tool {
+	return llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "execute_shell_command",
@@ -43,10 +40,11 @@ func GetAdvancedToolDefinitions() []llmtypes.Tool {
 			}),
 		},
 	}
-	tools = append(tools, executeShellTool)
+}
 
-	// Add read_image tool
-	readImageTool := llmtypes.Tool{
+// imageToolDef returns the read_image tool definition (single source of truth).
+func imageToolDef() llmtypes.Tool {
+	return llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "read_image",
@@ -67,10 +65,11 @@ func GetAdvancedToolDefinitions() []llmtypes.Tool {
 			}),
 		},
 	}
-	tools = append(tools, readImageTool)
+}
 
-	// Add fetch_web_content tool
-	fetchWebContentTool := llmtypes.Tool{
+// webToolDef returns the fetch_web_content tool definition (single source of truth).
+func webToolDef() llmtypes.Tool {
+	return llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "fetch_web_content",
@@ -99,10 +98,11 @@ func GetAdvancedToolDefinitions() []llmtypes.Tool {
 			}),
 		},
 	}
-	tools = append(tools, fetchWebContentTool)
+}
 
-	// Add read_pdf tool
-	readPDFTool := llmtypes.Tool{
+// pdfToolDef returns the read_pdf tool definition (single source of truth).
+func pdfToolDef() llmtypes.Tool {
+	return llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "read_pdf",
@@ -127,7 +127,34 @@ func GetAdvancedToolDefinitions() []llmtypes.Tool {
 			}),
 		},
 	}
-	tools = append(tools, readPDFTool)
+}
 
+// GetShellToolDefinitions returns only the shell (execute_shell_command) tool.
+func GetShellToolDefinitions() []llmtypes.Tool {
+	return []llmtypes.Tool{shellToolDef()}
+}
+
+// GetImageToolDefinitions returns only the image (read_image) tool.
+func GetImageToolDefinitions() []llmtypes.Tool {
+	return []llmtypes.Tool{imageToolDef()}
+}
+
+// GetWebToolDefinitions returns only the web fetch (fetch_web_content) tool.
+func GetWebToolDefinitions() []llmtypes.Tool {
+	return []llmtypes.Tool{webToolDef()}
+}
+
+// GetPDFToolDefinitions returns only the PDF (read_pdf) tool.
+func GetPDFToolDefinitions() []llmtypes.Tool {
+	return []llmtypes.Tool{pdfToolDef()}
+}
+
+// GetAdvancedToolDefinitions returns all advanced workspace tools (shell, image, web, PDF). No duplication: built from the single-tool getters.
+func GetAdvancedToolDefinitions() []llmtypes.Tool {
+	var tools []llmtypes.Tool
+	tools = append(tools, GetShellToolDefinitions()...)
+	tools = append(tools, GetImageToolDefinitions()...)
+	tools = append(tools, GetWebToolDefinitions()...)
+	tools = append(tools, GetPDFToolDefinitions()...)
 	return tools
 }

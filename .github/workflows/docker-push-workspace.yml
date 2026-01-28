@@ -1,0 +1,48 @@
+# Build and push workspace-api image to Docker Hub.
+# Trigger: manual (workflow_dispatch) or push of tag 'workspace-v*'.
+# Repository secrets: DOCKERHUB_USERNAME (e.g. manishiitg), DOCKERHUB_TOKEN.
+
+name: Docker push workspace-api
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'workspace-v*'
+
+env:
+  IMAGE: manishiitg/workspace-api
+
+jobs:
+  push:
+    name: Build and push workspace-api
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set tags
+        id: tags
+        run: |
+          echo "latest=${{ env.IMAGE }}:latest" >> $GITHUB_OUTPUT
+          if [[ "${{ github.ref }}" == refs/tags/workspace-v* ]]; then
+            echo "version=${{ env.IMAGE }}:${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${{ env.IMAGE }}:latest" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./workspace
+          file: ./workspace/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.latest }}
+            ${{ steps.tags.outputs.version }}

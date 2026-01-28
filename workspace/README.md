@@ -804,6 +804,22 @@ docker-compose down
 docker-compose down -v
 ```
 
+### **Pushing to Docker Hub**
+
+The workspace-api image is published as `manishiitg/workspace-api` on Docker Hub. Examples under `agent_go/examples/workspace_tools/` use this image.
+
+**Build and push locally** (run from repo root or `workspace/`):
+```bash
+# From workspace/
+./docker-push.sh
+
+# Or with a custom tag
+DOCKER_IMAGE=manishiitg/workspace-api:v1.0.0 ./docker-push.sh
+```
+Ensure you are logged in first: `docker login -u manishiitg`.
+
+**Push via GitHub Actions:** Add repository secrets `DOCKERHUB_USERNAME` (e.g. `manishiitg`) and `DOCKERHUB_TOKEN`, then run the "Docker push workspace-api" workflow manually, or push a tag `workspace-v*` (e.g. `workspace-v1.0.0`) to build and push.
+
 ### **Environment Variables:**
 ```bash
 # Required

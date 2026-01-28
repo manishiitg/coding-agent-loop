@@ -2,10 +2,55 @@ package virtualtools
 
 import (
 	"context"
+	"os"
 
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// getWorkspaceAPIURL returns the workspace API base URL from environment or default
+func getWorkspaceAPIURL() string {
+	if url := os.Getenv("WORKSPACE_API_URL"); url != "" {
+		return url
+	}
+	return "http://localhost:8081"
+}
+
+// WorkspaceFileContent is the response shape for read_workspace_file (used by orchestrator and server)
+type WorkspaceFileContent struct {
+	Content string `json:"content"`
+}
+
+// WorkspaceFile represents a file or folder from the workspace list API (used by orchestrator)
+type WorkspaceFile struct {
+	FilePath    string `json:"filepath"`
+	Folder      string `json:"folder,omitempty"`
+	Type        string `json:"type"`
+	IsDirectory bool   `json:"is_directory,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+	ModifiedAt  string `json:"modified_at,omitempty"`
+	Content     string `json:"content,omitempty"`
+	Name        string `json:"-"`
+}
+
+// WorkspaceAPIResponse is the generic workspace API response (Success, Message, Error, Data)
+type WorkspaceAPIResponse struct {
+	Success bool        `json:"success"`
+	Message string      `json:"message"`
+	Error   string      `json:"error"`
+	Data    interface{} `json:"data"`
+}
+
+// WorkspaceFolderItem is a single item in a folder listing (can have Children for nested listing)
+type WorkspaceFolderItem struct {
+	FilePath    string                `json:"filepath"`
+	Type        string                `json:"type"`
+	IsDirectory bool                  `json:"is_directory,omitempty"`
+	Children    []WorkspaceFolderItem `json:"children,omitempty"`
+}
+
+// WorkspaceFolderListing is the folder listing response (array of folder items)
+type WorkspaceFolderListing []WorkspaceFolderItem
 
 // WorkspaceEventEmitter interface for emitting workspace file operation events
 type WorkspaceEventEmitter interface {

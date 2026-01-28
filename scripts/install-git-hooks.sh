@@ -146,10 +146,28 @@ else
 fi
 set -e  # Re-enable exit on error
 
-# If linting passed, proceed
+# If linting passed, run build then proceed
 if [ $LINT_EXIT -eq 0 ]; then
     echo ""
-    echo -e "${GREEN}✅ Linting passed. Proceeding with commit.${NC}"
+    echo -e "${GREEN}✅ Linting passed.${NC}"
+    # Ensure we are at repo root (lint may have left us in agent_go)
+    cd "$(git rev-parse --show-toplevel)"
+    echo -e "${BLUE}🏗️  Building agent_go...${NC}"
+    if ! (cd agent_go && go build ./...); then
+        echo -e "${RED}❌ Build failed! Commit blocked.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}✅ Build successful.${NC}"
+    if [ -d "workspace" ] && [ -f "workspace/go.mod" ]; then
+        echo -e "${BLUE}🏗️  Building workspace...${NC}"
+        if ! (cd workspace && go build ./...); then
+            echo -e "${RED}❌ Workspace build failed! Commit blocked.${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}✅ Workspace build successful.${NC}"
+    fi
+    echo ""
+    echo -e "${GREEN}✅ All pre-commit checks passed. Proceeding with commit.${NC}"
     exit 0
 else
     # Linting found issues - check severity
@@ -278,8 +296,9 @@ echo ""
 echo -e "${BLUE}What happens now:${NC}"
 echo "  • Every commit will be automatically scanned for secrets (gitleaks)"
 echo "  • Every commit will run golangci-lint on Go code"
+echo "  • Every commit will run go build on agent_go and workspace"
 echo "  • Errors from tool_output_folder, cache, and bin are automatically filtered"
-echo "  • Commits with secrets or critical linting issues will be blocked"
+echo "  • Commits with secrets, critical linting issues, or build failures will be blocked"
 echo "  • You'll get clear error messages if issues are detected"
 echo ""
 echo -e "${BLUE}Manual scanning:${NC}"

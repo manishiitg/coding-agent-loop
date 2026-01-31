@@ -141,7 +141,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
   
   // State for preset selection
   const [showPresetSelection, setShowPresetSelection] = useState(false)
-  const [pendingModeCategory, setPendingModeCategory] = useState<'workflow' | null>(null)
+  const [pendingModeCategory, setPendingModeCategory] = useState<'workflow' | 'skill_builder' | null>(null)
 
   const handleModeSelect = (category: ModeCategory) => {
     if (!category) {

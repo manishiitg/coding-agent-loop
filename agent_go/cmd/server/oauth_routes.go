@@ -56,6 +56,9 @@ type OAuthLogoutRequest struct {
 
 // handleOAuthCallback handles GET /api/oauth/callback - receives OAuth authorization code
 func (api *StreamingAPI) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
+	api.logger.Info(fmt.Sprintf("🔔 OAuth callback received: state=%s, code_present=%v, error=%s",
+		r.URL.Query().Get("state"), r.URL.Query().Get("code") != "", r.URL.Query().Get("error")))
+
 	query := r.URL.Query()
 
 	// Get state parameter
@@ -233,8 +236,12 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Standard redirect URI for our OAuth callback
-	redirectURI := "http://localhost:8000/api/oauth/callback"
+	// Derive redirect URI from the incoming request so it works in both local and production
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	redirectURI := fmt.Sprintf("%s://%s/api/oauth/callback", scheme, r.Host)
 
 	// Initialize OAuth config if not present
 	if serverConfig.OAuth == nil {
@@ -350,16 +357,23 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 
 	// Start OAuth flow in background goroutine
 	go func() {
+		// Recover from panics so the goroutine doesn't die silently
+		defer func() {
+			if r := recover(); r != nil {
+				api.logger.Error(fmt.Sprintf("🔥 PANIC in OAuth goroutine for %s: %v", req.ServerName, r), fmt.Errorf("%v", r))
+			}
+		}()
+
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
-		api.logger.Info(fmt.Sprintf("Waiting for OAuth callback for %s (state: %s)", req.ServerName, state))
+		api.logger.Info(fmt.Sprintf("⏳ Waiting for OAuth callback for %s (state: %s)", req.ServerName, state))
 
 		// Wait for authorization code from callback
 		var code string
 		select {
 		case code = <-flow.CodeChan:
-			api.logger.Info(fmt.Sprintf("Received authorization code for %s", req.ServerName))
+			api.logger.Info(fmt.Sprintf("📥 Received authorization code for %s (code length: %d)", req.ServerName, len(code)))
 		case err := <-flow.ErrChan:
 			api.logger.Error(fmt.Sprintf("OAuth flow failed for %s: %v", req.ServerName, err), err)
 			return
@@ -369,13 +383,20 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 		}
 
 		// Exchange code for token
+		api.logger.Info(fmt.Sprintf("🔄 Exchanging authorization code for token for %s (redirect_uri: %s, token_url: %s)",
+			req.ServerName, oauthMgr.GetRedirectURI(), oauthMgr.GetTokenURL()))
 		token, err := oauthMgr.ExchangeCodeForToken(ctx, code)
 		if err != nil {
-			api.logger.Error(fmt.Sprintf("Failed to exchange code for token for %s: %v", req.ServerName, err), err)
+			api.logger.Error(fmt.Sprintf("❌ Failed to exchange code for token for %s: %v", req.ServerName, err), err)
 			return
 		}
 
-		api.logger.Info(fmt.Sprintf("✅ OAuth flow completed for %s, token expires: %s", req.ServerName, token.Expiry))
+		api.logger.Info(fmt.Sprintf("✅ OAuth token obtained for %s, expires: %s, has_refresh: %v",
+			req.ServerName, token.Expiry, token.RefreshToken != ""))
+
+		// Check if we can write to the token directory
+		tokenFile := flow.ServerConfig.OAuth.TokenFile
+		api.logger.Info(fmt.Sprintf("📁 Token file target: %s", tokenFile))
 
 		// Persist OAuth config to the user config file so MCP client uses it for future connections
 		api.logger.Info(fmt.Sprintf("💾 Persisting OAuth config for %s", req.ServerName))

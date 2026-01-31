@@ -197,11 +197,8 @@ func DiscoverSkills(workspaceAPIURL string) ([]Skill, error) {
 	// List all folders in the skills directory
 	entries, err := client.ListFiles(SkillsBasePath)
 	if err != nil {
-		// If skills folder doesn't exist, return empty list
-		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found") {
-			return []Skill{}, nil
-		}
-		return nil, fmt.Errorf("failed to list skills directory: %w", err)
+		// If skills folder doesn't exist or workspace API is unreachable, return empty list
+		return []Skill{}, nil
 	}
 
 	var skills []Skill

@@ -5,7 +5,7 @@ import "time"
 // Document represents a markdown document
 type Document struct {
 	FilePath    string     `json:"filepath"`
-	Content     string     `json:"content,omitempty"` // Only included when reading specific files
+	Content     string     `json:"content"` // Always included (empty string for list endpoints, populated for single file reads)
 	Folder      string     `json:"folder,omitempty"`
 	Type        string     `json:"type,omitempty"`         // "file" or "folder"
 	Children    []Document `json:"children,omitempty"`     // For hierarchical structure

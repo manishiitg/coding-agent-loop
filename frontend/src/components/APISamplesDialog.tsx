@@ -85,6 +85,8 @@ export const APISamplesDialog: React.FC<APISamplesDialogProps> = ({ isOpen, onCl
     }
   }
 
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+
   // Generate context-aware examples
   const generateExamples = () => {
     const presetId = activePreset?.id || 'your-preset-id'
@@ -94,7 +96,7 @@ export const APISamplesDialog: React.FC<APISamplesDialogProps> = ({ isOpen, onCl
     if (selectedModeCategory === 'workflow') {
       return {
         executeExample: `# Execute workflow preset (actual execution phase)
-curl -X POST http://localhost:8000/api/external/execute \\
+curl -X POST ${apiBaseUrl}/api/external/execute \\
   -H "Content-Type: application/json" \\
   -d '{
     "preset_id": "${presetId}",
@@ -120,7 +122,7 @@ curl -X POST http://localhost:8000/api/external/execute \\
     } else {
       return {
         executeExample: `# Execute chat preset
-curl -X POST http://localhost:8000/api/external/execute \\
+curl -X POST ${apiBaseUrl}/api/external/execute \\
   -H "Content-Type: application/json" \\
   -d '{
     "preset_id": "${presetId}"
@@ -141,10 +143,10 @@ curl -X POST http://localhost:8000/api/external/execute \\
   const examples = generateExamples()
 
   const pollEventsExample = `# Poll for events using session_id
-curl "http://localhost:8000/api/sessions/session-uuid-123/events?since=0"
+curl "${apiBaseUrl}/api/sessions/session-uuid-123/events?since=0"
 
 # Poll for new events since last check
-curl "http://localhost:8000/api/sessions/session-uuid-123/events?since=15"`
+curl "${apiBaseUrl}/api/sessions/session-uuid-123/events?since=15"`
 
   const pollEventsResponse = `{
   "events": [
@@ -171,7 +173,7 @@ curl "http://localhost:8000/api/sessions/session-uuid-123/events?since=15"`
 }`
 
   const cancelExecutionExample = `# Cancel execution using session_id
-curl -X POST http://localhost:8000/api/external/cancel \\
+curl -X POST ${apiBaseUrl}/api/external/cancel \\
   -H "Content-Type: application/json" \\
   -d '{
     "session_id": "session-uuid-123"
@@ -187,7 +189,7 @@ curl -X POST http://localhost:8000/api/external/cancel \\
 
 # 1. Connect to ${selectedModeCategory === 'workflow' ? 'workflow' : 'chat'} preset
 echo "🚀 Starting ${selectedModeCategory === 'workflow' ? 'workflow' : 'chat'} connection..."
-RESPONSE=$(curl -s -X POST http://localhost:8000/api/external/execute \\
+RESPONSE=$(curl -s -X POST ${apiBaseUrl}/api/external/execute \\
   -H "Content-Type: application/json" \\
   -d '{"preset_id": "${activePreset?.id || 'your-preset-id'}"${selectedModeCategory === 'workflow' ? ',\n    "execution_phase": "post-verification",\n    "options": {\n      "run_management": "create_new_runs_always",\n      "execution_strategy": "sequential_execution"\n    }' : ''}}')
 
@@ -201,7 +203,7 @@ echo "📡 Polling for events..."
 LAST_INDEX=0
 
 while true; do
-  EVENTS_RESPONSE=$(curl -s "http://localhost:8000/api/sessions/$SESSION_ID/events?since=$LAST_INDEX")
+  EVENTS_RESPONSE=$(curl -s "${apiBaseUrl}/api/sessions/$SESSION_ID/events?since=$LAST_INDEX")
   
   EVENTS=$(echo $EVENTS_RESPONSE | jq -r '.events[]')
   # Calculate new last index from events received

@@ -46,7 +46,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [llmConfig, setLlmConfig] = useState<PresetLLMConfig | null>(null);
   const [useCodeExecutionMode, setUseCodeExecutionMode] = useState(false);
   const [useToolSearchMode, setUseToolSearchMode] = useState(false);
-  const [enableContextSummarization, setEnableContextSummarization] = useState(true);
+  // Context summarization is always enabled (not user-configurable)
+  const enableContextSummarization = true;
   const [useKnowledgebase, setUseKnowledgebase] = useState(true); // Default true (enabled)
   const [enableBrowserAccess, setEnableBrowserAccess] = useState(false); // Default false (disabled)
   // Agent-specific LLM configs (for workflow mode)
@@ -121,7 +122,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setUseCodeExecutionMode(editingPreset.useCodeExecutionMode || false);
       // For workflow presets, default to true if not explicitly set
       setUseToolSearchMode(editingPreset.useToolSearchMode !== undefined ? editingPreset.useToolSearchMode : true); // Default true for workflow
-      setEnableContextSummarization(editingPreset.enableContextSummarization !== undefined ? editingPreset.enableContextSummarization : true);
       setUseKnowledgebase(presetLLM.use_knowledgebase !== false); // Default true unless explicitly false
       setEnableBrowserAccess(editingPreset?.enableBrowserAccess ?? false); // Default false unless explicitly true
       // Load agent-specific configs if available
@@ -148,7 +148,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setUseCodeExecutionMode(false);
       // Default tool search mode to true for workflow presets
       setUseToolSearchMode(true);
-      setEnableContextSummarization(true);
       setUseKnowledgebase(true); // Default true
       setEnableBrowserAccess(false); // Default false
       // Initialize agent-specific configs to null (will use legacy default)
@@ -279,7 +278,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, enableContextSummarization, useKnowledgebase, enableBrowserAccess, onSave, onClose]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, useKnowledgebase, enableBrowserAccess, onSave, onClose]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -643,34 +642,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                   />
                 )}
 
-                {/* Context Summarization Toggle */}
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Context Summarization
-                  </label>
-                  <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">
-                          Enable Context Summarization
-                        </div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          Auto-summarize when token usage exceeds 80% of context window
-                        </div>
-                      </div>
-                      <label className="relative inline-flex items-center cursor-pointer ml-3">
-                        <input
-                          type="checkbox"
-                          checked={enableContextSummarization}
-                          onChange={(e) => setEnableContextSummarization(e.target.checked)}
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-
                 {/* Knowledgebase Toggle */}
                 <div>
                   <label className="block text-sm font-medium mb-2">
@@ -903,33 +874,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                   </div>
                 )}
 
-                {/* Context Summarization Toggle */}
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Context Summarization
-                  </label>
-                  <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">
-                          Enable Context Summarization
-                        </div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          Automatically summarize conversation history when token usage exceeds 80% of context window
-                        </div>
-                      </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={enableContextSummarization}
-                          onChange={(e) => setEnableContextSummarization(e.target.checked)}
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-                      </label>
-                    </div>
-                  </div>
-                </div>
               </div>
             </div>
           )}

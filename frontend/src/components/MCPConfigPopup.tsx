@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, Plus, Trash2, Code, X, Check, AlertCircle, Server } from 'lucide-react';
+import { Loader2, Plus, Trash2, Code, X, Check, AlertCircle, Server, FileJson } from 'lucide-react';
 import { mcpConfigApi } from '../services/mcpConfigApi';
 import MCPConfigEditor from './MCPConfigEditor';
 
@@ -37,6 +37,9 @@ export const MCPConfigPopup: React.FC<MCPConfigPopupProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [showJsonEditor, setShowJsonEditor] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [addMode, setAddMode] = useState<'form' | 'json'>('form');
+  const [addJsonText, setAddJsonText] = useState('');
+  const [addJsonError, setAddJsonError] = useState<string | null>(null);
   const [addFormData, setAddFormData] = useState({
     name: '',
     type: 'url' as 'url' | 'command',
@@ -124,6 +127,52 @@ export const MCPConfigPopup: React.FC<MCPConfigPopupProps> = ({
       useOAuth: false
     });
     setShowAddForm(false);
+  };
+
+  const handleAddServerFromJson = async () => {
+    if (!config || !addJsonText.trim()) return;
+
+    let parsed: Record<string, MCPServerConfig>;
+    try {
+      parsed = JSON.parse(addJsonText);
+    } catch {
+      setAddJsonError('Invalid JSON');
+      return;
+    }
+
+    // Validate structure: must be an object with string keys
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      setAddJsonError('JSON must be an object mapping server names to their config');
+      return;
+    }
+
+    const newConfig = { ...config, mcpServers: { ...config.mcpServers } };
+    for (const [name, serverConfig] of Object.entries(parsed)) {
+      newConfig.mcpServers[name] = serverConfig;
+    }
+
+    await saveConfig(newConfig);
+    setAddJsonText('');
+    setAddJsonError(null);
+    setShowAddForm(false);
+  };
+
+  const handleJsonTextChange = (value: string) => {
+    setAddJsonText(value);
+    if (!value.trim()) {
+      setAddJsonError(null);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(value);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        setAddJsonError('JSON must be an object mapping server names to their config');
+      } else {
+        setAddJsonError(null);
+      }
+    } catch {
+      setAddJsonError('Invalid JSON');
+    }
   };
 
   const getServerType = (serverConfig: MCPServerConfig): string => {
@@ -267,121 +316,187 @@ export const MCPConfigPopup: React.FC<MCPConfigPopupProps> = ({
           {/* Add Server Form */}
           {showAddForm && (
             <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-              <h3 className="font-medium text-gray-900 dark:text-gray-100 mb-3">Add New Server</h3>
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Server Name
-                  </label>
-                  <input
-                    type="text"
-                    value={addFormData.name}
-                    onChange={(e) => setAddFormData({ ...addFormData, name: e.target.value })}
-                    placeholder="e.g., my-server"
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Connection Type
-                  </label>
-                  <div className="flex gap-4">
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="radio"
-                        checked={addFormData.type === 'url'}
-                        onChange={() => setAddFormData({ ...addFormData, type: 'url' })}
-                        className="text-blue-500"
-                      />
-                      <span className="text-sm text-gray-700 dark:text-gray-300">URL (HTTP/SSE)</span>
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="radio"
-                        checked={addFormData.type === 'command'}
-                        onChange={() => setAddFormData({ ...addFormData, type: 'command' })}
-                        className="text-blue-500"
-                      />
-                      <span className="text-sm text-gray-700 dark:text-gray-300">Command (Stdio)</span>
-                    </label>
-                  </div>
-                </div>
-
-                {addFormData.type === 'url' ? (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Server URL
-                      </label>
-                      <input
-                        type="text"
-                        value={addFormData.url}
-                        onChange={(e) => setAddFormData({ ...addFormData, url: e.target.value })}
-                        placeholder="https://mcp.example.com/mcp"
-                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={addFormData.useOAuth}
-                          onChange={(e) => setAddFormData({ ...addFormData, useOAuth: e.target.checked })}
-                          className="text-blue-500 rounded"
-                        />
-                        <span className="text-sm text-gray-700 dark:text-gray-300">
-                          Enable OAuth (auto-discover endpoints)
-                        </span>
-                      </label>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Command
-                      </label>
-                      <input
-                        type="text"
-                        value={addFormData.command}
-                        onChange={(e) => setAddFormData({ ...addFormData, command: e.target.value })}
-                        placeholder="e.g., npx"
-                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Arguments (space-separated)
-                      </label>
-                      <input
-                        type="text"
-                        value={addFormData.args}
-                        onChange={(e) => setAddFormData({ ...addFormData, args: e.target.value })}
-                        placeholder="e.g., -y @my-mcp/server"
-                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      />
-                    </div>
-                  </>
-                )}
-
-                <div className="flex justify-end gap-2 pt-2">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-medium text-gray-900 dark:text-gray-100">Add New Server</h3>
+                <div className="flex bg-gray-200 dark:bg-gray-700 rounded-md p-0.5">
                   <button
-                    onClick={() => setShowAddForm(false)}
-                    className="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+                    onClick={() => setAddMode('form')}
+                    className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                      addMode === 'form'
+                        ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100 shadow-sm'
+                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                    }`}
                   >
-                    Cancel
+                    Form
                   </button>
                   <button
-                    onClick={handleAddServer}
-                    disabled={!addFormData.name.trim() || saving}
-                    className="px-4 py-1.5 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    onClick={() => setAddMode('json')}
+                    className={`px-3 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1 ${
+                      addMode === 'json'
+                        ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100 shadow-sm'
+                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                    }`}
                   >
-                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                    Add Server
+                    <FileJson className="w-3 h-3" />
+                    JSON
                   </button>
                 </div>
               </div>
+
+              {addMode === 'form' ? (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Server Name
+                    </label>
+                    <input
+                      type="text"
+                      value={addFormData.name}
+                      onChange={(e) => setAddFormData({ ...addFormData, name: e.target.value })}
+                      placeholder="e.g., my-server"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Connection Type
+                    </label>
+                    <div className="flex gap-4">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          checked={addFormData.type === 'url'}
+                          onChange={() => setAddFormData({ ...addFormData, type: 'url' })}
+                          className="text-blue-500"
+                        />
+                        <span className="text-sm text-gray-700 dark:text-gray-300">URL (HTTP/SSE)</span>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          checked={addFormData.type === 'command'}
+                          onChange={() => setAddFormData({ ...addFormData, type: 'command' })}
+                          className="text-blue-500"
+                        />
+                        <span className="text-sm text-gray-700 dark:text-gray-300">Command (Stdio)</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {addFormData.type === 'url' ? (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          Server URL
+                        </label>
+                        <input
+                          type="text"
+                          value={addFormData.url}
+                          onChange={(e) => setAddFormData({ ...addFormData, url: e.target.value })}
+                          placeholder="https://mcp.example.com/mcp"
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={addFormData.useOAuth}
+                            onChange={(e) => setAddFormData({ ...addFormData, useOAuth: e.target.checked })}
+                            className="text-blue-500 rounded"
+                          />
+                          <span className="text-sm text-gray-700 dark:text-gray-300">
+                            Enable OAuth (auto-discover endpoints)
+                          </span>
+                        </label>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          Command
+                        </label>
+                        <input
+                          type="text"
+                          value={addFormData.command}
+                          onChange={(e) => setAddFormData({ ...addFormData, command: e.target.value })}
+                          placeholder="e.g., npx"
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          Arguments (space-separated)
+                        </label>
+                        <input
+                          type="text"
+                          value={addFormData.args}
+                          onChange={(e) => setAddFormData({ ...addFormData, args: e.target.value })}
+                          placeholder="e.g., -y @my-mcp/server"
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      onClick={() => setShowAddForm(false)}
+                      className="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleAddServer}
+                      disabled={!addFormData.name.trim() || saving}
+                      className="px-4 py-1.5 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                      Add Server
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Paste server JSON. Each key is a server name, value is its config. Existing servers with the same name will be overwritten.
+                  </p>
+                  <textarea
+                    value={addJsonText}
+                    onChange={(e) => handleJsonTextChange(e.target.value)}
+                    placeholder={`{\n  "my-server": {\n    "url": "https://mcp.example.com/sse"\n  },\n  "local-tool": {\n    "command": "npx",\n    "args": ["-y", "@my/mcp-server"]\n  }\n}`}
+                    className={`w-full h-48 px-3 py-2 border rounded-md font-mono text-sm resize-y bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                      addJsonError
+                        ? 'border-red-400 dark:border-red-600'
+                        : 'border-gray-300 dark:border-gray-600'
+                    }`}
+                  />
+                  {addJsonError && (
+                    <div className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
+                      <AlertCircle className="w-3 h-3 flex-shrink-0" />
+                      {addJsonError}
+                    </div>
+                  )}
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      onClick={() => { setShowAddForm(false); setAddJsonText(''); setAddJsonError(null); }}
+                      className="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleAddServerFromJson}
+                      disabled={!addJsonText.trim() || !!addJsonError || saving}
+                      className="px-4 py-1.5 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                      Add from JSON
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

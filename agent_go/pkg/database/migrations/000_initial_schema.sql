@@ -42,8 +42,15 @@ CREATE TABLE IF NOT EXISTS preset_queries (
     label TEXT NOT NULL, -- Display name for the preset
     query TEXT NOT NULL, -- The actual query text
     selected_servers TEXT, -- JSON array of server names (e.g., ["aws", "github"])
+    selected_tools TEXT DEFAULT '[]', -- JSON array of "server:tool" strings
     selected_folder TEXT DEFAULT NULL, -- Single folder path for orchestrator/workflow modes
     agent_mode TEXT DEFAULT 'ReAct', -- Agent mode: simple, ReAct, orchestrator, workflow
+    llm_config TEXT DEFAULT NULL, -- JSON configuration for LLM settings
+    use_code_execution_mode INTEGER DEFAULT 0, -- Enable MCP code execution mode
+    use_tool_search_mode INTEGER DEFAULT 0, -- Enable tool search mode
+    pre_discovered_tools TEXT DEFAULT '[]', -- JSON array of always-available tool names
+    selected_skills TEXT DEFAULT '[]', -- JSON array of skill folder names
+    enable_browser_access INTEGER DEFAULT 0, -- Enable browser automation tool
     is_predefined INTEGER DEFAULT 0, -- Whether this is a built-in preset (SQLite uses INTEGER for boolean)
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,

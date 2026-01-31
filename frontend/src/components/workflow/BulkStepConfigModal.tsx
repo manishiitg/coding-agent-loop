@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { X, Settings, AlertCircle, CheckCircle2, Loader2, Code2, Sparkles, Brain, Shield, BookOpen, Wrench, Info, Book, FileStack, Search } from "lucide-react";
+import { X, Settings, AlertCircle, CheckCircle2, Loader2, Code2, Sparkles, Brain, Shield, BookOpen, Wrench, Info, Book, FileStack, Search, HardDriveDownload, Scissors } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "../ui/accordion";
 import { useLLMStore } from "../../stores";
@@ -59,10 +59,11 @@ export default function BulkStepConfigModal({
   // Feature toggles from preset (default to true if not set)
   const enableKnowledgebase = presetLLMConfig?.use_knowledgebase !== false;
   const enableContextSummarization = presetLLMConfig?.enable_context_summarization !== false;
+  const enableContextEditing = presetLLMConfig?.enable_context_editing !== false;
 
   // Function to update feature toggles in the preset
   const handleToggleFeature = useCallback(async (
-    feature: 'use_knowledgebase' | 'enable_context_summarization',
+    feature: 'use_knowledgebase' | 'enable_context_summarization' | 'enable_context_editing',
     enabled: boolean
   ) => {
     if (!activePreset || !activePresetId) return;
@@ -84,7 +85,10 @@ export default function BulkStepConfigModal({
         activePreset.selectedFolder,
         updatedLLMConfig,
         activePreset.useCodeExecutionMode,
-        feature === 'enable_context_summarization' ? enabled : activePreset.enableContextSummarization
+        feature === 'enable_context_summarization' ? enabled : activePreset.enableContextSummarization,
+        undefined, // useToolSearchMode
+        undefined, // enableBrowserAccess
+        feature === 'enable_context_editing' ? enabled : activePreset.enableContextEditing
       );
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
@@ -305,6 +309,16 @@ export default function BulkStepConfigModal({
     return enabledTools.includes(`${category}:${toolName}`);
   };
 
+  // Check context offloading state across all steps
+  const contextOffloadingState = useMemo(() => {
+    if (!plan) return { enabled: true };
+    const allSteps = getAllSteps();
+    const disabledCount = allSteps.filter(({ step }) =>
+      step.agent_configs?.enable_context_offloading === false
+    ).length;
+    return { enabled: allSteps.length === 0 || disabledCount === 0 };
+  }, [plan, getAllSteps]);
+
   // Check if tools are currently disabled by examining step configs
   const toolAccessState = useMemo(() => {
     if (!plan) {
@@ -362,7 +376,9 @@ export default function BulkStepConfigModal({
       | "set_learning_detail_level_general"
       | "set_code_execution_mode"
       | "set_simple_mode"
-      | "set_tool_search_mode",
+      | "set_tool_search_mode"
+      | "enable_context_offloading"
+      | "disable_context_offloading",
     llm?: LLMOption | null,
     maxTurns?: number
   ) => {
@@ -604,6 +620,12 @@ export default function BulkStepConfigModal({
             // Set simple mode (disable code execution)
             newAgentConfigs.use_code_execution_mode = false;
             newAgentConfigs.use_tool_search_mode = false;
+            break;
+          case "enable_context_offloading":
+            newAgentConfigs.enable_context_offloading = true;
+            break;
+          case "disable_context_offloading":
+            newAgentConfigs.enable_context_offloading = false;
             break;
         }
 
@@ -1184,6 +1206,68 @@ export default function BulkStepConfigModal({
                     </Button>
                     <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
                       Enables automatic context summarization during execution. When disabled, full conversation context is maintained without compression.
+                    </p>
+                  </div>
+
+                  {/* Context Offloading Toggle */}
+                  <div className="space-y-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => handleImmediateAction(
+                        contextOffloadingState.enabled
+                          ? "disable_context_offloading"
+                          : "enable_context_offloading"
+                      )}
+                      disabled={applyingAction !== null}
+                      className={`w-full justify-start h-auto py-3 px-4 transition-all ${
+                        contextOffloadingState.enabled
+                          ? "bg-purple-50 dark:bg-purple-950/20 border-purple-300 dark:border-purple-800 hover:bg-purple-100 dark:hover:bg-purple-950/30"
+                          : "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 w-full">
+                        {applyingAction === "enable_context_offloading" || applyingAction === "disable_context_offloading" ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <HardDriveDownload className={`w-4 h-4 ${contextOffloadingState.enabled ? 'text-purple-600 dark:text-purple-400' : 'text-muted-foreground'}`} />
+                        )}
+                        <div className="flex-1 text-left">
+                          <div className="font-medium text-sm">Context Offloading</div>
+                          <div className={`text-xs mt-0.5 ${contextOffloadingState.enabled ? 'text-purple-600 dark:text-purple-400' : 'text-muted-foreground'}`}>
+                            {contextOffloadingState.enabled ? 'Enabled' : 'Disabled'}
+                          </div>
+                        </div>
+                      </div>
+                    </Button>
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Enable context offloading virtual tools (read_large_output, search_large_output, query_large_output) for all steps.
+                    </p>
+                  </div>
+
+                  {/* Context Editing Toggle */}
+                  <div className="space-y-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => handleToggleFeature('enable_context_editing', !enableContextEditing)}
+                      disabled={applyingAction !== null || !activePreset}
+                      className={`w-full justify-start h-auto py-3 px-4 transition-all ${
+                        enableContextEditing
+                          ? "bg-slate-100 dark:bg-slate-800/40 border-slate-300 dark:border-slate-600 hover:bg-slate-200 dark:hover:bg-slate-800/60"
+                          : "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 w-full">
+                        <Scissors className={`w-4 h-4 ${enableContextEditing ? 'text-slate-600 dark:text-slate-300' : 'text-muted-foreground'}`} />
+                        <div className="flex-1 text-left">
+                          <div className="font-medium text-sm">Context Editing</div>
+                          <div className={`text-xs mt-0.5 ${enableContextEditing ? 'text-slate-600 dark:text-slate-300' : 'text-muted-foreground'}`}>
+                            {enableContextEditing ? 'Enabled' : 'Disabled'}
+                          </div>
+                        </div>
+                      </div>
+                    </Button>
+                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
+                      Enable dynamic context reduction during execution. Compacts large tool outputs and old conversation turns to optimize context usage.
                     </p>
                   </div>
                 </div>

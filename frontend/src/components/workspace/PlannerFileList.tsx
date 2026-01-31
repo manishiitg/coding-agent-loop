@@ -234,7 +234,7 @@ export default function PlannerFileList({
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
-                          onFolderUpload(file.filepath)
+                          onFolderUpload(file.originalFilepath || file.filepath)
                         }}
                         className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
                       >

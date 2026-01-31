@@ -16,6 +16,7 @@ export interface CustomPreset {
   useToolSearchMode?: boolean; // Tool search mode
   preDiscoveredTools?: string[]; // Tools always available without searching
   enableContextSummarization?: boolean; // Enable context summarization
+  enableContextEditing?: boolean; // Enable context editing (dynamic context reduction)
   enableBrowserAccess?: boolean; // Browser automation access
 }
 
@@ -33,5 +34,6 @@ export interface PredefinedPreset {
   useToolSearchMode?: boolean; // Tool search mode
   preDiscoveredTools?: string[]; // Tools always available without searching
   enableContextSummarization?: boolean; // Enable context summarization
+  enableContextEditing?: boolean; // Enable context editing (dynamic context reduction)
   enableBrowserAccess?: boolean; // Browser automation access
 }

@@ -87,6 +87,11 @@ func ExportWorkspace(c *gin.Context) {
 			return nil
 		}
 
+		// Skip symlinks (they may point to directories or files outside the workspace)
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+
 		// Calculate relative path from workspace root
 		relPath, err := filepath.Rel(fullWorkspacePath, filePath)
 		if err != nil {

@@ -2510,6 +2510,21 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         selected_skills: selectedModeCategory === 'chat' && currentTab?.config?.selectedSkills?.length
           ? currentTab.config.selectedSkills
           : undefined,
+        // Context editing: Read from active workflow preset's llmConfig
+        enable_context_editing: (() => {
+          if (selectedModeCategory === 'workflow') {
+            const presetStore = useGlobalPresetStore.getState()
+            const presetId = presetStore.activePresetIds.workflow
+            const preset = presetId
+              ? presetStore.customPresets.find(p => p.id === presetId)
+                || presetStore.predefinedPresets.find(p => p.id === presetId)
+              : null
+            if (preset?.llmConfig?.enable_context_editing === false) {
+              return false
+            }
+          }
+          return undefined // Let backend use default
+        })(),
         // Note: Conversation history is loaded by backend from database using session ID
         // Backend will automatically load history from conversation_turn events if session exists
       }

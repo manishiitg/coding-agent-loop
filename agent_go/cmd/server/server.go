@@ -752,7 +752,10 @@ func runServer(cmd *cobra.Command, args []string) {
 		chatDB, err = database.NewSupabaseDB(connStr)
 		connInfo = "PostgreSQL (Supabase)"
 	} else {
-		dbPath := viper.GetString("db-path")
+		dbPath := os.Getenv("DB_PATH")
+		if dbPath == "" {
+			dbPath = viper.GetString("db-path")
+		}
 		if dbPath == "" {
 			dbPath = "/app/chat_history.db" // Default SQLite database path
 		}
@@ -1900,6 +1903,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Load preset LLM config for chat/simple mode (for feature toggle fallbacks)
+	var presetLLMConfig *database.PresetLLMConfig
+	if req.PresetQueryID != "" {
+		ctx := context.Background()
+		preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
+		if err == nil && len(preset.LLMConfig) > 0 {
+			if err := json.Unmarshal(preset.LLMConfig, &presetLLMConfig); err != nil {
+				log.Printf("[PRESET LLM] Failed to parse preset LLM config for chat mode: %v", err)
+			}
+		}
+	}
+
 	// Return immediate response with query ID
 	response := QueryResponse{
 		QueryID:   queryID,
@@ -2116,9 +2131,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Context summarization configuration
 			// Priority: Request > Environment Variable > Default (matches orchestrator defaults)
 			EnableContextSummarization: func() bool {
+				// Priority: Request > Preset > Environment Variable > Default
 				// If explicitly set in request, use that value
 				if req.EnableContextSummarization != nil {
 					return *req.EnableContextSummarization
+				}
+				// Check preset LLM config
+				if presetLLMConfig != nil && presetLLMConfig.EnableContextSummarization != nil {
+					return *presetLLMConfig.EnableContextSummarization
 				}
 				// Check environment variable - default to enabled (true), can be disabled via "false"
 				if envVal := os.Getenv("ENABLE_CONTEXT_SUMMARIZATION"); envVal == "false" {
@@ -2190,9 +2210,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Context editing configuration
 			// Priority: Request > Environment Variable > Default
 			EnableContextEditing: func() bool {
+				// Priority: Request > Preset > Environment Variable > Default
 				// If explicitly set in request, use that value
 				if req.EnableContextEditing != nil {
 					return *req.EnableContextEditing
+				}
+				// Check preset LLM config
+				if presetLLMConfig != nil && presetLLMConfig.EnableContextEditing != nil {
+					return *presetLLMConfig.EnableContextEditing
 				}
 				// Check environment variable
 				if envVal := os.Getenv("ENABLE_CONTEXT_EDITING"); envVal == "true" {

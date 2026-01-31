@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // Migration represents a database migration
@@ -196,55 +197,32 @@ func (mr *MigrationRunner) runMigration(migration Migration) error {
 	// Execute migration SQL
 	_, err = tx.Exec(migration.SQL)
 	if err != nil {
-		// Check if this is a duplicate column error for migration 006 by verifying schema
-		if migration.Version == 6 && migration.Name == "add_selected_folders_to_presets" {
-			// Check if column actually exists before skipping
-			exists, checkErr := mr.columnExists(tx, "preset_queries", "selected_folder")
-			if checkErr != nil {
-				return fmt.Errorf("failed to check column existence: %w", checkErr)
+		errMsg := err.Error()
+		// Handle duplicate column/table errors gracefully (initial schema may already include these)
+		if strings.Contains(errMsg, "duplicate column name") || strings.Contains(errMsg, "already exists") {
+			fmt.Printf("⚠️  Migration %d: %s - already applied (schema up to date), skipping: %s\n", migration.Version, migration.Name, errMsg)
+			tx.Rollback()
+
+			// Record migration as applied in a new transaction
+			recordTx, txErr := mr.db.Begin()
+			if txErr != nil {
+				return fmt.Errorf("failed to begin record transaction: %w", txErr)
+			}
+			defer recordTx.Rollback()
+
+			recordQuery := `INSERT INTO schema_migrations (version) VALUES (?)`
+			if mr.driverName == "postgres" {
+				recordQuery = `INSERT INTO schema_migrations (version) VALUES ($1)`
+			}
+			if _, recordErr := recordTx.Exec(recordQuery, migration.Version); recordErr != nil {
+				return fmt.Errorf("failed to record migration: %w", recordErr)
+			}
+			if commitErr := recordTx.Commit(); commitErr != nil {
+				return fmt.Errorf("failed to commit migration record: %w", commitErr)
 			}
 
-			if exists {
-				fmt.Printf("⚠️  Migration %d: %s - Column 'selected_folder' already exists, skipping\n", migration.Version, migration.Name)
-
-				// Record migration as applied
-				_, recordErr := tx.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, migration.Version)
-				if recordErr != nil {
-					return fmt.Errorf("failed to record migration: %w", recordErr)
-				}
-
-				if err := tx.Commit(); err != nil {
-					return fmt.Errorf("failed to commit migration: %w", err)
-				}
-
-				fmt.Printf("✅ Applied migration %d: %s (skipped duplicate column)\n", migration.Version, migration.Name)
-				return nil
-			}
-		}
-		// Check if this is a duplicate column error for migration 011 (app_token)
-		if migration.Version == 11 && migration.Name == "update_slack_to_socket_mode" {
-			// Check if column actually exists before skipping
-			exists, checkErr := mr.columnExists(tx, "slack_feedback_config", "app_token")
-			if checkErr != nil {
-				return fmt.Errorf("failed to check column existence: %w", checkErr)
-			}
-
-			if exists {
-				fmt.Printf("⚠️  Migration %d: %s - Column 'app_token' already exists, skipping\n", migration.Version, migration.Name)
-
-				// Record migration as applied
-				_, recordErr := tx.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, migration.Version)
-				if recordErr != nil {
-					return fmt.Errorf("failed to record migration: %w", recordErr)
-				}
-
-				if err := tx.Commit(); err != nil {
-					return fmt.Errorf("failed to commit migration: %w", err)
-				}
-
-				fmt.Printf("✅ Applied migration %d: %s (skipped duplicate column)\n", migration.Version, migration.Name)
-				return nil
-			}
+			fmt.Printf("✅ Recorded migration %d: %s (skipped - schema already current)\n", migration.Version, migration.Name)
+			return nil
 		}
 		return fmt.Errorf("failed to execute migration SQL: %w", err)
 	}

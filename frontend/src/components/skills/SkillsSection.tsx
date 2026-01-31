@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Sparkles, Loader2, AlertCircle, Plus, RefreshCw } from 'lucide-react'
+import { Sparkles, Loader2, AlertCircle, Plus, RefreshCw, Lightbulb } from 'lucide-react'
 import { skillsApi } from '../../api/skills'
 import type { Skill } from '../../types/skills'
 import SkillCard from './SkillCard'
 import SkillImportDialog from './SkillImportDialog'
+import { useAppStore } from '../../stores/useAppStore'
 
 export default function SkillsSection() {
   const [skills, setSkills] = useState<Skill[]>([])
@@ -11,6 +12,8 @@ export default function SkillsSection() {
   const [error, setError] = useState<string | null>(null)
   const [showDetails, setShowDetails] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
+  
+  const { setAgentMode } = useAppStore()
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true)
@@ -46,6 +49,11 @@ export default function SkillsSection() {
   const handleImportSuccess = () => {
     setShowImportDialog(false)
     loadSkills()
+  }
+  
+  const handleOpenSkillBuilder = () => {
+    setAgentMode('skill_builder')
+    setShowDetails(false)
   }
 
   return (
@@ -113,6 +121,13 @@ export default function SkillsSection() {
                       <RefreshCw className="w-4 h-4" />
                     </button>
                     <button
+                      onClick={handleOpenSkillBuilder}
+                      className="px-3 py-1.5 text-sm font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 rounded-md transition-colors flex items-center gap-2"
+                    >
+                      <Lightbulb className="w-4 h-4" />
+                      Skill Builder
+                    </button>
+                    <button
                       onClick={() => setShowImportDialog(true)}
                       className="px-3 py-1.5 text-sm font-medium text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-900/50 rounded-md transition-colors flex items-center gap-2"
                     >
@@ -136,13 +151,22 @@ export default function SkillsSection() {
                       <p className="text-sm text-center mb-4">
                         Import skills from GitHub to extend your agent's capabilities
                       </p>
-                      <button
-                        onClick={() => setShowImportDialog(true)}
-                        className="px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 rounded-md transition-colors flex items-center gap-2"
-                      >
-                        <Plus className="w-4 h-4" />
-                        Import from GitHub
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleOpenSkillBuilder}
+                          className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-md transition-colors flex items-center gap-2"
+                        >
+                          <Lightbulb className="w-4 h-4" />
+                          Skill Builder
+                        </button>
+                        <button
+                          onClick={() => setShowImportDialog(true)}
+                          className="px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 rounded-md transition-colors flex items-center gap-2"
+                        >
+                          <Plus className="w-4 h-4" />
+                          Import from GitHub
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <div className="grid gap-4">

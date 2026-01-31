@@ -560,13 +560,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       // Load run folders for a workspace
       loadRunFolders: async (workspacePath: string) => {
-        console.log('[WorkflowStore] loadRunFolders called:', {
-          workspacePath,
-          stackTrace: new Error().stack?.split('\n').slice(0, 5).join('\n')
-        })
-
         if (!workspacePath) {
-          console.log('[WorkflowStore] loadRunFolders: No workspacePath, clearing runFolders')
           set({ runFolders: [] })
           return
         }
@@ -575,11 +569,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
         try {
           const response = await agentApi.getRunFolders(workspacePath)
-          console.log('[WorkflowStore] loadRunFolders response:', {
-            hasResponse: !!response,
-            foldersCount: response?.folders?.length || 0,
-            folders: response?.folders?.map(f => f.name)
-          })
 
           if (!response) {
             set({ runFolders: [], isLoadingRunFolders: false })
@@ -592,7 +581,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           }
 
           if (!Array.isArray(folders)) {
-            console.warn('[WorkflowStore] response.folders is not an array. Type:', typeof folders)
             set({ runFolders: [], isLoadingRunFolders: false })
             return
           }
@@ -616,7 +604,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
             if (isValidIterationPattern) {
               // Preserve the selection even if not in list yet (it was likely just created)
               // The folder should appear in the next refresh
-              console.log(`[WorkflowStore] Preserving selection "${currentSelection}" - folder may not be in list yet`)
             } else {
               // Saved folder no longer exists and doesn't match iteration pattern, default to newest or null
               const newSelection = sorted.length > 0 ? sorted[0].name : null

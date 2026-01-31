@@ -100,3 +100,4 @@ gcp-oauth.keys.json
 
 Downloads/*
 Workflow/*
+agent_go/Workflow/

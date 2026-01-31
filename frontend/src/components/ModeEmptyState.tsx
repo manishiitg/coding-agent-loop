@@ -70,7 +70,9 @@ export const ModeEmptyState: React.FC<ModeEmptyStateProps> = ({ modeCategory }) 
           <span>
             {modeCategory === 'chat' 
               ? 'Type your message below to get started'
-              : 'Get started with your workflow'
+              : modeCategory === 'skill_builder'
+                ? 'Start building a new skill'
+                : 'Get started with your workflow'
             }
           </span>
         </div>

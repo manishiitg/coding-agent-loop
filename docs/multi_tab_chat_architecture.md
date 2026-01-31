@@ -609,13 +609,16 @@ System for restoring and working with past chat sessions. Handles configuration 
 
 1. **Page Load**: Component mounts, starts active sessions polling
 2. **Fetch Active Sessions**: After 500ms delay, fetches active sessions (status: `'running'`)
-3. **Create Tabs**: For each active session without a tab:
-   - Creates tab with session ID
-   - Fetches full session details (including config)
-   - Restores config (LLM, workspace, MCP servers, etc.)
-   - Loads historical events
-   - Sets streaming status to `true`
-   - Switches to first active session tab
+3. **Filter & Create Tabs**:
+   - Filter to running sessions
+   - **Important**: In chat mode, filter out workflow sessions (`agent_mode === 'workflow'`) to prevent them from appearing as chat tabs
+   - For each remaining session without a tab:
+     - Creates tab with session ID
+     - Fetches full session details (including config)
+     - Restores config (LLM, workspace, MCP servers, etc.)
+     - Loads historical events
+     - Sets streaming status to `true`
+     - Switches to first active session tab
 4. **Polling**: Polling automatically starts for active sessions (via `tabsWithActiveSessions` filter)
 
 ### Session Reactivation Flow

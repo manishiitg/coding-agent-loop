@@ -2508,3 +2508,5 @@ func isTextBasedFile(filename, contentType string) bool {
 	// If neither extension nor MIME type is recognized, default to false (reject)
 	return false
 }
+
+

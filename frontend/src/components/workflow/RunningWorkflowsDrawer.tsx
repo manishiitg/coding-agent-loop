@@ -145,6 +145,19 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
     }
   }
 
+  // Get set of session IDs that are already active in tabs
+  // Only compute when drawer is visible
+  const activeSessionIds = useMemo(() => {
+    if (!showRunningDrawer) return new Set<string>()
+    const ids = new Set<string>()
+    Object.values(chatTabs).forEach(tab => {
+      if (tab.sessionId && tab.metadata?.mode === 'workflow') {
+        ids.add(tab.sessionId)
+      }
+    })
+    return ids
+  }, [showRunningDrawer, chatTabs])
+
   // Combine tracked workflows with active workflow tabs
   // Only compute when drawer is visible to avoid performance impact on main UI
   const allWorkflows = useMemo(() => {
@@ -250,16 +263,17 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
       if (wf.sessionId) seenSessionIds.add(wf.sessionId)
     })
 
-    // Then, add active workflow tabs that aren't already in tracked list
     Object.values(chatTabs).forEach(tab => {
+      const isStreaming = getTabStreamingStatus(tab.tabId)
+      const isActiveSession = tab.sessionId && activeSessionIds.has(tab.sessionId)
+      
       if (tab.metadata?.mode !== 'workflow') return
       if (tab.sessionId && seenSessionIds.has(tab.sessionId)) return
 
       const presetId = tab.metadata?.presetQueryId
       if (!presetId) return
 
-      const isStreaming = getTabStreamingStatus(tab.tabId)
-      if (!isStreaming) return // Only show actively running tabs
+      if (!isStreaming && !isActiveSession) return // Only show actively running tabs
 
       const preset = customPresets.find(p => p.id === presetId) || predefinedPresets.find(p => p.id === presetId)
       const presetName = preset?.label || tab.name || 'Workflow'
@@ -375,19 +389,6 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
       return aIsStale ? 1 : -1
     })
   }, [showRunningDrawer, runningWorkflows, chatTabs, tabEvents, getTabStreamingStatus, customPresets, predefinedPresets, activePresetId, stepProgress])
-
-  // Get set of session IDs that are already active in tabs
-  // Only compute when drawer is visible
-  const activeSessionIds = useMemo(() => {
-    if (!showRunningDrawer) return new Set<string>()
-    const ids = new Set<string>()
-    Object.values(chatTabs).forEach(tab => {
-      if (tab.sessionId && tab.metadata?.mode === 'workflow') {
-        ids.add(tab.sessionId)
-      }
-    })
-    return ids
-  }, [showRunningDrawer, chatTabs])
 
   // Auto-expand latest events by default - update when workflows change
   useEffect(() => {
@@ -642,6 +643,11 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
                 const STALE_THRESHOLD_MS = 10 * 60 * 1000 // 10 minutes
                 const now = Date.now()
                 const isStale = workflow.lastEventTime ? (now - workflow.lastEventTime) > STALE_THRESHOLD_MS : true
+                
+                // Use lastEventTime for display if available and more recent than creation/minimize time
+                const displayTimestamp = (workflow.lastEventTime && workflow.lastEventTime > workflow.timestamp) 
+                  ? workflow.lastEventTime 
+                  : workflow.timestamp
 
                 return (
                 <div
@@ -841,7 +847,7 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
                   {/* Footer: Time + Action hint */}
                   <div className="flex items-center justify-between mt-3 pt-2 border-t border-border/50 text-xs">
                     <span className="text-muted-foreground">
-                      {formatTimestamp(workflow.timestamp)}
+                      {formatTimestamp(displayTimestamp)}
                     </span>
                     <div className="flex items-center gap-1 text-primary font-medium">
                       <Eye className="w-3 h-3" />

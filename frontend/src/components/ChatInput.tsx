@@ -333,7 +333,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       
       const newConfig = {
         ...currentConfig, // ✅ Preserve all existing configuration
-        provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex',
+        provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
         model_id: llm.model
       }
       
@@ -1056,8 +1056,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-2">
                 
-                {/* Agent Mode Selector - Only show when no preset is active */}
-                {!chatActivePreset && (
+                {/* Agent Mode Selector - Only show when no preset is active AND not in skill_builder mode */}
+                {!chatActivePreset && agentMode !== 'skill_builder' && (
                   <div className="flex items-center gap-2">
                     {/* Agent Mode Toggle - Simple / Code Exec / Tool Search (mutually exclusive) */}
                     <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
@@ -1137,21 +1137,25 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 {/* Server and LLM Selection - only show when no preset is active */}
                 {!chatActivePreset && (
                   <div className="flex items-center gap-2">
-                    <ServerSelectionDropdown
-                      availableServers={availableServers}
-                      selectedServers={manualSelectedServers}
-                      onServerToggle={onManualServerToggle}
-                      onSelectAll={onSelectAllServers}
-                      onClearAll={onClearAllServers}
-                      disabled={isStreaming || isSummarizing}
-                    />
-                    <SkillSelectionDropdown
-                      selectedSkills={selectedSkills}
-                      onSkillToggle={onSkillToggle}
-                      onSelectAll={onSelectAllSkills}
-                      onClearAll={onClearAllSkills}
-                      disabled={isStreaming || isSummarizing}
-                    />
+                    {agentMode !== 'skill_builder' && (
+                      <>
+                        <ServerSelectionDropdown
+                          availableServers={availableServers}
+                          selectedServers={manualSelectedServers}
+                          onServerToggle={onManualServerToggle}
+                          onSelectAll={onSelectAllServers}
+                          onClearAll={onClearAllServers}
+                          disabled={isStreaming || isSummarizing}
+                        />
+                        <SkillSelectionDropdown
+                          selectedSkills={selectedSkills}
+                          onSkillToggle={onSkillToggle}
+                          onSelectAll={onSelectAllSkills}
+                          onClearAll={onClearAllSkills}
+                          disabled={isStreaming || isSummarizing}
+                        />
+                      </>
+                    )}
                     <LLMSelectionDropdown
                       availableLLMs={availableLLMs}
                       selectedLLM={primaryLLM}

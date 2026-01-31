@@ -16,6 +16,8 @@ import { WorkflowLayout } from "./components/workflow";
 import { EventModeProvider } from "./components/events";
 import { ModePresetBar } from "./components/ModePresetBar";
 import { ChatTabs } from "./components/ChatTabs";
+import { RunningWorkflowsDrawer } from "./components/workflow/RunningWorkflowsDrawer";
+import { type RunningWorkflow } from "./stores/useRunningWorkflowsStore";
 import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
 import { useModeStore } from "./stores/useModeStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
@@ -158,7 +160,7 @@ function App() {
   const [restoreError, setRestoreError] = useState<string | null>(null)
   
   // Ref to prevent duplicate default tab creation (React StrictMode runs effects twice)
-  const hasCreatedDefaultTabRef = useRef(false)
+  const hasCreatedDefaultTabRef = useRef<string | null>(null)
   
   const { clearActivePreset, applyPreset, getActivePreset } = useGlobalPresetStore()
 
@@ -374,46 +376,46 @@ function App() {
   useEffect(() => {
     if (!hasCompletedInitialSetup) return
     
-    // Only create default tab for chat mode
-    if (selectedModeCategory !== 'chat') {
+    // Only create default tab for chat/skill_builder modes
+    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'skill_builder') {
       return
     }
     
     // Prevent duplicate execution (React StrictMode runs effects twice)
-    if (hasCreatedDefaultTabRef.current) {
+    if (hasCreatedDefaultTabRef.current === selectedModeCategory) {
       return
     }
     
     const chatStore = useChatStore.getState()
     const existingTabs = Object.values(chatStore.chatTabs)
     
-    // Filter to only chat mode tabs
-    const chatModeTabs = existingTabs.filter(tab => 
-      tab.metadata?.mode === 'chat'
+    // Filter to only tabs for current mode
+    const modeTabs = existingTabs.filter(tab => 
+      tab.metadata?.mode === selectedModeCategory
     )
     
-    // If chat mode tabs already exist, skip
-    if (chatModeTabs.length > 0) {
+    // If tabs already exist for this mode, skip
+    if (modeTabs.length > 0) {
       return
     }
     
-    // Mark as in progress
-    hasCreatedDefaultTabRef.current = true
+    // Mark as in progress for this mode
+    hasCreatedDefaultTabRef.current = selectedModeCategory
     
     // Create default tab with new session ID
     const createDefaultTab = async () => {
       // Double-check tabs don't exist right before creating (race condition protection)
       const currentTabs = Object.values(useChatStore.getState().chatTabs)
-      const currentChatTabs = currentTabs.filter(tab => 
-        tab.metadata?.mode === 'chat'
+      const currentModeTabs = currentTabs.filter(tab => 
+        tab.metadata?.mode === selectedModeCategory
       )
-      if (currentChatTabs.length === 0) {
+      if (currentModeTabs.length === 0) {
         try {
-          await chatStore.createChatTab('Chat 1', { mode: 'chat' })
+          await chatStore.createChatTab('Chat 1', { mode: selectedModeCategory })
         } catch (error) {
           console.error('Failed to create default tab:', error)
           // Reset flag on error so it can retry
-          hasCreatedDefaultTabRef.current = false
+          hasCreatedDefaultTabRef.current = null
         }
       }
     }
@@ -421,34 +423,34 @@ function App() {
     createDefaultTab()
   }, [hasCompletedInitialSetup, selectedModeCategory])
 
-  // Ensure a chat tab is selected after restore (fix for page reload issue)
-  // This ensures that when tabs are restored from localStorage, we select the first chat tab
-  // if activeTabId is null or invalid
+  // Ensure a chat/skill tab is selected after restore (fix for page reload issue)
+  // This ensures that when tabs are restored from localStorage, we select the first tab of the current mode
+  // if activeTabId is null or invalid or belongs to a different mode
   useEffect(() => {
     if (!hasCompletedInitialSetup) return
     
-    // Only run for chat mode
-    if (selectedModeCategory !== 'chat') {
+    // Only run for chat/skill_builder modes
+    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'skill_builder') {
       return
     }
     
     const chatStore = useChatStore.getState()
     const activeTabId = chatStore.activeTabId
     
-    // Check if activeTabId is null or points to a non-existent tab
+    // Check if activeTabId is null, points to a non-existent tab, or belongs to a different mode
     const activeTab = activeTabId ? chatStore.getTab(activeTabId) : null
-    const hasValidActiveTab = activeTab && activeTab.metadata?.mode === 'chat'
+    const hasValidActiveTab = activeTab && activeTab.metadata?.mode === selectedModeCategory
     
     if (!hasValidActiveTab) {
-      // Find the first chat tab
-      const chatTabs = Object.values(chatStore.chatTabs).filter(tab => 
-        tab.metadata?.mode === 'chat'
+      // Find the first tab for the current mode
+      const modeTabs = Object.values(chatStore.chatTabs).filter(tab => 
+        tab.metadata?.mode === selectedModeCategory
       ).sort((a, b) => a.createdAt - b.createdAt)
       
-      if (chatTabs.length > 0) {
-        // Select the first chat tab
-        console.log(`[App] No valid active tab found, selecting first chat tab: ${chatTabs[0].tabId}`)
-        chatStore.switchTab(chatTabs[0].tabId)
+      if (modeTabs.length > 0) {
+        // Select the first tab
+        console.log(`[App] No valid active tab found for mode ${selectedModeCategory}, selecting first tab: ${modeTabs[0].tabId}`)
+        chatStore.switchTab(modeTabs[0].tabId)
       }
     }
   }, [hasCompletedInitialSetup, selectedModeCategory])
@@ -560,26 +562,135 @@ function App() {
       // Tab already exists, just switch to it
       console.log(`[App] Tab ${existingTab.tabId} already exists for session ${sessionId}, switching to it`)
       chatStore.switchTab(existingTab.tabId)
-      // Still set chatSessionId for consistency (ChatArea uses it)
-      setChatSessionId(sessionId)
-      // Still update the title in case it changed
-      setChatSessionTitle(sessionTitle || '')
+      
+      // Auto-minimize sidebar when restoring a chat
+      setSidebarMinimized(true)
+      
+      // Don't set chatSessionId/Title here - this triggers redundant effects in ChatArea
+      // The tab switch is sufficient for the UI to update via activeTabId
+      
       // Clear file content view
       setShowFileContent(false)
       return
     }
     
-    // No existing tab, proceed with normal flow
-    // Use the session ID directly without timestamp to avoid unnecessary reloads
-    // ChatArea will check if events are already loaded and skip reloading if they exist
-    setChatSessionId(sessionId);
+    // No existing tab, create one immediately to ensure UI selection
+    const createAndSwitchTab = async () => {
+      // Default to tiny mode, ChatArea will update to advanced if needed (e.g. for orchestrator)
+      const newTabId = await chatStore.createChatTab(
+        sessionTitle || 'Chat', 
+        { mode: 'chat' }, 
+        sessionId, 
+        'tiny'
+      )
+      chatStore.switchTab(newTabId)
+      
+      // Now set the session ID to trigger hydration in ChatArea
+      setChatSessionId(sessionId);
+      setSidebarMinimized(true);
+      setChatSessionTitle(sessionTitle || '');
+    }
     
-    setChatSessionTitle(sessionTitle || '');
-    
-    // Clear file content view when selecting a chat session
-    setShowFileContent(false);
-  }, [setChatSessionId, setChatSessionTitle, setShowFileContent]);
+    createAndSwitchTab()
+  }, [setChatSessionId, setChatSessionTitle, setShowFileContent, setSidebarMinimized]);
 
+  // Handle restoring a workflow from running list
+  const handleRestoreWorkflow = useCallback(async (workflow: RunningWorkflow) => {
+    console.log('[App] Restoring workflow from running list:', workflow)
+
+    // Ensure we're in workflow mode
+    const { setModeCategory } = useModeStore.getState()
+    const currentMode = useModeStore.getState().selectedModeCategory
+    if (currentMode !== 'workflow') {
+      setModeCategory('workflow')
+    }
+
+    // If this workflow is for a different preset, switch to it
+    const activePresetId = useGlobalPresetStore.getState().activePresetIds.workflow
+    if (workflow.presetId !== activePresetId) {
+      console.log('[App] Switching to preset:', workflow.presetId)
+      useGlobalPresetStore.getState().applyPreset(workflow.presetId, 'workflow')
+      // Small delay to let preset switch settle
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+
+    // Load run folders to find the latest iteration
+    const { loadRunFolders, setSelectedRunFolder, setSelectedGroupIds } = useWorkflowStore.getState()
+
+    if (workflow.workspacePath) {
+      try {
+        // Load run folders for this workspace
+        await loadRunFolders(workflow.workspacePath)
+
+        // Get the updated run folders from state
+        const folders = useWorkflowStore.getState().runFolders
+
+        if (folders.length > 0) {
+          // Folders are already sorted by iteration number descending (newest first)
+          const latestFolder = folders[0]
+          console.log('[App] Latest iteration:', latestFolder.name, 'Stored iteration:', workflow.runFolder)
+
+          // Always use the latest iteration
+          setSelectedRunFolder(latestFolder.name)
+        } else if (workflow.runFolder && workflow.runFolder !== 'new') {
+          // No folders found, use the stored run folder
+          setSelectedRunFolder(workflow.runFolder)
+        }
+      } catch (error) {
+        console.error('[App] Failed to load run folders during restore:', error)
+        // Fallback to stored run folder
+        if (workflow.runFolder && workflow.runFolder !== 'new') {
+          setSelectedRunFolder(workflow.runFolder)
+        }
+      }
+    } else if (workflow.runFolder && workflow.runFolder !== 'new') {
+      // No workspace path, just use stored run folder
+      setSelectedRunFolder(workflow.runFolder)
+    }
+
+    // Restore selected group IDs if they exist
+    if (workflow.selectedGroupIds && workflow.selectedGroupIds.length > 0) {
+      console.log('[App] Restoring selected groups:', workflow.selectedGroupIds)
+      setSelectedGroupIds(workflow.selectedGroupIds)
+    }
+
+    // Create a new tab connected to the restored session
+    const { createChatTab, switchTab } = useChatStore.getState()
+    const { getPhaseById } = useWorkflowStore.getState()
+
+    // Get phase info
+    const phase = getPhaseById(workflow.phaseId)
+    const phaseName = phase?.title || workflow.phaseName
+
+    // Check if a tab with this sessionId already exists
+    const existingTabs = Object.values(useChatStore.getState().chatTabs)
+    const existingTab = existingTabs.find(tab =>
+      tab.sessionId === workflow.sessionId &&
+      tab.metadata?.mode === 'workflow'
+    )
+
+    if (existingTab) {
+      // Tab already exists, just switch to it
+      console.log('[App] Found existing tab for session, switching to it:', existingTab.tabId)
+      switchTab(existingTab.tabId)
+    } else {
+      // Create a new tab connected to the session
+      console.log('[App] Creating new tab for restored session:', workflow.sessionId)
+      const tabId = await createChatTab(phaseName, {
+        mode: 'workflow',
+        phaseId: workflow.phaseId,
+        phaseName,
+        presetQueryId: workflow.presetId
+      }, workflow.sessionId)  // Pass sessionId to connect to existing session
+
+      switchTab(tabId)
+    }
+
+    // Show the chat area so user can see the logs
+    useWorkflowStore.getState().setShowChatArea(true)
+
+    console.log('[App] Workflow restored, sessionId:', workflow.sessionId)
+  }, []);
 
   // Minimize toggle functions
   const toggleSidebarMinimize = useCallback(() => {
@@ -601,11 +712,17 @@ function App() {
       if ((event.ctrlKey || event.metaKey) && event.key === '3') {
         event.preventDefault()
       }
-      // Ctrl/Cmd + 4 for Workflow agent mode
-      if ((event.ctrlKey || event.metaKey) && event.key === '4') {
-        event.preventDefault()
-        setAgentMode('workflow')
-      }
+        // Ctrl/Cmd + 4 for Workflow agent mode
+        if ((event.metaKey || event.ctrlKey) && event.key === '4') {
+          event.preventDefault()
+          setAgentMode('workflow')
+        }
+
+        // Ctrl/Cmd + 5 for Skill Builder agent mode
+        if ((event.metaKey || event.ctrlKey) && event.key === '5') {
+          event.preventDefault()
+          setAgentMode('skill_builder')
+        }
       // Ctrl/Cmd + 5 for sidebar minimize
       if ((event.ctrlKey || event.metaKey) && event.key === '5') {
         event.preventDefault()
@@ -640,6 +757,7 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
+        <TooltipProvider>
         {/* Mode Selection Modal */}
         <ModeSelectionModal 
           isOpen={showModeSelection}
@@ -688,6 +806,11 @@ function App() {
                 )}
               </div>
             </EventModeProvider>
+
+            {/* Running Workflows Tracking - Global */}
+            <RunningWorkflowsDrawer
+              onRestoreWorkflow={handleRestoreWorkflow}
+            />
             
             {/* File Content View - overlay when showing file content */}
             {showFileContent && (
@@ -1011,6 +1134,7 @@ function App() {
             </div>
           </div>
         )}
+        </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );

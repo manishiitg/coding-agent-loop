@@ -10,6 +10,7 @@ import (
 	_ "net/http/pprof" // Register pprof handlers
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -34,6 +35,7 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
+	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/logger"
 	"mcp-agent-builder-go/agent_go/pkg/skills"
 
@@ -204,6 +206,42 @@ func createCustomTools(workflowMode bool) ([]llmtypes.Tool, map[string]interface
 	return allTools, allExecutors, toolCategories
 }
 
+// enhanceToolDescriptionForChatMode enhances a tool description with chat-mode-specific directory access information
+func enhanceToolDescriptionForChatMode(toolName, originalDescription string) string {
+	// Special tools that don't operate on specific directories
+	specialTools := map[string]bool{
+		"sync_workspace_to_github":    true,
+		"get_workspace_github_status": true,
+		"human_feedback":              true,
+		"fetch_web_content":           true,
+	}
+	if specialTools[toolName] {
+		return originalDescription
+	}
+
+	// Write tools are restricted to Chats/
+	writeTools := map[string]bool{
+		"update_workspace_file":     true,
+		"diff_patch_workspace_file": true,
+		"delete_workspace_file":     true,
+		"write_workspace_file":      true,
+		"move_workspace_file":       true,
+		"execute_shell_command":     true, // Shell can write too
+	}
+
+	var accessInfo strings.Builder
+	accessInfo.WriteString("\n\n📁 **DIRECTORY ACCESS RESTRICTIONS (CHAT MODE):**")
+
+	if writeTools[toolName] {
+		accessInfo.WriteString("\n\n⚠️ **IMPORTANT:** You can ONLY write/modify files in the 'Chats/' folder. All other folders are read-only.")
+		accessInfo.WriteString("\nExample: 'Chats/output.txt', 'Chats/data.json'.")
+	} else {
+		accessInfo.WriteString("\n\nYou have READ access to all workspace folders (Workflow/, skills/, etc.), but you can only WRITE to the 'Chats/' folder.")
+	}
+
+	return originalDescription + accessInfo.String()
+}
+
 // wrapExecutorsWithChatModeFolderGuard wraps workspace tool executors to restrict chat mode to only write in Chats/ folder
 // This creates a wrapper that:
 // 1. ALLOWS read access to all folders (list, search, read operations)
@@ -260,7 +298,7 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 				}
 				// Inject allowed write folder for kernel-level sandboxing
 				// Shell commands can only write to Chats/ folder
-				ctx = context.WithValue(ctx, virtualtools.FolderGuardAllowedWriteFolderKey, allowedWriteFolder)
+				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, allowedWriteFolder)
 			}
 
 			// For WRITE tools, ONLY allow writes to Chats/ folder
@@ -268,9 +306,16 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 				for _, paramName := range writePathParams {
 					if paramValue, exists := args[paramName]; exists {
 						if pathStr, ok := paramValue.(string); ok && pathStr != "" {
+							// Clean the path to resolve .. and .
+							cleanedPath := filepath.Clean(pathStr)
+							
 							// Check if path starts with Chats/ - this is the ONLY allowed write location
-							if !strings.HasPrefix(pathStr, allowedWriteFolder) && !strings.HasPrefix(pathStr, "Chats") {
-								log.Printf("[CHAT MODE FOLDER GUARD] Blocked WRITE to '%s' for tool %s - chat mode can only write to Chats/ folder", pathStr, toolNameCopy)
+							// Must start with Chats and be either "Chats" exactly or "Chats/" (subfolder/file)
+							isChatsDir := cleanedPath == "Chats"
+							isChildOfChats := strings.HasPrefix(cleanedPath, "Chats/") || strings.HasPrefix(cleanedPath, "Chats\\")
+							
+							if !isChatsDir && !isChildOfChats {
+								log.Printf("[CHAT MODE FOLDER GUARD] Blocked WRITE to '%s' (cleaned: '%s') for tool %s - chat mode can only write to Chats/ folder", pathStr, cleanedPath, toolNameCopy)
 								return "", fmt.Errorf("access denied: cannot write to '%s' (chat mode can only write to Chats/ folder)", pathStr)
 							}
 						}
@@ -289,6 +334,76 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 	}
 
 	log.Printf("[CHAT MODE FOLDER GUARD] Wrapped %d executors - chat mode can only write to Chats/ folder", len(wrappedExecutors))
+	return wrappedExecutors
+}
+
+// wrapExecutorsWithSkillBuilderFolderGuard wraps workspace tool executors to restrict skill builder mode to only write in skills/ folder
+func wrapExecutorsWithSkillBuilderFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error)) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+	// The ONLY folder skill builder mode can write to
+	allowedWriteFolder := "skills/custom/"
+
+	// Write tools that should be restricted to skills/custom/ folder
+	writeTools := map[string]bool{
+		"update_workspace_file":     true,
+		"delete_workspace_file":     true,
+		"move_workspace_file":       true,
+		"diff_patch_workspace_file": true,
+		"write_workspace_file":      true,
+	}
+
+	// Path parameters to check for write tools
+	writePathParams := []string{"filepath", "source_filepath", "destination_filepath"}
+
+	wrappedExecutors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
+
+	for toolName, executor := range executors {
+		toolNameCopy := toolName
+		originalExecutor := executor
+
+		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
+			// For shell commands, restrict to skills/custom/ folder for writes
+			if toolNameCopy == "execute_shell_command" {
+				if cmdValue, exists := args["command"]; exists {
+					if cmdStr, ok := cmdValue.(string); ok {
+						cmdLower := strings.ToLower(cmdStr)
+
+						// Block git commands
+						if strings.HasPrefix(cmdLower, "git ") || strings.Contains(cmdLower, " git ") {
+							return "", fmt.Errorf("access denied: git commands are not allowed in skill builder mode")
+						}
+					}
+				}
+				// Inject allowed write folder for kernel-level sandboxing
+				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, allowedWriteFolder)
+			}
+
+			// For WRITE tools, ONLY allow writes to skills/custom/ folder
+			if writeTools[toolNameCopy] {
+				for _, paramName := range writePathParams {
+					if paramValue, exists := args[paramName]; exists {
+						if pathStr, ok := paramValue.(string); ok && pathStr != "" {
+							cleanedPath := filepath.Clean(pathStr)
+							
+							// Check if path starts with skills/custom/
+							isCustomSkillsDir := cleanedPath == "skills/custom"
+							isChildOfCustomSkills := strings.HasPrefix(cleanedPath, "skills/custom/") || strings.HasPrefix(cleanedPath, "skills\\custom\\")
+							
+							if !isCustomSkillsDir && !isChildOfCustomSkills {
+								log.Printf("[SKILL BUILDER FOLDER GUARD] Blocked WRITE to '%s' - can only write to skills/custom/ folder", pathStr)
+								return "", fmt.Errorf("access denied: cannot write to '%s' (skill builder mode can only write to skills/custom/ folder)", pathStr)
+							}
+						}
+					}
+				}
+			}
+
+			return originalExecutor(ctx, args)
+		}
+
+		wrappedExecutors[toolNameCopy] = wrappedExecutor
+	}
+
+	log.Printf("[SKILL BUILDER FOLDER GUARD] Wrapped %d executors - can only write to skills/custom/ folder", len(wrappedExecutors))
 	return wrappedExecutors
 }
 
@@ -1004,6 +1119,16 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Println("✅ Server shutdown complete")
+}
+
+// GetAPIURL returns the base URL for the API server
+// It handles replacing 0.0.0.0 with 127.0.0.1 for local loopback calls
+func (api *StreamingAPI) GetAPIURL() string {
+	host := api.config.Host
+	if host == "0.0.0.0" || host == "" {
+		host = "127.0.0.1"
+	}
+	return fmt.Sprintf("http://%s:%d", host, api.config.Port)
 }
 
 // CORS middleware
@@ -2265,9 +2390,42 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Note: Frontend always sends enable_workspace_access for chat mode (true/false)
 		// Chat mode is detected by: "simple", "" (empty/default), or "chat" agent mode
 		// Workflow/orchestrator modes handle workspace tools differently, so exclude them
+		// Skill Builder mode is also treated as a chat-like mode but with specific folder guards
 		isChatMode := req.AgentMode == "simple" || req.AgentMode == "" || req.AgentMode == "chat"
+		isSkillBuilderMode := req.AgentMode == "skill_builder"
+
+		// For Skill Builder mode, ensure skill-creator is installed and selected
+		if isSkillBuilderMode {
+			workspaceAPIURL := api.GetAPIURL()
+			// Check if skill-creator exists
+			_, err := skills.GetSkill(workspaceAPIURL, "skill-creator")
+			if err != nil {
+				log.Printf("[SKILL BUILDER] skill-creator not found, attempting import from GitHub...")
+				// Import skill-creator
+				_, err := skills.ImportGitHubSkill(workspaceAPIURL, "https://github.com/anthropics/skills/tree/main/skills/skill-creator")
+				if err != nil {
+					log.Printf("[SKILL BUILDER] Warning: Failed to import skill-creator: %v", err)
+				} else {
+					log.Printf("[SKILL BUILDER] Successfully imported skill-creator")
+				}
+			}
+
+			// Add skill-creator to selected skills if not present
+			hasSkillCreator := false
+			for _, s := range req.SelectedSkills {
+				if s == "skill-creator" {
+					hasSkillCreator = true
+					break
+				}
+			}
+			if !hasSkillCreator {
+				req.SelectedSkills = append(req.SelectedSkills, "skill-creator")
+				log.Printf("[SKILL BUILDER] Automatically added skill-creator to selected skills")
+			}
+		}
+
 		// log.Printf("[FOLDER GUARD DEBUG] req.AgentMode=%s, isChatMode=%v, GetUnderlyingAgent()!=nil: %v", req.AgentMode, isChatMode, llmAgent.GetUnderlyingAgent() != nil)
-		if isChatMode && llmAgent.GetUnderlyingAgent() != nil {
+		if (isChatMode || isSkillBuilderMode) && llmAgent.GetUnderlyingAgent() != nil {
 			// Check if workspace access is enabled
 			// Default to true for backward compatibility with legacy requests
 			// nil = inherit default (true), non-nil = explicit override
@@ -2302,22 +2460,39 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if enableWorkspaceAccess {
-				// Create Chats/ folder if it doesn't exist (chat mode can only write here)
+				// Create Chats/ folder if it doesn't exist
 				if err := skills.CreateFolder("Chats"); err != nil {
-					// Log warning but don't fail - folder may already exist
-					log.Printf("[CHAT MODE] Warning: Could not create Chats/ folder: %v", err)
-				} else {
-					log.Printf("[CHAT MODE] Ensured Chats/ folder exists for chat output")
+					log.Printf("[WORKSPACE] Warning: Could not create Chats/ folder: %v", err)
 				}
 
-				// Chat mode: only workspace_advanced tools (shell, image, web fetch, PDF)
-				workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
-				workspaceExecutors := virtualtools.CreateWorkspaceAdvancedToolExecutors()
-				_, _, toolCategories := createCustomTools(false) // Get toolCategories map for chat mode (advanced only)
+				// Create skills/ folder if it doesn't exist
+				if err := skills.CreateFolder("skills"); err != nil {
+					log.Printf("[WORKSPACE] Warning: Could not create skills/ folder: %v", err)
+				} else {
+					// Create skills/custom/ folder for Skill Builder
+					if err := skills.CreateFolder("skills/custom"); err != nil {
+						log.Printf("[WORKSPACE] Warning: Could not create skills/custom/ folder: %v", err)
+					} else {
+						log.Printf("[WORKSPACE] Ensured skills/ and skills/custom/ folders exist")
+					}
+				}
 
-				// Apply folder guard to block Workflow/ folder access in chat mode
-				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors)
-				log.Printf("[CHAT MODE FOLDER GUARD] Applied Workflow/ folder restriction to chat mode")
+				// Chat mode: include all workspace tools (basic + git + advanced)
+				// These tools will be RESTRICTED to Chats/ folder via wrapExecutorsWithChatModeFolderGuard
+				workspaceTools := virtualtools.CreateWorkspaceTools()
+				workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
+				_, _, toolCategories := createCustomTools(true) // Get toolCategories map (all tools)
+
+				// Apply folder guard to block Workflow/ folder access and restrict writes to appropriate folders
+				if isSkillBuilderMode {
+					// Skill Builder mode: restrict writes to skills/custom/ folder
+					workspaceExecutors = wrapExecutorsWithSkillBuilderFolderGuard(workspaceExecutors)
+					log.Printf("[SKILL BUILDER FOLDER GUARD] Applied skills/custom/ folder restriction to skill builder tools")
+				} else {
+					// Chat mode: restrict writes to Chats/ folder
+					workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors)
+					log.Printf("[CHAT MODE FOLDER GUARD] Applied Chats/ folder restriction to chat mode tools")
+				}
 
 				// Apply skill folder guard if skills are selected (read-only access to selected skills only)
 				if len(req.SelectedSkills) > 0 {
@@ -2335,8 +2510,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					toolName := tool.Function.Name
 					if executor, exists := workspaceExecutors[toolName]; exists {
-						// Convert Parameters to map[string]interface{} using JSON marshal/unmarshal
-						// This matches the workflow implementation for consistency
+						// Enhance tool description for chat mode
+						enhancedDescription := enhanceToolDescriptionForChatMode(toolName, tool.Function.Description)
+
+						// Convert Parameters to map[string]interface{}
 						var params map[string]interface{}
 						if tool.Function.Parameters != nil {
 							paramsBytes, err := json.Marshal(tool.Function.Parameters)
@@ -2361,7 +2538,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						// No type assertion needed unlike workflow where executors are map[string]interface{}
 						if err := underlyingAgent.RegisterCustomTool(
 							toolName,
-							tool.Function.Description,
+							enhancedDescription,
 							params,
 							executor,
 							toolCategory,
@@ -2496,7 +2673,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Add base instructions for all agents
-			underlyingAgent.AppendSystemPrompt(GetAgentInstructions())
+			if isSkillBuilderMode {
+				underlyingAgent.AppendSystemPrompt(GetSkillBuilderInstructions())
+			} else {
+				underlyingAgent.AppendSystemPrompt(GetAgentInstructions())
+			}
 
 			// Add skill instructions if skills are selected
 			if len(req.SelectedSkills) > 0 {
@@ -2910,6 +3091,7 @@ func listChatSessionsHandler(db database.Database) http.HandlerFunc {
 		limitStr := r.URL.Query().Get("limit")
 		offsetStr := r.URL.Query().Get("offset")
 		presetQueryID := r.URL.Query().Get("preset_query_id")
+		agentMode := r.URL.Query().Get("agent_mode")
 
 		limit := 20
 		offset := 0
@@ -2932,7 +3114,13 @@ func listChatSessionsHandler(db database.Database) http.HandlerFunc {
 			presetQueryIDPtr = &presetQueryID
 		}
 
-		sessions, total, err := db.ListChatSessions(r.Context(), limit, offset, presetQueryIDPtr, nil)
+		// Convert agent_mode to pointer for optional filtering
+		var agentModePtr *string
+		if agentMode != "" {
+			agentModePtr = &agentMode
+		}
+
+		sessions, total, err := db.ListChatSessions(r.Context(), limit, offset, presetQueryIDPtr, agentModePtr)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

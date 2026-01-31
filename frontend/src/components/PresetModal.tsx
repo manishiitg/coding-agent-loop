@@ -84,7 +84,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   // LLM selection handler - updates local preset LLM config
   const handleLLMSelect = useCallback((llm: LLMOption) => {
     setLlmConfig({
-      provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex',
+      provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
       model_id: llm.model
     });
   }, []);
@@ -460,7 +460,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           llm.provider === executionLLM.provider && llm.model === executionLLM.model_id
                         ) || null : currentLLMOption}
                         onLLMSelect={(llm) => setExecutionLLM({
-                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
                           model_id: llm.model
                         })}
                         onRefresh={refreshAvailableLLMs}
@@ -495,7 +495,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           llm.provider === validationLLM.provider && llm.model === validationLLM.model_id
                         ) || null : currentLLMOption}
                         onLLMSelect={(llm) => setValidationLLM({
-                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
                           model_id: llm.model
                         })}
                         onRefresh={refreshAvailableLLMs}
@@ -530,7 +530,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           llm.provider === learningLLM.provider && llm.model === learningLLM.model_id
                         ) || null : currentLLMOption}
                         onLLMSelect={(llm) => setLearningLLM({
-                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
                           model_id: llm.model
                         })}
                         onRefresh={refreshAvailableLLMs}
@@ -565,7 +565,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           llm.provider === phaseLLM.provider && llm.model === phaseLLM.model_id
                         ) || null : currentLLMOption}
                         onLLMSelect={(llm) => setPhaseLLM({
-                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
                           model_id: llm.model
                         })}
                         onRefresh={refreshAvailableLLMs}

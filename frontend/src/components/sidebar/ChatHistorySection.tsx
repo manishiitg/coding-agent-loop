@@ -69,12 +69,18 @@ export default function ChatHistorySection({
 
     switch (selectedModeCategory) {
       case 'chat':
-        // Show ALL chat sessions EXCEPT workflows
-        // This includes: simple, code exec, orchestrator, and any other non-workflow modes
+        // Show ALL chat sessions EXCEPT workflows AND skill_builder
+        // This includes: simple, code exec, orchestrator, etc.
         return sessions.filter(session => {
           const agentMode = (session.agent_mode || '').toLowerCase()
-          // Exclude only workflow sessions, show everything else (simple, code exec, orchestrator, etc.)
-          return agentMode !== 'workflow'
+          // Exclude workflow and skill_builder sessions
+          return agentMode !== 'workflow' && agentMode !== 'skill_builder'
+        })
+      
+      case 'skill_builder':
+        // Show ONLY skill_builder sessions
+        return sessions.filter(session => {
+          return (session.agent_mode || '').toLowerCase() === 'skill_builder'
         })
       
       case 'workflow':
@@ -177,6 +183,8 @@ export default function ChatHistorySection({
     switch (agentMode.toLowerCase()) {
       case 'simple':
         return 'Simple'
+      case 'skill_builder':
+        return 'Skill Builder'
       case 'workflow':
         return 'Workflow'
       default:
@@ -331,7 +339,7 @@ export default function ChatHistorySection({
                     )}
                   </div>
                 <div className="text-xs text-gray-500 dark:text-gray-400">
-                  {formatDate(session.created_at)}
+                  {formatDate(session.last_activity || session.created_at)}
                   {session.agent_mode && (
                     <span className="ml-2 px-2 py-0.5 rounded text-xs bg-muted text-muted-foreground">
                       {formatAgentMode(session.agent_mode)}

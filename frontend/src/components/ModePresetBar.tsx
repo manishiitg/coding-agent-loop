@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { MessageCircle, Workflow, Settings, ExternalLink, Trash2, Copy } from 'lucide-react'
+import { MessageCircle, Workflow, Settings, ExternalLink, Trash2, Copy, Lightbulb } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import PresetModal from './PresetModal'
 import { useMCPStore } from '../stores/useMCPStore'
+import { useAppStore } from '../stores/useAppStore'
 import { APISamplesDialog } from './APISamplesDialog'
 
 const getModeIcon = (category: string) => {
@@ -14,6 +15,8 @@ const getModeIcon = (category: string) => {
       return <MessageCircle className="w-3 h-3" />
     case 'workflow':
       return <Workflow className="w-3 h-3" />
+    case 'skill_builder':
+      return <Lightbulb className="w-3 h-3" />
     default:
       return <MessageCircle className="w-3 h-3" />
   }
@@ -25,6 +28,8 @@ const getModeName = (category: string) => {
       return 'Chat Mode'
     case 'workflow':
       return 'Workflow Mode'
+    case 'skill_builder':
+      return 'Skill Builder'
     default:
       return 'Chat Mode'
   }
@@ -36,6 +41,7 @@ const getModeName = (category: string) => {
  */
 export const ModePresetBar: React.FC = () => {
   const { selectedModeCategory, setModeCategory, getAgentModeFromCategory } = useModeStore()
+  const { setWorkspaceMinimized } = useAppStore()
   // Use toolList to get all available servers, not just enabled ones
   const toolList = useMCPStore(state => state.toolList)
   const availableServers = React.useMemo(() => 
@@ -239,7 +245,9 @@ export const ModePresetBar: React.FC = () => {
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                     selectedModeCategory === 'chat'
                       ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
-                      : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                      : selectedModeCategory === 'skill_builder'
+                        ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                        : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
                   }`}
                   title="Click to change mode"
                   type="button"
@@ -305,6 +313,28 @@ export const ModePresetBar: React.FC = () => {
                           </div>
                         </div>
                       </button>
+                      {/* Skill Builder Mode */}
+                      <button
+                        onClick={() => {
+                          setModeCategory('skill_builder')
+                          setShowModeSwitch(false)
+                        }}
+                        className={`w-full text-left p-3 rounded-md text-sm transition-colors ${
+                          selectedModeCategory === 'skill_builder'
+                            ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-900 dark:text-emerald-100'
+                            : 'hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <Lightbulb className="w-4 h-4 text-emerald-500" />
+                          <div>
+                            <div className="font-medium">Skill Builder</div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400">
+                              Create reusable skills
+                            </div>
+                          </div>
+                        </div>
+                      </button>
                     </div>
                   </div>
                 )}
@@ -349,6 +379,7 @@ export const ModePresetBar: React.FC = () => {
                               e.stopPropagation()
                               setEditingPreset(activePreset as CustomPreset)
                               setShowPresetModal(true)
+                              setWorkspaceMinimized(true)
                             }}
                             className="px-2 py-1 border-l border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
                             title="Edit preset"
@@ -375,6 +406,7 @@ export const ModePresetBar: React.FC = () => {
                                 setEditingPreset(null)
                                 setShowPresetModal(true)
                                 setShowPresetDropdown(false)
+                                setWorkspaceMinimized(true)
                               }}
                               className="w-full text-left p-2 rounded-md text-sm hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300"
                             >
@@ -431,6 +463,7 @@ export const ModePresetBar: React.FC = () => {
                                             setEditingPreset(preset as CustomPreset)
                                             setShowPresetModal(true)
                                             setShowPresetDropdown(false)
+                                            setWorkspaceMinimized(true)
                                           }}
                                           className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                                           title="Edit preset"

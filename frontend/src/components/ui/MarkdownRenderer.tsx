@@ -12,14 +12,63 @@ interface MarkdownRendererProps {
   showScrollbar?: boolean
 }
 
-export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ 
-  content, 
-  className = "", 
+const ToolDefinition: React.FC<{ content: string }> = ({ content }) => {
+  const lines = content.split('\n').filter(line => line.trim() !== '')
+  const data: Record<string, string> = {}
+  
+  lines.forEach(line => {
+    const colonIndex = line.indexOf(':')
+    if (colonIndex !== -1) {
+      const key = line.slice(0, colonIndex).trim()
+      let value = line.slice(colonIndex + 1).trim()
+      // Remove quotes if present
+      if (value.startsWith('"') && value.endsWith('"')) {
+        value = value.slice(1, -1)
+      }
+      data[key] = value
+    }
+  })
+
+  return (
+    <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 my-4 shadow-sm">
+      <div className="font-semibold text-gray-900 dark:text-gray-100 mb-2 border-b border-gray-200 dark:border-gray-700 pb-2 flex items-center gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-500">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+        </svg>
+        Tool Definition
+      </div>
+      <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+        {Object.entries(data).map(([key, value]) => (
+          <React.Fragment key={key}>
+            <div className="font-medium text-gray-700 dark:text-gray-300 capitalize text-right self-start whitespace-nowrap">
+              {key.replace(/-/g, ' ')}:
+            </div>
+            <div className="text-gray-900 dark:text-gray-100 font-mono text-xs bg-white dark:bg-gray-900 px-2 py-0.5 rounded border border-gray-200 dark:border-gray-700 break-all">
+              {value || <span className="text-gray-400 italic">None</span>}
+            </div>
+          </React.Fragment>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
+  content,
+  className = "",
   maxHeight = "none",
-  showScrollbar = false 
+  showScrollbar = false
 }) => {
   const containerClasses = `prose prose-sm max-w-none dark:prose-invert ${className}`
   const scrollClasses = showScrollbar ? `max-h-[${maxHeight}] overflow-y-auto overflow-x-auto` : ""
+
+  const processedContent = React.useMemo(() => {
+    // Replace YAML-like frontmatter/blocks with a custom code block
+    // Matches content between --- and --- where the content looks like key-value pairs
+    // Regex: (^|\n)---\n([a-zA-Z0-9_-]+:[\s\S]+?)\n---(\n|$)
+    if (!content) return ""
+    return content.replace(/(^|\n)---\n([a-zA-Z0-9_-]+:[\s\S]+?)\n---(\n|$)/g, '$1\n```tool-definition\n$2\n```\n$3')
+  }, [content])
 
   return (
     <div className={`${containerClasses} ${scrollClasses} markdown-content`}>
@@ -133,6 +182,10 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           code: ({ className, children, inline, ...props }: React.HTMLAttributes<HTMLElement> & { inline?: boolean }) => {
             const match = /language-(\w+)/.exec(className || '')
             const isInline = typeof inline === 'boolean' ? inline : false
+            
+            if (!isInline && match && match[1] === 'tool-definition') {
+              return <ToolDefinition content={String(children).replace(/\n$/, '')} />
+            }
             
             // For inline code, use simple styling
             if (isInline || !match) {
@@ -253,7 +306,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           ),
         }}
       >
-        {content}
+        {processedContent}
       </ReactMarkdown>
     </div>
   )
@@ -290,4 +343,4 @@ export const ConversationMarkdownRenderer: React.FC<{ content: string; maxHeight
       <MarkdownRenderer content={content} />
     </div>
   </div>
-) 
+)

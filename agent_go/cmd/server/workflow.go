@@ -1925,6 +1925,9 @@ func (api *StreamingAPI) handleGetAllStepLearnings(w http.ResponseWriter, r *htt
 			if agentConfigs.UseCodeExecutionMode != nil {
 				metadata["use_code_execution_mode"] = *agentConfigs.UseCodeExecutionMode
 			}
+			if agentConfigs.UseToolSearchMode != nil {
+				metadata["use_tool_search_mode"] = *agentConfigs.UseToolSearchMode
+			}
 			if agentConfigs.LearningDetailLevel != "" {
 				metadata["learning_detail_level"] = agentConfigs.LearningDetailLevel
 			}

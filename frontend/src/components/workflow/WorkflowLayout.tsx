@@ -8,9 +8,7 @@ import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import ChatArea, { type ChatAreaRef } from '../ChatArea'
 import { ChatHeader } from '../ChatHeader'
 import { WorkflowChatTabs } from './WorkflowChatTabs'
-import { RunningWorkflowsIndicator } from './RunningWorkflowsIndicator'
-import { RunningWorkflowsDrawer } from './RunningWorkflowsDrawer'
-import { useRunningWorkflowsStore, useShowRunningDrawer, type RunningWorkflow } from '../../stores/useRunningWorkflowsStore'
+import { useRunningWorkflowsStore, useShowRunningDrawer } from '../../stores/useRunningWorkflowsStore'
 import { sanitizeDisplayNameForFolder } from '../../utils/workflowUtils'
 
 // Helper component to get observerId and render ChatArea
@@ -72,7 +70,6 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
     // Backend tracks the actual event index which may be higher due to filtering/cleanup
     const lastIndex = response.last_processed_index ?? events.length - 1
     setTabLastEventIndex(sessionId, lastIndex)
-    console.log(`[WorkflowLayout] restoreWorkflowStateFromEvents: loaded ${events.length} events, last_processed_index=${lastIndex}`)
 
     // Scan events to find batch context, current step, and step statuses
     let latestBatchContext: {
@@ -1051,102 +1048,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     handleStartPhase(planningPhaseId)
   }, [handleStartPhase, setShowChatArea, activePresetId])
 
-  // Handle restoring a workflow from running list
-  const handleRestoreWorkflow = useCallback(async (workflow: RunningWorkflow) => {
-    console.log('[WorkflowLayout] Restoring workflow from running list:', workflow)
-
-    // Ensure we're in workflow mode
-    const currentMode = useModeStore.getState().selectedModeCategory
-    if (currentMode !== 'workflow') {
-      useModeStore.getState().setModeCategory('workflow')
-    }
-
-    // If this workflow is for a different preset, switch to it
-    if (workflow.presetId !== activePresetId) {
-      console.log('[WorkflowLayout] Switching to preset:', workflow.presetId)
-      useGlobalPresetStore.getState().setActivePreset('workflow', workflow.presetId)
-    }
-
-    // Load run folders to find the latest iteration
-    const { loadRunFolders, setSelectedGroupIds } = useWorkflowStore.getState()
-
-    if (workflow.workspacePath) {
-      try {
-        // Load run folders for this workspace
-        await loadRunFolders(workflow.workspacePath)
-
-        // Get the updated run folders from state
-        const folders = useWorkflowStore.getState().runFolders
-
-        if (folders.length > 0) {
-          // Folders are already sorted by iteration number descending (newest first)
-          const latestFolder = folders[0]
-          console.log('[WorkflowLayout] Latest iteration:', latestFolder.name, 'Stored iteration:', workflow.runFolder)
-
-          // Always use the latest iteration
-          setSelectedRunFolder(latestFolder.name)
-        } else if (workflow.runFolder && workflow.runFolder !== 'new') {
-          // No folders found, use the stored run folder
-          setSelectedRunFolder(workflow.runFolder)
-        }
-      } catch (error) {
-        console.error('[WorkflowLayout] Failed to load run folders during restore:', error)
-        // Fallback to stored run folder
-        if (workflow.runFolder && workflow.runFolder !== 'new') {
-          setSelectedRunFolder(workflow.runFolder)
-        }
-      }
-    } else if (workflow.runFolder && workflow.runFolder !== 'new') {
-      // No workspace path, just use stored run folder
-      setSelectedRunFolder(workflow.runFolder)
-    }
-
-    // Note: Workspace folder expansion is handled automatically by useEffect when selectedRunFolder changes
-
-    // Restore selected group IDs if they exist
-    if (workflow.selectedGroupIds && workflow.selectedGroupIds.length > 0) {
-      console.log('[WorkflowLayout] Restoring selected groups:', workflow.selectedGroupIds)
-      setSelectedGroupIds(workflow.selectedGroupIds)
-    }
-
-    // Create a new tab connected to the restored session
-    const { createChatTab, switchTab } = useChatStore.getState()
-    const { getPhaseById } = useWorkflowStore.getState()
-
-    // Get phase info
-    const phase = getPhaseById(workflow.phaseId)
-    const phaseName = phase?.title || workflow.phaseName
-
-    // Check if a tab with this sessionId already exists
-    const existingTabs = Object.values(useChatStore.getState().chatTabs)
-    const existingTab = existingTabs.find(tab =>
-      tab.sessionId === workflow.sessionId &&
-      tab.metadata?.mode === 'workflow'
-    )
-
-    if (existingTab) {
-      // Tab already exists, just switch to it
-      console.log('[WorkflowLayout] Found existing tab for session, switching to it:', existingTab.tabId)
-      switchTab(existingTab.tabId)
-    } else {
-      // Create a new tab connected to the session
-      console.log('[WorkflowLayout] Creating new tab for restored session:', workflow.sessionId)
-      const tabId = await createChatTab(phaseName, {
-        mode: 'workflow',
-        phaseId: workflow.phaseId,
-        phaseName,
-        presetQueryId: workflow.presetId
-      }, workflow.sessionId)  // Pass sessionId to connect to existing session
-
-      switchTab(tabId)
-    }
-
-    // Show the chat area so user can see the logs
-    setShowChatArea(true)
-
-    console.log('[WorkflowLayout] Workflow restored, sessionId:', workflow.sessionId)
-  }, [activePresetId, setSelectedRunFolder, setShowChatArea])
-
   // Minimize chat area when drawer opens to reduce renders and stop event processing
   // Open chat area when drawer closes
   useEffect(() => {
@@ -1235,14 +1136,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             </>
           )}
         </div>
-
-        {/* Running Workflows Drawer - overlays when open */}
-        <RunningWorkflowsDrawer
-          onRestoreWorkflow={handleRestoreWorkflow}
-        />
-
-        {/* Running Workflows Indicator - positioned within workflow area */}
-        <RunningWorkflowsIndicator />
       </div>
     </div>
   )

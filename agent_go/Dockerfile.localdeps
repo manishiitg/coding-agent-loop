@@ -1,0 +1,48 @@
+# Agent Dockerfile when build context is the PARENT of mcp-agent-builder-go
+# (so mcpagent and multi-llm-provider-go are available as siblings).
+# Usage: from mcp-agent-builder-go: docker build -f agent_go/Dockerfile.localdeps -t agent ..
+# Compose: agent service uses context: .. and dockerfile: agent_go/Dockerfile.localdeps
+
+# Build stage
+FROM golang:1.24-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates tzdata gcc musl-dev
+
+# Preserve go replace paths: agent_go expects ../../mcpagent, ../workspace, ../../multi-llm-provider-go
+WORKDIR /build
+COPY mcp-agent-builder-go /build/mcp-agent-builder-go
+COPY mcpagent /build/mcpagent
+COPY multi-llm-provider-go /build/multi-llm-provider-go
+
+WORKDIR /build/mcp-agent-builder-go/agent_go
+RUN go mod download
+RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o mcp-agent .
+
+# Runtime stage (same as default Dockerfile)
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates nodejs npm gcc musl-dev python3 py3-pip jq ripgrep chromium chromium-chromedriver gcompat
+
+RUN npm install -g agent-browser
+
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
+RUN pip3 install --break-system-packages uv
+
+RUN addgroup -g 1001 -S appgroup && adduser -S appuser -u 1001 -G appgroup
+
+WORKDIR /app
+
+COPY --from=builder /build/mcp-agent-builder-go/agent_go/mcp-agent .
+COPY --from=builder /build/mcp-agent-builder-go/agent_go/configs ./configs
+COPY --from=builder /build/mcp-agent-builder-go/agent_go/pkg/database/migrations ./pkg/database/migrations
+
+RUN mkdir -p reports logs /home/appuser/.config/mcpagent/tokens && \
+    chown -R appuser:appgroup /app /home/appuser
+
+USER appuser
+
+EXPOSE 8000
+
+CMD ["./mcp-agent", "server", "--host", "0.0.0.0", "--port", "8000", "--log-level", "debug", "--mcp-config", "configs/mcp_servers_clean.json", "--db-path", "/home/appuser/.config/mcpagent/chat_history.db"]

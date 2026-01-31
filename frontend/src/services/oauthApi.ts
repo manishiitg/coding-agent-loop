@@ -28,7 +28,7 @@ export interface OAuthLogoutRequest {
 export class OAuthApi {
   private baseUrl: string;
 
-  constructor(baseUrl: string = 'http://localhost:8000') {
+  constructor(baseUrl: string = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000') {
     this.baseUrl = baseUrl;
   }
 
@@ -85,4 +85,4 @@ export class OAuthApi {
 }
 
 // Export a default instance
-export const oauthApi = new OAuthApi('http://localhost:8000');
+export const oauthApi = new OAuthApi(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');

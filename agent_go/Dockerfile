@@ -58,6 +58,9 @@ COPY --from=builder /app/mcp-agent .
 # Copy configuration files
 COPY --from=builder /app/configs ./configs
 
+# Copy database migration files (required for schema creation on startup)
+COPY --from=builder /app/pkg/database/migrations ./pkg/database/migrations
+
 # Create reports and logs directories
 RUN mkdir -p reports logs && chown -R appuser:appgroup /app
 

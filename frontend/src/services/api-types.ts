@@ -106,6 +106,8 @@ export interface AgentQueryRequest {
   enable_workspace_access?: boolean // Enable/disable workspace file access tools (default: true)
   // Browser automation access configuration
   enable_browser_access?: boolean // Enable/disable browser automation tool (auto-enables workspace when true)
+  // Context editing configuration
+  enable_context_editing?: boolean // Enable context editing (dynamic context reduction)
   // Selected skills to include in the chat context
   selected_skills?: string[] // Array of skill folder names
 }
@@ -676,6 +678,7 @@ export interface PresetLLMConfig {
   // Feature toggles
   use_knowledgebase?: boolean           // nil/true = enabled (default), false = disabled
   enable_context_summarization?: boolean // nil/true = enabled (default), false = disabled
+  enable_context_editing?: boolean       // nil/true = enabled (default), false = disabled
 }
 
 // Preset Query API types
@@ -693,6 +696,7 @@ export interface PresetQuery {
   pre_discovered_tools?: string; // JSON string of tools array
   selected_skills?: string; // JSON string of skill folder names
   enable_context_summarization?: boolean; // Enable context summarization
+  enable_context_editing?: boolean; // Enable context editing (dynamic context reduction)
   enable_browser_access?: boolean; // Browser automation access
   is_predefined: boolean;
   created_at: string;
@@ -713,6 +717,7 @@ export interface CreatePresetQueryRequest {
   pre_discovered_tools?: string[]; // Tools always available without searching
   selected_skills?: string[]; // Skill folder names for workflow
   enable_context_summarization?: boolean; // Enable context summarization
+  enable_context_editing?: boolean; // Enable context editing (dynamic context reduction)
   enable_browser_access?: boolean; // Browser automation access
   is_predefined?: boolean;
 }
@@ -730,6 +735,7 @@ export interface UpdatePresetQueryRequest {
   pre_discovered_tools?: string[]; // Tools always available without searching
   selected_skills?: string[]; // Skill folder names for workflow
   enable_context_summarization?: boolean; // Enable context summarization
+  enable_context_editing?: boolean; // Enable context editing (dynamic context reduction)
   enable_browser_access?: boolean; // Browser automation access
 }
 

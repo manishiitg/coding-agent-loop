@@ -202,7 +202,9 @@ type PresetLLMConfig struct {
 	PhaseLLM      *AgentLLMConfig `json:"phase_llm,omitempty"`      // Default for all phase agents (planning, anonymization, plan improvement, etc.)
 
 	// Feature toggles
-	UseKnowledgebase *bool `json:"use_knowledgebase,omitempty"` // nil/true = enabled (default), false = disabled - controls knowledgebase folder creation and prompt references
+	UseKnowledgebase          *bool `json:"use_knowledgebase,omitempty"`           // nil/true = enabled (default), false = disabled - controls knowledgebase folder creation and prompt references
+	EnableContextSummarization *bool `json:"enable_context_summarization,omitempty"` // nil/true = enabled (default), false = disabled
+	EnableContextEditing       *bool `json:"enable_context_editing,omitempty"`       // nil/true = enabled (default), false = disabled
 }
 
 // AgentLLMConfig represents LLM configuration for a specific agent type

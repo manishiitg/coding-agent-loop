@@ -9,12 +9,9 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// Default workspace API URL
-const defaultWorkspaceAPIURL = "http://localhost:8081"
-
 // RegisterSkillRoutes sets up skill API routes
 func RegisterSkillRoutes(router *mux.Router, api *StreamingAPI) {
-	workspaceAPIURL := defaultWorkspaceAPIURL
+	workspaceAPIURL := getWorkspaceAPIURL()
 
 	router.HandleFunc("/skills", listSkillsHandler(workspaceAPIURL)).Methods("GET", "OPTIONS")
 	router.HandleFunc("/skills/import", importSkillHandler(workspaceAPIURL)).Methods("POST", "OPTIONS")

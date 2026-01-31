@@ -1,0 +1,20 @@
+# Copy to terraform.tfvars and fill in (do not commit terraform.tfvars).
+# When skip_acr_managed_identity = true, set acr_admin_password (from az acr credential show -n <acr_name> -o tsv --query "passwords[0].value").
+
+resource_group_name = "code-analysis-phase-1"
+location            = "eastus"
+project_name        = "mcpagent"
+acr_name            = "mcpagentacr"   # Must be globally unique, alphanumeric only, 5-50 chars
+
+# Use ACR admin credentials when you don't have role assignment permission
+# skip_acr_managed_identity = true
+# acr_admin_password = ""   # Get from: az acr credential show -n <acr_name> -o tsv --query "passwords[0].value"
+
+# Optional: API keys and env (use TF_VAR_* or a secret backend; do not commit)
+# openai_api_key = ""
+# agent_env = {}
+# workspace_api_env = {}
+
+# Optional: custom FQDNs (leave empty to use default *.azurecontainerapps.io)
+# agent_fqdn        = ""
+# workspace_api_fqdn = ""

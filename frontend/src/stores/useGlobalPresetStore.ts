@@ -37,9 +37,9 @@ interface GlobalPresetState {
   
   // Actions for database management
   refreshPresets: () => Promise<void>
-  addPreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean) => Promise<CustomPreset | null>
-  updatePreset: (id: string, label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean) => Promise<void>
-  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean) => Promise<CustomPreset | null>
+  addPreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean) => Promise<CustomPreset | null>
+  updatePreset: (id: string, label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean) => Promise<void>
+  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean) => Promise<CustomPreset | null>
   deletePreset: (id: string) => Promise<void>
   duplicatePreset: (presetId: string) => Promise<CustomPreset | null>
   updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
@@ -187,10 +187,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               useToolSearchMode: preset.use_tool_search_mode,
               preDiscoveredTools,
               enableContextSummarization: preset.enable_context_summarization !== undefined ? preset.enable_context_summarization : true,
+              enableContextEditing: preset.enable_context_editing !== undefined ? preset.enable_context_editing : true,
               enableBrowserAccess: preset.enable_browser_access ?? false
             }
           })
-          
+
           // Convert predefined presets
           const predefinedPresets: PredefinedPreset[] = response.presets
             .filter(preset => preset.is_predefined)
@@ -232,7 +233,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 selectedFolder,
                 llmConfig,
                 useCodeExecutionMode: preset.use_code_execution_mode,
-                enableContextSummarization: preset.enable_context_summarization !== undefined ? preset.enable_context_summarization : true
+                enableContextSummarization: preset.enable_context_summarization !== undefined ? preset.enable_context_summarization : true,
+                enableContextEditing: preset.enable_context_editing !== undefined ? preset.enable_context_editing : true
               }
             })
           
@@ -250,7 +252,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      addPreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, useToolSearchMode, enableBrowserAccess) => {
+      addPreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, useToolSearchMode, enableBrowserAccess, enableContextEditing) => {
         // Apply workflow-specific default for tool search mode
         // When agentMode is 'workflow' and useToolSearchMode is not explicitly provided, default to true
         const effectiveToolSearchMode = useToolSearchMode !== undefined ? useToolSearchMode : (agentMode === 'workflow')
@@ -318,6 +320,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             request.enable_browser_access = enableBrowserAccess
           }
 
+          // Include context editing if provided
+          if (enableContextEditing !== undefined) {
+            request.enable_context_editing = enableContextEditing
+          }
+
           console.log('[code_execution] [PRESET_SAVE] Sending to backend:', {
             request,
             use_code_execution_mode: request.use_code_execution_mode
@@ -340,6 +347,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             useToolSearchMode: effectiveToolSearchMode,
             preDiscoveredTools,
             enableContextSummarization,
+            enableContextEditing,
             enableBrowserAccess
           }
 
@@ -354,7 +362,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
 
-      updatePreset: async (id, label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, useToolSearchMode, enableBrowserAccess) => {
+      updatePreset: async (id, label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, useToolSearchMode, enableBrowserAccess, enableContextEditing) => {
         // CRITICAL: Log ALL arguments using rest parameters to see what's actually passed
         console.error('[code_execution] [PRESET_STORE] ========== updatePreset CALLED ==========')
         console.error('[code_execution] [PRESET_STORE] Arguments received:', {
@@ -456,6 +464,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             request.enable_browser_access = enableBrowserAccess
           }
 
+          // Include context editing if provided
+          if (enableContextEditing !== undefined) {
+            request.enable_context_editing = enableContextEditing
+          }
+
           console.log('[code_execution] [PRESET] Updating preset with request:', request)
 
           await agentApi.updatePresetQuery(id, request)
@@ -477,6 +490,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                     useToolSearchMode,
                     preDiscoveredTools,
                     enableContextSummarization,
+                    enableContextEditing,
                     enableBrowserAccess
                   }
                 : preset
@@ -488,7 +502,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
 
-      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, useToolSearchMode, enableBrowserAccess) => {
+      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, useToolSearchMode, enableBrowserAccess, enableContextEditing) => {
         // CRITICAL: Log ALL arguments to trace parameter flow
         console.error('[code_execution] [PRESET_STORE] ========== savePreset CALLED ==========')
         console.error('[code_execution] [PRESET_STORE] Arguments received:', {
@@ -566,6 +580,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               request.enable_browser_access = enableBrowserAccess
             }
 
+            // Include context editing if provided
+            if (enableContextEditing !== undefined) {
+              request.enable_context_editing = enableContextEditing
+            }
+
             console.log('[code_execution] [PRESET_STORE] Updating preset with request:', {
               ...request,
               use_code_execution_mode: request.use_code_execution_mode
@@ -590,6 +609,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                       useToolSearchMode: effectiveToolSearchMode,
                       preDiscoveredTools,
                       enableContextSummarization,
+                      enableContextEditing,
                       enableBrowserAccess
                     }
                   : preset
@@ -641,6 +661,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               request.enable_browser_access = enableBrowserAccess
             }
 
+            // Include context editing if provided
+            if (enableContextEditing !== undefined) {
+              request.enable_context_editing = enableContextEditing
+            }
+
             console.log('[code_execution] [PRESET_STORE] Creating preset with request:', {
               ...request,
               use_code_execution_mode: request.use_code_execution_mode
@@ -663,6 +688,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               useToolSearchMode: effectiveToolSearchMode,
               preDiscoveredTools,
               enableContextSummarization,
+              enableContextEditing,
               enableBrowserAccess
             }
 

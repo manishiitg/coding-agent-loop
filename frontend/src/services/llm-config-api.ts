@@ -23,11 +23,9 @@ export interface GetModelMetadataResponse {
   models: ModelMetadata[]
 }
 
-// Create axios instance for LLM configuration API
+// Create axios instance for LLM configuration API (use Vite env so deploy URL works)
 const llmConfigApi = axios.create({
-  baseURL: process.env.NODE_ENV === 'production' 
-    ? 'https://api.mcp-agent.com' 
-    : 'http://localhost:8000',
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',

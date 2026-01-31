@@ -84,4 +84,4 @@ export class MCPConfigApi {
 }
 
 // Export a default instance
-export const mcpConfigApi = new MCPConfigApi('http://localhost:8000');
+export const mcpConfigApi = new MCPConfigApi(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');

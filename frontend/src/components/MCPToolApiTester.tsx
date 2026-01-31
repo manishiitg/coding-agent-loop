@@ -56,6 +56,8 @@ export default function MCPToolApiTester({
     return JSON.stringify(example, null, 2)
   }
 
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+
   const executeTool = async () => {
     setLoading(true)
     setError(null)
@@ -72,7 +74,7 @@ export default function MCPToolApiTester({
 
       console.log('[MCPToolApiTester] Executing tool:', requestBody)
 
-      const res = await fetch('http://localhost:8000/api/mcp/execute', {
+      const res = await fetch(`${apiBaseUrl}/api/mcp/execute`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -103,7 +105,7 @@ export default function MCPToolApiTester({
   }
 
   const copyCurlCommand = () => {
-    const curlCmd = `curl -X POST http://localhost:8000/api/mcp/execute \\
+    const curlCmd = `curl -X POST ${apiBaseUrl}/api/mcp/execute \\
   -H "Content-Type: application/json" \\
   -d '{
     "server": "${serverName}",

@@ -1999,18 +1999,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							if err := populateRuntimeFields(step, stepConfigs); err != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to populate runtime fields for learning: %v", err))
 							}
-							err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM)
+							triggerReason := "Loop condition met (step completed successfully)"
+							err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
 							if err != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, err))
 							} else {
 								hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for step %d", stepIndex+1))
 							}
 						} else {
+							skipReason := ""
 							if isFastExecuteStep {
+								skipReason = "Fast execution mode enabled"
 								hcpo.GetLogger().Info(fmt.Sprintf("⚡ Fast mode: Skipping learning agents for step %d", stepIndex+1))
 							} else if isLearningDisabled {
+								skipReason = "Learning disabled in step config"
 								hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled: Skipping learning agents for step %d", stepIndex+1))
 							} else if shouldSkipLearningDueToTempOverride {
+								skipReason = fmt.Sprintf("Temp LLM %s used (skip flag enabled)", usedTempLLM)
 								hcpo.GetLogger().Info(fmt.Sprintf("🔧 %s was used and skip learning flag enabled: Skipping learning agents for step %d (loop completed)", usedTempLLM, stepIndex+1))
 
 								// IMPORTANT: Update metadata even when skipping learning due to tempLLM
@@ -2079,6 +2084,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 									})
 									hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted learning_skipped event for step %d: %s (temp override: %s/%s)", stepIndex+1, stepTitle, hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID))
 								}
+							}
+
+							// Log skipped learning to file
+							if skipReason != "" {
+								_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+									"type":           "learning_skipped",
+									"step_path":      stepPath,
+									"learning_type":  "success",
+									"skip_reason":    skipReason,
+									"timestamp":      time.Now().Format(time.RFC3339),
+								})
 							}
 						}
 
@@ -2232,7 +2248,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to populate runtime fields for learning: %v", err))
 								} else {
 									// For loop iterations, usedTempLLM is in scope but typically empty (loop iterations use original LLM)
-									err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM)
+									triggerReason := fmt.Sprintf("Loop iteration %d completed (learning enabled for first 2 iterations)", loopIterationCount)
+									if configuredExplicitly {
+										triggerReason = fmt.Sprintf("Loop iteration %d completed (learning explicitly enabled in config)", loopIterationCount)
+									}
+									err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
 								}
 								if err != nil {
 									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Learning phase failed after loop iteration %d for %s: %v", loopIterationCount, stepPath, err))
@@ -2283,6 +2303,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update learning metadata (tempLLM skip, loop iter) for %s: %v", learningPathIdentifier, metadataErr))
 								} else {
 									hcpo.GetLogger().Info(fmt.Sprintf("📊 Updated metadata for %s (loop iteration %d learning skipped due to %s, turnCount: %d)", learningPathIdentifier, loopIterationCount, usedTempLLM, turnCount))
+								}
+							} else {
+								// Log other skipped reasons (fast mode, disabled, locked)
+								skipReason := ""
+								if isFastExecuteStep {
+									skipReason = "Fast execution mode enabled"
+								} else if isLearningDisabled {
+									skipReason = "Learning disabled in step config"
+								} else if shouldSkipLearningDueToLock {
+									skipReason = "Learnings are locked and already exist"
+								}
+
+								if skipReason != "" {
+									_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+										"type":           "learning_skipped",
+										"step_path":      stepPath,
+										"learning_type":  "success", // Loop iteration learning is treated as success learning
+										"skip_reason":    skipReason,
+										"timestamp":      time.Now().Format(time.RFC3339),
+									})
 								}
 							}
 						}
@@ -2464,7 +2504,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to populate runtime fields for learning: %v", err))
 						} else {
 							// usedTempLLM is set in the retry loop above when validation passes
-							err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM)
+							triggerReason := "Validation passed (success criteria met)"
+							if hasLoop(step) {
+								triggerReason = "Loop condition met (step completed successfully)"
+							}
+							err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
 						}
 						if err != nil {
 							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, err))
@@ -2474,9 +2518,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					} else {
 						// Failure Learning Agent - analyze what went wrong and provide refined task description
 						// SKIP failure learning for loop steps - loop steps only run success learning when condition is met
+						skipReason := ""
 						if hasLoop(step) {
+							skipReason = "Step is a loop step (only learns on success)"
 							hcpo.GetLogger().Info(fmt.Sprintf("🔄 Step %s is a loop step - skipping failure learning (loop steps only run success learning when condition is met)", stepPath))
 						} else if failureLearningAttempts >= 2 {
+							skipReason = fmt.Sprintf("Failure learning attempts limit reached (%d >= 2)", failureLearningAttempts)
 							hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Failure learning attempts limit reached (%d >= 2) - skipping failure learning analysis for %s", failureLearningAttempts, stepPath))
 						} else {
 							failureLearningAttempts++
@@ -2495,7 +2542,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to populate runtime fields for learning: %v", err))
 								refinedTaskDescription = ""
 							} else {
-								refinedTaskDescription, _, learningErr = hcpo.runFailureLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM)
+								triggerReason := "Validation failed (success criteria not met)"
+								refinedTaskDescription, _, learningErr = hcpo.runFailureLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
 							}
 							if learningErr != nil {
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for %s: %v", stepPath, learningErr))
@@ -2573,6 +2621,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 									}
 								}
 							}
+						}
+
+						// Log skipped failure learning to file
+						if skipReason != "" {
+							_ = hcpo.logLearningExecution(ctx, stepPath, map[string]interface{}{
+								"type":           "learning_skipped",
+								"step_path":      stepPath,
+								"learning_type":  "failure",
+								"skip_reason":    skipReason,
+								"timestamp":      time.Now().Format(time.RFC3339),
+							})
 						}
 					}
 				}

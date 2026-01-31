@@ -6,6 +6,7 @@ import (
 
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
 // getWorkspaceAPIURL returns the workspace API base URL from environment or default
@@ -58,23 +59,22 @@ type WorkspaceEventEmitter interface {
 }
 
 // Context keys for workspace event emission and folder guard paths
-type contextKey string
-
+// These are now imported from the common package
 const (
 	// WorkspaceEventEmitterKey is the context key for the workspace event emitter
-	WorkspaceEventEmitterKey contextKey = "workspace_event_emitter"
+	WorkspaceEventEmitterKey common.ContextKey = "workspace_event_emitter"
 	// TurnKey is the context key for the turn number
-	TurnKey contextKey = "turn"
+	TurnKey common.ContextKey = "turn"
 	// ServerNameKey is the context key for the server name
-	ServerNameKey contextKey = "server_name"
+	ServerNameKey common.ContextKey = "server_name"
 	// FolderGuardReadPathsKey is the context key for folder guard read paths
-	FolderGuardReadPathsKey contextKey = "folder_guard_read_paths"
+	FolderGuardReadPathsKey = common.FolderGuardReadPathsKey
 	// FolderGuardWritePathsKey is the context key for folder guard write paths
-	FolderGuardWritePathsKey contextKey = "folder_guard_write_paths"
+	FolderGuardWritePathsKey = common.FolderGuardWritePathsKey
 	// FolderGuardBlockedPathsKey is the context key for blocked paths (deny list)
-	FolderGuardBlockedPathsKey contextKey = "folder_guard_blocked_paths"
+	FolderGuardBlockedPathsKey = common.FolderGuardBlockedPathsKey
 	// FolderGuardAllowedWriteFolderKey is the context key for the only folder allowed for writes (chat mode)
-	FolderGuardAllowedWriteFolderKey contextKey = "folder_guard_allowed_write_folder"
+	FolderGuardAllowedWriteFolderKey = common.FolderGuardAllowedWriteFolderKey
 )
 
 // CreateWorkspaceTools creates all workspace-related virtual tools (basic + git + advanced)

@@ -3,7 +3,6 @@ import { X, Plus, ArrowDown } from 'lucide-react'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
 import { EventModeToggle } from './events'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 
 interface ChatTabsProps {
   // For chat mode: callback when starting a new chat
@@ -101,12 +100,12 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
       return
     }
     
-    if (selectedModeCategory === 'chat') {
-      // Create a new chat tab
-      console.log('[ChatTabs] Creating new chat tab...')
+    if (selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder') {
+      // Create a new chat/skill tab
+      console.log(`[ChatTabs] Creating new ${selectedModeCategory} tab...`)
       const chatStore = useChatStore.getState()
       const allChatTabs = Object.values(chatTabs).filter(tab => 
-        tab.metadata?.mode === 'chat'
+        tab.metadata?.mode === selectedModeCategory
       )
       const chatNumber = allChatTabs.length + 1
       const tabName = `Chat ${chatNumber}`
@@ -114,8 +113,8 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
       console.log(`[ChatTabs] Tab name: ${tabName}, existing tabs: ${allChatTabs.length}`)
       
       try {
-        console.log(`[ChatTabs] Creating new chat tab: ${tabName}`)
-        const newTabId = await chatStore.createChatTab(tabName, { mode: 'chat' })
+        console.log(`[ChatTabs] Creating new tab: ${tabName} in mode: ${selectedModeCategory}`)
+        const newTabId = await chatStore.createChatTab(tabName, { mode: selectedModeCategory })
         console.log(`[ChatTabs] ✅ createChatTab returned tab ID: ${newTabId}`)
         
         // Note: Tab creation is verified inside createChatTab itself
@@ -172,90 +171,9 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     return 'bg-gray-400'
   }
   
-  // Get tooltip text for tab
-  const getTabTooltip = (tab: ChatTab): string => {
-    const sessionStatus = tabSessionStatus[tab.tabId]
-    const parts: string[] = [tab.name]
-    
-    // Always show session ID if available (full ID)
-    if (tab.sessionId) {
-      parts.push(`Session ID: ${tab.sessionId}`)
-    } else {
-      parts.push('Session ID: None')
-    }
-    
-    // Determine status from multiple sources (priority: sessionStatus > tab state)
-    let statusLabel: string | null = null
-    
-    if (sessionStatus?.status) {
-      // Use status from backend if available
-      statusLabel = sessionStatus.status === 'active' ? 'Active' :
-                    sessionStatus.status === 'running' ? 'Running' :
-                    sessionStatus.status === 'completed' ? 'Completed' :
-                    sessionStatus.status === 'paused' ? 'Paused' :
-                    sessionStatus.status === 'stopped' ? 'Stopped' :
-                    sessionStatus.status === 'error' ? 'Error' :
-                    sessionStatus.status
-    } else if (tab.isCompleted) {
-      // Fallback to tab state
-      statusLabel = 'Completed'
-    } else if (tab.isStreaming) {
-      statusLabel = 'Running'
-    } else if (tab.sessionId) {
-      // Has session but not streaming and not completed - might be paused or waiting
-      statusLabel = 'Inactive'
-    } else {
-      statusLabel = 'No session'
-    }
-    
-    // Always show status
-    parts.push(`Status: ${statusLabel}`)
-    
-    // Show agent mode - check tab config for code execution mode first, then sessionStatus
-    let modeLabel: string | null = null
-    
-    // Check if code execution mode is enabled in tab config (frontend-only setting)
-    if (tab.config?.useCodeExecutionMode) {
-      modeLabel = 'Chat (Code Execution)'
-    } else if (sessionStatus?.agentMode) {
-      // Use backend agent mode if available
-      modeLabel = sessionStatus.agentMode === 'workflow' ? 'Workflow' : 
-                   sessionStatus.agentMode === 'simple' ? 'Chat (Simple)' :
-                   sessionStatus.agentMode === 'orchestrator' ? 'Chat (Orchestrator)' :
-                   'Chat'
-    }
-    
-    if (modeLabel) {
-      parts.push(`Mode: ${modeLabel}`)
-    }
-    
-    // Show last activity if available
-    if (sessionStatus?.lastActivity) {
-      try {
-        const lastActivity = new Date(sessionStatus.lastActivity)
-        const now = new Date()
-        const diffMs = now.getTime() - lastActivity.getTime()
-        const diffMins = Math.floor(diffMs / 60000)
-        
-        if (diffMins < 1) {
-          parts.push('Last activity: Just now')
-        } else if (diffMins < 60) {
-          parts.push(`Last activity: ${diffMins} min ago`)
-        } else {
-          const diffHours = Math.floor(diffMins / 60)
-          parts.push(`Last activity: ${diffHours} hour${diffHours > 1 ? 's' : ''} ago`)
-        }
-      } catch {
-        // Invalid date, skip
-      }
-    }
-    
-    return parts.join(' • ')
-  }
-
-  // Show tabs bar only in chat mode (workflow tabs are shown in WorkflowChatTabs inside ChatArea panel)
+  // Show tabs bar only in chat/skill_builder mode (workflow tabs are shown in WorkflowChatTabs inside ChatArea panel)
   // In workflow mode, ChatTabs should not be visible at all
-  const shouldShowTabsBar = selectedModeCategory === 'chat'
+  const shouldShowTabsBar = selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder'
   const hasTabs = modeTabs.length > 0
   
   // In workflow mode, don't show ChatTabs at all
@@ -267,14 +185,19 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
   const borderClass = hasTabs ? 'border-b border-gray-200 dark:border-gray-700' : ''
   
   return (
-    <TooltipProvider>
-      <div className={`flex-shrink-0 flex items-center gap-1 bg-gray-50 dark:bg-gray-800 px-2 py-1 overflow-x-auto${borderClass ? ` ${borderClass}` : ''}`}>
-        {/* Existing Tabs */}
-        {modeTabs.map((tab) => {
-          const isActive = tab.tabId === activeTabId
-          const indicatorColor = getTabIndicator(tab)
-          const tooltipText = getTabTooltip(tab)
-          
+    <div className={`flex-shrink-0 flex items-center gap-1 bg-gray-50 dark:bg-gray-800 px-2 py-1 overflow-x-auto${borderClass ? ` ${borderClass}` : ''}`}>
+      {/* Existing Tabs */}
+      {modeTabs.map((tab) => {
+        const isActive = tab.tabId === activeTabId
+        const indicatorColor = getTabIndicator(tab)
+        
+        // Determine active border color based on mode
+          const activeBorderClass = selectedModeCategory === 'skill_builder' 
+            ? 'border-emerald-500' 
+            : selectedModeCategory === 'workflow'
+              ? 'border-purple-500'
+              : 'border-blue-500'
+
           // Calculate new event count for inactive tabs
           // NOTE: Events are already filtered by backend based on event_mode, so no need to filter again
           const newEventCount = (() => {
@@ -292,63 +215,60 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
           })()
           
           return (
-            <Tooltip key={tab.tabId}>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => handleTabClick(tab.tabId)}
-                  data-testid={`chat-tab-${tab.tabId}`}
-                  className={`
-                    flex items-center gap-2 px-3 py-1.5 rounded-t-md text-sm font-medium transition-colors
-                    ${isActive
-                      ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border-b-2 border-blue-500'
-                      : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100'
-                    }
-                  `}
-                >
-                  {/* Status Indicator */}
-                  <div className={`w-2 h-2 rounded-full ${indicatorColor}`} />
-                  
-                  {/* Tab Name */}
-                  <span className="whitespace-nowrap">{tab.name}</span>
-                  
-                  {/* New Events Badge - show for inactive tabs with new events */}
-                  {!isActive && newEventCount > 0 && (
-                    <span className="flex items-center justify-center min-w-[18px] h-4 px-1.5 text-xs font-semibold text-white bg-red-500 dark:bg-red-600 rounded-full">
-                      {newEventCount > 99 ? '99+' : newEventCount}
-                    </span>
-                  )}
-                  
-                  {/* Event Mode Toggle - show inside active tab header */}
-                  {isActive && (
-                    <div className="ml-1 flex items-center" onClick={(e) => e.stopPropagation()}>
-                      <EventModeToggle />
-                    </div>
-                  )}
-                  
-                  {/* Close Button */}
-                  <button
-                    onClick={(e) => handleTabClose(e, tab.tabId)}
-                    data-testid={`close-tab-${tab.tabId}`}
-                    className={`
-                      ml-1 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600
-                      ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 hover:opacity-70'}
-                      transition-opacity
-                    `}
-                    title="Close tab"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{tooltipText}</p>
-              </TooltipContent>
-            </Tooltip>
+            <div
+              key={tab.tabId}
+              onClick={() => handleTabClick(tab.tabId)}
+              onKeyDown={(e) => e.key === 'Enter' && handleTabClick(tab.tabId)}
+              role="button"
+              tabIndex={0}
+              data-testid={`chat-tab-${tab.tabId}`}
+              className={`
+                flex items-center gap-2 px-3 py-1.5 rounded-t-md text-sm font-medium transition-colors cursor-pointer outline-none
+                ${isActive
+                  ? `bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border-b-2 ${activeBorderClass}`
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100'
+                }
+              `}
+            >
+              {/* Status Indicator */}
+              <div className={`w-2 h-2 rounded-full ${indicatorColor}`} />
+              
+              {/* Tab Name */}
+              <span className="whitespace-nowrap">{tab.name}</span>
+              
+              {/* New Events Badge - show for inactive tabs with new events */}
+              {!isActive && newEventCount > 0 && (
+                <span className="flex items-center justify-center min-w-[18px] h-4 px-1.5 text-xs font-semibold text-white bg-red-500 dark:bg-red-600 rounded-full">
+                  {newEventCount > 99 ? '99+' : newEventCount}
+                </span>
+              )}
+              
+              {/* Event Mode Toggle - show inside active tab header */}
+              {isActive && (
+                <div className="ml-1 flex items-center" onClick={(e) => e.stopPropagation()}>
+                  <EventModeToggle />
+                </div>
+              )}
+              
+              {/* Close Button */}
+              <button
+                onClick={(e) => handleTabClose(e, tab.tabId)}
+                data-testid={`close-tab-${tab.tabId}`}
+                className={`
+                  ml-1 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600
+                  ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 hover:opacity-70'}
+                  transition-opacity
+                `}
+                title="Close tab"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
           )
         })}
       
-      {/* New Tab Button - Only show in chat mode (workflow phases are started from WorkflowToolbar) */}
-      {selectedModeCategory === 'chat' && (
+      {/* New Tab Button - Only show in chat/skill_builder mode (workflow phases are started from WorkflowToolbar) */}
+      {(selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder') && (
         <button
           onClick={handleNewTab}
           data-testid="new-chat-button"
@@ -381,7 +301,6 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
         </div>
       )}
     </div>
-    </TooltipProvider>
   )
 }
 

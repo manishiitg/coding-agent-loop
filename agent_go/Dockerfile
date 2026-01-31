@@ -25,7 +25,7 @@ FROM alpine:latest
 # Install ca-certificates for HTTPS requests, Node.js for MCP servers, C libraries for CGO, Python for uvx, jq for JSON processing, ripgrep for text searching
 # Also install chromium for agent-browser headless browser automation
 # gcompat provides glibc compatibility for agent-browser binary
-RUN apk --no-cache add ca-certificates nodejs npm gcc musl-dev python3 py3-pip jq ripgrep chromium chromium-chromedriver gcompat
+RUN apk --no-cache add ca-certificates nodejs npm gcc musl-dev python3 py3-pip jq ripgrep chromium chromium-chromedriver gcompat curl wget bash
 
 # Install agent-browser globally for browser automation
 RUN npm install -g agent-browser

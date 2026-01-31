@@ -43,9 +43,9 @@ export default function Workspace({
   const { getActiveTab, setTabConfig } = useChatStore()
   const { getActivePreset } = usePresetApplication()
   
-  // Get file context based on mode: chat mode uses tab config, workflow mode uses preset
+  // Get file context based on mode: chat/skill_builder mode uses tab config, workflow mode uses preset
   const chatFileContext = useMemo(() => {
-    if (selectedModeCategory === 'chat') {
+    if (selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder') {
       const activeTab = getActiveTab()
       return activeTab?.config?.fileContext || []
     } else if (selectedModeCategory === 'workflow') {
@@ -63,7 +63,7 @@ export default function Workspace({
   
   // Add file to context handler - mode-specific
   const addFileToContext = useCallback((file: { name: string; path: string; type: 'file' | 'folder' }) => {
-    if (selectedModeCategory === 'chat') {
+    if (selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder') {
       const activeTab = getActiveTab()
       if (activeTab) {
         const currentContext = activeTab.config?.fileContext || []
@@ -326,6 +326,12 @@ export default function Workspace({
       // Adjust filepaths to show workflow folder as root (remove the workflow folder path prefix)
       // Store original path in originalFilepath for API calls
       result = adjustFilePathsRecursive(result, workflowFolderPath)
+    } else if (selectedModeCategory === 'skill_builder') {
+      // Skill builder mode: always filter to skills/ folder
+      result = filterToWorkflowFolder(filesToProcess, 'skills')
+      
+      // Adjust filepaths to show skills folder as root
+      result = adjustFilePathsRecursive(result, 'skills')
     }
     
     return result
@@ -468,6 +474,12 @@ export default function Workspace({
       // Adjust filepaths to show workflow folder as root (remove the workflow folder path prefix)
       // Store original path in originalFilepath for API calls
       result = adjustFilePathsRecursive(result, workflowFolderPath)
+    } else if (selectedModeCategory === 'skill_builder') {
+      // Skill builder mode: always filter to skills/ folder
+      result = filterToWorkflowFolder(files, 'skills')
+      
+      // Adjust filepaths to show skills folder as root
+      result = adjustFilePathsRecursive(result, 'skills')
     }
     
     // Apply search filter
@@ -499,8 +511,8 @@ export default function Workspace({
     }
   }, [highlightedFile, expandFoldersForFile, scrollToHighlightedFile, selectedModeCategory, workflowFolderPath, filteredFiles])
   
-  // Automatically expand workspace folder when a workflow is first opened
-  // Only runs once per workflow preset to allow manual open/close afterward
+  // Automatically expand workspace folder when a workflow or skill builder is first opened
+  // Only runs once per workflow preset or mode switch to allow manual open/close afterward
   useEffect(() => {
     if (selectedModeCategory === 'workflow' && workflowFolderPath && filteredFiles.length > 0) {
       // Check if we've already auto-expanded for this workflow preset
@@ -510,58 +522,40 @@ export default function Workspace({
       if (autoExpandedWorkflowRef.current !== workflowPresetId) {
         // Small delay to ensure files are fully loaded and rendered
         const timeoutId = setTimeout(() => {
-          // Use the store's expandFoldersToLevel function which properly handles the expansion
-          // Expand up to 4 levels deep (level 0, 1, 2, 3, 4) - that's 4 more levels after workflow folder
-          console.log('[Workspace] Auto-expanding workflow folders using expandFoldersToLevel:', {
-            filteredFilesLength: filteredFiles.length,
-            firstItem: filteredFiles[0],
-            workflowFolderPath
-          })
-          
-          // Determine what files to expand:
-          // - If filteredFiles contains the workflow folder itself as root, expand it first, then its children
-          // - Otherwise, use filteredFiles directly (which are already the children)
+          // Determine what files to expand
           const workflowFolder = filteredFiles.length > 0 && filteredFiles[0].type === 'folder' ? filteredFiles[0] : null
           const filesToExpand = workflowFolder && workflowFolder.children
             ? workflowFolder.children 
             : filteredFiles
           
-          console.log('[Workspace] Files to expand:', {
-            workflowFolderPath: workflowFolder?.filepath,
-            workflowFolderHasChildren: !!workflowFolder?.children,
-            childrenCount: filesToExpand.length,
-            firstFew: filesToExpand.slice(0, 3).map(f => ({ path: f.filepath, type: f.type, hasChildren: !!f.children }))
-          })
-          
-          // Expand children up to 4 levels deep (levels 0, 1, 2, 3, 4 = 5 levels total)
-          // We use maxLevel=4 to get 4 levels below the workflow folder
-          // Pass the workflow folder path as an additional folder to ensure it's expanded
-          // Exclude "planning", "variables", "learnings", and "logs" folders to keep them closed by default
-          // Note: "logs" exclusion applies to nested paths like "runs/iteration-x/group-x/logs"
+          // Expand children up to 4 levels deep
           const additionalFolders = workflowFolder ? [workflowFolder.filepath] : undefined
           const excludeFolders = ['planning', 'variables', 'learnings', 'logs']
           expandFoldersToLevel(filesToExpand, 4, additionalFolders, excludeFolders)
           
-          if (workflowFolder) {
-            console.log('[Workspace] Expanded workflow folder and children:', {
-              workflowFolderPath: workflowFolder.filepath,
-              childrenCount: filesToExpand.length
-            })
-          }
-          
           // Mark this workflow as auto-expanded
           autoExpandedWorkflowRef.current = workflowPresetId
-          
-          // Log the result after a short delay to see what was expanded
-          setTimeout(() => {
-            console.log('[Workspace] After expansion, expandedFolders count:', expandedFolders.size)
-          }, 100)
-        }, 500) // Increased delay to ensure files are fully processed
+        }, 500)
         
         return () => clearTimeout(timeoutId)
       }
-    } else if (selectedModeCategory !== 'workflow') {
-      // Reset the auto-expanded ref when switching away from workflow mode
+    } else if (selectedModeCategory === 'skill_builder' && filteredFiles.length > 0) {
+      // Auto-expand for skill builder mode
+      if (autoExpandedWorkflowRef.current !== 'skill_builder_auto') {
+        const timeoutId = setTimeout(() => {
+          console.log('[Workspace] Auto-expanding Skill Builder folders (custom only)')
+          // For skill builder, we want to see the list of skill categories
+          // Specifically: 
+          // 1. Expand the root 'skills/' folder (level 0)
+          // 2. Expand the 'custom/' folder (specified in additionalFolders)
+          // 3. Keep individual skill folders closed to avoid clutter
+          expandFoldersToLevel(filteredFiles, 0, ['custom'])
+          autoExpandedWorkflowRef.current = 'skill_builder_auto'
+        }, 500)
+        return () => clearTimeout(timeoutId)
+      }
+    } else if (selectedModeCategory !== 'workflow' && selectedModeCategory !== 'skill_builder') {
+      // Reset the auto-expanded ref when switching away
       autoExpandedWorkflowRef.current = null
     }
   }, [selectedModeCategory, workflowFolderPath, filteredFiles, expandFoldersToLevel, activeWorkflowPreset?.id, expandedFolders, setExpandedFolders])
@@ -1836,9 +1830,23 @@ export default function Workspace({
             </div>
           </div>
         )}
+
+        {/* Skill Builder Filter Banner - Only show in skill builder mode */}
+        {!minimized && selectedModeCategory === 'skill_builder' && (
+          <div className="mb-2 px-2.5 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-md">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                <Filter className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                <span className="text-xs text-emerald-900 dark:text-emerald-100 truncate">
+                  Filters workspace to skills/ folder
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
         
-        {/* Search/Filter Input - Hidden when workflow folder is filtered in workflow mode */}
-        {!minimized && (selectedModeCategory !== 'workflow' || !workflowFolderPath) && (
+        {/* Search/Filter Input - Hidden when workspace is filtered (workflow or skill_builder) */}
+        {!minimized && (selectedModeCategory !== 'workflow' || !workflowFolderPath) && selectedModeCategory !== 'skill_builder' && (
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

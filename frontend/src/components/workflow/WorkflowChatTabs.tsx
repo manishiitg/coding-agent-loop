@@ -2,7 +2,7 @@ import React, { useMemo, useEffect } from 'react'
 import { X, ArrowDown, Square } from 'lucide-react'
 import { useChatStore, type ChatTab } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { EventModeToggle } from '../events'
 import { agentApi } from '../../services/api'
 
@@ -111,48 +111,12 @@ export const WorkflowChatTabs: React.FC = () => {
     return 'bg-gray-400'
   }
 
-  // Get tooltip text for tab
-  const getTabTooltip = (tab: ChatTab): string => {
-    const sessionStatus = tabSessionStatus[tab.tabId]
-    const parts: string[] = [tab.name]
-
-    if (tab.sessionId) {
-      parts.push(`Session ID: ${tab.sessionId}`)
-    }
-
-    let statusLabel: string | null = null
-    if (sessionStatus?.status) {
-      statusLabel = sessionStatus.status === 'active' ? 'Active' :
-                    sessionStatus.status === 'running' ? 'Running' :
-                    sessionStatus.status === 'completed' ? 'Completed' :
-                    sessionStatus.status === 'paused' ? 'Paused' :
-                    sessionStatus.status === 'stopped' ? 'Stopped' :
-                    sessionStatus.status === 'error' ? 'Error' :
-                    sessionStatus.status
-    } else if (tab.isCompleted) {
-      statusLabel = 'Completed'
-    } else if (tab.isStreaming) {
-      statusLabel = 'Running'
-    } else if (tab.sessionId) {
-      statusLabel = 'Inactive'
-    }
-
-    if (statusLabel) {
-      parts.push(`Status: ${statusLabel}`)
-    }
-
-    return parts.join(' • ')
-  }
-
-  return (
-    <TooltipProvider>
-      <div className="flex items-center gap-1 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-2 py-1 overflow-x-auto">
-        {activeWorkflowTabs.map((tab) => {
-          const isActive = tab.tabId === activeTabId
-          const indicatorColor = getTabIndicator(tab)
-          const tooltipText = getTabTooltip(tab)
-          const isTabStreaming = getTabStreamingStatus(tab.tabId)
-          const canStop = tab.sessionId && (isTabStreaming || tab.isStreaming)
+    return (
+      <div className="flex items-center gap-1 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-2 py-1 overflow-x-auto">      {activeWorkflowTabs.map((tab) => {
+        const isActive = tab.tabId === activeTabId
+        const indicatorColor = getTabIndicator(tab)
+        const isTabStreaming = getTabStreamingStatus(tab.tabId)
+        const canStop = tab.sessionId && (isTabStreaming || tab.isStreaming)
 
           // Calculate new event count for inactive tabs
           // NOTE: Events are already filtered by backend based on event_mode, so no need to filter again
@@ -171,71 +135,68 @@ export const WorkflowChatTabs: React.FC = () => {
           })()
 
           return (
-            <Tooltip key={tab.tabId}>
-              <TooltipTrigger asChild>
+            <div
+              key={tab.tabId}
+              onClick={() => handleTabClick(tab.tabId)}
+              onKeyDown={(e) => e.key === 'Enter' && handleTabClick(tab.tabId)}
+              role="button"
+              tabIndex={0}
+              className={`
+                flex items-center gap-1.5 px-2 py-1 rounded-t-md text-xs font-medium transition-colors cursor-pointer outline-none
+                ${isActive
+                  ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border-b-2 border-blue-500'
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100'
+                }
+              `}
+            >
+              {/* Status Indicator */}
+              <div className={`w-1.5 h-1.5 rounded-full ${indicatorColor}`} />
+
+              {/* Tab Name */}
+              <span className="whitespace-nowrap">{tab.name}</span>
+
+              {/* New Events Badge - show for inactive tabs with new events */}
+              {!isActive && newEventCount > 0 && (
+                <span className="flex items-center justify-center min-w-[18px] h-4 px-1.5 text-xs font-semibold text-white bg-red-500 dark:bg-red-600 rounded-full">
+                  {newEventCount > 99 ? '99+' : newEventCount}
+                </span>
+              )}
+
+              {/* Event Mode Toggle - show inside active tab header */}
+              {isActive && (
+                <div className="ml-1 flex items-center" onClick={(e) => e.stopPropagation()}>
+                  <EventModeToggle />
+                </div>
+              )}
+
+              {/* Stop Button - show for tabs with sessionId that are streaming/running */}
+              {canStop && (
                 <button
-                  onClick={() => handleTabClick(tab.tabId)}
+                  onClick={(e) => handleStopSession(e, tab)}
                   className={`
-                    flex items-center gap-1.5 px-2 py-1 rounded-t-md text-xs font-medium transition-colors
-                    ${isActive
-                      ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border-b-2 border-blue-500'
-                      : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100'
-                    }
+                    ml-0.5 p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30
+                    ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 hover:opacity-70'}
+                    transition-opacity
                   `}
+                  title="Stop session"
                 >
-                  {/* Status Indicator */}
-                  <div className={`w-1.5 h-1.5 rounded-full ${indicatorColor}`} />
-
-                  {/* Tab Name */}
-                  <span className="whitespace-nowrap">{tab.name}</span>
-
-                  {/* New Events Badge - show for inactive tabs with new events */}
-                  {!isActive && newEventCount > 0 && (
-                    <span className="flex items-center justify-center min-w-[18px] h-4 px-1.5 text-xs font-semibold text-white bg-red-500 dark:bg-red-600 rounded-full">
-                      {newEventCount > 99 ? '99+' : newEventCount}
-                    </span>
-                  )}
-
-                  {/* Event Mode Toggle - show inside active tab header */}
-                  {isActive && (
-                    <div className="ml-1 flex items-center" onClick={(e) => e.stopPropagation()}>
-                      <EventModeToggle />
-                    </div>
-                  )}
-
-                  {/* Stop Button - show for tabs with sessionId that are streaming/running */}
-                  {canStop && (
-                    <button
-                      onClick={(e) => handleStopSession(e, tab)}
-                      className={`
-                        ml-0.5 p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30
-                        ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 hover:opacity-70'}
-                        transition-opacity
-                      `}
-                      title="Stop session"
-                    >
-                      <Square className="w-3 h-3 text-red-600 dark:text-red-400" fill="currentColor" />
-                    </button>
-                  )}
-
-                  {/* Close Button */}
-                  <button
-                    onClick={(e) => handleTabClose(e, tab.tabId)}
-                    className={`
-                      ml-0.5 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600
-                      ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 hover:opacity-70'}
-                      transition-opacity
-                    `}
-                    title="Close tab"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
+                  <Square className="w-3 h-3 text-red-600 dark:text-red-400" fill="currentColor" />
                 </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{tooltipText}</p>
-              </TooltipContent>
-            </Tooltip>
+              )}
+
+              {/* Close Button */}
+              <button
+                onClick={(e) => handleTabClose(e, tab.tabId)}
+                className={`
+                  ml-0.5 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600
+                  ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 hover:opacity-70'}
+                  transition-opacity
+                `}
+                title="Close tab"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
           )
         })}
 
@@ -301,6 +262,5 @@ export const WorkflowChatTabs: React.FC = () => {
           </div>
         )}
       </div>
-    </TooltipProvider>
   )
 }

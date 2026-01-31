@@ -190,7 +190,7 @@ func (c *WorkspaceAPIClient) DeleteFolder(folderPath string) error {
 	return nil
 }
 
-// DiscoverSkills discovers all skills in the workspace
+// DiscoverSkills discovers all skills in the workspace, including those in skills/custom/
 func DiscoverSkills(workspaceAPIURL string) ([]Skill, error) {
 	client := NewWorkspaceAPIClient(workspaceAPIURL)
 
@@ -203,31 +203,66 @@ func DiscoverSkills(workspaceAPIURL string) ([]Skill, error) {
 
 	var skills []Skill
 
-	// Process each entry
-	for _, entry := range entries {
-		if entry.Type != "folder" {
-			continue
+	// Helper to process a potential skill folder
+	processSkillFolder := func(entry DocumentEntry, prefix string) {
+		folderName := entry.Filepath
+		if prefix != "" {
+			// For nested skills, construct relative folder name
+			// entry.Filepath is full path like "skills/custom/my-skill"
+			// we want "custom/my-skill"
+			parts := strings.Split(entry.Filepath, "/")
+			if len(parts) >= 2 {
+				// Take the last N parts based on prefix depth
+				// But simpler: just strip "skills/" prefix
+				relPath := strings.TrimPrefix(entry.Filepath, SkillsBasePath+"/")
+				folderName = relPath
+			}
+		} else {
+			folderName = path.Base(entry.Filepath)
 		}
-
-		// Extract folder name from path
-		folderName := path.Base(entry.Filepath)
 
 		// Try to read SKILL.md from this folder
 		skillFilePath := path.Join(entry.Filepath, SkillFileName)
 		content, err := client.ReadFile(skillFilePath)
 		if err != nil {
 			// Skip folders without SKILL.md
-			continue
+			return
 		}
 
 		// Parse the skill
 		skill, err := ParseSkillFromContent(content, folderName, skillFilePath)
 		if err != nil {
 			// Log but skip invalid skills
-			continue
+			return
 		}
 
 		skills = append(skills, *skill)
+	}
+
+	// Process each entry in skills/
+	for _, entry := range entries {
+		if entry.Type != "folder" {
+			continue
+		}
+
+		folderName := path.Base(entry.Filepath)
+
+		// Check for "custom" folder
+		if folderName == "custom" {
+			// List contents of skills/custom
+			customEntries, err := client.ListFiles(entry.Filepath)
+			if err == nil {
+				for _, customEntry := range customEntries {
+					if customEntry.Type == "folder" {
+						processSkillFolder(customEntry, "custom")
+					}
+				}
+			}
+			continue
+		}
+
+		// Process standard skill folder
+		processSkillFolder(entry, "")
 	}
 
 	return skills, nil

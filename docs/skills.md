@@ -4,10 +4,23 @@ Skills are reusable instruction sets that guide workflow agents on how to handle
 
 ## Overview
 
-- **Storage**: Skills are stored in `workspace-docs/skills/<skill-name>/`
-- **Main File**: Each skill must have a `SKILL.md` file with YAML frontmatter
-- **Read-Only**: Skills are read-only during workflow execution
-- **Selection**: Skills can be selected at preset level or overridden per-step
+- **Storage**: Skills are stored in `workspace-docs/skills/`. 
+  - **Standard Skills**: Imported skills are stored in `skills/<skill-name>/`.
+  - **Custom Skills**: Skills created via Skill Builder are stored in `skills/custom/<skill-name>/`.
+- **Main File**: Each skill must have a `SKILL.md` file with YAML frontmatter.
+- **Read-Only**: Skills are read-only during workflow execution (but writable in Skill Builder mode).
+- **Selection**: Skills can be selected at preset level or overridden per-step.
+
+## Skill Builder Mode
+
+The Skill Builder is a specialized agent mode designed to help you create, test, and refine skills.
+- **Access**: Select "Skill Builder" from the mode switcher or use `Ctrl+5`.
+- **Theme**: Identified by the Emerald (Green) theme.
+- **Capabilities**:
+  - Automatically creates skills in the `skills/custom/` directory.
+  - Can read all existing skills for reference.
+  - Restricted to writing only within `skills/custom/`.
+  - Optimized for creating API wrappers and automation scripts (Python/Bash).
 
 ## Skill File Format
 
@@ -229,14 +242,15 @@ Skills can be imported from GitHub folder URLs:
 ```
 workspace-docs/
 ├── skills/
-│   ├── code-review/
+│   ├── code-review/           # Standard/Imported Skill
 │   │   └── SKILL.md
-│   ├── lead-research-assistant/
-│   │   ├── SKILL.md
-│   │   └── templates/
-│   │       └── research-template.md
-│   └── mcp-builder/
-│       └── SKILL.md
+│   ├── custom/                # User-created Skills
+│   │   └── my-new-skill/
+│   │       └── SKILL.md
+│   └── lead-research-assistant/
+│       ├── SKILL.md
+│       └── templates/
+│           └── research-template.md
 └── ... other workspace files
 ```
 

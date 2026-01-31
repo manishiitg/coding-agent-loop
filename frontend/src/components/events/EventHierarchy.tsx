@@ -71,7 +71,39 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   
   // Merge loaded older events with current events
   const displayEvents = useMemo(() => {
-    const allEvents = [...loadedOlderEvents, ...events];
+    let allEvents = [...loadedOlderEvents, ...events];
+
+    // Deduplicate events by ID to prevent visual duplicates
+    const seenIds = new Set<string>();
+    allEvents = allEvents.filter(event => {
+      if (seenIds.has(event.id)) return false;
+      seenIds.add(event.id);
+      return true;
+    });
+
+    // Filter out "Total Token Usage" and "Context Offloading" events in tiny mode
+    if (eventMode === 'tiny') {
+      allEvents = allEvents.filter(event => {
+        if (event.type === 'token_usage') {
+          // Check if it's a total token usage event
+          // events-bridge structure: event.data.data holds the actual event payload
+          const agentEvent = event.data as { data?: Record<string, unknown> } | undefined
+          const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined
+          
+          if (payload?.context === 'conversation_total') {
+            return false
+          }
+        }
+        
+        // Hide Context Offloading events in tiny mode
+        if (event.type === 'large_tool_output_detected' || event.type === 'large_tool_output_file_written') {
+          return false
+        }
+        
+        return true
+      })
+    }
+
     const sortedEvents = allEvents.sort((a, b) => {
       const timeA = a.timestamp ? (Date.parse(a.timestamp) || 0) : 0;
       const timeB = b.timestamp ? (Date.parse(b.timestamp) || 0) : 0;
@@ -82,7 +114,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       return sortedEvents.slice(-MAX_EVENTS_TO_PROCESS);
     }
     return sortedEvents;
-  }, [events, loadedOlderEvents]);
+  }, [events, loadedOlderEvents, eventMode]);
   
   // Reset loaded older events when session or event mode changes
   useEffect(() => {
@@ -104,18 +136,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       }
     }
     return undefined;
-  }, []);
-
-  const getHierarchyLevel = useCallback((event: PollingEvent): number => {
-    if ('hierarchy_level' in event && typeof event.hierarchy_level === 'number') return event.hierarchy_level;
-    if (event.data && typeof event.data === 'object') {
-      for (const [, value] of Object.entries(event.data)) {
-        if (value && typeof value === 'object' && 'hierarchy_level' in value) {
-          return (value as { hierarchy_level: number }).hierarchy_level;
-        }
-      }
-    }
-    return -1;
   }, []);
 
   const getAgentSessionKey = useCallback((event: PollingEvent): string | null => {
@@ -205,13 +225,13 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       }
     });
 
-    const buildTreeRecursive = (event: PollingEvent): EventNode => {
+    const buildTreeRecursive = (event: PollingEvent, depth: number): EventNode => {
       const children = childrenMap.get(event.id) || [];
-      const childNodes = children.map(child => buildTreeRecursive(child));
+      const childNodes = children.map(child => buildTreeRecursive(child, depth + 1));
       return {
         event,
         children: childNodes,
-        level: getHierarchyLevel(event),
+        level: depth,
         isExpanded: expandedNodes.has(event.id)
       };
     };
@@ -221,8 +241,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       return !parentId || !filteredEventIds.has(parentId);
     });
 
-    return rootEvents.map(event => buildTreeRecursive(event));
-  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId, getHierarchyLevel]);
+    return rootEvents.map(event => buildTreeRecursive(event, 0));
+  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId]); // Removed getHierarchyLevel dependency
 
   const flattenedItems = useMemo(() => {
     const list: FlattenedItem[] = [];
@@ -265,8 +285,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     const { event, children, level, isExpanded } = node;
     const hasChildren = children.length > 0;
     
-    // Base indentation
-    const indentLevel = Math.max(0, level + 1);
+    // Base indentation - use level + 1 to ensure at least one level of indent (20px) for visibility
+    const indentLevel = level + 1;
     const indentSize = flatHierarchy ? 0 : 20;
     const indent = indentLevel * indentSize;
     

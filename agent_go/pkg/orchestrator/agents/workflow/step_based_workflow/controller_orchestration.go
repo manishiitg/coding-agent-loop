@@ -541,7 +541,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 
 					// Calculate turn count for orchestration step
 					turnCount := len(conversationHistory)
-					err = hcpo.runSuccessLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM)
+					triggerReason := "Orchestration success criteria met"
+			err = hcpo.runSuccessLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
 					if err != nil {
 						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for orchestration step %s: %v", orchestrationStepPath, err))
 					} else {
@@ -635,7 +636,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 
 				// Calculate turn count for orchestration step
 				turnCount := len(conversationHistory)
-				_, _, err = hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM)
+				triggerReason := "Orchestration validation failed"
+				_, _, err = hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
 				if err != nil {
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for orchestration step %s: %v", orchestrationStepPath, err))
 				} else {
@@ -1051,7 +1053,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 
 		// Calculate turn count for orchestration step
 		turnCount := len(conversationHistory)
-		_, _, err := hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, failureValidationResponse, isCodeExecutionMode, usedTempLLM, turnCount, lastExecutionLLM)
+		triggerReason := "Orchestration iteration limit reached"
+		_, _, err := hcpo.runFailureLearningPhase(ctx, stepIndex, orchestrationStepPath, learningPathIdentifier, totalSteps, orchestrationStepPlan.OrchestrationStep, conversationHistory, failureValidationResponse, isCodeExecutionMode, usedTempLLM, turnCount, lastExecutionLLM, triggerReason)
 		if err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for orchestration step %s: %v", orchestrationStepPath, err))
 		} else {

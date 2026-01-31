@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
-import type { StepProgress, GetEventsResponse } from '../services/api-types'
+import type { StepProgress } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { useChatStore } from './useChatStore'
 import { getTypedEventData } from '../generated/event-types'
@@ -13,8 +13,7 @@ import {
 } from '../constants/runningWorkflows'
 import {
   hasWorkflowCompletion,
-  hasWorkflowError,
-  calculateBackoffDelay
+  hasWorkflowError
 } from '../utils/workflowEventProcessor'
 
 // Running workflow interface for tracking active workflows
@@ -135,7 +134,6 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
           }
           set({ runningWorkflows: updated })
           saveRunningWorkflowsToStorage(updated)
-          console.log(`[RunningWorkflowsStore] Updated existing running workflow: ${params.sessionId}`)
         } else {
           // Create new running workflow entry
           const runningWorkflow: RunningWorkflow = {
@@ -167,7 +165,6 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
 
           set({ runningWorkflows: newRunningWorkflows })
           saveRunningWorkflowsToStorage(newRunningWorkflows)
-          console.log(`[RunningWorkflowsStore] Minimized workflow: ${params.presetName} - ${params.phaseName}`)
         }
 
         // Start polling (adaptive based on drawer state)
@@ -211,7 +208,6 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
         set({ runningWorkflows: newRunningWorkflows })
         saveRunningWorkflowsToStorage(newRunningWorkflows)
 
-        console.log(`[RunningWorkflowsStore] Restored workflow: ${runningWorkflow.presetName} - ${runningWorkflow.phaseName}`)
 
         // Clear is_minimized flag in session metadata
         agentApi.updateChatSession(runningWorkflow.sessionId, {
@@ -252,8 +248,6 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
         const newRunningWorkflows = state.runningWorkflows.filter(bg => bg.id !== id)
         set({ runningWorkflows: newRunningWorkflows })
         saveRunningWorkflowsToStorage(newRunningWorkflows)
-
-        console.log(`[RunningWorkflowsStore] Removed running workflow: ${id}`)
       },
 
       // Update workflow status
@@ -341,12 +335,8 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
         let interval: number = POLLING_INTERVALS.BACKGROUND
         if (drawerOpen) {
           interval = POLLING_INTERVALS.ACTIVE
-          console.log('[RunningWorkflowsStore] Starting fast polling (drawer open)')
         } else if (runningCount === 0) {
           interval = POLLING_INTERVALS.IDLE
-          console.log('[RunningWorkflowsStore] Starting slow polling (no running workflows)')
-        } else {
-          console.log('[RunningWorkflowsStore] Starting background polling')
         }
 
         const pollingInterval = setInterval(() => {
@@ -362,7 +352,6 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
       stopRunningPolling: () => {
         const state = get()
         if (state.runningPollingInterval) {
-          console.log('[RunningWorkflowsStore] Stopping polling')
           clearInterval(state.runningPollingInterval)
           set({ runningPollingInterval: null })
         }
@@ -420,7 +409,6 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
                   failedPollCount: 0,  // Reset failure count on restart
                   lastPollError: undefined
                 })
-                console.log(`[RunningWorkflowsStore] Workflow resumed (was ${bg.status}): ${bg.presetName}`)
               }
             } else if (response.session_status === 'stopped') {
               shouldMarkPaused = true
@@ -435,9 +423,7 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
               chatStore.addTabEvents(bg.sessionId, response.events)
 
               // Update last event index
-              // last_event_index may exist in response but isn't in the type definition
-              const responseWithIndex = response as GetEventsResponse & { last_event_index?: number }
-              const newLastIndex = responseWithIndex.last_event_index ?? (lastIndex + response.events.length)
+              const newLastIndex = response.last_processed_index ?? (lastIndex + response.events.length)
               chatStore.setTabLastEventIndex(bg.sessionId, newLastIndex)
 
               // Process events for progress updates
@@ -450,7 +436,9 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
                   'tool_call_start',
                   'tool_call_end',
                   'llm_generation_end',
-                  'orchestrator_agent_start'
+                  'orchestrator_agent_start',
+                  'orchestrator_agent_end',
+                  'workflow_start'
                 ]
                 if (event.type && runningEventTypes.includes(event.type)) {
                   hasRunningEvents = true
@@ -477,10 +465,8 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
                 // workflow_end event is the true indicator of workflow completion
                 if (event.type && hasWorkflowCompletion([event])) {
                   shouldMarkCompleted = true
-                  console.log(`[RunningWorkflowsStore] Workflow completion event detected: ${event.type} for ${bg.presetName}`)
                 } else if (event.type && hasWorkflowError([event])) {
                   shouldMarkFailed = true
-                  console.log(`[RunningWorkflowsStore] Workflow error event detected: ${event.type} for ${bg.presetName}`)
                 }
               }
 
@@ -502,27 +488,18 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
                 failedPollCount: 0,
                 lastPollError: undefined
               })
-              console.log(`[RunningWorkflowsStore] Workflow resumed (saw running events, was completed): ${bg.presetName}`)
               // Continue processing - don't return, let it keep polling
             } else if (shouldMarkFailed) {
               get().updateRunningWorkflowStatus(bg.id, { status: 'failed' })
-              console.log(`[RunningWorkflowsStore] Workflow failed: ${bg.presetName}`)
               continue
             } else if (shouldMarkCompleted) {
               // Only mark as completed if we saw a workflow_end event
               get().updateRunningWorkflowStatus(bg.id, { status: 'completed' })
               chatStore.cleanupTabEvents?.(bg.sessionId, EVENT_CONFIG.MAX_EVENTS_PER_COMPLETED_SESSION)
-              console.log(`[RunningWorkflowsStore] Workflow completed (workflow_end event): ${bg.presetName}`)
               continue
             } else if (shouldMarkPaused) {
               get().updateRunningWorkflowStatus(bg.id, { status: 'paused' })
-              console.log(`[RunningWorkflowsStore] Workflow stopped: ${bg.presetName}`)
               continue
-            } else if (response.session_status === 'completed' && bg.status !== 'completed') {
-              // If session_status is completed but we didn't see workflow_end event,
-              // it might be a false positive (single agent completion). 
-              // Don't mark as completed yet - keep polling to see if more events arrive
-              console.log(`[RunningWorkflowsStore] Session status is 'completed' but no workflow_end event yet for ${bg.presetName} - continuing to poll`)
             }
 
             // Reset failure count on success
@@ -549,14 +526,6 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
                 'error'
               )
             }
-
-            // Calculate backoff delay for next attempt
-            const backoffDelay = calculateBackoffDelay(
-              newFailureCount,
-              VALIDATION_CONFIG.RETRY_BASE_DELAY,
-              VALIDATION_CONFIG.RETRY_MAX_DELAY
-            )
-            console.log(`[RunningWorkflowsStore] Will retry after ${backoffDelay}ms (attempt ${newFailureCount})`)
           }
         }
 
@@ -573,14 +542,12 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
         if (!force && state.lastValidationTime) {
           const age = now - state.lastValidationTime
           if (age < VALIDATION_CONFIG.VALIDATION_CACHE_TTL) {
-            console.log('[RunningWorkflowsStore] Skipping validation (recently validated)')
             return
           }
         }
 
         if (state.runningWorkflows.length === 0) return
 
-        console.log(`[RunningWorkflowsStore] Validating ${state.runningWorkflows.length} workflows...`)
 
         const validWorkflows: RunningWorkflow[] = []
         const removedIds: string[] = []
@@ -615,10 +582,6 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
           }
         }
 
-        if (removedIds.length > 0) {
-          console.log(`[RunningWorkflowsStore] Removed ${removedIds.length} stale workflows`)
-        }
-
         set({ runningWorkflows: validWorkflows, lastValidationTime: now })
         saveRunningWorkflowsToStorage(validWorkflows)
       },
@@ -635,7 +598,6 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
           // Remove old completed/failed workflows
           const age = now - wf.lastUpdated
           if (age > WORKFLOW_LIMITS.COMPLETED_WORKFLOW_TTL) {
-            console.log(`[RunningWorkflowsStore] Auto-removing old ${wf.status} workflow: ${wf.presetName}`)
             // Cleanup events
             if (wf.sessionId) {
               useChatStore.getState().cleanupTabEvents?.(

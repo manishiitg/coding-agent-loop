@@ -4,6 +4,7 @@ import { agentApi } from '../services/api'
 import type { PlannerFile, PresetQuery, PresetLLMConfig, CreatePresetQueryRequest, UpdatePresetQueryRequest } from '../services/api-types'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import { useAppStore } from './useAppStore'
+import { type ModeCategory } from './useModeStore'
 import { useWorkspaceStore } from './useWorkspaceStore'
 import { useMCPStore } from './useMCPStore'
 import { useLLMStore } from './useLLMStore'
@@ -24,10 +25,7 @@ interface GlobalPresetState {
   error: string | null
   
   // Active preset tracking per mode category
-  activePresetIds: {
-    'chat': string | null
-    'workflow': string | null
-  }
+  activePresetIds: Record<Exclude<ModeCategory, null>, string | null>
   
   // Current preset application state
   currentPresetServers: string[]
@@ -45,9 +43,9 @@ interface GlobalPresetState {
   updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
   
   // Actions for preset application
-  applyPreset: (presetOrId: CustomPreset | PredefinedPreset | string, modeCategory: 'chat' | 'workflow') => PresetApplicationResult
-  clearActivePreset: (modeCategory: 'chat' | 'workflow') => void
-  getActivePreset: (modeCategory: 'chat' | 'workflow') => CustomPreset | PredefinedPreset | null
+  applyPreset: (presetOrId: CustomPreset | PredefinedPreset | string, modeCategory: Exclude<ModeCategory, null>) => PresetApplicationResult
+  clearActivePreset: (modeCategory: Exclude<ModeCategory, null>) => void
+  getActivePreset: (modeCategory: Exclude<ModeCategory, null>) => CustomPreset | PredefinedPreset | null
   
   // Actions for current state management
   setCurrentPresetServers: (servers: string[]) => void
@@ -55,11 +53,11 @@ interface GlobalPresetState {
   setSelectedPresetFolder: (folderPath: string | null) => void
   setCurrentQuery: (query: string) => void
   clearPresetState: () => void
-  setActivePreset: (modeCategory: 'chat' | 'workflow', presetId: string | null) => void
+  setActivePreset: (modeCategory: Exclude<ModeCategory, null>, presetId: string | null) => void
   
   // Helper actions
-  getPresetsForMode: (modeCategory: 'chat' | 'workflow') => (CustomPreset | PredefinedPreset)[]
-  isPresetActive: (presetId: string, modeCategory: 'chat' | 'workflow') => boolean
+  getPresetsForMode: (modeCategory: Exclude<ModeCategory, null>) => (CustomPreset | PredefinedPreset)[]
+  isPresetActive: (presetId: string, modeCategory: Exclude<ModeCategory, null>) => boolean
 }
 
 export const useGlobalPresetStore = create<GlobalPresetState>()(
@@ -74,7 +72,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       
       activePresetIds: {
         'chat': null,
-        'workflow': null
+        'workflow': null,
+        'skill_builder': null
       },
       
       currentPresetServers: [],
@@ -1118,12 +1117,13 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           currentQuery: '',
           activePresetIds: {
             'chat': null,
-            'workflow': null
+            'workflow': null,
+            'skill_builder': null
           }
         })
       },
 
-      setActivePreset: (modeCategory: 'chat' | 'workflow', presetId: string | null) => {
+      setActivePreset: (modeCategory: Exclude<ModeCategory, null>, presetId: string | null) => {
         set(state => ({
           activePresetIds: {
             ...state.activePresetIds,
@@ -1143,6 +1143,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           } else if (modeCategory === 'workflow') {
             return preset.agentMode === 'workflow'
           }
+          // skill_builder has no presets
           return false
         })
       },

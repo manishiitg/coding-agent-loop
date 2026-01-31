@@ -3,14 +3,16 @@ import { Layers } from 'lucide-react'
 import { useRunningWorkflowsStore, useRunningWorkflows } from '../../stores/useRunningWorkflowsStore'
 import { useChatStore } from '../../stores/useChatStore'
 import { cn } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 
-/**
- * Floating indicator showing count of running workflows.
- * Combines tracked workflows with active workflow tabs.
- * Always visible in bottom-right corner.
- * Click to open the RunningWorkflowsDrawer.
- */
-export const RunningWorkflowsIndicator: React.FC = () => {
+interface RunningWorkflowsIndicatorProps {
+  variant?: 'floating' | 'sidebar'
+  minimized?: boolean
+}
+export const RunningWorkflowsIndicator: React.FC<RunningWorkflowsIndicatorProps> = ({
+  variant = 'floating',
+  minimized = false
+}) => {
   const setShowRunningDrawer = useRunningWorkflowsStore(state => state.setShowRunningDrawer)
   const runningWorkflows = useRunningWorkflows()
 
@@ -46,6 +48,54 @@ export const RunningWorkflowsIndicator: React.FC = () => {
   }, [runningWorkflows, chatTabs, getTabStreamingStatus])
 
   const hasRunning = running > 0
+  const tooltipText = hasRunning ? `${running} running workflows` : "Workflows"
+
+  if (variant === 'sidebar') {
+    if (minimized) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setShowRunningDrawer(true)
+              }}
+              className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors relative"
+            >
+              <Layers className="w-5 h-5" />
+              {hasRunning && (
+                <div className="absolute top-1 right-1">
+                  <div className="w-2 h-2 rounded-full bg-green-500 border border-white dark:border-slate-900" />
+                  <div className="absolute inset-0 w-2 h-2 rounded-full bg-green-500 animate-ping" />
+                </div>
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="right">
+            <p>{tooltipText}</p>
+          </TooltipContent>
+        </Tooltip>
+      )
+    }
+
+    // Expanded sidebar item
+    return (
+      <button
+        onClick={() => setShowRunningDrawer(true)}
+        className="w-full flex items-center justify-between px-2 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md transition-colors group"
+      >
+        <div className="flex items-center gap-2">
+          <Layers className="w-4 h-4 text-gray-500 dark:text-gray-400 group-hover:text-gray-700 dark:group-hover:text-gray-200" />
+          <span>Workflows</span>
+        </div>
+        {hasRunning && (
+          <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold text-white bg-green-500 rounded-full">
+            {running}
+          </span>
+        )}
+      </button>
+    )
+  }
 
   return (
     <button
@@ -58,7 +108,7 @@ export const RunningWorkflowsIndicator: React.FC = () => {
         "focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2",
         hasRunning ? "border-primary border-2" : hasWorkflows ? "border-border" : "border-border/50 opacity-70 hover:opacity-100"
       )}
-      title={hasRunning ? `${running} running workflows` : "Workflows"}
+      title={tooltipText}
     >
       <Layers className={cn(
         "w-5 h-5",

@@ -168,6 +168,9 @@ func runServer(cmd *cobra.Command, args []string) {
 			"semantic_search": enableSemanticSearch,
 		})
 	})
+	r.HEAD("/health", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
 
 	// API routes
 	api := r.Group("/api")

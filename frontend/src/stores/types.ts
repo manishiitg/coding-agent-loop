@@ -50,7 +50,7 @@ export interface Toast {
 }
 
 // Agent Mode Types
-export type AgentMode = 'simple' | 'workflow'
+export type AgentMode = 'simple' | 'workflow' | 'skill_builder'
 
 // Workflow Types - dynamic from backend
 export type WorkflowPhase = string

@@ -48,6 +48,9 @@ export interface ChatAreaRef {
 }
 
 
+// Global flag to ensure auto-restore only happens once per page load
+let globalHasRestored = false
+
 // Inner component that can use the EventMode context
 const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   const { onNewChat, hideHeader = false, hideInput = false, compact = false, tabId } = props
@@ -130,6 +133,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     // For workflow mode, use preset servers
     if (selectedModeCategory === 'workflow') {
       return currentPresetServers.length > 0 ? currentPresetServers : selectedServers
+    }
+    // For skill_builder mode, strictly disable all servers
+    if (selectedModeCategory === 'skill_builder') {
+      return ["NO_SERVERS"]
     }
     // For chat mode, ALWAYS use tab's selected servers from config (if available), otherwise fall back to global
     // NEVER use currentPresetServers in chat mode - workflow preset state is isolated to workflow mode only
@@ -346,7 +353,27 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     // In basic/tiny mode, hide workspace_file_operation events from display
     // (they're still processed by useWorkspaceStore for file highlighting)
     if (eventMode === 'basic' || eventMode === 'tiny') {
-      return tabEvents.filter(event => event.type !== 'workspace_file_operation')
+      return tabEvents.filter(event => {
+        if (event.type === 'workspace_file_operation') return false
+        
+        // In tiny mode, also hide Total Token Usage and Context Offloading events
+        if (eventMode === 'tiny') {
+          if (event.type === 'token_usage') {
+            const agentEvent = event.data as { data?: Record<string, unknown> } | undefined
+            const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined
+            
+            if (payload?.context === 'conversation_total') {
+              return false
+            }
+          }
+          
+          if (event.type === 'large_tool_output_detected' || event.type === 'large_tool_output_file_written') {
+            return false
+          }
+        }
+        
+        return true
+      })
     }
     // In advanced mode, show all events
     return tabEvents
@@ -371,18 +398,18 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
   // State for preset selection overlay
   const [showPresetSelection, setShowPresetSelection] = useState(false)
-  const [pendingModeCategory, setPendingModeCategory] = useState<'workflow' | null>(null)
+  const [pendingModeCategory, setPendingModeCategory] = useState<Exclude<ModeCategory, null> | null>(null)
   
   // State for mode switch dialog
   const [showModeSwitchDialog, setShowModeSwitchDialog] = useState(false)
-  const [pendingModeSwitch, setPendingModeSwitch] = useState<'chat' | 'workflow' | null>(null)
+  const [pendingModeSwitch, setPendingModeSwitch] = useState<Exclude<ModeCategory, null> | null>(null)
   
 
   // Handle mode selection from dropdown
   // Handle mode switching with preset selection for Workflow
-  const handleModeSwitchWithPreset = (category: 'chat' | 'workflow') => {
-    if (category === 'chat') {
-      // Chat mode doesn't need preset selection
+  const handleModeSwitchWithPreset = (category: Exclude<ModeCategory, null>) => {
+    if (category === 'chat' || category === 'skill_builder') {
+      // Chat and Skill Builder modes doesn't need preset selection
       // Clear any active presets when switching to chat mode
       clearActivePreset('workflow')
       switchMode(category)
@@ -408,7 +435,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   }
 
   // Switch mode function
-  const switchMode = (category: 'chat' | 'workflow') => {
+  const switchMode = (category: Exclude<ModeCategory, null>) => {
     const { setModeCategory, getAgentModeFromCategory } = useModeStore.getState()
     const { setAgentMode } = useAppStore.getState()
     
@@ -923,7 +950,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         ? getTabLastEventIndex(effectiveSessionId)
         : lastEventIndexRef.current
       
-      // CRITICAL: Detect and fix sentinel value (9999) which means "all events processed" but not an actual index
+      // CRITICAL: Detect sentinel value (9999) which means "all events processed" but not an actual index
       // If lastEventIndex is 9999 or higher, check stored events to get the actual last index
       if (rawLastEventIndex >= 9999) {
         const storedEvents = getTabEvents(effectiveSessionId)
@@ -943,6 +970,19 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             setTabLastEventIndex(effectiveSessionId, 0)
           } else {
             setLastEventIndex(0)
+          }
+        }
+      } else if (rawLastEventIndex === -1) {
+        // Safety check: if index is -1 but we have events, use the event count
+        // This prevents re-fetching from 0 if index state was lost but events exist
+        const storedEvents = getTabEvents(effectiveSessionId)
+        if (storedEvents && storedEvents.length > 0) {
+          const actualLastIndex = storedEvents.length - 1
+          rawLastEventIndex = actualLastIndex
+          console.log(`[ChatArea] Recovered lastEventIndex ${actualLastIndex} from stored events for session ${effectiveSessionId}`)
+          
+          if (currentTab) {
+            setTabLastEventIndex(effectiveSessionId, actualLastIndex)
           }
         }
       }
@@ -1261,14 +1301,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
   // Auto-restore active sessions on page load
   // This ensures that if the user refreshes the page, active chats are automatically restored
-  const hasRestoredActiveSessionsRef = useRef(false)
   useEffect(() => {
-    // Only restore once on mount
-    if (hasRestoredActiveSessionsRef.current) {
+    // Only restore once per page load (using global flag)
+    if (globalHasRestored) {
       return
     }
     
     const restoreActiveSessions = async () => {
+      // Mark as restored immediately to prevent concurrent executions
+      globalHasRestored = true
+      
       try {
         // Wait a bit for active sessions polling to start and fetch initial data
         await new Promise(resolve => setTimeout(resolve, 500))
@@ -1278,18 +1320,56 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         
         if (activeSessions.length === 0) {
           console.log('[AutoRestore] No active sessions found, skipping restore')
-          hasRestoredActiveSessionsRef.current = true
           return
         }
         
         console.log(`[AutoRestore] Found ${activeSessions.length} active session(s), checking if tabs need to be created`)
         
         // Filter to only running sessions (active ones)
-        const runningSessions = activeSessions.filter(s => s.status === 'running')
+        // CRITICAL: Filter based on current mode category to ensure sessions appear in correct mode
+        // Workflow sessions are handled by the Running Workflows drawer in Workflow mode
+        const runningSessions = activeSessions.filter(s => {
+          const isRunning = s.status === 'running'
+          const agentMode = s.agent_mode?.toLowerCase()
+          const isWorkflow = agentMode === 'workflow'
+          const isSkillBuilder = agentMode === 'skill_builder'
+          
+          // Filter by current mode
+          if (selectedModeCategory === 'chat') {
+            // In chat mode, skip workflow and skill_builder sessions
+            if (isWorkflow || isSkillBuilder) {
+              console.log(`[AutoRestore] Skipping ${agentMode} session in chat mode: ${s.session_id}`)
+              return false
+            }
+          } else if (selectedModeCategory === 'skill_builder') {
+            // In skill_builder mode, ONLY include skill_builder sessions
+            if (!isSkillBuilder) {
+              console.log(`[AutoRestore] Skipping ${agentMode} session in skill_builder mode: ${s.session_id}`)
+              return false
+            }
+          } else {
+            // Should not happen as effect only runs for chat/skill_builder
+            return false
+          }
+          
+          if (isRunning) return true
+
+          // Also include recently completed sessions (within last 30 minutes)
+          if (s.status === 'completed' && s.last_activity) {
+            const lastActivityTime = new Date(s.last_activity).getTime()
+            const thirtyMinutesAgo = Date.now() - (30 * 60 * 1000)
+            
+            if (lastActivityTime > thirtyMinutesAgo) {
+              console.log(`[AutoRestore] Including recently completed session: ${s.session_id} (completed at ${s.last_activity})`)
+              return true
+            }
+          }
+
+          return false
+        })
         
         if (runningSessions.length === 0) {
-          console.log('[AutoRestore] No running sessions found, skipping restore')
-          hasRestoredActiveSessionsRef.current = true
+          console.log('[AutoRestore] No running sessions found (after filtering), skipping restore')
           return
         }
         
@@ -1315,10 +1395,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           const agentMode = activeSession.agent_mode?.toLowerCase() || ''
           const defaultEventMode: 'basic' | 'advanced' | 'tiny' = 
             agentMode === 'orchestrator' ? 'advanced' : 'tiny'
+            
+          // Determine tab mode (chat or skill_builder)
+          const tabMode: 'chat' | 'skill_builder' = agentMode === 'skill_builder' ? 'skill_builder' : 'chat'
           
           try {
-            console.log(`[AutoRestore] Creating tab for active session ${sessionId}: ${sessionTitle}`)
-            const newTabId = await createChatTab(sessionTitle, { mode: 'chat' }, sessionId, defaultEventMode)
+            console.log(`[AutoRestore] Creating tab for active session ${sessionId}: ${sessionTitle} (mode: ${tabMode})`)
+            const newTabId = await createChatTab(sessionTitle, { mode: tabMode }, sessionId, defaultEventMode)
             const newTab = chatStore.getTab(newTabId)
             
             if (!newTab) {
@@ -1355,14 +1438,28 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                 
                 // Restore LLM config
                 if (config.llm_config) {
+                  let provider = config.llm_config.provider as string
+                  // Fix for invalid provider (e.g. "." or empty) - fallback to global default
+                  if (!provider || provider === '.' || provider.trim() === '') {
+                    console.warn(`[AutoRestore] Invalid provider "${provider}" found in session config, falling back to default`)
+                    provider = useLLMStore.getState().primaryConfig.provider || 'openai'
+                  }
+
+                  let modelId = config.llm_config.model_id || ''
+                  // Fix for invalid/missing model_id - fallback to global default
+                  if (!modelId || modelId.trim() === '') {
+                    console.warn(`[AutoRestore] Invalid model_id "${modelId}" found in session config, falling back to default`)
+                    modelId = useLLMStore.getState().primaryConfig.model_id || ''
+                  }
+
                   const llmConfig: ExtendedLLMConfiguration = {
-                    provider: config.llm_config.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
-                    model_id: config.llm_config.model_id || '',
+                    provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                    model_id: modelId,
                     fallback_models: config.llm_config.fallback_models || [],
                   }
                   if (config.llm_config.cross_provider_fallback) {
                     llmConfig.cross_provider_fallback = {
-                      provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                      provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
                       models: config.llm_config.cross_provider_fallback.models || [],
                     }
                   }
@@ -1404,9 +1501,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               setTabLastEventIndex(sessionId, lastIndex)
               console.log(`[AutoRestore] Loaded ${pollingEvents.length} events for session ${sessionId}, last_processed_index=${lastIndex}`)
               
-              // Set streaming status if session is active
-              chatStore.setTabStreaming(newTabId, true)
-              chatStore.setTabCompleted(newTabId, false)
+              // Set streaming/completed status based on actual session status
+              if (activeSession.status === 'completed') {
+                chatStore.setTabStreaming(newTabId, false)
+                chatStore.setTabCompleted(newTabId, true)
+                console.log(`[AutoRestore] Restored completed session ${sessionId}`)
+              } else {
+                chatStore.setTabStreaming(newTabId, true)
+                chatStore.setTabCompleted(newTabId, false)
+              }
               
               // If this is the first active session, switch to it
               if (runningSessions.indexOf(activeSession) === 0) {
@@ -1421,16 +1524,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           }
         }
         
-        hasRestoredActiveSessionsRef.current = true
         console.log(`[AutoRestore] Completed restoring ${runningSessions.length} active session(s)`)
       } catch (error) {
         console.error('[AutoRestore] Failed to restore active sessions:', error)
-        hasRestoredActiveSessionsRef.current = true // Mark as attempted to avoid retry loops
       }
     }
     
-    // Only restore in chat mode, not workflow mode
-    if (selectedModeCategory === 'chat') {
+    // Restore in chat or skill_builder mode
+    if (selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder') {
       restoreActiveSessions()
     }
   }, [getActiveSessions, createChatTab, switchTab, setTabEvents, setTabLastEventIndex, selectedModeCategory])
@@ -1654,22 +1755,35 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                   configUpdate.enableContextSummarization = config.enable_context_summarization
                 }
                 
-                // Restore LLM config
-                if (config.llm_config) {
-                  const llmConfig: ExtendedLLMConfiguration = {
-                    provider: config.llm_config.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
-                    model_id: config.llm_config.model_id || '',
-                    fallback_models: config.llm_config.fallback_models || [],
-                  }
-                  if (config.llm_config.cross_provider_fallback) {
-                    llmConfig.cross_provider_fallback = {
-                      provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
-                      models: config.llm_config.cross_provider_fallback.models || [],
-                    }
-                  }
-                  configUpdate.llmConfig = llmConfig
-                }
+                                  // Restore LLM config
+                                  if (config.llm_config) {
+                                    let provider = config.llm_config.provider as string
+                                    // Fix for invalid provider (e.g. "." or empty) - fallback to global default
+                                    if (!provider || provider === '.' || provider.trim() === '') {
+                                      console.warn(`[History] Invalid provider "${provider}" found in session config, falling back to default`)
+                                      provider = useLLMStore.getState().primaryConfig.provider || 'openai'
+                                    }
                 
+                                    let modelId = config.llm_config.model_id || ''
+                                    // Fix for invalid/missing model_id - fallback to global default
+                                    if (!modelId || modelId.trim() === '') {
+                                      console.warn(`[History] Invalid model_id "${modelId}" found in session config, falling back to default`)
+                                      modelId = useLLMStore.getState().primaryConfig.model_id || ''
+                                    }
+                
+                                    const llmConfig: ExtendedLLMConfiguration = {
+                                      provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                                      model_id: modelId,
+                                      fallback_models: config.llm_config.fallback_models || [],
+                                    }
+                                    if (config.llm_config.cross_provider_fallback) {
+                                      llmConfig.cross_provider_fallback = {
+                                        provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                                        models: config.llm_config.cross_provider_fallback.models || [],
+                                      }
+                                    }
+                                    configUpdate.llmConfig = llmConfig
+                                  }                
                 // Restore workspace file context
                 if (config.file_context && Array.isArray(config.file_context)) {
                   configUpdate.fileContext = config.file_context.map((item: { name?: string; path?: string; type?: string }) => ({
@@ -1725,14 +1839,28 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               
               // Restore LLM config
               if (config.llm_config) {
+                let provider = config.llm_config.provider as string
+                // Fix for invalid provider (e.g. "." or empty) - fallback to global default
+                if (!provider || provider === '.' || provider.trim() === '') {
+                  console.warn(`[History] Invalid provider "${provider}" found in session config, falling back to default`)
+                  provider = useLLMStore.getState().primaryConfig.provider || 'openai'
+                }
+
+                let modelId = config.llm_config.model_id || ''
+                // Fix for invalid/missing model_id - fallback to global default
+                if (!modelId || modelId.trim() === '') {
+                  console.warn(`[History] Invalid model_id "${modelId}" found in session config, falling back to default`)
+                  modelId = useLLMStore.getState().primaryConfig.model_id || ''
+                }
+
                 const llmConfig: ExtendedLLMConfiguration = {
-                  provider: config.llm_config.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
-                  model_id: config.llm_config.model_id || '',
+                  provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                  model_id: modelId,
                   fallback_models: config.llm_config.fallback_models || [],
                 }
                 if (config.llm_config.cross_provider_fallback) {
                   llmConfig.cross_provider_fallback = {
-                    provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                    provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
                     models: config.llm_config.cross_provider_fallback.models || [],
                   }
                 }
@@ -1870,11 +1998,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               
               // Determine default event mode based on agent mode
               // orchestrator -> advanced (more complex, needs detailed view)
-              // simple -> basic (standard view)
-              // workflow -> basic (standard view)
+              // simple -> tiny (minimal view for restored sessions)
+              // workflow -> tiny (minimal view for restored sessions)
               const agentMode = chatSession.agent_mode?.toLowerCase() || ''
               const defaultEventMode: 'basic' | 'advanced' | 'tiny' = 
-                agentMode === 'orchestrator' ? 'advanced' : 'basic'
+                agentMode === 'orchestrator' ? 'advanced' : 'tiny'
               
               try {
                 const newTabId = await createChatTab(sessionTitle, { mode: 'chat' }, originalSessionId, defaultEventMode)
@@ -1910,14 +2038,28 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                   
                   // Restore LLM config
                   if (config.llm_config) {
+                    let provider = config.llm_config.provider as string
+                    // Fix for invalid provider (e.g. "." or empty) - fallback to global default
+                    if (!provider || provider === '.' || provider.trim() === '') {
+                      console.warn(`[History] Invalid provider "${provider}" found in session config, falling back to default`)
+                      provider = useLLMStore.getState().primaryConfig.provider || 'openai'
+                    }
+
+                    let modelId = config.llm_config.model_id || ''
+                    // Fix for invalid/missing model_id - fallback to global default
+                    if (!modelId || modelId.trim() === '') {
+                      console.warn(`[History] Invalid model_id "${modelId}" found in session config, falling back to default`)
+                      modelId = useLLMStore.getState().primaryConfig.model_id || ''
+                    }
+
                     const llmConfig: ExtendedLLMConfiguration = {
-                      provider: config.llm_config.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
-                      model_id: config.llm_config.model_id || '',
+                      provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                      model_id: modelId,
                       fallback_models: config.llm_config.fallback_models || [],
                     }
                     if (config.llm_config.cross_provider_fallback) {
                       llmConfig.cross_provider_fallback = {
-                        provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
+                        provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
                         models: config.llm_config.cross_provider_fallback.models || [],
                       }
                     }
@@ -1983,22 +2125,35 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                   configUpdate.enableContextSummarization = config.enable_context_summarization
                 }
                 
-                // Restore LLM config
-                if (config.llm_config) {
-                  const llmConfig: ExtendedLLMConfiguration = {
-                    provider: config.llm_config.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
-                    model_id: config.llm_config.model_id || '',
-                    fallback_models: config.llm_config.fallback_models || [],
-                  }
-                  if (config.llm_config.cross_provider_fallback) {
-                    llmConfig.cross_provider_fallback = {
-                      provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic',
-                      models: config.llm_config.cross_provider_fallback.models || [],
-                    }
-                  }
-                  configUpdate.llmConfig = llmConfig
-                }
+                                  // Restore LLM config
+                                  if (config.llm_config) {
+                                    let provider = config.llm_config.provider as string
+                                    // Fix for invalid provider (e.g. "." or empty) - fallback to global default
+                                    if (!provider || provider === '.' || provider.trim() === '') {
+                                      console.warn(`[History] Invalid provider "${provider}" found in session config, falling back to default`)
+                                      provider = useLLMStore.getState().primaryConfig.provider || 'openai'
+                                    }
                 
+                                    let modelId = config.llm_config.model_id || ''
+                                    // Fix for invalid/missing model_id - fallback to global default
+                                    if (!modelId || modelId.trim() === '') {
+                                      console.warn(`[History] Invalid model_id "${modelId}" found in session config, falling back to default`)
+                                      modelId = useLLMStore.getState().primaryConfig.model_id || ''
+                                    }
+                
+                                    const llmConfig: ExtendedLLMConfiguration = {
+                                      provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                                      model_id: modelId,
+                                      fallback_models: config.llm_config.fallback_models || [],
+                                    }
+                                    if (config.llm_config.cross_provider_fallback) {
+                                      llmConfig.cross_provider_fallback = {
+                                        provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                                        models: config.llm_config.cross_provider_fallback.models || [],
+                                      }
+                                    }
+                                    configUpdate.llmConfig = llmConfig
+                                  }                
                 // Restore workspace file context
                 if (config.file_context && Array.isArray(config.file_context)) {
                   configUpdate.fileContext = config.file_context.map((item: { name?: string; path?: string; type?: string }) => ({
@@ -2022,6 +2177,18 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               
               // Switch to it (events should already be loaded)
               switchTab(tabWithSession.tabId)
+              
+              // Check/Update event mode if needed (e.g. if created as tiny but needs advanced)
+              const agentMode = chatSession.agent_mode?.toLowerCase() || ''
+              const targetEventMode: 'basic' | 'advanced' | 'tiny' = 
+                agentMode === 'orchestrator' ? 'advanced' : 'tiny'
+              
+              if (tabWithSession.eventMode !== targetEventMode) {
+                 const chatStore = useChatStore.getState()
+                 chatStore.setTabEventMode(tabWithSession.tabId, targetEventMode)
+                 console.log(`[History] Updated event mode for tab ${tabWithSession.tabId} to ${targetEventMode}`)
+              }
+              
               console.log(`[History] Tab ${tabWithSession.tabId} already exists for session ${originalSessionId}, switching to it`)
             }
             
@@ -2203,20 +2370,20 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     
     // Get or create current tab
     let currentTab = activeTab
-    if (!currentTab && selectedModeCategory === 'chat') {
+    if (!currentTab && (selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder')) {
       const chatStore = useChatStore.getState()
       const chatTabs = Object.values(chatStore.chatTabs).filter(tab => 
-        tab.metadata?.mode === 'chat'
+        tab.metadata?.mode === selectedModeCategory
       )
       
       if (chatTabs.length === 0) {
-        console.log('[SUBMIT] No chat tab exists, creating one automatically...')
+        console.log(`[SUBMIT] No ${selectedModeCategory} tab exists, creating one automatically...`)
         try {
-          const newTabId = await chatStore.createChatTab('Chat 1', { mode: 'chat' })
+          const newTabId = await chatStore.createChatTab('Chat 1', { mode: selectedModeCategory })
           currentTab = chatStore.getTab(newTabId)
-          console.log(`[SUBMIT] Created new chat tab: ${newTabId}`)
+          console.log(`[SUBMIT] Created new ${selectedModeCategory} tab: ${newTabId}`)
         } catch (error) {
-          console.error('[SUBMIT] Failed to create chat tab:', error)
+          console.error(`[SUBMIT] Failed to create ${selectedModeCategory} tab:`, error)
           return
         }
       } else {
@@ -2405,6 +2572,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       } else if (correctAgentMode === 'workflow') {
         // For workflow mode, use preset value if available
         useCodeExecutionMode = presetUseCodeExecutionMode
+      } else if (correctAgentMode === 'skill_builder') {
+        // For skill_builder mode, strictly disable code execution
+        useCodeExecutionMode = false
       } else {
         useCodeExecutionMode = undefined
       }
@@ -2430,6 +2600,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       } else if (correctAgentMode === 'workflow') {
         // For workflow mode, use preset value if available
         useToolSearchMode = presetUseToolSearchMode
+      } else if (correctAgentMode === 'skill_builder') {
+        // For skill_builder mode, strictly disable tool search
+        useToolSearchMode = false
       } else {
         useToolSearchMode = undefined
       }
@@ -2447,8 +2620,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         finalType: typeof useCodeExecutionMode
       })
       
-      // Use tab's LLM config in chat mode, global config otherwise
-      const effectiveLLMConfig = (selectedModeCategory === 'chat' && currentTab?.config) 
+      // Use tab's LLM config in chat/skill_builder mode, global config otherwise
+      const effectiveLLMConfig = ((selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder') && currentTab?.config) 
         ? currentTab.config.llmConfig 
         : llmConfig
       
@@ -2476,6 +2649,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         tabId: currentTab.tabId
       })
       
+      const isChatOrSkillBuilder = selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder'
+
       const requestPayload = {
         query: queryWithContext,
         agent_mode: correctAgentMode,
@@ -2494,20 +2669,20 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         use_tool_search_mode: correctAgentMode === 'simple' ? (useToolSearchMode ?? false) : useToolSearchMode,
         // Execution options from frontend (for workflow execution phase)
         execution_options: executionOptionsRef.current,
-        // Context summarization: Enable by default for chat mode
-        enable_context_summarization: selectedModeCategory === 'chat' ? true : undefined,
-        summarize_on_max_turns: selectedModeCategory === 'chat' ? true : undefined,
-        summary_keep_last_messages: selectedModeCategory === 'chat' ? 8 : undefined,
+        // Context summarization: Enable by default for chat/skill_builder mode
+        enable_context_summarization: isChatOrSkillBuilder ? true : undefined,
+        summarize_on_max_turns: isChatOrSkillBuilder ? true : undefined,
+        summary_keep_last_messages: isChatOrSkillBuilder ? 8 : undefined,
         // Workspace access: Send the setting from tab config (default: true)
-        enable_workspace_access: selectedModeCategory === 'chat'
+        enable_workspace_access: isChatOrSkillBuilder
           ? (currentTab?.config?.enableWorkspaceAccess ?? true)
           : undefined,
         // Browser access: Send the setting from tab config (default: false)
-        enable_browser_access: selectedModeCategory === 'chat'
+        enable_browser_access: isChatOrSkillBuilder
           ? (currentTab?.config?.enableBrowserAccess ?? false)
           : undefined,
         // Selected skills: Include skill folder names from tab config
-        selected_skills: selectedModeCategory === 'chat' && currentTab?.config?.selectedSkills?.length
+        selected_skills: isChatOrSkillBuilder && currentTab?.config?.selectedSkills?.length
           ? currentTab.config.selectedSkills
           : undefined,
         // Context editing: Read from active workflow preset's llmConfig

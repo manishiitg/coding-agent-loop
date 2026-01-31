@@ -30,8 +30,6 @@ var ADVANCED_MODE_EVENTS = map[string]bool{
 var TINY_MODE_ADDITIONAL_EVENTS = map[string]bool{
 	"user_message":             true,
 	"system_prompt":            true,
-	"agent_start":              true,
-	"agent_end":                true,
 	"agent_error":              true,
 	"llm_generation_end":       true,
 	"batch_execution_canceled": true,

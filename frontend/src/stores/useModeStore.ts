@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware'
 import { devtools } from 'zustand/middleware'
 import type { AgentMode } from './types'
 
-export type ModeCategory = 'chat' | 'workflow' | null
+export type ModeCategory = 'chat' | 'workflow' | 'skill_builder' | null
 
 interface ModeState {
   // Core mode selection
@@ -103,6 +103,8 @@ export const useModeStore = create<ModeState>()(
                 return 'chat'
               case 'workflow':
                 return 'workflow'
+              case 'skill_builder':
+                return 'skill_builder'
               default:
                 return null
             }
@@ -114,6 +116,8 @@ export const useModeStore = create<ModeState>()(
                 return 'simple' // Default to simple for chat mode
               case 'workflow':
                 return 'workflow'
+              case 'skill_builder':
+                return 'skill_builder'
               default:
                 return 'simple'
             }

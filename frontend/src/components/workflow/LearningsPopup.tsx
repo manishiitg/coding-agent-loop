@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { X, BookOpen, Lock, Unlock, Loader2, AlertCircle, ChevronDown, ChevronRight, Code, FileText, Trash2 } from 'lucide-react'
+import { X, BookOpen, Lock, Unlock, Loader2, AlertCircle, ChevronDown, ChevronRight, Code, FileText, Trash2, Search, Terminal } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { PlanningResponse, PlanStep } from '../../utils/stepConfigMatching'
 import { isConditionalStep, isDecisionStep, isOrchestrationStep, isTodoTaskStep } from '../../utils/stepConfigMatching'
@@ -27,33 +27,9 @@ interface LearningMetadata {
   lock_threshold?: number  // Calculated by backend based on last_turn_count
   // Fields from step_config.json (merged by backend API)
   use_code_execution_mode?: boolean
+  use_tool_search_mode?: boolean
   learning_detail_level?: string
   lock_learnings?: boolean
-}
-
-// Determine complexity based on successful runs counters and last_turn_count
-// TODO: Turn-based classification is not reliable - turn count varies significantly based on
-// the LLM model used and doesn't reflect actual step complexity. We need a better complexity metric.
-// PRIORITY: Check successful runs counters FIRST (they reflect actual complexity category where runs were recorded)
-// Then fall back to turn count if no successful runs exist
-function getComplexity(metadata: LearningMetadata | null): 'simple' | 'medium' | 'complex' | 'unknown' {
-  if (!metadata) return 'unknown'
-  
-  // PRIORITY 1: Infer from successful runs counters (most reliable - reflects actual complexity category)
-  // If any counter has a value > 0, use that to determine complexity
-  if ((metadata.successful_runs_simple || 0) > 0) return 'simple'
-  if ((metadata.successful_runs_medium || 0) > 0) return 'medium'
-  if ((metadata.successful_runs_complex || 0) > 0) return 'complex'
-  
-  // PRIORITY 2: Fallback to last_turn_count (less reliable, but better than nothing)
-  const turnCount = metadata.last_turn_count
-  if (turnCount !== undefined && turnCount > 0) {
-    if (turnCount < 100) return 'simple'
-    if (turnCount <= 200) return 'medium'
-    return 'complex'
-  }
-  
-  return 'unknown'
 }
 
 // Get lock threshold from metadata (calculated by backend - single source of truth)
@@ -192,6 +168,8 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
   
   // Filter state - show only unlocked steps
   const [showOnlyUnlocked, setShowOnlyUnlocked] = useState(false)
+  // Search state
+  const [searchTerm, setSearchTerm] = useState('')
 
   // Get preset default for code execution mode (fallback when step doesn't have explicit setting)
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -201,6 +179,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
     ? customPresets.find(p => p.id === activePresetId) || predefinedPresets.find(p => p.id === activePresetId)
     : null
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
+  const presetUseToolSearchMode = activePreset?.useToolSearchMode ?? false
 
   // Fetch learnings when popup opens (API now includes step config data merged in)
   useEffect(() => {
@@ -575,36 +554,102 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
     })
   }
 
+  // Apply search filter
+  if (searchTerm) {
+    const lowerTerm = searchTerm.toLowerCase()
+    stepsWithLearnings = stepsWithLearnings.filter(step => {
+      const title = getStepTitle(plan, step.stepId).toLowerCase()
+      const id = step.stepId.toLowerCase()
+      return title.includes(lowerTerm) || id.includes(lowerTerm)
+    })
+  }
+
+  const handleExpandAll = () => {
+    const newExpanded = new Set<string>()
+    stepsWithLearnings.forEach(step => {
+      newExpanded.add(step.stepId)
+      // Trigger fetch if not cached
+      if (!learningContentCache[step.stepId]) {
+        fetchLearningContent(step.stepId)
+      }
+    })
+    setExpandedStepIds(newExpanded)
+  }
+
+  const handleCollapseAll = () => {
+    setExpandedStepIds(new Set())
+  }
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" style={{ zIndex: 50 }}>
       <div className="bg-background border border-border rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-primary" />
-            <h2 className="text-lg font-semibold">Step Learnings</h2>
+        <div className="flex flex-col border-b border-border flex-shrink-0">
+          <div className="flex items-center justify-between p-4 pb-2">
+            <div className="flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-primary" />
+              <h2 className="text-lg font-semibold">Step Learnings</h2>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={onClose}
+                className="p-1 rounded-md hover:bg-muted transition-colors"
+                title="Close (Esc)"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-            {/* Filter: Show only unlocked steps */}
-            <button
-              onClick={() => setShowOnlyUnlocked(!showOnlyUnlocked)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                showOnlyUnlocked
-                  ? 'bg-yellow-100 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:hover:bg-yellow-900/50 text-yellow-700 dark:text-yellow-400'
-                  : 'bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
-              }`}
-              title={showOnlyUnlocked ? 'Show all steps' : 'Show only unlocked steps'}
-            >
-              <Unlock className="w-4 h-4" />
-              <span>Unlocked Only</span>
-            </button>
-            <button
-              onClick={onClose}
-              className="p-1 rounded-md hover:bg-muted transition-colors"
-              title="Close (Esc)"
-            >
-              <X className="w-5 h-5" />
-            </button>
+          
+          <div className="flex items-center gap-3 px-4 pb-4">
+             {/* Search Bar */}
+             <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-2.5 w-4 h-4 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search steps..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 text-sm bg-muted/50 border border-input rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-2.5 top-2.5 p-0.5 rounded-full hover:bg-muted transition-colors"
+                >
+                  <X className="w-3 h-3 text-muted-foreground" />
+                </button>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleExpandAll}
+                className="px-3 py-2 text-xs font-medium bg-muted hover:bg-muted/80 rounded-md transition-colors whitespace-nowrap"
+              >
+                Expand All
+              </button>
+              <button
+                onClick={handleCollapseAll}
+                className="px-3 py-2 text-xs font-medium bg-muted hover:bg-muted/80 rounded-md transition-colors whitespace-nowrap"
+              >
+                Collapse All
+              </button>
+              {/* Filter: Show only unlocked steps */}
+              <button
+                onClick={() => setShowOnlyUnlocked(!showOnlyUnlocked)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
+                  showOnlyUnlocked
+                    ? 'bg-yellow-100 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:hover:bg-yellow-900/50 text-yellow-700 dark:text-yellow-400'
+                    : 'bg-muted hover:bg-muted/80 text-foreground'
+                }`}
+                title={showOnlyUnlocked ? 'Show all steps' : 'Show only unlocked steps'}
+              >
+                <Unlock className="w-3.5 h-3.5" />
+                <span>Unlocked Only</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -625,8 +670,11 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
           )}
 
           {!isLoading && !error && stepsWithLearnings.length === 0 && (
-            <div className="text-center py-8 text-muted-foreground">
-              No steps with learnings found in the plan
+            <div className="text-center py-8 text-muted-foreground flex flex-col items-center gap-2">
+              <BookOpen className="w-10 h-10 opacity-20" />
+              <p>No steps with learnings found</p>
+              {searchTerm && <p className="text-sm">Try adjusting your search query</p>}
+              {showOnlyUnlocked && <p className="text-sm">Try disabling the "Unlocked Only" filter</p>}
             </div>
           )}
 
@@ -638,7 +686,6 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                 const isAutoLocked = metadata?.auto_locked_at !== undefined && metadata.auto_locked_at !== ''
                 const isManuallyLocked = metadata?.lock_learnings === true
                 const isLocked = isAutoLocked || isManuallyLocked
-                const complexity = getComplexity(metadata) // Used only for display (complexity label/color)
                 const threshold = getLockThreshold(metadata) // Backend-calculated threshold
                 const successfulRuns = getSuccessfulRuns(metadata)
                 const progress = threshold > 0 ? (successfulRuns / threshold) * 100 : 0
@@ -674,10 +721,14 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                 // Check if this is a sub-agent (should be indented)
                 const isSubAgent = stepType === 'sub_agent' || stepType === 'todo_sub_agent'
 
-                // Determine effective code execution mode: step config > preset default
+                // Determine effective modes: step config > preset default
                 const effectiveUseCodeExecutionMode = metadata?.use_code_execution_mode !== undefined
                   ? metadata.use_code_execution_mode
                   : presetUseCodeExecutionMode
+                
+                const effectiveUseToolSearchMode = metadata?.use_tool_search_mode !== undefined
+                  ? metadata.use_tool_search_mode
+                  : presetUseToolSearchMode
 
                 return (
                   <div
@@ -687,18 +738,18 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                     }`}
                   >
                     <div 
-                      className="p-4 cursor-pointer"
+                      className="p-5 cursor-pointer"
                       onClick={() => toggleExpand(stepId)}
                     >
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start gap-3 mb-2">
                             <button
                               onClick={(e) => {
                                 e.stopPropagation()
                                 toggleExpand(stepId)
                               }}
-                              className="p-0.5 hover:bg-muted rounded transition-colors"
+                              className="mt-0.5 p-1 hover:bg-muted rounded-md transition-colors shrink-0"
                               title={isExpanded ? "Collapse" : "Expand"}
                             >
                               {isExpanded ? (
@@ -707,146 +758,128 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                                 <ChevronRight className="w-4 h-4 text-muted-foreground" />
                               )}
                             </button>
-                            <span className="text-xs font-mono font-semibold text-primary bg-primary/10 px-1.5 py-0.5 rounded">
-                              #{stepNumber}
-                            </span>
-                            <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${getStepTypeBadgeColor()}`}>
-                              {getStepTypeLabel()}
-                            </span>
-                            <h3 className="font-medium">{stepTitle}</h3>
-                            <span className="text-xs text-muted-foreground font-mono">({stepId})</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                <span className="text-xs font-mono font-semibold text-primary bg-primary/10 px-1.5 py-0.5 rounded shrink-0">
+                                  #{stepNumber}
+                                </span>
+                                <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${getStepTypeBadgeColor()}`}>
+                                  {getStepTypeLabel()}
+                                </span>
+                                <h3 className="font-medium truncate" title={stepTitle}>{stepTitle}</h3>
+                              </div>
+                              <div className="text-xs text-muted-foreground font-mono truncate" title={stepId}>{stepId}</div>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-4 mt-2 text-sm">
-                            {metadata && (
-                              <>
-                                <div className="flex items-center gap-2">
-                                  {isLocked ? (
-                                    <>
-                                      <Lock className="w-4 h-4 text-green-600 dark:text-green-400" />
-                                      <span className="text-green-600 dark:text-green-400">
-                                        {isAutoLocked && isManuallyLocked ? 'Locked (Auto + Manual)' :
-                                         isAutoLocked ? 'Locked (Auto)' :
-                                         'Locked (Manual)'}
-                                      </span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Unlock className="w-4 h-4 text-yellow-600 dark:text-yellow-400" />
-                                      <span className="text-yellow-600 dark:text-yellow-400">Unlocked</span>
-                                    </>
-                                  )}
-                                </div>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    // If locked (auto or manual), unlock it. If unlocked, lock it.
-                                    toggleLock(stepId, isLocked)
-                                  }}
-                                  disabled={isUpdatingLock}
-                                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                                    isLocked
-                                      ? 'bg-yellow-100 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:hover:bg-yellow-900/50 text-yellow-700 dark:text-yellow-400'
-                                      : 'bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
-                                  }`}
-                                  title={isLocked ? "Unlock learnings" : "Lock learnings manually"}
-                                >
-                                  {isUpdatingLock ? (
-                                    <>
-                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                      <span>Updating...</span>
-                                    </>
-                                  ) : isLocked ? (
-                                    <>
-                                      <Unlock className="w-3.5 h-3.5" />
-                                      <span>Unlock</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Lock className="w-3.5 h-3.5" />
-                                      <span>Lock</span>
-                                    </>
-                                  )}
-                                </button>
-                                {hasLearningsFolder(metadata, cachedContent) && (
+
+                          <div className="flex flex-col gap-3 ml-8">
+                            {/* Metadata Row 1: Lock Status & Complexity */}
+                            <div className="flex items-center gap-4 flex-wrap text-sm">
+                              {metadata && (
+                                <>
+                                  <div className="flex items-center gap-2">
+                                    {isLocked ? (
+                                      <>
+                                        <Lock className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
+                                        <span className="text-green-600 dark:text-green-400 font-medium text-xs">
+                                          {isAutoLocked && isManuallyLocked ? 'Locked (Auto + Manual)' :
+                                           isAutoLocked ? 'Locked (Auto)' :
+                                           'Locked'}
+                                        </span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Unlock className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400" />
+                                        <span className="text-yellow-600 dark:text-yellow-400 font-medium text-xs">Unlocked</span>
+                                      </>
+                                    )}
+                                  </div>
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation()
-                                      setDeleteConfirmStepId(stepId)
+                                      toggleLock(stepId, isLocked)
                                     }}
-                                    disabled={deletingStepIds.has(stepId)}
-                                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-red-100 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-400"
-                                    title="Delete learnings"
+                                    disabled={isUpdatingLock}
+                                    className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                                      isLocked
+                                        ? 'bg-yellow-50 hover:bg-yellow-100 dark:bg-yellow-900/20 dark:hover:bg-yellow-900/40 text-yellow-700 dark:text-yellow-400'
+                                        : 'bg-muted hover:bg-muted/80 text-muted-foreground'
+                                    }`}
+                                    title={isLocked ? "Unlock learnings" : "Lock learnings manually"}
                                   >
-                                    {deletingStepIds.has(stepId) ? (
+                                    {isUpdatingLock ? (
                                       <>
-                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                        <span>Deleting...</span>
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                        <span>Updating...</span>
+                                      </>
+                                    ) : isLocked ? (
+                                      <>
+                                        <Unlock className="w-3 h-3" />
+                                        <span>Unlock</span>
                                       </>
                                     ) : (
                                       <>
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                        <span>Delete</span>
+                                        <Lock className="w-3 h-3" />
+                                        <span>Lock</span>
                                       </>
                                     )}
                                   </button>
-                                )}
-                              </>
-                            )}
-                            {metadata && (
-                              <div className="flex flex-col gap-1">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-muted-foreground">Complexity:</span>
-                                  <span className={`font-medium ${
-                                    complexity === 'simple' ? 'text-green-600 dark:text-green-400' :
-                                    complexity === 'medium' ? 'text-yellow-600 dark:text-yellow-400' :
-                                    complexity === 'complex' ? 'text-orange-600 dark:text-orange-400' :
-                                    'text-gray-500 dark:text-gray-400'
-                                  }`}>
-                                    {complexity.charAt(0).toUpperCase() + complexity.slice(1)}
-                                  </span>
-                                  {metadata.last_turn_count && metadata.last_turn_count > 0 && (
-                                    <span className="text-xs text-muted-foreground">
-                                      ({metadata.last_turn_count} turns)
-                                    </span>
-                                  )}
-                                  
-                                  {/* Detail Level Badge - from step config (via API) */}
-                                  {metadata?.learning_detail_level && (
-                                    <span className={`ml-2 text-xs px-1.5 py-0.5 rounded font-medium border ${
-                                      metadata.learning_detail_level === 'general'
-                                        ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800'
-                                        : 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-300 dark:border-purple-800'
-                                    }`}>
-                                      {metadata.learning_detail_level === 'general' ? 'General Mode' : 'Exact Mode'}
-                                    </span>
-                                  )}
+                                </>
+                              )}
+                            </div>
 
-                                  {/* Execution Mode Badge - Simple vs Agent (step config > preset default) */}
-                                  <span className={`ml-2 text-xs px-1.5 py-0.5 rounded font-medium border flex items-center gap-1 ${
-                                    effectiveUseCodeExecutionMode
-                                      ? 'bg-teal-50 text-teal-600 border-teal-200 dark:bg-teal-900/20 dark:text-teal-400 dark:border-teal-800'
-                                      : 'bg-gray-50 text-gray-600 border-gray-200 dark:bg-gray-800/50 dark:text-gray-400 dark:border-gray-700'
-                                  }`}>
-                                    {effectiveUseCodeExecutionMode ? (
-                                      <>
-                                        <Code className="w-3 h-3" />
-                                        Agent Mode
-                                      </>
-                                    ) : (
-                                      <>
-                                        <FileText className="w-3 h-3" />
-                                        Simple Mode
-                                      </>
-                                    )}
-                                  </span>
-                                </div>
+                            {/* Metadata Row 2: Badges */}
+                            {metadata && (
+                              <div className="flex items-center gap-3 flex-wrap">
+                                {metadata.last_turn_count !== undefined && metadata.last_turn_count > 0 && (
+                                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/30 px-2 py-1 rounded border border-border">
+                                    <span>Turn Count:</span>
+                                    <span className="font-medium text-foreground">{metadata.last_turn_count}</span>
+                                  </div>
+                                )}
                                 
+                                {metadata?.learning_detail_level && (
+                                  <span className={`text-xs px-2 py-1 rounded font-medium border ${
+                                    metadata.learning_detail_level === 'general'
+                                      ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800'
+                                      : 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-300 dark:border-purple-800'
+                                  }`}>
+                                    {metadata.learning_detail_level === 'general' ? 'General Mode' : 'Exact Mode'}
+                                  </span>
+                                )}
+
+                                <span className={`text-xs px-2 py-1 rounded font-medium border flex items-center gap-1.5 ${
+                                  effectiveUseCodeExecutionMode
+                                    ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800'
+                                    : effectiveUseToolSearchMode
+                                    ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800'
+                                    : 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-800/50 dark:text-slate-300 dark:border-slate-700'
+                                }`}>
+                                  {effectiveUseCodeExecutionMode ? (
+                                    <>
+                                      <Terminal className="w-3.5 h-3.5" />
+                                      Agent Mode
+                                    </>
+                                  ) : effectiveUseToolSearchMode ? (
+                                    <>
+                                      <Search className="w-3.5 h-3.5" />
+                                      Tool Search
+                                    </>
+                                  ) : (
+                                    <>
+                                      <FileText className="w-3.5 h-3.5" />
+                                      Simple Mode
+                                    </>
+                                  )}
+                                </span>
+
                                 {metadata.total_iterations !== undefined && (
-                                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                    <span>Total Iterations: {metadata.total_iterations}</span>
+                                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/30 px-2 py-1 rounded border border-border ml-auto">
+                                    <span>Iterations:</span>
+                                    <span className="font-mono font-medium text-foreground">{metadata.total_iterations}</span>
                                     {metadata.auto_lock_reason && (
-                                      <span className="text-amber-600 dark:text-amber-500" title={metadata.auto_lock_reason}>
-                                        • Reason: {metadata.auto_lock_reason.replace('threshold_reached_', '').replace(/_/g, ' ')}
+                                      <span className="text-amber-600 dark:text-amber-500 border-l border-border pl-1.5 ml-0.5 truncate max-w-[150px]" title={metadata.auto_lock_reason}>
+                                        {metadata.auto_lock_reason.replace('threshold_reached_', '').replace(/_/g, ' ')}
                                       </span>
                                     )}
                                   </div>
@@ -854,8 +887,29 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                               </div>
                             )}
                           </div>
+                        </div>
 
-                        {metadata && threshold > 0 && (
+                        {/* Delete Button */}
+                        {hasLearningsFolder(metadata, cachedContent) && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setDeleteConfirmStepId(stepId)
+                            }}
+                            disabled={deletingStepIds.has(stepId)}
+                            className="p-2 rounded-md text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ml-2 shrink-0 self-start"
+                            title="Delete learnings"
+                          >
+                            {deletingStepIds.has(stepId) ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-4 h-4" />
+                            )}
+                          </button>
+                        )}
+                      </div>
+
+                      {metadata && threshold > 0 && (
                           <div className="mt-3">
                             <div className="flex items-center justify-between text-sm mb-1">
                               <span className="text-muted-foreground">
@@ -899,12 +953,10 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                           </div>
                         )}
                       </div>
-                    </div>
-                  </div>
 
-                  {/* Expanded Learning Content */}
-                  {isExpanded && (
-                    <div className="border-t border-border px-4 py-4 bg-background/50">
+                      {/* Expanded Learning Content */}
+                    {isExpanded && (
+                      <div className="border-t border-border px-4 py-4 bg-background/50">
                       {isLoadingContent && (
                         <div className="flex items-center justify-center py-4">
                           <Loader2 className="w-5 h-5 animate-spin text-primary" />

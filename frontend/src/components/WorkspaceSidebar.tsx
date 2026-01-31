@@ -9,6 +9,7 @@ import LLMConfigurationModal from './LLMConfigurationModal'
 import type { ActiveSessionInfo } from '../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useMCPStore, useLLMStore } from '../stores'
+import { RunningWorkflowsIndicator } from './workflow/RunningWorkflowsIndicator'
 
 interface WorkspaceSidebarProps {
   // Chat session selection
@@ -111,6 +112,11 @@ export default function WorkspaceSidebar({
             {/* Skills */}
             <SkillsSection />
 
+            {/* Running Workflows */}
+            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700 p-1">
+              <RunningWorkflowsIndicator variant="sidebar" minimized={false} />
+            </div>
+
             {/* Chat History */}
             <ChatHistorySection
               onSessionSelect={(sessionId, sessionTitle, sessionType, activeSessionInfo) => {
@@ -195,6 +201,9 @@ export default function WorkspaceSidebar({
               <p>Skills</p>
             </TooltipContent>
           </Tooltip>
+
+          {/* Running Workflows Icon */}
+          <RunningWorkflowsIndicator variant="sidebar" minimized={true} />
 
           {/* Chat History Icon */}
           <ChatHistorySection minimized={true} />

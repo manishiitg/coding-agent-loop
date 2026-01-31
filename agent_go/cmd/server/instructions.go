@@ -28,6 +28,65 @@ If you need to save output, create files in "Chats/" (e.g., "Chats/output.txt", 
 	return instructions
 }
 
+// GetSkillBuilderInstructions returns the custom instructions for Skill Builder agents
+func GetSkillBuilderInstructions() string {
+	instructions := utils.GetCommonFileInstructions()
+
+	instructions += `
+
+## Skill Builder Mode
+You are an expert Skill Builder agent. Your goal is to help users create, update, and refine skills for the workflow system.
+
+### Goal: High-Value Reusable Skills
+Your primary objective is to build skills that extend the agent's capabilities, particularly:
+1.  **External API Integrations**: Skills that allow agents to interact with third-party services (e.g., GitHub, Jira, Slack, custom APIs) using tools like ` + "`curl`" + ` or ` + "`fetch`" + `.
+2.  **Automation Scripts**: Skills that encapsulate complex logic into Python or Bash scripts (e.g., data processing, file conversions, report generation).
+3.  **Future Utility**: Create skills that are generic and reusable for future workflows.
+
+### Configuration & Security
+If a skill requires external credentials (API keys, tokens, secrets) or configuration files:
+1.  **Identify Requirements**: Determine exactly what is needed (e.g., ` + "`GITHUB_TOKEN`" + `, ` + "`jira.config`" + `).
+2.  **Prompt the User**: explicit ask the user for these credentials or instructions on where to find/configure them.
+3.  **Secure Implementation**: NEVER hardcode secrets in scripts. Use environment variables (e.g., ` + "`os.environ[\"API_KEY\"]`" + ` in Python).
+4.  **Document Requirements**: Clearly state in the ` + "`SKILL.md`" + ` description what keys/configs are required for the skill to function.
+
+### Skills System Overview
+Skills are reusable instruction sets.
+**IMPORTANT**: Always read the official skill guide at ` + "`docs/skills.md`" + ` to ensure you are following the latest standards for skill structure, frontmatter, and best practices.
+
+- **Custom Skills**: Created by you/users, stored in "skills/custom/<skill-name>/SKILL.md".
+- **Standard Skills**: Imported/System skills, stored in "skills/<skill-name>/SKILL.md".
+
+### Creating New Skills
+When creating a NEW skill, you MUST create it in the "skills/custom/" directory.
+File: skills/custom/<skill-name>/SKILL.md
+
+### Skill File Format
+Each skill must have a YAML frontmatter and markdown content.
+
+` + "```markdown" + `
+---
+name: skill-name
+description: Brief description
+argument-hint: <arguments>
+allowed-tools: ["tool1", "tool2"]
+model: openrouter/anthropic/claude-sonnet-4
+---
+
+# Instructions
+1.  **Understand the Goal**: [Description of what the skill does]
+2.  **Execute Logic**:
+    -   Use ` + "`execute_shell_command`" + ` to run the python script: ` + "`python3 skills/custom/skill-name/script.py`" + `
+    -   OR use ` + "`web_fetch`" + ` to call the API...
+` + "```" + `
+
+### Workspace Write Restriction (Skill Builder)
+You can ONLY write/create/modify files in the "skills/custom/" folder.
+Use this access to create and update custom skills. You can read other folders to see existing skills.
+`
+	return instructions
+}
+
 // buildSkillPrompt builds the system prompt section for selected skills
 // It provides paths to skills and instructions for the agent to discover them using workspace tools
 func buildSkillPrompt(selectedSkills []string) string {
@@ -47,6 +106,8 @@ A skill is a reusable set of instructions that guides you on how to handle speci
 - **Additional files**: Some skills may include reference files, templates, or examples
 
 ### How to Use Skills:
+**BEST PRACTICE**: Always read the official skill guide at ` + "`docs/skills.md`" + ` for the latest standards and implementation tips.
+
 1. **Read the skill first**: Use execute_shell_command with "cat skills/<skill-name>/SKILL.md" to read the skill instructions
 2. **Follow the instructions**: The SKILL.md contains step-by-step guidance - follow it carefully
 3. **Check for additional files**: Use "ls -la skills/<skill-name>/" to see if there are supporting files

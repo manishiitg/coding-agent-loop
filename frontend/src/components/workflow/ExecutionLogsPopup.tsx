@@ -613,6 +613,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                       <span className={`px-2 py-0.5 rounded text-xs uppercase font-medium ${
                         log.type === 'learning_completed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' :
                         log.type === 'learning_failed' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' :
+                        log.type === 'learning_skipped' ? 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300' :
                         'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
                       }`}>
                         {log.type.replace('learning_', '')}
@@ -623,6 +624,26 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                         <span>Type: {log.learning_type}</span>
                         {log.detail_level && <span>Level: {log.detail_level}</span>}
                     </div>
+
+                    {/* Trigger Reason (Why learning started) */}
+                    {log.trigger_reason && (
+                      <div className="mt-2 text-xs bg-blue-50 dark:bg-blue-900/10 p-2 rounded border border-blue-100 dark:border-blue-900/30">
+                        <div className="font-semibold text-blue-700 dark:text-blue-300 mb-1 flex items-center gap-1.5">
+                          <span className="text-sm">💡</span> Trigger Reason
+                        </div>
+                        <p className="text-muted-foreground">{log.trigger_reason}</p>
+                      </div>
+                    )}
+
+                    {/* Skip Reason (Why learning was skipped) */}
+                    {log.skip_reason && (
+                      <div className="mt-2 text-xs bg-gray-50 dark:bg-gray-800/30 p-2 rounded border border-gray-100 dark:border-gray-800/50">
+                        <div className="font-semibold text-muted-foreground mb-1 flex items-center gap-1.5">
+                          <span className="text-sm">⏭️</span> Skip Reason
+                        </div>
+                        <p className="text-muted-foreground">{log.skip_reason}</p>
+                      </div>
+                    )}
                     
                     {log.result && (
                         <div className="mt-2 text-xs">

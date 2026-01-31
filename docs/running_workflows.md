@@ -135,10 +135,10 @@ interface WorkflowItem {
 
 ### RunningWorkflowsIndicator
 
-Floating button in bottom-right of workflow area:
+Located in the **Workspace Sidebar (Left Menu)**:
 - Shows total count badge (tracked + active streaming tabs)
 - Pulsing green dot when any workflow is running
-- Primary border when workflows are running
+- Available in both expanded and minimized sidebar states
 - Click opens drawer
 
 ### RunningWorkflowsDrawer

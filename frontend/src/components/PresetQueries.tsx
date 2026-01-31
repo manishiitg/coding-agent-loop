@@ -7,6 +7,7 @@ import type { PlannerFile, PresetLLMConfig } from '../services/api-types';
 import { Checkbox } from './ui/checkbox';
 import { Card } from './ui/Card';
 import { useModeStore } from '../stores/useModeStore';
+import { useAppStore } from '../stores/useAppStore';
 
 interface PresetQueriesProps {
   setCurrentQuery: (query: string) => void;
@@ -30,6 +31,7 @@ interface PresetQueriesProps {
     onPresetAdded,
   }) => {
   const { selectedModeCategory } = useModeStore();
+  const { setWorkspaceMinimized } = useAppStore();
   
   const {
     customPresets,
@@ -88,6 +90,7 @@ interface PresetQueriesProps {
   const handleAddPreset = () => {
     setEditingPreset(null);
     setIsModalOpen(true);
+    setWorkspaceMinimized(true);
   };
 
   // Handle trigger from parent component
@@ -102,6 +105,7 @@ interface PresetQueriesProps {
   const handleEditPreset = (preset: CustomPreset) => {
     setEditingPreset(preset);
     setIsModalOpen(true);
+    setWorkspaceMinimized(true);
   };
 
   const handleDeletePreset = async (id: string) => {

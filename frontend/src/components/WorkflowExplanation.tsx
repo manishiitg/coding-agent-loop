@@ -1,7 +1,7 @@
 import React from 'react'
 
 interface WorkflowExplanationProps {
-  agentMode: 'simple' | 'workflow'
+  agentMode: 'simple' | 'workflow' | 'skill_builder'
   selectedWorkflowPreset?: string | null
 }
 

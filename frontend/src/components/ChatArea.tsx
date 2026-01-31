@@ -13,7 +13,7 @@ import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { WorkflowExplanation } from './WorkflowExplanation'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore, useGlobalPresetStore } from '../stores'
-import { useModeStore } from '../stores/useModeStore'
+import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { ModeEmptyState } from './ModeEmptyState'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
@@ -398,7 +398,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
   // State for preset selection overlay
   const [showPresetSelection, setShowPresetSelection] = useState(false)
-  const [pendingModeCategory, setPendingModeCategory] = useState<Exclude<ModeCategory, null> | null>(null)
+  const [pendingModeCategory, setPendingModeCategory] = useState<Exclude<ModeCategory, 'chat' | null> | null>(null)
   
   // State for mode switch dialog
   const [showModeSwitchDialog, setShowModeSwitchDialog] = useState(false)

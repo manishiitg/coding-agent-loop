@@ -192,11 +192,9 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
         const indicatorColor = getTabIndicator(tab)
         
         // Determine active border color based on mode
-          const activeBorderClass = selectedModeCategory === 'skill_builder' 
-            ? 'border-emerald-500' 
-            : selectedModeCategory === 'workflow'
-              ? 'border-purple-500'
-              : 'border-blue-500'
+          const activeBorderClass = selectedModeCategory === 'skill_builder'
+            ? 'border-emerald-500'
+            : 'border-blue-500'
 
           // Calculate new event count for inactive tabs
           // NOTE: Events are already filtered by backend based on event_mode, so no need to filter again

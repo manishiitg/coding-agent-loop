@@ -45,14 +45,14 @@ Your primary objective is to build skills that extend the agent's capabilities, 
 
 ### Configuration & Security
 If a skill requires external credentials (API keys, tokens, secrets) or configuration files:
-1.  **Identify Requirements**: Determine exactly what is needed (e.g., `GITHUB_TOKEN`, `jira.config`).
+1.  **Identify Requirements**: Determine exactly what is needed (e.g., ` + "`GITHUB_TOKEN`" + `, ` + "`jira.config`" + `).
 2.  **Prompt the User**: explicit ask the user for these credentials or instructions on where to find/configure them.
-3.  **Secure Implementation**: NEVER hardcode secrets in scripts. Use environment variables (e.g., `os.environ["API_KEY"]` in Python).
-4.  **Document Requirements**: Clearly state in the `SKILL.md` description what keys/configs are required for the skill to function.
+3.  **Secure Implementation**: NEVER hardcode secrets in scripts. Use environment variables (e.g., ` + "`os.environ[\"API_KEY\"]`" + ` in Python).
+4.  **Document Requirements**: Clearly state in the ` + "`SKILL.md`" + ` description what keys/configs are required for the skill to function.
 
 ### Skills System Overview
 Skills are reusable instruction sets.
-**IMPORTANT**: Always read the official skill guide at `docs/skills.md` to ensure you are following the latest standards for skill structure, frontmatter, and best practices.
+**IMPORTANT**: Always read the official skill guide at ` + "`docs/skills.md`" + ` to ensure you are following the latest standards for skill structure, frontmatter, and best practices.
 
 - **Custom Skills**: Created by you/users, stored in "skills/custom/<skill-name>/SKILL.md".
 - **Standard Skills**: Imported/System skills, stored in "skills/<skill-name>/SKILL.md".
@@ -106,7 +106,7 @@ A skill is a reusable set of instructions that guides you on how to handle speci
 - **Additional files**: Some skills may include reference files, templates, or examples
 
 ### How to Use Skills:
-**BEST PRACTICE**: Always read the official skill guide at `docs/skills.md` for the latest standards and implementation tips.
+**BEST PRACTICE**: Always read the official skill guide at ` + "`docs/skills.md`" + ` for the latest standards and implementation tips.
 
 1. **Read the skill first**: Use execute_shell_command with "cat skills/<skill-name>/SKILL.md" to read the skill instructions
 2. **Follow the instructions**: The SKILL.md contains step-by-step guidance - follow it carefully

@@ -119,6 +119,13 @@ export default function Workspace({
   // Search Sync Details state
   const [showSearchSyncDetails, setShowSearchSyncDetails] = useState(false)
 
+  // Multi-file upload state
+  const [pendingFiles, setPendingFiles] = useState<File[]>([])
+  const [isDragOver, setIsDragOver] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null)
+  const [uploadResults, setUploadResults] = useState<{ name: string; success: boolean; error?: string }[] | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   const {
     files,
     loading,
@@ -1272,53 +1279,126 @@ export default function Workspace({
     openUploadDialog(fullFolderPath)
   }
 
-  const handleFileSelect = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file) return
+  const blockedExtensions = useMemo(() => [
+    'exe', 'dll', 'so', 'dylib', 'bin', 'msi', 'dmg', 'iso', 'jar', 'bat', 'cmd', 'com', 'scr'
+  ], [])
 
-    // Validate file type (block executables and system files)
-    const blockedExtensions = [
-      'exe', 'dll', 'so', 'dylib', 'bin', 'msi', 'dmg', 'iso', 'jar', 'bat', 'cmd', 'com', 'scr'
-    ]
-    
+  const validateFile = useCallback((file: File): string | null => {
     const fileExt = file.name.split('.').pop()?.toLowerCase() || ''
     if (blockedExtensions.includes(fileExt)) {
-      setError('Executables and system files are not allowed for security reasons.')
-      return
+      return 'Blocked file type (executable/system file)'
     }
-
-    // Validate file size (10MB limit)
     if (file.size > 10 * 1024 * 1024) {
-      setError('File size must be less than 10MB')
-      return
+      return 'File exceeds 10MB limit'
+    }
+    return null
+  }, [blockedExtensions])
+
+  const addFiles = useCallback((files: FileList | File[]) => {
+    const newFiles = Array.from(files)
+    setPendingFiles(prev => {
+      const existingNames = new Set(prev.map(f => f.name))
+      const unique = newFiles.filter(f => !existingNames.has(f.name))
+      return [...prev, ...unique]
+    })
+    setUploadResults(null)
+  }, [])
+
+  const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files
+    if (!files || files.length === 0) return
+    addFiles(files)
+    // Reset input so the same files can be re-selected
+    event.target.value = ''
+  }, [addFiles])
+
+  const removeFile = useCallback((index: number) => {
+    setPendingFiles(prev => prev.filter((_, i) => i !== index))
+  }, [])
+
+  const handleUploadAll = useCallback(async () => {
+    if (pendingFiles.length === 0) return
+
+    setUploadDialog({ isLoading: true })
+    setError(null)
+    setUploadResults(null)
+
+    const rawFolderPath = uploadDialog.folderPath || '/'
+    const folderPath = rawFolderPath === '/' ? '/' : getFullFilePath(rawFolderPath)
+    const results: { name: string; success: boolean; error?: string }[] = []
+
+    for (let i = 0; i < pendingFiles.length; i++) {
+      const file = pendingFiles[i]
+      setUploadProgress({ current: i + 1, total: pendingFiles.length })
+
+      const validationError = validateFile(file)
+      if (validationError) {
+        results.push({ name: file.name, success: false, error: validationError })
+        continue
+      }
+
+      try {
+        const commitMessage = uploadDialog.commitMessage || `Upload ${file.name}`
+        await agentApi.uploadPlannerFile(file, folderPath, commitMessage)
+        results.push({ name: file.name, success: true })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Upload failed'
+        results.push({ name: file.name, success: false, error: msg })
+      }
     }
 
-    try {
-      setUploadDialog({ isLoading: true })
-      setError(null)
+    setUploadProgress(null)
+    setUploadResults(results)
 
-      // Reconstruct folder path using getFullFilePath to handle workflow mode correctly
-      const rawFolderPath = uploadDialog.folderPath || '/'
-      const folderPath = rawFolderPath === '/' ? '/' : getFullFilePath(rawFolderPath)
-      const commitMessage = uploadDialog.commitMessage || `Upload ${file.name}`
-
-      await agentApi.uploadPlannerFile(file, folderPath, commitMessage)
-      
-      // Refresh file list
+    const allSucceeded = results.every(r => r.success)
+    if (allSucceeded) {
       await fetchFiles()
-      
-      // Close dialog
+      setPendingFiles([])
       closeUploadDialog()
-    } catch (err) {
-      console.error('Failed to upload file:', err)
-      setError(err instanceof Error ? err.message : 'Failed to upload file')
+      setUploadResults(null)
+    } else {
+      await fetchFiles()
+      // Keep dialog open to show results; remove succeeded files from pending
+      const failedNames = new Set(results.filter(r => !r.success).map(r => r.name))
+      setPendingFiles(prev => prev.filter(f => failedNames.has(f.name)))
       setUploadDialog({ isLoading: false })
     }
-  }, [uploadDialog.folderPath, uploadDialog.commitMessage, setUploadDialog, closeUploadDialog, fetchFiles, setError, getFullFilePath])
+  }, [pendingFiles, uploadDialog.folderPath, uploadDialog.commitMessage, setUploadDialog, closeUploadDialog, fetchFiles, setError, getFullFilePath, validateFile])
 
   const cancelUpload = useCallback(() => {
+    setPendingFiles([])
+    setUploadResults(null)
+    setUploadProgress(null)
+    setIsDragOver(false)
     closeUploadDialog()
   }, [closeUploadDialog])
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(true)
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      addFiles(e.dataTransfer.files)
+    }
+  }, [addFiles])
+
+  const formatFileSize = useCallback((bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }, [])
 
   // Keyboard shortcuts for upload dialog
   useEffect(() => {
@@ -1330,21 +1410,12 @@ export default function Workspace({
         if (!uploadDialog.isLoading) {
           cancelUpload()
         }
-      } else if (event.key === 'Enter') {
-        event.preventDefault()
-        if (!uploadDialog.isLoading) {
-          // Trigger file input click or submit if file is selected
-          const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
-          if (fileInput && fileInput.files && fileInput.files.length > 0) {
-            handleFileSelect({ target: fileInput } as React.ChangeEvent<HTMLInputElement>)
-          }
-        }
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [uploadDialog.isOpen, uploadDialog.isLoading, cancelUpload, handleFileSelect])
+  }, [uploadDialog.isOpen, uploadDialog.isLoading, cancelUpload])
 
   // Folder creation handlers
   const handleCreateFolder = (parentFolder?: PlannerFile | string) => {
@@ -1956,18 +2027,12 @@ export default function Workspace({
       {/* Upload Dialog */}
       {uploadDialog.isOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <form onSubmit={(e) => {
-            e.preventDefault()
-            const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
-            if (fileInput && fileInput.files && fileInput.files.length > 0) {
-              handleFileSelect({ target: fileInput } as React.ChangeEvent<HTMLInputElement>)
-            }
-          }} className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md mx-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md mx-4 max-h-[80vh] flex flex-col">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
-              Upload File
+              Upload Files
             </h3>
-            
-            <div className="space-y-4">
+
+            <div className="space-y-4 overflow-y-auto flex-1 min-h-0">
               {/* Upload Destination Display */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -1990,25 +2055,105 @@ export default function Workspace({
                   value={uploadDialog.commitMessage}
                   onChange={(e) => setUploadDialog({ commitMessage: e.target.value })}
                   placeholder="Upload description"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  disabled={uploadDialog.isLoading}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50"
                 />
               </div>
 
-              {/* File Input */}
+              {/* Drag & Drop Zone */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Select File
+                  Select Files
                 </label>
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => !uploadDialog.isLoading && fileInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-md p-6 text-center cursor-pointer transition-colors ${
+                    isDragOver
+                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                      : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+                  } ${uploadDialog.isLoading ? 'opacity-50 pointer-events-none' : ''}`}
+                >
+                  <Upload className="mx-auto h-8 w-8 text-gray-400 dark:text-gray-500 mb-2" />
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Drag files here or click to browse
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Text-based files only, 10MB max each
+                  </p>
+                </div>
                 <input
+                  ref={fileInputRef}
                   type="file"
+                  multiple
                   onChange={handleFileSelect}
                   accept=".txt,.md,.json,.csv,.yaml,.yml,.xml,.html,.css,.js,.py,.go,.java,.c,.cpp,.cs,.php,.rb,.sql,.ts,.vue,.svelte"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  className="hidden"
                 />
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Only text-based files allowed (10MB max)
-                </p>
               </div>
+
+              {/* Selected Files List */}
+              {pendingFiles.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    {pendingFiles.length} file{pendingFiles.length !== 1 ? 's' : ''} selected
+                  </label>
+                  <div className="border border-gray-200 dark:border-gray-600 rounded-md divide-y divide-gray-200 dark:divide-gray-600 max-h-40 overflow-y-auto">
+                    {pendingFiles.map((file, index) => {
+                      const validationError = validateFile(file)
+                      return (
+                        <div key={`${file.name}-${index}`} className="flex items-center justify-between px-3 py-2 text-sm">
+                          <div className="flex-1 min-w-0 mr-2">
+                            <p className={`truncate ${validationError ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
+                              {file.name}
+                            </p>
+                            {validationError ? (
+                              <p className="text-xs text-red-500 dark:text-red-400">{validationError}</p>
+                            ) : (
+                              <p className="text-xs text-gray-500 dark:text-gray-400">{formatFileSize(file.size)}</p>
+                            )}
+                          </div>
+                          {!uploadDialog.isLoading && (
+                            <button
+                              type="button"
+                              onClick={() => removeFile(index)}
+                              className="flex-shrink-0 p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Upload Progress */}
+              {uploadProgress && (
+                <div className="text-sm text-blue-600 dark:text-blue-400">
+                  Uploading file {uploadProgress.current} of {uploadProgress.total}...
+                </div>
+              )}
+
+              {/* Upload Results */}
+              {uploadResults && (
+                <div className="border border-gray-200 dark:border-gray-600 rounded-md divide-y divide-gray-200 dark:divide-gray-600 max-h-32 overflow-y-auto">
+                  {uploadResults.map((result, index) => (
+                    <div key={index} className="flex items-center px-3 py-1.5 text-sm">
+                      <span className={`mr-2 ${result.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                        {result.success ? '\u2713' : '\u2717'}
+                      </span>
+                      <span className="truncate text-gray-900 dark:text-gray-100">{result.name}</span>
+                      {result.error && (
+                        <span className="ml-2 text-xs text-red-500 dark:text-red-400 truncate">{result.error}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Action Buttons */}
@@ -2022,14 +2167,19 @@ export default function Workspace({
                 Cancel
               </button>
               <button
-                type="submit"
-                disabled={uploadDialog.isLoading}
+                type="button"
+                onClick={handleUploadAll}
+                disabled={uploadDialog.isLoading || pendingFiles.length === 0}
                 className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
               >
-                {uploadDialog.isLoading ? 'Uploading...' : 'Upload'}
+                {uploadDialog.isLoading
+                  ? uploadProgress
+                    ? `Uploading ${uploadProgress.current}/${uploadProgress.total}...`
+                    : 'Uploading...'
+                  : `Upload${pendingFiles.length > 0 ? ` (${pendingFiles.length})` : ''}`}
               </button>
             </div>
-          </form>
+          </div>
         </div>
       )}
 

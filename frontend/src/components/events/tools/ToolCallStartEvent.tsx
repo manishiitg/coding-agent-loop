@@ -1,12 +1,15 @@
 import React from 'react'
-import type { ToolCallStartEvent } from '../../../generated/events'
+import type { ToolCallStartEvent } from '../../../generated/event-types'
 import { WorkspaceToolCallDisplay, HumanFeedbackToolCallDisplay, CodeExecutionToolCallDisplay, ToolSearchToolCallDisplay } from './ToolCallSpecialRender'
+import { useExpandable } from '../useExpandable'
+import { Plus, Minus } from 'lucide-react'
 
 interface ToolCallStartEventProps {
   event: ToolCallStartEvent
 }
 
 export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ event }) => {
+  const { isExpanded, toggle } = useExpandable()
   
   // Check if this is a workspace tool
   const isWorkspaceTool = (toolName: string): boolean => {
@@ -73,16 +76,23 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
     }
   }
 
+  const hasArguments = event.tool_params?.arguments !== undefined
+
   // Single-line layout following design guidelines
   return (
-    <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded p-2">
+    <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded p-2 transition-colors duration-200">
       <div className="flex items-center justify-between gap-3">
         {/* Left side: Icon and main content */}
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-orange-700 dark:text-orange-300">
+            <div className="text-sm font-medium text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
               Tool Call Start{' '}
-              <span className="text-xs font-normal text-orange-600 dark:text-orange-400">
+              {event.is_parallel && (
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 border border-purple-200 dark:border-purple-700">
+                  PARALLEL
+                </span>
+              )}
+              <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
                 {event.turn && `• Turn: ${event.turn}`}
                 {event.tool_name && ` • Tool: ${event.tool_name}`}
                 {event.server_name && ` • Server: ${event.server_name}`}
@@ -91,21 +101,33 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
           </div>
         </div>
 
-        {/* Right side: Time */}
-        {event.timestamp && (
-          <div className="text-xs text-orange-600 dark:text-orange-400 flex-shrink-0">
-            {new Date(event.timestamp).toLocaleTimeString()}
-          </div>
-        )}
+        {/* Right side: Time and Toggle */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {event.timestamp && (
+            <div className="text-xs text-blue-600 dark:text-blue-400">
+              {new Date(event.timestamp).toLocaleTimeString()}
+            </div>
+          )}
+          
+          {hasArguments && (
+            <button
+              onClick={toggle}
+              className="p-0.5 hover:bg-blue-200 dark:hover:bg-blue-800 rounded text-blue-700 dark:text-blue-300 transition-colors"
+              title={isExpanded ? "Collapse arguments (Alt+Click for all)" : "Expand arguments (Alt+Click for all)"}
+            >
+              {isExpanded ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Tool arguments always visible below */}
-      {event.tool_params?.arguments !== undefined && (
+      {/* Tool arguments visibility controlled by isExpanded */}
+      {hasArguments && isExpanded && (
         <div className="mt-2">
           <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-            <div className="text-xs font-medium text-orange-700 dark:text-orange-300 mb-1">Arguments:</div>
+            <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">Arguments:</div>
             <pre className="text-xs text-gray-800 dark:text-gray-200 font-mono whitespace-pre-wrap overflow-x-auto">
-              {event.tool_params.arguments ? formatArguments(event.tool_params.arguments) : '(no arguments)'}
+              {event.tool_params?.arguments ? formatArguments(event.tool_params.arguments) : '(no arguments)'}
             </pre>
           </div>
         </div>

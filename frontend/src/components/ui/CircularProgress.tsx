@@ -178,7 +178,7 @@ export const CircularProgress: React.FC<CircularProgressProps> = ({
           {cacheTokens > 0 && (
             <div className="flex items-center justify-between gap-4">
               <span className="text-gray-500 dark:text-gray-400">Cache:</span>
-              <span className="font-medium text-cyan-600 dark:text-cyan-400">
+              <span className="font-medium text-sky-600 dark:text-sky-400">
                 {formatTokenCount(cacheTokens)}
                 {cacheCost > 0 && (
                   <span className="text-green-600 dark:text-green-400 ml-1">(${cacheCost.toFixed(4)})</span>
@@ -243,7 +243,7 @@ export const CircularProgress: React.FC<CircularProgressProps> = ({
             <span className="font-medium">
               {llmCallCount}
               {cacheEnabledCallCount > 0 && (
-                <span className="text-cyan-600 dark:text-cyan-400 ml-1">({cacheEnabledCallCount} cached)</span>
+                <span className="text-sky-600 dark:text-sky-400 ml-1">({cacheEnabledCallCount} cached)</span>
               )}
             </span>
           </div>

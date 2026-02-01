@@ -75,7 +75,7 @@ export const NodeDetailPanel: React.FC<NodeDetailPanelProps> = ({
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center gap-2">
           {isConditional && <GitBranch className="w-4 h-4 text-purple-500" />}
-          {isLoop && <RefreshCw className="w-4 h-4 text-cyan-500" />}
+          {isLoop && <RefreshCw className="w-4 h-4 text-indigo-500" />}
           <span className="font-medium text-gray-900 dark:text-gray-100">
             {isEditing ? 'Edit Step' : `Step ${(node.data.stepIndex as number) + 1}`}
           </span>
@@ -164,8 +164,8 @@ export const NodeDetailPanel: React.FC<NodeDetailPanelProps> = ({
             )}
 
             {isLoop && (
-              <div className="p-2 bg-cyan-50 dark:bg-cyan-900/20 rounded">
-                <span className="text-xs font-medium text-cyan-600 dark:text-cyan-400">
+              <div className="p-2 bg-indigo-50 dark:bg-indigo-900/20 rounded">
+                <span className="text-xs font-medium text-indigo-600 dark:text-indigo-400">
                   Loop:
                 </span>
                 {step.loop_condition && (

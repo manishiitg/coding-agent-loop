@@ -508,7 +508,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
       relative w-[280px] rounded-xl border-2 bg-white dark:bg-gray-900 shadow-lg
       ${isSubAgent ? 'overflow-visible' : 'overflow-hidden'}
       ${statusBorderColors[status]}
-      ${isSubAgent ? 'border-dashed border-cyan-400 dark:border-cyan-500' : ''}
+      ${isSubAgent ? 'border-dashed border-indigo-400 dark:border-indigo-500' : ''}
       ${selected ? 'ring-2 ring-blue-500/40' : ''}
       ${changeType ? changeHighlightStyles[changeType] : ''}
     `}>
@@ -544,7 +544,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
         type="target"
         position={isHorizontal ? Position.Left : Position.Top}
         id="top"
-        className={`!w-3 !h-3 !border-2 !border-white dark:!border-gray-900 ${isSubAgent ? '!bg-cyan-400 dark:!bg-cyan-600' : '!bg-transparent pointer-events-none opacity-0'}`}
+        className={`!w-3 !h-3 !border-2 !border-white dark:!border-gray-900 ${isSubAgent ? '!bg-indigo-400 dark:!bg-indigo-600' : '!bg-transparent pointer-events-none opacity-0'}`}
         style={isHorizontal ? { left: '-6px', top: '30%' } : { top: '-6px', left: '50%' }}
       />
 
@@ -553,7 +553,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
         {/* First row: Step number (or sub-agent indicator) and title */}
         <div className="flex items-start gap-3 mb-2">
           {isSubAgent ? (
-            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 flex-shrink-0" title="Sub-agent">
+            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 flex-shrink-0" title="Sub-agent">
               <Bot className="w-4 h-4" />
             </div>
           ) : (
@@ -664,7 +664,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
           {/* Validation Skipped Badge */}
           {stepConfig?.agent_configs?.llm_validation_mode === 'skip' && (
             <div 
-              className="flex items-center justify-center w-8 h-8 rounded-md bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-400 border border-cyan-200 dark:border-cyan-800"
+              className="flex items-center justify-center w-8 h-8 rounded-md bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800"
               title="LLM validation will be skipped if pre-validation passes"
             >
               <SkipForward className="w-3.5 h-3.5" />

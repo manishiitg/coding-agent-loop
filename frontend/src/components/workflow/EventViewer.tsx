@@ -64,12 +64,12 @@ const eventConfig: Record<string, { icon: React.ReactNode; color: string; label:
   },
   orchestrator_step_start: { 
     icon: <Loader2 className="w-3.5 h-3.5 animate-spin" />, 
-    color: 'text-cyan-500 bg-cyan-50 dark:bg-cyan-900/20', 
+    color: 'text-indigo-500 bg-indigo-50 dark:bg-indigo-900/20', 
     label: 'Step Start' 
   },
   orchestrator_step_end: { 
     icon: <CheckCircle className="w-3.5 h-3.5" />, 
-    color: 'text-cyan-500 bg-cyan-50 dark:bg-cyan-900/20', 
+    color: 'text-indigo-500 bg-indigo-50 dark:bg-indigo-900/20', 
     label: 'Step End' 
   },
   request_human_feedback: { 

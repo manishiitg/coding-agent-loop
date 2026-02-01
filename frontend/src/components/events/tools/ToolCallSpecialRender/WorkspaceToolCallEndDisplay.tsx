@@ -1,8 +1,10 @@
-import React, { useState } from 'react'
+import React from 'react'
 import type { ToolCallEndEvent } from '../../../../generated/events'
 import { ToolMarkdownRenderer } from '../../../ui/MarkdownRenderer'
 import { CircularProgress, type ContextOnlyTokenUsage } from '../../../ui/CircularProgress'
 import { TooltipProvider } from '../../../ui/tooltip'
+import { useExpandable } from '../../useExpandable'
+import { Plus, Minus } from 'lucide-react'
 
 interface WorkspaceToolCallEndDisplayProps {
   event: ToolCallEndEvent
@@ -49,8 +51,7 @@ const formatDuration = (durationNs: number) => {
 }
 
 export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayProps> = ({ event }) => {
-  // Always expanded by default
-  const [showContent, setShowContent] = useState(true)
+  const { isExpanded: showContent, toggle } = useExpandable()
   
   if (!event.result) {
     return null
@@ -125,13 +126,13 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
     }
     
     return (
-      <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded p-2">
+      <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded p-2">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-green-700 dark:text-green-300 flex items-center gap-2">
+              <div className="text-sm font-medium text-blue-700 dark:text-blue-300 flex items-center gap-2">
                 📂 Files Listed Successfully{' '}
-                <span className="text-xs font-normal text-green-600 dark:text-green-400">
+                <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
                   {event.turn && `• Turn: ${event.turn}`}
                   {event.tool_name && ` • Tool: ${event.tool_name}`}
                   {event.server_name && ` • Server: ${event.server_name}`}
@@ -152,18 +153,27 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
             </div>
           </div>
 
-          {event.timestamp && (
-            <div className="text-xs text-green-600 dark:text-green-400 flex-shrink-0">
-              {new Date(event.timestamp).toLocaleTimeString()}
-            </div>
-          )}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {event.timestamp && (
+              <div className="text-xs text-blue-600 dark:text-blue-400 flex-shrink-0">
+                {new Date(event.timestamp).toLocaleTimeString()}
+              </div>
+            )}
+            <button
+              onClick={toggle}
+              className="p-0.5 hover:bg-blue-200 dark:hover:bg-blue-800 rounded text-blue-700 dark:text-blue-300 transition-colors"
+              title={showContent ? "Collapse output (Alt+Click for all)" : "Expand output (Alt+Click for all)"}
+            >
+              {showContent ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
 
         {/* File tree */}
-        {files.length > 0 && (
+        {showContent && files.length > 0 && (
           <div className="mt-2">
             <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-              <div className="text-xs font-medium text-green-700 dark:text-green-300 mb-2">
+              <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-2">
                 📋 Found {files.length} {files.length === 1 ? 'item' : 'items'}
               </div>
               <div className="max-h-96 overflow-y-auto">
@@ -188,13 +198,13 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
     const resultMessage = isJsonResult ? 'File Read Successfully' : content
     
     return (
-      <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded p-2">
+      <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded p-2">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-green-700 dark:text-green-300 flex items-center gap-2">
+              <div className="text-sm font-medium text-blue-700 dark:text-blue-300 flex items-center gap-2">
                 📖 {resultMessage}{' '}
-                <span className="text-xs font-normal text-green-600 dark:text-green-400">
+                <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
                   {event.turn && `• Turn: ${event.turn}`}
                   {event.tool_name && ` • Tool: ${event.tool_name}`}
                   {event.server_name && ` • Server: ${event.server_name}`}
@@ -215,66 +225,65 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
             </div>
           </div>
 
-          {event.timestamp && (
-            <div className="text-xs text-green-600 dark:text-green-400 flex-shrink-0">
-              {new Date(event.timestamp).toLocaleTimeString()}
-            </div>
-          )}
-        </div>
-
-        {/* File metadata */}
-        <div className="mt-2">
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-            <div className="grid grid-cols-1 gap-2 text-xs">
-              {filepath && (
-                <div>
-                  <span className="font-medium text-green-700 dark:text-green-300">📁 File: </span>
-                  <span className="font-mono text-gray-800 dark:text-gray-200">{filepath}</span>
-                </div>
-              )}
-              {folder && (
-                <div>
-                  <span className="font-medium text-green-700 dark:text-green-300">📂 Folder: </span>
-                  <span className="font-mono text-gray-800 dark:text-gray-200">{folder}</span>
-                </div>
-              )}
-              {lastModified && (
-                <div>
-                  <span className="font-medium text-green-700 dark:text-green-300">🕒 Modified: </span>
-                  <span className="text-gray-800 dark:text-gray-200">{new Date(lastModified).toLocaleString()}</span>
-                </div>
-              )}
-            </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {event.timestamp && (
+              <div className="text-xs text-blue-600 dark:text-blue-400 flex-shrink-0">
+                {new Date(event.timestamp).toLocaleTimeString()}
+              </div>
+            )}
+            <button
+              onClick={toggle}
+              className="p-0.5 hover:bg-blue-200 dark:hover:bg-blue-800 rounded text-blue-700 dark:text-blue-300 transition-colors"
+              title={showContent ? "Collapse output (Alt+Click for all)" : "Expand output (Alt+Click for all)"}
+            >
+              {showContent ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            </button>
           </div>
         </div>
 
+        {/* File metadata */}
+        {showContent && (
+          <div className="mt-2">
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+              <div className="grid grid-cols-1 gap-2 text-xs">
+                {filepath && (
+                  <div>
+                    <span className="font-medium text-blue-700 dark:text-blue-300">📁 File: </span>
+                    <span className="font-mono text-gray-800 dark:text-gray-200">{filepath}</span>
+                  </div>
+                )}
+                {folder && (
+                  <div>
+                    <span className="font-medium text-blue-700 dark:text-blue-300">📂 Folder: </span>
+                    <span className="font-mono text-gray-800 dark:text-gray-200">{folder}</span>
+                  </div>
+                )}
+                {lastModified && (
+                  <div>
+                    <span className="font-medium text-blue-700 dark:text-blue-300">🕒 Modified: </span>
+                    <span className="text-gray-800 dark:text-gray-200">{new Date(lastModified).toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* File content */}
-        {content && (
+        {showContent && content && (
           <div className="mt-2">
             <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
               <div className="flex items-center justify-between mb-1">
-                <div className="text-xs font-medium text-green-700 dark:text-green-300">
+                <div className="text-xs font-medium text-blue-700 dark:text-blue-300">
                   📄 Content {isMarkdownContent(content) && <span className="text-blue-600 dark:text-blue-400">(Markdown)</span>}
                 </div>
                 <button
-                  onClick={() => setShowContent(!showContent)}
-                  className="text-xs text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-200 transition-colors"
+                  onClick={toggle}
+                  className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors"
                 >
-                  {showContent ? 'Hide' : 'Show'}
+                  {showContent ? 'Collapse output' : 'Expand output'}
                 </button>
               </div>
-              
-              {showContent && (
-                <div className="text-sm text-gray-800 dark:text-gray-200 mt-2">
-                  {isMarkdownContent(content) ? (
-                    <ToolMarkdownRenderer content={content} maxHeight="400px" />
-                  ) : (
-                    <pre className="whitespace-pre-wrap font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded border max-h-96 overflow-y-auto text-xs">
-                      {content}
-                    </pre>
-                  )}
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -320,44 +329,55 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
             </div>
           </div>
 
-          {event.timestamp && (
-            <div className="text-xs text-green-600 dark:text-green-400 flex-shrink-0">
-              {new Date(event.timestamp).toLocaleTimeString()}
-            </div>
-          )}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {event.timestamp && (
+              <div className="text-xs text-green-600 dark:text-green-400 flex-shrink-0">
+                {new Date(event.timestamp).toLocaleTimeString()}
+              </div>
+            )}
+            <button
+              onClick={toggle}
+              className="p-0.5 hover:bg-green-200 dark:hover:bg-green-800 rounded text-green-700 dark:text-green-300 transition-colors"
+              title={showContent ? "Collapse output (Alt+Click for all)" : "Expand output (Alt+Click for all)"}
+            >
+              {showContent ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
 
         {/* File metadata */}
-        <div className="mt-2">
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-            <div className="grid grid-cols-1 gap-2 text-xs">
-              {filepath && (
-                <div>
-                  <span className="font-medium text-green-700 dark:text-green-300">📁 File: </span>
-                  <span className="font-mono text-gray-800 dark:text-gray-200">{filepath}</span>
-                </div>
-              )}
-              {folder && (
-                <div>
-                  <span className="font-medium text-green-700 dark:text-green-300">📂 Folder: </span>
-                  <span className="font-mono text-gray-800 dark:text-gray-200">{folder}</span>
-                </div>
-              )}
-              {lastModified && (
-                <div>
-                  <span className="font-medium text-green-700 dark:text-green-300">🕒 Modified: </span>
-                  <span className="text-gray-800 dark:text-gray-200">{new Date(lastModified).toLocaleString()}</span>
-                </div>
-              )}
-              {applied && (
-                <div>
-                  <span className="font-medium text-green-700 dark:text-green-300">✅ Status: </span>
-                  <span className="text-gray-800 dark:text-gray-200">Changes applied successfully</span>
-                </div>
-              )}
+        {showContent && (
+          <div className="mt-2">
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+              <div className="grid grid-cols-1 gap-2 text-xs">
+                {filepath && (
+                  <div>
+                    <span className="font-medium text-green-700 dark:text-green-300">📁 File: </span>
+                    <span className="font-mono text-gray-800 dark:text-gray-200">{filepath}</span>
+                  </div>
+                )}
+                {folder && (
+                  <div>
+                    <span className="font-medium text-green-700 dark:text-green-300">📂 Folder: </span>
+                    <span className="font-mono text-gray-800 dark:text-gray-200">{folder}</span>
+                  </div>
+                )}
+                {lastModified && (
+                  <div>
+                    <span className="font-medium text-green-700 dark:text-green-300">🕒 Modified: </span>
+                    <span className="text-gray-800 dark:text-gray-200">{new Date(lastModified).toLocaleString()}</span>
+                  </div>
+                )}
+                {applied && (
+                  <div>
+                    <span className="font-medium text-green-700 dark:text-green-300">✅ Status: </span>
+                    <span className="text-gray-800 dark:text-gray-200">Changes applied successfully</span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     )
   }
@@ -396,38 +416,49 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
             </div>
           </div>
 
-          {event.timestamp && (
-            <div className="text-xs text-green-600 dark:text-green-400 flex-shrink-0">
-              {new Date(event.timestamp).toLocaleTimeString()}
-            </div>
-          )}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {event.timestamp && (
+              <div className="text-xs text-green-600 dark:text-green-400 flex-shrink-0">
+                {new Date(event.timestamp).toLocaleTimeString()}
+              </div>
+            )}
+            <button
+              onClick={toggle}
+              className="p-0.5 hover:bg-green-200 dark:hover:bg-green-800 rounded text-green-700 dark:text-green-300 transition-colors"
+              title={showContent ? "Collapse output (Alt+Click for all)" : "Expand output (Alt+Click for all)"}
+            >
+              {showContent ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
 
         {/* File metadata */}
-        <div className="mt-2">
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-            <div className="grid grid-cols-1 gap-2 text-xs">
-              {filepath && (
-                <div>
-                  <span className="font-medium text-green-700 dark:text-green-300">📁 File: </span>
-                  <span className="font-mono text-gray-800 dark:text-gray-200">{filepath}</span>
-                </div>
-              )}
-              {folder && (
-                <div>
-                  <span className="font-medium text-green-700 dark:text-green-300">📂 Folder: </span>
-                  <span className="font-mono text-gray-800 dark:text-gray-200">{folder}</span>
-                </div>
-              )}
-              {deleted && (
-                <div>
-                  <span className="font-medium text-green-700 dark:text-green-300">✅ Status: </span>
-                  <span className="text-gray-800 dark:text-gray-200">File deleted successfully</span>
-                </div>
-              )}
+        {showContent && (
+          <div className="mt-2">
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+              <div className="grid grid-cols-1 gap-2 text-xs">
+                {filepath && (
+                  <div>
+                    <span className="font-medium text-green-700 dark:text-green-300">📁 File: </span>
+                    <span className="font-mono text-gray-800 dark:text-gray-200">{filepath}</span>
+                  </div>
+                )}
+                {folder && (
+                  <div>
+                    <span className="font-medium text-green-700 dark:text-green-300">📂 Folder: </span>
+                    <span className="font-mono text-gray-800 dark:text-gray-200">{folder}</span>
+                  </div>
+                )}
+                {deleted && (
+                  <div>
+                    <span className="font-medium text-green-700 dark:text-green-300">✅ Status: </span>
+                    <span className="text-gray-800 dark:text-gray-200">File deleted successfully</span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     )
   }

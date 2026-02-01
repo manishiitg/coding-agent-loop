@@ -126,6 +126,10 @@ type OrchestratorAgentConfig struct {
 	ContextEditingThreshold     int  `json:"context_editing_threshold,omitempty"`      // Token threshold for context editing (0 = use default: 100)
 	ContextEditingTurnThreshold int  `json:"context_editing_turn_threshold,omitempty"` // Turn age threshold for context editing (0 = use default: 20)
 
+	// Parallel tool execution: When enabled, multiple tool calls in a single LLM response
+	// are executed concurrently using a fork-join pattern instead of sequentially
+	EnableParallelToolExecution bool `json:"enable_parallel_tool_execution,omitempty"`
+
 	// MCP session ID for connection management
 	// When set, MCP connections are shared across agents with the same session ID
 	// Connections persist until CloseSession() is called (not when agent closes)

@@ -57,10 +57,6 @@ const (
 	TodoTaskItemCompleted  events.EventType = "todo_task_item_completed"  // When a todo item is completed
 	TodoTaskStepCompleted  events.EventType = "todo_task_step_completed"  // When the entire todo task step is completed
 
-	// Step execution events
-	StepExecutionStart  events.EventType = "step_execution_start"
-	StepExecutionEnd    events.EventType = "step_execution_end"
-	StepExecutionFailed events.EventType = "step_execution_failed"
 )
 
 // Helper function to get component from orchestrator event type
@@ -74,7 +70,6 @@ func GetComponentFromEventType(eventType events.EventType) string {
 		HumanVerificationResponse, RequestHumanFeedback, BlockingHumanFeedback,
 		LearningSkipped, TempLLMSkipped,
 		DecisionEvaluated, PreValidationCompleted,
-		StepExecutionStart, StepExecutionEnd, StepExecutionFailed,
 		TodoTaskRouteSelected, TodoTaskItemCreated, TodoTaskItemUpdated, TodoTaskItemCompleted, TodoTaskStepCompleted:
 		return "orchestrator"
 	default:

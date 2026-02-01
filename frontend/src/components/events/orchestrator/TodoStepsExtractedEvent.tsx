@@ -675,7 +675,7 @@ export const TodoStepsExtractedEventDisplay: React.FC<
                 </span>
               )}
               {stepSummary.loop > 0 && (
-                <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300">
+                <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300">
                   <RefreshCw className="w-3 h-3" />
                   {stepSummary.loop}
                 </span>
@@ -959,21 +959,21 @@ export const TodoStepsExtractedEventDisplay: React.FC<
                       
                       {step.has_loop && step.loop_condition && (
                         <div className="text-xs">
-                          <span className="font-medium text-cyan-700 dark:text-cyan-400">Loop Condition:</span>
+                          <span className="font-medium text-indigo-700 dark:text-indigo-400">Loop Condition:</span>
                           <span className="text-gray-600 dark:text-gray-400 ml-1">{step.loop_condition}</span>
                         </div>
                       )}
                       
                       {step.has_loop && step.max_iterations && (
                         <div className="text-xs">
-                          <span className="font-medium text-cyan-700 dark:text-cyan-400">Max Iterations:</span>
+                          <span className="font-medium text-indigo-700 dark:text-indigo-400">Max Iterations:</span>
                           <span className="text-gray-600 dark:text-gray-400 ml-1">{step.max_iterations}</span>
                         </div>
                       )}
                       
                       {step.has_loop && step.loop_description && (
                         <div className="text-xs">
-                          <span className="font-medium text-cyan-700 dark:text-cyan-400">Loop Description:</span>
+                          <span className="font-medium text-indigo-700 dark:text-indigo-400">Loop Description:</span>
                           <span className="text-gray-600 dark:text-gray-400 ml-1 italic">{step.loop_description}</span>
                         </div>
                       )}
@@ -1274,21 +1274,21 @@ const ConditionalStepCard: React.FC<ConditionalStepCardProps> = ({
                 
                 {nestedStep.has_loop && nestedStep.loop_condition && (
                   <div className="text-xs">
-                    <span className="font-medium text-cyan-700 dark:text-cyan-400">Loop Condition:</span>
+                    <span className="font-medium text-indigo-700 dark:text-indigo-400">Loop Condition:</span>
                     <span className="text-gray-600 dark:text-gray-400 ml-1">{nestedStep.loop_condition}</span>
                   </div>
                 )}
                 
                 {nestedStep.has_loop && nestedStep.max_iterations && (
                   <div className="text-xs">
-                    <span className="font-medium text-cyan-700 dark:text-cyan-400">Max Iterations:</span>
+                    <span className="font-medium text-indigo-700 dark:text-indigo-400">Max Iterations:</span>
                     <span className="text-gray-600 dark:text-gray-400 ml-1">{nestedStep.max_iterations}</span>
                   </div>
                 )}
                 
                 {nestedStep.has_loop && nestedStep.loop_description && (
                   <div className="text-xs">
-                    <span className="font-medium text-cyan-700 dark:text-cyan-400">Loop Description:</span>
+                    <span className="font-medium text-indigo-700 dark:text-indigo-400">Loop Description:</span>
                     <span className="text-gray-600 dark:text-gray-400 ml-1 italic">{nestedStep.loop_description}</span>
                   </div>
                 )}

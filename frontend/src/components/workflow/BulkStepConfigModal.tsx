@@ -1144,9 +1144,8 @@ export default function BulkStepConfigModal({
             <AccordionItem value="runtime-config" className="border border-border rounded-xl bg-muted/10 hover:bg-muted/20 transition-colors shadow-sm">
               <AccordionTrigger className="hover:no-underline px-5 py-4">
                 <div className="flex items-center gap-3">
-                  <div className="p-1.5 rounded-md bg-teal-500/10">
-                    <Settings className="w-4 h-4 text-teal-600 dark:text-teal-400" />
-                  </div>
+                                            <div className="p-1.5 rounded-md bg-indigo-500/10">
+                                              <Settings className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />                  </div>
                   <span className="font-semibold text-base">Runtime Configuration</span>
                 </div>
               </AccordionTrigger>

@@ -77,12 +77,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveStepProgress(ctx context.Context,
 	}
 
 	// Emit step progress updated event for frontend dynamic updates
-	hcpo.emitStepProgressUpdatedEvent(ctx, progress, "", "")
+	hcpo.emitStepProgressUpdatedEvent(ctx, progress, "", "", "")
 
 	return nil
 }
 
-// emitStepStartedEvent emits a step started event
+// emitStepStartedEvent emits a step started event via step_progress_updated
 func (hcpo *StepBasedWorkflowOrchestrator) emitStepStartedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string, isBranchStep bool) {
 	bridge := hcpo.GetContextAwareBridge()
 	if bridge == nil {
@@ -98,40 +98,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitStepStartedEvent(ctx context.Cont
 		stepId = fmt.Sprintf("step-%d", stepIndex+1)
 	}
 
-	startedEvent := &StepStartedEvent{
-		BaseEventData: baseevents.BaseEventData{
-			Timestamp: time.Now(),
-			Component: "orchestrator",
-		},
-		StepID:        stepId,
-		StepIndex:     stepIndex,
-		StepTitle:     stepTitle,
-		StepPath:      stepPath,
-		IsBranchStep:  isBranchStep,
-		RunFolder:     hcpo.selectedRunFolder,
-		WorkspacePath: hcpo.GetWorkspacePath(),
-	}
-
-	agentEvent := &baseevents.AgentEvent{
-		Type:      baseevents.StepExecutionStart,
-		Timestamp: time.Now(),
-		Data:      startedEvent,
-	}
-
-	if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit step started event: %v", err))
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_started event for step %d: %s", stepIndex+1, stepTitle))
-	}
-
-	// Also emit progress event with "start" status for focus feature
+	// Emit progress event with "start" status
 	progress, err := hcpo.loadStepProgress(ctx)
 	if err == nil && progress != nil {
-		hcpo.emitStepProgressUpdatedEvent(ctx, progress, "start", stepId)
+		hcpo.emitStepProgressUpdatedEvent(ctx, progress, "start", stepId, "")
 	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_progress_updated (start) for step %d: %s", stepIndex+1, stepTitle))
 }
 
-// emitStepFinishedEvent emits a step finished event
+// emitStepFinishedEvent emits a step finished event via step_progress_updated
 func (hcpo *StepBasedWorkflowOrchestrator) emitStepFinishedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string, isBranchStep bool) {
 	bridge := hcpo.GetContextAwareBridge()
 	if bridge == nil {
@@ -147,35 +123,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitStepFinishedEvent(ctx context.Con
 		stepId = fmt.Sprintf("step-%d", stepIndex+1)
 	}
 
-	finishedEvent := &StepFinishedEvent{
-		BaseEventData: baseevents.BaseEventData{
-			Timestamp: time.Now(),
-			Component: "orchestrator",
-		},
-		StepID:       stepId,
-		StepIndex:    stepIndex,
-		StepTitle:    stepTitle,
-		StepPath:     stepPath,
-		IsBranchStep: isBranchStep,
-	}
-
-	agentEvent := &baseevents.AgentEvent{
-		Type:      baseevents.StepExecutionEnd,
-		Timestamp: time.Now(),
-		Data:      finishedEvent,
-	}
-
-	if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit step finished event: %v", err))
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_finished event for step %d: %s", stepIndex+1, stepTitle))
-	}
-
-	// Also emit progress event with "end" status for focus feature
+	// Emit progress event with "end" status
 	progress, err := hcpo.loadStepProgress(ctx)
 	if err == nil && progress != nil {
-		hcpo.emitStepProgressUpdatedEvent(ctx, progress, "end", stepId)
+		hcpo.emitStepProgressUpdatedEvent(ctx, progress, "end", stepId, "")
 	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_progress_updated (end) for step %d: %s", stepIndex+1, stepTitle))
 }
 
 // emitDecisionEvaluatedEvent emits a decision evaluated event with structured response
@@ -236,8 +190,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitDecisionEvaluatedEvent(ctx contex
 }
 
 // emitStepProgressUpdatedEvent emits an event when step progress is updated
-// status can be "start" (step started), "stop" (step stopped), "end" (step ended), or empty (regular progress update)
-func (hcpo *StepBasedWorkflowOrchestrator) emitStepProgressUpdatedEvent(ctx context.Context, progress *StepProgress, status string, stepId string) {
+// status can be "start" (step started), "stop" (step stopped), "end" (step ended), "failed" (step failed), or empty (regular progress update)
+// errorMsg is populated when status is "failed"
+func (hcpo *StepBasedWorkflowOrchestrator) emitStepProgressUpdatedEvent(ctx context.Context, progress *StepProgress, status string, stepId string, errorMsg string) {
 	bridge := hcpo.GetContextAwareBridge()
 	if bridge == nil {
 		return
@@ -271,6 +226,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitStepProgressUpdatedEvent(ctx cont
 		RunFolder:     hcpo.selectedRunFolder,
 		CurrentStepId: currentStepId,
 		Status:        status,
+		Error:         errorMsg,
 		// Include batch context for frontend batch progress tracking
 		GroupId:     hcpo.currentGroupId,
 		GroupIndex:  hcpo.currentGroupIdx,

@@ -140,6 +140,7 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.EnableContextEditing, // Context editing configuration
 		boa.config.ContextEditingThreshold,
 		boa.config.ContextEditingTurnThreshold,
+		boa.config.EnableParallelToolExecution, // Parallel tool execution
 		&boa.config.LLMConfig,        // Pass LLMConfig
 		boa.config.APIKeys,          // Pass API keys
 		boa.config.MCPSessionID,     // MCP session ID for connection sharing

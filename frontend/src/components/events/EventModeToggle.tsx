@@ -1,6 +1,6 @@
 import React from 'react';
 import { useChatStore } from '../../stores/useChatStore';
-import { Filter, Settings, Minus } from 'lucide-react';
+import { Filter, Settings, Minus, Minimize2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export const EventModeToggle: React.FC = () => {
@@ -10,13 +10,15 @@ export const EventModeToggle: React.FC = () => {
   const setTabEventMode = useChatStore(state => state.setTabEventMode);
 
   const cycleMode = () => {
-    // Cycle through: basic → advanced → tiny → basic
+    // Cycle through: basic → advanced → tiny → micro → basic
     if (activeTab) {
-      let newMode: 'basic' | 'advanced' | 'tiny';
+      let newMode: 'basic' | 'advanced' | 'tiny' | 'micro';
       if (mode === 'basic') {
         newMode = 'advanced';
       } else if (mode === 'advanced') {
         newMode = 'tiny';
+      } else if (mode === 'tiny') {
+        newMode = 'micro';
       } else {
         newMode = 'basic';
       }
@@ -39,6 +41,8 @@ export const EventModeToggle: React.FC = () => {
         return { icon: Settings, label: 'Advanced' };
       case 'tiny':
         return { icon: Minus, label: 'Tiny' };
+      case 'micro':
+        return { icon: Minimize2, label: 'Micro' };
       default:
         return { icon: Filter, label: 'Basic' };
     }

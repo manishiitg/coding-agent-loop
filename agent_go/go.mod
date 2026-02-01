@@ -12,7 +12,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/lib/pq v1.10.9
-	github.com/manishiitg/mcpagent v0.0.0
+	github.com/manishiitg/mcpagent v1.2.1
 	github.com/manishiitg/multi-llm-provider-go v0.3.0
 	github.com/mark3labs/mcp-go v0.44.0-beta.1
 	github.com/mattn/go-sqlite3 v1.14.32
@@ -22,16 +22,11 @@ require (
 	github.com/slack-go/slack v0.17.3
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/viper v1.21.0
-	golang.org/x/image v0.32.0
 	gopkg.in/yaml.v3 v3.0.1
 	workspace v0.0.0-00010101000000-000000000000
 )
 
 replace workspace => ../workspace
-
-replace github.com/manishiitg/mcpagent => ../../mcpagent
-
-replace github.com/manishiitg/multi-llm-provider-go => ../../multi-llm-provider-go
 
 require (
 	cloud.google.com/go v0.123.0 // indirect

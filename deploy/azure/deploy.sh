@@ -57,7 +57,9 @@ create_clean_context() {
     --exclude='.terraform' \
     --exclude='tmp' \
     --exclude='*.db' \
-    --exclude='__pycache__'
+    --exclude='__pycache__' \
+    --exclude='mcpagent' \
+    --exclude='multi-llm-provider-go'
     
   echo "    Clean context created."
 }

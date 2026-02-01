@@ -74,6 +74,7 @@ resource "azurerm_container_app" "agent" {
       image  = "${local.acr_login_server}/mcp-agent:${var.agent_image_tag}"
       cpu    = 1.0
       memory = "2Gi"
+      args   = ["--mcp-config", "/home/appuser/.config/mcpagent/mcp_config.json"]
 
       env {
         name  = "PORT"

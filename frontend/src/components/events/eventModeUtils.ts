@@ -32,8 +32,8 @@ export const shouldShowEventByMode = (eventType: string, mode: EventMode): boole
   if (mode === 'advanced') {
     return true // Show all events in advanced mode
   }
-  if (mode === 'tiny') {
-    // In tiny mode, hide everything basic mode hides PLUS user_message and system_prompt
+  if (mode === 'tiny' || mode === 'micro') {
+    // In tiny/micro mode, hide everything basic mode hides PLUS user_message and system_prompt
     // So hide if it's in ADVANCED_MODE_EVENTS OR in TINY_MODE_ADDITIONAL_EVENTS
     return !ADVANCED_MODE_EVENTS.has(eventType) && !TINY_MODE_ADDITIONAL_EVENTS.has(eventType)
   }

@@ -64,7 +64,7 @@ cat > .git/hooks/pre-commit << 'EOF'
 #!/bin/bash
 
 # Pre-commit Hook
-# Scans staged files for secrets and runs golangci-lint
+# Checks staged file sizes, scans for secrets, and runs golangci-lint
 
 set -e
 
@@ -74,6 +74,21 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+
+# Reject if any staged file is larger than 10MB
+MAX_FILE_SIZE_BYTES=10485760
+echo -e "${BLUE}📏 Checking staged file sizes (max 10MB)...${NC}"
+while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    blob=$(git rev-parse --verify ":${path}" 2>/dev/null) || continue
+    size=$(git cat-file -s "$blob" 2>/dev/null) || size=0
+    if [ -n "$size" ] && [ "$size" -gt "$MAX_FILE_SIZE_BYTES" ] 2>/dev/null; then
+        size_mb=$(awk "BEGIN { printf \"%.1f\", $size / 1048576 }")
+        echo -e "${RED}❌ Staged file too large: $path (${size_mb}MB). Max 10MB. Commit blocked.${NC}"
+        exit 1
+    fi
+done < <(git diff --cached --name-only)
+echo -e "${GREEN}✅ All staged files within size limit.${NC}"
 
 echo -e "${BLUE}🔒 Scanning for secrets with gitleaks...${NC}"
 

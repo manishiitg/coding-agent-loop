@@ -84,14 +84,19 @@ terraform apply -auto-approve
 
 Apply creates ACR (if new), Log Analytics, Container App Environment, and **agent**, **workspace-api**, and **frontend** Container Apps.
 
-## 3. Build, push, and restart (one command)
+## 3. Build and Deploy (Parallel & Zero-Downtime)
 
-After initial `terraform apply`, use the deploy script to build on ACR's native amd64 servers (no local Docker or QEMU needed), push images, restart apps, and run health checks:
+After initial `terraform apply`, use the deploy script to build on ACR (native amd64) and update the apps.
+
+The script now:
+1.  **Builds in parallel:** Agent, Workspace, and Frontend build simultaneously.
+2.  **Uses unique tags:** Generates a timestamped tag (e.g., `v20260201-1200`) for every deploy. This ensures zero caching issues and allows easy rollback.
+3.  **Zero-Downtime Update:** Uses `az containerapp update` to spin up a new revision before shutting down the old one.
 
 ```bash
 cd deploy/azure
 
-# Deploy all services (~5 min)
+# Deploy all services (fastest)
 ./deploy.sh all
 
 # Or deploy a single service
@@ -100,35 +105,22 @@ cd deploy/azure
 ./deploy.sh agent
 ```
 
-The script uses `az acr build` which builds remotely on Azure — much faster than local `docker build --platform linux/amd64` on Apple Silicon.
-
-**Important:** The agent build requires a `.dockerignore` file at the parent of the repo (e.g. `ai-work/.dockerignore`) to avoid uploading unnecessary files. This file is already created and excludes everything except `agent_go/`, `workspace/`, `mcpagent/`, and `multi-llm-provider-go/`.
-
 ### Manual build (alternative)
 
-If you prefer local Docker builds:
+If you prefer local Docker builds (not recommended for Apple Silicon unless you have a cross-compiler setup):
 
 ```bash
+# Get ACR name
 ACR=$(cd deploy/azure && terraform output -raw acr_login_server)
+TAG="manual-$(date +%s)"
 az acr login -n <acr_name>
 
-# From parent directory (for agent with local deps)
-docker build --platform linux/amd64 -t "$ACR/mcp-agent:latest" -f mcp-agent-builder-go/agent_go/Dockerfile.localdeps .
+# Build and push with a unique tag
+docker build --platform linux/amd64 -t "$ACR/mcp-agent:$TAG" -f mcp-agent-builder-go/agent_go/Dockerfile.localdeps ..
+docker push "$ACR/mcp-agent:$TAG"
 
-# From repo root
-docker build --platform linux/amd64 -t "$ACR/workspace-api:latest" -f workspace/Dockerfile workspace
-
-AGENT_URL=$(cd deploy/azure && terraform output -raw agent_fqdn)
-WORKSPACE_URL=$(cd deploy/azure && terraform output -raw workspace_api_fqdn)
-docker build --platform linux/amd64 \
-  --build-arg VITE_API_BASE_URL="$AGENT_URL" \
-  --build-arg VITE_WORKSPACE_API_URL="$WORKSPACE_URL" \
-  -t "$ACR/mcp-agent-frontend:latest" \
-  -f frontend/Dockerfile.prod frontend
-
-docker push "$ACR/mcp-agent:latest"
-docker push "$ACR/workspace-api:latest"
-docker push "$ACR/mcp-agent-frontend:latest"
+# Update the app manually
+az containerapp update -n mcpagent-agent -g code-analysis-phase-1 --image "$ACR/mcp-agent:$TAG"
 ```
 
 ## 4. Test the deployment
@@ -184,25 +176,33 @@ Then open http://localhost:5173 (frontend), http://localhost:8000 (agent), http:
 | `agent_env` | Optional map of env vars for agent |
 | `workspace_api_env` | Optional map of env vars for workspace-api |
 
-## Known Limitation: Chat History (SQLite on Azure Files)
+## Database (PostgreSQL)
 
-The agent uses SQLite for chat history. Azure Files (SMB) does not support the POSIX file locking that SQLite requires, so the agent falls back to `/tmp/chat_history.db`. This means **chat history is lost on every container restart or redeployment**.
+The deployment now provisions an **Azure Database for PostgreSQL Flexible Server** for persistent chat history and reliability. This replaces the previous SQLite/Azure Files setup which was prone to locking issues.
 
-### Planned fix: Azure Database for PostgreSQL
+### Configuration Required
 
-The Go agent already supports PostgreSQL via `--db-type postgres` and `DATABASE_URL`. To enable persistent chat history, add an Azure Database for PostgreSQL Flexible Server. This requires the `Microsoft.DBforPostgreSQL` resource provider to be registered on the subscription.
+You **must** provide a database admin password.
 
-**Steps** (requires subscription Owner or Contributor):
+Add this to your `terraform.tfvars` file (do not commit it):
 
-1. Register the provider:
-   ```bash
-   az provider register --namespace Microsoft.DBforPostgreSQL
-   ```
-2. Add the PostgreSQL Terraform resources (server, firewall rule, database) to `main.tf`
-3. Wire the agent container to use `DATABASE_URL` and `DB_TYPE=postgres` instead of `DB_PATH`
-4. Run `terraform apply`
+```hcl
+postgres_admin_password = "YourStrongPassword123!"
+```
 
-Until then, the agent-data Azure Files volume is still mounted for other data (OAuth tokens, configs) but SQLite writes go to the ephemeral `/tmp` directory.
+Or set it via environment variable:
+
+```bash
+export TF_VAR_postgres_admin_password="YourStrongPassword123!"
+```
+
+The `agent` container app is automatically configured with:
+- `DB_TYPE=postgres`
+- `DATABASE_URL` (constructed securely from your inputs)
+
+### Access
+
+The database is configured to allow access from Azure Services (Container Apps). It also has `public_network_access_enabled = true` to allow connections from your local machine if you whitelist your IP, but the firewall rule defaults to Azure-internal only.
 
 ## Workspace API: empty workspace-docs on deploy
 

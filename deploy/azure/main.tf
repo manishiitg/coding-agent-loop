@@ -29,9 +29,9 @@ resource "azurerm_container_app_environment" "env" {
   log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
 }
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- 
 # Persistent Storage (Azure Files)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- 
 resource "azurerm_storage_account" "persistent" {
   name                     = "${replace(var.project_name, "-", "")}storage"
   resource_group_name      = data.azurerm_resource_group.rg.name
@@ -101,29 +101,50 @@ resource "azurerm_role_assignment" "acr_pull" {
   principal_id         = azurerm_user_assigned_identity.acr_pull[0].principal_id
 }
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- 
 # Default Workspace Folders (created once when the file share is provisioned)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- 
 resource "null_resource" "workspace_default_folders" {
   triggers = {
     share_id = azurerm_storage_share.workspace_docs.id
   }
 
   provisioner "local-exec" {
-    command = <<-EOT
-      ACCOUNT_KEY=$(az storage account keys list \
-        --account-name ${azurerm_storage_account.persistent.name} \
-        --resource-group ${data.azurerm_resource_group.rg.name} \
-        --query '[0].value' -o tsv) && \
-      az storage directory create --account-name ${azurerm_storage_account.persistent.name} \
-        --account-key "$ACCOUNT_KEY" --share-name ${azurerm_storage_share.workspace_docs.name} \
-        --name "Downloads" -o none && \
-      az storage directory create --account-name ${azurerm_storage_account.persistent.name} \
-        --account-key "$ACCOUNT_KEY" --share-name ${azurerm_storage_share.workspace_docs.name} \
-        --name "Chats" -o none && \
-      az storage directory create --account-name ${azurerm_storage_account.persistent.name} \
-        --account-key "$ACCOUNT_KEY" --share-name ${azurerm_storage_share.workspace_docs.name} \
-        --name "Workspace" -o none
+    command = <<EOT
+      ACCOUNT_KEY=$(az storage account keys list --account-name ${azurerm_storage_account.persistent.name} --resource-group ${data.azurerm_resource_group.rg.name} --query '[0].value' -o tsv) && az storage directory create --account-name ${azurerm_storage_account.persistent.name} --account-key "$ACCOUNT_KEY" --share-name ${azurerm_storage_share.workspace_docs.name} --name "Downloads" -o none && az storage directory create --account-name ${azurerm_storage_account.persistent.name} --account-key "$ACCOUNT_KEY" --share-name ${azurerm_storage_share.workspace_docs.name} --name "Chats" -o none && az storage directory create --account-name ${azurerm_storage_account.persistent.name} --account-key "$ACCOUNT_KEY" --share-name ${azurerm_storage_share.workspace_docs.name} --name "Workspace" -o none
     EOT
   }
+}
+
+# --------------------------------------------------------------------------- 
+# Database (PostgreSQL Flexible Server)
+# --------------------------------------------------------------------------- 
+resource "azurerm_postgresql_flexible_server" "db" {
+  name                   = "${var.project_name}-db-${formatdate("YYYYMMDDhhmm", timestamp())}"
+  resource_group_name    = data.azurerm_resource_group.rg.name
+  location               = data.azurerm_resource_group.rg.location
+  version                = "16"
+  administrator_login    = "pgadmin"
+  administrator_password = var.postgres_admin_password
+  storage_mb             = 32768
+  sku_name               = "B_Standard_B1ms" # Burstable, 1 vCore, 2GB RAM
+  
+  # Allow public access (required for Container Apps without VNET integration)
+  # Security note: Access is restricted by firewall rules below.
+  public_network_access_enabled = true
+}
+
+resource "azurerm_postgresql_flexible_server_database" "mcpagent" {
+  name      = "mcpagent"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  charset   = "UTF8"
+  collation = "en_US.utf8"
+}
+
+# Allow access from Azure Services (including Container Apps)
+resource "azurerm_postgresql_flexible_server_firewall_rule" "azure_services" {
+  name             = "allow-azure-services"
+  server_id        = azurerm_postgresql_flexible_server.db.id
+  start_ip_address = "0.0.0.0"
+  end_ip_address   = "0.0.0.0"
 }

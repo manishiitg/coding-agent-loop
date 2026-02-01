@@ -28,6 +28,13 @@ variable "acr_admin_password" {
   description = "ACR admin password for image pull (use when skip_acr_managed_identity=true)"
 }
 
+variable "postgres_admin_password" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Admin password for the Azure PostgreSQL Flexible Server"
+}
+
 variable "skip_acr_managed_identity" {
   type        = bool
   default     = false

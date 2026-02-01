@@ -52,3 +52,6 @@ reports/
 # Cache
 .cache/
 tmp/ 
+# Ignore large local workspace data
+workspace-docs/
+workflow-docs/

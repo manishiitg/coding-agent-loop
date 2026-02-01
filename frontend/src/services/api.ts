@@ -178,7 +178,7 @@ export const agentApi = {
     options?: {
       limit?: number
       offset?: number
-      eventMode?: 'basic' | 'advanced' | 'tiny'
+      eventMode?: 'basic' | 'advanced' | 'tiny' | 'micro'
     }
   ): Promise<GetEventsResponse> => {
     const params: Record<string, string | number> = {}

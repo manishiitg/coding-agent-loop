@@ -350,14 +350,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   // (These events are still sent to frontend for workspace store processing, but hidden from chat UI)
   const displayEvents = useMemo(() => {
     const eventMode = activeTab?.eventMode || 'basic'
-    // In basic/tiny mode, hide workspace_file_operation events from display
+    // In basic/tiny/micro mode, hide workspace_file_operation events from display
     // (they're still processed by useWorkspaceStore for file highlighting)
-    if (eventMode === 'basic' || eventMode === 'tiny') {
+    if (eventMode === 'basic' || eventMode === 'tiny' || eventMode === 'micro') {
       return tabEvents.filter(event => {
         if (event.type === 'workspace_file_operation') return false
         
-        // In tiny mode, also hide Total Token Usage and Context Offloading events
-        if (eventMode === 'tiny') {
+        // In tiny/micro mode, also hide Total Token Usage and Context Offloading events
+        if (eventMode === 'tiny' || eventMode === 'micro') {
           if (event.type === 'token_usage') {
             const agentEvent = event.data as { data?: Record<string, unknown> } | undefined
             const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined
@@ -995,7 +995,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
       try {
         // Get event mode from current tab (defaults to 'basic')
-        const eventMode: 'basic' | 'advanced' | 'tiny' = (currentTab?.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny'
+        const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (currentTab?.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
         
         const response = await agentApi.getSessionEvents(effectiveSessionId, currentLastEventIndex, { eventMode })
         
@@ -1468,7 +1468,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               }
               
               // Load events for this session
-              const eventMode: 'basic' | 'advanced' | 'tiny' = (newTab.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny'
+              const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (newTab.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
               const response = await agentApi.getSessionEvents(sessionId, 0, { eventMode })
               const pollingEvents: PollingEvent[] = response.events
 
@@ -1896,7 +1896,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             
             try {
               // Get event mode from the tab we just created/switched to
-              const eventMode: 'basic' | 'advanced' | 'tiny' = (tabWithSession.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny'
+              const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (tabWithSession.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
               const response = await agentApi.getSessionEvents(originalSessionId, 0, { eventMode })
               
               // Convert and set historical events
@@ -2199,7 +2199,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             setIsLoadingHistory(true)
             try {
             // Get event mode from the tab we just created/switched to
-            const eventMode: 'basic' | 'advanced' | 'tiny' = (tabWithSession.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny'
+            const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (tabWithSession.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
               console.log(`[History] Loading events from database for completed session ${originalSessionId} with eventMode: ${eventMode}`)
               
               // Use database endpoint (not polling endpoint) for completed sessions

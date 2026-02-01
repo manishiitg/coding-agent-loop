@@ -234,10 +234,10 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | TodoTaskNodeData
     let stepId: string | undefined
 
-    if (node.type === 'orchestrator') {
+    if ((node.type as string) === 'orchestrator') {
       const orchestratorData = stepData as OrchestratorNodeData
       stepId = orchestratorData.orchestration_step?.id ?? orchestratorData.step?.id
-    } else if (node.type === 'todo_task') {
+    } else if ((node.type as string) === 'todo_task') {
       const todoTaskData = stepData as TodoTaskNodeData
       stepId = todoTaskData.todo_task_step?.id ?? todoTaskData.step?.id
     } else {
@@ -480,7 +480,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     if (!node) return null
     
     // Validation/learning nodes don't have step data
-    if (node.type === 'validation' || node.type === 'learning') return null
+    if ((node.type as string) === 'validation' || (node.type as string) === 'learning') return null
 
     if (isEvaluationStep) {
       const evalStepData = node.data as EvaluationStepNodeData
@@ -512,7 +512,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
   // Initialize edit fields when node changes or edit mode is enabled
   React.useEffect(() => {
-    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator' || node.type === 'todo_task')) {
+    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'orchestrator' || (node.type as string) === 'todo_task')) {
       const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
       if (stepData.step) {
         const step = stepData.step
@@ -520,7 +520,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         setEditedDescription(step.description || '')
         setEditedSuccessCriteria(step.success_criteria || '')
         // Initialize max_iterations for loop steps (always initialize for loop nodes)
-        if ((isRegularStep(step) && step.has_loop) || node.type === 'loop') {
+        if ((isRegularStep(step) && step.has_loop) || (node.type as string) === 'loop') {
           setEditedMaxIterations((isRegularStep(step) ? step.max_iterations : undefined)?.toString() || '10')
         } else {
           setEditedMaxIterations('')
@@ -531,7 +531,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
   // Handle start edit
   const handleStartEdit = () => {
-    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator' || node.type === 'todo_task')) {
+    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'orchestrator' || (node.type as string) === 'todo_task')) {
       const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
       if (stepData.step) {
         const step = stepData.step
@@ -562,7 +562,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       }
       
       // Include max_iterations for loop steps
-      if (node.type === 'loop') {
+      if ((node.type as string) === 'loop') {
         const stepData = node.data as LoopNodeData
         if (stepData.step && isRegularStep(stepData.step) && stepData.step.has_loop) {
           const maxIterations = parseInt(editedMaxIterations, 10)
@@ -589,7 +589,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   const handleCancelEdit = () => {
     setIsEditing(false)
     // Reset to original values
-    if (node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator' || node.type === 'todo_task')) {
+    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'orchestrator' || (node.type as string) === 'todo_task')) {
       const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
       if (stepData.step) {
         const step = stepData.step
@@ -715,7 +715,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   }
 
   // Handle validation/learning nodes
-  if (node && (node.type === 'validation' || node.type === 'learning')) {
+  if (node && ((node.type as string) === 'validation' || (node.type as string) === 'learning')) {
     const nodeData = node.data as ValidationNodeData | LearningNodeData
     const parentStepId = nodeData.parentStepId
     
@@ -741,7 +741,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     if (!parentStep) return null
     
     const agentConfigs = parentStep.agent_configs as AgentConfigs | undefined
-    const isValidation = node.type === 'validation'
+    const isValidation = (node.type as string) === 'validation'
     
     // Determine if code execution mode is enabled
     const stepCodeExecSetting = agentConfigs?.use_code_execution_mode
@@ -1190,7 +1190,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 space-y-5">
           {/* For conditional steps, only show condition and edit option */}
-          {isConditionalStep(step) && node.type === 'conditional' ? (
+          {isConditionalStep(step) && (node.type as string) === 'conditional' ? (
             <div className="space-y-4">
               {/* Condition Display */}
               {step.condition_question && (
@@ -1397,7 +1397,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 </div>
               )}
 
-              {((isRegularStep(step) && step.has_loop) || node.type === 'loop') && isRegularStep(step) && (
+              {((isRegularStep(step) && step.has_loop) || (node.type as string) === 'loop') && isRegularStep(step) && (
                 <div className="p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
                   <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">
                     Loop:
@@ -1539,13 +1539,13 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 // - Regular/Loop: step.validation_schema
                 let validationSchema: ValidationSchema | undefined
                 
-                if (node.type === 'orchestrator') {
+                if ((node.type as string) === 'orchestrator') {
                   const orchestratorData = node.data as OrchestratorNodeData
                   validationSchema = orchestratorData.validation_schema || step.validation_schema as ValidationSchema | undefined
-                } else if (node.type === 'decision' && isDecisionStep(step)) {
+                } else if ((node.type as string) === 'decision' && isDecisionStep(step)) {
                   // For decision steps, validation_schema is on the nested decision_step
                   validationSchema = step.decision_step?.validation_schema as ValidationSchema | undefined
-                } else if (node.type === 'conditional' && isConditionalStep(step)) {
+                } else if ((node.type as string) === 'conditional' && isConditionalStep(step)) {
                   // For conditional steps, check wrapper step first, then show note about branch steps
                   validationSchema = step.validation_schema as ValidationSchema | undefined
                 } else {
@@ -1555,7 +1555,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 
                 if (!validationSchema || !validationSchema.files || validationSchema.files.length === 0) {
                   // For conditional steps, show a note that branch steps have their own validation schemas
-                  if (node.type === 'conditional' && isConditionalStep(step)) {
+                  if ((node.type as string) === 'conditional' && isConditionalStep(step)) {
                     const hasBranchSchemas = 
                       (step.if_true_steps && step.if_true_steps.some(s => s.validation_schema)) ||
                       (step.if_false_steps && step.if_false_steps.some(s => s.validation_schema))
@@ -1705,7 +1705,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
           )}
 
           {/* Step Configuration Panel */}
-          {isConditionalStep(step) && node.type === 'conditional' ? (
+          {isConditionalStep(step) && (node.type as string) === 'conditional' ? (
             <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
               <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
                 <p className="text-xs text-blue-700 dark:text-blue-300">
@@ -1721,13 +1721,13 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 presetServers={presetServers}
                 presetLLMConfig={presetLLMConfig}
                 presetUseCodeExecutionMode={presetUseCodeExecutionMode}
-                isTodoTaskStep={node.type === 'todo_task'}
+                isTodoTaskStep={(node.type as string) === 'todo_task'}
                 isExpanded={true}
                 onToggleExpanded={() => {}}
                 planSteps={plan?.steps || []}
               />
             </div>
-          ) : isDecisionStep(step) && node.type === 'decision' ? (
+          ) : isDecisionStep(step) && (node.type as string) === 'decision' ? (
             <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
               {/* Decision Step Info */}
               <div className="mb-3 p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800">
@@ -1766,13 +1766,13 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 presetServers={presetServers}
                 presetLLMConfig={presetLLMConfig}
                 presetUseCodeExecutionMode={presetUseCodeExecutionMode}
-                isTodoTaskStep={node.type === 'todo_task'}
+                isTodoTaskStep={(node.type as string) === 'todo_task'}
                 isExpanded={true}
                 onToggleExpanded={() => {}}
                 planSteps={plan?.steps || []}
               />
             </div>
-          ) : isOrchestrationStep(step) && node.type === 'orchestrator' ? (
+          ) : isOrchestrationStep(step) && (node.type as string) === 'orchestrator' ? (
             <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
               {/* Orchestrator Step Info */}
               <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
@@ -1830,13 +1830,13 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 presetServers={presetServers}
                 presetLLMConfig={presetLLMConfig}
                 presetUseCodeExecutionMode={presetUseCodeExecutionMode}
-                isTodoTaskStep={node.type === 'todo_task'}
+                isTodoTaskStep={(node.type as string) === 'todo_task'}
                 isExpanded={true}
                 onToggleExpanded={() => {}}
                 planSteps={plan?.steps || []}
               />
             </div>
-          ) : isTodoTaskStep(step) && node.type === 'todo_task' ? (
+          ) : isTodoTaskStep(step) && (node.type as string) === 'todo_task' ? (
             <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
               {/* Todo Task Step Info */}
               <div className="mb-3 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
@@ -1918,7 +1918,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 presetServers={presetServers}
                 presetLLMConfig={presetLLMConfig}
                 presetUseCodeExecutionMode={presetUseCodeExecutionMode}
-                isTodoTaskStep={node.type === 'todo_task'}
+                isTodoTaskStep={(node.type as string) === 'todo_task'}
                 isExpanded={true}
                 onToggleExpanded={() => {}}
                 planSteps={plan?.steps || []}
@@ -1927,7 +1927,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
           ) : (
             <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
               {/* Show note for sub-agents (check for both patterns: -sub-agent- and nodes with undefined in ID that might be sub-agents) */}
-              {(node.id.includes('-sub-agent-') || (node.id.includes('undefined') && node.type === 'step')) && (
+              {(node.id.includes('-sub-agent-') || (node.id.includes('undefined') && (node.type as string) === 'step')) && (
                 <div className="mb-3 p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800">
                   <p className="text-xs text-indigo-700 dark:text-indigo-300">
                     <strong>Sub-Agent:</strong> This configuration applies to the sub-agent step within an orchestration route.
@@ -1950,7 +1950,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 presetServers={presetServers}
                 presetLLMConfig={presetLLMConfig}
                 presetUseCodeExecutionMode={presetUseCodeExecutionMode}
-                isTodoTaskStep={node.type === 'todo_task'}
+                isTodoTaskStep={(node.type as string) === 'todo_task'}
                 isExpanded={true}
                 onToggleExpanded={() => {}}
                 planSteps={plan?.steps || []}
@@ -1973,7 +1973,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         }}
         title="Delete Step"
         message={
-          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator' || node.type === 'todo_task')
+          node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'orchestrator' || (node.type as string) === 'todo_task')
             ? (() => {
                 const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
@@ -1993,7 +1993,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         onConfirm={handleDeleteLearnings}
         title="Delete Learnings"
         message={
-          node && (node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator' || node.type === 'todo_task')
+          node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'orchestrator' || (node.type as string) === 'todo_task')
             ? (() => {
                 const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | TodoTaskNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
@@ -2001,10 +2001,10 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 // For todo_task steps, use todo_task_step.ID
                 // For other steps, use step.ID
                 let stepId: string
-                if (node.type === 'orchestrator') {
+                if ((node.type as string) === 'orchestrator') {
                   const orchestratorData = stepData as OrchestratorNodeData
                   stepId = orchestratorData.orchestration_step?.id ?? orchestratorData.step?.id ?? `step-${stepIndex + 1}`
-                } else if (node.type === 'todo_task') {
+                } else if ((node.type as string) === 'todo_task') {
                   const todoTaskData = stepData as TodoTaskNodeData
                   stepId = todoTaskData.todo_task_step?.id ?? todoTaskData.step?.id ?? `step-${stepIndex + 1}`
                 } else {

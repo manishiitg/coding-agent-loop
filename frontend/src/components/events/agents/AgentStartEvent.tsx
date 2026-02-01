@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import type { AgentStartEvent } from '@/generated/events'
 import { useExpandable } from '../useExpandable'
 import { Plus, Minus } from 'lucide-react'

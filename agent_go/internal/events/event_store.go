@@ -50,8 +50,8 @@ func ShouldShowEventByMode(eventType string, eventMode string) bool {
 	if eventMode == "advanced" {
 		return true // Show all events in advanced mode
 	}
-	if eventMode == "tiny" {
-		// In tiny mode, hide everything basic mode hides PLUS user_message and system_prompt
+	if eventMode == "tiny" || eventMode == "micro" {
+		// In tiny/micro mode, hide everything basic mode hides PLUS user_message and system_prompt
 		// So hide if it's in ADVANCED_MODE_EVENTS OR in TINY_MODE_ADDITIONAL_EVENTS
 		return !ADVANCED_MODE_EVENTS[eventType] && !TINY_MODE_ADDITIONAL_EVENTS[eventType]
 	}

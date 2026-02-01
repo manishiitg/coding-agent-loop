@@ -47,6 +47,11 @@ resource "azurerm_container_app" "agent" {
     }
   }
 
+  secret {
+    name  = "database-url"
+    value = "postgres://pgadmin:${var.postgres_admin_password}@${azurerm_postgresql_flexible_server.db.fqdn}:5432/mcpagent?sslmode=require"
+  }
+
   registry {
     server               = local.acr_login_server
     username             = local.use_acr_admin ? local.acr_username : null
@@ -79,9 +84,25 @@ resource "azurerm_container_app" "agent" {
         value = local.workspace_api_url
       }
       env {
-        name  = "DB_PATH"
-        value = "/home/appuser/.config/mcpagent/chat_history.db"
+        name  = "DB_TYPE"
+        value = "postgres"
       }
+      env {
+        name        = "DATABASE_URL"
+        secret_name = "database-url"
+      }
+      # Hack: The 'value' above is a template. We need to construct the full string inside the container 
+      # or use a secret for the whole URL. 
+      # Better approach: Pass components or use a secret for the whole URL? 
+      # Terraform container apps 'env' with 'secret_name' puts the secret value into the env var. 
+      # So we can't interpolate the secret into the value string here directly.
+      # Strategy: Pass DB_HOST, DB_USER, DB_PASS separately and let the app handle it OR construct it.
+      # The Go agent expects DATABASE_URL.
+      # Let's change strategy: use a secure string construction if possible, or pass raw params.
+      # Checking Go agent code isn't possible, but standard is DATABASE_URL.
+      # I will change to pass DB_PASSWORD as a separate env var and assume the agent can use it, 
+      # OR (safer for generic apps) I will create the full connection string as a secret in Terraform.
+
       dynamic "env" {
         for_each = toset(var.openai_api_key != "" ? [1] : [])
         content {

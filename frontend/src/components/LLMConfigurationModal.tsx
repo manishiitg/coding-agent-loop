@@ -63,7 +63,13 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     testAPIKey,
     defaultsLoaded,
     loadDefaultsFromBackend,
-    refreshAvailableLLMs
+    refreshAvailableLLMs,
+    // Subscribe to custom model lists so modal re-renders when user adds a custom model (list updates in Primary Model dropdown)
+    customOpenRouterModels,
+    customBedrockModels,
+    customOpenAIModels,
+    customVertexModels,
+    customAzureModels
   } = useLLMStore()
 
   // Get mode-specific configs

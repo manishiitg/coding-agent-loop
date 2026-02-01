@@ -104,11 +104,12 @@ func CreateDocument(c *gin.Context) {
 		})
 		return
 	}
-	defer lockManager.ReleaseLock(lock)
+	// We will release the lock explicitly before Git operations
 
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(fullPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
+		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to create directory",
@@ -119,6 +120,7 @@ func CreateDocument(c *gin.Context) {
 
 	// Check if file already exists
 	if _, err := os.Stat(fullPath); err == nil {
+		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusConflict, models.APIResponse[any]{
 			Success: false,
 			Message: "Document already exists",
@@ -129,6 +131,7 @@ func CreateDocument(c *gin.Context) {
 
 	// Write file
 	if err := os.WriteFile(fullPath, []byte(req.Content), 0644); err != nil {
+		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to create document",
@@ -136,6 +139,9 @@ func CreateDocument(c *gin.Context) {
 		})
 		return
 	}
+
+	// Release lock immediately after writing
+	lockManager.ReleaseLock(lock)
 
 	// File created successfully
 
@@ -725,8 +731,16 @@ func GetDocument(c *gin.Context) {
 		return
 	}
 
-	// Read operations don't need locks - os.ReadFile is atomic and safe
-	// Only write operations need locks to prevent concurrent modifications
+	// Acquire read lock (checks if file is being written to)
+	// This prevents reading partial files during concurrent writes
+	if err := lockManager.AcquireReadLock(filePath, 5*time.Second); err != nil {
+		c.JSON(http.StatusConflict, models.APIResponse[any]{
+			Success: false,
+			Message: "File is currently being modified",
+			Error:   err.Error(),
+		})
+		return
+	}
 
 	// Check if file exists and get file info
 	fileInfo, err := os.Stat(filePath)
@@ -870,7 +884,7 @@ func UpdateDocument(c *gin.Context) {
 		})
 		return
 	}
-	defer lockManager.ReleaseLock(lock)
+	// We will release the lock explicitly before Git operations
 
 	// Check if file exists and create directory if needed
 	fileExists := true
@@ -879,6 +893,7 @@ func UpdateDocument(c *gin.Context) {
 		// Create directory if it doesn't exist
 		dir := filepath.Dir(filePath)
 		if err := os.MkdirAll(dir, 0755); err != nil {
+			lockManager.ReleaseLock(lock) // Release lock on error
 			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 				Success: false,
 				Message: "Failed to create directory",
@@ -890,6 +905,7 @@ func UpdateDocument(c *gin.Context) {
 
 	// Write content (create or update)
 	if err := os.WriteFile(filePath, []byte(req.Content), 0644); err != nil {
+		lockManager.ReleaseLock(lock) // Release lock on error
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to write document",
@@ -897,6 +913,9 @@ func UpdateDocument(c *gin.Context) {
 		})
 		return
 	}
+
+	// Release lock immediately after writing to allow reads
+	lockManager.ReleaseLock(lock)
 
 	// Queue file for semantic processing
 	if fileProcessor := GetFileProcessor(); fileProcessor != nil {
@@ -1007,10 +1026,11 @@ func DeleteDocument(c *gin.Context) {
 		})
 		return
 	}
-	defer lockManager.ReleaseLock(lock)
+	// We will release the lock explicitly
 
 	// Check if file exists
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusNotFound, models.APIResponse[any]{
 			Success: false,
 			Message: "Document not found",
@@ -1021,6 +1041,7 @@ func DeleteDocument(c *gin.Context) {
 
 	// Delete file
 	if err := os.Remove(filePath); err != nil {
+		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to delete document",
@@ -1028,6 +1049,9 @@ func DeleteDocument(c *gin.Context) {
 		})
 		return
 	}
+
+	// Release lock immediately after deletion
+	lockManager.ReleaseLock(lock)
 
 	// Queue file for semantic processing (delete embeddings)
 	if fileProcessor := GetFileProcessor(); fileProcessor != nil {
@@ -1151,10 +1175,10 @@ func MoveDocument(c *gin.Context) {
 		})
 		return
 	}
-	defer lockManager.ReleaseLock(sourceLock)
-
+	
 	destinationLock, err := lockManager.AcquireLock(destinationFilePath, 30*time.Second)
 	if err != nil {
+		lockManager.ReleaseLock(sourceLock) // Release source lock if destination fails
 		c.JSON(http.StatusConflict, models.APIResponse[any]{
 			Success: false,
 			Message: "Destination file is currently being modified",
@@ -1162,11 +1186,13 @@ func MoveDocument(c *gin.Context) {
 		})
 		return
 	}
-	defer lockManager.ReleaseLock(destinationLock)
+	// We will release locks explicitly
 
 	// Create destination directory if it doesn't exist
 	destDir := filepath.Dir(destinationFilePath)
 	if err := os.MkdirAll(destDir, 0755); err != nil {
+		lockManager.ReleaseLock(sourceLock)
+		lockManager.ReleaseLock(destinationLock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to create destination directory",
@@ -1177,6 +1203,8 @@ func MoveDocument(c *gin.Context) {
 
 	// Move file
 	if err := os.Rename(sourceFilePath, destinationFilePath); err != nil {
+		lockManager.ReleaseLock(sourceLock)
+		lockManager.ReleaseLock(destinationLock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to move document",
@@ -1184,6 +1212,10 @@ func MoveDocument(c *gin.Context) {
 		})
 		return
 	}
+
+	// Release locks immediately after move
+	lockManager.ReleaseLock(sourceLock)
+	lockManager.ReleaseLock(destinationLock)
 
 	// Handle git operations if commit message provided and git is initialized
 	if req.CommitMessage != "" {
@@ -1424,10 +1456,11 @@ func CreateFolder(c *gin.Context) {
 		})
 		return
 	}
-	defer lockManager.ReleaseLock(lock)
+	// Lock will be released explicitly
 
 	// Create the folder
 	if err := os.MkdirAll(folderPath, 0755); err != nil {
+		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to create folder",
@@ -1435,6 +1468,9 @@ func CreateFolder(c *gin.Context) {
 		})
 		return
 	}
+
+	// Release lock immediately after creation
+	lockManager.ReleaseLock(lock)
 
 	// Handle git operations if commit message provided and git is initialized
 	if req.CommitMessage != "" {
@@ -1570,10 +1606,10 @@ func CopyFolder(c *gin.Context) {
 		})
 		return
 	}
-	defer lockManager.ReleaseLock(sourceLock)
-
+	
 	destinationLock, err := lockManager.AcquireLock(destinationPath, 30*time.Second)
 	if err != nil {
+		lockManager.ReleaseLock(sourceLock)
 		c.JSON(http.StatusConflict, models.APIResponse[any]{
 			Success: false,
 			Message: "Destination folder is currently being modified",
@@ -1581,7 +1617,7 @@ func CopyFolder(c *gin.Context) {
 		})
 		return
 	}
-	defer lockManager.ReleaseLock(destinationLock)
+	// We will release locks explicitly
 
 	// Counters for response
 	var filesCopied int
@@ -1650,6 +1686,8 @@ func CopyFolder(c *gin.Context) {
 	})
 
 	if err != nil {
+		lockManager.ReleaseLock(sourceLock)
+		lockManager.ReleaseLock(destinationLock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to copy folder",
@@ -1657,6 +1695,10 @@ func CopyFolder(c *gin.Context) {
 		})
 		return
 	}
+
+	// Release locks immediately after copy
+	lockManager.ReleaseLock(sourceLock)
+	lockManager.ReleaseLock(destinationLock)
 
 	// Handle git operations if commit message provided
 	if req.CommitMessage != "" {
@@ -1750,10 +1792,11 @@ func DeleteFolder(c *gin.Context) {
 		})
 		return
 	}
-	defer lockManager.ReleaseLock(lock)
+	// We will release lock explicitly
 
 	// Remove the folder and all its contents
 	if err := os.RemoveAll(folderPath); err != nil {
+		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to delete folder",
@@ -1761,6 +1804,9 @@ func DeleteFolder(c *gin.Context) {
 		})
 		return
 	}
+
+	// Release lock immediately after deletion
+	lockManager.ReleaseLock(lock)
 
 	// If commit message provided and git is initialized, commit the deletion
 	if commitMessage != "" {
@@ -1842,7 +1888,7 @@ func DeleteAllFilesInFolder(c *gin.Context, folderPathParam, commitMessage strin
 		})
 		return
 	}
-	defer lockManager.ReleaseLock(lock)
+	// We will release lock explicitly
 
 	// Count and collect all files and folders to be deleted
 	var itemsToDelete []string
@@ -1869,6 +1915,7 @@ func DeleteAllFilesInFolder(c *gin.Context, folderPathParam, commitMessage strin
 	})
 
 	if err != nil {
+		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to scan folder contents",
@@ -1922,6 +1969,9 @@ func DeleteAllFilesInFolder(c *gin.Context, folderPathParam, commitMessage strin
 		lockManager.ReleaseLock(itemLock)
 		deletedCount++
 	}
+
+	// Release folder lock immediately after deletion loop
+	lockManager.ReleaseLock(lock)
 
 	// Handle git operations if commit message provided
 	if commitMessage != "" {

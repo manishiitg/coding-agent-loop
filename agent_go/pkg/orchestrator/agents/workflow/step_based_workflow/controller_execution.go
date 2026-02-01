@@ -350,7 +350,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ensureStepExecutionFolderExists(ctx c
 func getValidationFolderPath(validationWorkspacePath string, stepPath string) string {
 	// Check if this is a sub-agent step
 	// Pattern: step-{X}-sub-agent-{index}
-	if strings.Contains(stepPath, "-sub-agent-") {
+	if strings.Contains(stepPath, "-sub-agent-") || strings.Contains(stepPath, "-sub-") {
 		return fmt.Sprintf("%s/logs/%s", validationWorkspacePath, stepPath)
 	}
 	pathInfo := parseStepPath(stepPath)
@@ -367,7 +367,7 @@ func getValidationFolderPath(validationWorkspacePath string, stepPath string) st
 func getExecutionFolderPathForLogs(validationWorkspacePath string, stepPath string) string {
 	// Check if this is a sub-agent step
 	// Pattern: step-{X}-sub-agent-{index}
-	if strings.Contains(stepPath, "-sub-agent-") {
+	if strings.Contains(stepPath, "-sub-agent-") || strings.Contains(stepPath, "-sub-") {
 		return fmt.Sprintf("%s/logs/%s/execution", validationWorkspacePath, stepPath)
 	}
 	pathInfo := parseStepPath(stepPath)

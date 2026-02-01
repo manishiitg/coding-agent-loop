@@ -338,6 +338,8 @@ type AgentConfigs struct {
 	PrerequisiteRules           []PrerequisiteRule `json:"prerequisite_rules,omitempty"`             // Array of prerequisite rules, each with one step dependency and one description
 	KeepLearningFull            *bool              `json:"keep_learning_full,omitempty"`             // Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (default: false, can be overridden by KEEP_LEARNING_FULL env var)
 	DisableTempLLM              *bool              `json:"disable_temp_llm,omitempty"`               // If true, skip tempLLM override and use step config base LLM (step config > preset > orchestrator default)
+	TodoTaskOrchestratorTier    *int               `json:"todo_task_orchestrator_tier,omitempty"`    // Tier for todo task orchestrator agent (1/2/3) in tiered mode
+	EnableDynamicTierSelection  *bool              `json:"enable_dynamic_tier_selection,omitempty"`  // Allow todo task orchestrator to choose tier for sub-agents
 }
 
 // ============================================================================

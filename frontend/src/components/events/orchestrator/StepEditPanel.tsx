@@ -25,6 +25,7 @@ interface StepEditPanelProps {
   presetServers?: string[]; // Preset's selected servers (subset to show in UI)
   presetLLMConfig?: PresetLLMConfig | null; // Preset's LLM config with agent defaults
   presetUseCodeExecutionMode?: boolean; // Preset's code execution mode (default value for step)
+  isTodoTaskStep?: boolean; // Whether this step is a todo_task step (for tier selection UI)
   isExpanded?: boolean; // Controlled expanded state from parent
   onToggleExpanded?: (expanded: boolean) => void; // Callback when expansion state changes
   planSteps?: import('../../../utils/stepConfigMatching').PlanStep[]; // All plan steps (for prerequisite detection)
@@ -40,6 +41,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   presetServers = [],
   presetLLMConfig = null,
   presetUseCodeExecutionMode = false,
+  isTodoTaskStep: isTodoTask = false,
   isExpanded: controlledIsExpanded,
   onToggleExpanded,
   planSteps = [],
@@ -1371,6 +1373,74 @@ const allCategoryTools = getToolsByCategory(category, capabilities?.workspace);
                 </div>
               </div>
             </div>
+
+            {/* Todo Task Tier Controls (only in tiered mode for todo_task steps) */}
+            {isTodoTask && presetLLMConfig?.llm_allocation_mode === 'tiered' && (
+              <>
+                <div className="border-t border-gray-200 dark:border-gray-700"></div>
+                <div className="space-y-3">
+                  <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                    Todo Task Tier Settings
+                  </div>
+
+                  {/* Orchestrator Tier */}
+                  <div>
+                    <label className="text-xs text-gray-600 dark:text-gray-400">Orchestrator Agent Tier</label>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-500 mb-1">
+                      Which tier for the orchestrator agent itself
+                    </p>
+                    <select
+                      value={agentConfigs.todo_task_orchestrator_tier ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setAgentConfigs((prev) => ({
+                          ...prev,
+                          todo_task_orchestrator_tier: val ? parseInt(val) : undefined,
+                        }));
+                      }}
+                      className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Auto (default)</option>
+                      <option value="1">Tier 1 - High Reasoning</option>
+                      <option value="2">Tier 2 - Medium Reasoning</option>
+                      <option value="3">Tier 3 - Low Reasoning</option>
+                    </select>
+                  </div>
+
+                  {/* Dynamic Tier Selection */}
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-xs text-gray-600 dark:text-gray-400">Dynamic Tier Selection</label>
+                        <p className="text-[10px] text-gray-500 dark:text-gray-500">
+                          Allow orchestrator to choose tier for sub-agents
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={agentConfigs.enable_dynamic_tier_selection ?? false}
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                          agentConfigs.enable_dynamic_tier_selection ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
+                        }`}
+                        onClick={() => {
+                          setAgentConfigs((prev) => ({
+                            ...prev,
+                            enable_dynamic_tier_selection: !prev.enable_dynamic_tier_selection,
+                          }));
+                        }}
+                      >
+                        <span
+                          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                            agentConfigs.enable_dynamic_tier_selection ? 'translate-x-4' : 'translate-x-0.5'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* Divider */}
             <div className="border-t border-gray-200 dark:border-gray-700"></div>

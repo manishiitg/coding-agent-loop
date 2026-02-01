@@ -176,6 +176,10 @@ type WorkflowOrchestrator struct {
 	// Preset-level feature toggles
 	useKnowledgebase bool // Whether to create and reference knowledgebase folder (default: true)
 
+	// Tiered LLM allocation mode
+	tieredConfig      *step_based_workflow.TieredLLMConfig
+	llmAllocationMode string
+
 	// Frontend-provided execution options (when provided, skips interactive prompts)
 	executionOptions *step_based_workflow.ExecutionOptions
 
@@ -360,6 +364,33 @@ func NewWorkflowOrchestrator(
 		log.Printf("[PRESET_EXECUTION_LLM_DEBUG] presetLLMConfig is nil - no preset LLM config provided")
 	}
 
+	// Extract tiered LLM allocation config
+	var llmAllocationMode string
+	var tieredConfig *step_based_workflow.TieredLLMConfig
+	if presetLLMConfig != nil && presetLLMConfig.LLMAllocationMode == "tiered" && presetLLMConfig.TieredConfig != nil {
+		llmAllocationMode = "tiered"
+		tieredConfig = &step_based_workflow.TieredLLMConfig{
+			Tier1: &step_based_workflow.AgentLLMConfig{
+				Provider: presetLLMConfig.TieredConfig.Tier1.Provider,
+				ModelID:  presetLLMConfig.TieredConfig.Tier1.ModelID,
+			},
+			Tier2: &step_based_workflow.AgentLLMConfig{
+				Provider: presetLLMConfig.TieredConfig.Tier2.Provider,
+				ModelID:  presetLLMConfig.TieredConfig.Tier2.ModelID,
+			},
+			Tier3: &step_based_workflow.AgentLLMConfig{
+				Provider: presetLLMConfig.TieredConfig.Tier3.Provider,
+				ModelID:  presetLLMConfig.TieredConfig.Tier3.ModelID,
+			},
+		}
+		// In tiered mode, populate presetPhaseLLM from Tier1 for phase agents created outside the controller
+		presetPhaseLLM = tieredConfig.Tier1
+		log.Printf("[TIERED_LLM] Tiered mode enabled - Tier1: %s/%s, Tier2: %s/%s, Tier3: %s/%s",
+			tieredConfig.Tier1.Provider, tieredConfig.Tier1.ModelID,
+			tieredConfig.Tier2.Provider, tieredConfig.Tier2.ModelID,
+			tieredConfig.Tier3.Provider, tieredConfig.Tier3.ModelID)
+	}
+
 	// Extract feature toggles from preset config
 	useKnowledgebase := true // Default to enabled
 	if presetLLMConfig != nil && presetLLMConfig.UseKnowledgebase != nil {
@@ -382,6 +413,8 @@ func NewWorkflowOrchestrator(
 		presetPlanImprovementLLM:      presetPlanImprovementLLM,
 		presetPlanToolOptimizationLLM: presetPlanToolOptimizationLLM,
 		useKnowledgebase:              useKnowledgebase,
+		tieredConfig:                  tieredConfig,
+		llmAllocationMode:             llmAllocationMode,
 	}
 
 	return wo, nil
@@ -532,6 +565,8 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 		nil, // presetAnonymizationLLM (deprecated, no longer used)
 		wo.presetPlanImprovementLLM,
 		wo.useKnowledgebase, // Feature toggle for knowledgebase
+		wo.llmAllocationMode, // Tiered LLM allocation mode
+		wo.tieredConfig,      // Tiered LLM config
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
@@ -658,6 +693,8 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		nil,
 		wo.presetPlanImprovementLLM,
 		wo.useKnowledgebase, // Feature toggle for knowledgebase
+		wo.llmAllocationMode, // Tiered LLM allocation mode
+		wo.tieredConfig,      // Tiered LLM config
 	)
 	if err != nil {
 		wo.GetLogger().Error(fmt.Sprintf("❌ Failed to create orchestrator: %v", err), nil)
@@ -873,6 +910,8 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		nil, // presetAnonymizationLLM (deprecated, no longer used)
 		wo.presetPlanImprovementLLM,
 		wo.useKnowledgebase, // Feature toggle for knowledgebase
+		wo.llmAllocationMode, // Tiered LLM allocation mode
+		wo.tieredConfig,      // Tiered LLM config
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)

@@ -90,6 +90,10 @@ type StepBasedWorkflowOrchestrator struct {
 
 	// Preset-level feature toggles
 	useKnowledgebase bool // Whether to create and reference knowledgebase folder (default: true)
+
+	// Tiered LLM allocation mode
+	tierResolver  *TierResolver // nil when manual mode
+	useTieredMode bool
 }
 
 // NewStepBasedWorkflowOrchestrator creates a new human-controlled todo planner orchestrator
@@ -120,6 +124,8 @@ func NewStepBasedWorkflowOrchestrator(
 	presetAnonymizationLLM *AgentLLMConfig, // Optional preset default for anonymization agent
 	presetPlanImprovementLLM *AgentLLMConfig, // Optional preset default for plan improvement agent
 	useKnowledgebase bool, // Whether to create and reference knowledgebase folder (default: true)
+	llmAllocationMode string, // "manual" (default) or "tiered"
+	tieredConfig *TieredLLMConfig, // Tiered LLM config (only used when llmAllocationMode == "tiered")
 ) (*StepBasedWorkflowOrchestrator, error) {
 
 	// Create base workflow orchestrator
@@ -174,6 +180,25 @@ func NewStepBasedWorkflowOrchestrator(
 		useKnowledgebase:         useKnowledgebase,
 	}
 
+	// Set up tiered LLM allocation mode
+	if llmAllocationMode == "tiered" && tieredConfig != nil {
+		orchestratorLLMConfig := llmConfig
+		var apiKeys *orchestrator.APIKeys
+		if orchestratorLLMConfig != nil {
+			apiKeys = orchestratorLLMConfig.APIKeys
+		}
+		hcpo.tierResolver = NewTierResolver(tieredConfig, apiKeys)
+		hcpo.useTieredMode = true
+		// Populate preset LLMs from tiers for backward compatibility with phase agents
+		if tieredConfig.Tier1 != nil {
+			hcpo.presetPhaseLLM = tieredConfig.Tier1 // Phase always uses Tier 1
+		}
+		logger.Info(fmt.Sprintf("🏷️ Tiered LLM allocation mode enabled - Tier1: %s/%s, Tier2: %s/%s, Tier3: %s/%s",
+			tieredConfig.Tier1.Provider, tieredConfig.Tier1.ModelID,
+			tieredConfig.Tier2.Provider, tieredConfig.Tier2.ModelID,
+			tieredConfig.Tier3.Provider, tieredConfig.Tier3.ModelID))
+	}
+
 	// Create VariableManager for variable extraction operations (independent from controller)
 	hcpo.variableManager = NewVariableManager(
 		baseOrchestrator,
@@ -210,6 +235,38 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 	var llmConfig *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	stepPath := fmt.Sprintf("step-%d", stepIndex+1)
+
+	// TIERED MODE: Use tier resolver for conditional agents
+	if hcpo.useTieredMode && hcpo.tierResolver != nil {
+		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath)
+		llmConfig, _ = hcpo.tierResolver.ResolveForConditional(maturity)
+		if llmConfig == nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Tiered mode: No valid LLM configuration for conditional agent step '%s'", step.GetTitle()))
+			return nil
+		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Conditional agent for step '%s' using tier-resolved LLM: %s/%s", step.GetTitle(), llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+
+		actualAgentName := agentName
+		if actualAgentName == "" {
+			actualAgentName = fmt.Sprintf("conditional-agent-%s", stepID)
+		}
+		actualPhase := phase
+		if actualPhase == "" {
+			actualPhase = "conditional_evaluation"
+		}
+
+		agent, err := hcpo.createConditionalAgent(ctx, actualPhase, stepIndex, 0, actualAgentName, agentConfigs, llmConfig, stepPath, stepID)
+		if err != nil {
+			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to create tiered conditional agent for step '%s': %v", step.GetTitle(), err), nil)
+			return nil
+		}
+		stepConditionalAgent, ok := agent.(*WorkflowConditionalAgent)
+		if !ok {
+			hcpo.GetLogger().Error(fmt.Sprintf("❌ Factory returned wrong agent type for step '%s'", step.GetTitle()), nil)
+			return nil
+		}
+		return stepConditionalAgent
+	}
 
 	if hasStepSpecificConfig {
 		// Step has specific config - check for ConditionalLLM first (special case)
@@ -1158,3 +1215,30 @@ func (hcpo *StepBasedWorkflowOrchestrator) formatValidationResponseForTemplate(v
 }
 
 // conversation history formatting moved to shared.FormatConversationHistory
+
+// getLearningMaturity determines the learning maturity level for a step by counting learning files
+// 0 files = NoLearnings, 1 file = HasLearnings, 2+ files = MatureLearnings
+func (hcpo *StepBasedWorkflowOrchestrator) getLearningMaturity(ctx context.Context, stepID string, stepPath string) LearningMaturity {
+	if stepID == "" {
+		return NoLearnings
+	}
+
+	// Check if learnings folder is empty first
+	learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, 0, stepPath)
+	if err != nil || learningsEmpty {
+		return NoLearnings
+	}
+
+	// Read learning files to count them
+	stepLearningsPath := getLearningFolderPathByStepID("", stepID, stepPath, hcpo.isEvaluationMode)
+	learningFiles, err := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
+	if err != nil || len(learningFiles) == 0 {
+		return NoLearnings
+	}
+
+	if len(learningFiles) == 1 {
+		return HasLearnings
+	}
+
+	return MatureLearnings
+}

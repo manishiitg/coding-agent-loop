@@ -55,6 +55,11 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [validationLLM, setValidationLLM] = useState<AgentLLMConfig | null>(null);
   const [learningLLM, setLearningLLM] = useState<AgentLLMConfig | null>(null);
   const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(null);
+  // Tiered LLM allocation mode
+  const [llmAllocationMode, setLlmAllocationMode] = useState<'manual' | 'tiered'>('manual');
+  const [tier1LLM, setTier1LLM] = useState<AgentLLMConfig | null>(null);
+  const [tier2LLM, setTier2LLM] = useState<AgentLLMConfig | null>(null);
+  const [tier3LLM, setTier3LLM] = useState<AgentLLMConfig | null>(null);
 
   // Store subscriptions - using selectors for stable references
   const primaryConfig = useLLMStore(state => state.primaryConfig);
@@ -129,6 +134,11 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setValidationLLM(presetLLM.validation_llm || null);
       setLearningLLM(presetLLM.learning_llm || null);
       setPhaseLLM(presetLLM.phase_llm || null);
+      // Load tiered LLM allocation config
+      setLlmAllocationMode(presetLLM.llm_allocation_mode || 'manual');
+      setTier1LLM(presetLLM.tiered_config?.tier_1 || null);
+      setTier2LLM(presetLLM.tiered_config?.tier_2 || null);
+      setTier3LLM(presetLLM.tiered_config?.tier_3 || null);
     } else {
       setLabel('');
       setQuery('');
@@ -155,6 +165,11 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setValidationLLM(null);
       setLearningLLM(null);
       setPhaseLLM(null);
+      // Initialize tiered config
+      setLlmAllocationMode('manual');
+      setTier1LLM(null);
+      setTier2LLM(null);
+      setTier3LLM(null);
     }
   }, [editingPreset, fixedAgentMode, primaryConfig, selectedModeCategory, getAgentModeFromCategory]);
 
@@ -224,6 +239,14 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           learning_llm: learningLLM || defaultAgentLLM,
           phase_llm: phaseLLM || defaultAgentLLM,
           use_knowledgebase: useKnowledgebase,
+          llm_allocation_mode: llmAllocationMode,
+          ...(llmAllocationMode === 'tiered' && tier1LLM && tier2LLM && tier3LLM ? {
+            tiered_config: {
+              tier_1: tier1LLM,
+              tier_2: tier2LLM,
+              tier_3: tier3LLM,
+            }
+          } : {}),
         };
       }
       console.log('[PRESET_MODAL] Agent LLM configs being saved:', {
@@ -278,7 +301,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, useKnowledgebase, enableBrowserAccess, onSave, onClose]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, useKnowledgebase, enableBrowserAccess, llmAllocationMode, tier1LLM, tier2LLM, tier3LLM, onSave, onClose]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -436,6 +459,156 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                       </div>
                     </div>
 
+                    {/* LLM Allocation Mode Toggle */}
+                    <div className="mb-4">
+                      <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                        LLM Allocation Mode
+                      </label>
+                      <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => setLlmAllocationMode('manual')}
+                          className={`flex-1 px-3 py-2 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
+                            llmAllocationMode === 'manual' ? 'agent-mode-selected' : 'agent-mode-unselected'
+                          }`}
+                        >
+                          Fixed Models
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLlmAllocationMode('tiered')}
+                          className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+                            llmAllocationMode === 'tiered' ? 'agent-mode-selected' : 'agent-mode-unselected'
+                          }`}
+                        >
+                          Tiered Auto
+                        </button>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {llmAllocationMode === 'manual' && 'Manual: Configure each agent type separately'}
+                        {llmAllocationMode === 'tiered' && 'Auto: System selects tier based on learning maturity'}
+                      </div>
+                    </div>
+
+                    {llmAllocationMode === 'tiered' ? (
+                      <>
+                        {/* Tier 1 - High Reasoning */}
+                        <div>
+                          <div className="flex items-center gap-1.5 mb-2">
+                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                              Tier 1 - High Reasoning
+                            </label>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-xs">Used for first-time execution, initial learning, phase agents, and new conditional evaluations.</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={tier1LLM ? availableLLMs.find(llm =>
+                              llm.provider === tier1LLM.provider && llm.model === tier1LLM.model_id
+                            ) || null : currentLLMOption}
+                            onLLMSelect={(llm) => setTier1LLM({
+                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                              model_id: llm.model
+                            })}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Most capable model for complex first-time tasks.
+                          </div>
+                        </div>
+                        {/* Tier 2 - Medium Reasoning */}
+                        <div>
+                          <div className="flex items-center gap-1.5 mb-2">
+                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                              Tier 2 - Medium Reasoning
+                            </label>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-xs">Used for execution with existing learnings and learning refinement.</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={tier2LLM ? availableLLMs.find(llm =>
+                              llm.provider === tier2LLM.provider && llm.model === tier2LLM.model_id
+                            ) || null : currentLLMOption}
+                            onLLMSelect={(llm) => setTier2LLM({
+                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                              model_id: llm.model
+                            })}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Balanced model for tasks with existing learnings.
+                          </div>
+                        </div>
+                        {/* Tier 3 - Low Reasoning */}
+                        <div>
+                          <div className="flex items-center gap-1.5 mb-2">
+                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                              Tier 3 - Low Reasoning
+                            </label>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-xs">Used for validation (always) and mature learning refinement (2+ runs).</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={tier3LLM ? availableLLMs.find(llm =>
+                              llm.provider === tier3LLM.provider && llm.model === tier3LLM.model_id
+                            ) || null : currentLLMOption}
+                            onLLMSelect={(llm) => setTier3LLM({
+                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                              model_id: llm.model
+                            })}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Cost-efficient model for validation and mature learnings.
+                          </div>
+                        </div>
+                        {/* Info panel */}
+                        <div className="text-xs text-gray-500 pt-2 border-t border-gray-200 dark:border-gray-700 space-y-1">
+                          <div className="font-medium text-gray-600 dark:text-gray-400">Auto-selection rules:</div>
+                          <div>Execution: Tier 1 → Tier 2 (after first learning)</div>
+                          <div>Learning: Tier 1 → Tier 2 → Tier 3 (progressive)</div>
+                          <div>Validation: Always Tier 3</div>
+                          <div>Phase agents: Always Tier 1</div>
+                          <div className="text-yellow-600 dark:text-yellow-400 mt-1">Temp LLM overrides and per-step LLM configs are disabled in tiered mode</div>
+                        </div>
+                      </>
+                    ) : (
+                      <>
                     {/* Execution Agent */}
                     <div>
                       <div className="flex items-center gap-1.5 mb-2">
@@ -579,6 +752,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     <div className="text-xs text-gray-500 pt-2 border-t border-gray-200 dark:border-gray-700">
                       Step-specific configs in step_config.json take priority over these defaults
                     </div>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

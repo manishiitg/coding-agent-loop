@@ -46,6 +46,17 @@ export const StepProgressUpdatedEventDisplay: React.FC<StepProgressUpdatedEventD
             Phase: {String(event.metadata.orchestrator_phase)}
           </div>
         )}
+        {event.used_tier && event.used_tier_label && (
+          <div className={`${compact ? 'text-[10px]' : 'text-xs'} mt-1`}>
+            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
+              event.used_tier === 1 ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' :
+              event.used_tier === 2 ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' :
+              'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+            }`}>
+              Tier {event.used_tier} ({event.used_tier_label})
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )

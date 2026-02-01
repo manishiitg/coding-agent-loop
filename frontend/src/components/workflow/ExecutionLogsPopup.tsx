@@ -100,12 +100,12 @@ const parseStepId = (stepId: string): (string | number)[] => {
   // Remove 'step-' prefix and split by patterns
   const withoutPrefix = stepId.replace(/^step-/, '')
 
-  // Match: number, or 'true', or 'false', or 'sub-agent'
-  const pattern = /(\d+|true|false|sub-agent)/g
+  // Match: number, or 'true', or 'false', or 'sub-agent', or 'sub', or 'generic'
+  const pattern = /(\d+|true|false|sub-agent|sub|generic)/g
   let match
   while ((match = pattern.exec(withoutPrefix)) !== null) {
     const val = match[1]
-    if (val === 'true' || val === 'false' || val === 'sub-agent') {
+    if (val === 'true' || val === 'false' || val === 'sub-agent' || val === 'sub' || val === 'generic') {
       segments.push(val)
     } else {
       segments.push(parseInt(val, 10))
@@ -152,7 +152,7 @@ const getStepNestingLevel = (stepId: string): number => {
   let level = 0
 
   for (const seg of segments) {
-    if (seg === 'true' || seg === 'false' || seg === 'sub-agent') {
+    if (seg === 'true' || seg === 'false' || seg === 'sub-agent' || seg === 'sub' || seg === 'generic') {
       level++
     }
   }
@@ -164,7 +164,8 @@ const getStepNestingLevel = (stepId: string): number => {
 const getStepNestingContext = (stepId: string): 'none' | 'branch' | 'sub-agent' => {
   // Check the last nesting indicator in the ID
   const lastBranchIndex = Math.max(stepId.lastIndexOf('-true-'), stepId.lastIndexOf('-false-'))
-  const lastSubAgentIndex = stepId.lastIndexOf('-sub-agent-')
+  const lastSubIndex = Math.max(stepId.lastIndexOf('-sub-'), stepId.lastIndexOf('-generic-'))
+  const lastSubAgentIndex = Math.max(stepId.lastIndexOf('-sub-agent-'), lastSubIndex)
 
   if (lastBranchIndex === -1 && lastSubAgentIndex === -1) {
     return 'none'
@@ -180,7 +181,7 @@ const getStepNestingContext = (stepId: string): 'none' | 'branch' | 'sub-agent' 
 // Get the indentation style for a step based on its nesting level
 const getStepIndentStyle = (level: number): React.CSSProperties => {
   if (level === 0) return {}
-  return { marginLeft: `${level * 24}px` }
+  return { marginLeft: `${level * 32}px` }
 }
 
 // Get additional CSS class for nested steps (colored left border)
@@ -1057,6 +1058,19 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                     Progress: {log.todo_task_response.progress_summary}
                                   </div>
                                 )}
+
+                                {/* Inline Sub-Agent Logs */}
+                                {log.todo_task_response.selected_sub_agent_path && logs?.steps?.[log.todo_task_response.selected_sub_agent_path] && (
+                                  <details className="mt-2 group/sub">
+                                    <summary className="text-xs font-semibold text-purple-600 dark:text-purple-400 cursor-pointer hover:underline flex items-center gap-1.5 select-none list-none">
+                                      <ChevronRight className="w-3.5 h-3.5 transition-transform group-open/sub:rotate-90" />
+                                      View Sub-Agent Execution ({logs!.steps[log.todo_task_response.selected_sub_agent_path].title})
+                                    </summary>
+                                    <div className="mt-3 ml-2 pl-3 border-l-2 border-purple-200 dark:border-purple-900/50">
+                                      {renderStepContent(log.todo_task_response.selected_sub_agent_path, logs!.steps[log.todo_task_response.selected_sub_agent_path])}
+                                    </div>
+                                  </details>
+                                )}
                               </div>
                             )}
 
@@ -1517,7 +1531,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                     (stepLogs.decisions && stepLogs.decisions.length > 0) ||
                     stepLogs.is_completed
                   ) {
-                      status = 'IN_PROGRESS' // Default if active
+                      status = 'RUNNING' // Default if active
 
                       if (stepLogs.is_completed) {
                           status = 'COMPLETED'

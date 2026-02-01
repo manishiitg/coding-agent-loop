@@ -1463,6 +1463,8 @@ export interface StepProgressUpdatedEvent {
   group_id?: string;
   group_index?: number;
   total_groups?: number;
+  used_tier?: number;
+  used_tier_label?: string;
 }
 export interface DecisionEvaluatedEvent {
   timestamp?: string;

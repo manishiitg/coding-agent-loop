@@ -101,6 +101,13 @@ Example: To update 'publish-notion-report' inside todo_task step 'codebase-inven
 </details>
 
 <details>
+<summary>Todo Task Steps</summary>
+- Main Orchestrator: Check '{{.RunPathRelative}}/execution/step-X/tasks.md' for task status and progress
+- Sub-Agents: Check 'logs/step-X-sub-agent-{i}/' for sub-agent issues (predefined agents)
+- Generic Agent: Check 'logs/step-X-generic-agent-{i}/' for issues
+</details>
+
+<details>
 <summary>Validation Failures</summary>
 - Pre-Validation (Structural): Update 'validation_schema' (file exists, JSON format)
 - LLM Validation (Authenticity): Update 'success_criteria' to focus on execution history
@@ -511,6 +518,7 @@ Learnings are stored at workspace root:
 - learnings/{step_id}/ (regular steps, using step IDs from plan.json)
 - learnings/{step_id}/ (branch steps, using step IDs from plan.json where step_id is the branch step's own ID)
 - learnings/{step_id}/ (orchestration sub-agents, using step IDs from plan.json where step_id is the sub-agent's own ID)
+- learnings/{step_id}/ (todo task sub-agents, using step IDs from plan.json where step_id is the sub-agent's own ID)
 
 Plan is stored at:
 - planning/plan.json
@@ -655,7 +663,7 @@ func filterHumanInputSteps(plan *PlanningResponse) *PlanningResponse {
 				Type:                orchestrationStep.Type,
 				ID:                  orchestrationStep.ID,
 				Title:               orchestrationStep.Title,
-				OrchestrationStep:   orchestrationStep.OrchestrationStep,
+				OrchestrationStep:   filterStep(orchestrationStep.OrchestrationStep),
 				NextStepID:          orchestrationStep.NextStepID,
 				OrchestrationRoutes: make([]PlanOrchestrationRoute, 0, len(orchestrationStep.OrchestrationRoutes)),
 				AgentConfigs:        orchestrationStep.AgentConfigs,
@@ -687,6 +695,44 @@ func filterHumanInputSteps(plan *PlanningResponse) *PlanningResponse {
 			return filteredOrchestration
 		}
 
+		// Handle todo task steps (they have sub-agent steps in predefined_routes that also need filtering)
+		if todoTaskStep, ok := step.(*TodoTaskPlanStep); ok {
+			filteredTodoTask := &TodoTaskPlanStep{
+				Type:               todoTaskStep.Type,
+				ID:                 todoTaskStep.ID,
+				Title:              todoTaskStep.Title,
+				TodoTaskStep:       filterStep(todoTaskStep.TodoTaskStep),
+				EnableGenericAgent: todoTaskStep.EnableGenericAgent,
+				NextStepID:         todoTaskStep.NextStepID,
+				PredefinedRoutes:   make([]PlanOrchestrationRoute, 0, len(todoTaskStep.PredefinedRoutes)),
+				AgentConfigs:       todoTaskStep.AgentConfigs,
+			}
+
+			// Filter predefined routes (sub-agents)
+			for _, route := range todoTaskStep.PredefinedRoutes {
+				// Skip only if sub-agent is a human input step
+				if isHumanInputStep(route.SubAgentStep) {
+					continue // Skip this route (human input sub-agent)
+				}
+
+				// Recursively filter sub-agent step (in case it has nested structures like conditional branches)
+				filteredSubAgentStep := filterStep(route.SubAgentStep)
+				if filteredSubAgentStep != nil {
+					// Create a copy of the route with filtered sub-agent
+					filteredRoute := PlanOrchestrationRoute{
+						RouteID:       route.RouteID,
+						RouteName:     route.RouteName,
+						Condition:     route.Condition,
+						SubAgentStep:  filteredSubAgentStep,
+						ContextToPass: route.ContextToPass,
+					}
+					filteredTodoTask.PredefinedRoutes = append(filteredTodoTask.PredefinedRoutes, filteredRoute)
+				}
+			}
+
+			return filteredTodoTask
+		}
+
 		// For all other step types, keep as-is (regular, decision, loop steps)
 		return step
 	}
@@ -716,16 +762,36 @@ func countSubAgents(plan *PlanningResponse) int {
 				}
 			}
 		}
-		// Also check if conditional steps contain orchestration steps
+
+		// Handle todo task steps (predefined routes are sub-agents)
+		if todoTaskStep, ok := step.(*TodoTaskPlanStep); ok {
+			count += len(todoTaskStep.PredefinedRoutes)
+			// Recursively count sub-agents in conditional steps (if any sub-agents are conditional)
+			for _, route := range todoTaskStep.PredefinedRoutes {
+				if conditionalSubAgent, ok := route.SubAgentStep.(*ConditionalPlanStep); ok {
+					// Count branch steps in conditional sub-agents
+					count += len(conditionalSubAgent.IfTrueSteps)
+					count += len(conditionalSubAgent.IfFalseSteps)
+				}
+			}
+		}
+
+		// Also check if conditional steps contain orchestration or todo task steps
 		if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
 			for _, branchStep := range conditionalStep.IfTrueSteps {
 				if branchOrchestration, ok := branchStep.(*OrchestrationPlanStep); ok {
 					count += len(branchOrchestration.OrchestrationRoutes)
 				}
+				if branchTodoTask, ok := branchStep.(*TodoTaskPlanStep); ok {
+					count += len(branchTodoTask.PredefinedRoutes)
+				}
 			}
 			for _, branchStep := range conditionalStep.IfFalseSteps {
 				if branchOrchestration, ok := branchStep.(*OrchestrationPlanStep); ok {
 					count += len(branchOrchestration.OrchestrationRoutes)
+				}
+				if branchTodoTask, ok := branchStep.(*TodoTaskPlanStep); ok {
+					count += len(branchTodoTask.PredefinedRoutes)
 				}
 			}
 		}

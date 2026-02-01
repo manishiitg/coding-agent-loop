@@ -381,8 +381,9 @@ Learning files are stored in step-specific folders:
 - Shared learnings: {WorkspacePath}/learnings/
 - Regular step learnings: {WorkspacePath}/learnings/step-{X}/ (at workspace root, not inside runs/)
 - Branch step learnings: {WorkspacePath}/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
+- Todo Task sub-agent learnings: {WorkspacePath}/learnings/step-{X}-sub-{routeID}/ (at workspace root, not inside runs/)
 
-You must scan BOTH shared and step-specific folders (including branch step folders). Use list_workspace_files to discover all step-specific folders recursively.
+You must scan BOTH shared and step-specific folders (including branch step and todo task sub-agent folders). Use list_workspace_files to discover all step-specific folders recursively.
 `
 
 	return `# Learning Anonymization Agent
@@ -555,7 +556,8 @@ func (agent *WorkflowAnonymizationAgent) anonymizationUserMessageProcessor(templ
 - **Shared Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/
 - **Regular Step Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (at workspace root, not inside runs/, e.g., step-1/, step-2/)
 - **Branch Step Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
-- **IMPORTANT**: Scan BOTH shared, regular step, and branch step folders. Use list_workspace_files to discover all step folders recursively.
+- **Todo Task Sub-Agent Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/step-{X}-sub-{routeID}/ (at workspace root, not inside runs/)
+- **IMPORTANT**: Scan BOTH shared, regular step, branch step, and todo task sub-agent folders. Use list_workspace_files to discover all step folders recursively.
 `
 
 	return `# Anonymize Learnings Task

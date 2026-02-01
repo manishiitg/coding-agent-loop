@@ -339,6 +339,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"UseKnowledgebase":    fmt.Sprintf("%v", useKnowledgebase),
 	}
 
+	// Add EnableDynamicTierSelection flag for system prompt
+	enableDynamicTier := false
+	if hcpo.useTieredMode {
+		if stepConfig := getAgentConfigs(step); stepConfig != nil &&
+			stepConfig.EnableDynamicTierSelection != nil {
+			enableDynamicTier = *stepConfig.EnableDynamicTierSelection
+		}
+	}
+	templateVars["EnableDynamicTierSelection"] = fmt.Sprintf("%t", enableDynamicTier)
+
 	// Add variable names and values (like orchestration step)
 	if variableNames := FormatVariableNames(hcpo.variablesManifest); variableNames != "" {
 		templateVars["VariableNames"] = variableNames
@@ -351,15 +361,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 }
 
 // selectTodoTaskOrchestratorLLM selects the LLM config for todo task orchestrator
-// Uses selectExecutionLLM helper with learningsFolderEmpty=true to skip tempLLM logic
-// Priority: step config execution LLM > preset execution LLM > orchestrator default
+// Priority: configured orchestrator tier (tiered mode) > selectExecutionLLM fallback
 func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskOrchestratorLLM(
 	ctx context.Context,
 	stepConfig *AgentConfigs,
 	stepID string,
 	stepPath string,
 ) *orchestrator.LLMConfig {
-	// Use selectExecutionLLM with learningsFolderEmpty=true since orchestrators don't accumulate learnings
+	// TIERED MODE: Use configured orchestrator tier if set
+	if hcpo.useTieredMode && hcpo.tierResolver != nil && stepConfig != nil &&
+		stepConfig.TodoTaskOrchestratorTier != nil {
+		tier := TierLevel(*stepConfig.TodoTaskOrchestratorTier)
+		if tier >= TierHigh && tier <= TierLow {
+			llmConfig := hcpo.tierResolver.ResolveTier(tier)
+			if llmConfig != nil {
+				hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Todo task orchestrator using configured Tier %d (%s): %s/%s",
+					int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+				return llmConfig
+			}
+		}
+	}
+	// Fallback: selectExecutionLLM with learningsFolderEmpty=true since orchestrators don't accumulate learnings
 	// This will skip tempLLM logic and use step config > preset > orchestrator fallback
 	return hcpo.selectExecutionLLM(
 		ctx,
@@ -893,6 +915,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) logTodoTaskRoutingDecision(
 		todoSummary["blocked"] = todoFile.Summary.Blocked
 	}
 
+	// Determine selected sub-agent path for logging (so UI can link to it)
+	var selectedSubAgentPath string
+	if response.NextAction == "delegate" {
+		if response.UseGenericAgent {
+			selectedSubAgentPath = fmt.Sprintf("%s-generic-%s", stepPath, response.TodoIDToExecute)
+		} else if response.SelectedRouteID != "" {
+			selectedSubAgentPath = fmt.Sprintf("%s-sub-%s", stepPath, response.SelectedRouteID)
+		}
+	}
+
 	// Build log entry
 	routingEntry := map[string]interface{}{
 		"type":         "routing",
@@ -907,6 +939,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) logTodoTaskRoutingDecision(
 			"selected_route_id":               response.SelectedRouteID,
 			"selected_route_name":             selectedRouteName,
 			"use_generic_agent":               response.UseGenericAgent,
+			"selected_sub_agent_path":         selectedSubAgentPath,
 			"todo_id_to_execute":              response.TodoIDToExecute,
 			"todo_title":                      todoTitle,
 			"instructions_to_sub_agent":       response.InstructionsToSubAgent,

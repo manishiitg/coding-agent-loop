@@ -679,6 +679,14 @@ export interface PresetLLMConfig {
   use_knowledgebase?: boolean           // nil/true = enabled (default), false = disabled
   enable_context_summarization?: boolean // nil/true = enabled (default), false = disabled
   enable_context_editing?: boolean       // nil/true = enabled (default), false = disabled
+
+  // Tiered LLM allocation mode
+  llm_allocation_mode?: 'manual' | 'tiered'
+  tiered_config?: {
+    tier_1: AgentLLMConfig
+    tier_2: AgentLLMConfig
+    tier_3: AgentLLMConfig
+  }
 }
 
 // Preset Query API types

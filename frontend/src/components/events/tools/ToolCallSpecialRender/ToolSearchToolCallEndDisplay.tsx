@@ -137,13 +137,13 @@ export const ToolSearchToolCallEndDisplay: React.FC<ToolSearchToolCallEndDisplay
 
   if (toolName === 'add_tool') {
     return (
-      <div className="bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-800 rounded p-2">
+      <div className="bg-purple-50 dark:bg-violet-900/20 border border-purple-200 dark:border-violet-800 rounded p-2">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-violet-700 dark:text-violet-300 flex items-center gap-2">
+              <div className="text-sm font-medium text-purple-700 dark:text-violet-300 flex items-center gap-2">
                 ➕ Tool Added{' '}
-                <span className="text-xs font-normal text-violet-600 dark:text-violet-400">
+                <span className="text-xs font-normal text-purple-600 dark:text-violet-400">
                   {event.turn && `• Turn: ${event.turn}`}
                   {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
                 </span>
@@ -162,13 +162,13 @@ export const ToolSearchToolCallEndDisplay: React.FC<ToolSearchToolCallEndDisplay
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             {event.timestamp && (
-              <div className="text-xs text-violet-600 dark:text-violet-400 flex-shrink-0">
+              <div className="text-xs text-purple-600 dark:text-violet-400 flex-shrink-0">
                 {new Date(event.timestamp).toLocaleTimeString()}
               </div>
             )}
             <button
               onClick={toggle}
-              className="p-0.5 hover:bg-violet-200 dark:hover:bg-violet-800 rounded text-violet-700 dark:text-violet-300 transition-colors"
+              className="p-0.5 hover:bg-purple-200 dark:hover:bg-violet-800 rounded text-purple-700 dark:text-violet-300 transition-colors"
               title={isOutputExpanded ? "Collapse output (Alt+Click for all)" : "Expand output (Alt+Click for all)"}
             >
               {isOutputExpanded ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}

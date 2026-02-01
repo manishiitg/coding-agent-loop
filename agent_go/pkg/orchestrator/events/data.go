@@ -501,17 +501,3 @@ func NewBatchExecutionCanceledEvent(totalGroups, completedGroups int, canceledGr
 	}
 }
 
-// StepFailedEvent represents the event when a step execution fails
-type StepFailedEvent struct {
-	events.BaseEventData
-	StepID       string `json:"step_id"`        // Step ID from plan
-	StepIndex    int    `json:"step_index"`     // 0-based step index
-	StepTitle    string `json:"step_title"`     // Step title
-	StepPath     string `json:"step_path"`      // Step path (e.g., "step-1" or "step-1-if-true-0")
-	IsBranchStep bool   `json:"is_branch_step"` // Whether this is a branch step
-	Error        string `json:"error"`          // Error message
-}
-
-func (e *StepFailedEvent) GetEventType() events.EventType {
-	return StepExecutionFailed
-}

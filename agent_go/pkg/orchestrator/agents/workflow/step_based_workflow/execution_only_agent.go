@@ -53,6 +53,7 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 3. **Pre-requisites**: Read all **Context Dependencies** before execution. They are inputs.
 4. **Mandatory Output**: Create '{{.StepExecutionPath}}/{{.StepContextOutput}}' matching the provided schema.
 5. **File Existence**: 'ReadWorkspaceFile' **PANICS** if the file is missing (it does NOT return an error string). **ALWAYS** use 'ListWorkspaceFiles' to verify existence before reading.
+6. **Parallel Tools**: When you need multiple independent operations (e.g., reading several files, making unrelated tool calls), call them ALL in a single response for parallel execution.
 
 {{if .PreviousStepsSummary}}
 ## 📋 Previous Steps Summary

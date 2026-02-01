@@ -1186,6 +1186,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                     workflowStore.setStepStatus(stepId, 'running')
                   } else if (status === 'end') {
                     workflowStore.setStepStatus(stepId, 'completed')
+                  } else if (status === 'failed') {
+                    workflowStore.setStepStatus(stepId, 'failed')
                   }
                 }
 
@@ -1204,28 +1206,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                     groupIndex,
                     totalGroups
                   )
-                }
-              }
-
-              // Handle step execution end (backup for step_progress_updated)
-              if (event.type === 'step_execution_end') {
-                const eventData = event.data as Record<string, unknown> | undefined
-                const stepData = (eventData?.data as Record<string, unknown>) || eventData
-                const stepId = stepData?.step_id as string | undefined
-
-                if (stepId) {
-                  workflowStore.setStepStatus(stepId, 'completed')
-                }
-              }
-
-              // Handle step execution failed
-              if (event.type === 'step_execution_failed') {
-                const eventData = event.data as Record<string, unknown> | undefined
-                const stepData = (eventData?.data as Record<string, unknown>) || eventData
-                const stepId = stepData?.step_id as string | undefined
-
-                if (stepId) {
-                  workflowStore.setStepStatus(stepId, 'failed')
                 }
               }
 

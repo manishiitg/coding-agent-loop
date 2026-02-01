@@ -36,50 +36,6 @@ func (e *DecisionEvaluatedEvent) GetEventType() baseevents.EventType {
 	return events.DecisionEvaluated
 }
 
-// StepStartedEvent represents the event when a step execution starts
-type StepStartedEvent struct {
-	baseevents.BaseEventData
-	StepID        string `json:"step_id"`        // Step ID from plan
-	StepIndex     int    `json:"step_index"`     // 0-based step index
-	StepTitle     string `json:"step_title"`     // Step title
-	StepPath      string `json:"step_path"`      // Step path (e.g., "step-1" or "step-1-if-true-0")
-	IsBranchStep  bool   `json:"is_branch_step"` // Whether this is a branch step
-	RunFolder     string `json:"run_folder"`     // Run folder name (e.g., "iteration-1")
-	WorkspacePath string `json:"workspace_path"` // Workspace path for file operations
-}
-
-func (e *StepStartedEvent) GetEventType() baseevents.EventType {
-	return baseevents.StepExecutionStart
-}
-
-type StepFinishedEvent struct {
-	baseevents.BaseEventData
-	StepID       string `json:"step_id"`        // Step ID from plan
-	StepIndex    int    `json:"step_index"`     // 0-based step index
-	StepTitle    string `json:"step_title"`     // Step title
-	StepPath     string `json:"step_path"`      // Step path (e.g., "step-1" or "step-1-if-true-0")
-	IsBranchStep bool   `json:"is_branch_step"` // Whether this is a branch step
-}
-
-func (e *StepFinishedEvent) GetEventType() baseevents.EventType {
-	return baseevents.StepExecutionEnd
-}
-
-// StepFailedEvent represents the event when a step execution fails
-type StepFailedEvent struct {
-	baseevents.BaseEventData
-	StepID       string `json:"step_id"`        // Step ID from plan
-	StepIndex    int    `json:"step_index"`     // 0-based step index
-	StepTitle    string `json:"step_title"`     // Step title
-	StepPath     string `json:"step_path"`      // Step path (e.g., "step-1" or "step-1-if-true-0")
-	IsBranchStep bool   `json:"is_branch_step"` // Whether this is a branch step
-	Error        string `json:"error"`          // Error message
-}
-
-func (e *StepFailedEvent) GetEventType() baseevents.EventType {
-	return baseevents.StepExecutionFailed
-}
-
 // StepTokenUsageEvent represents token usage summary for a workflow step
 // Note: This is a local type, but uses orchestrator events.StepTokenUsageEvent from the orchestrator/events package
 type StepTokenUsageEvent struct {
@@ -133,7 +89,8 @@ type StepProgressUpdatedEvent struct {
 	WorkspacePath string `json:"workspace_path"`            // Workspace path for file operations
 	RunFolder     string `json:"run_folder"`                // Run folder name (e.g., "iteration-1")
 	CurrentStepId string `json:"current_step_id,omitempty"` // Step ID of the current step (starting, running, or completed)
-	Status        string `json:"status,omitempty"`          // Step status: "start", "end", or empty (for progress updates)
+	Status        string `json:"status,omitempty"`          // Step status: "start", "end", "failed", or empty (for progress updates)
+	Error         string `json:"error,omitempty"`           // Error message (populated when status is "failed")
 	// Batch execution info (always present since backend always runs in batch context)
 	GroupId     string `json:"group_id,omitempty"`     // Current group ID being executed
 	GroupIndex  int    `json:"group_index"`            // 0-based index of current group

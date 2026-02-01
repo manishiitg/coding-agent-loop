@@ -4,12 +4,15 @@ import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer'
 import { WorkspaceToolCallEndDisplay, CodeExecutionToolCallEndDisplay, ToolSearchToolCallEndDisplay } from './ToolCallSpecialRender'
 import { CircularProgress, type ContextOnlyTokenUsage } from '../../ui/CircularProgress'
 import { TooltipProvider } from '../../ui/tooltip'
+import { useExpandable } from '../useExpandable'
+import { Plus, Minus } from 'lucide-react'
 
 interface ToolCallEndEventProps {
   event: ToolCallEndEvent
 }
 
 export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event }) => {
+  const { isExpanded, toggle } = useExpandable()
   
   // Check if this is a workspace tool
   const isWorkspaceTool = (toolName: string): boolean => {
@@ -142,16 +145,33 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
       model_id: modelId,
     } : undefined
 
+  // Determine theme color based on tool name (retrieval vs action)
+  const toolName = event.tool_name?.toLowerCase() || ''
+  const isRetrieval = toolName.includes('search') || 
+                      toolName.includes('list') || 
+                      toolName.includes('read') || 
+                      toolName.includes('get') ||
+                      toolName.includes('fetch') ||
+                      toolName.includes('find')
+
+  const theme = isRetrieval ? 'blue' : 'green'
+  
+  const bgColor = theme === 'blue' ? 'bg-blue-50 dark:bg-blue-900/20' : 'bg-green-50 dark:bg-green-900/20'
+  const borderColor = theme === 'blue' ? 'border-blue-200 dark:border-blue-800' : 'border-green-200 dark:border-green-800'
+  const textColor = theme === 'blue' ? 'text-blue-700 dark:text-blue-300' : 'text-green-700 dark:text-green-300'
+  const textSecondaryColor = theme === 'blue' ? 'text-blue-600 dark:text-blue-400' : 'text-green-600 dark:text-green-400'
+  const hoverBgColor = theme === 'blue' ? 'hover:bg-blue-200 dark:hover:bg-blue-800' : 'hover:bg-green-200 dark:hover:bg-green-800'
+
   // Single-line layout following design guidelines
   return (
-    <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded p-2">
+    <div className={`${bgColor} border ${borderColor} rounded p-2`}>
       <div className="flex items-center justify-between gap-3">
         {/* Left side: Icon and main content */}
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-green-700 dark:text-green-300 flex items-center gap-2">
+            <div className={`text-sm font-medium ${textColor} flex items-center gap-2`}>
               Tool Call End{' '}
-              <span className="text-xs font-normal text-green-600 dark:text-green-400">
+              <span className={`text-xs font-normal ${textSecondaryColor}`}>
                 {event.turn && `• Turn: ${event.turn}`}
                 {event.tool_name && ` • Tool: ${event.tool_name}`}
                 {event.server_name && ` • Server: ${event.server_name}`}
@@ -172,16 +192,27 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
           </div>
         </div>
 
-        {/* Right side: Time */}
-        {event.timestamp && (
-          <div className="text-xs text-green-600 dark:text-green-400 flex-shrink-0">
-            {new Date(event.timestamp).toLocaleTimeString()}
-          </div>
-        )}
+        {/* Right side: Time and Toggle */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {event.timestamp && (
+            <div className={`text-xs ${textSecondaryColor}`}>
+              {new Date(event.timestamp).toLocaleTimeString()}
+            </div>
+          )}
+          {resultInfo && (
+            <button
+              onClick={toggle}
+              className={`p-0.5 ${hoverBgColor} rounded ${textColor} transition-colors`}
+              title={isExpanded ? "Collapse output (Alt+Click for all)" : "Expand output (Alt+Click for all)"}
+            >
+              {isExpanded ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Extract Content always visible below */}
-      {resultInfo && (
+      {/* Extract Content visibility controlled by isExpanded */}
+      {resultInfo && isExpanded && (
         <div className="bg-white dark:bg-gray-800 rounded-md mt-2">
           <ConversationMarkdownRenderer content={resultInfo.textContent} />
         </div>

@@ -81,7 +81,7 @@ const getStepIcon = (type: string) => {
     case 'sub-agent':
       return <Bot className="w-4 h-4 text-indigo-500" />
     case 'branch':
-      return <Split className="w-4 h-4 text-cyan-500" />
+      return <Split className="w-4 h-4 text-indigo-500" />
     case 'decision-inner':
       return <Terminal className="w-4 h-4 text-blue-400" />
     default:
@@ -191,7 +191,7 @@ const getStepNestingClass = (stepId: string): string => {
     case 'sub-agent':
       return 'border-l-4 border-l-purple-500/50'
     case 'branch':
-      return 'border-l-4 border-l-cyan-500/50'
+      return 'border-l-4 border-l-indigo-500/50'
     default:
       return ''
   }

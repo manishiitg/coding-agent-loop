@@ -113,7 +113,7 @@ export const TokenUsageEventDisplay: React.FC<TokenUsageEventDisplayProps> = ({ 
             <span className="text-orange-600 dark:text-orange-400">• Mode: Code Exec</span>
           )}
           {event.use_tool_search_mode && (
-            <span className="text-cyan-600 dark:text-cyan-400">• Mode: Tool Search</span>
+            <span className="text-indigo-600 dark:text-indigo-400">• Mode: Tool Search</span>
           )}
         </div>
         {event.timestamp && (
@@ -135,7 +135,7 @@ export const TokenUsageEventDisplay: React.FC<TokenUsageEventDisplayProps> = ({ 
             )}
           </span>
           {cumulativeCacheTokens > 0 && (
-            <span className="text-cyan-600 dark:text-cyan-400 ml-1">
+            <span className="text-sky-600 dark:text-sky-400 ml-1">
               Cache:{cumulativeCacheTokens.toLocaleString()}
               {cacheCost > 0 && (
                 <span className="text-green-600 dark:text-green-400 ml-1">(${cacheCost.toFixed(4)})</span>
@@ -191,7 +191,7 @@ export const TokenUsageEventDisplay: React.FC<TokenUsageEventDisplayProps> = ({ 
             <span className="font-semibold">Calls:</span>
             <span className="ml-1">{llmCallCount}</span>
             {cacheEnabledCallCount > 0 && (
-              <span className="text-cyan-600 dark:text-cyan-400 ml-1">({cacheEnabledCallCount} cached)</span>
+              <span className="text-sky-600 dark:text-sky-400 ml-1">({cacheEnabledCallCount} cached)</span>
             )}
           </span>
         )}

@@ -1071,6 +1071,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// Apply step-specific overrides
 	hcpo.applyStepConfigToAgentConfig(config, stepConfig, isCodeExecutionMode)
 
+	// Enable parallel tool execution for execution agents
+	// This allows concurrent execution of multiple independent tool calls
+	config.EnableParallelToolExecution = true
+	hcpo.GetLogger().Info("⚡ Parallel tool execution enabled for execution-only agent")
+
 	// 5. Prepare custom tools (filtered by step config)
 	toolsToRegister, executorsToUse := hcpo.prepareCustomTools(stepConfig)
 
@@ -1708,6 +1713,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	isToolSearchMode := hcpo.getToolSearchMode(stepConfig)
 	config.UseToolSearchMode = isToolSearchMode
 	config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
+
+	// Enable parallel tool execution for todo task orchestrator
+	// This allows concurrent execution of multiple tool calls (e.g., call_sub_agent, call_generic_agent)
+	config.EnableParallelToolExecution = true
+	hcpo.GetLogger().Info("⚡ Parallel tool execution enabled for todo task orchestrator agent")
 
 	// Set EnableContextOffloading if specified
 	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {

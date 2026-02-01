@@ -142,6 +142,7 @@ func NewBaseAgent(
 	enableContextEditing bool, // Context editing configuration
 	contextEditingThreshold int, // Token threshold for context editing (0 = use default)
 	contextEditingTurnThreshold int, // Turn age threshold for context editing (0 = use default)
+	enableParallelToolExecution bool, // Parallel tool execution configuration
 	llmConfig *LLMConfig, // NEW: Full LLM configuration
 	apiKeys *AgentAPIKeys, // API keys for providers
 	mcpSessionID string, // MCP session ID for connection sharing across agents
@@ -248,6 +249,11 @@ func NewBaseAgent(
 		if contextEditingTurnThreshold > 0 {
 			agentOptions = append(agentOptions, mcpagent.WithContextEditingTurnThreshold(contextEditingTurnThreshold))
 		}
+	}
+
+	// Add parallel tool execution if enabled
+	if enableParallelToolExecution {
+		agentOptions = append(agentOptions, mcpagent.WithParallelToolExecution(true))
 	}
 
 	// Removed verbose logging

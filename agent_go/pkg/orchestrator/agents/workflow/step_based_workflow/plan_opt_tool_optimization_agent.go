@@ -839,6 +839,16 @@ func createMinimalPlan(fullPlan *PlanningResponse, currentToolConfigsMap map[str
 					}
 				}
 			}
+			// Recursively extract sub-agents from todo task routes
+			if todoTaskStep, ok := step.(*TodoTaskPlanStep); ok {
+				// Extract sub-agents from predefined routes
+				for _, route := range todoTaskStep.PredefinedRoutes {
+					if route.SubAgentStep != nil {
+						// Recursively process sub-agent step (may have nested structures)
+						extractSteps([]PlanStepInterface{route.SubAgentStep})
+					}
+				}
+			}
 		}
 	}
 
@@ -913,6 +923,16 @@ func createStepLearningsFolderMapping(stepConfigs []StepConfig, plan *PlanningRe
 			if orchestrationStep, ok := step.(*OrchestrationPlanStep); ok {
 				// Extract sub-agents from routes
 				for _, route := range orchestrationStep.OrchestrationRoutes {
+					if route.SubAgentStep != nil {
+						// Recursively process sub-agent step (may have nested structures)
+						extractMappings([]PlanStepInterface{route.SubAgentStep}, currentParentStepID, "", -1)
+					}
+				}
+			}
+			// Recursively extract sub-agents from todo task routes
+			if todoTaskStep, ok := step.(*TodoTaskPlanStep); ok {
+				// Extract sub-agents from predefined routes
+				for _, route := range todoTaskStep.PredefinedRoutes {
 					if route.SubAgentStep != nil {
 						// Recursively process sub-agent step (may have nested structures)
 						extractMappings([]PlanStepInterface{route.SubAgentStep}, currentParentStepID, "", -1)
@@ -1023,6 +1043,35 @@ func createStepLogsFolderMapping(plan *PlanningResponse, stepConfigs []StepConfi
 						extractMappings([]PlanStepInterface{route.SubAgentStep}, subAgentStepNumber, "", -1)
 					}
 				}
+			}
+			// Recursively extract sub-agents from todo task routes
+			if todoTaskStep, ok := step.(*TodoTaskPlanStep); ok {
+				// Extract sub-agents from predefined routes
+				// Todo task sub-agents use step-X-sub-{routeID} format for logs (as seen in controller_todo_task.go)
+				// Wait, controller_todo_task.go uses: fmt.Sprintf("%s-sub-%s", stepPath, route.RouteID)
+				// StepPath for top level step is "step-{N}"
+				// So it becomes "step-{N}-sub-{routeID}"
+				for _, route := range todoTaskStep.PredefinedRoutes {
+					if route.SubAgentStep != nil {
+						subAgentStepNumber := currentStepNumber
+						// Use route ID for path (consistent with controller_todo_task.go)
+						subAgentLogsPathBase := fmt.Sprintf("step-%d-sub-%s", subAgentStepNumber, route.RouteID)
+						subAgentLogsPaths := []string{
+							fmt.Sprintf("runs/*/logs/%s/", subAgentLogsPathBase),
+							fmt.Sprintf("logs/%s/", subAgentLogsPathBase),
+						}
+						mappings = append(mappings, StepLogsFolderMapping{
+							StepID:    route.SubAgentStep.GetID(),
+							LogsPaths: subAgentLogsPaths,
+						})
+						// Recursively process sub-agent step (may have nested structures)
+						extractMappings([]PlanStepInterface{route.SubAgentStep}, subAgentStepNumber, "", -1)
+					}
+				}
+				// Also handle generic agent logs if enable_generic_agent is true (but we can't predict todo IDs easily)
+				// Generic agents use step-{N}-generic-{todoID} format
+				// We can try to capture generic agent logs using wildcard pattern if we want
+				// For now, focus on predefined routes as they are the ones with configurations to optimize
 			}
 		}
 	}
@@ -1275,6 +1324,15 @@ func createCurrentToolConfigsMapping(stepConfigs []StepConfig, plan *PlanningRes
 			if orchestrationStep, ok := step.(*OrchestrationPlanStep); ok {
 				// Extract sub-agents from routes
 				for _, route := range orchestrationStep.OrchestrationRoutes {
+					if route.SubAgentStep != nil {
+						extractConfigs([]PlanStepInterface{route.SubAgentStep})
+					}
+				}
+			}
+			// Recursively extract sub-agents from todo task routes
+			if todoTaskStep, ok := step.(*TodoTaskPlanStep); ok {
+				// Extract sub-agents from predefined routes
+				for _, route := range todoTaskStep.PredefinedRoutes {
 					if route.SubAgentStep != nil {
 						extractConfigs([]PlanStepInterface{route.SubAgentStep})
 					}

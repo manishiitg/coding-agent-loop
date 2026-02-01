@@ -142,6 +142,19 @@ Execute a generic agent for ad-hoc tasks that don't match predefined routes.
 - 'instructions': Detailed instructions for the agent
 - 'success_criteria': How to verify the task was completed successfully
 
+{{if .EnableDynamicTierSelection}}
+### ⚡ LLM Tier Selection (Tiered Mode Active)
+Both sub-agent tools accept an optional 'preferred_tier' parameter:
+- **1** (High Reasoning): Use for complex, novel, or critical tasks requiring deep analysis
+- **2** (Medium Reasoning): Use for routine, well-defined, or simpler tasks
+- **3** (Low Reasoning): Use for simple, repetitive, or validation-like tasks
+
+**Guidelines:**
+- Use Tier 1 for: first-time tasks, complex analysis, tasks requiring creativity
+- Use Tier 2 for: routine tasks, well-understood patterns, moderate complexity
+- Use Tier 3 for: simple file operations, formatting, data extraction
+- If unsure, omit the parameter to let the system auto-select based on task history
+{{end}}
 ---
 
 ## 🏗️ AVAILABLE SUB-AGENTS
@@ -413,17 +426,18 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 	enableGenericAgent := templateVars["EnableGenericAgent"] == "true"
 
 	templateData := map[string]interface{}{
-		"CurrentDate":           now.Format("2006-01-02"),
-		"CurrentTime":           now.Format("15:04:05"),
-		"PredefinedRoutes":      templateVars["PredefinedRoutes"],
-		"EnableGenericAgent":    enableGenericAgent,
-		"CurrentTodos":          templateVars["CurrentTodos"],
-		"ProgressSummary":       templateVars["ProgressSummary"],
-		"VariableNames":         templateVars["VariableNames"],
-		"VariableValues":        templateVars["VariableValues"],
-		"LearningHistory":       templateVars["LearningHistory"],
-		"StepExecutionPath":     templateVars["StepExecutionPath"],
-		"ShellWorkingDirectory": templateVars["ShellWorkingDirectory"],
+		"CurrentDate":                now.Format("2006-01-02"),
+		"CurrentTime":                now.Format("15:04:05"),
+		"PredefinedRoutes":           templateVars["PredefinedRoutes"],
+		"EnableGenericAgent":         enableGenericAgent,
+		"EnableDynamicTierSelection": templateVars["EnableDynamicTierSelection"] == "true",
+		"CurrentTodos":               templateVars["CurrentTodos"],
+		"ProgressSummary":            templateVars["ProgressSummary"],
+		"VariableNames":              templateVars["VariableNames"],
+		"VariableValues":             templateVars["VariableValues"],
+		"LearningHistory":            templateVars["LearningHistory"],
+		"StepExecutionPath":          templateVars["StepExecutionPath"],
+		"ShellWorkingDirectory":      templateVars["ShellWorkingDirectory"],
 	}
 
 	var result strings.Builder

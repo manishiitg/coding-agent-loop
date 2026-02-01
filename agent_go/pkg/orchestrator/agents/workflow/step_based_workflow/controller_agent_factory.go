@@ -400,6 +400,28 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	stepPath string,
 	learningsFolderEmpty bool,
 ) *orchestrator.LLMConfig {
+	// TIERED MODE: Bypass all manual selection logic
+	if hcpo.useTieredMode && hcpo.tierResolver != nil {
+		// Check for preferred tier override from sub-agent tool context
+		if preferredTier, ok := ctx.Value(virtualtools.PreferredTierContextKey).(int); ok && preferredTier >= 1 && preferredTier <= 3 {
+			tier := TierLevel(preferredTier)
+			llmConfig := hcpo.tierResolver.ResolveTier(tier)
+			if llmConfig != nil {
+				hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Execution agent using PREFERRED Tier %d (%s) for step %s: %s/%s",
+					preferredTier, TierLevelLabel(tier), stepPath, llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+			}
+			return llmConfig
+		}
+		// Fall through to maturity-based resolution
+		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath)
+		llmConfig, tier := hcpo.tierResolver.ResolveForExecution(maturity)
+		if llmConfig != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Execution agent for step %s using Tier %d (%s): %s/%s (maturity: %d)",
+				stepPath, int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID, int(maturity)))
+		}
+		return llmConfig
+	}
+
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	shouldSkipTempOverride := isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure
 
@@ -709,6 +731,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) addPrerequisiteDetectionTool(
 // selectValidationLLM selects the LLM config for validation agents
 // Priority: step config > preset default
 func (hcpo *StepBasedWorkflowOrchestrator) selectValidationLLM(stepConfig *AgentConfigs) *orchestrator.LLMConfig {
+	// TIERED MODE: Bypass all manual selection logic
+	if hcpo.useTieredMode && hcpo.tierResolver != nil {
+		llmConfig, tier := hcpo.tierResolver.ResolveForValidation()
+		if llmConfig != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Validation agent using Tier %d (%s): %s/%s",
+				int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+		}
+		return llmConfig
+	}
+
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	if stepConfig != nil && stepConfig.ValidationLLM != nil && stepConfig.ValidationLLM.Provider != "" && stepConfig.ValidationLLM.ModelID != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific validation LLM: %s/%s", stepConfig.ValidationLLM.Provider, stepConfig.ValidationLLM.ModelID))
@@ -863,6 +895,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) getLearningMaxTurns(stepConfig *Agent
 // Priority: tempLearningLLM (if learnings exist) > cost-optimization (tempLLM if >50% stable) > step config > preset default
 // Note: If learnings already exist for a step, use tempLearningLLM if configured. For new learning (no learnings), always use default LLM.
 func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context, stepConfig *AgentConfigs, stepID string, stepPath string) *orchestrator.LLMConfig {
+	// TIERED MODE: Bypass all manual selection logic
+	if hcpo.useTieredMode && hcpo.tierResolver != nil {
+		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath)
+		llmConfig, tier := hcpo.tierResolver.ResolveForLearning(maturity)
+		if llmConfig != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Learning agent for step %s using Tier %d (%s): %s/%s (maturity: %d)",
+				stepPath, int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID, int(maturity)))
+		}
+		return llmConfig
+	}
+
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 
 	// 0. TEMP LEARNING LLM: Check if learnings exist for this step and use tempLearningLLM if configured
@@ -1779,7 +1822,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	// IMPORTANT: Inject sub-agent tools for tool-based delegation
 	// These tools allow the orchestrator to delegate work to sub-agents directly via tool calls
 	if subAgentExecCtx != nil {
-		subAgentTools := virtualtools.CreateSubAgentTools()
+		// Determine if dynamic tier selection is enabled for sub-agent tools
+		enableTierSelection := hcpo.useTieredMode && subAgentExecCtx.TodoTaskStep != nil
+		if enableTierSelection {
+			stepConfig := getAgentConfigs(subAgentExecCtx.TodoTaskStep)
+			enableTierSelection = stepConfig != nil &&
+				stepConfig.EnableDynamicTierSelection != nil &&
+				*stepConfig.EnableDynamicTierSelection
+		}
+		subAgentTools := virtualtools.CreateSubAgentTools(enableTierSelection)
 		subAgentExecutors := virtualtools.CreateSubAgentToolExecutors()
 		subAgentCategory := virtualtools.GetSubAgentToolCategory()
 

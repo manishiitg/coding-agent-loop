@@ -51,6 +51,22 @@ func (lm *LockManager) AcquireLock(filePath string, timeout time.Duration) (*Fil
 	return lock, nil
 }
 
+// AcquireReadLock acquires a read lock (conceptually, currently checking if write locked)
+// Since we don't support shared read locks in the map structure yet (exclusive only),
+// this mainly checks if a Write lock is held and waits/fails.
+// For now, we'll implement a non-blocking check that fails if Write locked.
+func (lm *LockManager) AcquireReadLock(filePath string, timeout time.Duration) error {
+	lm.mutex.RLock()
+	defer lm.mutex.RUnlock()
+
+	if existingLock, exists := lm.locks[filePath]; exists {
+		if time.Since(existingLock.acquired) <= timeout {
+			return fmt.Errorf("file is currently locked for writing: %s", filePath)
+		}
+	}
+	return nil
+}
+
 // ReleaseLock releases an in-memory file lock
 func (lm *LockManager) ReleaseLock(lock *FileLock) error {
 	if lock == nil {
@@ -60,8 +76,10 @@ func (lm *LockManager) ReleaseLock(lock *FileLock) error {
 	lm.mutex.Lock()
 	defer lm.mutex.Unlock()
 
-	// Remove from manager
-	delete(lm.locks, lock.filepath)
+	// Only remove if it's the same lock (prevent removing a newer lock)
+	if existing, ok := lm.locks[lock.filepath]; ok && existing == lock {
+		delete(lm.locks, lock.filepath)
+	}
 	return nil
 }
 
@@ -77,12 +95,6 @@ func (lm *LockManager) IsLocked(filePath string) bool {
 
 	// Check if lock is stale
 	if time.Since(lock.acquired) > 30*time.Second {
-		// Lock is stale, remove it
-		lm.mutex.RUnlock()
-		lm.mutex.Lock()
-		delete(lm.locks, filePath)
-		lm.mutex.Unlock()
-		lm.mutex.RLock()
 		return false
 	}
 

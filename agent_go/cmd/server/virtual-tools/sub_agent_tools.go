@@ -26,6 +26,8 @@ const (
 	PredefinedRoutesKey subAgentContextKey = "predefined_routes"
 	// ValidateTodoExistsKey is the context key for the todo validation function
 	ValidateTodoExistsKey subAgentContextKey = "validate_todo_exists"
+	// PreferredTierContextKey is the context key for preferred LLM tier override (1/2/3)
+	PreferredTierContextKey subAgentContextKey = "preferred_tier"
 )
 
 // ValidateTodoExistsFunc is the function signature for validating if a task exists in tasks.md
@@ -53,64 +55,81 @@ type ExecutePredefinedSubAgentFunc func(ctx context.Context, routeID, todoID, in
 type ExecuteGenericAgentFunc func(ctx context.Context, todoID, instructions, successCriteria string) (string, error)
 
 // CreateSubAgentTools creates the sub-agent calling virtual tools
-func CreateSubAgentTools() []llmtypes.Tool {
+// If enableTierSelection is true, both tools include an optional preferred_tier parameter (1/2/3)
+func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 	var tools []llmtypes.Tool
 
 	// call_sub_agent tool - Execute a predefined sub-agent
+	callSubAgentProperties := map[string]interface{}{
+		"route_id": map[string]interface{}{
+			"type":        "string",
+			"description": "The ID of the predefined route/agent to execute (from the available routes in your context)",
+		},
+		"todo_id": map[string]interface{}{
+			"type":        "string",
+			"description": "The ID of the todo task this execution is for (for tracking and event emission)",
+		},
+		"instructions": map[string]interface{}{
+			"type":        "string",
+			"description": "Detailed instructions for what the sub-agent should accomplish. Be specific about inputs, expected outputs, and any constraints.",
+		},
+		"success_criteria": map[string]interface{}{
+			"type":        "string",
+			"description": "How to verify the task was completed successfully. Include specific checks, file existence, data validation, etc.",
+		},
+	}
+	if enableTierSelection {
+		callSubAgentProperties["preferred_tier"] = map[string]interface{}{
+			"type":        "integer",
+			"description": "LLM reasoning tier for this sub-agent. 1 = high reasoning (complex/novel tasks), 2 = medium reasoning (routine tasks), 3 = low reasoning (simple/validation tasks). If omitted, system auto-selects based on learning maturity.",
+			"enum":        []int{1, 2, 3},
+		}
+	}
 	callSubAgentTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "call_sub_agent",
 			Description: "Execute a predefined sub-agent to perform a specific task. The sub-agent will run to completion and return its result. Use this for tasks that match one of the predefined agent routes.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"route_id": map[string]interface{}{
-						"type":        "string",
-						"description": "The ID of the predefined route/agent to execute (from the available routes in your context)",
-					},
-					"todo_id": map[string]interface{}{
-						"type":        "string",
-						"description": "The ID of the todo task this execution is for (for tracking and event emission)",
-					},
-					"instructions": map[string]interface{}{
-						"type":        "string",
-						"description": "Detailed instructions for what the sub-agent should accomplish. Be specific about inputs, expected outputs, and any constraints.",
-					},
-					"success_criteria": map[string]interface{}{
-						"type":        "string",
-						"description": "How to verify the task was completed successfully. Include specific checks, file existence, data validation, etc.",
-					},
-				},
-				"required": []string{"route_id", "todo_id", "instructions", "success_criteria"},
+				"type":       "object",
+				"properties": callSubAgentProperties,
+				"required":   []string{"route_id", "todo_id", "instructions", "success_criteria"},
 			}),
 		},
 	}
 	tools = append(tools, callSubAgentTool)
 
 	// call_generic_agent tool - Execute a generic agent for ad-hoc tasks
+	callGenericAgentProperties := map[string]interface{}{
+		"todo_id": map[string]interface{}{
+			"type":        "string",
+			"description": "The ID of the todo task this execution is for (for tracking and event emission)",
+		},
+		"instructions": map[string]interface{}{
+			"type":        "string",
+			"description": "Detailed instructions for what the agent should accomplish. Be very specific since there's no predefined context.",
+		},
+		"success_criteria": map[string]interface{}{
+			"type":        "string",
+			"description": "How to verify the task was completed successfully. Include specific checks the agent should perform.",
+		},
+	}
+	if enableTierSelection {
+		callGenericAgentProperties["preferred_tier"] = map[string]interface{}{
+			"type":        "integer",
+			"description": "LLM reasoning tier for this sub-agent. 1 = high reasoning (complex/novel tasks), 2 = medium reasoning (routine tasks), 3 = low reasoning (simple/validation tasks). If omitted, system auto-selects based on learning maturity.",
+			"enum":        []int{1, 2, 3},
+		}
+	}
 	callGenericAgentTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "call_generic_agent",
 			Description: "Execute a generic agent for ad-hoc tasks that don't match predefined routes. The agent will use available tools to complete the task. Use this sparingly - prefer predefined routes when available.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"todo_id": map[string]interface{}{
-						"type":        "string",
-						"description": "The ID of the todo task this execution is for (for tracking and event emission)",
-					},
-					"instructions": map[string]interface{}{
-						"type":        "string",
-						"description": "Detailed instructions for what the agent should accomplish. Be very specific since there's no predefined context.",
-					},
-					"success_criteria": map[string]interface{}{
-						"type":        "string",
-						"description": "How to verify the task was completed successfully. Include specific checks the agent should perform.",
-					},
-				},
-				"required": []string{"todo_id", "instructions", "success_criteria"},
+				"type":       "object",
+				"properties": callGenericAgentProperties,
+				"required":   []string{"todo_id", "instructions", "success_criteria"},
 			}),
 		},
 	}
@@ -151,6 +170,11 @@ func handleCallSubAgent(ctx context.Context, args map[string]interface{}) (strin
 	successCriteria, ok := args["success_criteria"].(string)
 	if !ok || successCriteria == "" {
 		return "", fmt.Errorf("success_criteria is required")
+	}
+
+	// Extract preferred_tier if provided (for tiered LLM allocation)
+	if preferredTier, ok := args["preferred_tier"].(float64); ok && int(preferredTier) >= 1 && int(preferredTier) <= 3 {
+		ctx = context.WithValue(ctx, PreferredTierContextKey, int(preferredTier))
 	}
 
 	// VALIDATION: Check if task exists in tasks.md before delegation
@@ -215,6 +239,11 @@ func handleCallGenericAgent(ctx context.Context, args map[string]interface{}) (s
 	successCriteria, ok := args["success_criteria"].(string)
 	if !ok || successCriteria == "" {
 		return "", fmt.Errorf("success_criteria is required")
+	}
+
+	// Extract preferred_tier if provided (for tiered LLM allocation)
+	if preferredTier, ok := args["preferred_tier"].(float64); ok && int(preferredTier) >= 1 && int(preferredTier) <= 3 {
+		ctx = context.WithValue(ctx, PreferredTierContextKey, int(preferredTier))
 	}
 
 	// VALIDATION: Check if task exists in tasks.md before delegation

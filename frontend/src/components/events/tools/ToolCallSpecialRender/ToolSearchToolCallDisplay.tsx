@@ -81,13 +81,13 @@ export const ToolSearchToolCallDisplay: React.FC<ToolSearchToolCallDisplayProps>
     const toolNames = (parsedArgs.tool_names as string[]) || (parsedArgs.tool_name ? [parsedArgs.tool_name as string] : [])
 
     return (
-      <div className="bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-800 rounded p-2">
+      <div className="bg-purple-50 dark:bg-violet-900/20 border border-purple-200 dark:border-violet-800 rounded p-2">
         <div className="flex items-center justify-between gap-3">
            <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-violet-700 dark:text-violet-300 flex items-center">
+              <div className="text-sm font-medium text-purple-700 dark:text-violet-300 flex items-center">
                 ➕ Add Tool{parallelBadge}{' '}
-                <span className="text-xs font-normal text-violet-600 dark:text-violet-400">
+                <span className="text-xs font-normal text-purple-600 dark:text-violet-400">
                   {event.turn && `• Turn: ${event.turn}`}
                 </span>
               </div>
@@ -95,13 +95,13 @@ export const ToolSearchToolCallDisplay: React.FC<ToolSearchToolCallDisplayProps>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             {event.timestamp && (
-              <div className="text-xs text-violet-600 dark:text-violet-400">
+              <div className="text-xs text-purple-600 dark:text-violet-400">
                 {new Date(event.timestamp).toLocaleTimeString()}
               </div>
             )}
             <button
               onClick={toggle}
-              className="p-0.5 hover:bg-violet-200 dark:hover:bg-violet-800 rounded text-violet-700 dark:text-violet-300 transition-colors"
+              className="p-0.5 hover:bg-purple-200 dark:hover:bg-violet-800 rounded text-purple-700 dark:text-violet-300 transition-colors"
               title={isExpanded ? "Collapse arguments (Alt+Click for all)" : "Expand arguments (Alt+Click for all)"}
             >
               {isExpanded ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
@@ -112,7 +112,7 @@ export const ToolSearchToolCallDisplay: React.FC<ToolSearchToolCallDisplayProps>
         {isExpanded && (
           <div className="mt-2">
              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-                <div className="text-xs font-medium text-violet-700 dark:text-violet-300 mb-1">
+                <div className="text-xs font-medium text-purple-700 dark:text-violet-300 mb-1">
                    Adding {toolNames.length} tool{toolNames.length !== 1 ? 's' : ''}:
                 </div>
                 <div className="flex flex-wrap gap-1">

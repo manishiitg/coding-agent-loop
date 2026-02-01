@@ -205,6 +205,17 @@ type PresetLLMConfig struct {
 	UseKnowledgebase          *bool `json:"use_knowledgebase,omitempty"`           // nil/true = enabled (default), false = disabled - controls knowledgebase folder creation and prompt references
 	EnableContextSummarization *bool `json:"enable_context_summarization,omitempty"` // nil/true = enabled (default), false = disabled
 	EnableContextEditing       *bool `json:"enable_context_editing,omitempty"`       // nil/true = enabled (default), false = disabled
+
+	// Tiered LLM allocation mode
+	LLMAllocationMode string              `json:"llm_allocation_mode,omitempty"` // "manual" (default) or "tiered"
+	TieredConfig      *TieredLLMConfig    `json:"tiered_config,omitempty"`
+}
+
+// TieredLLMConfig represents the 3-tier LLM configuration for tiered allocation mode
+type TieredLLMConfig struct {
+	Tier1 *AgentLLMConfig `json:"tier_1"` // High reasoning
+	Tier2 *AgentLLMConfig `json:"tier_2"` // Medium reasoning
+	Tier3 *AgentLLMConfig `json:"tier_3"` // Low reasoning
 }
 
 // AgentLLMConfig represents LLM configuration for a specific agent type
@@ -301,6 +312,37 @@ type CreatePresetQueryRequest struct {
 // validatePresetLLMConfig validates a PresetLLMConfig, accepting either legacy Provider+ModelID
 // or at least one non-nil AgentLLMConfig with valid provider and model_id
 func validatePresetLLMConfig(config *PresetLLMConfig) error {
+	// Tiered mode validation: validate tier configs instead of agent-specific configs
+	if config.LLMAllocationMode == "tiered" {
+		if config.TieredConfig == nil {
+			return fmt.Errorf("tiered_config is required when llm_allocation_mode is 'tiered'")
+		}
+		tierConfigs := []struct {
+			config *AgentLLMConfig
+			name   string
+		}{
+			{config.TieredConfig.Tier1, "tier_1"},
+			{config.TieredConfig.Tier2, "tier_2"},
+			{config.TieredConfig.Tier3, "tier_3"},
+		}
+		for _, tierConfig := range tierConfigs {
+			if tierConfig.config == nil {
+				return fmt.Errorf("%s is required in tiered_config", tierConfig.name)
+			}
+			if tierConfig.config.ModelID == "" {
+				return fmt.Errorf("model_id is required for %s", tierConfig.name)
+			}
+			if tierConfig.config.Provider == "" {
+				return fmt.Errorf("provider is required for %s", tierConfig.name)
+			}
+			if _, err := llmproviders.ValidateProvider(tierConfig.config.Provider); err != nil {
+				return fmt.Errorf("invalid provider for %s: %w", tierConfig.name, err)
+			}
+		}
+		return nil
+	}
+
+	// Manual mode validation (default)
 	// Check if legacy config is provided
 	hasLegacyConfig := config.Provider != "" && config.ModelID != ""
 

@@ -38,6 +38,7 @@ import { agentApi } from '../../../services/api'
 import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import LLMOverrideModal from '../LLMOverrideModal'
 import BulkStepConfigModal from '../BulkStepConfigModal'
+import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import LearningsPopup from '../LearningsPopup'
 import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import EvaluationPopup from '../EvaluationPopup'
@@ -126,6 +127,17 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // Workspace store for opening folders
   const fetchFiles = useWorkspaceStore(state => state.fetchFiles)
+
+  // Check if tiered LLM mode is active (hides tempLLM override controls)
+  const isTieredMode = useMemo(() => {
+    const presetStore = useGlobalPresetStore.getState()
+    const activePresetId = presetStore.activePresetIds.workflow
+    const activePreset = activePresetId
+      ? presetStore.customPresets.find(p => p.id === activePresetId) ||
+        presetStore.predefinedPresets.find(p => p.id === activePresetId)
+      : null
+    return activePreset?.llmConfig?.llm_allocation_mode === 'tiered'
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Workflow store - use useShallow to prevent unnecessary re-renders
   // Note: runFolders, variablesManifest, stepProgress come from props (passed from WorkflowCanvas)
@@ -2095,8 +2107,22 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
       {/* Right side - View controls */}
       <div className="flex items-center gap-1">
-        {/* LLM Override Button and Banner */}
-        {tempOverrideLLM || tempOverrideLLM2 || tempLearningLLM ? (
+        {/* LLM Override Button and Banner - hidden in tiered mode */}
+        {isTieredMode ? (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed opacity-50">
+                  <Brain className="w-3.5 h-3.5" />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Temp LLM overrides disabled in Tiered Auto mode</p>
+                <p className="text-xs mt-1 text-muted-foreground">LLM selection is automatic based on learning maturity</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : tempOverrideLLM || tempOverrideLLM2 || tempLearningLLM ? (
           // Active override indicator with toggle and clear button
           <TooltipProvider>
             <div className={`flex items-center gap-1 px-2 py-1 bg-secondary border border-border rounded-md shadow-sm ${!tempOverrideLLMEnabled ? 'opacity-60' : ''}`}>

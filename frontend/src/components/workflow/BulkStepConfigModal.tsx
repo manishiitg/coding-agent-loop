@@ -185,8 +185,12 @@ export default function BulkStepConfigModal({
       setSaveSuccess(false);
       setApplyingAction(null);
       setSelectedMaxTurns(100);
+      setTodoTaskOrchestratorTier("");
+      setEnableDynamicTierSelection(false);
     }
   }, [isOpen]);
+
+
 
   // Handle Escape key to close modal
   useEffect(() => {
@@ -352,6 +356,36 @@ export default function BulkStepConfigModal({
       readImageDisabled: totalSteps > 0 && readImageDisabledCount === totalSteps,
     };
   }, [plan, getAllSteps]);
+
+  // Initialize todo task settings from plan when modal opens
+  useEffect(() => {
+    if (isOpen && plan) {
+      const allSteps = getAllSteps();
+      const todoSteps = allSteps.map(s => s.step).filter(s => isTodoTaskStep(s));
+
+      if (todoSteps.length > 0) {
+        // Check dynamic tier selection
+        // If ALL todo tasks have it enabled, set to true. Otherwise false.
+        const allEnabled = todoSteps.every(
+          (s) => s.agent_configs?.enable_dynamic_tier_selection === true
+        );
+        setEnableDynamicTierSelection(allEnabled);
+
+        // Check orchestrator tier
+        // If ALL todo tasks have the same tier, set to that tier. Otherwise empty (Auto/Mixed).
+        const firstTier =
+          todoSteps[0].agent_configs?.todo_task_orchestrator_tier;
+        const allSameTier = todoSteps.every(
+          (s) => s.agent_configs?.todo_task_orchestrator_tier === firstTier
+        );
+        if (allSameTier && firstTier !== undefined) {
+          setTodoTaskOrchestratorTier(firstTier.toString());
+        } else {
+          setTodoTaskOrchestratorTier("");
+        }
+      }
+    }
+  }, [isOpen, plan, getAllSteps]);
 
   // Handle immediate action (disable/enable validation, learning, lock learnings, LLM updates, disable human tools, set max turns, learning detail level, agent mode)
   const handleImmediateAction = async (
@@ -666,6 +700,59 @@ export default function BulkStepConfigModal({
   const allSteps = getAllSteps();
   const stepCount = allSteps.length;
 
+  // Check if any top-level steps are todo_task steps (for tiered mode controls)
+  const hasTodoTaskSteps = useMemo(() => {
+    if (!plan || !plan.steps) return false;
+    return plan.steps.some((step) => isTodoTaskStep(step));
+  }, [plan]);
+
+  // Local state for todo task tiered mode controls
+  const [todoTaskOrchestratorTier, setTodoTaskOrchestratorTier] = useState<string>("");
+  const [enableDynamicTierSelection, setEnableDynamicTierSelection] = useState(false);
+
+  // Handler to apply all todo task settings at once
+  const handleApplyTodoTaskSettings = useCallback(async () => {
+    if (!plan) return;
+
+    setApplyingAction('todo_task_settings');
+    setSaveError(null);
+    setSaveSuccess(false);
+
+    try {
+      const todoTaskStepUpdates: Array<{ stepId: string; updates: Partial<PlanStep> }> = [];
+
+      const allSteps = getAllSteps();
+      allSteps.forEach(({ stepId, step }) => {
+        if (isTodoTaskStep(step)) {
+          const agentConfigs = step.agent_configs || {};
+          const newAgentConfigs = { ...agentConfigs };
+
+          newAgentConfigs.todo_task_orchestrator_tier = todoTaskOrchestratorTier ? parseInt(todoTaskOrchestratorTier) : undefined;
+          newAgentConfigs.enable_dynamic_tier_selection = enableDynamicTierSelection;
+
+          todoTaskStepUpdates.push({
+            stepId: stepId,
+            updates: { agent_configs: newAgentConfigs } as Partial<PlanStep>,
+          });
+        }
+      });
+
+      if (todoTaskStepUpdates.length > 0) {
+        await onBulkUpdate(todoTaskStepUpdates);
+      }
+
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+    } catch (error) {
+      console.error("[BulkStepConfigModal] Error applying todo task settings:", error);
+      setSaveError(
+        error instanceof Error ? error.message : "Failed to update todo task settings"
+      );
+    } finally {
+      setApplyingAction(null);
+    }
+  }, [plan, onBulkUpdate, todoTaskOrchestratorTier, enableDynamicTierSelection, getAllSteps]);
+
   if (!isOpen) return null;
 
   return (
@@ -730,6 +817,93 @@ export default function BulkStepConfigModal({
                 </div>
               </AccordionTrigger>
               <AccordionContent className="px-5 pt-2 pb-6">
+                {presetLLMConfig?.llm_allocation_mode === 'tiered' ? (
+                  <div className="text-sm text-muted-foreground space-y-3">
+                    <div className="flex items-center gap-2 p-3 rounded-lg border border-border bg-muted/30">
+                      <Brain className="w-4 h-4 text-purple-500" />
+                      <span className="font-medium">Tiered Auto Mode Active</span>
+                    </div>
+                    <p>Per-step LLM configuration is disabled in Tiered Auto mode. The system automatically selects the appropriate LLM tier based on learning maturity.</p>
+                    <div className="space-y-1 text-xs">
+                      <div>Execution: Tier 1 → Tier 2 (after first learning)</div>
+                      <div>Learning: Tier 1 → Tier 2 → Tier 3 (progressive)</div>
+                      <div>Validation: Always Tier 3</div>
+                      <div>Phase agents: Always Tier 1</div>
+                    </div>
+                    {/* Todo Task Tiered Settings */}
+                    {hasTodoTaskSteps && (
+                      <div className="mt-4 p-4 rounded-xl border border-border bg-card space-y-4">
+                        <div className="font-semibold text-sm text-foreground">Todo Task Settings</div>
+
+                        {/* Orchestrator Tier Selector */}
+                        <div>
+                          <label className="text-xs font-medium text-foreground">Orchestrator Agent Tier</label>
+                          <p className="text-[10px] text-muted-foreground mb-2">
+                            Which tier to use for the todo task orchestrator agent itself
+                          </p>
+                          <select
+                            className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                            value={todoTaskOrchestratorTier}
+                            onChange={(e) => setTodoTaskOrchestratorTier(e.target.value)}
+                          >
+                            <option value="">Auto (default)</option>
+                            <option value="1">Tier 1 - High Reasoning</option>
+                            <option value="2">Tier 2 - Medium Reasoning</option>
+                            <option value="3">Tier 3 - Low Reasoning</option>
+                          </select>
+                        </div>
+
+                        {/* Dynamic Tier Selection Toggle */}
+                        <div>
+                          <label className="text-xs font-medium text-foreground">Dynamic Tier Selection for Sub-Agents</label>
+                          <p className="text-[10px] text-muted-foreground mb-2">
+                            Allow the orchestrator to choose the reasoning tier when delegating tasks
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={enableDynamicTierSelection}
+                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                                enableDynamicTierSelection ? 'bg-primary' : 'bg-muted-foreground/30'
+                              }`}
+                              onClick={() => setEnableDynamicTierSelection(!enableDynamicTierSelection)}
+                            >
+                              <span
+                                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                                  enableDynamicTierSelection ? 'translate-x-4' : 'translate-x-0.5'
+                                }`}
+                              />
+                            </button>
+                            <span className="text-xs">{enableDynamicTierSelection ? 'Enabled' : 'Disabled'}</span>
+                          </div>
+                        </div>
+
+                        {/* Single Apply Button */}
+                        <div className="pt-2 border-t border-border">
+                          <Button
+                            size="sm"
+                            className="w-full h-8"
+                            disabled={applyingAction !== null}
+                            onClick={handleApplyTodoTaskSettings}
+                          >
+                            {applyingAction === "todo_task_settings" ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                Applying...
+                              </>
+                            ) : (
+                              "Apply Settings to All Todo Tasks"
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    <p className="text-xs text-muted-foreground">To configure per-step LLMs, switch to Fixed Models mode in the preset settings.</p>
+                  </div>
+                ) : (
+                <>
                 <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
                   Configure which LLM models to use for execution, validation, and learning phases across all steps.
                 </p>
@@ -830,6 +1004,8 @@ export default function BulkStepConfigModal({
                     />
                   </div>
                 </div>
+                </>
+                )}
               </AccordionContent>
             </AccordionItem>
 

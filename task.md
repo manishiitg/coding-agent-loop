@@ -52,3 +52,5 @@ i) prompt tempaltes, need to check variables on compile time
 12. support parallel tool call
 
 13. in Chat also lets show in ly stuff inside Chat/ folder and also when type using @ limit to search inside by default 
+
+14. for new workflows we should not have all workspace tools selected

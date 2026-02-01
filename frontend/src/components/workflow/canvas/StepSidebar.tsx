@@ -1721,6 +1721,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 presetServers={presetServers}
                 presetLLMConfig={presetLLMConfig}
                 presetUseCodeExecutionMode={presetUseCodeExecutionMode}
+                isTodoTaskStep={node.type === 'todo_task'}
                 isExpanded={true}
                 onToggleExpanded={() => {}}
                 planSteps={plan?.steps || []}
@@ -1765,6 +1766,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 presetServers={presetServers}
                 presetLLMConfig={presetLLMConfig}
                 presetUseCodeExecutionMode={presetUseCodeExecutionMode}
+                isTodoTaskStep={node.type === 'todo_task'}
                 isExpanded={true}
                 onToggleExpanded={() => {}}
                 planSteps={plan?.steps || []}
@@ -1828,6 +1830,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 presetServers={presetServers}
                 presetLLMConfig={presetLLMConfig}
                 presetUseCodeExecutionMode={presetUseCodeExecutionMode}
+                isTodoTaskStep={node.type === 'todo_task'}
                 isExpanded={true}
                 onToggleExpanded={() => {}}
                 planSteps={plan?.steps || []}
@@ -1915,6 +1918,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 presetServers={presetServers}
                 presetLLMConfig={presetLLMConfig}
                 presetUseCodeExecutionMode={presetUseCodeExecutionMode}
+                isTodoTaskStep={node.type === 'todo_task'}
                 isExpanded={true}
                 onToggleExpanded={() => {}}
                 planSteps={plan?.steps || []}
@@ -1946,6 +1950,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 presetServers={presetServers}
                 presetLLMConfig={presetLLMConfig}
                 presetUseCodeExecutionMode={presetUseCodeExecutionMode}
+                isTodoTaskStep={node.type === 'todo_task'}
                 isExpanded={true}
                 onToggleExpanded={() => {}}
                 planSteps={plan?.steps || []}

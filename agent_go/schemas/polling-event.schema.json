@@ -4771,6 +4771,12 @@
         },
         "total_groups": {
           "type": "integer"
+        },
+        "used_tier": {
+          "type": "integer"
+        },
+        "used_tier_label": {
+          "type": "string"
         }
       },
       "additionalProperties": false,

@@ -95,6 +95,9 @@ type StepProgressUpdatedEvent struct {
 	GroupId     string `json:"group_id,omitempty"`     // Current group ID being executed
 	GroupIndex  int    `json:"group_index"`            // 0-based index of current group
 	TotalGroups int    `json:"total_groups"`           // Total number of groups in batch
+	// Tiered LLM allocation info (only populated in tiered mode)
+	UsedTier      int    `json:"used_tier,omitempty"`       // Tier number (1, 2, or 3)
+	UsedTierLabel string `json:"used_tier_label,omitempty"` // Human-readable tier label ("High", "Medium", "Low")
 }
 
 func (e *StepProgressUpdatedEvent) GetEventType() baseevents.EventType {

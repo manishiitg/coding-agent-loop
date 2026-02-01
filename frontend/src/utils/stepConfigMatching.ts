@@ -34,6 +34,8 @@ export interface AgentConfigs {
   prerequisite_rules?: PrerequisiteRule[];
   keep_learning_full?: boolean;
   disable_temp_llm?: boolean;
+  todo_task_orchestrator_tier?: number;       // 1/2/3 - tier for orchestrator agent in tiered mode
+  enable_dynamic_tier_selection?: boolean;    // allow orchestrator to choose tier for sub-agents
 }
 
 // PrerequisiteRule represents a single prerequisite rule with one step dependency and one description

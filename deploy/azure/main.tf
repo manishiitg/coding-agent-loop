@@ -116,11 +116,15 @@ resource "null_resource" "workspace_default_folders" {
   }
 }
 
-# --------------------------------------------------------------------------- 
+# ---------------------------------------------------------------------------
 # Database (PostgreSQL Flexible Server)
-# --------------------------------------------------------------------------- 
+# ---------------------------------------------------------------------------
+resource "random_id" "db_suffix" {
+  byte_length = 4
+}
+
 resource "azurerm_postgresql_flexible_server" "db" {
-  name                   = "${var.project_name}-db-${formatdate("YYYYMMDDhhmm", timestamp())}"
+  name                   = "${var.project_name}-db-${random_id.db_suffix.hex}"
   resource_group_name    = data.azurerm_resource_group.rg.name
   location               = data.azurerm_resource_group.rg.location
   version                = "16"
@@ -133,7 +137,6 @@ resource "azurerm_postgresql_flexible_server" "db" {
   # Security note: Access is restricted by firewall rules below.
   public_network_access_enabled = true
 }
-
 resource "azurerm_postgresql_flexible_server_database" "mcpagent" {
   name      = "mcpagent"
   server_id = azurerm_postgresql_flexible_server.db.id

@@ -27,3 +27,8 @@ output "frontend_fqdn" {
   value       = "https://${azurerm_container_app.frontend.ingress[0].fqdn}"
   description = "Public URL of the Frontend (Container App with nginx)"
 }
+
+output "postgres_fqdn" {
+  value       = azurerm_postgresql_flexible_server.db.fqdn
+  description = "FQDN of the Azure PostgreSQL Flexible Server"
+}

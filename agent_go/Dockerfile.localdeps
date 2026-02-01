@@ -38,7 +38,8 @@ COPY --from=builder /build/mcp-agent-builder-go/agent_go/mcp-agent .
 COPY --from=builder /build/mcp-agent-builder-go/agent_go/configs ./configs
 COPY --from=builder /build/mcp-agent-builder-go/agent_go/pkg/database/migrations ./pkg/database/migrations
 
-RUN mkdir -p reports logs /home/appuser/.config/mcpagent/tokens && \
+# Create necessary directories and set permissions
+RUN mkdir -p reports logs cache generated tool_output_folder /home/appuser/.config/mcpagent/tokens && \
     chown -R appuser:appgroup /app /home/appuser
 
 USER appuser

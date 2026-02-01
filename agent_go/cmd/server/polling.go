@@ -10,6 +10,7 @@ import (
 
 	"mcp-agent-builder-go/agent_go/internal/events"
 	"mcp-agent-builder-go/agent_go/pkg/database"
+
 	pkgevents "github.com/manishiitg/mcpagent/events"
 
 	"github.com/gorilla/mux"
@@ -39,8 +40,8 @@ type GetEventsResponse struct {
 	Events             []events.Event `json:"events"`
 	HasMore            bool           `json:"has_more"`
 	SessionID          string         `json:"session_id"`
-	SessionStatus      string         `json:"session_status,omitempty"`       // Session status: "running", "completed", "error", "stopped", "inactive"
-	LastProcessedIndex int            `json:"last_processed_index"`           // Last index processed in unfiltered array (for correct sinceIndex tracking)
+	SessionStatus      string         `json:"session_status,omitempty"` // Session status: "running", "completed", "error", "stopped", "inactive"
+	LastProcessedIndex int            `json:"last_processed_index"`     // Last index processed in unfiltered array (for correct sinceIndex tracking)
 }
 
 // --- POLLING API HANDLERS ---
@@ -69,8 +70,8 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	if eventMode == "" {
 		eventMode = "basic" // Default to basic mode
 	}
-	if eventMode != "basic" && eventMode != "advanced" && eventMode != "tiny" {
-		http.Error(w, "event_mode must be 'basic', 'advanced', or 'tiny'", http.StatusBadRequest)
+	if eventMode != "basic" && eventMode != "advanced" && eventMode != "tiny" && eventMode != "micro" {
+		http.Error(w, "event_mode must be 'basic', 'advanced', 'tiny', or 'micro'", http.StatusBadRequest)
 		return
 	}
 

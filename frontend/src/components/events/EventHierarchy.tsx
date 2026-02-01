@@ -67,7 +67,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   // Get active tab for sessionId and eventMode
   const activeTab = useChatStore(state => state.getActiveTab())
   const sessionId = activeTab?.sessionId
-  const eventMode: 'basic' | 'advanced' | 'tiny' = (activeTab?.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny'
+  const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (activeTab?.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
   
   // Merge loaded older events with current events
   const displayEvents = useMemo(() => {
@@ -81,8 +81,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       return true;
     });
 
-    // Filter out "Total Token Usage" and "Context Offloading" events in tiny mode
-    if (eventMode === 'tiny') {
+    // Filter out "Total Token Usage" and "Context Offloading" events in tiny/micro mode
+    if (eventMode === 'tiny' || eventMode === 'micro') {
       allEvents = allEvents.filter(event => {
         if (event.type === 'token_usage') {
           // Check if it's a total token usage event

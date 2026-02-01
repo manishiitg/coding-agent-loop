@@ -54,26 +54,6 @@ services:
   #     retries: 3
   #     start_period: 40s
 
-  # MCP Agent (main server)
-  agent:
-    build:
-      context: ./agent_go
-      dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
-    env_file:
-      - ./agent_go/.env
-    environment:
-      - PORT=8000
-      # Workspace API URL when using docker-compose (service name)
-      - WORKSPACE_API_URL=http://workspace-api:8080
-      - WORKSPACE_ENABLE_SEMANTIC_SEARCH=${WORKSPACE_ENABLE_SEMANTIC_SEARCH:-false}
-      - WORKSPACE_ENABLE_GITHUB_SYNC=${WORKSPACE_ENABLE_GITHUB_SYNC:-false}
-    depends_on:
-      workspace-api:
-        condition: service_healthy
-    restart: unless-stopped
-
   # Workspace File Management API
   workspace-api:
     build:
@@ -150,15 +130,12 @@ services:
     depends_on:
       workspace-api:
         condition: service_healthy
-      agent:
-        condition: service_started
     restart: unless-stopped
 
 volumes:
   ollama_data:
   # neo4j_data: # Removed - using cloud AuraDB instead
   # neo4j_logs: # Removed - using cloud AuraDB instead
-  agent_logs:
   workspace-docs:
   workspace_data:
   qdrant_data:

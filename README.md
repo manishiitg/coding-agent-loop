@@ -216,9 +216,9 @@ git commit -m "Test commit"
 - **Tool Events**: `tool_call_start`, `tool_call_end`, `tool_call_error`
 - **Completion Events**: `conversation_end`, `agent_end`
 
-## 🐳 **Docker Support**
+## 🐳 Docker Support
 
-### **Full Stack Deployment**
+### Full Stack Deployment
 ```bash
 # Start all services
 docker-compose up -d
@@ -230,7 +230,7 @@ docker-compose up -d
 # - Qdrant Vector DB: http://localhost:6333
 ```
 
-### **Individual Services**
+### Individual Services
 ```bash
 # Build Go agent
 docker build -t mcp-agent ./agent_go
@@ -242,7 +242,26 @@ docker build -t mcp-frontend ./frontend
 docker build -t mcp-planner ./planner
 ```
 
-## 📁 **Project Structure**
+## ☁️ Cloud Deployment (Azure)
+
+The project includes a production-grade deployment stack for Microsoft Azure using **Terraform** and **Azure Container Apps**.
+
+### **Infrastructure Features**
+- **Managed Database**: Uses **Azure Database for PostgreSQL Flexible Server** for persistent, reliable chat history (replacing SQLite).
+- **Scalable Compute**: Deploys as serverless **Azure Container Apps** for the Agent, Workspace API, and Frontend.
+- **Persistent Storage**: Azure File Shares for shared configuration and OAuth tokens.
+- **Observability**: Integrated with Azure Log Analytics and Application Insights.
+
+### **Optimized Deployment Workflow**
+A custom, high-performance deployment script (`deploy/azure/deploy.sh`) provides:
+- **Clean Context Builds**: Automatically creates a lightweight build context by excluding local data (like `workspace-docs/` or `node_modules`), reducing upload sizes from ~800MB to **<100KB**.
+- **Parallel Execution**: Builds all three service images simultaneously on Azure Container Registry (native amd64).
+- **Zero-Downtime Updates**: Uses unique timestamped tags and graceful revision swapping for seamless rollouts.
+
+See the **[Azure Deployment Guide](deploy/azure/README.md)** for detailed setup instructions.
+
+## 📁 Project Structure
+
 
 ```
 mcp-agent-builder-go/

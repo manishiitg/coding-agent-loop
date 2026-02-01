@@ -1,6 +1,5 @@
 import React from 'react'
 import type { ToolCallEndEvent } from '../../../../generated/events'
-import { ToolMarkdownRenderer } from '../../../ui/MarkdownRenderer'
 import { CircularProgress, type ContextOnlyTokenUsage } from '../../../ui/CircularProgress'
 import { TooltipProvider } from '../../../ui/tooltip'
 import { useExpandable } from '../../useExpandable'

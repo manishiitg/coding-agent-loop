@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronDown, Sun, Moon, Monitor } from 'lucide-react'
+import { ChevronDown, Sun, Moon } from 'lucide-react'
 import { useTheme } from '../hooks/useTheme'
 
 const themeOptions = [

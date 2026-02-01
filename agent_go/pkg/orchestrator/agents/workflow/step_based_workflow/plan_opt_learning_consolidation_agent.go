@@ -28,10 +28,10 @@ Audit and merge patterns within 'learnings/step-{X}/' folders.
 - **NEVER** merge branch folders with parent folders.
 - **NEVER** create 'general_patterns_learning.md' or 'consolidated_patterns_learning.md'. Merge into **EXISTING** step-specific files.
 
-- **Regular/Decision/Routing**: `learnings/step-{X}/`
-- **Branch Steps**: `learnings/step-{X}-{true/false}-{Y}/`
-- **Orchestration Sub-Agents**: `learnings/step-{X}-sub-agent-{index}/`
-- **Todo Task Sub-Agents**: `learnings/step-{X}-sub-{routeID}/`
+- **Regular/Decision/Routing**: 'learnings/step-{X}/'
+- **Branch Steps**: 'learnings/step-{X}-{true/false}-{Y}/'
+- **Orchestration Sub-Agents**: 'learnings/step-{X}-sub-agent-{index}/'
+- **Todo Task Sub-Agents**: 'learnings/step-{X}-sub-{routeID}/'
 
 ## 🔍 CONSOLIDATION CRITERIA
 1. **Duplicates**: Same tool calls/logic WITHIN the folder.

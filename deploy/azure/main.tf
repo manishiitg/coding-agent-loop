@@ -132,6 +132,7 @@ resource "azurerm_postgresql_flexible_server" "db" {
   administrator_password = var.postgres_admin_password
   storage_mb             = 32768
   sku_name               = "B_Standard_B1ms" # Burstable, 1 vCore, 2GB RAM
+  zone                   = "3"
   
   # Allow public access (required for Container Apps without VNET integration)
   # Security note: Access is restricted by firewall rules below.

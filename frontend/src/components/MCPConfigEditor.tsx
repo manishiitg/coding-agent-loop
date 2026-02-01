@@ -9,7 +9,6 @@ interface MCPConfigEditorProps {
 
 export const MCPConfigEditor: React.FC<MCPConfigEditorProps> = ({
   onConfigChange,
-  onClose
 }) => {
   const [configJson, setConfigJson] = useState<string>('');
   const [originalJson, setOriginalJson] = useState<string>('');
@@ -69,6 +68,19 @@ export const MCPConfigEditor: React.FC<MCPConfigEditorProps> = ({
       try {
         const parsed = JSON.parse(configJson);
         setJsonError(null);
+        
+        // Helper to normalize "official" format { "servers": { ... } } to { "mcpServers": { ... } }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if ((parsed as any).servers && !parsed.mcpServers) {
+           // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          parsed.mcpServers = (parsed as any).servers;
+           // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          delete (parsed as any).servers;
+          
+          // Update editor content with normalized JSON
+          const normalizedJson = JSON.stringify(parsed, null, 2);
+          setConfigJson(normalizedJson);
+        }
         
         const result = await mcpConfigApi.saveConfig(parsed);
         setSuccess(`Config saved successfully! ${result.servers} servers configured.`);
@@ -184,14 +196,6 @@ export const MCPConfigEditor: React.FC<MCPConfigEditorProps> = ({
             <RefreshCw className="h-4 w-4" />
             Reload
           </button>
-          {onClose && (
-            <button
-              onClick={onClose}
-              className="px-3 py-2 text-sm bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
-            >
-              Close
-            </button>
-          )}
         </div>
       </div>
 
@@ -290,7 +294,15 @@ export const MCPConfigEditor: React.FC<MCPConfigEditorProps> = ({
           <div className="flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
             <div className="text-sm text-blue-700 dark:text-blue-300">
-              <strong>Base servers</strong> (citymall-*, context7, etc.) cannot be removed - they're always active
+              {status?.base_server_names && status.base_server_names.length > 0 ? (
+                <>
+                  <strong>Base servers</strong> defined in the core configuration ({status.base_server_names.join(', ')}) cannot be removed - they're always active. You can override them by adding a server with the same name.
+                </>
+              ) : (
+                <>
+                  <strong>Base servers</strong> defined in the core configuration cannot be removed - they're always active. You can override them by adding a server with the same name.
+                </>
+              )}
             </div>
           </div>
         </div>

@@ -184,6 +184,26 @@ Then open http://localhost:5173 (frontend), http://localhost:8000 (agent), http:
 | `agent_env` | Optional map of env vars for agent |
 | `workspace_api_env` | Optional map of env vars for workspace-api |
 
+## Known Limitation: Chat History (SQLite on Azure Files)
+
+The agent uses SQLite for chat history. Azure Files (SMB) does not support the POSIX file locking that SQLite requires, so the agent falls back to `/tmp/chat_history.db`. This means **chat history is lost on every container restart or redeployment**.
+
+### Planned fix: Azure Database for PostgreSQL
+
+The Go agent already supports PostgreSQL via `--db-type postgres` and `DATABASE_URL`. To enable persistent chat history, add an Azure Database for PostgreSQL Flexible Server. This requires the `Microsoft.DBforPostgreSQL` resource provider to be registered on the subscription.
+
+**Steps** (requires subscription Owner or Contributor):
+
+1. Register the provider:
+   ```bash
+   az provider register --namespace Microsoft.DBforPostgreSQL
+   ```
+2. Add the PostgreSQL Terraform resources (server, firewall rule, database) to `main.tf`
+3. Wire the agent container to use `DATABASE_URL` and `DB_TYPE=postgres` instead of `DB_PATH`
+4. Run `terraform apply`
+
+Until then, the agent-data Azure Files volume is still mounted for other data (OAuth tokens, configs) but SQLite writes go to the ephemeral `/tmp` directory.
+
 ## Workspace API: empty workspace-docs on deploy
 
 The **workspace-api** image creates an empty `workspace-docs` tree: `Downloads/`, `Chats/`, and `Workspace/` under `/app/workspace-docs`. Rebuild and push the workspace image after changing `workspace/Dockerfile` for this to apply.

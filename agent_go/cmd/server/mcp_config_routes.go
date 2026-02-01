@@ -159,19 +159,8 @@ func (api *StreamingAPI) handleSaveMCPConfig(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Clear cache to force fresh discovery
-	cacheManager := mcpcache.GetCacheManager(api.logger)
-	if err := cacheManager.Clear(); err != nil {
-		api.logger.Warn(fmt.Sprintf("Failed to clear cache: %v", err))
-	}
-
-	// Trigger background discovery
+	// Trigger background discovery (smart refresh - will only discover modified/new servers)
 	go api.triggerMCPDiscovery()
-
-	// Clear in-memory tool status to force refresh
-	api.toolStatusMux.Lock()
-	api.toolStatus = make(map[string]ToolStatus)
-	api.toolStatusMux.Unlock()
 
 	api.logger.Info(fmt.Sprintf("✅ User MCP config saved successfully with %d user additions", len(userAdditions.MCPServers)))
 
@@ -384,10 +373,18 @@ func (api *StreamingAPI) handleGetMCPConfigStatus(w http.ResponseWriter, r *http
 	lastDiscovery := api.lastDiscovery
 	api.discoveryMux.RUnlock()
 
+	// Collect base server names
+	baseServerNames := make([]string, 0, len(api.mcpConfig.MCPServers))
+	for name := range api.mcpConfig.MCPServers {
+		baseServerNames = append(baseServerNames, name)
+	}
+	sort.Strings(baseServerNames)
+
 	status := map[string]interface{}{
 		"config_path":        api.mcpConfigPath,
 		"user_config_path":   userConfigPath,
 		"base_servers":       len(api.mcpConfig.MCPServers),
+		"base_server_names":  baseServerNames,
 		"user_servers":       len(userConfig.MCPServers),
 		"total_servers":      len(api.mcpConfig.MCPServers) + len(userConfig.MCPServers),
 		"discovered_servers": discoveredCount,

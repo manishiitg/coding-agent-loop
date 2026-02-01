@@ -79,15 +79,19 @@ func validateUpdateField(field string) bool {
 
 // NewSQLiteDB creates a new SQLite database connection
 func NewSQLiteDB(dbPath string) (*SQLiteDB, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	// Use connection string options for compatibility with network storage (Azure Files, SMB/CIFS).
+	// _journal_mode=WAL: better concurrency and works on network shares
+	// _locking_mode=EXCLUSIVE: avoids POSIX file locking which doesn't work on SMB
+	// _busy_timeout=5000: wait up to 5s if DB is busy
+	// _foreign_keys=1: enable foreign key constraints
+	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_locking_mode=EXCLUSIVE&_busy_timeout=5000&_foreign_keys=1", dbPath)
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Enable foreign keys
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
-	}
+	// Limit to single connection to avoid lock contention on network storage
+	db.SetMaxOpenConns(1)
 
 	// Test the connection
 	if err := db.Ping(); err != nil {

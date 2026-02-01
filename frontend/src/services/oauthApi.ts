@@ -5,12 +5,23 @@
 
 export interface OAuthStartRequest {
   server_name: string;
+  client_id?: string;
 }
 
 export interface OAuthStartResponse {
   server_name: string;
   auth_url: string;
   state: string;
+  message: string;
+}
+
+export interface OAuthDiscoveryResponse {
+  status: 'needs_client_id';
+  server_name: string;
+  auth_url?: string;
+  token_url?: string;
+  resource?: string;
+  scopes_supported?: string[];
   message: string;
 }
 
@@ -34,13 +45,18 @@ export class OAuthApi {
 
   /**
    * Start OAuth flow for a server
-   * This will trigger the backend to open a browser window for authentication
+   * Returns OAuthDiscoveryResponse if server needs a client_id, otherwise OAuthStartResponse
    */
-  async startOAuthFlow(serverName: string): Promise<OAuthStartResponse> {
+  async startOAuthFlow(serverName: string, clientId?: string): Promise<OAuthStartResponse | OAuthDiscoveryResponse> {
+    const body: OAuthStartRequest = { server_name: serverName };
+    if (clientId) {
+      body.client_id = clientId;
+    }
+
     const response = await fetch(`${this.baseUrl}/api/oauth/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ server_name: serverName }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {

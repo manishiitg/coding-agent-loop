@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { MessageCircle, Workflow, Settings, ExternalLink, Trash2, Copy, Lightbulb } from 'lucide-react'
+import { MessageCircle, Workflow, Settings, Trash2, Copy, Lightbulb } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -7,7 +7,6 @@ import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import PresetModal from './PresetModal'
 import { useMCPStore } from '../stores/useMCPStore'
 import { useAppStore } from '../stores/useAppStore'
-import { APISamplesDialog } from './APISamplesDialog'
 
 const getModeIcon = (category: string) => {
   switch (category) {
@@ -75,7 +74,6 @@ export const ModePresetBar: React.FC = () => {
   const [showModeSwitch, setShowModeSwitch] = useState(false)
   const [showPresetDropdown, setShowPresetDropdown] = useState(false)
   const [showPresetModal, setShowPresetModal] = useState(false)
-  const [showAPISamples, setShowAPISamples] = useState(false)
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null)
 
   // Preset click handler - now uses the global store
@@ -502,17 +500,7 @@ export const ModePresetBar: React.FC = () => {
           
           {/* Right: Event Controls */}
           <div className="flex items-center gap-3">
-            {/* External Connection Button - Show when there's an active preset */}
-            {activePreset && (
-              <button
-                onClick={() => setShowAPISamples(true)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600"
-                title="View External Connection Examples"
-              >
-                <ExternalLink className="w-3 h-3" />
-                <span>External Connection</span>
-              </button>
-            )}
+            
           </div>
         </div>
       </div>
@@ -526,12 +514,6 @@ export const ModePresetBar: React.FC = () => {
         availableServers={availableServers}
         hideAgentModeSelection={!!editingPreset}
         fixedAgentMode={editingPreset?.agentMode || (selectedModeCategory ? (getAgentModeFromCategory(selectedModeCategory) as 'simple' | 'workflow') : undefined)}
-      />
-      
-      {/* API Samples Dialog */}
-      <APISamplesDialog
-        isOpen={showAPISamples}
-        onClose={() => setShowAPISamples(false)}
       />
     </>
   )

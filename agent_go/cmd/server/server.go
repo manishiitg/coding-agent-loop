@@ -879,7 +879,20 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 
 	if err != nil {
-		log.Fatalf("Failed to initialize chat history database: %v", err)
+		log.Printf("⚠️  Failed to initialize chat history database: %v", err)
+		if dbType == "sqlite" {
+			// SQLite may fail on network storage (Azure Files/SMB) which doesn't support
+			// POSIX file locking. Fall back to local ephemeral storage.
+			fallbackPath := "/tmp/chat_history.db"
+			log.Printf("⚠️  Retrying with local ephemeral storage: %s", fallbackPath)
+			chatDB, err = database.NewSQLiteDB(fallbackPath)
+			if err != nil {
+				log.Fatalf("Failed to initialize chat history database after fallback: %v", err)
+			}
+			connInfo = fmt.Sprintf("SQLite (%s) [fallback from network storage]", fallbackPath)
+		} else {
+			log.Fatalf("Failed to initialize chat history database: %v", err)
+		}
 	}
 	defer chatDB.Close()
 

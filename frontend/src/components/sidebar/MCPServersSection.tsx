@@ -349,11 +349,15 @@ export default function MCPServersSection() {
       {/* MCP Config Popup Modal */}
       {showConfigEditor && (
         <MCPConfigPopup
+          initialView="json"
           onConfigChange={() => {
             // Refresh tools after config change
             refreshTools();
           }}
-          onClose={() => setShowConfigEditor(false)}
+          onClose={() => {
+            setShowConfigEditor(false)
+            setShowMCPDetails(true)
+          }}
         />
       )}
 

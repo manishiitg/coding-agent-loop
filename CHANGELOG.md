@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased] - 2026-01-31
+
+### Fixed
+- **Auto-Unlock Loop**: Fixed a critical bug where Orchestration and Todo Task sub-agents triggered false-positive plan modifications due to dynamic runtime instructions. Implemented "Clone & Modify" pattern to preserve original plan integrity.
+- **Stale UI Locks**: Fixed issue where UI showed steps as "Locked" after a learning reset because auto-lock metadata was not being cleared.
+- **Todo Task Instructions**: Fixed broken instruction passing to Todo Task sub-agents by embedding instructions directly in step descriptions.
+
 ## [v0.1.0] - 2026-01-25
 
 ### Features

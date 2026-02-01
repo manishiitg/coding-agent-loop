@@ -153,7 +153,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	metadata.LastExecutionLLM = executionLLM
 	metadata.LastLearningLLM = learningLLM
 	if step != nil {
-		metadata.StepHash = hcpo.CalculateStepHash(step)
+		// Fix: Use original step from plan to ensure hash stability
+		// Otherwise, dynamic orchestrator overrides cause hash drift and infinite auto-unlock loops
+		var stepToHash PlanStepInterface = step
+		if hcpo.approvedPlan != nil {
+			if originalStep := hcpo.findStepInPlan(hcpo.approvedPlan.Steps, step.GetID()); originalStep != nil {
+				stepToHash = originalStep
+			}
+		}
+		metadata.StepHash = hcpo.CalculateStepHash(stepToHash)
 	}
 
 	if hasNewLearning {
@@ -402,6 +410,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateUnlockMetadata(
 	metadata.AutoUnlockedAt = time.Now().Format(time.RFC3339)
 	metadata.AutoUnlockReason = unlockReason
 	metadata.AutoUnlockIteration = metadata.TotalIterations
+
+	// Clear auto-lock info to prevent UI from showing "Locked (Auto)" state
+	// The UI checks if AutoLockedAt is set to determine if it's auto-locked
+	metadata.AutoLockedAt = ""
+	metadata.AutoLockReason = ""
+	metadata.AutoLockIteration = 0
 
 	// Write updated metadata
 	metadataJSON, err := json.MarshalIndent(metadata, "", "  ")

@@ -85,7 +85,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) CheckAndResetStepHash(
 		return nil
 	}
 
-	currentHash := hcpo.CalculateStepHash(step)
+	// Try to find the original step in the approved plan to use for hashing.
+	// This avoids hash mismatches due to dynamic orchestrator instructions being injected into the runtime step object.
+	var originalStep PlanStepInterface
+	if hcpo.approvedPlan != nil {
+		originalStep = hcpo.findStepInPlan(hcpo.approvedPlan.Steps, stepID)
+	}
+
+	// Use original step if found, otherwise fallback to the current step (which might have runtime overrides)
+	stepToHash := step
+	if originalStep != nil {
+		stepToHash = originalStep
+	}
+
+	currentHash := hcpo.CalculateStepHash(stepToHash)
 
 	// Read existing metadata
 	metadata, err := hcpo.readStepLearningMetadata(ctx, stepID, stepPath)
@@ -103,8 +116,108 @@ func (hcpo *StepBasedWorkflowOrchestrator) CheckAndResetStepHash(
 	// Hash mismatch! Step definition changed.
 	hcpo.GetLogger().Info(fmt.Sprintf("🔄 Step definition changed for %s (Hash mismatch) - Triggering learning reset", stepID))
 
+	// LOG DEBUG DETAILS FOR HASH MISMATCH
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [HASH DEBUG] Stored Hash: %s", metadata.StepHash))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [HASH DEBUG] New Hash:    %s", currentHash))
+	if originalStep != nil {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [HASH DEBUG] Using original plan definition for hash to ignore dynamic orchestrator overrides"))
+	}
+
+	// Log components used for hash calculation
+	agentConfigs := getAgentConfigs(stepToHash)
+	learningDetailLevel := "exact"
+	if agentConfigs != nil && agentConfigs.LearningDetailLevel != "" {
+		learningDetailLevel = agentConfigs.LearningDetailLevel
+	}
+
+	deps := stepToHash.GetContextDependencies()
+	sortedDeps := make([]string, len(deps))
+	copy(sortedDeps, deps)
+	sort.Strings(sortedDeps)
+
+	desc := stepToHash.GetDescription()
+	if len(desc) > 50 {
+		desc = desc[:50] + "..."
+	}
+
+	crit := stepToHash.GetSuccessCriteria()
+	if len(crit) > 50 {
+		crit = crit[:50] + "..."
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [HASH DEBUG] Title: '%s'", stepToHash.GetTitle()))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [HASH DEBUG] Description: '%s' (Length: %d)", desc, len(stepToHash.GetDescription())))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [HASH DEBUG] Success Criteria: '%s' (Length: %d)", crit, len(stepToHash.GetSuccessCriteria())))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [HASH DEBUG] Dependencies: %v", sortedDeps))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [HASH DEBUG] Learning Detail Level: '%s'", learningDetailLevel))
+
 	// Reset counters and unlock learnings
 	return hcpo.ResetLearningMetadata(ctx, stepID, stepIndex, stepPath, currentHash, "plan_changed")
+}
+
+// findStepInPlan recursively finds a step by ID in the plan structure
+func (hcpo *StepBasedWorkflowOrchestrator) findStepInPlan(steps []PlanStepInterface, targetID string) PlanStepInterface {
+	for _, step := range steps {
+		if step.GetID() == targetID {
+			return step
+		}
+
+		// Handle nested steps
+		switch s := step.(type) {
+		case *ConditionalPlanStep:
+			if found := hcpo.findStepInPlan(s.IfTrueSteps, targetID); found != nil {
+				return found
+			}
+			if found := hcpo.findStepInPlan(s.IfFalseSteps, targetID); found != nil {
+				return found
+			}
+		case *OrchestrationPlanStep:
+			// Check the inner orchestration step
+			if s.OrchestrationStep != nil {
+				if s.OrchestrationStep.GetID() == targetID {
+					return s.OrchestrationStep
+				}
+				// Recurse into inner step if it has children
+				if found := hcpo.findStepInPlan([]PlanStepInterface{s.OrchestrationStep}, targetID); found != nil {
+					return found
+				}
+			}
+			// Check sub-agents in routes
+			for _, route := range s.OrchestrationRoutes {
+				if route.SubAgentStep != nil {
+					if route.SubAgentStep.GetID() == targetID {
+						return route.SubAgentStep
+					}
+					if found := hcpo.findStepInPlan([]PlanStepInterface{route.SubAgentStep}, targetID); found != nil {
+						return found
+					}
+				}
+			}
+		case *TodoTaskPlanStep:
+			// Check the inner todo task step
+			if s.TodoTaskStep != nil {
+				if s.TodoTaskStep.GetID() == targetID {
+					return s.TodoTaskStep
+				}
+				// Recurse into inner step if it has children
+				if found := hcpo.findStepInPlan([]PlanStepInterface{s.TodoTaskStep}, targetID); found != nil {
+					return found
+				}
+			}
+			// Check sub-agents in routes
+			for _, route := range s.PredefinedRoutes {
+				if route.SubAgentStep != nil {
+					if route.SubAgentStep.GetID() == targetID {
+						return route.SubAgentStep
+					}
+					if found := hcpo.findStepInPlan([]PlanStepInterface{route.SubAgentStep}, targetID); found != nil {
+						return found
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // ResetLearningMetadata resets all stable run counters and unlocks learnings for a step.
@@ -136,6 +249,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) ResetLearningMetadata(
 	metadata.SuccessfulRunsMedium = 0
 	metadata.SuccessfulRunsComplex = 0
 	metadata.ConsecutiveNoNewLearning = 0 // Also reset legacy counter
+
+	// Clear auto-lock info to prevent UI from showing "Locked (Auto)" state
+	// The UI checks if AutoLockedAt is set to determine if it's auto-locked
+	metadata.AutoLockedAt = ""
+	metadata.AutoLockReason = ""
+	metadata.AutoLockIteration = 0
+
 	metadata.AutoUnlockedAt = time.Now().Format(time.RFC3339)
 	metadata.AutoUnlockReason = unlockReason
 	metadata.AutoUnlockIteration = metadata.TotalIterations

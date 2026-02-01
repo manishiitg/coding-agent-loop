@@ -846,34 +846,45 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 		// Sub-agents don't receive previous steps history - they work independently based on orchestrator instructions
 
 		// Modify sub-agent step with orchestrator-provided instructions, success criteria, and context settings
-		// Update the PlanStepInterface version for execution
+		// CRITICAL: Create a COPY of the step to avoid modifying the original plan in memory
+		// This ensures CheckAndResetStepHash can still compare against the original unmodified plan
+		var stepToExecute PlanStepInterface = subAgentStepPlan
+
 		if regularStep := getRegularPlanStep(subAgentStepPlan); regularStep != nil {
+			// Create a shallow copy of the struct
+			// Strings like Description are value types (headers), so modifying them on the copy is safe
+			// Pointers like AgentConfigs are shared, which is fine as we don't modify them here
+			stepCopy := *regularStep
+
 			if orchestrationResponse.InstructionsToSubAgent != "" {
 				// Append orchestrator instructions to original description (preserve plan context)
-				originalDescription := regularStep.Description
+				originalDescription := stepCopy.Description
 				if originalDescription != "" {
-					regularStep.Description = fmt.Sprintf("%s\n\n## Orchestrator Instructions\n\n%s", originalDescription, orchestrationResponse.InstructionsToSubAgent)
+					stepCopy.Description = fmt.Sprintf("%s\n\n## Orchestrator Instructions\n\n%s", originalDescription, orchestrationResponse.InstructionsToSubAgent)
 				} else {
-					regularStep.Description = orchestrationResponse.InstructionsToSubAgent
+					stepCopy.Description = orchestrationResponse.InstructionsToSubAgent
 				}
 			}
 			if orchestrationResponse.SuccessCriteriaForSubAgent != "" {
-				regularStep.SuccessCriteria = orchestrationResponse.SuccessCriteriaForSubAgent
+				stepCopy.SuccessCriteria = orchestrationResponse.SuccessCriteriaForSubAgent
 			}
 			if orchestrationResponse.ContextDependenciesForSubAgent != "" {
 				// Parse comma-separated context dependencies into array
 				deps := strings.Split(orchestrationResponse.ContextDependenciesForSubAgent, ",")
-				regularStep.ContextDependencies = make([]string, 0, len(deps))
+				stepCopy.ContextDependencies = make([]string, 0, len(deps))
 				for _, dep := range deps {
 					dep = strings.TrimSpace(dep)
 					if dep != "" {
-						regularStep.ContextDependencies = append(regularStep.ContextDependencies, dep)
+						stepCopy.ContextDependencies = append(stepCopy.ContextDependencies, dep)
 					}
 				}
 			}
 			if orchestrationResponse.ContextOutputForSubAgent != "" {
-				regularStep.ContextOutput = FlexibleContextOutput(orchestrationResponse.ContextOutputForSubAgent)
+				stepCopy.ContextOutput = FlexibleContextOutput(orchestrationResponse.ContextOutputForSubAgent)
 			}
+
+			// Use the copy for execution
+			stepToExecute = &stepCopy
 		}
 
 		// Execute sub-agent (without previous steps history - sub-agents don't need it)
@@ -903,7 +914,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 
 		subAgentExecutionResult, updatedSubAgentContextFiles, err := hcpo.executeSingleStep(
 			ctx,
-			subAgentStepPlan, // Use PlanStepInterface for executeSingleStep
+			stepToExecute, // Use the modified COPY
 			stepIndex,        // Use parent step index
 			subAgentPath,
 			1, // totalSteps = 1 for single sub-agent

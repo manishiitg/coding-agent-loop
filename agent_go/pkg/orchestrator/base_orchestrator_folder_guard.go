@@ -316,15 +316,18 @@ func (bo *BaseOrchestrator) PrepareWorkspaceToolsWithFolderGuard(tools []llmtype
 	// Wrap executors with folder guard
 	wrappedExecutors := bo.WrapWorkspaceToolsWithFolderGuard(executors)
 
-	// Enhance tool descriptions with folder guard information automatically
-	for i := range tools {
-		if tools[i].Function != nil {
-			tools[i].Function.Description = bo.EnhanceToolDescriptionWithFolderGuard(
-				tools[i].Function.Name,
-				tools[i].Function.Description,
-			)
-		}
-	}
+	// NOTE: Description enhancement disabled - the runtime path validation via
+	// WrapWorkspaceToolsWithFolderGuard is sufficient. The description enhancement
+	// was causing massive token waste because tool descriptions are mutated in-place
+	// on shared WorkspaceTools, accumulating guards from every step in the workflow.
+	// for i := range tools {
+	// 	if tools[i].Function != nil {
+	// 		tools[i].Function.Description = bo.EnhanceToolDescriptionWithFolderGuard(
+	// 			tools[i].Function.Name,
+	// 			tools[i].Function.Description,
+	// 		)
+	// 	}
+	// }
 
 	return tools, wrappedExecutors
 }

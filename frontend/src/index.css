@@ -1,7 +1,6 @@
 /* Import VS Code Themes */
 @import './themes/vscode-light.css';
 @import './themes/vscode-dark.css';
-@import './themes/vscode-dark-plus.css';
 
 @tailwind base;
 @tailwind components;
@@ -99,48 +98,6 @@
     --chart-5: 0 70% 60%;                 /* VS Code red */
   }
 
-  /* ===== DARK+ THEME ===== */
-  .dark-plus {
-    /* VS Code Dark+ Theme Colors */
-    --background: 215 28% 12%;            /* #1e1e1e - VS Code Dark+ background */
-    --foreground: 0 0% 83%;               /* #d4d4d4 - VS Code Dark+ foreground */
-    --card: 215 28% 17%;                  /* #252526 - VS Code Dark+ panel background */
-    --card-foreground: 0 0% 83%;          /* #d4d4d4 - VS Code Dark+ foreground */
-    
-    /* Surface Colors - VS Code Dark+ hierarchy */
-    --popover: 215 28% 17%;               /* #252526 - VS Code Dark+ panel background */
-    --popover-foreground: 0 0% 83%;       /* #d4d4d4 - VS Code Dark+ foreground */
-    --primary: 200 100% 40%;              /* #007acc - VS Code blue */
-    --primary-foreground: 0 0% 100%;      /* White text on blue */
-    --secondary: 215 28% 20%;             /* #333333 - VS Code Dark+ muted */
-    --secondary-foreground: 0 0% 83%;     /* #d4d4d4 - VS Code Dark+ foreground */
-    
-    /* Accent Colors - VS Code Dark+ palette */
-    --muted: 215 28% 20%;                 /* #333333 - VS Code Dark+ muted */
-    --muted-foreground: 0 0% 60%;         /* #969696 - VS Code Dark+ muted text */
-    --accent: 200 100% 40%;               /* #007acc - VS Code blue */
-    --accent-foreground: 0 0% 100%;       /* White text on accent */
-    
-    /* Status Colors - VS Code Dark+ colors */
-    --destructive: 0 70% 60%;             /* #f44747 - VS Code red */
-    --destructive-foreground: 0 0% 100%;  /* White text on red */
-    --success: 180 60% 50%;               /* #4ec9b0 - VS Code green */
-    --warning: 20 60% 60%;                /* #ce9178 - VS Code orange */
-    --info: 200 100% 40%;                 /* #007acc - VS Code blue */
-    
-    /* Border & Input - VS Code Dark+ borders */
-    --border: 215 28% 25%;                /* #404040 - VS Code Dark+ border */
-    --input: 215 28% 20%;                 /* #333333 - VS Code Dark+ input */
-    --ring: 200 100% 40%;                 /* #007acc - VS Code focus ring */
-    
-    /* Chart Colors - VS Code Dark+ inspired */
-    --chart-1: 200 100% 40%;              /* VS Code blue */
-    --chart-2: 180 60% 50%;               /* VS Code green */
-    --chart-3: 20 60% 60%;                /* VS Code orange */
-    --chart-4: 280 60% 60%;               /* Purple */
-    --chart-5: 0 70% 60%;                 /* VS Code red */
-  }
-  
   /* ===== CUSTOM THEME (Example) ===== */
   .theme-custom {
     --background: 220 100% 95%;           /* Light blue background */
@@ -218,17 +175,6 @@
   color: hsl(0 0% 95%) !important;                  /* Light text */
 }
 
-/* Dark+ mode tooltips - Keep existing contrast */
-.dark-plus .bg-popover {
-  background-color: hsl(0 0% 15%) !important;       /* Dark background */
-  color: hsl(0 0% 95%) !important;                  /* Light text */
-  border: 1px solid hsl(0 0% 25%) !important;       /* Dark border */
-}
-
-.dark-plus .text-popover-foreground {
-  color: hsl(0 0% 95%) !important;                  /* Light text */
-}
-
 /* ===== AGENT MODE BUTTONS - VS CODE THEME ===== */
 
 /* Selected state - Light mode */
@@ -286,32 +232,6 @@
 }
 
 .dark .agent-mode-unselected svg {
-  color: hsl(0 0% 83%) !important;                 /* VS Code foreground for icons */
-}
-
-/* ===== DARK+ THEME AGENT MODE BUTTONS ===== */
-.dark-plus .agent-mode-selected {
-  background-color: hsl(0 0% 24%) !important;      /* VS Code border #3c3c3c - subtle background */
-  color: hsl(200 100% 40%) !important;              /* VS Code blue #007acc - for text */
-  border: 1px solid hsl(200 100% 40%) !important;  /* VS Code blue #007acc - for border */
-  box-shadow: 0 0 0 1px hsl(200 100% 20%) !important; /* More subtle focus ring */
-}
-
-.dark-plus .agent-mode-unselected {
-  background-color: hsl(0 0% 20%) !important;      /* VS Code secondary #333333 */
-  color: hsl(0 0% 83%) !important;                 /* VS Code foreground #d4d4d4 */
-  border: 1px solid hsl(0 0% 24%) !important;      /* VS Code border #3c3c3c */
-}
-
-.dark-plus .agent-mode-unselected:hover {
-  background-color: hsl(0 0% 24%) !important;      /* Slightly lighter on hover */
-}
-
-.dark-plus .agent-mode-selected svg {
-  color: hsl(0 0% 100%) !important;                /* White icons when selected */
-}
-
-.dark-plus .agent-mode-unselected svg {
   color: hsl(0 0% 83%) !important;                 /* VS Code foreground for icons */
 }
 

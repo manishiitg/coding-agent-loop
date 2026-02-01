@@ -5,7 +5,6 @@ import { useTheme } from '../hooks/useTheme'
 const themeOptions = [
   { value: 'light', label: 'Light', icon: Sun },
   { value: 'dark', label: 'Dark', icon: Moon },
-  { value: 'dark-plus', label: 'Dark+', icon: Monitor },
 ]
 
 export default function ThemeDropdown() {
@@ -16,7 +15,7 @@ export default function ThemeDropdown() {
   const CurrentIcon = currentTheme.icon
 
   const handleThemeChange = (newTheme: string) => {
-    setTheme(newTheme as 'light' | 'dark' | 'dark-plus')
+    setTheme(newTheme as 'light' | 'dark')
     setIsOpen(false)
   }
 
@@ -24,14 +23,14 @@ export default function ThemeDropdown() {
     <div className="relative">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 dark-plus:hover:bg-gray-800 transition-colors text-sm"
+        className="flex items-center gap-2 px-3 py-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-sm"
         title="Select theme"
       >
-        <CurrentIcon className="w-4 h-4 text-gray-600 dark:text-gray-400 dark-plus:text-gray-400" />
-        <span className="text-gray-700 dark:text-gray-300 dark-plus:text-gray-300">
+        <CurrentIcon className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+        <span className="text-gray-700 dark:text-gray-300">
           {currentTheme.label}
         </span>
-        <ChevronDown className="w-3 h-3 text-gray-500 dark:text-gray-500 dark-plus:text-gray-500" />
+        <ChevronDown className="w-3 h-3 text-gray-500 dark:text-gray-500" />
       </button>
 
       {isOpen && (
@@ -43,7 +42,7 @@ export default function ThemeDropdown() {
           />
           
           {/* Dropdown */}
-          <div className="absolute right-0 top-full mt-1 w-32 bg-white dark:bg-gray-800 dark-plus:bg-gray-800 border border-gray-200 dark:border-gray-700 dark-plus:border-gray-700 rounded-md shadow-lg z-20">
+          <div className="absolute right-0 top-full mt-1 w-32 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg z-20">
             {themeOptions.map((option) => {
               const Icon = option.icon
               const isSelected = option.value === theme
@@ -52,16 +51,16 @@ export default function ThemeDropdown() {
                 <button
                   key={option.value}
                   onClick={() => handleThemeChange(option.value)}
-                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-gray-700 dark-plus:hover:bg-gray-700 transition-colors first:rounded-t-md last:rounded-b-md ${
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors first:rounded-t-md last:rounded-b-md ${
                     isSelected 
-                      ? 'bg-blue-50 dark:bg-blue-900/20 dark-plus:bg-blue-900/20 text-blue-700 dark:text-blue-300 dark-plus:text-blue-300' 
-                      : 'text-gray-700 dark:text-gray-300 dark-plus:text-gray-300'
+                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' 
+                      : 'text-gray-700 dark:text-gray-300'
                   }`}
                 >
                   <Icon className="w-4 h-4" />
                   <span>{option.label}</span>
                   {isSelected && (
-                    <div className="ml-auto w-2 h-2 bg-blue-600 dark:bg-blue-400 dark-plus:bg-blue-400 rounded-full" />
+                    <div className="ml-auto w-2 h-2 bg-blue-600 dark:bg-blue-400 rounded-full" />
                   )}
                 </button>
               )

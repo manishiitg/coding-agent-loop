@@ -282,6 +282,15 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 		if err2 := json.Unmarshal([]byte(fileListJSON), &altFormat); err2 == nil && len(altFormat.Files) > 0 {
 			filesList = altFormat.Files
 		}
+		// Try API response wrapper format {success, data: [...]}
+		if len(filesList) == 0 {
+			var apiResp struct {
+				Data []virtualtools.WorkspaceFile `json:"data"`
+			}
+			if err3 := json.Unmarshal([]byte(fileListJSON), &apiResp); err3 == nil && len(apiResp.Data) > 0 {
+				filesList = apiResp.Data
+			}
+		}
 		if len(filesList) == 0 {
 			// Removed verbose logging
 			return nil
@@ -485,6 +494,15 @@ func (bo *BaseOrchestrator) ListWorkspaceDirectories(ctx context.Context, dirPat
 		if err2 := json.Unmarshal([]byte(fileListJSON), &altFormat); err2 == nil && len(altFormat.Files) > 0 {
 			filesList = altFormat.Files
 		}
+		// Try API response wrapper format {success, data: [...]}
+		if len(filesList) == 0 {
+			var apiResp struct {
+				Data []virtualtools.WorkspaceFile `json:"data"`
+			}
+			if err3 := json.Unmarshal([]byte(fileListJSON), &apiResp); err3 == nil && len(apiResp.Data) > 0 {
+				filesList = apiResp.Data
+			}
+		}
 		if len(filesList) == 0 {
 			duration := time.Since(startTime)
 			bo.GetLogger().Info(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceDirectories(%s) completed: no directories found (took %v)", dirPath, duration))
@@ -622,6 +640,15 @@ func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath stri
 		}
 		if err2 := json.Unmarshal([]byte(fileListJSON), &altFormat); err2 == nil && len(altFormat.Files) > 0 {
 			filesList = altFormat.Files
+		}
+		// Try API response wrapper format {success, data: [...]}
+		if len(filesList) == 0 {
+			var apiResp struct {
+				Data []virtualtools.WorkspaceFile `json:"data"`
+			}
+			if err3 := json.Unmarshal([]byte(fileListJSON), &apiResp); err3 == nil && len(apiResp.Data) > 0 {
+				filesList = apiResp.Data
+			}
 		}
 		if len(filesList) == 0 {
 			duration := time.Since(startTime)

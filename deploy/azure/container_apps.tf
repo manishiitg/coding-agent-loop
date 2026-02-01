@@ -91,6 +91,10 @@ resource "azurerm_container_app" "agent" {
         name        = "DATABASE_URL"
         secret_name = "database-url"
       }
+      env {
+        name  = "PUBLIC_URL"
+        value = "https://${var.project_name}-agent.${azurerm_container_app_environment.env.default_domain}"
+      }
       # Hack: The 'value' above is a template. We need to construct the full string inside the container 
       # or use a secret for the whole URL. 
       # Better approach: Pass components or use a secret for the whole URL? 

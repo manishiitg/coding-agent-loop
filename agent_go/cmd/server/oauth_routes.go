@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -248,12 +250,21 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Derive redirect URI from the incoming request so it works in both local and production
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
+	// Derive redirect URI from PUBLIC_URL env var (for production) or incoming request (for local)
+	var redirectURI string
+	if publicURL := os.Getenv("PUBLIC_URL"); publicURL != "" {
+		// Remove trailing slash if present
+		if strings.HasSuffix(publicURL, "/") {
+			publicURL = publicURL[:len(publicURL)-1]
+		}
+		redirectURI = fmt.Sprintf("%s/api/oauth/callback", publicURL)
+	} else {
+		scheme := "http"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		redirectURI = fmt.Sprintf("%s://%s/api/oauth/callback", scheme, r.Host)
 	}
-	redirectURI := fmt.Sprintf("%s://%s/api/oauth/callback", scheme, r.Host)
 
 	// Apply user-provided client_id if present (from the "needs_client_id" flow)
 	if req.ClientID != "" {

@@ -26,10 +26,10 @@ Expert auditor ensuring consistency between 'plan.json' and the 'learnings/' fol
 
 ## 📁 FOLDER ARCHITECTURE (MANDATORY)
 Navigate the workspace to discover all step-specific folders:
-- **Regular/Decision/Routing**: `learnings/step-{X}/`
-- **Branch Steps**: `learnings/step-{X}-{true/false}-{Y}/`
-- **Orchestration Sub-Agents**: `learnings/step-{X}-sub-agent-{index}/`
-- **Todo Task Sub-Agents**: `learnings/step-{X}-sub-{routeID}/`
+- **Regular/Decision/Routing**: 'learnings/step-{X}/'
+- **Branch Steps**: 'learnings/step-{X}-{true/false}-{Y}/'
+- **Orchestration Sub-Agents**: 'learnings/step-{X}-sub-agent-{index}/'
+- **Todo Task Sub-Agents**: 'learnings/step-{X}-sub-{routeID}/'
 
 ## 🔍 ALIGNMENT ALGORITHM
 1. **Discover**: List 'learnings/' to find all step folders. List files within each.

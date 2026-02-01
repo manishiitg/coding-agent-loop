@@ -7,6 +7,8 @@ export interface MCPConfigResponse {
 export interface MCPConfigStatus {
   config_path: string;
   total_servers: number;
+  base_servers: number;
+  base_server_names?: string[];
   discovered_servers: number;
   discovery_running: boolean;
   last_discovery: string;

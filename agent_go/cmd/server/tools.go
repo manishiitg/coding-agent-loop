@@ -623,6 +623,16 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 		cfg = api.mcpConfig
 	}
 
+	// Cleanup: Remove in-memory status for servers that no longer exist in config
+	api.toolStatusMux.Lock()
+	for name := range api.toolStatus {
+		if _, exists := cfg.MCPServers[name]; !exists {
+			delete(api.toolStatus, name)
+			api.logger.Info(fmt.Sprintf("🗑️ Removed deleted server from status: %s", name))
+		}
+	}
+	api.toolStatusMux.Unlock()
+
 	discoveredServers := 0
 	for serverName := range cfg.MCPServers {
 		// Get server configuration for cache key generation

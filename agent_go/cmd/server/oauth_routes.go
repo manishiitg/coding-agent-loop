@@ -31,6 +31,18 @@ var (
 // OAuthLoginRequest represents a request to start OAuth flow
 type OAuthLoginRequest struct {
 	ServerName string `json:"server_name"`
+	ClientID   string `json:"client_id,omitempty"` // User-provided client_id for servers without DCR
+}
+
+// OAuthDiscoveryResponse is returned when the server doesn't support DCR and needs a client_id
+type OAuthDiscoveryResponse struct {
+	Status          string   `json:"status"`                     // "needs_client_id"
+	ServerName      string   `json:"server_name"`
+	AuthURL         string   `json:"auth_url,omitempty"`         // Discovered authorization endpoint
+	TokenURL        string   `json:"token_url,omitempty"`        // Discovered token endpoint
+	Resource        string   `json:"resource,omitempty"`         // RFC 8707 resource indicator
+	ScopesSupported []string `json:"scopes_supported,omitempty"` // Discovered scopes
+	Message         string   `json:"message"`
 }
 
 // OAuthStartResponse represents the response when starting OAuth flow
@@ -243,6 +255,19 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 	}
 	redirectURI := fmt.Sprintf("%s://%s/api/oauth/callback", scheme, r.Host)
 
+	// Apply user-provided client_id if present (from the "needs_client_id" flow)
+	if req.ClientID != "" {
+		if serverConfig.OAuth == nil {
+			serverConfig.OAuth = &oauth.OAuthConfig{
+				AutoDiscover: true,
+				UsePKCE:      true,
+				TokenFile:    fmt.Sprintf("~/.config/mcpagent/tokens/%s.json", req.ServerName),
+			}
+		}
+		serverConfig.OAuth.ClientID = req.ClientID
+		api.logger.Info(fmt.Sprintf("Using user-provided client_id for %s: %s", req.ServerName, req.ClientID))
+	}
+
 	// Initialize OAuth config if not present
 	if serverConfig.OAuth == nil {
 		if serverConfig.URL == "" {
@@ -260,6 +285,10 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 	if serverConfig.OAuth.RedirectURL == "" {
 		serverConfig.OAuth.RedirectURL = redirectURI
 	}
+
+	// Track discovered info for the "needs_client_id" response
+	var discoveredResource string
+	var discoveredScopes []string
 
 	// Auto-discover endpoints if needed (auto_discover is true OR endpoints are missing)
 	needsDiscovery := serverConfig.OAuth.AutoDiscover || serverConfig.OAuth.AuthURL == "" || serverConfig.OAuth.TokenURL == ""
@@ -281,6 +310,21 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 			serverConfig.OAuth.TokenURL = endpoints.TokenURL
 			api.logger.Info(fmt.Sprintf("Discovered OAuth endpoints from 401 - Auth: %s, Token: %s", endpoints.AuthURL, endpoints.TokenURL))
 
+			// Capture Resource and Scopes from discovery
+			if endpoints.Resource != "" {
+				discoveredResource = endpoints.Resource
+				serverConfig.OAuth.Resource = endpoints.Resource
+				api.logger.Info(fmt.Sprintf("Discovered resource for %s: %s", req.ServerName, endpoints.Resource))
+			}
+			if len(endpoints.ScopesSupported) > 0 {
+				discoveredScopes = endpoints.ScopesSupported
+				// Apply discovered scopes if none configured
+				if len(serverConfig.OAuth.Scopes) == 0 {
+					serverConfig.OAuth.Scopes = endpoints.ScopesSupported
+					api.logger.Info(fmt.Sprintf("Applied discovered scopes for %s: %v", req.ServerName, endpoints.ScopesSupported))
+				}
+			}
+
 			// Perform Dynamic Client Registration if no client_id and discovered endpoints have registration endpoint
 			if serverConfig.OAuth.ClientID == "" && endpoints.RegistrationEndpoint != "" {
 				api.logger.Info(fmt.Sprintf("Performing Dynamic Client Registration for %s (via 401 discovery)", req.ServerName))
@@ -288,11 +332,11 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 				regResponse, err := oauth.RegisterClient(endpoints.RegistrationEndpoint, serverConfig.OAuth.RedirectURL)
 				if err != nil {
 					api.logger.Warn(fmt.Sprintf("Dynamic Client Registration failed: %v", err))
-					// Continue without client_id - some servers may allow it with PKCE
+					// Continue without client_id - will prompt user below
 				} else {
 					serverConfig.OAuth.ClientID = regResponse.ClientID
 					serverConfig.OAuth.ClientSecret = regResponse.ClientSecret
-					api.logger.Info(fmt.Sprintf("✅ Registered client_id via 401 discovery: %s", regResponse.ClientID))
+					api.logger.Info(fmt.Sprintf("Registered client_id via 401 discovery: %s", regResponse.ClientID))
 				}
 			}
 		} else {
@@ -301,6 +345,15 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 			serverConfig.OAuth.TokenURL = metadata.TokenEndpoint
 			api.logger.Info(fmt.Sprintf("Discovered OAuth endpoints from .well-known - Auth: %s, Token: %s", metadata.AuthorizationEndpoint, metadata.TokenEndpoint))
 
+			// Capture scopes from auth server metadata
+			if len(metadata.ScopesSupported) > 0 {
+				discoveredScopes = metadata.ScopesSupported
+				if len(serverConfig.OAuth.Scopes) == 0 {
+					serverConfig.OAuth.Scopes = metadata.ScopesSupported
+					api.logger.Info(fmt.Sprintf("Applied discovered scopes from well-known for %s: %v", req.ServerName, metadata.ScopesSupported))
+				}
+			}
+
 			// Perform Dynamic Client Registration if no client_id and server supports it
 			if serverConfig.OAuth.ClientID == "" && metadata.RegistrationEndpoint != "" {
 				api.logger.Info(fmt.Sprintf("Performing Dynamic Client Registration for %s", req.ServerName))
@@ -308,14 +361,31 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 				regResponse, err := oauth.RegisterClient(metadata.RegistrationEndpoint, serverConfig.OAuth.RedirectURL)
 				if err != nil {
 					api.logger.Warn(fmt.Sprintf("Dynamic Client Registration failed: %v", err))
-					// Continue without client_id - some servers may allow it with PKCE
+					// Continue without client_id - will prompt user below
 				} else {
 					serverConfig.OAuth.ClientID = regResponse.ClientID
 					serverConfig.OAuth.ClientSecret = regResponse.ClientSecret
-					api.logger.Info(fmt.Sprintf("✅ Registered client_id: %s", regResponse.ClientID))
+					api.logger.Info(fmt.Sprintf("Registered client_id: %s", regResponse.ClientID))
 				}
 			}
 		}
+	}
+
+	// Instead of hard-failing, return a discovery response prompting for client_id
+	if serverConfig.OAuth.ClientID == "" {
+		api.logger.Info(fmt.Sprintf("No client_id for %s, returning needs_client_id response", req.ServerName))
+		discoveryResp := OAuthDiscoveryResponse{
+			Status:          "needs_client_id",
+			ServerName:      req.ServerName,
+			AuthURL:         serverConfig.OAuth.AuthURL,
+			TokenURL:        serverConfig.OAuth.TokenURL,
+			Resource:        discoveredResource,
+			ScopesSupported: discoveredScopes,
+			Message:         fmt.Sprintf("Server '%s' does not support Dynamic Client Registration. Please provide your OAuth App client_id.", req.ServerName),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(discoveryResp)
+		return
 	}
 
 	// Create OAuth manager with the fully configured OAuth settings
@@ -635,8 +705,8 @@ func (api *StreamingAPI) persistOAuthConfig(serverName string, serverConfig mcpc
 
 	// Log the OAuth config being persisted
 	if serverConfig.OAuth != nil {
-		api.logger.Info(fmt.Sprintf("💾 OAuth config for %s: AuthURL=%s, TokenURL=%s, TokenFile=%s, ClientID=%s",
-			serverName, serverConfig.OAuth.AuthURL, serverConfig.OAuth.TokenURL, serverConfig.OAuth.TokenFile, serverConfig.OAuth.ClientID))
+		api.logger.Info(fmt.Sprintf("💾 OAuth config for %s: AuthURL=%s, TokenURL=%s, TokenFile=%s, ClientID=%s, Resource=%s",
+			serverName, serverConfig.OAuth.AuthURL, serverConfig.OAuth.TokenURL, serverConfig.OAuth.TokenFile, serverConfig.OAuth.ClientID, serverConfig.OAuth.Resource))
 	}
 
 	// Load existing user config

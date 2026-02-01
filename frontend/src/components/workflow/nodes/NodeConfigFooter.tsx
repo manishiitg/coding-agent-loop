@@ -180,7 +180,7 @@ export const NodeConfigFooter = memo(({
           </span>
         )}
         {hasWorkspaceTools && workspaceToolsInfo && (
-          <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300" title={`Workspace tools: ${workspaceToolsInfo.enabled}/${workspaceToolsInfo.total}`}>
+          <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300" title={`Workspace tools: ${workspaceToolsInfo.enabled}/${workspaceToolsInfo.total}`}>
             WS: {workspaceToolsInfo.enabled}/{workspaceToolsInfo.total}
           </span>
         )}
@@ -195,7 +195,7 @@ export const NodeConfigFooter = memo(({
           </span>
         )}
         {learningAfterLoopIteration && (
-          <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-cyan-50 dark:bg-cyan-900/20 text-cyan-600 dark:text-cyan-400" title="Learning runs after each loop iteration">
+          <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400" title="Learning runs after each loop iteration">
             Learn Each Iteration
           </span>
         )}
@@ -214,7 +214,7 @@ export const NodeConfigFooter = memo(({
           )}
           {(routeName || routeCondition) && (
             <div className="text-[10px] text-gray-600 dark:text-gray-400">
-              <span className="font-semibold text-cyan-700 dark:text-cyan-400">Route: </span>
+              <span className="font-semibold text-indigo-700 dark:text-indigo-400">Route: </span>
               {routeName}
               {routeCondition && (
                 <span className="italic text-gray-500 dark:text-gray-500 ml-1" title={routeCondition}>
@@ -225,7 +225,7 @@ export const NodeConfigFooter = memo(({
           )}
           {loopCondition && (
             <div className="text-[10px] text-gray-600 dark:text-gray-400">
-              <span className="font-semibold text-cyan-700 dark:text-cyan-400">Until: </span>
+              <span className="font-semibold text-indigo-700 dark:text-indigo-400">Until: </span>
               {loopCondition}
               {maxIterations && (
                 <span className="text-gray-500 dark:text-gray-500 ml-1">

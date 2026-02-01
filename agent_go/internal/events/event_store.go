@@ -12,10 +12,9 @@ import (
 // These events are only shown in advanced mode
 // Note: workspace_file_operation is NOT in this list because it needs to be sent to frontend
 // for file highlighting functionality, but it will be filtered from display in basic/tiny mode
-// Note: Workflow execution events (step_execution_start, step_execution_end, step_execution_failed,
-// step_progress_updated) are NOT in this list because they are required for React Flow canvas
-// node highlighting and status updates. They must always be sent to frontend for workflow mode
-// to function correctly, even if filtered from display in basic/tiny mode.
+// Note: Workflow execution events (step_progress_updated) are NOT in this list because they are
+// required for React Flow canvas node highlighting and status updates. They must always be sent
+// to frontend for workflow mode to function correctly, even if filtered from display in basic/tiny mode.
 var ADVANCED_MODE_EVENTS = map[string]bool{
 	"llm_generation_start":      true,
 	"llm_generation_with_retry": true,

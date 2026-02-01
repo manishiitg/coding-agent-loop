@@ -490,7 +490,7 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
         {/* Validation Skipped Badge */}
         {stepConfig?.agent_configs?.llm_validation_mode === 'skip' && (
           <div 
-            className="flex items-center justify-center w-8 h-8 rounded-md bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-400 border border-cyan-200 dark:border-cyan-800"
+            className="flex items-center justify-center w-8 h-8 rounded-md bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800"
             title="LLM validation will be skipped if pre-validation passes"
           >
             <SkipForward className="w-3.5 h-3.5" />

@@ -38,7 +38,7 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
 
   const getAgentColor = () => {
     const t = (event as unknown as { agent_type?: string })?.agent_type
-    if (t === 'plan_breakdown') return 'green'
+    if (t === 'plan_breakdown') return 'emerald'
     if (t === 'planning') return 'blue'
     if (t === 'execution') return 'purple'
     if (t === 'validation') return 'emerald'
@@ -52,12 +52,12 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
   
   const getColorClasses = (color: string) => {
     switch (color) {
-      case 'green':
+      case 'emerald':
         return {
-          bg: 'bg-green-50 dark:bg-green-900/20',
-          border: 'border-green-200 dark:border-green-800',
-          text: 'text-green-700 dark:text-green-300',
-          textSecondary: 'text-green-600 dark:text-green-400'
+          bg: 'bg-emerald-50 dark:bg-emerald-900/20',
+          border: 'border-emerald-200 dark:border-emerald-800',
+          text: 'text-emerald-700 dark:text-emerald-300',
+          textSecondary: 'text-emerald-600 dark:text-emerald-400'
         };
       case 'blue':
         return {
@@ -72,13 +72,6 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
           border: 'border-purple-200 dark:border-purple-800',
           text: 'text-purple-700 dark:text-purple-300',
           textSecondary: 'text-purple-600 dark:text-purple-400'
-        };
-      case 'emerald':
-        return {
-          bg: 'bg-emerald-50 dark:bg-emerald-900/20',
-          border: 'border-emerald-200 dark:border-emerald-800',
-          text: 'text-emerald-700 dark:text-emerald-300',
-          textSecondary: 'text-emerald-600 dark:text-emerald-400'
         };
       case 'orange':
         return {
@@ -144,7 +137,7 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
                           {' • Total: '}
                           <span className="font-semibold">{eventWithTokens.total_tokens.toLocaleString()}</span>
                           {eventWithTokens.cache_tokens !== undefined && eventWithTokens.cache_tokens > 0 && (
-                            <span className="text-cyan-600 dark:text-cyan-400">
+                            <span className="text-sky-600 dark:text-sky-400">
                               {' • Cache: '}{eventWithTokens.cache_tokens.toLocaleString()}
                             </span>
                           )}

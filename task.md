@@ -1,5 +1,3 @@
-9. see if we can create mock llm with tools calls which we can use for tests 
-
 12. agent should support streaming
 
 13. review conversation.go why is it so big and the retry function
@@ -48,4 +46,9 @@ i) prompt tempaltes, need to check variables on compile time
 8. can orchestrator decide if need to leanr or not skills
 
 9. if we have a tool for slack notification
+
 11. if sheel tool is enabled in workspace/ do we need other list tools etc
+
+12. support parallel tool call
+
+13. in Chat also lets show in ly stuff inside Chat/ folder and also when type using @ limit to search inside by default 

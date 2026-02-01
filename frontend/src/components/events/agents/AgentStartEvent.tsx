@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import type { AgentStartEvent } from '@/generated/events'
+import { useExpandable } from '../useExpandable'
+import { Plus, Minus } from 'lucide-react'
 
 interface AgentStartEventProps {
   event: AgentStartEvent
 }
 
 export function AgentStartEventComponent({ event }: AgentStartEventProps) {
-  const [isExpanded, setIsExpanded] = useState(false)
-  
+  const { isExpanded, toggle } = useExpandable()
+
   const formatTimestamp = (timestamp?: string) => {
     if (!timestamp) return 'Unknown time'
     return new Date(timestamp).toLocaleTimeString()
@@ -46,10 +48,11 @@ export function AgentStartEventComponent({ event }: AgentStartEventProps) {
           
           {hasExpandableContent && (
             <button 
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200"
+              onClick={toggle}
+              className="p-0.5 hover:bg-blue-200 dark:hover:bg-blue-800 rounded text-blue-600 dark:text-blue-400 transition-colors"
+              title={isExpanded ? "Collapse details (Alt+Click for all)" : "Expand details (Alt+Click for all)"}
             >
-              {isExpanded ? '▼' : '▶'}
+              {isExpanded ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
             </button>
           )}
         </div>

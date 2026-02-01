@@ -68,7 +68,7 @@ export interface ChatTab {
   sessionId: string | null  // Chat session ID if exists
   isStreaming: boolean  // Whether this tab's execution is currently running
   isCompleted: boolean  // Whether this tab's execution has completed
-  eventMode: 'basic' | 'advanced' | 'tiny'  // Event display mode for this tab
+  eventMode: 'basic' | 'advanced' | 'tiny' | 'micro'  // Event display mode for this tab
   config: ChatTabConfig  // Tab-specific configuration
   createdAt: number  // Timestamp for ordering
   lastViewedEventCount: number  // Last event count when this tab was viewed (for badge)
@@ -279,7 +279,7 @@ interface ChatState extends StoreActions {
   clearToasts: () => void
   
   // Tab management actions
-  createChatTab: (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'basic' | 'advanced' | 'tiny') => Promise<string>  // Returns tabId
+  createChatTab: (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'basic' | 'advanced' | 'tiny' | 'micro') => Promise<string>  // Returns tabId
   switchTab: (tabId: string) => void
   closeTab: (tabId: string, stopSession?: boolean, keepEvents?: boolean) => Promise<void>
   getTab: (tabId: string) => ChatTab | undefined
@@ -289,7 +289,7 @@ interface ChatState extends StoreActions {
   setTabStreaming: (tabId: string, isStreaming: boolean) => void
   setTabCompleted: (tabId: string, isCompleted: boolean) => void
   updateTabSessionId: (tabId: string, sessionId: string) => void
-  setTabEventMode: (tabId: string, eventMode: 'basic' | 'advanced' | 'tiny') => void
+  setTabEventMode: (tabId: string, eventMode: 'basic' | 'advanced' | 'tiny' | 'micro') => void
   getTabConfig: (tabId: string) => ChatTabConfig | undefined
   setTabConfig: (tabId: string, configUpdate: Partial<ChatTabConfig>) => void
   getTabStreamingStatus: (tabId: string) => boolean
@@ -757,7 +757,7 @@ export const useChatStore = create<ChatState>()(
       },
       
       // Tab management actions
-      createChatTab: async (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'basic' | 'advanced' | 'tiny') => {
+      createChatTab: async (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'basic' | 'advanced' | 'tiny' | 'micro') => {
         // Generate unique tab ID
         const timestamp = Date.now()
         const mode = metadata?.mode || 'chat'
@@ -788,8 +788,12 @@ export const useChatStore = create<ChatState>()(
         }
         
         // Use provided eventMode, or default based on mode:
-        // chat/skill_builder mode -> 'tiny', workflow mode -> 'basic'
-        const finalEventMode = eventMode || ((mode === 'chat' || mode === 'skill_builder') ? 'tiny' : 'basic')
+        // workflow -> 'tiny'
+        // chat/skill_builder -> 'micro'
+        let finalEventMode = eventMode
+        if (!finalEventMode) {
+          finalEventMode = mode === 'workflow' ? 'tiny' : 'micro'
+        }
         
         // Create tab with session ID
         const tab: ChatTab = {
@@ -999,7 +1003,7 @@ export const useChatStore = create<ChatState>()(
       
       // updateTabObserverId removed - observers no longer used
       
-      setTabEventMode: (tabId: string, eventMode: 'basic' | 'advanced' | 'tiny') => {
+      setTabEventMode: (tabId: string, eventMode: 'basic' | 'advanced' | 'tiny' | 'micro') => {
         const state = get()
         const tab = state.chatTabs[tabId]
         if (!tab) return

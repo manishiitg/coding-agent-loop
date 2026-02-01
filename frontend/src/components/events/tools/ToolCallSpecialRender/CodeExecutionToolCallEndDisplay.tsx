@@ -2,6 +2,8 @@ import React from 'react'
 import type { ToolCallEndEvent } from '../../../../generated/events'
 import { CircularProgress, type ContextOnlyTokenUsage } from '../../../ui/CircularProgress'
 import { TooltipProvider } from '../../../ui/tooltip'
+import { useExpandable } from '../../useExpandable'
+import { Plus, Minus } from 'lucide-react'
 
 interface CodeExecutionToolCallEndDisplayProps {
   event: ToolCallEndEvent
@@ -26,6 +28,7 @@ const formatDuration = (durationNs: number) => {
 }
 
 export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndDisplayProps> = ({ event }) => {
+  const { isExpanded: isOutputExpanded, toggle } = useExpandable()
 
   // Extract context usage information for CircularProgress
   const contextUsagePercent = event.context_usage_percent
@@ -41,6 +44,26 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
       context_window_usage: contextWindowUsage,
       model_id: modelId,
     } : undefined
+
+  const renderHeaderRight = () => (
+    <div className="flex items-center gap-2 flex-shrink-0">
+      {event.timestamp && (
+        <div className="text-xs text-gray-600 dark:text-gray-400">
+          {new Date(event.timestamp).toLocaleTimeString()}
+        </div>
+      )}
+      
+      {/* Output Toggle */}
+      <button
+        onClick={toggle}
+        className="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-gray-700 dark:text-gray-300 transition-colors flex items-center gap-1"
+        title={isOutputExpanded ? "Collapse output (Alt+Click for all)" : "Expand output (Alt+Click for all)"}
+      >
+        <span className="text-[10px] uppercase font-bold">Output</span>
+        {isOutputExpanded ? <Minus className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+      </button>
+    </div>
+  )
 
   if (!event.result) {
     return null
@@ -80,16 +103,22 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
       // If it's not valid JSON, show error
       return (
         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded p-2">
-          <div className="text-sm font-medium text-red-700 dark:text-red-300">
-            ❌ Discovery Error{' '}
-            <span className="text-xs font-normal text-red-600 dark:text-red-400">
-              {event.turn && `• Turn: ${event.turn}`}
-              {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
-            </span>
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm font-medium text-red-700 dark:text-red-300">
+              ❌ Discovery Error{' '}
+              <span className="text-xs font-normal text-red-600 dark:text-red-400">
+                {event.turn && `• Turn: ${event.turn}`}
+                {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
+              </span>
+            </div>
+            {renderHeaderRight()}
           </div>
-          <div className="mt-2 text-xs text-red-600 dark:text-red-400">
-            Invalid JSON response: {event.result}
-          </div>
+          
+          {isOutputExpanded && (
+            <div className="mt-2 text-xs text-red-600 dark:text-red-400">
+              Invalid JSON response: {event.result}
+            </div>
+          )}
         </div>
       )
     }
@@ -127,100 +156,98 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
               </div>
             </div>
 
-            {event.timestamp && (
-              <div className="text-xs text-blue-600 dark:text-blue-400 flex-shrink-0">
-                {new Date(event.timestamp).toLocaleTimeString()}
-              </div>
-            )}
+            {renderHeaderRight()}
           </div>
 
-          <div className="mt-2 space-y-3">
-            {/* MCP Servers */}
-            {data.servers && data.servers.length > 0 && (
-              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
-                <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-2">
-                  📦 MCP Servers ({data.servers.length})
-                </div>
-                <div className="space-y-2 max-h-96 overflow-y-auto">
-                  {data.servers.map((server, idx) => (
-                    <div key={idx} className="border-l-2 border-blue-300 dark:border-blue-700 pl-2">
-                      <div className="font-mono text-sm font-semibold text-gray-800 dark:text-gray-200">
-                        {server.name}
-                      </div>
-                      <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                        Package: <span className="font-mono">{server.package}</span>
-                      </div>
-                      {server.tools && server.tools.length > 0 && (
-                        <div className="mt-1">
-                          <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
-                            Tools ({server.tools.length}):
-                          </div>
-                          <div className="flex flex-wrap gap-1">
-                            {server.tools.map((tool, toolIdx) => (
-                              <span
-                                key={toolIdx}
-                                className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded"
-                              >
-                                {tool}
-                              </span>
-                            ))}
-                          </div>
+          {isOutputExpanded && (
+            <div className="mt-2 space-y-3">
+              {/* MCP Servers */}
+              {data.servers && data.servers.length > 0 && (
+                <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
+                  <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-2">
+                    📦 MCP Servers ({data.servers.length})
+                  </div>
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {data.servers.map((server, idx) => (
+                      <div key={idx} className="border-l-2 border-blue-300 dark:border-blue-700 pl-2">
+                        <div className="font-mono text-sm font-semibold text-gray-800 dark:text-gray-200">
+                          {server.name}
                         </div>
-                      )}
+                        <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                          Package: <span className="font-mono">{server.package}</span>
+                        </div>
+                        {server.tools && server.tools.length > 0 && (
+                          <div className="mt-1">
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                              Tools ({server.tools.length}):
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {server.tools.map((tool, toolIdx) => (
+                                <span
+                                  key={toolIdx}
+                                  className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded"
+                                >
+                                  {tool}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Custom Tools */}
+              {data.custom_tools && (
+                <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
+                  <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-2">
+                    🔧 Custom Tools
+                  </div>
+                  <div className="text-xs text-gray-600 dark:text-gray-400">
+                    Package: <span className="font-mono">{data.custom_tools.package}</span>
+                  </div>
+                  {data.custom_tools.tools && data.custom_tools.tools.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {data.custom_tools.tools.map((tool, idx) => (
+                        <span
+                          key={idx}
+                          className="text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded"
+                        >
+                          {tool}
+                        </span>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Custom Tools */}
-            {data.custom_tools && (
-              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
-                <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-2">
-                  🔧 Custom Tools
-                </div>
-                <div className="text-xs text-gray-600 dark:text-gray-400">
-                  Package: <span className="font-mono">{data.custom_tools.package}</span>
-                </div>
-                {data.custom_tools.tools && data.custom_tools.tools.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {data.custom_tools.tools.map((tool, idx) => (
-                      <span
-                        key={idx}
-                        className="text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded"
-                      >
-                        {tool}
-                      </span>
-                    ))}
+              {/* Virtual Tools */}
+              {data.virtual_tools && (
+                <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
+                  <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-2">
+                    ⚡ Virtual Tools
                   </div>
-                )}
-              </div>
-            )}
-
-            {/* Virtual Tools */}
-            {data.virtual_tools && (
-              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
-                <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-2">
-                  ⚡ Virtual Tools
-                </div>
-                <div className="text-xs text-gray-600 dark:text-gray-400">
-                  Package: <span className="font-mono">{data.virtual_tools.package}</span>
-                </div>
-                {data.virtual_tools.tools && data.virtual_tools.tools.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {data.virtual_tools.tools.map((tool, idx) => (
-                      <span
-                        key={idx}
-                        className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-0.5 rounded"
-                      >
-                        {tool}
-                      </span>
-                    ))}
+                  <div className="text-xs text-gray-600 dark:text-gray-400">
+                    Package: <span className="font-mono">{data.virtual_tools.package}</span>
                   </div>
-                )}
-              </div>
-            )}
-          </div>
+                  {data.virtual_tools.tools && data.virtual_tools.tools.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {data.virtual_tools.tools.map((tool, idx) => (
+                        <span
+                          key={idx}
+                          className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-0.5 rounded"
+                        >
+                          {tool}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )
     }
@@ -279,100 +306,98 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
               </div>
             </div>
 
-            {event.timestamp && (
-              <div className="text-xs text-blue-600 dark:text-blue-400 flex-shrink-0">
-                {new Date(event.timestamp).toLocaleTimeString()}
-              </div>
-            )}
+            {renderHeaderRight()}
           </div>
 
-          <div className="mt-2 space-y-3">
-            {/* MCP Servers */}
-            {data.servers && data.servers.length > 0 && (
-              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
-                <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-2">
-                  📦 MCP Servers ({data.servers.length})
-                </div>
-                <div className="space-y-2 max-h-96 overflow-y-auto">
-                  {data.servers.map((server, idx) => (
-                    <div key={idx} className="border-l-2 border-blue-300 dark:border-blue-700 pl-2">
-                      <div className="font-mono text-sm font-semibold text-gray-800 dark:text-gray-200">
-                        {server.name}
-                      </div>
-                      <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                        Package: <span className="font-mono">{server.package}</span>
-                      </div>
-                      {server.tools && server.tools.length > 0 && (
-                        <div className="mt-1">
-                          <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
-                            Tools ({server.tools.length}):
-                          </div>
-                          <div className="flex flex-wrap gap-1">
-                            {server.tools.map((tool, toolIdx) => (
-                              <span
-                                key={toolIdx}
-                                className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded"
-                              >
-                                {tool}
-                              </span>
-                            ))}
-                          </div>
+          {isOutputExpanded && (
+            <div className="mt-2 space-y-3">
+              {/* MCP Servers */}
+              {data.servers && data.servers.length > 0 && (
+                <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
+                  <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-2">
+                    📦 MCP Servers ({data.servers.length})
+                  </div>
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {data.servers.map((server, idx) => (
+                      <div key={idx} className="border-l-2 border-blue-300 dark:border-blue-700 pl-2">
+                        <div className="font-mono text-sm font-semibold text-gray-800 dark:text-gray-200">
+                          {server.name}
                         </div>
-                      )}
+                        <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                          Package: <span className="font-mono">{server.package}</span>
+                        </div>
+                        {server.tools && server.tools.length > 0 && (
+                          <div className="mt-1">
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                              Tools ({server.tools.length}):
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {server.tools.map((tool, toolIdx) => (
+                                <span
+                                  key={toolIdx}
+                                  className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded"
+                                >
+                                  {tool}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Custom Tools */}
+              {data.custom_tools && (
+                <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
+                  <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-2">
+                    🔧 Custom Tools
+                  </div>
+                  <div className="text-xs text-gray-600 dark:text-gray-400">
+                    Package: <span className="font-mono">{data.custom_tools.package}</span>
+                  </div>
+                  {data.custom_tools.tools && data.custom_tools.tools.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {data.custom_tools.tools.map((tool, idx) => (
+                        <span
+                          key={idx}
+                          className="text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded"
+                        >
+                          {tool}
+                        </span>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Custom Tools */}
-            {data.custom_tools && (
-              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
-                <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-2">
-                  🔧 Custom Tools
-                </div>
-                <div className="text-xs text-gray-600 dark:text-gray-400">
-                  Package: <span className="font-mono">{data.custom_tools.package}</span>
-                </div>
-                {data.custom_tools.tools && data.custom_tools.tools.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {data.custom_tools.tools.map((tool, idx) => (
-                      <span
-                        key={idx}
-                        className="text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded"
-                      >
-                        {tool}
-                      </span>
-                    ))}
+              {/* Virtual Tools */}
+              {data.virtual_tools && (
+                <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
+                  <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-2">
+                    ⚡ Virtual Tools
                   </div>
-                )}
-              </div>
-            )}
-
-            {/* Virtual Tools */}
-            {data.virtual_tools && (
-              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
-                <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-2">
-                  ⚡ Virtual Tools
-                </div>
-                <div className="text-xs text-gray-600 dark:text-gray-400">
-                  Package: <span className="font-mono">{data.virtual_tools.package}</span>
-                </div>
-                {data.virtual_tools.tools && data.virtual_tools.tools.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {data.virtual_tools.tools.map((tool, idx) => (
-                      <span
-                        key={idx}
-                        className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-0.5 rounded"
-                      >
-                        {tool}
-                      </span>
-                    ))}
+                  <div className="text-xs text-gray-600 dark:text-gray-400">
+                    Package: <span className="font-mono">{data.virtual_tools.package}</span>
                   </div>
-                )}
-              </div>
-            )}
-          </div>
+                  {data.virtual_tools.tools && data.virtual_tools.tools.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {data.virtual_tools.tools.map((tool, idx) => (
+                        <span
+                          key={idx}
+                          className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-0.5 rounded"
+                        >
+                          {tool}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )
     }
@@ -408,28 +433,26 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
               </div>
             </div>
 
-            {event.timestamp && (
-              <div className="text-xs text-blue-600 dark:text-blue-400 flex-shrink-0">
-                {new Date(event.timestamp).toLocaleTimeString()}
-              </div>
-            )}
+            {renderHeaderRight()}
           </div>
 
-          <div className="mt-2">
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-xs font-medium text-blue-700 dark:text-blue-300">
-                  💻 Go Source Code
+          {isOutputExpanded && (
+            <div className="mt-2">
+              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs font-medium text-blue-700 dark:text-blue-300">
+                    💻 Go Source Code
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    {lineCount} line{lineCount !== 1 ? 's' : ''} • {resultText.length} chars
+                  </div>
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">
-                  {lineCount} line{lineCount !== 1 ? 's' : ''} • {resultText.length} chars
-                </div>
+                <pre className="text-xs text-gray-800 dark:text-gray-200 font-mono whitespace-pre-wrap overflow-x-auto bg-gray-50 dark:bg-gray-900 p-3 rounded max-h-48 overflow-y-auto">
+                  {resultText}
+                </pre>
               </div>
-              <pre className="text-xs text-gray-800 dark:text-gray-200 font-mono whitespace-pre-wrap overflow-x-auto bg-gray-50 dark:bg-gray-900 p-3 rounded max-h-48 overflow-y-auto">
-                {resultText}
-              </pre>
             </div>
-          </div>
+          )}
         </div>
       )
     }
@@ -440,7 +463,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
     // Check if result contains an error - use more precise pattern matching
     // Only check for error patterns at the start or in structured error messages
     const errorPatterns = [
-      /^.*\*\*❌ EXECUTION ERROR\*\*/m,  // Execution error header
+      /^.*\*\*❌ EXECUTION ERROR\*\*$/m,  // Execution error header
       /^.*BUILD ERROR.*$/m,               // Build error
       /^.*PLUGIN LOAD ERROR.*$/m,         // Plugin load error
       /^.*FUNCTION SIGNATURE ERROR.*$/m,  // Function signature error
@@ -455,15 +478,15 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
 
     const bgColor = isError 
       ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
-      : 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+      : 'bg-violet-50 dark:bg-violet-900/20 border-violet-200 dark:border-violet-800'
     
     const textColor = isError
       ? 'text-red-700 dark:text-red-300'
-      : 'text-green-700 dark:text-green-300'
+      : 'text-violet-700 dark:text-violet-300'
     
     const secondaryTextColor = isError
       ? 'text-red-600 dark:text-red-400'
-      : 'text-green-600 dark:text-green-400'
+      : 'text-violet-600 dark:text-violet-400'
 
     const statusIcon = isError ? '❌' : '✅'
     const statusText = isError ? 'Code Execution Failed' : 'Code Executed Successfully'
@@ -494,30 +517,26 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
             </div>
           </div>
 
-          {event.timestamp && (
-            <div className={`text-xs ${secondaryTextColor} flex-shrink-0`}>
-              {new Date(event.timestamp).toLocaleTimeString()}
-            </div>
-          )}
+          {renderHeaderRight()}
         </div>
 
         {/* Display output or error */}
-        {resultText && resultText.trim() && (
+        {resultText && resultText.trim() && isOutputExpanded && (
           <div className="mt-2">
             <div className={`bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3`}>
               <div className="flex items-center justify-between mb-2">
-                <div className={`text-xs font-medium ${isError ? 'text-red-700 dark:text-red-300' : 'text-green-700 dark:text-green-300'}`}>
+                <div className={`text-xs font-medium ${isError ? 'text-red-700 dark:text-red-300' : 'text-violet-700 dark:text-violet-300'}`}>
                   {isError ? '🔨 Error Details' : '📝 Execution Output'}
                 </div>
                 <div className="text-xs text-gray-500 dark:text-gray-400">
                   {resultText.length} chars
                 </div>
               </div>
-              <pre className={`text-xs font-mono whitespace-pre-wrap overflow-x-auto p-3 rounded max-h-96 overflow-y-auto ${
+              <pre className={`text-xs font-mono whitespace-pre-wrap overflow-x-auto p-3 rounded max-h-96 overflow-y-auto ${ 
                 isError 
                   ? 'text-red-800 dark:text-red-200 bg-red-50 dark:bg-red-900/30' 
                   : 'text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900'
-              }`}>
+              }`}> 
                 {resultText}
               </pre>
             </div>
@@ -529,4 +548,3 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
 
   return null
 }
-

@@ -9,9 +9,6 @@ export const ADVANCED_MODE_EVENTS = new Set([
   'conversation_turn',
   'cache_event',
   'comprehensive_cache_event',
-  'step_execution_start',
-  'step_execution_end',
-  'step_execution_failed',
   'step_progress_updated',
   'workspace_file_operation', // File operations for debugging
   // Add more advanced events here as needed

@@ -1,5 +1,5 @@
 import React from 'react'
-import type { ToolCallStartEvent } from '../../../../generated/events'
+import type { ToolCallStartEvent } from '../../../../generated/event-types'
 import { Button } from '../../../ui/Button'
 import { Textarea } from '../../../ui/Textarea'
 import { Card } from '../../../ui/Card'

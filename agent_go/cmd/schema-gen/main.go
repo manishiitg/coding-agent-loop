@@ -139,9 +139,6 @@ type EventDataUnion struct {
 	OrchestratorAgentError *orchestrator_events.OrchestratorAgentErrorEvent `json:"orchestrator_agent_error,omitempty"`
 
 	// Step Execution Events
-	StepStarted            *todo_creation_human.StepStartedEvent            `json:"step_execution_start,omitempty"`
-	StepFinished           *todo_creation_human.StepFinishedEvent           `json:"step_execution_end,omitempty"`
-	StepFailed             *todo_creation_human.StepFailedEvent             `json:"step_execution_failed,omitempty"`
 	StepTokenUsage         *todo_creation_human.StepTokenUsageEvent         `json:"step_token_usage,omitempty"`
 	StepProgressUpdated    *todo_creation_human.StepProgressUpdatedEvent    `json:"step_progress_updated,omitempty"`
 	DecisionEvaluated      *todo_creation_human.DecisionEvaluatedEvent      `json:"decision_evaluated,omitempty"`
@@ -296,9 +293,6 @@ var EventTypeMapping = map[events.EventType]string{
 	orchestrator_events.OrchestratorAgentError: "orchestrator_agent_error",
 
 	// Step Execution Events
-	orchestrator_events.StepExecutionStart:     "step_execution_start",
-	orchestrator_events.StepExecutionEnd:       "step_execution_end",
-	orchestrator_events.StepExecutionFailed:    "step_execution_failed",
 	orchestrator_events.StepTokenUsage:         "step_token_usage",
 	orchestrator_events.StepProgressUpdated:    "step_progress_updated",
 	orchestrator_events.DecisionEvaluated:      "decision_evaluated",
@@ -707,9 +701,6 @@ type UnifiedEvent struct {
 	RequestHumanFeedbackEvent orchestrator_events.RequestHumanFeedbackEvent `json:"request_human_feedback"`
 
 	// Step Execution Events
-	StepStartedEvent            todo_creation_human.StepStartedEvent            `json:"step_execution_start"`
-	StepFinishedEvent           todo_creation_human.StepFinishedEvent           `json:"step_execution_end"`
-	StepFailedEvent             todo_creation_human.StepFailedEvent             `json:"step_execution_failed"`
 	StepTokenUsageEvent         todo_creation_human.StepTokenUsageEvent         `json:"step_token_usage"`
 	StepProgressUpdatedEvent    todo_creation_human.StepProgressUpdatedEvent    `json:"step_progress_updated"`
 	PreValidationCompletedEvent todo_creation_human.PreValidationCompletedEvent `json:"pre_validation_completed"`

@@ -109,7 +109,11 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
             stepStatuses.set(stepId, 'running')
           } else if (status === 'end') {
             stepStatuses.set(stepId, 'completed')
-            // If this step just ended, it's no longer the running step
+            if (latestRunningStepId === stepId) {
+              latestRunningStepId = null
+            }
+          } else if (status === 'failed') {
+            stepStatuses.set(stepId, 'failed')
             if (latestRunningStepId === stepId) {
               latestRunningStepId = null
             }
@@ -140,25 +144,6 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
         else if (success === false) failedCount++
       }
 
-      // Track step execution end (backup)
-      if (event.type === 'step_execution_end') {
-        const eventData = event.data as Record<string, unknown>
-        const data = (eventData?.data as Record<string, unknown>) || eventData
-        const stepId = data?.step_id as string
-        if (stepId) {
-          stepStatuses.set(stepId, 'completed')
-        }
-      }
-
-      // Track step execution failed
-      if (event.type === 'step_execution_failed') {
-        const eventData = event.data as Record<string, unknown>
-        const data = (eventData?.data as Record<string, unknown>) || eventData
-        const stepId = data?.step_id as string
-        if (stepId) {
-          stepStatuses.set(stepId, 'failed')
-        }
-      }
     }
 
     // Restore current step ID if we found a running step

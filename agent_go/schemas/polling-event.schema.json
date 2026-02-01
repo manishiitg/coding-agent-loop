@@ -2112,15 +2112,6 @@
         "orchestrator_agent_error": {
           "$ref": "#/$defs/OrchestratorAgentErrorEvent"
         },
-        "step_execution_start": {
-          "$ref": "#/$defs/StepStartedEvent"
-        },
-        "step_execution_end": {
-          "$ref": "#/$defs/StepFinishedEvent"
-        },
-        "step_execution_failed": {
-          "$ref": "#/$defs/StepFailedEvent"
-        },
         "step_token_usage": {
           "$ref": "#/$defs/StepTokenUsageEvent"
         },
@@ -2257,103 +2248,100 @@
     "EventType": {
       "type": "string",
       "enum": [
-        "context_summarization_completed",
-        "context_summarization_error",
-        "step_progress_updated",
-        "variables_extracted",
-        "independent_steps_selected",
-        "cache_operation_start",
-        "tool_output",
-        "context_summarization_started",
-        "large_tool_output_file_written",
-        "fallback_attempt",
-        "orchestrator_agent_error",
-        "structured_output_end",
-        "mcp_server_connection_error",
-        "performance",
-        "tool_call_end",
-        "large_tool_output_server_unavailable",
-        "orchestrator_start",
-        "cache_miss",
-        "batch_group_start",
-        "agent_end",
-        "mcp_server_connection",
-        "request_human_feedback",
-        "streaming_progress",
-        "cache_write",
-        "llm_messages",
-        "system_prompt",
-        "user_message",
-        "unified_completion",
-        "orchestrator_error",
-        "orchestrator_agent_end",
-        "prerequisite_navigation",
-        "structured_output_error",
-        "llm_generation_end",
-        "orchestrator_agent_start",
-        "step_execution_failed",
-        "step_token_usage",
-        "agent_processing",
-        "llm_generation_error",
-        "mcp_server_selection",
-        "context_cancelled",
-        "json_validation_start",
-        "llm_token_usage",
-        "tool_call_start",
-        "tool_call_error",
-        "mcp_server_discovery",
-        "context_editing_error",
-        "step_execution_end",
-        "cache_error",
-        "batch_execution_start",
-        "pre_validation_completed",
-        "streaming_error",
-        "cache_hit",
-        "conversation_thinking",
-        "tool_response",
-        "large_tool_output_file_write_error",
-        "fallback_model_used",
         "orchestrator_end",
-        "blocking_human_feedback",
-        "streaming_end",
-        "cache_expired",
-        "model_change",
-        "structured_output_start",
-        "streaming_connection_lost",
-        "mcp_server_connection_start",
-        "json_validation_end",
-        "tool_call_progress",
-        "agent_start",
-        "agent_error",
-        "conversation_start",
-        "tool_execution",
-        "token_usage",
+        "agent_end",
         "throttling_detected",
-        "streaming_start",
-        "mcp_server_connection_end",
-        "conversation_end",
+        "orchestrator_agent_error",
+        "request_human_feedback",
+        "conversation_thinking",
+        "debug",
+        "llm_generation_with_retry",
         "context_editing_completed",
-        "large_tool_output_detected",
-        "token_limit_exceeded",
         "smart_routing_start",
-        "step_execution_start",
+        "decision_evaluated",
+        "conversation_turn",
+        "llm_generation_error",
+        "user_message",
+        "step_token_usage",
+        "step_progress_updated",
+        "batch_execution_end",
         "todo_steps_extracted",
         "cache_cleanup",
-        "llm_generation_start",
-        "llm_generation_with_retry",
-        "error_detail",
-        "smart_routing_end",
-        "human_verification_response",
-        "batch_group_end",
-        "batch_execution_end",
+        "cache_operation_start",
+        "large_tool_output_server_unavailable",
+        "prerequisite_navigation",
+        "structured_output_error",
+        "mcp_server_connection_start",
+        "json_validation_start",
+        "conversation_start",
         "conversation_error",
-        "conversation_turn",
+        "fallback_attempt",
+        "unified_completion",
+        "blocking_human_feedback",
+        "tool_call_start",
         "workspace_file_operation",
+        "fallback_model_used",
+        "cache_miss",
+        "mcp_server_connection_error",
+        "json_validation_end",
+        "tool_call_progress",
+        "agent_error",
+        "batch_group_end",
+        "conversation_end",
+        "context_summarization_completed",
+        "token_limit_exceeded",
+        "variables_extracted",
+        "independent_steps_selected",
+        "structured_output_start",
+        "cache_write",
+        "cache_error",
+        "tool_call_end",
+        "tool_output",
+        "mcp_server_discovery",
         "max_turns_reached",
-        "comprehensive_cache",
-        "decision_evaluated",
+        "large_tool_output_detected",
+        "streaming_error",
+        "cache_expired",
+        "llm_token_usage",
+        "context_cancelled",
+        "context_editing_error",
+        "orchestrator_agent_end",
+        "human_verification_response",
+        "streaming_connection_lost",
+        "mcp_server_connection",
+        "token_usage",
+        "large_tool_output_file_written",
+        "model_change",
+        "streaming_start",
         "streaming_chunk",
-        "debug"
+        "streaming_progress",
+        "cache_hit",
+        "tool_call_error",
+        "system_prompt",
+        "context_summarization_started",
+        "orchestrator_error",
+        "mcp_server_connection_end",
+        "llm_messages",
+        "performance",
+        "agent_processing",
+        "error_detail",
+        "orchestrator_agent_start",
+        "structured_output_end",
+        "batch_execution_start",
+        "batch_group_start",
+        "llm_generation_end",
+        "context_summarization_error",
+        "large_tool_output_file_write_error",
+        "comprehensive_cache",
+        "pre_validation_completed",
+        "streaming_end",
+        "agent_start",
+        "llm_generation_start",
+        "tool_execution",
+        "tool_response",
+        "mcp_server_selection",
+        "smart_routing_end",
+        "orchestrator_start"
       ]
     },
     "FallbackAttemptEvent": {
@@ -4724,119 +4712,6 @@
       "additionalProperties": false,
       "type": "object"
     },
-    "StepFailedEvent": {
-      "properties": {
-        "timestamp": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "component": {
-          "type": "string"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "step_id": {
-          "type": "string"
-        },
-        "step_index": {
-          "type": "integer"
-        },
-        "step_title": {
-          "type": "string"
-        },
-        "step_path": {
-          "type": "string"
-        },
-        "is_branch_step": {
-          "type": "boolean"
-        },
-        "error": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "StepFinishedEvent": {
-      "properties": {
-        "timestamp": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "component": {
-          "type": "string"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "step_id": {
-          "type": "string"
-        },
-        "step_index": {
-          "type": "integer"
-        },
-        "step_title": {
-          "type": "string"
-        },
-        "step_path": {
-          "type": "string"
-        },
-        "is_branch_step": {
-          "type": "boolean"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
     "StepProgressUpdatedEvent": {
       "properties": {
         "timestamp": {
@@ -4885,6 +4760,9 @@
         "status": {
           "type": "string"
         },
+        "error": {
+          "type": "string"
+        },
         "group_id": {
           "type": "string"
         },
@@ -4893,67 +4771,6 @@
         },
         "total_groups": {
           "type": "integer"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "StepStartedEvent": {
-      "properties": {
-        "timestamp": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "component": {
-          "type": "string"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "step_id": {
-          "type": "string"
-        },
-        "step_index": {
-          "type": "integer"
-        },
-        "step_title": {
-          "type": "string"
-        },
-        "step_path": {
-          "type": "string"
-        },
-        "is_branch_step": {
-          "type": "boolean"
-        },
-        "run_folder": {
-          "type": "string"
-        },
-        "workspace_path": {
-          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -6072,6 +5889,9 @@
         },
         "server_name": {
           "type": "string"
+        },
+        "is_parallel": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,

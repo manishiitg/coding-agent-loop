@@ -1,12 +1,22 @@
 import React from 'react'
-import type { ToolCallStartEvent } from '../../../../generated/events'
+import type { ToolCallStartEvent } from '../../../../generated/event-types'
+import { useExpandable } from '../../useExpandable'
+import { Plus, Minus } from 'lucide-react'
 
 interface CodeExecutionToolCallDisplayProps {
   event: ToolCallStartEvent
 }
 
 export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplayProps> = ({ event }) => {
+  const { isExpanded, toggle } = useExpandable()
+  
   const toolName = event.tool_name || ''
+
+  const parallelBadge = event.is_parallel ? (
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 border border-purple-200 dark:border-purple-700 ml-1.5">
+      PARALLEL
+    </span>
+  ) : null
 
   // Handle discover_code_structure tool (no parameters)
   if (toolName === 'discover_code_structure') {
@@ -15,8 +25,8 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-blue-700 dark:text-blue-300">
-                🔍 Discover Code Structure{' '}
+              <div className="text-sm font-medium text-blue-700 dark:text-blue-300 flex items-center">
+                🔍 Discover Code Structure{parallelBadge}{' '}
                 <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
                   {event.turn && `• Turn: ${event.turn}`}
                   {event.server_name && ` • Server: ${event.server_name}`}
@@ -65,8 +75,8 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-blue-700 dark:text-blue-300">
-                🔍 Discover Code Files{' '}
+              <div className="text-sm font-medium text-blue-700 dark:text-blue-300 flex items-center">
+                🔍 Discover Code Files{parallelBadge}{' '}
                 <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
                   {event.turn && `• Turn: ${event.turn}`}
                   {serverName && ` • Server: ${serverName}`}
@@ -75,45 +85,56 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
             </div>
           </div>
 
-          {event.timestamp && (
-            <div className="text-xs text-blue-600 dark:text-blue-400 flex-shrink-0">
-              {new Date(event.timestamp).toLocaleTimeString()}
-            </div>
-          )}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {event.timestamp && (
+              <div className="text-xs text-blue-600 dark:text-blue-400">
+                {new Date(event.timestamp).toLocaleTimeString()}
+              </div>
+            )}
+            <button
+              onClick={toggle}
+              className="p-0.5 hover:bg-blue-200 dark:hover:bg-blue-800 rounded text-blue-700 dark:text-blue-300 transition-colors"
+              title={isExpanded ? "Collapse arguments (Alt+Click for all)" : "Expand arguments (Alt+Click for all)"}
+            >
+              {isExpanded ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
 
-        <div className="mt-2 space-y-2">
-          {serverName && (
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-              <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">📦 Server:</div>
-              <div className="text-sm font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 px-2 py-1 rounded">
-                {serverName}
+        {isExpanded && (
+          <div className="mt-2 space-y-2">
+            {serverName && (
+              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+                <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">📦 Server:</div>
+                <div className="text-sm font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 px-2 py-1 rounded">
+                  {serverName}
+                </div>
               </div>
-            </div>
-          )}
-          {toolNames && toolNames.length > 0 && (
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-1.5">
-              <div className="text-[10px] font-medium text-blue-700 dark:text-blue-300 mb-0.5">
-                🔧 Tools ({toolNames.length}):
+            )}
+            {toolNames && toolNames.length > 0 && (
+              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-1.5">
+                <div className="text-[10px] font-medium text-blue-700 dark:text-blue-300 mb-0.5">
+                  🔧 Tools ({toolNames.length}):
+                </div>
+                <div className="flex flex-wrap gap-0.5">
+                  {toolNames.map((tool, index) => (
+                    <span
+                      key={index}
+                      className="text-[10px] font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700"
+                    >
+                      {tool}
+                    </span>
+                  ))}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-0.5">
-                {toolNames.map((tool, index) => (
-                  <span
-                    key={index}
-                    className="text-[10px] font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700"
-                  >
-                    {tool}
-                  </span>
-                ))}
+            )}
+            {(serverName || (toolNames && toolNames.length > 0)) && (
+              <div className="text-xs text-gray-500 dark:text-gray-400 px-2">
+                Fetching Go source code...
               </div>
-            </div>
-          )}
-          {(serverName || (toolNames && toolNames.length > 0)) && (
-            <div className="text-xs text-gray-500 dark:text-gray-400 px-2">
-              Fetching Go source code...
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
     )
   }
@@ -136,13 +157,13 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
     }
 
     return (
-      <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded p-2">
+      <div className="bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-800 rounded p-2">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-purple-700 dark:text-purple-300">
-                ✍️ Write Code{' '}
-                <span className="text-xs font-normal text-purple-600 dark:text-purple-400">
+              <div className="text-sm font-medium text-violet-700 dark:text-violet-300 flex items-center">
+                ✍️ Write Code{parallelBadge}{' '}
+                <span className="text-xs font-normal text-violet-600 dark:text-violet-400">
                   {event.turn && `• Turn: ${event.turn}`}
                   {event.server_name && ` • Server: ${event.server_name}`}
                 </span>
@@ -150,54 +171,64 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
             </div>
           </div>
 
-          {event.timestamp && (
-            <div className="text-xs text-purple-600 dark:text-purple-400 flex-shrink-0">
-              {new Date(event.timestamp).toLocaleTimeString()}
-            </div>
-          )}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {event.timestamp && (
+              <div className="text-xs text-violet-600 dark:text-violet-400">
+                {new Date(event.timestamp).toLocaleTimeString()}
+              </div>
+            )}
+            <button
+              onClick={toggle}
+              className="p-0.5 hover:bg-violet-200 dark:hover:bg-violet-800 rounded text-violet-700 dark:text-violet-300 transition-colors"
+              title={isExpanded ? "Collapse arguments (Alt+Click for all)" : "Expand arguments (Alt+Click for all)"}
+            >
+              {isExpanded ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
 
-        <div className="mt-2 space-y-2">
-          {filename && (
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-              <div className="text-xs font-medium text-purple-700 dark:text-purple-300 mb-1">📄 Filename:</div>
-              <div className="text-sm font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 px-2 py-1 rounded">
-                {filename}
-              </div>
-            </div>
-          )}
-
-          {cliArgs.length > 0 && (
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-              <div className="text-xs font-medium text-purple-700 dark:text-purple-300">
-                🔧 CLI Arguments:{' '}
-                <span className="font-mono text-gray-800 dark:text-gray-200">
-                  {cliArgs.join(', ')}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {code && (
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-              <div className="flex items-center justify-between mb-1">
-                <div className="text-xs font-medium text-purple-700 dark:text-purple-300">
-                  💻 Go Code Preview
-                </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">
-                  {lineCount} line{lineCount !== 1 ? 's' : ''} • {code.length} chars
+        {isExpanded && (
+          <div className="mt-2 space-y-2">
+            {filename && (
+              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+                <div className="text-xs font-medium text-violet-700 dark:text-violet-300 mb-1">📄 Filename:</div>
+                <div className="text-sm font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 px-2 py-1 rounded">
+                  {filename}
                 </div>
               </div>
-              <pre className="text-xs text-gray-800 dark:text-gray-200 font-mono whitespace-pre-wrap overflow-x-auto bg-gray-50 dark:bg-gray-900 p-2 rounded max-h-48 overflow-y-auto">
-                {code}
-              </pre>
-            </div>
-          )}
-        </div>
+            )}
+
+            {cliArgs.length > 0 && (
+              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+                <div className="text-xs font-medium text-violet-700 dark:text-violet-300">
+                  🔧 CLI Arguments:{' '}
+                  <span className="font-mono text-gray-800 dark:text-gray-200">
+                    {cliArgs.join(', ')}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {code && (
+              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-xs font-medium text-violet-700 dark:text-violet-300">
+                    💻 Go Code Preview
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    {lineCount} line{lineCount !== 1 ? 's' : ''} • {code.length} chars
+                  </div>
+                </div>
+                <pre className="text-xs text-gray-800 dark:text-gray-200 font-mono whitespace-pre-wrap overflow-x-auto bg-gray-50 dark:bg-gray-900 p-2 rounded max-h-48 overflow-y-auto">
+                  {code}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     )
   }
 
   return null
 }
-

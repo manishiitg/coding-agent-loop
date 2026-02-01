@@ -102,20 +102,3 @@ func (bo *BaseOrchestrator) EmitOrchestratorAgentError(ctx context.Context, agen
 	bo.emitEvent(ctx, orchestrator_events.OrchestratorAgentError, eventData)
 }
 
-// EmitStepFailedEvent emits a step failed event
-func (bo *BaseOrchestrator) EmitStepFailedEvent(ctx context.Context, stepID, stepTitle, stepPath, errorMsg string, stepIndex int, isBranchStep bool) {
-	eventData := &orchestrator_events.StepFailedEvent{
-		BaseEventData: baseevents.BaseEventData{
-			Timestamp: time.Now(),
-			Component: "orchestrator",
-		},
-		StepID:       stepID,
-		StepIndex:    stepIndex,
-		StepTitle:    stepTitle,
-		StepPath:     stepPath,
-		IsBranchStep: isBranchStep,
-		Error:        errorMsg,
-	}
-
-	bo.emitEvent(ctx, orchestrator_events.StepExecutionFailed, eventData)
-}

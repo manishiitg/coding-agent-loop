@@ -2740,7 +2740,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					validationDetails = "No validation response available"
 				}
 				err := fmt.Errorf("step %d failed validation after %d retry attempts. %s. Please review the execution results and update the plan if needed", stepIndex+1, maxRetryAttempts, validationDetails)
-				// Emit step_failed event using centralized method
+				// Emit step_progress_updated (failed) event
 				stepTitle := step.GetTitle()
 				if stepTitle == "" {
 					stepTitle = fmt.Sprintf("Step %d", stepIndex+1)
@@ -2749,8 +2749,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				if stepId == "" {
 					stepId = fmt.Sprintf("step-%d", stepIndex+1)
 				}
-				hcpo.EmitStepFailedEvent(ctx, stepId, stepTitle, stepPath, err.Error(), stepIndex, isBranchStep)
-				hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_failed event for step %d: %s (validation failed)", stepIndex+1, stepTitle))
+				progress, loadErr := hcpo.loadStepProgress(ctx)
+				if loadErr == nil && progress != nil {
+					hcpo.emitStepProgressUpdatedEvent(ctx, progress, "failed", stepId, err.Error())
+				}
+				hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_progress_updated (failed) for step %d: %s (validation failed)", stepIndex+1, stepTitle))
 				return executionResult, updatedContextFiles, err
 			}
 
@@ -3818,7 +3821,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			}
 
 			hcpo.GetLogger().Error(fmt.Sprintf("❌ Step %d execution failed: %v", i+1, err), nil)
-			// Emit step_failed event using centralized method
+			// Emit step_progress_updated (failed) event
 			stepTitle := step.GetTitle()
 			if stepTitle == "" {
 				stepTitle = fmt.Sprintf("Step %d", i+1)
@@ -3827,8 +3830,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			if stepId == "" {
 				stepId = fmt.Sprintf("step-%d", i+1)
 			}
-			hcpo.EmitStepFailedEvent(ctx, stepId, stepTitle, stepPath, err.Error(), i, false)
-			hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_failed event for step %d: %s", i+1, stepTitle))
+			progress, loadErr := hcpo.loadStepProgress(ctx)
+			if loadErr == nil && progress != nil {
+				hcpo.emitStepProgressUpdatedEvent(ctx, progress, "failed", stepId, err.Error())
+			}
+			hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_progress_updated (failed) for step %d: %s", i+1, stepTitle))
 			return fmt.Errorf("step %d execution failed: %w", i+1, err)
 		}
 

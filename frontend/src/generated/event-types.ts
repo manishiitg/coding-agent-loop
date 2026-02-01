@@ -78,9 +78,6 @@ import type {
   OrchestratorAgentStartEvent,
   OrchestratorAgentEndEvent,
   OrchestratorAgentErrorEvent,
-  StepStartedEvent,
-  StepFinishedEvent,
-  StepFailedEvent,
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
   DecisionEvaluatedEvent,
@@ -218,9 +215,6 @@ export type EventTypeString =
   | 'orchestrator_agent_start'
   | 'orchestrator_agent_end'
   | 'orchestrator_agent_error'
-  | 'step_execution_start'
-  | 'step_execution_end'
-  | 'step_execution_failed'
   | 'step_token_usage'
   | 'step_progress_updated'
   | 'decision_evaluated'
@@ -343,9 +337,6 @@ export interface EventTypeToDataMap {
   'orchestrator_agent_start': OrchestratorAgentStartEvent;
   'orchestrator_agent_end': OrchestratorAgentEndEvent;
   'orchestrator_agent_error': OrchestratorAgentErrorEvent;
-  'step_execution_start': StepStartedEvent;
-  'step_execution_end': StepFinishedEvent;
-  'step_execution_failed': StepFailedEvent;
   'step_token_usage': StepTokenUsageEvent;
   'step_progress_updated': StepProgressUpdatedEvent;
   'decision_evaluated': DecisionEvaluatedEvent;
@@ -774,9 +765,6 @@ export type {
   OrchestratorAgentStartEvent,
   OrchestratorAgentEndEvent,
   OrchestratorAgentErrorEvent,
-  StepStartedEvent,
-  StepFinishedEvent,
-  StepFailedEvent,
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
   DecisionEvaluatedEvent,

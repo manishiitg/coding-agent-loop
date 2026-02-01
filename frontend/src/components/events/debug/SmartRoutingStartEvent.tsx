@@ -1,6 +1,8 @@
 import React from 'react'
 import type { SmartRoutingStartEvent } from '../../../generated/events'
 import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer'
+import { useExpandable } from '../useExpandable'
+import { Plus, Minus } from 'lucide-react'
 
 interface SmartRoutingStartEventDisplayProps {
   event: SmartRoutingStartEvent
@@ -10,19 +12,19 @@ export const SmartRoutingStartEventDisplay: React.FC<SmartRoutingStartEventDispl
   event
 }) => {
   const { total_tools, total_servers, thresholds } = event
-  const [isExpanded, setIsExpanded] = React.useState(false)
+  const { isExpanded, toggle } = useExpandable()
 
   const hasExpandableContent = event.llm_prompt || event.user_query || event.conversation_context || event.llm_model_id || event.llm_provider
 
   return (
-    <div className="bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-800 rounded p-2">
+    <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded p-2">
       <div className="flex items-center justify-between gap-3">
         {/* Left side: Icon and main content */}
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            <div className="text-sm font-medium text-indigo-700 dark:text-indigo-300">
               Smart Routing Started{' '}
-              <span className="text-xs font-normal text-gray-600 dark:text-gray-400">
+              <span className="text-xs font-normal text-indigo-600 dark:text-indigo-400">
                 | Tools: {total_tools || 0} | Servers: {total_servers || 0} | Thresholds: tools&gt;{thresholds?.max_tools || 0}, servers&gt;{thresholds?.max_servers || 0}
                 {event.llm_model_id && ` | LLM: ${event.llm_model_id}`}
                 {event.llm_provider && ` (${event.llm_provider})`}
@@ -34,17 +36,18 @@ export const SmartRoutingStartEventDisplay: React.FC<SmartRoutingStartEventDispl
         {/* Right side: Time and expand button */}
         <div className="flex items-center gap-2 flex-shrink-0">
           {event.timestamp && (
-            <div className="text-xs text-gray-600 dark:text-gray-400">
+            <div className="text-xs text-indigo-600 dark:text-indigo-400">
               {new Date(event.timestamp).toLocaleTimeString()}
             </div>
           )}
           
           {hasExpandableContent && (
             <button
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 underline cursor-pointer flex-shrink-0"
+              onClick={toggle}
+              className="p-0.5 hover:bg-indigo-200 dark:hover:bg-indigo-800 rounded text-indigo-600 dark:text-indigo-400 transition-colors"
+              title={isExpanded ? "Collapse details (Alt+Click for all)" : "Expand details (Alt+Click for all)"}
             >
-              {isExpanded ? '▼' : '▶'}
+              {isExpanded ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
             </button>
           )}
         </div>

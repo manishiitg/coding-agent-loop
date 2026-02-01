@@ -25,13 +25,15 @@ export const EventModeProvider: React.FC<{ children: ReactNode }> = ({ children 
 
   React.useEffect(() => {
     // Expose global function for event mode cycling
-    // Cycle through: basic → advanced → tiny → basic
+    // Cycle through: basic → advanced → tiny → micro → basic
     (window as Window & { cycleEventMode?: () => void }).cycleEventMode = () => {
       let newMode: EventMode;
       if (mode === 'basic') {
         newMode = 'advanced';
       } else if (mode === 'advanced') {
         newMode = 'tiny';
+      } else if (mode === 'tiny') {
+        newMode = 'micro';
       } else {
         newMode = 'basic';
       }

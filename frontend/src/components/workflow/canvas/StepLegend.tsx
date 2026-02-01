@@ -504,7 +504,7 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                         {branchType === 'true' ? 'Y' : 'N'}
                       </div>
                     ) : isSubAgent ? (
-                      <div className={`flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-semibold bg-cyan-500/20 dark:bg-cyan-500/30 text-cyan-700 dark:text-cyan-400`}>
+                      <div className={`flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-semibold bg-indigo-500/20 dark:bg-indigo-500/30 text-indigo-700 dark:text-indigo-400`}>
                         S
                       </div>
                     ) : (
@@ -529,13 +529,13 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                           <GitBranch className="w-3 h-3 text-purple-500 flex-shrink-0" />
                         )}
                         {nodeType === 'loop' && (
-                          <Repeat className="w-3 h-3 text-cyan-500 flex-shrink-0" />
+                          <Repeat className="w-3 h-3 text-indigo-500 flex-shrink-0" />
                         )}
                         {nodeType === 'decision' && (
                           <Zap className="w-3 h-3 text-indigo-500 flex-shrink-0" />
                         )}
                         {nodeType === 'orchestrator' && (
-                          <GitBranch className="w-3 h-3 text-teal-500 flex-shrink-0" />
+                          <GitBranch className="w-3 h-3 text-indigo-500 flex-shrink-0" />
                         )}
                         <span>
                           {nodeType === 'orchestrator' && isOrchestrationStep(step) && step.orchestration_step?.title
@@ -556,7 +556,7 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                         )}
                         {skipLLMValidation && (
                           <span title="LLM validation will be skipped if pre-validation passes" className="flex-shrink-0">
-                            <SkipForward className="w-3 h-3 text-cyan-500" />
+                            <SkipForward className="w-3 h-3 text-indigo-500" />
                           </span>
                         )}
                         {isValidationDisabled && (

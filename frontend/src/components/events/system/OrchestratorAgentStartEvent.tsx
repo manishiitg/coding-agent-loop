@@ -1,6 +1,8 @@
 import React from 'react';
 import type { OrchestratorAgentStartEvent } from '../../../generated/events';
 import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer';
+import { useExpandable } from '../useExpandable';
+import { Plus, Minus } from 'lucide-react';
 
 interface OrchestratorAgentStartEventDisplayProps {
   event: OrchestratorAgentStartEvent;
@@ -10,6 +12,8 @@ interface OrchestratorAgentStartEventDisplayProps {
 }
 
 export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStartEventDisplayProps> = ({ event, isCollapsed, eventCount, onToggleCollapse }) => {
+  const { isExpanded: isInputsExpanded, toggle } = useExpandable()
+
   const formatTimestamp = (timestamp?: string) => {
     if (!timestamp) return '';
     return new Date(timestamp).toLocaleTimeString();
@@ -41,7 +45,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
 
   const getAgentColor = () => {
     const t = (event as unknown as { agent_type?: string })?.agent_type
-    if (t === 'plan_breakdown') return 'green'
+    if (t === 'plan_breakdown') return 'emerald'
     if (t === 'planning') return 'blue'
     if (t === 'execution') return 'purple'
     if (t === 'validation') return 'emerald'
@@ -55,13 +59,13 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   
   const getColorClasses = (color: string) => {
     switch (color) {
-      case 'green':
+      case 'emerald':
         return {
-          bg: 'bg-green-50 dark:bg-green-900/20',
-          border: 'border-green-200 dark:border-green-800',
-          text: 'text-green-700 dark:text-green-300',
-          textSecondary: 'text-green-600 dark:text-green-400',
-          hover: 'hover:text-green-800 dark:hover:text-green-200'
+          bg: 'bg-emerald-50 dark:bg-emerald-900/20',
+          border: 'border-emerald-200 dark:border-emerald-800',
+          text: 'text-emerald-700 dark:text-emerald-300',
+          textSecondary: 'text-emerald-600 dark:text-emerald-400',
+          hover: 'hover:text-emerald-800 dark:hover:text-emerald-200'
         };
       case 'blue':
         return {
@@ -78,14 +82,6 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
           text: 'text-purple-700 dark:text-purple-300',
           textSecondary: 'text-purple-600 dark:text-purple-400',
           hover: 'hover:text-purple-800 dark:hover:text-purple-200'
-        };
-      case 'emerald':
-        return {
-          bg: 'bg-emerald-50 dark:bg-emerald-900/20',
-          border: 'border-emerald-200 dark:border-emerald-800',
-          text: 'text-emerald-700 dark:text-emerald-300',
-          textSecondary: 'text-emerald-600 dark:text-emerald-400',
-          hover: 'hover:text-emerald-800 dark:hover:text-emerald-200'
         };
       case 'orange':
         return {
@@ -115,15 +111,16 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   };
 
   const colors = getColorClasses(agentColor);
+  const hasExpandableContent = event.objective || (event.input_data && event.input_data.context) || hasInputData;
 
   return (
-    <div className={`p-2 ${colors.bg} border ${colors.border} rounded`}>
+    <div className={`p-2 ${colors.bg} border ${colors.border} rounded transition-all duration-200`}>
       {/* Header with single-line layout */}
       <div className="flex items-center justify-between gap-3">
         {/* Left side: Icon and main content */}
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <div className={`w-6 h-6 ${colors.bg} rounded-full flex items-center justify-center`}>
+            <div className={`w-6 h-6 ${colors.bg} rounded-full flex items-center justify-center flex-shrink-0`}>
               <span className="text-sm">{agentIcon}</span>
             </div>
             <div className="min-w-0 flex-1">
@@ -146,6 +143,18 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
               {formatTimestamp(event.timestamp)}
             </div>
           )}
+
+          {/* Toggle for inputs/details */}
+          {!isCollapsed && hasExpandableContent && (
+            <button
+              onClick={toggle}
+              className={`p-0.5 ${colors.hover} rounded ${colors.text} transition-colors flex items-center gap-1`}
+              title={isInputsExpanded ? "Collapse inputs (Alt+Click for all)" : "Expand inputs (Alt+Click for all)"}
+            >
+              <span className="text-[10px] uppercase font-bold">Inputs</span>
+              {isInputsExpanded ? <Minus className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+            </button>
+          )}
           
           {/* Session collapse/expand button */}
           {onToggleCollapse && (
@@ -155,36 +164,36 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
               aria-label={isCollapsed ? 'Expand session' : 'Collapse session'}
               title={isCollapsed ? 'Expand session' : 'Collapse session'}
             >
-              {isCollapsed ? '+' : '−'}
+              {isCollapsed ? <Plus className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
             </button>
           )}
         </div>
       </div>
 
-      {/* Objective content - only show when not collapsed */}
-      {!isCollapsed && event.objective && (
-        <div className="mt-3">
-          <div className={`text-xs font-medium ${colors.textSecondary} mb-2`}>Objective:</div>
-          <ConversationMarkdownRenderer content={event.objective} maxHeight="400px" />
-        </div>
-      )}
-
-      {/* Context for conditional agents - show prominently after objective */}
-      {!isCollapsed && (event as unknown as { agent_type?: string })?.agent_type === 'conditional' && event.input_data?.context && (
-        <div className="mt-3">
-          <div className={`text-xs font-medium ${colors.textSecondary} mb-2`}>Context:</div>
-          <div className={`${colors.bg} rounded p-3 text-sm border ${colors.border}`}>
-            <ConversationMarkdownRenderer 
-              content={event.input_data.context} 
-              maxHeight="400px" 
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Expandable content - only show when not collapsed */}
-      {!isCollapsed && hasInputData && (
+      {/* Expandable content - only show when not collapsed AND inputs expanded */}
+      {!isCollapsed && isInputsExpanded && (
         <div className="mt-3 space-y-3">
+          {/* Objective content */}
+          {event.objective && (
+            <div>
+              <div className={`text-xs font-medium ${colors.textSecondary} mb-2`}>Objective:</div>
+              <ConversationMarkdownRenderer content={event.objective} maxHeight="400px" />
+            </div>
+          )}
+
+          {/* Context for conditional agents - show prominently after objective */}
+          {(event as unknown as { agent_type?: string })?.agent_type === 'conditional' && event.input_data?.context && (
+            <div>
+              <div className={`text-xs font-medium ${colors.textSecondary} mb-2`}>Context:</div>
+              <div className={`${colors.bg} rounded p-3 text-sm border ${colors.border}`}>
+                <ConversationMarkdownRenderer 
+                  content={event.input_data.context} 
+                  maxHeight="400px" 
+                />
+              </div>
+            </div>
+          )}
+
           {/* Input Data */}
           {hasInputData && (
             <div>

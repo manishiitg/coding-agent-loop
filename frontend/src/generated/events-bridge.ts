@@ -130,9 +130,6 @@ export interface EventDataUnion {
   orchestrator_agent_start?: OrchestratorAgentStartEvent;
   orchestrator_agent_end?: OrchestratorAgentEndEvent;
   orchestrator_agent_error?: OrchestratorAgentErrorEvent;
-  step_execution_start?: StepStartedEvent;
-  step_execution_end?: StepFinishedEvent;
-  step_execution_failed?: StepFailedEvent;
   step_token_usage?: StepTokenUsageEvent;
   step_progress_updated?: StepProgressUpdatedEvent;
   decision_evaluated?: DecisionEvaluatedEvent;
@@ -448,6 +445,7 @@ export interface ToolCallStartEvent {
   tool_name?: string;
   tool_params?: ToolParams;
   server_name?: string;
+  is_parallel?: boolean;
 }
 export interface ToolParams {
   arguments?: string;
@@ -1412,69 +1410,6 @@ export interface OrchestratorAgentErrorEvent {
   step_index?: number;
   iteration?: number;
 }
-export interface StepStartedEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  step_id?: string;
-  step_index?: number;
-  step_title?: string;
-  step_path?: string;
-  is_branch_step?: boolean;
-  run_folder?: string;
-  workspace_path?: string;
-}
-export interface StepFinishedEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  step_id?: string;
-  step_index?: number;
-  step_title?: string;
-  step_path?: string;
-  is_branch_step?: boolean;
-}
-export interface StepFailedEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  step_id?: string;
-  step_index?: number;
-  step_title?: string;
-  step_path?: string;
-  is_branch_step?: boolean;
-  error?: string;
-}
 export interface StepTokenUsageEvent {
   timestamp?: string;
   trace_id?: string;
@@ -1524,6 +1459,7 @@ export interface StepProgressUpdatedEvent {
   run_folder?: string;
   current_step_id?: string;
   status?: string;
+  error?: string;
   group_id?: string;
   group_index?: number;
   total_groups?: number;

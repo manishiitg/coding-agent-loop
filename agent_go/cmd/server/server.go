@@ -2379,6 +2379,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Default to 0 (use default: 5)
 				return 0
 			}(),
+			// Parallel tool execution: enabled by default, can be disabled via ENABLE_PARALLEL_TOOL_EXECUTION=false
+			EnableParallelToolExecution: func() bool {
+				if envVal := os.Getenv("ENABLE_PARALLEL_TOOL_EXECUTION"); envVal == "false" {
+					return false
+				}
+				return true // Default to enabled
+			}(),
 			// MCP session ID for connection reuse (e.g., Playwright browser sharing)
 			// Use the chat session ID so all agents in the same session share MCP connections
 			SessionID: sessionID,

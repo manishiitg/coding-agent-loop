@@ -21,7 +21,7 @@ interface LoopNodeProps {
 
 const statusBorderColors: Record<string, string> = {
   pending: 'border-gray-300 dark:border-gray-600',
-  running: 'border-cyan-500 dark:border-cyan-400',
+  running: 'border-indigo-500 dark:border-indigo-400',
   completed: 'border-green-500 dark:border-green-400',
   failed: 'border-red-500 dark:border-red-400'
 }
@@ -428,10 +428,10 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
     `}>
       {/* Loop Badge - Top Left */}
       <div className="absolute -top-3 left-4 z-20 flex items-center gap-1 px-2 py-0.5 rounded-md bg-gray-800 text-white text-[10px] font-semibold shadow-md border border-gray-700">
-        <Repeat className="w-3 h-3 text-cyan-400" />
+        <Repeat className="w-3 h-3 text-indigo-400" />
         <span>Loop</span>
         {max_iterations && (
-          <span className="text-cyan-300 ml-0.5">
+          <span className="text-indigo-300 ml-0.5">
             {current_iteration !== undefined && status === 'running' 
               ? `${current_iteration}/${max_iterations}` 
               : `×${max_iterations}`}

@@ -78,6 +78,10 @@ type LLMAgentConfig struct {
 	ContextEditingThreshold     int  // Token threshold for context editing (0 = use default: 100)
 	ContextEditingTurnThreshold int  // Turn age threshold for context editing (0 = use default: 5)
 
+	// Parallel tool execution: When enabled, multiple tool calls in a single LLM response
+	// are executed concurrently using a fork-join pattern instead of sequentially
+	EnableParallelToolExecution bool
+
 	// MCP session management for connection reuse
 	// When set, MCP connections are shared via session registry instead of creating new connections
 	// This enables browser reuse in Playwright and other stateful MCP servers
@@ -258,6 +262,12 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if config.SessionID != "" {
 		agentOptions = append(agentOptions, mcpagent.WithSessionID(config.SessionID))
 		logger.Info(fmt.Sprintf("🔗 MCP session ID configured for connection reuse: %s", config.SessionID))
+	}
+
+	// Add parallel tool execution if enabled
+	if config.EnableParallelToolExecution {
+		agentOptions = append(agentOptions, mcpagent.WithParallelToolExecution(true))
+		logger.Info("⚡ Parallel tool execution enabled - multiple tool calls will run concurrently")
 	}
 
 	// Add context summarization options if enabled

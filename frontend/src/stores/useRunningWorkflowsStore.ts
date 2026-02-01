@@ -479,7 +479,7 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
             // Apply status updates after processing events
             // This ensures we see workflow_end events before marking as completed
             
-            // If we see running events (step_execution_start, step_progress_updated, etc.) 
+            // If we see running events (step_progress_updated, etc.) 
             // and workflow was marked as completed, reset it back to running
             // This handles cases where workflow was incorrectly marked as completed
             if (hasRunningEvents && bg.status === 'completed') {

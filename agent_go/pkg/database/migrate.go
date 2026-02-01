@@ -163,27 +163,6 @@ func (mr *MigrationRunner) isMigrationApplied(version int, appliedMigrations []i
 	return false
 }
 
-// columnExists checks if a column exists in a table using driver-specific query
-func (mr *MigrationRunner) columnExists(tx *sql.Tx, tableName, columnName string) (bool, error) {
-	var count int
-	var query string
-	var args []interface{}
-
-	if mr.driverName == "postgres" {
-		query = `SELECT COUNT(*) FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`
-		args = []interface{}{tableName, columnName}
-	} else {
-		// Default to SQLite
-		query = `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`
-		args = []interface{}{tableName, columnName}
-	}
-
-	err := tx.QueryRow(query, args...).Scan(&count)
-	if err != nil {
-		return false, fmt.Errorf("failed to check column existence: %w", err)
-	}
-	return count > 0, nil
-}
 
 // runMigration runs a single migration
 func (mr *MigrationRunner) runMigration(migration Migration) error {

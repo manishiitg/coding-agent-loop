@@ -72,8 +72,8 @@ resource "azurerm_container_app" "agent" {
     container {
       name   = "agent"
       image  = "${local.acr_login_server}/mcp-agent:${var.agent_image_tag}"
-      cpu    = 0.5
-      memory = "1Gi"
+      cpu    = 1.0
+      memory = "2Gi"
 
       env {
         name  = "PORT"
@@ -219,8 +219,8 @@ resource "azurerm_container_app" "workspace_api" {
     container {
       name   = "workspace-api"
       image  = "${local.acr_login_server}/workspace-api:${var.workspace_api_image_tag}"
-      cpu    = 0.5
-      memory = "1Gi"
+      cpu    = 1.0
+      memory = "2Gi"
 
       env {
         name  = "PORT"

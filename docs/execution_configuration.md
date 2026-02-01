@@ -798,7 +798,6 @@ In chat mode, certain folders (e.g., `Workflow/`) are **read-only**.
 -   `move_workspace_file` - Cannot move files in/out of Workflow/
 -   `diff_patch_workspace_file` - Cannot patch files in Workflow/
 -   `execute_shell_command` - Cannot reference Workflow/ in commands
--   All git commands - Blocked entirely (can modify via `.git/` database)
 
 #### 4. Shell Execution Security
 When shell commands are executed, the system applies **three layers of security**:
@@ -829,7 +828,6 @@ graph TD
     C -->|Shell Execution| S[ExecuteIsolated]
 
     CHAT[Chat Mode Server] -->|blockedPaths| WRAP[wrapExecutorsWithChatModeFolderGuard]
-    WRAP -->|Git Blocking| GIT[Block git commands]
     WRAP -->|Command Check| CMD[Block commands with Workflow/]
     WRAP -->|Context Injection| CTX[Inject BlockedPaths to context]
 
@@ -857,7 +855,7 @@ graph TD
 | :--- | :--- | :--- |
 | **Read Tools** | `readPaths` + `writePaths` (combined) | `blockedPaths` (denied) |
 | **Write Tools** | `writePaths` only | `blockedPaths` (denied) |
-| **Shell Tools** | Environment sanitized + Filesystem isolated | Git commands + `blockedPaths` references |
+| **Shell Tools** | Environment sanitized + Filesystem isolated | `blockedPaths` references |
 | **Chat Mode Read** | All paths including `Workflow/` | None |
 | **Chat Mode Write** | All except `Workflow/` | `Workflow/` folder (read-only) |
 

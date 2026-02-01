@@ -40,6 +40,7 @@ import type {
   EvaluationReportsResponse,
   TokenUsageFile,
   WorkspaceStateResponse,
+  CapabilitiesResponse,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -265,7 +266,7 @@ export const agentApi = {
   },
 
   // Get server capabilities
-  getCapabilities: async () => {
+  getCapabilities: async (): Promise<CapabilitiesResponse> => {
     const response = await api.get('/api/capabilities')
     return response.data
   },

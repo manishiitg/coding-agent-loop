@@ -3,6 +3,7 @@ import { Handle, Position } from '@xyflow/react'
 import { XCircle, Loader2, Plus, RefreshCw, GitBranch, Play, Settings, Code, Terminal, AlertTriangle, Lock, SkipForward, CheckCircle, Search } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
+import { useCapabilitiesStore } from '../../../stores/useCapabilitiesStore'
 import { agentApi } from '../../../services/api'
 import { getToolsByCategory } from '../../../utils/customToolNames'
 import { NodeConfigFooter } from './NodeConfigFooter'
@@ -32,7 +33,8 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
   // Count specific tools enabled
   const enabled = enabledTools.filter(entry => {
     const parsed = parseToolEntry(entry)
-    return parsed && parsed.category === category && parsed.tool !== '*'
+    // Only count if it matches category AND is in the available tools list
+    return parsed && parsed.category === category && parsed.tool !== '*' && allCategoryTools.includes(parsed.tool)
   }).length
   return { enabled, total: allCategoryTools.length }
 }
@@ -94,6 +96,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
     : null
 
   const { availableLLMs } = useLLMStore()
+  const { capabilities } = useCapabilitiesStore()
 
   // Get step config (agent_configs)
   const stepConfig = step as { agent_configs?: { 
@@ -309,14 +312,14 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
   const enabledCustomTools = useMemo(() => stepConfig?.agent_configs?.enabled_custom_tools || [], [stepConfig?.agent_configs?.enabled_custom_tools])
   
   const workspaceToolsInfo = useMemo(() => {
-    const allWorkspaceTools = getToolsByCategory('workspace_tools')
+    const allWorkspaceTools = getToolsByCategory('workspace_tools', capabilities?.workspace)
     return getCategoryToolCount('workspace_tools', enabledCustomTools, allWorkspaceTools)
-  }, [enabledCustomTools])
+  }, [enabledCustomTools, capabilities?.workspace])
   
   const humanToolsInfo = useMemo(() => {
-    const allHumanTools = getToolsByCategory('human_tools')
+    const allHumanTools = getToolsByCategory('human_tools', capabilities?.workspace)
     return getCategoryToolCount('human_tools', enabledCustomTools, allHumanTools)
-  }, [enabledCustomTools])
+  }, [enabledCustomTools, capabilities?.workspace])
 
   const hasWorkspaceTools = workspaceToolsInfo.enabled > 0
   const hasHumanTools = humanToolsInfo.enabled > 0

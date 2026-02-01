@@ -20,18 +20,18 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"mcp-agent-builder-go/agent_go/internal/events"
-	agent "mcp-agent-builder-go/agent_go/pkg/agentwrapper"
-	"mcp-agent-builder-go/agent_go/pkg/database"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
-	orchtypes "mcp-agent-builder-go/agent_go/pkg/orchestrator/types"
 	unifiedevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/executor"
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
+	"mcp-agent-builder-go/agent_go/internal/events"
+	agent "mcp-agent-builder-go/agent_go/pkg/agentwrapper"
+	"mcp-agent-builder-go/agent_go/pkg/database"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	orchtypes "mcp-agent-builder-go/agent_go/pkg/orchestrator/types"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
@@ -41,10 +41,11 @@ import (
 
 	"github.com/joho/godotenv"
 
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 	eventbridge "mcp-agent-builder-go/agent_go/cmd/server/event_bridge"
 	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"mcp-agent-builder-go/agent_go/pkg/workspace"
 	"strconv"
 )
 
@@ -247,7 +248,7 @@ func enhanceToolDescriptionForChatMode(toolName, originalDescription string) str
 // 1. ALLOWS read access to all folders (list, search, read operations)
 // 2. ONLY ALLOWS write access to Chats/ folder
 // 3. BLOCKS write access to all other folders (Workflow/, skills/, etc.)
-// 4. BLOCKS git commands (can leak data through .git/ database)
+// 4. Restricts shell writes to Chats/ folder
 func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error)) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	// The ONLY folder chat mode can write to
 	allowedWriteFolder := "Chats/"
@@ -270,19 +271,11 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 		originalExecutor := executor
 
 		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
-			// For shell commands, block git commands and restrict to Chats/ folder for writes
+			// For shell commands, restrict to Chats/ folder for writes
 			if toolNameCopy == "execute_shell_command" {
 				if cmdValue, exists := args["command"]; exists {
 					if cmdStr, ok := cmdValue.(string); ok {
 						cmdLower := strings.ToLower(cmdStr)
-
-						// Block git commands entirely - they can leak/modify data through .git/ database
-						if strings.HasPrefix(cmdLower, "git ") || strings.Contains(cmdLower, " git ") ||
-							strings.Contains(cmdLower, "&& git ") || strings.Contains(cmdLower, "; git ") ||
-							strings.Contains(cmdLower, "| git ") || strings.Contains(cmdLower, "|| git ") {
-							log.Printf("[CHAT MODE FOLDER GUARD] Blocked git command: %s", cmdStr)
-							return "", fmt.Errorf("access denied: git commands are not allowed in chat mode")
-						}
 
 						// Check if shell command references Workflow/ folder (blocked entirely for shell)
 						workflowLower := "workflow"
@@ -308,12 +301,12 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 						if pathStr, ok := paramValue.(string); ok && pathStr != "" {
 							// Clean the path to resolve .. and .
 							cleanedPath := filepath.Clean(pathStr)
-							
+
 							// Check if path starts with Chats/ - this is the ONLY allowed write location
 							// Must start with Chats and be either "Chats" exactly or "Chats/" (subfolder/file)
 							isChatsDir := cleanedPath == "Chats"
 							isChildOfChats := strings.HasPrefix(cleanedPath, "Chats/") || strings.HasPrefix(cleanedPath, "Chats\\")
-							
+
 							if !isChatsDir && !isChildOfChats {
 								log.Printf("[CHAT MODE FOLDER GUARD] Blocked WRITE to '%s' (cleaned: '%s') for tool %s - chat mode can only write to Chats/ folder", pathStr, cleanedPath, toolNameCopy)
 								return "", fmt.Errorf("access denied: cannot write to '%s' (chat mode can only write to Chats/ folder)", pathStr)
@@ -363,16 +356,6 @@ func wrapExecutorsWithSkillBuilderFolderGuard(executors map[string]func(ctx cont
 		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
 			// For shell commands, restrict to skills/custom/ folder for writes
 			if toolNameCopy == "execute_shell_command" {
-				if cmdValue, exists := args["command"]; exists {
-					if cmdStr, ok := cmdValue.(string); ok {
-						cmdLower := strings.ToLower(cmdStr)
-
-						// Block git commands
-						if strings.HasPrefix(cmdLower, "git ") || strings.Contains(cmdLower, " git ") {
-							return "", fmt.Errorf("access denied: git commands are not allowed in skill builder mode")
-						}
-					}
-				}
 				// Inject allowed write folder for kernel-level sandboxing
 				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, allowedWriteFolder)
 			}
@@ -383,11 +366,11 @@ func wrapExecutorsWithSkillBuilderFolderGuard(executors map[string]func(ctx cont
 					if paramValue, exists := args[paramName]; exists {
 						if pathStr, ok := paramValue.(string); ok && pathStr != "" {
 							cleanedPath := filepath.Clean(pathStr)
-							
+
 							// Check if path starts with skills/custom/
 							isCustomSkillsDir := cleanedPath == "skills/custom"
 							isChildOfCustomSkills := strings.HasPrefix(cleanedPath, "skills/custom/") || strings.HasPrefix(cleanedPath, "skills\\custom\\")
-							
+
 							if !isCustomSkillsDir && !isChildOfCustomSkills {
 								log.Printf("[SKILL BUILDER FOLDER GUARD] Blocked WRITE to '%s' - can only write to skills/custom/ folder", pathStr)
 								return "", fmt.Errorf("access denied: cannot write to '%s' (skill builder mode can only write to skills/custom/ folder)", pathStr)
@@ -1215,6 +1198,10 @@ func (api *StreamingAPI) handleCapabilities(w http.ResponseWriter, r *http.Reque
 		"tracing": map[string]interface{}{
 			"enabled":  tracingProvider != "noop",
 			"provider": tracingProvider,
+		},
+		"workspace": map[string]interface{}{
+			"semantic_search_enabled": workspace.IsSemanticSearchEnabled(),
+			"github_sync_enabled":     workspace.IsGitSyncEnabled(),
 		},
 		"servers": []string{},
 	})

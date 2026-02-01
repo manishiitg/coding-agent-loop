@@ -59,17 +59,28 @@ export type CustomToolName = WorkspaceToolName | HumanToolName;
 
 // Helper to get all tools for a category
 // Supports: workspace_tools (all), workspace_basic (9), workspace_git (2), workspace_advanced (4), human_tools
-export function getToolsByCategory(category: string): string[] {
+export function getToolsByCategory(category: string, capabilities?: { semantic_search_enabled?: boolean, github_sync_enabled?: boolean }): string[] {
+  const isSemanticEnabled = capabilities?.semantic_search_enabled ?? true;
+  const isGitEnabled = capabilities?.github_sync_enabled ?? true;
+
+  const filterTools = (tools: readonly string[]) => {
+    return tools.filter(tool => {
+      if (tool === 'semantic_search_workspace_files' && !isSemanticEnabled) return false;
+      if (WORKSPACE_GIT_TOOLS.includes(tool as WorkspaceGitToolName) && !isGitEnabled) return false;
+      return true;
+    });
+  };
+
   switch (category) {
     case 'workspace_tools':
       // Backward compatible - returns all workspace tools
-      return [...WORKSPACE_TOOLS];
+      return filterTools(WORKSPACE_TOOLS);
     case 'workspace_basic':
       // Basic file/folder operations (9 tools)
-      return [...WORKSPACE_BASIC_TOOLS];
+      return filterTools(WORKSPACE_BASIC_TOOLS);
     case 'workspace_git':
       // GitHub sync tools (2 tools)
-      return [...WORKSPACE_GIT_TOOLS];
+      return isGitEnabled ? [...WORKSPACE_GIT_TOOLS] : [];
     case 'workspace_advanced':
       // Advanced tools (4 tools: shell + image + web fetch + PDF)
       return [...WORKSPACE_ADVANCED_TOOLS];
@@ -84,8 +95,17 @@ export function getToolsByCategory(category: string): string[] {
 }
 
 // Helper to get all available custom tools
-export function getAllCustomTools(): string[] {
-  return [...WORKSPACE_TOOLS, ...HUMAN_TOOLS];
+export function getAllCustomTools(capabilities?: { semantic_search_enabled?: boolean, github_sync_enabled?: boolean }): string[] {
+  const isSemanticEnabled = capabilities?.semantic_search_enabled ?? true;
+  const isGitEnabled = capabilities?.github_sync_enabled ?? true;
+
+  return [
+    ...getToolsByCategory('workspace_basic', { semantic_search_enabled: isSemanticEnabled, github_sync_enabled: isGitEnabled }),
+    ...(isGitEnabled ? WORKSPACE_GIT_TOOLS : []),
+    ...WORKSPACE_ADVANCED_TOOLS,
+    ...WORKSPACE_BROWSER_TOOLS,
+    ...HUMAN_TOOLS
+  ];
 }
 
 // Helper to get the category for a specific tool name

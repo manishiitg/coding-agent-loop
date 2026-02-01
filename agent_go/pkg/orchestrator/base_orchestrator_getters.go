@@ -208,6 +208,11 @@ func (bo *BaseOrchestrator) GetEnableContextEditing() bool {
 	return bo.enableContextEditing
 }
 
+// SetEnableContextEditing overrides the context editing enabled flag (e.g. from preset config)
+func (bo *BaseOrchestrator) SetEnableContextEditing(enabled bool) {
+	bo.enableContextEditing = enabled
+}
+
 // GetContextEditingThreshold returns the token threshold for context editing (0 = use default)
 func (bo *BaseOrchestrator) GetContextEditingThreshold() int {
 	return bo.contextEditingThreshold

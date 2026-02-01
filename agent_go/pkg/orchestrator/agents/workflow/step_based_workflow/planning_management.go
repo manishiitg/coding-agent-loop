@@ -1416,12 +1416,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreatePlanOnly(ctx context.Context, o
 		// Request human feedback about what they want to update in the plan
 		// If plan has validation errors, inform the user that the agent will fix them
 		updatePrompt := "What would you like to update in the existing plan? Please describe the changes or improvements you want."
-		updateContext := fmt.Sprintf("Current plan location: %s\nFound %d steps\n\nYour feedback will be used to guide the creation of an updated plan while preserving existing validation, learning, and execution artifacts.", planPath, len(existingPlan.Steps))
-
+		
 		// Check if plan has validation errors by attempting validation
 		if validationErr := validatePlanStepIDs(existingPlan.Steps); validationErr != nil {
-			updatePrompt = "The existing plan has validation errors that need to be fixed. What would you like to update in the plan?"
-			updateContext = fmt.Sprintf("Current plan location: %s\nFound %d steps\n\n⚠️ Plan validation errors detected: %v\n\nThe planning agent will automatically fix these validation errors. You can also describe any additional changes or improvements you want.\n\nYour feedback will be used to guide the creation of an updated plan while preserving existing validation, learning, and execution artifacts.", planPath, len(existingPlan.Steps), validationErr)
+			updatePrompt = fmt.Sprintf("The existing plan has validation errors that need to be fixed: %v\n\nThe planning agent will automatically fix these validation errors. You can also describe any additional changes or improvements you want.", validationErr)
 		}
 
 		updateFeedbackID := fmt.Sprintf("plan_update_feedback_%d", time.Now().UnixNano())
@@ -1429,7 +1427,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreatePlanOnly(ctx context.Context, o
 			ctx,
 			updateFeedbackID,
 			updatePrompt,
-			updateContext,
+			"", // No additional context (matches plan_opt_improvement_agent behavior)
 			hcpo.getSessionID(),
 			hcpo.getWorkflowID(),
 		)

@@ -67,6 +67,8 @@ services:
       - PORT=8000
       # Workspace API URL when using docker-compose (service name)
       - WORKSPACE_API_URL=http://workspace-api:8080
+      - WORKSPACE_ENABLE_SEMANTIC_SEARCH=${WORKSPACE_ENABLE_SEMANTIC_SEARCH:-false}
+      - WORKSPACE_ENABLE_GITHUB_SYNC=${WORKSPACE_ENABLE_GITHUB_SYNC:-false}
     depends_on:
       workspace-api:
         condition: service_healthy
@@ -106,6 +108,7 @@ services:
       - MCP_CACHE_TTL_MINUTES=${MCP_CACHE_TTL_MINUTES:-10080}
       # Semantic Search Configuration
       - WORKSPACE_ENABLE_SEMANTIC_SEARCH=${WORKSPACE_ENABLE_SEMANTIC_SEARCH:-false}
+      - WORKSPACE_ENABLE_GITHUB_SYNC=${WORKSPACE_ENABLE_GITHUB_SYNC:-false}
     volumes:
       - ./workspace-docs:/app/workspace-docs
       - workspace_data:/app/data

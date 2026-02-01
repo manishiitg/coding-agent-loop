@@ -257,7 +257,9 @@ func GetAllToolDefinitions() []llmtypes.Tool {
 	var tools []llmtypes.Tool
 	tools = append(tools, GetBasicToolDefinitions()...)
 	tools = append(tools, GetAdvancedToolDefinitions()...)
-	tools = append(tools, GetGitToolDefinitions()...)
+	if IsGitSyncEnabled() {
+		tools = append(tools, GetGitToolDefinitions()...)
+	}
 	tools = append(tools, browser.GetToolDefinition())
 	return tools
 }
@@ -355,7 +357,17 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 
 // IsSemanticSearchEnabled checks if semantic search is enabled
 func IsSemanticSearchEnabled() bool {
-	return os.Getenv("ENABLE_SEMANTIC_SEARCH") == "true"
+	return os.Getenv("WORKSPACE_ENABLE_SEMANTIC_SEARCH") == "true" || os.Getenv("ENABLE_SEMANTIC_SEARCH") == "true"
+}
+
+// IsGitSyncEnabled checks if GitHub sync is enabled
+func IsGitSyncEnabled() bool {
+	// Enabled if WORKSPACE_ENABLE_GITHUB_SYNC is true OR if GITHUB_TOKEN is present and not explicitly disabled
+	enabled := os.Getenv("WORKSPACE_ENABLE_GITHUB_SYNC")
+	if enabled == "false" {
+		return false
+	}
+	return enabled == "true" || os.Getenv("GITHUB_TOKEN") != ""
 }
 
 // NewAdvancedExecutor creates executors for advanced workspace tools (shell, image, web fetch, pdf)
@@ -401,20 +413,22 @@ func NewAdvancedExecutor(client *Client) map[string]func(ctx context.Context, ar
 func NewGitExecutor(client *Client) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
 
-	executors["sync_workspace_to_github"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
-		var params SyncWorkspaceToGithubParams
-		if err := mapToStruct(args, &params); err != nil {
-			return "", fmt.Errorf("invalid arguments: %w", err)
+	if IsGitSyncEnabled() {
+		executors["sync_workspace_to_github"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
+			var params SyncWorkspaceToGithubParams
+			if err := mapToStruct(args, &params); err != nil {
+				return "", fmt.Errorf("invalid arguments: %w", err)
+			}
+			return client.SyncWorkspaceToGithub(ctx, params)
 		}
-		return client.SyncWorkspaceToGithub(ctx, params)
-	}
 
-	executors["get_workspace_github_status"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
-		var params GetWorkspaceGithubStatusParams
-		if err := mapToStruct(args, &params); err != nil {
-			return "", fmt.Errorf("invalid arguments: %w", err)
+		executors["get_workspace_github_status"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
+			var params GetWorkspaceGithubStatusParams
+			if err := mapToStruct(args, &params); err != nil {
+				return "", fmt.Errorf("invalid arguments: %w", err)
+			}
+			return client.GetWorkspaceGithubStatus(ctx, params)
 		}
-		return client.GetWorkspaceGithubStatus(ctx, params)
 	}
 
 	return executors

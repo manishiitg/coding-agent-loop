@@ -40,7 +40,7 @@ type GetEventsResponse struct {
 	HasMore            bool           `json:"has_more"`
 	SessionID          string         `json:"session_id"`
 	SessionStatus      string         `json:"session_status,omitempty"`       // Session status: "running", "completed", "error", "stopped", "inactive"
-	LastProcessedIndex int            `json:"last_processed_index,omitempty"` // Last index processed in unfiltered array (for correct sinceIndex tracking)
+	LastProcessedIndex int            `json:"last_processed_index"`           // Last index processed in unfiltered array (for correct sinceIndex tracking)
 }
 
 // --- POLLING API HANDLERS ---

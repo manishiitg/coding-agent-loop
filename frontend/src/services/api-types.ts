@@ -796,6 +796,23 @@ export interface WorkflowPhase {
   options?: WorkflowPhaseOption[];
 }
 
+export interface CapabilitiesResponse {
+  providers: string[];
+  streaming: boolean;
+  sse: boolean;
+  agent_modes: string[];
+  tracing: {
+    enabled: boolean;
+    provider: string;
+  };
+  workspace: {
+    semantic_search_enabled: boolean;
+    github_sync_enabled: boolean;
+  };
+  servers: string[];
+}
+
+
 export interface WorkflowStatus {
   id: string;
   title: string;

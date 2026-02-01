@@ -825,6 +825,25 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Create streaming API server
 	configPath := config.MCPConfigPath
+
+	// Check if config file exists
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		log.Printf("⚠️  MCP config file not found at %s, initializing empty config...", configPath)
+
+		// Ensure directory exists
+		configDir := filepath.Dir(configPath)
+		if err := os.MkdirAll(configDir, 0755); err != nil {
+			log.Fatalf("Failed to create config directory: %v", err)
+		}
+
+		// Create empty config file
+		emptyConfig := &mcpclient.MCPConfig{MCPServers: make(map[string]mcpclient.MCPServerConfig)}
+		if err := mcpclient.SaveConfig(configPath, emptyConfig); err != nil {
+			log.Fatalf("Failed to create empty MCP config: %v", err)
+		}
+		log.Printf("✅ Created empty MCP config at %s", configPath)
+	}
+
 	mcpConfig, err := mcpclient.LoadConfig(configPath, nil) // Logger not yet available, will be created later
 	if err != nil {
 		log.Fatalf("Failed to load MCP config: %v", err)

@@ -179,9 +179,17 @@ type WorkflowOrchestrator struct {
 	// Frontend-provided execution options (when provided, skips interactive prompts)
 	executionOptions *step_based_workflow.ExecutionOptions
 
+	// Synthetic plan for "Task Agent" mode
+	virtualPlan *step_based_workflow.PlanningResponse
+
 	// Session ID for MCP connection management
 	// Generated once when workflow starts, used by all agents to share MCP connections
 	sessionID string
+}
+
+// SetVirtualPlan sets a synthetic plan for the workflow (used by Task Agent mode)
+func (wo *WorkflowOrchestrator) SetVirtualPlan(plan *step_based_workflow.PlanningResponse) {
+	wo.virtualPlan = plan
 }
 
 // SetExecutionOptions sets the execution options from frontend

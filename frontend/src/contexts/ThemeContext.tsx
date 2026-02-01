@@ -5,7 +5,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {
     // Check localStorage first, then system preference
     const savedTheme = localStorage.getItem('theme') as Theme
-    if (savedTheme) {
+    if (savedTheme === 'light' || savedTheme === 'dark') {
       return savedTheme
     }
     
@@ -19,7 +19,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // Apply theme to document
-    document.documentElement.classList.remove('light', 'dark', 'dark-plus')
+    document.documentElement.classList.remove('light', 'dark')
     document.documentElement.classList.add(theme)
     
     // Save to localStorage
@@ -29,7 +29,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const toggleTheme = () => {
     setThemeState(prev => {
       if (prev === 'light') return 'dark'
-      if (prev === 'dark') return 'dark-plus'
       return 'light'
     })
   }

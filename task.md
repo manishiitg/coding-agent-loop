@@ -18,10 +18,6 @@ will index data
 i) prompt tempaltes, need to check variables on compile time
 
 
-22. we should have a human notification tool also.
-
-26. learnings vs skills? 
-
 28.. the context eidting/ summiazation, token call, we do after a turn.. and not after a tool call
 
 29.. get credit card, mutual funds, itr complete finacal info
@@ -44,31 +40,12 @@ i) prompt tempaltes, need to check variables on compile time
 
 52. check auto summization.. it trigges many times.. i think some bug is there in token calcuation
 
-53. add oauth support for mcp and make a better ui for adding mcp/managing mcp than simple json ---- done
-
-55. langfuse tracing
-
-58. run multiple workflows together -- test
-
-
-2. for a new plan step, we should disable validation by default (done)
-
-3. all workflows don't require a knowledgebase (done)
-
-4. typing in chatinput is very slow (done)
 
 5. make large tool output optional in chat agent
-
-6. remove objective and ask user what to do when creating new plan also
 
 7. can orchestrator decide if need to use tempLLM or normal LLM
 
 8. can orchestrator decide if need to leanr or not skills
 
 9. if we have a tool for slack notification
-
-10. have a too to fetch via web
-
 11. if sheel tool is enabled in workspace/ do we need other list tools etc
-
-12. the success learning agents should not have human tools (done)

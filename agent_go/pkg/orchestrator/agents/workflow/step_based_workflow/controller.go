@@ -1003,6 +1003,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetRunSingleStepMode(enabled bool, st
 	hcpo.singleStepTarget = stepIndex
 }
 
+// SetApprovedPlan sets the approved plan for the orchestrator
+func (hcpo *StepBasedWorkflowOrchestrator) SetApprovedPlan(plan *PlanningResponse) {
+	hcpo.approvedPlan = plan
+}
+
 // GetLearningDetailLevel returns the stored learning detail level preference
 func (hcpo *StepBasedWorkflowOrchestrator) GetLearningDetailLevel() string {
 	if hcpo.learningDetailLevel == "" {

@@ -66,6 +66,7 @@ func init() {
 	viper.BindEnv("github-repo", "GITHUB_REPO")
 	viper.BindEnv("docs-dir", "DOCS_DIR")
 	viper.BindEnv("enable-semantic-search", "WORKSPACE_ENABLE_SEMANTIC_SEARCH")
+	viper.BindEnv("enable-github-sync", "WORKSPACE_ENABLE_GITHUB_SYNC")
 
 	// Add subcommands
 	rootCmd.AddCommand(serverCmd)

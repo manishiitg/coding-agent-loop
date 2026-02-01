@@ -9,12 +9,17 @@ export { useWorkflowStore, useWorkflowPhases, useWorkflowPhasesLoading, useWorkf
 export type { ExecutionModeType } from './useWorkflowStore'
 export { useRunningWorkflowsStore, useRunningWorkflows, useShowRunningDrawer, useRunningWorkflowsRunningCount, useRunningWorkflowsTotalCount } from './useRunningWorkflowsStore'
 export type { RunningWorkflow } from './useRunningWorkflowsStore'
+export { useCapabilitiesStore } from './useCapabilitiesStore'
 
 // Export types
 export type * from './types'
 
 // Store initialization helper
 export const initializeStores = async () => {
+  // Initialize capabilities store first as other stores might depend on it
+  const { useCapabilitiesStore } = await import('./useCapabilitiesStore')
+  await useCapabilitiesStore.getState().fetchCapabilities()
+
   // Initialize MCP store by loading tools
   const { useMCPStore } = await import('./useMCPStore')
   await useMCPStore.getState().refreshTools()

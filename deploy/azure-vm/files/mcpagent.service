@@ -1,0 +1,35 @@
+[Unit]
+Description=MCP Agent Server
+After=network.target
+Wants=workspace-api.service
+
+[Service]
+Type=simple
+User=appuser
+Group=appgroup
+WorkingDirectory=/opt/mcpagent
+ExecStart=/opt/mcpagent/mcp-agent server \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --db-path /data/agent-data/chat_history.db \
+    --mcp-config /opt/mcpagent/configs/mcp_servers_clean.json
+
+Environment=WORKSPACE_API_URL=http://localhost:8080
+Environment=PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+Environment=TOOL_EXECUTION_TIMEOUT=15m
+EnvironmentFile=-/opt/mcpagent/env
+
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mcpagent
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/data/agent-data /opt/mcpagent
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

@@ -39,6 +39,10 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		}
 	}
 
+	// Always use shell execution - removed from tool definition to simplify LLM interface
+	useShell := true
+	params.UseShell = &useShell
+
 	path := "/api/execute"
 	respBody, err := c.request(ctx, "POST", path, params)
 	if err != nil {

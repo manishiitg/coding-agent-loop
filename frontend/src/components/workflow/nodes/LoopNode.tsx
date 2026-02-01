@@ -5,6 +5,7 @@ import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useAppStore } from '../../../stores'
+import { useCapabilitiesStore } from '../../../stores/useCapabilitiesStore'
 import { agentApi } from '../../../services/api'
 import { isValidJSON } from '../../../utils/event-helpers'
 import type { LoopNodeData } from '../hooks/usePlanToFlow'
@@ -66,7 +67,8 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
   // Count specific tools enabled
   const enabled = enabledTools.filter(entry => {
     const parsed = parseToolEntry(entry)
-    return parsed && parsed.category === category && parsed.tool !== '*'
+    // Only count if it matches category AND is in the available tools list
+    return parsed && parsed.category === category && parsed.tool !== '*' && allCategoryTools.includes(parsed.tool)
   }).length
   return { enabled, total: allCategoryTools.length }
 }
@@ -74,8 +76,9 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
 export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
   const { id, title, loop_condition, max_iterations, current_iteration, status, stepIndex, changeType, step, workspacePath, selectedRunFolder, onRunFromStep, onOpenSidebar, isExecuting } = data
   const { availableLLMs } = useLLMStore()
+  const { capabilities } = useCapabilitiesStore()
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
-  const { setWorkspaceMinimized } = useAppStore()
+  const setWorkspaceMinimized = useAppStore(state => state.setWorkspaceMinimized)
 
   // Button is disabled if executing or no callback
   const isRunDisabled = isExecuting || !onRunFromStep
@@ -288,14 +291,14 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
   const enabledCustomTools = useMemo(() => stepConfig?.agent_configs?.enabled_custom_tools || [], [stepConfig?.agent_configs?.enabled_custom_tools])
   
   const workspaceToolsInfo = useMemo(() => {
-    const allWorkspaceTools = getToolsByCategory('workspace_tools')
+    const allWorkspaceTools = getToolsByCategory('workspace_tools', capabilities?.workspace)
     return getCategoryToolCount('workspace_tools', enabledCustomTools, allWorkspaceTools)
-  }, [enabledCustomTools])
+  }, [enabledCustomTools, capabilities?.workspace])
   
   const humanToolsInfo = useMemo(() => {
-    const allHumanTools = getToolsByCategory('human_tools')
+    const allHumanTools = getToolsByCategory('human_tools', capabilities?.workspace)
     return getCategoryToolCount('human_tools', enabledCustomTools, allHumanTools)
-  }, [enabledCustomTools])
+  }, [enabledCustomTools, capabilities?.workspace])
   
   const hasWorkspaceTools = workspaceToolsInfo.enabled > 0
   const hasHumanTools = humanToolsInfo.enabled > 0

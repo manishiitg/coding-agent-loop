@@ -2,8 +2,11 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { X, Settings, AlertCircle, CheckCircle2, Loader2, Code2, Sparkles, Brain, Shield, BookOpen, Wrench, Info, Book, FileStack, Search, HardDriveDownload, Scissors } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "../ui/accordion";
-import { useLLMStore } from "../../stores";
-import { useGlobalPresetStore } from "../../stores/useGlobalPresetStore";
+import { useLLMStore, useGlobalPresetStore } from "../../stores";
+import { useCapabilitiesStore } from "../../stores/useCapabilitiesStore";
+import {
+  getToolsByCategory,
+} from "../../utils/customToolNames";
 import type {
   AgentLLMConfig,
   AgentConfigs,
@@ -14,7 +17,6 @@ import type {
   PlanStep,
 } from "../../utils/stepConfigMatching";
 import { isConditionalStep, isDecisionStep, isOrchestrationStep, isTodoTaskStep } from "../../utils/stepConfigMatching";
-import { getToolsByCategory } from "../../utils/customToolNames";
 import LLMSelectionDropdown from "../LLMSelectionDropdown";
 
 interface BulkStepConfigModalProps {
@@ -33,6 +35,7 @@ export default function BulkStepConfigModal({
   onBulkUpdate,
 }: BulkStepConfigModalProps) {
   const { availableLLMs, refreshAvailableLLMs } = useLLMStore();
+  const { capabilities } = useCapabilitiesStore();
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -463,7 +466,7 @@ export default function BulkStepConfigModal({
              // If empty or has wildcard, replace with explicit list excluding human tools
              if (currentEnabledTools.length === 0 || currentEnabledTools.includes("human_tools:*")) {
                // Get all workspace tools and add them explicitly (exclude human tools)
-               const workspaceTools = getToolsByCategory("workspace_tools");
+               const workspaceTools = getToolsByCategory("workspace_tools", capabilities?.workspace);
                newAgentConfigs.enabled_custom_tools = workspaceTools.map(
                  (tool) => `workspace_tools:${tool}`
                );
@@ -510,7 +513,7 @@ export default function BulkStepConfigModal({
              
              // If empty or has wildcard, replace with explicit list excluding the tool
              if (currentEnabledTools.length === 0 || currentEnabledTools.includes("workspace_tools:*")) {
-               const allWorkspaceTools = getToolsByCategory("workspace_tools");
+               const allWorkspaceTools = getToolsByCategory("workspace_tools", capabilities?.workspace);
                newAgentConfigs.enabled_custom_tools = allWorkspaceTools
                  .filter((tool) => tool !== "execute_shell_command")
                  .map((tool) => `workspace_tools:${tool}`);
@@ -558,7 +561,7 @@ export default function BulkStepConfigModal({
              
              // If empty or has wildcard, replace with explicit list excluding the tool
              if (currentEnabledTools.length === 0 || currentEnabledTools.includes("workspace_tools:*")) {
-               const allWorkspaceTools = getToolsByCategory("workspace_tools");
+               const allWorkspaceTools = getToolsByCategory("workspace_tools", capabilities?.workspace);
                newAgentConfigs.enabled_custom_tools = allWorkspaceTools
                  .filter((tool) => tool !== "read_image")
                  .map((tool) => `workspace_tools:${tool}`);

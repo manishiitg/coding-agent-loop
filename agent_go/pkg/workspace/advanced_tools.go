@@ -10,18 +10,20 @@ func shellToolDef() llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "execute_shell_command",
-			Description: "Execute shell commands and scripts within the workspace directory. Commands run with a 60-second timeout (configurable up to 300 seconds) and are restricted to the workspace boundary (/app/workspace-docs).\n\n**PATH USAGE RULES:**\n- **Tool Parameters**: Use relative paths (e.g., 'working_directory: \"scripts\"' resolves to '/app/workspace-docs/scripts')\n- **Inside Scripts**: When writing Python/shell scripts that reference files, use absolute paths starting with '/app/workspace-docs' (e.g., '/app/workspace-docs/script.py', '/app/workspace-docs/data/file.csv'). This ensures scripts work regardless of the working_directory setting.\n\nReturns stdout, stderr, and exit code. Use 'use_shell: true' for complex commands with pipes (|), redirects (>), chaining (&&, ||), environment variables, or wildcards.",
+			Description: "Execute shell commands and scripts within the workspace directory. Commands run with a 60-second timeout (configurable up to 300 seconds) and are restricted to the workspace boundary (/app/workspace-docs).\n\n**PATH USAGE RULES:**\n- **Tool Parameters**: Use relative paths (e.g., 'working_directory: \"scripts\"' resolves to '/app/workspace-docs/scripts')\n- **Inside Scripts**: When writing Python/shell scripts that reference files, use absolute paths starting with '/app/workspace-docs' (e.g., '/app/workspace-docs/script.py', '/app/workspace-docs/data/file.csv'). This ensures scripts work regardless of the working_directory setting.\n\nReturns stdout, stderr, and exit code. Always executes via shell (sh -c), supporting pipes (|), redirects (>), chaining (&&, ||), environment variables, and wildcards.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
+					// NOTE: use_shell was removed from the tool definition to simplify the interface for the LLM. 
+					// It is now hardcoded to true internally in ExecuteShellCommand.
 					"command": map[string]interface{}{
 						"type":        "string",
-						"description": "Shell command to execute. If use_shell is true, this can be a complex command with pipes, redirects, etc. (e.g., 'ls', 'grep', 'find', './script.sh', 'ls | grep .md', 'cd dir && ls', 'VAR=value command')",
+						"description": "Shell command to execute. Supports complex commands with pipes, redirects, chaining, environment variables, and wildcards (e.g., 'ls | grep .md', 'cd dir && ls', 'VAR=value command').",
 					},
 					"args": map[string]interface{}{
 						"type":        "array",
 						"items":       map[string]interface{}{"type": "string"},
-						"description": "Command arguments as an array of strings (e.g., ['-l', '-a'] for 'ls -l -a'). Ignored if use_shell is true - include arguments in command string instead.",
+						"description": "Command arguments as an array of strings (e.g., ['-l', '-a'] for 'ls -l -a'). These are appended to the command string.",
 					},
 					"working_directory": map[string]interface{}{
 						"type":        "string",
@@ -30,10 +32,6 @@ func shellToolDef() llmtypes.Tool {
 					"timeout": map[string]interface{}{
 						"type":        "integer",
 						"description": "Timeout in seconds (default: 60, max: 300)",
-					},
-					"use_shell": map[string]interface{}{
-						"type":        "boolean",
-						"description": "Execute through shell interpreter (sh -c). Enables complex commands with pipes (|), redirects (>), chaining (&&, ||), environment variables, wildcards, etc. Default: false (direct execution, more secure). Set to true for complex commands.",
 					},
 				},
 				"required": []string{"command"},

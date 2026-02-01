@@ -4525,23 +4525,115 @@ func NewWorkflowPlanningAgent(config *agents.OrchestratorAgentConfig, logger log
 
 // updateSingleStep is a helper function that updates a single step in the plan
 // Returns the step index and field changes for changelog
-func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fieldChanges *[]PlanFieldChange) (int, []string, error) {
-	// Find the step to update
-	var existingStep PlanStepInterface
-	stepIndex := -1
-	for i, step := range plan.Steps {
-		if step.GetID() == partialUpdate.ExistingStepID {
-			existingStep = step
-			stepIndex = i
-			break
+// findStepByID recursively searches for a step with the given ID in the plan steps.
+// It returns the step interface, its index at the current level, and the slice it belongs to.
+func findStepByID(steps []PlanStepInterface, id string) (PlanStepInterface, int, []PlanStepInterface) {
+	for i, step := range steps {
+		if step.GetID() == id {
+			return step, i, steps
+		}
+
+		// Search in nested structures
+		switch s := step.(type) {
+		case *ConditionalPlanStep:
+			if foundStep, idx, slice := findStepByID(s.IfTrueSteps, id); foundStep != nil {
+				return foundStep, idx, slice
+			}
+			if foundStep, idx, slice := findStepByID(s.IfFalseSteps, id); foundStep != nil {
+				return foundStep, idx, slice
+			}
+		case *OrchestrationPlanStep:
+			if s.OrchestrationStep != nil && s.OrchestrationStep.GetID() == id {
+				// Special case: the internal orchestration_step matches
+				// We return it but we need to handle its update specifically since it's not in a slice
+				return s.OrchestrationStep, -1, nil
+			}
+			for _, route := range s.OrchestrationRoutes {
+				if route.SubAgentStep != nil {
+					if foundStep, idx, slice := findStepByID([]PlanStepInterface{route.SubAgentStep}, id); foundStep != nil {
+						return foundStep, idx, slice
+					}
+				}
+			}
+		case *TodoTaskPlanStep:
+			if s.TodoTaskStep != nil && s.TodoTaskStep.GetID() == id {
+				// Special case: the internal todo_task_step matches
+				return s.TodoTaskStep, -1, nil
+			}
+			for _, route := range s.PredefinedRoutes {
+				if route.SubAgentStep != nil {
+					if foundStep, idx, slice := findStepByID([]PlanStepInterface{route.SubAgentStep}, id); foundStep != nil {
+						return foundStep, idx, slice
+					}
+				}
+			}
 		}
 	}
+	return nil, -1, nil
+}
+
+// updateStepRecursively updates a step within the plan structure, even if nested.
+func updateStepRecursively(steps []PlanStepInterface, partialUpdate PartialPlanStep, fieldChanges *[]PlanFieldChange) (bool, int) {
+	for i, step := range steps {
+		if step.GetID() == partialUpdate.ExistingStepID {
+			// Found the step at this level
+			steps[i] = mergePartialStepUpdate(step, partialUpdate)
+			return true, i
+		}
+
+		// Recursively search and update in nested structures
+		switch s := step.(type) {
+		case *ConditionalPlanStep:
+			if updated, _ := updateStepRecursively(s.IfTrueSteps, partialUpdate, fieldChanges); updated {
+				return true, i // Return parent index for learning unlock purposes (simplified)
+			}
+			if updated, _ := updateStepRecursively(s.IfFalseSteps, partialUpdate, fieldChanges); updated {
+				return true, i
+			}
+		case *OrchestrationPlanStep:
+			if s.OrchestrationStep != nil && s.OrchestrationStep.GetID() == partialUpdate.ExistingStepID {
+				s.OrchestrationStep = mergePartialStepUpdate(s.OrchestrationStep, partialUpdate)
+				return true, i
+			}
+			for j := range s.OrchestrationRoutes {
+				if s.OrchestrationRoutes[j].SubAgentStep != nil {
+					// We need to wrap the sub_agent_step in a temporary slice for the recursive call
+					tmpSlice := []PlanStepInterface{s.OrchestrationRoutes[j].SubAgentStep}
+					if updated, _ := updateStepRecursively(tmpSlice, partialUpdate, fieldChanges); updated {
+						s.OrchestrationRoutes[j].SubAgentStep = tmpSlice[0]
+						return true, i
+					}
+				}
+			}
+		case *TodoTaskPlanStep:
+			if s.TodoTaskStep != nil && s.TodoTaskStep.GetID() == partialUpdate.ExistingStepID {
+				s.TodoTaskStep = mergePartialStepUpdate(s.TodoTaskStep, partialUpdate)
+				return true, i
+			}
+			for j := range s.PredefinedRoutes {
+				if s.PredefinedRoutes[j].SubAgentStep != nil {
+					tmpSlice := []PlanStepInterface{s.PredefinedRoutes[j].SubAgentStep}
+					if updated, _ := updateStepRecursively(tmpSlice, partialUpdate, fieldChanges); updated {
+						s.PredefinedRoutes[j].SubAgentStep = tmpSlice[0]
+						return true, i
+					}
+				}
+			}
+		}
+	}
+	return false, -1
+}
+
+func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fieldChanges *[]PlanFieldChange) (int, []string, error) {
+	// Find the step to update (for field tracking)
+	existingStep, _, _ := findStepByID(plan.Steps, partialUpdate.ExistingStepID)
+
 	if existingStep == nil {
 		availableIDs := make([]string, 0, len(plan.Steps))
 		for _, step := range plan.Steps {
 			availableIDs = append(availableIDs, step.GetID())
 		}
-		return -1, nil, fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs)
+		return -1, nil, fmt.Errorf("step ID '%s' not found in existing plan. Available top-level step IDs: %v", partialUpdate.ExistingStepID, availableIDs)
 	}
 
 	changedFields := []string{}
@@ -5145,10 +5237,14 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 		}
 	}
 
-	// Merge partial update
-	plan.Steps[stepIndex] = mergePartialStepUpdate(existingStep, partialUpdate)
+	// Apply updates recursively
+	updated, topLevelIndex := updateStepRecursively(plan.Steps, partialUpdate, fieldChanges)
+	if !updated {
+		// This shouldn't happen because we already checked for existence using findStepByID
+		return -1, nil, fmt.Errorf("failed to apply update to step '%s'", partialUpdate.ExistingStepID)
+	}
 
-	return stepIndex, changedFields, nil
+	return topLevelIndex, changedFields, nil
 }
 
 // createUpdateRegularStepExecutor creates an executor function for update_regular_step tool

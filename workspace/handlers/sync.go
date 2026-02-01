@@ -39,6 +39,15 @@ func isAuthenticationError(output string) bool {
 
 // SyncWithGitHub handles POST /api/sync/github
 func SyncWithGitHub(c *gin.Context) {
+	if !viper.GetBool("enable-github-sync") {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+			Success: false,
+			Message: "GitHub sync is disabled",
+			Error:   "WORKSPACE_ENABLE_GITHUB_SYNC is not set to true",
+		})
+		return
+	}
+
 	log.Printf("[SYNC] ===== Starting GitHub sync request =====")
 	var req models.SyncRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -438,6 +447,23 @@ func SyncWithGitHub(c *gin.Context) {
 
 // GetSyncStatus handles GET /api/sync/status
 func GetSyncStatus(c *gin.Context) {
+	if !viper.GetBool("enable-github-sync") {
+		c.JSON(http.StatusOK, models.APIResponse[models.SyncStatus]{
+			Success: true,
+			Message: "GitHub sync is disabled",
+			Data: models.SyncStatus{
+				IsConnected:    false,
+				Repository:     "",
+				Branch:         "",
+				PendingChanges: 0,
+				PendingFiles:   []string{},
+				FileStatuses:   []models.FileStatus{},
+				Conflicts:      []models.Conflict{},
+			},
+		})
+		return
+	}
+
 	var req models.SyncStatusRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.APIResponse[any]{

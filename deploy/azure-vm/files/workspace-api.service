@@ -1,0 +1,24 @@
+[Unit]
+Description=Workspace API Server (Planner)
+After=network.target
+
+[Service]
+Type=simple
+# Runs as root: needed for unshare/mount namespace isolation
+User=root
+WorkingDirectory=/opt/workspace-api
+ExecStart=/opt/workspace-api/planner server \
+    --port 8080 \
+    --docs-dir /data/workspace-docs
+
+Environment=PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+EnvironmentFile=-/opt/workspace-api/env
+
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=workspace-api
+
+[Install]
+WantedBy=multi-user.target

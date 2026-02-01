@@ -1,0 +1,67 @@
+#cloud-config
+# First-boot setup for MCP Agent VM: installs runtime dependencies, formats data disk.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - nginx
+  - jq
+  - ripgrep
+  - git
+  - python3
+  - python3-pip
+  - chromium-browser
+  - unzip
+  - curl
+  - util-linux
+
+write_files:
+  - path: /etc/pip.conf
+    content: |
+      [global]
+      break-system-packages = true
+
+runcmd:
+  # Install Node.js 20 via NodeSource
+  - curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  - apt-get install -y nodejs
+  - npm install -g agent-browser
+
+  # Create application user
+  - groupadd -g 1001 appgroup || true
+  - useradd -u 1001 -g appgroup -m -s /bin/bash appuser || true
+
+  # Format and mount data disk (LUN 0 = /dev/sdc on most Azure VMs)
+  - |
+    DATA_DEV="/dev/sdc"
+    # Wait for disk to appear
+    for i in $(seq 1 30); do
+      [ -b "$DATA_DEV" ] && break
+      sleep 2
+    done
+    if [ -b "$DATA_DEV" ]; then
+      # Only format if no filesystem exists
+      if ! blkid "$DATA_DEV" | grep -q TYPE; then
+        mkfs.ext4 -L mcpdata "$DATA_DEV"
+      fi
+      mkdir -p /data
+      echo "LABEL=mcpdata /data ext4 defaults,nofail 0 2" >> /etc/fstab
+      mount /data
+    fi
+
+  # Create data directories
+  - mkdir -p /data/agent-data /data/workspace-docs/{Downloads,Chats,Workspace}
+  - chown -R appuser:appgroup /data/agent-data
+
+  # Create application directories
+  - mkdir -p /opt/mcpagent/configs /opt/workspace-api /opt/frontend
+
+  # Set Chromium path for Playwright
+  - echo 'PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser' >> /etc/environment
+
+  # Disable default nginx site
+  - rm -f /etc/nginx/sites-enabled/default
+
+  # Signal cloud-init complete
+  - touch /var/log/cloud-init-complete

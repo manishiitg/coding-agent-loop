@@ -39,48 +39,52 @@ func (c *Client) SyncWorkspaceToGithub(ctx context.Context, params SyncWorkspace
 	}
 	
 	// GetGitToolDefinitions returns the tool definitions for the git workspace tools
-	func GetGitToolDefinitions() []llmtypes.Tool {
-		return []llmtypes.Tool{
-			{
-				Type: "function",
-				Function: &llmtypes.FunctionDefinition{
-					Name:        "get_workspace_github_status",
-					Description: "Get the current GitHub sync status including pending changes, conflicts, and repository information. Uses git commands to check local repository status and connection to GitHub remote.",
-					Parameters: llmtypes.NewParameters(map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"show_pending": map[string]interface{}{
-								"type": "boolean",
-								"description": "Show pending changes (default: true)",
-							},
-							"show_conflicts": map[string]interface{}{
-								"type": "boolean",
-								"description": "Show conflicts if any (default: true)",
-							},
-						},
-					}),
-				},
-			},
-			{
-				Type: "function",
-				Function: &llmtypes.FunctionDefinition{
-					Name:        "sync_workspace_to_github",
-					Description: "Sync all workspace files to GitHub repository using standard git workflow: commit 	 pull 	 push. Always pulls first to ensure synchronization. Fails if merge conflicts are detected (requires manual resolution).",
-					Parameters: llmtypes.NewParameters(map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"force": map[string]interface{}{
-								"type": "boolean",
-								"description": "Force sync even if there are conflicts (not recommended, default: false)",
-							},
-							"commit_message": map[string]interface{}{
-								"type": "string",
-								"description": "Custom commit message for the sync operation (optional)",	
-							},
-						},
-					}),
-				},
-			},
-		}
+func GetGitToolDefinitions() []llmtypes.Tool {
+	if !IsGitSyncEnabled() {
+		return []llmtypes.Tool{}
 	}
+
+	return []llmtypes.Tool{
+		{
+			Type: "function",
+			Function: &llmtypes.FunctionDefinition{
+				Name:        "get_workspace_github_status",
+				Description: "Get the current GitHub sync status including pending changes, conflicts, and repository information. Uses git commands to check local repository status and connection to GitHub remote.",
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"show_pending": map[string]interface{}{
+							"type": "boolean",
+							"description": "Show pending changes (default: true)",
+						},
+						"show_conflicts": map[string]interface{}{
+							"type": "boolean",
+							"description": "Show conflicts if any (default: true)",
+						},
+					},
+				}),
+			},
+		},
+		{
+			Type: "function",
+			Function: &llmtypes.FunctionDefinition{
+				Name:        "sync_workspace_to_github",
+				Description: "Sync all workspace files to GitHub repository using standard git workflow: commit 	 pull 	 push. Always pulls first to ensure synchronization. Fails if merge conflicts are detected (requires manual resolution).",
+				Parameters: llmtypes.NewParameters(map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"force": map[string]interface{}{
+							"type": "boolean",
+							"description": "Force sync even if there are conflicts (not recommended, default: false)",
+						},
+						"commit_message": map[string]interface{}{
+							"type": "string",
+							"description": "Custom commit message for the sync operation (optional)",
+						},
+					},
+				}),
+			},
+		},
+	}
+}
 	

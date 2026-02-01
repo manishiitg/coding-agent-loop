@@ -602,7 +602,30 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	hcpo.GetLogger().Info(fmt.Sprintf("🤖 Executing predefined sub-agent: %s (%s)", route.RouteName, route.RouteID))
 
 	// Use the sub-agent step from the route
-	subAgentStep := route.SubAgentStep
+	// CRITICAL: Create a COPY of the step to avoid modifying the original plan in memory
+	// This ensures CheckAndResetStepHash can still compare against the original unmodified plan
+	var stepToExecute PlanStepInterface = route.SubAgentStep
+
+	if regularStep := getRegularPlanStep(route.SubAgentStep); regularStep != nil {
+		// Create a shallow copy of the struct
+		stepCopy := *regularStep
+
+		if response.InstructionsToSubAgent != "" {
+			// Append orchestrator instructions to original description
+			originalDescription := stepCopy.Description
+			if originalDescription != "" {
+				stepCopy.Description = fmt.Sprintf("%s\n\n## Orchestrator Instructions\n\n%s", originalDescription, response.InstructionsToSubAgent)
+			} else {
+				stepCopy.Description = response.InstructionsToSubAgent
+			}
+		}
+		if response.SuccessCriteriaForSubAgent != "" {
+			stepCopy.SuccessCriteria = response.SuccessCriteriaForSubAgent
+		}
+
+		// Use the copy for execution
+		stepToExecute = &stepCopy
+	}
 
 	// Build sub-agent step path
 	subAgentStepPath := fmt.Sprintf("%s-sub-%s", stepPath, route.RouteID)
@@ -628,9 +651,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 
 	// Execute the sub-agent step using executeSingleStep
 	// This will include learning and prevalidation like regular orchestration sub-agents
-	// Signature: ctx, step, stepIndex, stepPath, totalSteps, iteration, previousContextFiles, progress,
-	//            isBranchStep, execCtx, allSteps, isDecisionInnerStep, decisionContext,
-	//            decisionEvaluationQuestion, isSubAgent, previousExecutionResults, orchestrationRoutes
 	execCtx := &ExecutionContext{
 		SkipHumanInput:     true, // Sub-agents don't request human feedback
 		FastExecuteMode:    false,
@@ -643,12 +663,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 
 	// Push context before sub-agent execution (preserve orchestrator context)
 	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
-		cab.PushContext("execution", stepIndex, subAgentStep.GetID(), subAgentStep.GetTitle())
+		cab.PushContext("execution", stepIndex, route.SubAgentStep.GetID(), route.SubAgentStep.GetTitle())
 	}
 
 	executionResult, _, err := hcpo.executeSingleStep(
 		ctx,
-		subAgentStep,
+		stepToExecute,                           // Use the modified COPY
 		stepIndex,                               // Use parent step index for context
 		subAgentStepPath,                        // stepPath
 		1,                                       // totalSteps = 1 for single sub-agent
@@ -662,7 +682,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 		nil,                                     // decisionContext = nil
 		"",                                      // decisionEvaluationQuestion - empty
 		true,                                    // isSubAgent = true (sub-agents never request human feedback)
-		[]string{response.InstructionsToSubAgent}, // previousExecutionResults - pass instructions
+		[]string{},                              // previousExecutionResults - empty (instructions are now in description)
 		orchestrationRoutesForSubAgent,          // orchestrationRoutes
 	)
 

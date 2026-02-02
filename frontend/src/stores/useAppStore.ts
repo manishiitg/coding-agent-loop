@@ -40,6 +40,7 @@ interface AppState {
   setSidebarMinimized: (minimized: boolean) => void
   setWorkspaceMinimized: (minimized: boolean) => void
   setUseCodeExecutionMode: (enabled: boolean) => void
+
 }
 
 export const useAppStore = create<AppState>()(
@@ -60,7 +61,6 @@ export const useAppStore = create<AppState>()(
           sidebarMinimized: false,
           workspaceMinimized: false,
           useCodeExecutionMode: true, // Default to enabled
-
           // Actions
           setAgentMode: (mode) => {
             const currentMode = get().agentMode
@@ -133,7 +133,7 @@ export const useAppStore = create<AppState>()(
 
         setUseCodeExecutionMode: (enabled) => {
           set({ useCodeExecutionMode: enabled })
-        }
+        },
         }
       },
       {

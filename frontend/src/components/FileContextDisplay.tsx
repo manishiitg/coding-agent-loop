@@ -10,7 +10,7 @@ interface FileContextDisplayProps {
   files: FileContextItem[]
   onRemoveFile: (path: string) => void
   onClearAll: () => void
-  agentMode: 'simple' | 'workflow' | 'skill_builder'
+  agentMode: 'simple' | 'workflow'
   isRequiredFolderSelected: boolean
 }
 

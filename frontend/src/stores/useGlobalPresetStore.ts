@@ -72,8 +72,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       
       activePresetIds: {
         'chat': null,
-        'workflow': null,
-        'skill_builder': null
+        'workflow': null
       },
       
       currentPresetServers: [],
@@ -711,8 +710,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             customPresets: state.customPresets.filter(preset => preset.id !== id),
             activePresetIds: {
               chat: state.activePresetIds.chat === id ? null : state.activePresetIds.chat,
-              workflow: state.activePresetIds.workflow === id ? null : state.activePresetIds.workflow,
-              skill_builder: state.activePresetIds.skill_builder === id ? null : state.activePresetIds.skill_builder
+              workflow: state.activePresetIds.workflow === id ? null : state.activePresetIds.workflow
             }
           }))
         } catch (error) {
@@ -1118,8 +1116,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           currentQuery: '',
           activePresetIds: {
             'chat': null,
-            'workflow': null,
-            'skill_builder': null
+            'workflow': null
           }
         })
       },
@@ -1144,7 +1141,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           } else if (modeCategory === 'workflow') {
             return preset.agentMode === 'workflow'
           }
-          // skill_builder has no presets
           return false
         })
       },

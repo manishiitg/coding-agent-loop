@@ -76,14 +76,14 @@ export interface ChatTab {
   metadata?: {
     phaseId?: string  // For workflow mode: phase ID
     phaseName?: string  // For workflow mode: phase name
-    mode?: 'chat' | 'workflow' | 'skill_builder'  // Which mode this tab belongs to
+    mode?: 'chat' | 'workflow'  // Which mode this tab belongs to
     presetQueryId?: string  // For workflow mode: preset query ID (workflow identifier)
   }
 }
 
 // Helper function to get default tab config from current global state
 // Uses mode-specific configs for LLM and server selections
-const getDefaultTabConfig = (mode: 'chat' | 'workflow' | 'skill_builder' = 'chat'): ChatTabConfig => {
+const getDefaultTabConfig = (mode: 'chat' | 'workflow' = 'chat'): ChatTabConfig => {
   const mcpStore = useMCPStore?.getState?.()
   const llmStore = useLLMStore?.getState?.()
 
@@ -284,7 +284,7 @@ interface ChatState extends StoreActions {
   closeTab: (tabId: string, stopSession?: boolean, keepEvents?: boolean) => Promise<void>
   getTab: (tabId: string) => ChatTab | undefined
   getActiveTab: () => ChatTab | undefined
-  getTabsByMode: (mode: 'chat' | 'workflow' | 'skill_builder') => ChatTab[]
+  getTabsByMode: (mode: 'chat' | 'workflow') => ChatTab[]
   getTabsByPhaseId: (phaseId: string) => ChatTab[]  // Find workflow tabs by phaseId
   setTabStreaming: (tabId: string, isStreaming: boolean) => void
   setTabCompleted: (tabId: string, isCompleted: boolean) => void
@@ -789,7 +789,7 @@ export const useChatStore = create<ChatState>()(
         
         // Use provided eventMode, or default based on mode:
         // workflow -> 'tiny'
-        // chat/skill_builder -> 'micro'
+        // chat -> 'micro'
         let finalEventMode = eventMode
         if (!finalEventMode) {
           finalEventMode = mode === 'workflow' ? 'tiny' : 'micro'
@@ -940,7 +940,7 @@ export const useChatStore = create<ChatState>()(
         return state.chatTabs[state.activeTabId]
       },
       
-      getTabsByMode: (mode: 'chat' | 'workflow' | 'skill_builder') => {
+      getTabsByMode: (mode: 'chat' | 'workflow') => {
         const state = get()
         return Object.values(state.chatTabs).filter(tab => tab.metadata?.mode === mode)
       },
@@ -1356,14 +1356,12 @@ export const useChatStore = create<ChatState>()(
         try {
                 // Map mode category to agent mode for filtering
                 let agentMode: string | undefined
-                if (modeCategory === 'skill_builder') {
-                  agentMode = 'skill_builder'
-                } else if (modeCategory === 'workflow') {
+                if (modeCategory === 'workflow') {
                   agentMode = 'workflow'
                 }
-                // For 'chat' mode, we want all non-workflow/non-skill-builder sessions
+                // For 'chat' mode, we want all non-workflow sessions
                 // Leaving agentMode undefined fetches all, and client-side filtering handles the rest
-                
+
                 console.log('[ChatStore] Fetching fresh chat history for mode:', modeCategory, `(agentMode: ${agentMode})`, '(initial load: 10 sessions)')
                 const response = await agentApi.getChatSessions(10, 0, undefined, agentMode)
                 const sessions = response.sessions || []
@@ -1397,12 +1395,10 @@ export const useChatStore = create<ChatState>()(
         try {
                 // Map mode category to agent mode for filtering
                 let agentMode: string | undefined
-                if (modeCategory === 'skill_builder') {
-                  agentMode = 'skill_builder'
-                } else if (modeCategory === 'workflow') {
+                if (modeCategory === 'workflow') {
                   agentMode = 'workflow'
                 }
-                
+
                 console.log('[ChatStore] Loading more chat history for mode:', modeCategory, `(agentMode: ${agentMode})`, `(offset: ${state.chatHistoryLoadedCount}, limit: 10)`)
                 const response = await agentApi.getChatSessions(10, state.chatHistoryLoadedCount, undefined, agentMode)
                 const newSessions = response.sessions || []

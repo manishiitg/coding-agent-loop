@@ -68,11 +68,9 @@ export const ModeEmptyState: React.FC<ModeEmptyStateProps> = ({ modeCategory }) 
         <div className="mt-8 flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
           <ArrowRight className="w-4 h-4" />
           <span>
-            {modeCategory === 'chat' 
+            {modeCategory === 'chat'
               ? 'Type your message below to get started'
-              : modeCategory === 'skill_builder'
-                ? 'Start building a new skill'
-                : 'Get started with your workflow'
+              : 'Get started with your workflow'
             }
           </span>
         </div>

@@ -36,7 +36,7 @@ const isMarkdownContent = (content: string): boolean => {
 }
 
 export const WorkspaceToolCallDisplay: React.FC<WorkspaceToolCallDisplayProps> = ({ event }) => {
-  const { isExpanded: showContent, toggle } = useExpandable()
+  const { isExpanded: showContent, toggle } = useExpandable(false)
   
   if (!event.tool_params?.arguments) {
     return null

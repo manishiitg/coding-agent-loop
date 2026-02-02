@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { MessageCircle, Workflow, Settings, Trash2, Copy, Lightbulb } from 'lucide-react'
+import { MessageCircle, Workflow, Settings, Trash2, Copy } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -14,8 +14,6 @@ const getModeIcon = (category: string) => {
       return <MessageCircle className="w-3 h-3" />
     case 'workflow':
       return <Workflow className="w-3 h-3" />
-    case 'skill_builder':
-      return <Lightbulb className="w-3 h-3" />
     default:
       return <MessageCircle className="w-3 h-3" />
   }
@@ -27,8 +25,6 @@ const getModeName = (category: string) => {
       return 'Chat Mode'
     case 'workflow':
       return 'Workflow Mode'
-    case 'skill_builder':
-      return 'Skill Builder'
     default:
       return 'Chat Mode'
   }
@@ -40,34 +36,34 @@ const getModeName = (category: string) => {
  */
 export const ModePresetBar: React.FC = () => {
   const { selectedModeCategory, setModeCategory, getAgentModeFromCategory } = useModeStore()
-  const { setWorkspaceMinimized } = useAppStore()
+  const { setWorkspaceMinimized, agentMode } = useAppStore()
   // Use toolList to get all available servers, not just enabled ones
   const toolList = useMCPStore(state => state.toolList)
-  const availableServers = React.useMemo(() => 
+  const availableServers = React.useMemo(() =>
     [...new Set(toolList.map(t => t.server).filter(Boolean) as string[])],
     [toolList]
   )
-  
+
   // Use the new global preset store
-  const { 
-    customPresets, 
+  const {
+    customPresets,
     savePreset,
     deletePreset,
     duplicatePreset,
     refreshPresets,
     loading: presetsLoading
   } = usePresetManagement()
-  
-  const { 
-    applyPreset, 
-    getActivePreset, 
+
+  const {
+    applyPreset,
+    getActivePreset,
     isPresetActive,
     getPresetsForMode
   } = usePresetApplication()
-  
+
   // Get active preset for current mode
   const activePreset = getActivePreset(selectedModeCategory as 'chat' | 'workflow')
-  
+
   // Get presets for current mode
   const presetsForMode = getPresetsForMode(selectedModeCategory as 'chat' | 'workflow')
 
@@ -80,7 +76,7 @@ export const ModePresetBar: React.FC = () => {
   const handlePresetClick = useCallback((preset: CustomPreset | PredefinedPreset) => {
     // Determine the mode category based on the preset's agentMode
     const presetModeCategory = preset.agentMode === 'workflow' ? 'workflow' : 'chat'
-    
+
     // If preset is for workflow mode, ensure we're in workflow mode
     if (presetModeCategory === 'workflow' && selectedModeCategory !== 'workflow') {
       setModeCategory('workflow')
@@ -89,10 +85,10 @@ export const ModePresetBar: React.FC = () => {
     else if (presetModeCategory === 'chat' && selectedModeCategory !== 'chat') {
       setModeCategory('chat')
     }
-    
+
     // Apply the preset with the correct mode category
     const result = applyPreset(preset, presetModeCategory)
-    
+
     if (result.success) {
       setShowPresetDropdown(false)
     } else {
@@ -137,12 +133,12 @@ export const ModePresetBar: React.FC = () => {
         useToolSearchMode,
         enableBrowserAccess
       )
-      
+
       // Apply the preset immediately if it's a new one
       if (savedPreset && !editingPreset) {
         handlePresetClick(savedPreset)
       }
-      
+
       setShowPresetModal(false)
       setEditingPreset(null)
     } catch (error) {
@@ -186,16 +182,16 @@ export const ModePresetBar: React.FC = () => {
       })
     }
   }, [selectedModeCategory, refreshPresets])
-  
+
   // Refresh presets when dropdown is opened for workflow mode
   const handlePresetDropdownToggle = useCallback(() => {
     const newState = !showPresetDropdown
     setShowPresetDropdown(newState)
-    
+
     // If opening dropdown and in workflow mode, ensure presets are refreshed
     if (newState && selectedModeCategory === 'workflow') {
       const currentPresets = getPresetsForMode('workflow')
-      
+
       // Always refresh when opening dropdown in workflow mode to ensure latest presets
       if (currentPresets.length === 0 && !presetsLoading) {
         refreshPresets().catch(error => {
@@ -214,14 +210,14 @@ export const ModePresetBar: React.FC = () => {
         setShowPresetDropdown(false)
       }
     }
-    
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setShowModeSwitch(false)
         setShowPresetDropdown(false)
       }
     }
-    
+
     document.addEventListener('mousedown', onMouseDown)
     document.addEventListener('keydown', onKeyDown)
     return () => {
@@ -243,9 +239,7 @@ export const ModePresetBar: React.FC = () => {
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                     selectedModeCategory === 'chat'
                       ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
-                      : selectedModeCategory === 'skill_builder'
-                        ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
-                        : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                      : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
                   }`}
                   title="Click to change mode"
                   type="button"
@@ -257,7 +251,7 @@ export const ModePresetBar: React.FC = () => {
                   <span>{getModeName(selectedModeCategory)}</span>
                   <Settings className="w-3 h-3" />
                 </button>
-                
+
                 {/* Direct Mode Selection Dropdown */}
                 {showModeSwitch && (
                   <div
@@ -311,34 +305,12 @@ export const ModePresetBar: React.FC = () => {
                           </div>
                         </div>
                       </button>
-                      {/* Skill Builder Mode */}
-                      <button
-                        onClick={() => {
-                          setModeCategory('skill_builder')
-                          setShowModeSwitch(false)
-                        }}
-                        className={`w-full text-left p-3 rounded-md text-sm transition-colors ${
-                          selectedModeCategory === 'skill_builder'
-                            ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-900 dark:text-emerald-100'
-                            : 'hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <Lightbulb className="w-4 h-4 text-emerald-500" />
-                          <div>
-                            <div className="font-medium">Skill Builder</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                              Create reusable skills
-                            </div>
-                          </div>
-                        </div>
-                      </button>
                     </div>
                   </div>
                 )}
               </div>
             )}
-            
+
             {/* Center: Preset Information */}
             <div className="flex items-center gap-3">
               {/* Preset Information - Show ONLY for workflow mode */}
@@ -369,7 +341,7 @@ export const ModePresetBar: React.FC = () => {
                             </>
                           )}
                         </button>
-                        
+
                         {/* Settings gear icon - separate clickable element */}
                         {activePreset && customPresets.some(cp => cp.id === activePreset.id) && (
                           <button
@@ -385,7 +357,7 @@ export const ModePresetBar: React.FC = () => {
                             <Settings className="w-3 h-3 text-gray-400" />
                           </button>
                         )}
-                        
+
                         {/* Settings gear icon for when no preset is selected */}
                         {!activePreset && (
                           <div className="px-2 py-1 border-l border-gray-200 dark:border-gray-600">
@@ -393,7 +365,7 @@ export const ModePresetBar: React.FC = () => {
                           </div>
                         )}
                       </div>
-                      
+
                       {/* Preset Dropdown */}
                       {showPresetDropdown && (
                         <div className="preset-dropdown absolute top-full left-0 mt-1 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-50">
@@ -413,21 +385,21 @@ export const ModePresetBar: React.FC = () => {
                                 <span className="font-medium">+ Add New Preset</span>
                               </div>
                             </button>
-                            
+
                             {/* Loading state */}
                             {presetsLoading && (
                               <div className="p-2 text-sm text-gray-500 dark:text-gray-400 text-center">
                                 Loading presets...
                               </div>
                             )}
-                            
+
                             {/* No presets message */}
                             {!presetsLoading && presetsForMode.length === 0 && (
                               <div className="p-2 text-sm text-gray-500 dark:text-gray-400 text-center">
                                 No workflow presets available. Create one to get started.
                               </div>
                             )}
-                            
+
                             {/* Available Presets */}
                             {!presetsLoading && presetsForMode.length > 0 && presetsForMode
                               .map((preset: CustomPreset | PredefinedPreset) => (
@@ -450,7 +422,7 @@ export const ModePresetBar: React.FC = () => {
                                       </div>
                                     </div>
                                   </button>
-                                  
+
                                   {/* Edit/Duplicate/Delete buttons - only show for custom presets */}
                                   {customPresets.some(cp => cp.id === preset.id) && (
                                     <div className="flex gap-1">
@@ -497,14 +469,14 @@ export const ModePresetBar: React.FC = () => {
               })()}
             </div>
           </div>
-          
+
           {/* Right: Event Controls */}
           <div className="flex items-center gap-3">
-            
+
           </div>
         </div>
       </div>
-      
+
       {/* Preset Modal */}
       <PresetModal
         isOpen={showPresetModal}
@@ -514,8 +486,8 @@ export const ModePresetBar: React.FC = () => {
         availableServers={availableServers}
         hideAgentModeSelection={!!editingPreset}
         fixedAgentMode={editingPreset?.agentMode || (selectedModeCategory ? (getAgentModeFromCategory(selectedModeCategory) as 'simple' | 'workflow') : undefined)}
+        agentMode={agentMode}
       />
     </>
   )
 }
-

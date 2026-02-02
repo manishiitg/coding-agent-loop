@@ -1,5 +1,5 @@
 import React from 'react'
-import { MessageCircle, Workflow, Lightbulb } from 'lucide-react'
+import { MessageCircle, Workflow } from 'lucide-react'
 import { type ModeCategory } from '../stores/useModeStore'
 
 export interface ModeInfo {
@@ -37,30 +37,13 @@ export const MODE_INFO: Record<Exclude<ModeCategory, null>, ModeInfo> = {
     ],
     examples: [],
     tips: []
-  },
-  'skill_builder': {
-    icon: <Lightbulb className="w-16 h-16 text-emerald-500" />,
-    title: 'Skill Builder',
-    description: 'Create and refine reusable skills for your agents',
-    features: [
-      'Interactive skill creation',
-      'Validates SKILL.md format',
-      'Saves directly to skills/ folder',
-      'Test skills immediately'
-    ],
-    examples: [],
-    tips: [
-      'Start by describing what the skill should do',
-      'Provide example inputs and outputs',
-      'Specify which tools the skill needs'
-    ]
   }
 }
 
 export const getModeInfo = (category: ModeCategory | null): ModeInfo => {
   if (!category || !MODE_INFO[category]) {
     return {
-      icon: <Lightbulb className="w-16 h-16 text-gray-400" />,
+      icon: <MessageCircle className="w-16 h-16 text-gray-400" />,
       title: 'Welcome to AI Assistant',
       description: 'Select a mode to get started with your AI-powered workflow',
       features: [],

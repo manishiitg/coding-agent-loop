@@ -10,6 +10,7 @@ interface ToolSelectionSectionProps {
   onServerChange: (servers: string[]) => void;
   onToolChange: (tools: string[]) => void;
   stepId?: string; // Optional step ID for debugging
+  agentMode: string; // Add agentMode prop
 }
 
 export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
@@ -272,6 +273,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
       {/* Server and Tool List */}
       <div className="border border-gray-200 dark:border-gray-700 rounded-md max-h-96 overflow-y-auto">
         {availableServers
+          .filter(serverName => serverName !== 'mcp')
           .sort((a, b) => {
             const aSelected = selectedServers.includes(a);
             const bSelected = selectedServers.includes(b);

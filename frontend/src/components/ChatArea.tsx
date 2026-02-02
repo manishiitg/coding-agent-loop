@@ -134,10 +134,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     if (selectedModeCategory === 'workflow') {
       return currentPresetServers.length > 0 ? currentPresetServers : selectedServers
     }
-    // For skill_builder mode, strictly disable all servers
-    if (selectedModeCategory === 'skill_builder') {
-      return ["NO_SERVERS"]
-    }
     // For chat mode, ALWAYS use tab's selected servers from config (if available), otherwise fall back to global
     // NEVER use currentPresetServers in chat mode - workflow preset state is isolated to workflow mode only
     const tabSelectedServers = (selectedModeCategory === 'chat' && activeTab?.config) 
@@ -408,8 +404,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   // Handle mode selection from dropdown
   // Handle mode switching with preset selection for Workflow
   const handleModeSwitchWithPreset = (category: Exclude<ModeCategory, null>) => {
-    if (category === 'chat' || category === 'skill_builder') {
-      // Chat and Skill Builder modes doesn't need preset selection
+    if (category === 'chat') {
+      // Chat mode doesn't need preset selection
       // Clear any active presets when switching to chat mode
       clearActivePreset('workflow')
       switchMode(category)
@@ -1312,23 +1308,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           const isRunning = s.status === 'running'
           const agentMode = s.agent_mode?.toLowerCase()
           const isWorkflow = agentMode === 'workflow'
-          const isSkillBuilder = agentMode === 'skill_builder'
-          
+
           // Filter by current mode
           if (selectedModeCategory === 'chat') {
-            // In chat mode, skip workflow and skill_builder sessions
-            if (isWorkflow || isSkillBuilder) {
+            // In chat mode, skip workflow sessions
+            if (isWorkflow) {
               console.log(`[AutoRestore] Skipping ${agentMode} session in chat mode: ${s.session_id}`)
               return false
             }
-          } else if (selectedModeCategory === 'skill_builder') {
-            // In skill_builder mode, ONLY include skill_builder sessions
-            if (!isSkillBuilder) {
-              console.log(`[AutoRestore] Skipping ${agentMode} session in skill_builder mode: ${s.session_id}`)
-              return false
-            }
           } else {
-            // Should not happen as effect only runs for chat/skill_builder
+            // Should not happen as effect only runs for chat
             return false
           }
           
@@ -1376,8 +1365,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           const defaultEventMode: 'basic' | 'advanced' | 'tiny' = 
             agentMode === 'orchestrator' ? 'advanced' : 'tiny'
             
-          // Determine tab mode (chat or skill_builder)
-          const tabMode: 'chat' | 'skill_builder' = agentMode === 'skill_builder' ? 'skill_builder' : 'chat'
+          // Determine tab mode
+          const tabMode = 'chat' as const
           
           try {
             console.log(`[AutoRestore] Creating tab for active session ${sessionId}: ${sessionTitle} (mode: ${tabMode})`)
@@ -1510,8 +1499,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       }
     }
     
-    // Restore in chat or skill_builder mode
-    if (selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder') {
+    // Restore in chat mode
+    if (selectedModeCategory === 'chat') {
       restoreActiveSessions()
     }
   }, [getActiveSessions, createChatTab, switchTab, setTabEvents, setTabLastEventIndex, selectedModeCategory])
@@ -2350,7 +2339,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     
     // Get or create current tab
     let currentTab = activeTab
-    if (!currentTab && (selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder')) {
+    if (!currentTab && selectedModeCategory === 'chat') {
       const chatStore = useChatStore.getState()
       const chatTabs = Object.values(chatStore.chatTabs).filter(tab => 
         tab.metadata?.mode === selectedModeCategory
@@ -2552,9 +2541,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       } else if (correctAgentMode === 'workflow') {
         // For workflow mode, use preset value if available
         useCodeExecutionMode = presetUseCodeExecutionMode
-      } else if (correctAgentMode === 'skill_builder') {
-        // For skill_builder mode, strictly disable code execution
-        useCodeExecutionMode = false
       } else {
         useCodeExecutionMode = undefined
       }
@@ -2580,9 +2566,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       } else if (correctAgentMode === 'workflow') {
         // For workflow mode, use preset value if available
         useToolSearchMode = presetUseToolSearchMode
-      } else if (correctAgentMode === 'skill_builder') {
-        // For skill_builder mode, strictly disable tool search
-        useToolSearchMode = false
       } else {
         useToolSearchMode = undefined
       }
@@ -2600,8 +2583,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         finalType: typeof useCodeExecutionMode
       })
       
-      // Use tab's LLM config in chat/skill_builder mode, global config otherwise
-      const effectiveLLMConfig = ((selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder') && currentTab?.config) 
+      // Use tab's LLM config in chat mode, global config otherwise
+      const effectiveLLMConfig = (selectedModeCategory === 'chat' && currentTab?.config)
         ? currentTab.config.llmConfig 
         : llmConfig
       
@@ -2629,7 +2612,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         tabId: currentTab.tabId
       })
       
-      const isChatOrSkillBuilder = selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder'
+      const isChatMode = selectedModeCategory === 'chat'
 
       const requestPayload = {
         query: queryWithContext,
@@ -2649,20 +2632,20 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         use_tool_search_mode: correctAgentMode === 'simple' ? (useToolSearchMode ?? false) : useToolSearchMode,
         // Execution options from frontend (for workflow execution phase)
         execution_options: executionOptionsRef.current,
-        // Context summarization: Enable by default for chat/skill_builder mode
-        enable_context_summarization: isChatOrSkillBuilder ? true : undefined,
-        summarize_on_max_turns: isChatOrSkillBuilder ? true : undefined,
-        summary_keep_last_messages: isChatOrSkillBuilder ? 8 : undefined,
+        // Context summarization: Enable by default for chat mode
+        enable_context_summarization: isChatMode ? true : undefined,
+        summarize_on_max_turns: isChatMode ? true : undefined,
+        summary_keep_last_messages: isChatMode ? 8 : undefined,
         // Workspace access: Send the setting from tab config (default: true)
-        enable_workspace_access: isChatOrSkillBuilder
+        enable_workspace_access: isChatMode
           ? (currentTab?.config?.enableWorkspaceAccess ?? true)
           : undefined,
         // Browser access: Send the setting from tab config (default: false)
-        enable_browser_access: isChatOrSkillBuilder
+        enable_browser_access: isChatMode
           ? (currentTab?.config?.enableBrowserAccess ?? false)
           : undefined,
         // Selected skills: Include skill folder names from tab config
-        selected_skills: isChatOrSkillBuilder && currentTab?.config?.selectedSkills?.length
+        selected_skills: isChatMode && currentTab?.config?.selectedSkills?.length
           ? currentTab.config.selectedSkills
           : undefined,
         // Context editing: Read from active workflow preset's llmConfig

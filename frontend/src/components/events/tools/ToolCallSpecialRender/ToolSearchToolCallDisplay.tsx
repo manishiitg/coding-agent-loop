@@ -8,15 +8,7 @@ interface ToolSearchToolCallDisplayProps {
 }
 
 export const ToolSearchToolCallDisplay: React.FC<ToolSearchToolCallDisplayProps> = ({ event }) => {
-  const { isExpanded, toggle } = useExpandable()
-
-  const toolName = event.tool_name || ''
-
-  const parallelBadge = event.is_parallel ? (
-    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 border border-purple-200 dark:border-purple-700 ml-1.5">
-      PARALLEL
-    </span>
-  ) : null
+  const { isExpanded, toggle } = useExpandable(false)
 
   if (!event.tool_params?.arguments) {
     return null

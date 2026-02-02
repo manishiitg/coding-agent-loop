@@ -1,4 +1,4 @@
-import { MessageCircle, Workflow, Settings, Lightbulb } from 'lucide-react'
+import { MessageCircle, Workflow, Settings } from 'lucide-react'
 import { type ModeCategory } from '../stores/useModeStore'
 
 /**
@@ -15,8 +15,6 @@ export const getModeIcon = (category: ModeCategory, className?: string) => {
       return <MessageCircle className={defaultClassName} />
     case 'workflow':
       return <Workflow className={defaultClassName} />
-    case 'skill_builder':
-      return <Lightbulb className={defaultClassName} />
     default:
       return <Settings className="w-6 h-6 text-gray-400" />
   }
@@ -33,8 +31,6 @@ export const getModeName = (category: ModeCategory) => {
       return 'Chat Mode'
     case 'workflow':
       return 'Workflow Mode'
-    case 'skill_builder':
-      return 'Skill Builder'
     default:
       return 'Unknown Mode'
   }
@@ -51,8 +47,6 @@ export const getModeDescription = (category: ModeCategory) => {
       return 'Quick conversations with AI'
     case 'workflow':
       return 'Todo-based execution with human verification'
-    case 'skill_builder':
-      return 'Create and refine reusable skills'
     default:
       return 'Unknown mode'
   }

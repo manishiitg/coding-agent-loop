@@ -13,10 +13,16 @@ import SkillSelectionDropdown from './skills/SkillSelectionDropdown'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
 import CommandSelectionDialog from './CommandSelectionDialog'
+import SkillImportDialog from './skills/SkillImportDialog'
+import { MCPConfigPopup } from './MCPConfigPopup'
+import MCPDetailsModal from './MCPDetailsModal'
+import LLMConfigurationModal from './LLMConfigurationModal'
+import ResumeSessionDialog from './ResumeSessionDialog'
 import type { PlannerFile } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
+import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { agentApi } from '../services/api'
 
@@ -43,8 +49,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Use selectors to subscribe only to specific values, reducing re-renders
   const activeTabId = useChatStore(state => state.activeTabId)
   const setTabConfig = useChatStore(state => state.setTabConfig)
-  const sessionId = useChatStore(state => state.sessionId)
-  
   // Get active tab and its config (ChatInput is only rendered in chat mode)
   // Use selector to get only the tab we need, preventing re-renders when other tabs change
   const activeTab = useChatStore(state => 
@@ -319,6 +323,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   } = useLLMStore()
 
   const { scrollToFile } = useWorkspaceStore()
+  const { showSkillImport, showMCPDetails, showMCPConfig, showModels, showResume, openDialog, closeDialog } = useCommandDialogStore()
 
   // LLM selection (always update tab config)
   const onPrimaryLLMSelect = useCallback((llm: LLMOption) => {
@@ -379,7 +384,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Command selection dialog state
   const [showCommandDialog, setShowCommandDialog] = useState(false)
-  const [commandDialogPosition, setCommandDialogPosition] = useState({ top: 0, left: 0 })
+  const [commandDialogPosition, setCommandDialogPosition] = useState({ bottom: 0, left: 0 })
   const [commandSearchQuery, setCommandSearchQuery] = useState('')
   const [slashPosition, setSlashPosition] = useState(-1) // Position of / in text
 
@@ -541,18 +546,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         setShowCommandDialog(true)
         setShowFileDialog(false) // Hide file dialog if command dialog is active
         
-        // Calculate dialog position
+        // Calculate dialog position — anchor from bottom so it grows upward
         const textarea = e.target
         const rect = textarea.getBoundingClientRect()
-        const dialogHeight = 200 // Approximate dialog height
-        const spaceAbove = rect.top
-        const spaceBelow = window.innerHeight - rect.bottom
-        const shouldPositionAbove = spaceAbove > dialogHeight || spaceAbove > spaceBelow
 
         setCommandDialogPosition({
-          top: shouldPositionAbove
-            ? rect.top + window.scrollY - dialogHeight - 10
-            : rect.bottom + window.scrollY + 10,
+          bottom: window.innerHeight - rect.top + 8,
           left: rect.left + window.scrollX
         })
       } else {
@@ -635,13 +634,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Handle manual summarization
   // If messageToSendAfter is provided, it will be sent as a user message after summarization completes
   const handleSummarize = useCallback(async (messageToSendAfter?: string) => {
-    if (!sessionId || isSummarizing || isStreaming) {
+    if (!tabSessionId || isSummarizing || isStreaming) {
       return
     }
 
     setIsSummarizing(true)
     try {
-      const response = await agentApi.summarizeConversation(sessionId)
+      const response = await agentApi.summarizeConversation(tabSessionId)
       console.log('[SUMMARIZATION] Success:', response)
       // Show success notification (you can add a toast library here)
       alert(`Conversation summarized successfully!\nOriginal: ${response.original_count} messages\nNew: ${response.new_count} messages\nReduced by: ${response.reduced_by} messages`)
@@ -660,18 +659,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     } finally {
       setIsSummarizing(false)
     }
-  }, [sessionId, isSummarizing, isStreaming, tabSessionId, onSubmit])
+  }, [tabSessionId, isSummarizing, isStreaming, onSubmit])
 
   // Handle manual context compaction (context editing)
   // If messageToSendAfter is provided, it will be sent as a user message after compaction completes
   const handleCompact = useCallback(async (messageToSendAfter?: string) => {
-    if (!sessionId || isSummarizing || isStreaming) {
+    if (!tabSessionId || isSummarizing || isStreaming) {
       return
     }
 
     setIsSummarizing(true) // Reuse the same loading state
     try {
-      const response = await agentApi.compactContext(sessionId)
+      const response = await agentApi.compactContext(tabSessionId)
       console.log('[CONTEXT_EDITING] Success:', response)
       // Show success notification
       alert(`Context compacted successfully!\nCompacted: ${response.compacted_count} tool responses\nTokens saved: ${response.total_tokens_saved?.toLocaleString() || 0}`)
@@ -690,7 +689,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     } finally {
       setIsSummarizing(false)
     }
-  }, [sessionId, isSummarizing, isStreaming, tabSessionId, onSubmit])
+  }, [tabSessionId, isSummarizing, isStreaming, onSubmit])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If command dialog is open, let it handle keyboard events
@@ -719,7 +718,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       
       if (summarizeIndex >= 0) {
         // Handle summarize command
-        if (sessionId && !isSummarizing && !isStreaming) {
+        if (tabSessionId && !isSummarizing && !isStreaming) {
           // Extract text before /summarize
           const textBeforeSummarize = trimmedQuery.substring(0, summarizeIndex).trim()
           
@@ -745,7 +744,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
       if (compactIndex >= 0) {
         // Handle compact command
-        if (sessionId && !isSummarizing && !isStreaming) {
+        if (tabSessionId && !isSummarizing && !isStreaming) {
           const textBeforeCompact = trimmedQuery.substring(0, compactIndex).trim()
           handleCompact(textBeforeCompact || undefined)
           
@@ -764,7 +763,122 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         }
         return
       }
-      
+
+      // Handle /build-skill command
+      const buildSkillIndex = trimmedQuery.indexOf('/build-skill')
+      if (buildSkillIndex >= 0) {
+        const textAfterCommand = trimmedQuery.substring(buildSkillIndex + '/build-skill'.length).trim()
+
+        // Auto-add skill-creator to current tab's selectedSkills
+        if (activeTabId) {
+          const currentSkills = tabConfig?.selectedSkills || []
+          if (!currentSkills.includes('skill-creator')) {
+            setTabConfig(activeTabId, { selectedSkills: [...currentSkills, 'skill-creator'] })
+          }
+        }
+
+        // Expand skills/ and skills/custom/ folders in workspace
+        const wsStore = useWorkspaceStore.getState()
+        const expanded = new Set(wsStore.expandedFolders)
+        expanded.add('skills')
+        expanded.add('skills/custom')
+        wsStore.setExpandedFolders(expanded)
+
+        // Clear input after command (both local and store)
+        setLocalInputText('')
+        if (syncToStoreTimeoutRef.current) {
+          clearTimeout(syncToStoreTimeoutRef.current)
+          syncToStoreTimeoutRef.current = null
+        }
+        if (activeTabId) {
+          setTabConfig(activeTabId, { inputText: '' })
+        }
+
+        // Submit: always include skill-creator path context, plus user's text if provided
+        const skillContext = 'Refer to the skill-creator skill at skills/custom/skill-creator/SKILL.md for instructions on how to build skills.'
+        const message = textAfterCommand
+          ? `${textAfterCommand}\n\n${skillContext}`
+          : `I want to build a skill based on our conversation. ${skillContext}`
+        onSubmit(message)
+        return
+      }
+
+      // Handle /add-skill command — open the import dialog
+      if (trimmedQuery.indexOf('/add-skill') >= 0) {
+        // Clear input
+        setLocalInputText('')
+        if (syncToStoreTimeoutRef.current) {
+          clearTimeout(syncToStoreTimeoutRef.current)
+          syncToStoreTimeoutRef.current = null
+        }
+        if (activeTabId) {
+          setTabConfig(activeTabId, { inputText: '' })
+        }
+
+        // Open the skill import dialog
+        openDialog('skillImport')
+        return
+      }
+
+      // Handle /mcp-add command — open MCP config editor (must be before /mcp check)
+      if (trimmedQuery.indexOf('/mcp-add') >= 0) {
+        setLocalInputText('')
+        if (syncToStoreTimeoutRef.current) {
+          clearTimeout(syncToStoreTimeoutRef.current)
+          syncToStoreTimeoutRef.current = null
+        }
+        if (activeTabId) {
+          setTabConfig(activeTabId, { inputText: '' })
+        }
+        useAppStore.getState().setWorkspaceMinimized(true)
+        openDialog('mcpConfig')
+        return
+      }
+
+      // Handle /mcp command — open MCP server details list
+      if (trimmedQuery.indexOf('/mcp') >= 0) {
+        setLocalInputText('')
+        if (syncToStoreTimeoutRef.current) {
+          clearTimeout(syncToStoreTimeoutRef.current)
+          syncToStoreTimeoutRef.current = null
+        }
+        if (activeTabId) {
+          setTabConfig(activeTabId, { inputText: '' })
+        }
+        useAppStore.getState().setWorkspaceMinimized(true)
+        openDialog('mcpDetails')
+        return
+      }
+
+      // Handle /models command — open LLM model config
+      if (trimmedQuery.indexOf('/models') >= 0) {
+        setLocalInputText('')
+        if (syncToStoreTimeoutRef.current) {
+          clearTimeout(syncToStoreTimeoutRef.current)
+          syncToStoreTimeoutRef.current = null
+        }
+        if (activeTabId) {
+          setTabConfig(activeTabId, { inputText: '' })
+        }
+        useAppStore.getState().setWorkspaceMinimized(true)
+        openDialog('models')
+        return
+      }
+
+      // Handle /resume command — show previous conversations
+      if (trimmedQuery.indexOf('/resume') >= 0) {
+        setLocalInputText('')
+        if (syncToStoreTimeoutRef.current) {
+          clearTimeout(syncToStoreTimeoutRef.current)
+          syncToStoreTimeoutRef.current = null
+        }
+        if (activeTabId) {
+          setTabConfig(activeTabId, { inputText: '' })
+        }
+        openDialog('resume')
+        return
+      }
+
       if (canSubmitImmediately) {
         // Clear input text immediately (both local and store)
         setLocalInputText('')
@@ -813,7 +927,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [inputText, onSubmit, showFileDialog, showCommandDialog, tabSessionId, canSubmit, canSubmitImmediately, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTabId, activeTab?.tabId, activeTab?.sessionId, sessionId, setTabConfig, adjustTextareaHeight, tabConfig?.queuedMessages])
+  }, [inputText, onSubmit, showFileDialog, showCommandDialog, tabSessionId, canSubmit, canSubmitImmediately, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTabId, activeTab?.tabId, activeTab?.sessionId, setTabConfig, adjustTextareaHeight, tabConfig?.queuedMessages])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -824,13 +938,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const compactIndex = trimmedQuery.indexOf('/compact')
 
     if (summarizeIndex >= 0) {
-      if (sessionId && !isSummarizing && !isStreaming) {
+      if (tabSessionId && !isSummarizing && !isStreaming) {
         const textBeforeSummarize = trimmedQuery.substring(0, summarizeIndex).trim()
         handleSummarize(textBeforeSummarize || undefined)
-        
+
         // Clear input after command (both local and store)
         setLocalInputText('')
-        
+
         // Clear any pending store sync to prevent overwriting the empty state
         if (syncToStoreTimeoutRef.current) {
           clearTimeout(syncToStoreTimeoutRef.current)
@@ -845,7 +959,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
 
     if (compactIndex >= 0) {
-      if (sessionId && !isSummarizing && !isStreaming) {
+      if (tabSessionId && !isSummarizing && !isStreaming) {
         const textBeforeCompact = trimmedQuery.substring(0, compactIndex).trim()
         handleCompact(textBeforeCompact || undefined)
         
@@ -895,7 +1009,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         })
       }
     }
-  }, [canSubmit, canSubmitImmediately, activeTabId, tabSessionId, queryToSubmit, onSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, setTabConfig, sessionId, tabConfig?.queuedMessages])
+  }, [canSubmit, canSubmitImmediately, activeTabId, tabSessionId, queryToSubmit, onSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, setTabConfig, tabConfig?.queuedMessages])
 
   // File selection handlers
   const handleCommandSelect = useCallback((command: string) => {
@@ -1056,8 +1170,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-2">
                 
-                {/* Agent Mode Selector - Only show when no preset is active AND not in skill_builder mode */}
-                {!chatActivePreset && agentMode !== 'skill_builder' && (
+                {/* Agent Mode Selector - Only show when no preset is active */}
+                {!chatActivePreset && (
                   <div className="flex items-center gap-2">
                     {/* Agent Mode Toggle - Simple / Code Exec / Tool Search (mutually exclusive) */}
                     <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
@@ -1137,7 +1251,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 {/* Server and LLM Selection - only show when no preset is active */}
                 {!chatActivePreset && (
                   <div className="flex items-center gap-2">
-                    {agentMode !== 'skill_builder' && (
+                    
                       <>
                         <ServerSelectionDropdown
                           availableServers={availableServers}
@@ -1146,6 +1260,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           onSelectAll={onSelectAllServers}
                           onClearAll={onClearAllServers}
                           disabled={isStreaming || isSummarizing}
+                          agentMode={agentMode}
                         />
                         <SkillSelectionDropdown
                           selectedSkills={selectedSkills}
@@ -1155,7 +1270,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           disabled={isStreaming || isSummarizing}
                         />
                       </>
-                    )}
+                    
                     <LLMSelectionDropdown
                       availableLLMs={availableLLMs}
                       selectedLLM={primaryLLM}
@@ -1301,6 +1416,33 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         searchQuery={fileSearchQuery}
         position={fileDialogPosition}
       />
+      {/* Slash command dialogs */}
+      {showSkillImport && (
+        <SkillImportDialog
+          onClose={() => closeDialog('skillImport')}
+          onSuccess={() => closeDialog('skillImport')}
+        />
+      )}
+      {showMCPDetails && (
+        <MCPDetailsModal
+          onClose={() => closeDialog('mcpDetails')}
+          onOpenConfigEditor={() => openDialog('mcpConfig')}
+        />
+      )}
+      {showMCPConfig && (
+        <MCPConfigPopup
+          onClose={() => closeDialog('mcpConfig')}
+        />
+      )}
+      <LLMConfigurationModal
+        isOpen={showModels}
+        onClose={() => closeDialog('models')}
+      />
+      {showResume && (
+        <ResumeSessionDialog
+          onClose={() => closeDialog('resume')}
+        />
+      )}
       </div>
     </TooltipProvider>
   )

@@ -12,8 +12,8 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/lib/pq v1.10.9
-	github.com/manishiitg/mcpagent v1.2.2
-	github.com/manishiitg/multi-llm-provider-go v0.3.0
+	github.com/manishiitg/mcpagent v1.2.4
+	github.com/manishiitg/multi-llm-provider-go v0.3.1
 	github.com/mark3labs/mcp-go v0.44.0-beta.1
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/pkoukk/tiktoken-go v0.1.8

@@ -23,6 +23,7 @@ interface PresetModalProps {
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
   fixedAgentMode?: 'simple' | 'workflow';
+  agentMode: string;
 }
 
 const PresetModal: React.FC<PresetModalProps> = React.memo(({
@@ -33,44 +34,43 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   availableServers = [],
   hideAgentModeSelection = false,
   fixedAgentMode,
+  agentMode: propAgentMode,
 }) => {
   const [label, setLabel] = useState('');
   const [query, setQuery] = useState('');
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
-  const [agentMode, setAgentMode] = useState<'simple' | 'workflow'>('simple');
+  const [internalAgentMode, setInternalAgentMode] = useState<'simple' | 'workflow'>('simple');
   const [selectedFolder, setSelectedFolder] = useState<PlannerFile | null>(null);
   const [showFolderDialog, setShowFolderDialog] = useState(false);
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
   const [llmConfig, setLlmConfig] = useState<PresetLLMConfig | null>(null);
   const [useCodeExecutionMode, setUseCodeExecutionMode] = useState(false);
   const [useToolSearchMode, setUseToolSearchMode] = useState(false);
-  // Context summarization is always enabled (not user-configurable)
   const enableContextSummarization = true;
-  const [useKnowledgebase, setUseKnowledgebase] = useState(true); // Default true (enabled)
-  const [enableBrowserAccess, setEnableBrowserAccess] = useState(false); // Default false (disabled)
-  // Agent-specific LLM configs (for workflow mode)
+  const [useKnowledgebase, setUseKnowledgebase] = useState(true);
+  const [enableBrowserAccess, setEnableBrowserAccess] = useState(false);
   const [executionLLM, setExecutionLLM] = useState<AgentLLMConfig | null>(null);
   const [validationLLM, setValidationLLM] = useState<AgentLLMConfig | null>(null);
   const [learningLLM, setLearningLLM] = useState<AgentLLMConfig | null>(null);
   const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(null);
-  // Tiered LLM allocation mode
   const [llmAllocationMode, setLlmAllocationMode] = useState<'manual' | 'tiered'>('manual');
   const [tier1LLM, setTier1LLM] = useState<AgentLLMConfig | null>(null);
   const [tier2LLM, setTier2LLM] = useState<AgentLLMConfig | null>(null);
   const [tier3LLM, setTier3LLM] = useState<AgentLLMConfig | null>(null);
 
-  // Store subscriptions - using selectors for stable references
+  const { selectedModeCategory, getAgentModeFromCategory } = useModeStore();
   const primaryConfig = useLLMStore(state => state.primaryConfig);
   const availableLLMs = useLLMStore(state => state.availableLLMs);
   const getCurrentLLMOption = useLLMStore(state => state.getCurrentLLMOption);
   const refreshAvailableLLMs = useLLMStore(state => state.refreshAvailableLLMs);
-  const { selectedModeCategory, getAgentModeFromCategory } = useModeStore();
 
-  // Calculate effective agent mode that always honors fixedAgentMode when provided
-  // This ensures workflow presets only show Workflow/ folders in the folder selection dialog
-  const effectiveAgentMode = fixedAgentMode || agentMode;
+  const effectiveAgentMode = useMemo(() => {
+    if (fixedAgentMode) return fixedAgentMode;
+    if (propAgentMode) return propAgentMode as 'simple' | 'workflow';
+    return internalAgentMode;
+  }, [fixedAgentMode, propAgentMode, internalAgentMode]);
 
   // Helper to manage execution modes (mutually exclusive in UI for simplicity)
   const setExecutionMode = useCallback((mode: 'simple' | 'code' | 'search') => {
@@ -117,7 +117,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setSelectedServers(editingPreset.selectedServers || []);
       setSelectedTools(editingPreset.selectedTools || []); // NEW
       setSelectedSkills(editingPreset.selectedSkills || []);
-      setAgentMode(editingPreset.agentMode || 'workflow'); // Default to workflow
+      setInternalAgentMode(editingPreset.agentMode || 'workflow'); // Default to workflow
       setSelectedFolder(editingPreset.selectedFolder || null);
       const presetLLM = editingPreset.llmConfig || {
         provider: primaryConfig.provider,
@@ -147,7 +147,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setSelectedSkills([]);
       // Default to workflow mode as chat presets are disabled
       const defaultMode = 'workflow';
-      setAgentMode(defaultMode);
+      setInternalAgentMode(defaultMode);
       setSelectedFolder(null);
       // Initialize LLM config from current primary config
       const defaultLLM = {
@@ -806,6 +806,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     selectedTools={selectedTools}
                     onServerChange={setSelectedServers}
                     onToolChange={setSelectedTools}
+                    agentMode={effectiveAgentMode}
                   />
                 )}
 

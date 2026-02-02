@@ -16,6 +16,7 @@ interface ServerSelectionDropdownProps {
   onSelectAll: () => void;
   onClearAll: () => void;
   disabled?: boolean;
+  agentMode?: string;
 }
 
 export default function ServerSelectionDropdown({
@@ -24,7 +25,8 @@ export default function ServerSelectionDropdown({
   onServerToggle,
   onSelectAll,
   onClearAll,
-  disabled = false
+  disabled = false,
+  agentMode = 'chat'
 }: ServerSelectionDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -34,37 +36,42 @@ export default function ServerSelectionDropdown({
     onServerToggle(server);
   };
 
+  const serversToDisplay = useMemo(() => {
+    return availableServers.filter(s => s !== 'mcp');
+  }, [availableServers]);
+  
   // Memoize computed values to ensure reactivity
   const hasNoServers = useMemo(() => selectedServers.includes("NO_SERVERS"), [selectedServers]);
   const actualSelectedServers = useMemo(() => selectedServers.filter(s => s !== "NO_SERVERS"), [selectedServers]);
 
   // Filter servers based on search query
   const filteredServers = useMemo(() => {
+    const servers = serversToDisplay;
     if (!searchQuery.trim()) {
-      return availableServers;
+      return servers;
     }
     const query = searchQuery.toLowerCase();
-    return availableServers.filter(server => 
+    return servers.filter(server => 
       server.toLowerCase().includes(query)
     );
-  }, [availableServers, searchQuery]);
+  }, [serversToDisplay, searchQuery]);
 
   // Memoize display text to ensure it updates when selectedServers or availableServers change
   const displayText = useMemo(() => {
     if (hasNoServers) {
       return "None";
     } else if (actualSelectedServers.length === 0) {
-      return `All servers (${availableServers.length})`;
-    } else if (actualSelectedServers.length === availableServers.length) {
-      return `All servers (${availableServers.length})`;
+      return `All servers (${serversToDisplay.length})`;
+    } else if (actualSelectedServers.length === serversToDisplay.length) {
+      return `All servers (${serversToDisplay.length})`;
     } else if (actualSelectedServers.length === 1) {
       return actualSelectedServers[0];
     } else {
       return `${actualSelectedServers.length} servers`;
     }
-  }, [hasNoServers, actualSelectedServers, availableServers.length]);
+  }, [hasNoServers, actualSelectedServers, serversToDisplay.length]);
 
-  const isAllSelected = actualSelectedServers.length === availableServers.length && !hasNoServers;
+  const isAllSelected = actualSelectedServers.length === serversToDisplay.length && !hasNoServers;
   const isNoneSelected = hasNoServers;
 
   return (

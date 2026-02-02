@@ -43,9 +43,9 @@ export default function Workspace({
   const { getActiveTab, setTabConfig } = useChatStore()
   const { getActivePreset } = usePresetApplication()
   
-  // Get file context based on mode: chat/skill_builder mode uses tab config, workflow mode uses preset
+  // Get file context based on mode: chat mode uses tab config, workflow mode uses preset
   const chatFileContext = useMemo(() => {
-    if (selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder') {
+    if (selectedModeCategory === 'chat') {
       const activeTab = getActiveTab()
       return activeTab?.config?.fileContext || []
     } else if (selectedModeCategory === 'workflow') {
@@ -63,12 +63,12 @@ export default function Workspace({
   
   // Add file to context handler - mode-specific
   const addFileToContext = useCallback((file: { name: string; path: string; type: 'file' | 'folder' }) => {
-    if (selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder') {
+    if (selectedModeCategory === 'chat') {
       const activeTab = getActiveTab()
       if (activeTab) {
         const currentContext = activeTab.config?.fileContext || []
-        setTabConfig(activeTab.tabId, { 
-          fileContext: [...currentContext, file] 
+        setTabConfig(activeTab.tabId, {
+          fileContext: [...currentContext, file]
         })
       }
     }
@@ -233,6 +233,8 @@ export default function Workspace({
   
   // Track which workflow preset we've already auto-expanded to prevent re-expansion
   const autoExpandedWorkflowRef = useRef<string | null>(null)
+  // Track whether we've auto-expanded Chats/ for chat mode
+  const autoExpandedChatRef = useRef(false)
   
   // Stable empty Set for loadingChildren prop to prevent unnecessary re-renders
   const emptyLoadingSet = useMemo(() => new Set<string>(), [])
@@ -326,14 +328,14 @@ export default function Workspace({
       // Adjust filepaths to show workflow folder as root (remove the workflow folder path prefix)
       // Store original path in originalFilepath for API calls
       result = adjustFilePathsRecursive(result, workflowFolderPath)
-    } else if (selectedModeCategory === 'skill_builder') {
-      // Skill builder mode: always filter to skills/ folder
-      result = filterToWorkflowFolder(filesToProcess, 'skills')
-      
-      // Adjust filepaths to show skills folder as root
-      result = adjustFilePathsRecursive(result, 'skills')
+    } else if (selectedModeCategory === 'chat') {
+      // Chat mode: show only Chats/ and skills/ top-level folders
+      result = filesToProcess.filter(f => {
+        const topFolder = f.filepath.split('/')[0]
+        return topFolder === 'Chats' || topFolder === 'skills'
+      })
     }
-    
+
     return result
   }, [selectedModeCategory, workflowFolderPath, filterToWorkflowFolder])
   
@@ -474,14 +476,14 @@ export default function Workspace({
       // Adjust filepaths to show workflow folder as root (remove the workflow folder path prefix)
       // Store original path in originalFilepath for API calls
       result = adjustFilePathsRecursive(result, workflowFolderPath)
-    } else if (selectedModeCategory === 'skill_builder') {
-      // Skill builder mode: always filter to skills/ folder
-      result = filterToWorkflowFolder(files, 'skills')
-      
-      // Adjust filepaths to show skills folder as root
-      result = adjustFilePathsRecursive(result, 'skills')
+    } else if (selectedModeCategory === 'chat') {
+      // Chat mode: show only Chats/ and skills/ top-level folders
+      result = files.filter(f => {
+        const topFolder = f.filepath.split('/')[0]
+        return topFolder === 'Chats' || topFolder === 'skills'
+      })
     }
-    
+
     // Apply search filter
     result = filterFiles(result, searchQuery)
     
@@ -511,7 +513,7 @@ export default function Workspace({
     }
   }, [highlightedFile, expandFoldersForFile, scrollToHighlightedFile, selectedModeCategory, workflowFolderPath, filteredFiles])
   
-  // Automatically expand workspace folder when a workflow or skill builder is first opened
+  // Automatically expand workspace folder when a workflow is first opened
   // Only runs once per workflow preset or mode switch to allow manual open/close afterward
   useEffect(() => {
     if (selectedModeCategory === 'workflow' && workflowFolderPath && filteredFiles.length > 0) {
@@ -539,26 +541,24 @@ export default function Workspace({
         
         return () => clearTimeout(timeoutId)
       }
-    } else if (selectedModeCategory === 'skill_builder' && filteredFiles.length > 0) {
-      // Auto-expand for skill builder mode
-      if (autoExpandedWorkflowRef.current !== 'skill_builder_auto') {
-        const timeoutId = setTimeout(() => {
-          console.log('[Workspace] Auto-expanding Skill Builder folders (custom only)')
-          // For skill builder, we want to see the list of skill categories
-          // Specifically: 
-          // 1. Expand the root 'skills/' folder (level 0)
-          // 2. Expand the 'custom/' folder (specified in additionalFolders)
-          // 3. Keep individual skill folders closed to avoid clutter
-          expandFoldersToLevel(filteredFiles, 0, ['custom'])
-          autoExpandedWorkflowRef.current = 'skill_builder_auto'
-        }, 500)
-        return () => clearTimeout(timeoutId)
-      }
-    } else if (selectedModeCategory !== 'workflow' && selectedModeCategory !== 'skill_builder') {
+    } else if (selectedModeCategory !== 'workflow') {
       // Reset the auto-expanded ref when switching away
       autoExpandedWorkflowRef.current = null
     }
   }, [selectedModeCategory, workflowFolderPath, filteredFiles, expandFoldersToLevel, activeWorkflowPreset?.id, expandedFolders, setExpandedFolders])
+
+  // In chat mode, auto-expand Chats/ folder by default (skills/ stays closed)
+  useEffect(() => {
+    if (selectedModeCategory === 'chat' && filteredFiles.length > 0 && !autoExpandedChatRef.current) {
+      const hasChatsFolder = filteredFiles.some(f => f.filepath === 'Chats' || f.filepath === 'Chats/')
+      if (hasChatsFolder) {
+        autoExpandedChatRef.current = true
+        setExpandedFolders(new Set(['Chats']))
+      }
+    } else if (selectedModeCategory !== 'chat') {
+      autoExpandedChatRef.current = false
+    }
+  }, [selectedModeCategory, filteredFiles, setExpandedFolders])
   
   // Auto-collapse other iterations when an iteration is selected
   // Get selected iteration from workflow store
@@ -1831,22 +1831,8 @@ export default function Workspace({
           </div>
         )}
 
-        {/* Skill Builder Filter Banner - Only show in skill builder mode */}
-        {!minimized && selectedModeCategory === 'skill_builder' && (
-          <div className="mb-2 px-2.5 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-md">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                <Filter className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
-                <span className="text-xs text-emerald-900 dark:text-emerald-100 truncate">
-                  Filters workspace to skills/ folder
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* Search/Filter Input - Hidden when workspace is filtered (workflow or skill_builder) */}
-        {!minimized && (selectedModeCategory !== 'workflow' || !workflowFolderPath) && selectedModeCategory !== 'skill_builder' && (
+        {/* Search/Filter Input - Hidden when workspace is filtered (workflow) */}
+        {!minimized && (selectedModeCategory !== 'workflow' || !workflowFolderPath) && (
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

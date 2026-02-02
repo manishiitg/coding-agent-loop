@@ -376,8 +376,8 @@ function App() {
   useEffect(() => {
     if (!hasCompletedInitialSetup) return
     
-    // Only create default tab for chat/skill_builder modes
-    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'skill_builder') {
+    // Only create default tab for chat mode
+    if (selectedModeCategory !== 'chat') {
       return
     }
     
@@ -423,14 +423,14 @@ function App() {
     createDefaultTab()
   }, [hasCompletedInitialSetup, selectedModeCategory])
 
-  // Ensure a chat/skill tab is selected after restore (fix for page reload issue)
+  // Ensure a chat tab is selected after restore (fix for page reload issue)
   // This ensures that when tabs are restored from localStorage, we select the first tab of the current mode
   // if activeTabId is null or invalid or belongs to a different mode
   useEffect(() => {
     if (!hasCompletedInitialSetup) return
     
-    // Only run for chat/skill_builder modes
-    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'skill_builder') {
+    // Only run for chat mode
+    if (selectedModeCategory !== 'chat') {
       return
     }
     
@@ -718,11 +718,6 @@ function App() {
           setAgentMode('workflow')
         }
 
-        // Ctrl/Cmd + 5 for Skill Builder agent mode
-        if ((event.metaKey || event.ctrlKey) && event.key === '5') {
-          event.preventDefault()
-          setAgentMode('skill_builder')
-        }
       // Ctrl/Cmd + 5 for sidebar minimize
       if ((event.ctrlKey || event.metaKey) && event.key === '5') {
         event.preventDefault()

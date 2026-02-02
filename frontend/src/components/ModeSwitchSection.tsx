@@ -79,12 +79,6 @@ export const ModeSwitchSection: React.FC<ModeSwitchSectionProps> = ({ minimized 
       name: 'Workflow Mode',
       icon: getModeIcon('workflow', 'w-4 h-4 text-purple-600'),
       description: 'Todo-based task execution'
-    },
-    {
-      category: 'skill_builder',
-      name: 'Skill Builder',
-      icon: getModeIcon('skill_builder', 'w-4 h-4 text-emerald-500'),
-      description: 'Create reusable skills'
     }
   ]
 
@@ -109,39 +103,28 @@ export const ModeSwitchSection: React.FC<ModeSwitchSectionProps> = ({ minimized 
           {/* Current Mode */}
           {selectedModeCategory && (
             <div className={`flex items-center gap-2 p-2 rounded-lg border ${
-              selectedModeCategory === 'chat' 
-                ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' 
-                : selectedModeCategory === 'skill_builder'
-                  ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800'
-                  : 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800'
+              selectedModeCategory === 'chat'
+                ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+                : 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800'
             }`}>
               {getModeIcon(selectedModeCategory, `w-4 h-4 ${
-                selectedModeCategory === 'chat' 
-                  ? 'text-blue-600' 
-                  : selectedModeCategory === 'skill_builder'
-                    ? 'text-emerald-500'
-                    : 'text-purple-600'
+                selectedModeCategory === 'chat' ? 'text-blue-600' : 'text-purple-600'
               }`)}
               <div className="flex-1">
                 <div className={`text-sm font-medium ${
-                  selectedModeCategory === 'chat' 
-                    ? 'text-blue-900 dark:text-blue-100' 
-                    : selectedModeCategory === 'skill_builder'
-                      ? 'text-emerald-900 dark:text-emerald-100'
-                      : 'text-purple-900 dark:text-purple-100'
+                  selectedModeCategory === 'chat'
+                    ? 'text-blue-900 dark:text-blue-100'
+                    : 'text-purple-900 dark:text-purple-100'
                 }`}>
                   {getModeName(selectedModeCategory)}
                 </div>
                 <div className={`text-xs ${
-                  selectedModeCategory === 'chat' 
-                    ? 'text-blue-700 dark:text-blue-300' 
-                    : selectedModeCategory === 'skill_builder'
-                      ? 'text-emerald-700 dark:text-emerald-300'
-                      : 'text-purple-700 dark:text-purple-300'
+                  selectedModeCategory === 'chat'
+                    ? 'text-blue-700 dark:text-blue-300'
+                    : 'text-purple-700 dark:text-purple-300'
                 }`}>
-                  {agentMode === 'simple' ? 'Simple Agent' : 
-                   agentMode === 'workflow' ? 'Workflow Agent' : 
-                   agentMode === 'skill_builder' ? 'Skill Builder Agent' : 'Unknown Agent'}
+                  {agentMode === 'simple' ? 'Simple Agent' :
+                   agentMode === 'workflow' ? 'Workflow Agent' : 'Unknown Agent'}
                 </div>
               </div>
             </div>
@@ -157,11 +140,9 @@ export const ModeSwitchSection: React.FC<ModeSwitchSectionProps> = ({ minimized 
                     onClick={() => handleModeSelect(mode.category)}
                     className={`w-full text-left p-3 rounded-md text-sm transition-colors ${
                       selectedModeCategory === mode.category
-                        ? mode.category === 'chat' 
+                        ? mode.category === 'chat'
                           ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-900 dark:text-blue-100'
-                          : mode.category === 'skill_builder'
-                            ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-900 dark:text-emerald-100'
-                            : 'bg-purple-100 dark:bg-purple-900/30 text-purple-900 dark:text-purple-100'
+                          : 'bg-purple-100 dark:bg-purple-900/30 text-purple-900 dark:text-purple-100'
                         : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
                     }`}
                   >

@@ -69,20 +69,13 @@ export default function ChatHistorySection({
 
     switch (selectedModeCategory) {
       case 'chat':
-        // Show ALL chat sessions EXCEPT workflows AND skill_builder
+        // Show ALL chat sessions EXCEPT workflows
         // This includes: simple, code exec, orchestrator, etc.
         return sessions.filter(session => {
           const agentMode = (session.agent_mode || '').toLowerCase()
-          // Exclude workflow and skill_builder sessions
-          return agentMode !== 'workflow' && agentMode !== 'skill_builder'
+          return agentMode !== 'workflow'
         })
-      
-      case 'skill_builder':
-        // Show ONLY skill_builder sessions
-        return sessions.filter(session => {
-          return (session.agent_mode || '').toLowerCase() === 'skill_builder'
-        })
-      
+
       case 'workflow':
         // Hide all previous chats in workflow mode
         return []
@@ -183,8 +176,6 @@ export default function ChatHistorySection({
     switch (agentMode.toLowerCase()) {
       case 'simple':
         return 'Simple'
-      case 'skill_builder':
-        return 'Skill Builder'
       case 'workflow':
         return 'Workflow'
       default:

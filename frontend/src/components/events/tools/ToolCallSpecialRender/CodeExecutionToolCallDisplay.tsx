@@ -8,7 +8,7 @@ interface CodeExecutionToolCallDisplayProps {
 }
 
 export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplayProps> = ({ event }) => {
-  const { isExpanded, toggle } = useExpandable()
+  const { isExpanded, toggle } = useExpandable(false)
   
   const toolName = event.tool_name || ''
 

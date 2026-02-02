@@ -4,7 +4,7 @@ import { skillsApi } from '../../api/skills'
 import type { Skill } from '../../types/skills'
 import SkillCard from './SkillCard'
 import SkillImportDialog from './SkillImportDialog'
-import { useAppStore } from '../../stores/useAppStore'
+import { useChatStore } from '../../stores'
 
 export default function SkillsSection() {
   const [skills, setSkills] = useState<Skill[]>([])
@@ -13,7 +13,7 @@ export default function SkillsSection() {
   const [showDetails, setShowDetails] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
   
-  const { setAgentMode } = useAppStore()
+  const { getActiveTab, setTabConfig } = useChatStore()
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true)
@@ -52,7 +52,17 @@ export default function SkillsSection() {
   }
   
   const handleOpenSkillBuilder = () => {
-    setAgentMode('skill_builder')
+    const activeTab = getActiveTab()
+    if (activeTab) {
+      const currentSkills = activeTab.config.selectedSkills || []
+      const updatedSkills = currentSkills.includes('skill-creator')
+        ? currentSkills
+        : [...currentSkills, 'skill-creator']
+      setTabConfig(activeTab.tabId, {
+        selectedSkills: updatedSkills,
+        inputText: '/build-skill ',
+      })
+    }
     setShowDetails(false)
   }
 
@@ -125,7 +135,7 @@ export default function SkillsSection() {
                       className="px-3 py-1.5 text-sm font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 rounded-md transition-colors flex items-center gap-2"
                     >
                       <Lightbulb className="w-4 h-4" />
-                      Skill Builder
+                      Build Skill
                     </button>
                     <button
                       onClick={() => setShowImportDialog(true)}
@@ -157,7 +167,7 @@ export default function SkillsSection() {
                           className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-md transition-colors flex items-center gap-2"
                         >
                           <Lightbulb className="w-4 h-4" />
-                          Skill Builder
+                          Build Skill
                         </button>
                         <button
                           onClick={() => setShowImportDialog(true)}

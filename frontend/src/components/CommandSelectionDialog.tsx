@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Terminal, FileText, Scissors } from 'lucide-react'
+import { Terminal, FileText, Scissors, Lightbulb, Download, Server, Cpu, History } from 'lucide-react'
 
 interface Command {
   command: string
@@ -14,9 +14,34 @@ const AVAILABLE_COMMANDS: Command[] = [
     icon: <FileText className="w-4 h-4" />
   },
   {
-    command: 'compact',
-    description: 'Compact stale tool responses (context editing)',
-    icon: <Scissors className="w-4 h-4" />
+    command: 'build-skill',
+    description: 'Build a new skill using the skill-creator',
+    icon: <Lightbulb className="w-4 h-4" />
+  },
+  {
+    command: 'add-skill',
+    description: 'Import a skill from GitHub',
+    icon: <Download className="w-4 h-4" />
+  },
+  {
+    command: 'mcp',
+    description: 'View MCP server details and tools',
+    icon: <Server className="w-4 h-4" />
+  },
+  {
+    command: 'mcp-add',
+    description: 'Add or edit MCP server configuration',
+    icon: <Server className="w-4 h-4" />
+  },
+  {
+    command: 'models',
+    description: 'Open LLM model configuration',
+    icon: <Cpu className="w-4 h-4" />
+  },
+  {
+    command: 'resume',
+    description: 'Resume a previous conversation',
+    icon: <History className="w-4 h-4" />
   }
 ]
 
@@ -25,7 +50,7 @@ interface CommandSelectionDialogProps {
   onClose: () => void
   onSelectCommand: (command: string) => void
   searchQuery: string
-  position: { top: number; left: number }
+  position: { bottom: number; left: number }
 }
 
 export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
@@ -115,7 +140,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
       ref={dialogRef}
       className="fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg min-w-[300px] max-w-[400px]"
       style={{
-        top: `${position.top}px`,
+        bottom: `${position.bottom}px`,
         left: `${position.left}px`
       }}
     >
@@ -130,7 +155,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
       {/* Command List */}
       <div 
         ref={listRef}
-        className="overflow-y-auto max-h-64"
+        className="overflow-y-auto max-h-96"
       >
         {filteredCommands.length === 0 ? (
           <div className="px-3 py-4 text-center text-muted-foreground text-sm">

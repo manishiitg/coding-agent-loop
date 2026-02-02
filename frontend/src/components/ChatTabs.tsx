@@ -42,7 +42,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
       ).sort((a, b) => a.createdAt - b.createdAt)
     }
     // In chat mode, show all chat tabs
-    return Object.values(chatTabs).filter(tab => 
+    return Object.values(chatTabs).filter(tab =>
       tab.metadata?.mode === selectedModeCategory
     ).sort((a, b) => a.createdAt - b.createdAt)
   }, [chatTabs, selectedModeCategory])
@@ -100,21 +100,21 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
       return
     }
     
-    if (selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder') {
-      // Create a new chat/skill tab
-      console.log(`[ChatTabs] Creating new ${selectedModeCategory} tab...`)
+    if (selectedModeCategory === 'chat') {
+      // Create a new chat tab
+      console.log(`[ChatTabs] Creating new chat tab...`)
       const chatStore = useChatStore.getState()
-      const allChatTabs = Object.values(chatTabs).filter(tab => 
-        tab.metadata?.mode === selectedModeCategory
+      const allChatTabs = Object.values(chatTabs).filter(tab =>
+        tab.metadata?.mode === 'chat'
       )
       const chatNumber = allChatTabs.length + 1
       const tabName = `Chat ${chatNumber}`
-      
+
       console.log(`[ChatTabs] Tab name: ${tabName}, existing tabs: ${allChatTabs.length}`)
-      
+
       try {
-        console.log(`[ChatTabs] Creating new tab: ${tabName} in mode: ${selectedModeCategory}`)
-        const newTabId = await chatStore.createChatTab(tabName, { mode: selectedModeCategory })
+        console.log(`[ChatTabs] Creating new tab: ${tabName} in mode: chat`)
+        const newTabId = await chatStore.createChatTab(tabName, { mode: 'chat' })
         console.log(`[ChatTabs] ✅ createChatTab returned tab ID: ${newTabId}`)
         
         // Note: Tab creation is verified inside createChatTab itself
@@ -171,9 +171,9 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     return 'bg-gray-400'
   }
   
-  // Show tabs bar only in chat/skill_builder mode (workflow tabs are shown in WorkflowChatTabs inside ChatArea panel)
+  // Show tabs bar only in chat mode (workflow tabs are shown in WorkflowChatTabs inside ChatArea panel)
   // In workflow mode, ChatTabs should not be visible at all
-  const shouldShowTabsBar = selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder'
+  const shouldShowTabsBar = selectedModeCategory === 'chat'
   const hasTabs = modeTabs.length > 0
   
   // In workflow mode, don't show ChatTabs at all
@@ -192,9 +192,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
         const indicatorColor = getTabIndicator(tab)
         
         // Determine active border color based on mode
-          const activeBorderClass = selectedModeCategory === 'skill_builder'
-            ? 'border-emerald-500'
-            : 'border-blue-500'
+          const activeBorderClass = 'border-blue-500'
 
           // Calculate new event count for inactive tabs
           // NOTE: Events are already filtered by backend based on event_mode, so no need to filter again
@@ -265,8 +263,8 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
           )
         })}
       
-      {/* New Tab Button - Only show in chat/skill_builder mode (workflow phases are started from WorkflowToolbar) */}
-      {(selectedModeCategory === 'chat' || selectedModeCategory === 'skill_builder') && (
+      {/* New Tab Button - Only show in chat mode (workflow phases are started from WorkflowToolbar) */}
+      {selectedModeCategory === 'chat' && (
         <button
           onClick={handleNewTab}
           data-testid="new-chat-button"

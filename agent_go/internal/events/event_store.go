@@ -214,15 +214,38 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 		}
 	}
 
+	// Get the base index offset for this session (accounts for events stored in DB before reactivation)
+	// This offset is set when a session is reactivated to track where in-memory events start
+	// relative to the full event history (DB events + in-memory events)
+	baseIndex := es.sessionStartIndices[sessionID]
+
 	var result []Event
 	lastProcessedIndex := -1
 	hasMore := false
 
+	// Adjust sinceIndex to be relative to in-memory array if a base index is set
+	// Frontend sends absolute index (including DB events), we need relative index for in-memory array
+	adjustedSinceIndex := opts.SinceIndex
+	if baseIndex > 0 && opts.SinceIndex >= 0 {
+		adjustedSinceIndex = opts.SinceIndex - baseIndex
+		// If sinceIndex is before our in-memory events start, return all in-memory events
+		if adjustedSinceIndex < 0 {
+			adjustedSinceIndex = -1 // Will trigger "get all events" mode below
+		}
+	}
+
 	// Determine which events to retrieve based on options
-	if opts.SinceIndex >= 0 {
-		// Forward polling mode: get events after sinceIndex
+	if adjustedSinceIndex >= 0 || (opts.SinceIndex >= 0 && adjustedSinceIndex == -1) {
+		// Forward polling mode: get events after sinceIndex (adjusted for base index)
 		// CRITICAL: Filter FIRST, then apply index logic
 		// This ensures consistency with backward pagination and correct filtering behavior
+
+		// If adjustedSinceIndex is -1 but we're in forward polling mode (sinceIndex >= 0),
+		// it means sinceIndex was before our in-memory events - return all in-memory events
+		effectiveSinceIndex := adjustedSinceIndex
+		if effectiveSinceIndex < 0 {
+			effectiveSinceIndex = -1 // Will return all events
+		}
 
 		// Step 1: Filter the entire array first
 		var filteredEvents []Event
@@ -238,47 +261,48 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 		}
 
 		// Step 2: Find the position in filtered array that corresponds to "after sinceIndex" in unfiltered array
-		// Count how many filtered events exist up to and including sinceIndex
-		// The next position after that in the filtered array is where we start slicing
+		// Use effectiveSinceIndex (relative to in-memory array)
 		filteredCountUpToSinceIndex := 0
-		for i := 0; i <= opts.SinceIndex && i < len(events); i++ {
+		for i := 0; i <= effectiveSinceIndex && i < len(events); i++ {
 			if opts.EventMode == "" || ShouldShowEventByMode(events[i].Type, opts.EventMode) {
 				filteredCountUpToSinceIndex++
 			}
 		}
 
-		// Step 3: Slice from the next position in filtered array (after the last event at or before sinceIndex)
-		if opts.SinceIndex >= len(events) {
-			// We've already processed all events
+		// Step 3: Slice from the next position in filtered array
+		if effectiveSinceIndex >= len(events) {
 			result = []Event{}
-			lastProcessedIndex = len(events) - 1
-		} else if opts.SinceIndex == 0 && len(filteredEvents) > 0 {
-			// Special case: Starting from beginning (sinceIndex=0) - return latest N events
-			// This happens when switching event modes - show most recent events first
-			// Events are stored chronologically (oldest to newest), so "latest" = last N in array
-			startPos := len(filteredEvents) - InitialEventsLimit
-			if startPos < 0 {
-				startPos = 0
+			lastProcessedIndex = baseIndex + len(events) - 1
+		} else if effectiveSinceIndex <= 0 && len(filteredEvents) > 0 {
+			// Special case: Starting from beginning or before (sinceIndex=0 or adjusted to -1)
+			// Return all filtered events (no InitialEventsLimit when continuing a conversation)
+			// The limit only applies to initial page load, not to polling after reactivation
+			if effectiveSinceIndex < 0 {
+				// Return all in-memory events (sinceIndex was before our in-memory events)
+				result = filteredEvents
+				lastProcessedIndex = baseIndex + len(events) - 1
+				hasMore = false
+			} else {
+				// sinceIndex=0: Apply initial limit
+				startPos := len(filteredEvents) - InitialEventsLimit
+				if startPos < 0 {
+					startPos = 0
+				}
+				result = filteredEvents[startPos:]
+				lastProcessedIndex = baseIndex + len(events) - 1
+				hasMore = startPos > 0
 			}
-			result = filteredEvents[startPos:]
-			// We processed all events, but only returned the latest InitialEventsLimit
-			lastProcessedIndex = len(events) - 1
-			// hasMore = true if there are events before startPos (older events available)
-			hasMore = startPos > 0
 		} else {
-			// Normal polling: Get events after position filteredCountUpToSinceIndex in the filtered array
-			// This corresponds to events after sinceIndex in the unfiltered array
 			nextFilteredPos := filteredCountUpToSinceIndex
 			if nextFilteredPos >= len(filteredEvents) {
 				result = []Event{}
+				lastProcessedIndex = baseIndex + len(events) - 1
 			} else {
 				// Apply maximum limit to prevent fetching too many events at once
 				remainingEvents := filteredEvents[nextFilteredPos:]
 				if len(remainingEvents) > MaxPollingLimit {
 					result = remainingEvents[:MaxPollingLimit]
-					// Calculate the actual last processed index in unfiltered array
-					// We need to find which unfiltered index corresponds to the last returned event
-					// Count filtered events up to the last returned event
+					// Calculate actual last processed index (relative to in-memory array)
 					filteredCount := 0
 					actualLastIndex := -1
 					for i := 0; i < len(events); i++ {
@@ -290,16 +314,10 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 							}
 						}
 					}
-					if actualLastIndex >= 0 {
-						lastProcessedIndex = actualLastIndex
-					} else {
-						// Fallback: we processed up to the end
-						lastProcessedIndex = len(events) - 1
-					}
+					lastProcessedIndex = baseIndex + actualLastIndex
 				} else {
 					result = remainingEvents
-					// We processed from sinceIndex+1 to the end of unfiltered array
-					lastProcessedIndex = len(events) - 1
+					lastProcessedIndex = baseIndex + len(events) - 1
 				}
 			}
 		}
@@ -358,7 +376,8 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 			result = events
 		}
 		// For "all events" mode, we processed all events
-		lastProcessedIndex = len(events) - 1
+		// Add baseIndex to return absolute index
+		lastProcessedIndex = baseIndex + len(events) - 1
 	}
 
 	return GetEventsResult{
@@ -452,4 +471,103 @@ func (es *EventStore) GetStats() map[string]interface{} {
 		"total_events":   totalEvents,
 		"max_events":     es.maxEvents,
 	}
+}
+
+// SummarizationStartedEventData implements events.EventData for context_summarization_started
+type SummarizationStartedEventData struct {
+	OriginalMessageCount int    `json:"original_message_count"`
+	KeepLastMessages     int    `json:"keep_last_messages"`
+	Timestamp            string `json:"timestamp"`
+}
+
+func (s *SummarizationStartedEventData) GetEventType() events.EventType {
+	return events.EventType("context_summarization_started")
+}
+
+// SummarizationCompletedEventData implements events.EventData for context_summarization_completed
+type SummarizationCompletedEventData struct {
+	OriginalMessageCount int    `json:"original_message_count"`
+	NewMessageCount      int    `json:"new_message_count"`
+	Summary              string `json:"summary"`
+	Timestamp            string `json:"timestamp"`
+}
+
+func (s *SummarizationCompletedEventData) GetEventType() events.EventType {
+	return events.EventType("context_summarization_completed")
+}
+
+// SummarizationErrorEventData implements events.EventData for context_summarization_error
+type SummarizationErrorEventData struct {
+	Error     string `json:"error"`
+	Timestamp string `json:"timestamp"`
+}
+
+func (s *SummarizationErrorEventData) GetEventType() events.EventType {
+	return events.EventType("context_summarization_error")
+}
+
+// AddSummarizationStartedEvent adds a context_summarization_started event
+func (es *EventStore) AddSummarizationStartedEvent(sessionID string, originalMessageCount int, keepLastMessages int) {
+	now := time.Now()
+	eventData := &SummarizationStartedEventData{
+		OriginalMessageCount: originalMessageCount,
+		KeepLastMessages:     keepLastMessages,
+		Timestamp:            now.Format(time.RFC3339),
+	}
+	event := Event{
+		ID:        sessionID + "_context_summarization_started_" + now.Format("20060102150405.000"),
+		Type:      "context_summarization_started",
+		Timestamp: now,
+		SessionID: sessionID,
+		Data: &events.AgentEvent{
+			Type:      events.EventType("context_summarization_started"),
+			Timestamp: now,
+			Data:      eventData,
+		},
+	}
+	es.AddEvent(sessionID, event)
+}
+
+// AddSummarizationCompletedEvent adds a context_summarization_completed event
+func (es *EventStore) AddSummarizationCompletedEvent(sessionID string, originalCount int, newCount int, summary string) {
+	now := time.Now()
+	eventData := &SummarizationCompletedEventData{
+		OriginalMessageCount: originalCount,
+		NewMessageCount:      newCount,
+		Summary:              summary,
+		Timestamp:            now.Format(time.RFC3339),
+	}
+	event := Event{
+		ID:        sessionID + "_context_summarization_completed_" + now.Format("20060102150405.000"),
+		Type:      "context_summarization_completed",
+		Timestamp: now,
+		SessionID: sessionID,
+		Data: &events.AgentEvent{
+			Type:      events.EventType("context_summarization_completed"),
+			Timestamp: now,
+			Data:      eventData,
+		},
+	}
+	es.AddEvent(sessionID, event)
+}
+
+// AddSummarizationErrorEvent adds a context_summarization_error event
+func (es *EventStore) AddSummarizationErrorEvent(sessionID string, errorMessage string) {
+	now := time.Now()
+	eventData := &SummarizationErrorEventData{
+		Error:     errorMessage,
+		Timestamp: now.Format(time.RFC3339),
+	}
+	event := Event{
+		ID:        sessionID + "_context_summarization_error_" + now.Format("20060102150405.000"),
+		Type:      "context_summarization_error",
+		Timestamp: now,
+		SessionID: sessionID,
+		Data: &events.AgentEvent{
+			Type:      events.EventType("context_summarization_error"),
+			Timestamp: now,
+			Data:      eventData,
+		},
+	}
+	es.AddEvent(sessionID, event)
 }

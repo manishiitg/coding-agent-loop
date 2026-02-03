@@ -32,6 +32,8 @@ declare global {
   }
 }
 
+import { truncateTabTitle } from './utils/textUtils'
+
 const queryClient = new QueryClient();
 
 
@@ -578,9 +580,9 @@ function App() {
     const createAndSwitchTab = async () => {
       // Default to tiny mode, ChatArea will update to advanced if needed (e.g. for orchestrator)
       const newTabId = await chatStore.createChatTab(
-        sessionTitle || 'Chat', 
-        { mode: 'chat' }, 
-        sessionId, 
+        truncateTabTitle(sessionTitle || 'Chat'),
+        { mode: 'chat' },
+        sessionId,
         'tiny'
       )
       chatStore.switchTab(newTabId)

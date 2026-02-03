@@ -96,9 +96,14 @@ export default function LLMSelectionDropdown({
     onLLMSelect(llm);
   };
 
-  const getDisplayText = () => {
+  const getDisplayText = (truncate: boolean = true) => {
     if (selectedLLM) {
-      return selectedLLM.label;
+      const label = selectedLLM.label;
+      if (truncate) {
+        // Truncate to 10 characters if too long
+        return label.length > 10 ? label.substring(0, 10) + '…' : label;
+      }
+      return label;
     }
     return 'Select LLM';
   };
@@ -121,24 +126,26 @@ export default function LLMSelectionDropdown({
       <div className="relative" data-llm-dropdown style={inModal && isOpen ? { zIndex: 99999 } : undefined}>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
+            <button
               ref={buttonRef}
               type="button"
-              variant="outline"
-              size="sm"
               onClick={() => {
                 setIsOpen(!isOpen);
               }}
               disabled={disabled || availableLLMs.length === 0}
-              className="h-8 px-2 text-xs font-medium bg-background border-border hover:bg-secondary text-foreground"
+              className={`group flex items-center h-8 px-2 text-xs font-medium bg-background border border-border hover:bg-secondary text-foreground rounded-md transition-all duration-200 ${
+                disabled || availableLLMs.length === 0 ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+              }`}
               aria-expanded={isOpen}
               aria-haspopup="menu"
               aria-label={title}
             >
-              <Brain className="w-3 h-3 mr-1" />
-              {getDisplayText()}
-              <ChevronDown className="w-3 h-3 ml-1" />
-            </Button>
+              <Brain className="w-3 h-3 mr-1 flex-shrink-0" />
+              <span className="inline-block overflow-hidden whitespace-nowrap w-[60px] group-hover:w-[150px] transition-[width] duration-300 text-left">
+                {getDisplayText(false)}
+              </span>
+              <ChevronDown className="w-3 h-3 ml-1 flex-shrink-0" />
+            </button>
           </TooltipTrigger>
           <TooltipContent>
             <p>{availableLLMs.length === 0 ? 'No LLMs available' : title}</p>

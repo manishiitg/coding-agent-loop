@@ -2,7 +2,6 @@ import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffe
 import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
-import { Checkbox } from './ui/checkbox'
 import FileContextDisplay from './FileContextDisplay'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { CircularProgress } from './ui/CircularProgress'
@@ -49,6 +48,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Use selectors to subscribe only to specific values, reducing re-renders
   const activeTabId = useChatStore(state => state.activeTabId)
   const setTabConfig = useChatStore(state => state.setTabConfig)
+  const addToast = useChatStore(state => state.addToast)
   // Get active tab and its config (ChatInput is only rendered in chat mode)
   // Use selector to get only the tab we need, preventing re-renders when other tabs change
   const activeTab = useChatStore(state => 
@@ -641,9 +641,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     setIsSummarizing(true)
     try {
       const response = await agentApi.summarizeConversation(tabSessionId)
-      console.log('[SUMMARIZATION] Success:', response)
-      // Show success notification (you can add a toast library here)
-      alert(`Conversation summarized successfully!\nOriginal: ${response.original_count} messages\nNew: ${response.new_count} messages\nReduced by: ${response.reduced_by} messages`)
+      addToast(`Summarized: ${response.original_count} → ${response.new_count} messages (−${response.reduced_by})`, 'success')
       
       // If there's a message to send after summarization, send it now
       if (messageToSendAfter && messageToSendAfter.trim() && tabSessionId) {
@@ -655,11 +653,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     } catch (error) {
       console.error('[SUMMARIZATION] Error:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      alert(`Failed to summarize conversation: ${errorMessage}`)
+      addToast(`Failed to summarize: ${errorMessage}`, 'error')
     } finally {
       setIsSummarizing(false)
     }
-  }, [tabSessionId, isSummarizing, isStreaming, onSubmit])
+  }, [tabSessionId, isSummarizing, isStreaming, onSubmit, addToast])
 
   // Handle manual context compaction (context editing)
   // If messageToSendAfter is provided, it will be sent as a user message after compaction completes
@@ -672,8 +670,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     try {
       const response = await agentApi.compactContext(tabSessionId)
       console.log('[CONTEXT_EDITING] Success:', response)
-      // Show success notification
-      alert(`Context compacted successfully!\nCompacted: ${response.compacted_count} tool responses\nTokens saved: ${response.total_tokens_saved?.toLocaleString() || 0}`)
+      addToast(`Compacted ${response.compacted_count} responses, saved ${response.total_tokens_saved?.toLocaleString() || 0} tokens`, 'success')
       
       // If there's a message to send after compaction, send it now
       if (messageToSendAfter && messageToSendAfter.trim() && tabSessionId) {
@@ -685,11 +682,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     } catch (error) {
       console.error('[CONTEXT_EDITING] Error:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      alert(`Failed to compact context: ${errorMessage}`)
+      addToast(`Failed to compact: ${errorMessage}`, 'error')
     } finally {
       setIsSummarizing(false)
     }
-  }, [tabSessionId, isSummarizing, isStreaming, onSubmit])
+  }, [tabSessionId, isSummarizing, isStreaming, onSubmit, addToast])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If command dialog is open, let it handle keyboard events
@@ -721,7 +718,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         if (tabSessionId && !isSummarizing && !isStreaming) {
           // Extract text before /summarize
           const textBeforeSummarize = trimmedQuery.substring(0, summarizeIndex).trim()
-          
+
           // If there's text before /summarize, send it after summarization
           // Otherwise, just summarize
           handleSummarize(textBeforeSummarize || undefined)
@@ -1011,29 +1008,95 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [canSubmit, canSubmitImmediately, activeTabId, tabSessionId, queryToSubmit, onSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, setTabConfig, tabConfig?.queuedMessages])
 
-  // File selection handlers
+  // Command selection handler - executes commands directly
   const handleCommandSelect = useCallback((command: string) => {
-    if (!textareaRef.current || slashPosition === -1 || !activeTabId) return
+    if (!activeTabId) return
 
-    const beforeSlash = inputText.substring(0, slashPosition)
-    const afterSearch = inputText.substring(slashPosition + 1 + commandSearchQuery.length)
-    const newQuery = beforeSlash + '/' + command + ' ' + afterSearch
-
-    // Update local state immediately for fast UI
-    setLocalInputText(newQuery)
+    // Close dialog first
     setShowCommandDialog(false)
     setSlashPosition(-1)
     setCommandSearchQuery('')
 
-    // Focus back to textarea and position cursor after the space
-    setTimeout(() => {
-      if (textareaRef.current) {
-        textareaRef.current.focus()
-        const cursorPosition = beforeSlash.length + '/'.length + command.length + ' '.length
-        textareaRef.current.setSelectionRange(cursorPosition, cursorPosition)
+    // Get text before the slash command (if any)
+    const beforeSlash = slashPosition >= 0 ? inputText.substring(0, slashPosition).trim() : ''
+
+    // Clear input
+    setLocalInputText('')
+    if (syncToStoreTimeoutRef.current) {
+      clearTimeout(syncToStoreTimeoutRef.current)
+      syncToStoreTimeoutRef.current = null
+    }
+    setTabConfig(activeTabId, { inputText: '' })
+
+    // Execute commands directly
+    switch (command) {
+      case 'summarize':
+        if (tabSessionId && !isSummarizing && !isStreaming) {
+          handleSummarize(beforeSlash || undefined)
+        }
+        break
+      case 'compact':
+        if (tabSessionId && !isSummarizing && !isStreaming) {
+          handleCompact(beforeSlash || undefined)
+        }
+        break
+      case 'build-skill': {
+        // Auto-add skill-creator to current tab's selectedSkills
+        const currentSkills = tabConfig?.selectedSkills || []
+        if (!currentSkills.includes('skill-creator')) {
+          setTabConfig(activeTabId, { selectedSkills: [...currentSkills, 'skill-creator'] })
+        }
+        // Expand skills folders in workspace
+        const wsStore = useWorkspaceStore.getState()
+        const expanded = new Set(wsStore.expandedFolders)
+        expanded.add('skills')
+        expanded.add('skills/custom')
+        wsStore.setExpandedFolders(expanded)
+        // Submit with skill context
+        const skillContext = 'Refer to the skill-creator skill at skills/custom/skill-creator/SKILL.md for instructions on how to build skills.'
+        const message = beforeSlash
+          ? `${beforeSlash}\n\n${skillContext}`
+          : `I want to build a skill based on our conversation. ${skillContext}`
+        onSubmit(message)
+        break
       }
-    }, 0)
-  }, [inputText, slashPosition, commandSearchQuery, activeTabId])
+      case 'add-skill':
+        openDialog('skillImport')
+        break
+      case 'mcp-add':
+        useAppStore.getState().setWorkspaceMinimized(true)
+        openDialog('mcpConfig')
+        break
+      case 'mcp':
+        useAppStore.getState().setWorkspaceMinimized(true)
+        openDialog('mcpDetails')
+        break
+      case 'models':
+        useAppStore.getState().setWorkspaceMinimized(true)
+        openDialog('models')
+        break
+      case 'resume':
+        openDialog('resume')
+        break
+      default:
+        // For unknown commands, insert into text (fallback)
+        if (textareaRef.current) {
+          const afterSearch = inputText.substring((slashPosition >= 0 ? slashPosition : 0) + 1 + commandSearchQuery.length)
+          const newQuery = beforeSlash + '/' + command + ' ' + afterSearch
+          setLocalInputText(newQuery)
+          setTimeout(() => {
+            if (textareaRef.current) {
+              textareaRef.current.focus()
+              const cursorPosition = beforeSlash.length + '/'.length + command.length + ' '.length
+              textareaRef.current.setSelectionRange(cursorPosition, cursorPosition)
+            }
+          }, 0)
+        }
+    }
+
+    // Focus back to textarea
+    setTimeout(() => textareaRef.current?.focus(), 0)
+  }, [inputText, slashPosition, commandSearchQuery, activeTabId, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, tabConfig?.selectedSkills, setTabConfig, onSubmit, openDialog])
 
   const handleFileSelect = useCallback((file: PlannerFile) => {
     if (!textareaRef.current || atPosition === -1 || !activeTabId) return
@@ -1172,79 +1235,67 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 
                 {/* Agent Mode Selector - Only show when no preset is active */}
                 {!chatActivePreset && (
-                  <div className="flex items-center gap-2">
-                    {/* Agent Mode Toggle - Simple / Code Exec / Tool Search (mutually exclusive) */}
-                    <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setUseCodeExecutionMode(false)
-                              setUseToolSearchMode(false)
-                            }}
-                            disabled={isStreaming || isSummarizing}
-                            data-testid="agent-mode-simple"
-                            className={`p-1.5 transition-colors border-r border-gray-300 dark:border-gray-600 ${
-                              !useCodeExecutionMode && !useToolSearchMode
-                                ? 'agent-mode-selected rounded-l-md rounded-r-none'
-                                : 'agent-mode-unselected rounded-none'
-                            }`}
-                          >
-                            <Sparkles className="w-4 h-4" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Simple mode - Direct MCP tool access</p>
-                        </TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setUseCodeExecutionMode(true)
-                              setUseToolSearchMode(false)
-                            }}
-                            disabled={isStreaming || isSummarizing}
-                            data-testid="agent-mode-code-exec"
-                            className={`p-1.5 transition-colors border-r border-gray-300 dark:border-gray-600 ${
-                              useCodeExecutionMode && !useToolSearchMode
-                                ? 'agent-mode-selected rounded-none'
-                                : 'agent-mode-unselected rounded-none'
-                            }`}
-                          >
-                            <Code2 className="w-4 h-4" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Code Exec mode - MCP tools via generated Go code</p>
-                        </TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setUseCodeExecutionMode(false)
-                              setUseToolSearchMode(true)
-                            }}
-                            disabled={isStreaming || isSummarizing}
-                            data-testid="agent-mode-tool-search"
-                            className={`p-1.5 transition-colors ${
-                              useToolSearchMode
-                                ? 'agent-mode-selected rounded-r-md rounded-l-none'
-                                : 'agent-mode-unselected rounded-none'
-                            }`}
-                          >
-                            <Search className="w-4 h-4" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Tool Search mode - Discover tools on-demand</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
+                  <div className="flex items-center gap-1">
+                    {/* Simple Mode */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUseCodeExecutionMode(false)
+                        setUseToolSearchMode(false)
+                      }}
+                      disabled={isStreaming || isSummarizing}
+                      data-testid="agent-mode-simple"
+                      className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
+                        !useCodeExecutionMode && !useToolSearchMode
+                          ? 'bg-purple-100 dark:bg-purple-900/40 border-purple-400 dark:border-purple-600 text-purple-600 dark:text-purple-400'
+                          : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
+                      } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
+                    >
+                      <Sparkles className="w-4 h-4 flex-shrink-0" />
+                      <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[50px] transition-all duration-200">
+                        Simple
+                      </span>
+                    </button>
+                    {/* Code Exec Mode */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUseCodeExecutionMode(true)
+                        setUseToolSearchMode(false)
+                      }}
+                      disabled={isStreaming || isSummarizing}
+                      data-testid="agent-mode-code-exec"
+                      className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
+                        useCodeExecutionMode && !useToolSearchMode
+                          ? 'bg-orange-100 dark:bg-orange-900/40 border-orange-400 dark:border-orange-600 text-orange-600 dark:text-orange-400'
+                          : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
+                      } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
+                    >
+                      <Code2 className="w-4 h-4 flex-shrink-0" />
+                      <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[40px] transition-all duration-200">
+                        Code
+                      </span>
+                    </button>
+                    {/* Tool Search Mode */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUseCodeExecutionMode(false)
+                        setUseToolSearchMode(true)
+                      }}
+                      disabled={isStreaming || isSummarizing}
+                      data-testid="agent-mode-tool-search"
+                      className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
+                        useToolSearchMode
+                          ? 'bg-cyan-100 dark:bg-cyan-900/40 border-cyan-400 dark:border-cyan-600 text-cyan-600 dark:text-cyan-400'
+                          : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
+                      } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
+                    >
+                      <Search className="w-4 h-4 flex-shrink-0" />
+                      <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[50px] transition-all duration-200">
+                        Search
+                      </span>
+                    </button>
                   </div>
                 )}
                 
@@ -1279,54 +1330,38 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       disabled={isStreaming || isSummarizing}
                       openDirection="up"
                     />
-                    {/* Workspace Access Toggle */}
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="flex items-center gap-1.5 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md">
-                          <Checkbox
-                            id="workspace-access"
-                            checked={enableWorkspaceAccess}
-                            onCheckedChange={(checked) => setEnableWorkspaceAccess(checked === true)}
-                            disabled={isStreaming || isSummarizing || enableBrowserAccess}
-                            className="h-3.5 w-3.5"
-                          />
-                          <label
-                            htmlFor="workspace-access"
-                            className="text-xs font-medium cursor-pointer flex items-center gap-1 text-gray-700 dark:text-gray-300"
-                          >
-                            <FolderOpen className="w-3 h-3" />
-                            Workspace
-                          </label>
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>{enableWorkspaceAccess ? 'Workspace file access enabled' : 'Workspace file access disabled'}{enableBrowserAccess ? ' (required by Browser)' : ''}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                    {/* Browser Access Toggle */}
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="flex items-center gap-1.5 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md">
-                          <Checkbox
-                            id="browser-access"
-                            checked={enableBrowserAccess}
-                            onCheckedChange={(checked) => setEnableBrowserAccess(checked === true)}
-                            disabled={isStreaming || isSummarizing}
-                            className="h-3.5 w-3.5"
-                          />
-                          <label
-                            htmlFor="browser-access"
-                            className="text-xs font-medium cursor-pointer flex items-center gap-1 text-gray-700 dark:text-gray-300"
-                          >
-                            <Globe className="w-3 h-3" />
-                            Browser
-                          </label>
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>{enableBrowserAccess ? 'Browser automation enabled (uses agent-browser)' : 'Browser automation disabled'}</p>
-                      </TooltipContent>
-                    </Tooltip>
+                    {/* Workspace Access Toggle - Icon Button with expand on hover */}
+                    <button
+                      type="button"
+                      onClick={() => setEnableWorkspaceAccess(!enableWorkspaceAccess)}
+                      disabled={isStreaming || isSummarizing || enableBrowserAccess}
+                      className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
+                        enableWorkspaceAccess
+                          ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-600 text-blue-600 dark:text-blue-400'
+                          : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
+                      } ${(isStreaming || isSummarizing || enableBrowserAccess) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
+                    >
+                      <FolderOpen className="w-4 h-4 flex-shrink-0" />
+                      <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[80px] transition-all duration-200">
+                        Workspace
+                      </span>
+                    </button>
+                    {/* Browser Access Toggle - Icon Button with expand on hover */}
+                    <button
+                      type="button"
+                      onClick={() => setEnableBrowserAccess(!enableBrowserAccess)}
+                      disabled={isStreaming || isSummarizing}
+                      className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
+                        enableBrowserAccess
+                          ? 'bg-green-100 dark:bg-green-900/40 border-green-400 dark:border-green-600 text-green-600 dark:text-green-400'
+                          : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
+                      } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
+                    >
+                      <Globe className="w-4 h-4 flex-shrink-0" />
+                      <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[60px] transition-all duration-200">
+                        Browser
+                      </span>
+                    </button>
                   </div>
                 )}
                 

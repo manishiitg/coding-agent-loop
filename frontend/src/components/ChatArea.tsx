@@ -20,6 +20,7 @@ import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import { ChatHeader } from './ChatHeader'
 import type { ChatTab, ChatTabConfig } from '../stores/useChatStore'
 import { WORKSPACE_TOOLS } from '../utils/customToolNames'
+import { truncateTabTitle } from '../utils/textUtils'
 
 interface ChatAreaProps {
   // New chat handler
@@ -470,7 +471,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
   
   // Filter toasts to only include types supported by ToastContainer
-  const filteredToasts = toasts.filter((toast: { type: string }) => toast.type === 'success' || toast.type === 'info') as Array<{id: string, message: string, type: 'success' | 'info'}>
+  const filteredToasts = toasts.filter((toast: { type: string }) => toast.type === 'success' || toast.type === 'info' || toast.type === 'error') as Array<{id: string, message: string, type: 'success' | 'info' | 'error'}>
   
   // Handle mode switch dialog confirmation
   const handleModeSwitchConfirm = () => {
@@ -657,13 +658,28 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       requestAnimationFrame(() => {
         const element = chatContentRef.current;
         if (!element) return;
-        
+
         // Always scroll to bottom when auto-scroll is enabled and final response updates
         // The scroll handler will disable auto-scroll if user manually scrolls away
         scrollToBottom('smooth');
       });
     }
   }, [finalResponse, autoScroll, scrollToBottom])
+
+  // Auto-scroll when streaming text first appears (brings the "Generating..." card into view)
+  const activeSessionId = activeTab?.sessionId
+  const hasStreamingText = useChatStore(state =>
+    activeSessionId ? !!state.streamingText[activeSessionId] : false
+  )
+  const prevHasStreamingTextRef = useRef(false)
+  useEffect(() => {
+    if (hasStreamingText && !prevHasStreamingTextRef.current && autoScroll && chatContentRef.current) {
+      requestAnimationFrame(() => {
+        scrollToBottom('smooth')
+      })
+    }
+    prevHasStreamingTextRef.current = hasStreamingText
+  }, [hasStreamingText, autoScroll, scrollToBottom])
 
 
   // Update refs when values change (for global observer)
@@ -849,7 +865,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   // Polling function to get events for ALL active sessions
   const pollEvents = useCallback(async () => {
     const chatStore = useChatStore.getState()
-    
+
     // Get all tabs that should be polled (all tabs in current mode)
     const allTabs = Object.values(chatStore.chatTabs).filter(tab => {
       return tab.metadata?.mode === selectedModeCategory
@@ -908,8 +924,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     if (sessionsToPoll.length === 0) {
       return
     }
-    
-    // Polling multiple sessions (one per unique session)
     
     // Poll each session
     for (const { sessionId, tab } of sessionsToPoll) {
@@ -994,7 +1008,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (currentTab?.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
         
         const response = await agentApi.getSessionEvents(effectiveSessionId, currentLastEventIndex, { eventMode })
-        
+
         // Use session ID from response if available (it's the source of truth)
         const actualSessionId = response.session_id || effectiveSessionId
         
@@ -1059,7 +1073,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         }
 
         if (response.events.length > 0) {
-          
           // Update last event index for this session
           // CRITICAL: Use last_processed_index from backend (tracks unfiltered array position)
           // This ensures correct tracking even when filtering reduces the number of events returned
@@ -1098,23 +1111,72 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           // Filter events first (synchronous)
           // Type assertion: response.events is PollingEvent[] from GetEventsResponse
           const eventsBeforeFilter = response.events as PollingEvent[]
-          const newEvents = eventsBeforeFilter.filter(event => {
-            // Detect request human feedback event and stop streaming for this tab
-            if (event.type === 'request_human_feedback' && currentTab) {
-              const chatStore = useChatStore.getState()
-              chatStore.setTabStreaming(currentTab.tabId, false)
-              chatStore.setTabCompleted(currentTab.tabId, false) // Not completed, just paused
+
+          const newEvents: PollingEvent[] = []
+          let hasCompletionEvent = false
+          for (const event of eventsBeforeFilter) {
+            // Intercept streaming events - accumulate text in store, don't add to event list
+            if (event.type === 'streaming_start') {
+              chatStore.clearStreamingText(actualSessionId)
+              continue
             }
-            
-            // Process workspace events using the centralized store
+            if (event.type === 'streaming_chunk') {
+              // Extract content and chunk_index from streaming chunk event
+              // Structure: event.data (AgentEvent) → event.data.data (StreamingChunkEvent) → content/chunk_index
+              const agentEvent = event.data as Record<string, unknown> | undefined
+              const innerData = agentEvent?.data as Record<string, unknown> | undefined
+
+              const rawContent = innerData?.content ?? agentEvent?.content
+              const content = typeof rawContent === 'string' ? rawContent : ''
+
+              const rawIndex = innerData?.chunk_index ?? agentEvent?.chunk_index
+              const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
+
+              if (content) {
+                if (chunkIndex === 0) {
+                  chatStore.clearStreamingText(actualSessionId)
+                }
+                chatStore.appendStreamingChunk(actualSessionId, chunkIndex, content)
+              }
+              continue
+            }
+            if (event.type === 'streaming_end') {
+              continue
+            }
+
+            // Track completion events but don't clear streaming text synchronously.
+            // Clearing synchronously in the same loop as appendStreamingChunk prevents
+            // React from ever rendering the streaming card (state is set then cleared
+            // before the next render).
+            if (event.type === 'llm_generation_end' || event.type === 'unified_completion' || event.type === 'agent_end' || event.type === 'conversation_end') {
+              hasCompletionEvent = true
+            }
+
+            if (event.type === 'request_human_feedback' && currentTab) {
+              chatStore.setTabStreaming(currentTab.tabId, false)
+              chatStore.setTabCompleted(currentTab.tabId, false)
+            }
+
             const { processWorkspaceEvent } = useWorkspaceStore.getState()
             processWorkspaceEvent(event)
-            
-            // Backend doesn't send user_message events - we add them manually on the frontend
-            // So we don't need to filter user_message events from polling
-            // If backend ever sends user_message events, we'll accept them (shouldn't happen)
-            return true
-          })
+
+            newEvents.push(event)
+          }
+
+          // Defer streaming text clear so React renders the accumulated text first.
+          // Use requestAnimationFrame to ensure at least one paint with the streaming card
+          // before it's replaced by the full response from the event list.
+          if (hasCompletionEvent) {
+            const sid = actualSessionId
+            const textBeforeClear = useChatStore.getState().streamingText[sid]
+            requestAnimationFrame(() => {
+              // Only clear if no new streaming generation started since the defer
+              const currentText = useChatStore.getState().streamingText[sid]
+              if (currentText === textBeforeClear) {
+                useChatStore.getState().clearStreamingText(sid)
+              }
+            })
+          }
           
           // Process workflow-specific events (after filtering)
           if (selectedModeCategory === 'workflow') {
@@ -1354,8 +1416,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             continue
           }
           
-          // Create a tab for this active session
-          const sessionTitle = activeSession.query || 'Active Chat'
+          // Create a tab for this active session (truncate to 3 words for display)
+          const sessionTitle = truncateTabTitle(activeSession.query || 'Active Chat')
           
           // Determine default event mode based on agent mode
           // orchestrator -> advanced (more complex, needs detailed view)
@@ -1386,6 +1448,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               // Restore config from stored session
               if (chatSession.config) {
                 const config = chatSession.config
+                console.log(`[AutoRestore] Session config from API:`, JSON.stringify(config, null, 2))
                 const configUpdate: Partial<ChatTabConfig> = {}
                 
                 // Restore selected servers (prefer enabled_servers over selected_servers)
@@ -1448,14 +1511,23 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                 if (config.enable_workspace_access !== undefined) {
                   configUpdate.enableWorkspaceAccess = config.enable_workspace_access
                 }
-                
+
+                // Restore selected skills
+                if (config.selected_skills && Array.isArray(config.selected_skills)) {
+                  configUpdate.selectedSkills = config.selected_skills
+                }
+
                 // Update tab config
                 if (Object.keys(configUpdate).length > 0) {
                   chatStore.setTabConfig(newTabId, configUpdate)
-                  console.log(`[AutoRestore] Restored config for active session ${sessionId}:`, configUpdate)
+                  console.log(`[AutoRestore] Restored config for active session ${sessionId}:`, JSON.stringify(configUpdate, null, 2))
+                } else {
+                  console.log(`[AutoRestore] No config to restore for session ${sessionId}`)
                 }
+              } else {
+                console.log(`[AutoRestore] No config in chatSession for session ${sessionId}`)
               }
-              
+
               // Load events for this session
               const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (newTab.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
               const response = await agentApi.getSessionEvents(sessionId, 0, { eventMode })
@@ -1681,8 +1753,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           }
           
           if (!tabWithSession) {
-            // Create a tab for this active session
-            const sessionTitle = chatSessionTitle || chatSession?.title || activeSession.query || 'Active Chat'
+            // Create a tab for this active session (truncate to 3 words for display)
+            const sessionTitle = truncateTabTitle(chatSessionTitle || chatSession?.title || activeSession.query || 'Active Chat')
             
             // Determine default event mode based on agent mode
             // orchestrator -> advanced (more complex, needs detailed view)
@@ -1766,14 +1838,19 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                 if (config.enable_workspace_access !== undefined) {
                   configUpdate.enableWorkspaceAccess = config.enable_workspace_access
                 }
-                
+
+                // Restore selected skills
+                if (config.selected_skills && Array.isArray(config.selected_skills)) {
+                  configUpdate.selectedSkills = config.selected_skills
+                }
+
                 // Update tab config
                 if (Object.keys(configUpdate).length > 0) {
                   chatStore.setTabConfig(newTabId, configUpdate)
                   console.log(`[History] Restored config for active session ${originalSessionId}:`, configUpdate)
                 }
               }
-              
+
               // Switch to the new tab to display events
               switchTab(newTabId)
               console.log(`[History] Created tab ${newTabId} for active session ${originalSessionId}`)
@@ -1849,14 +1926,19 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               if (config.enable_workspace_access !== undefined) {
                 configUpdate.enableWorkspaceAccess = config.enable_workspace_access
               }
-              
+
+              // Restore selected skills
+              if (config.selected_skills && Array.isArray(config.selected_skills)) {
+                configUpdate.selectedSkills = config.selected_skills
+              }
+
               // Update tab config
               if (Object.keys(configUpdate).length > 0) {
                 chatStore.setTabConfig(tabWithSession.tabId, configUpdate)
                 console.log(`[History] Restored config for existing active session tab ${tabWithSession.tabId}:`, configUpdate)
               }
             }
-            
+
             // Switch to it (events should already be loaded)
             switchTab(tabWithSession.tabId)
             console.log(`[History] Tab ${tabWithSession.tabId} already exists for active session ${originalSessionId}, switching to it`)
@@ -1962,8 +2044,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             let tabWithSession = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === originalSessionId)
             
             if (!tabWithSession) {
-              // Create a tab for this historical session
-              const sessionTitle = chatSessionTitle || chatSession.title || 'Historical Chat'
+              // Create a tab for this historical session (truncate to 3 words for display)
+              const sessionTitle = truncateTabTitle(chatSessionTitle || chatSession.title || 'Historical Chat')
               
               // Determine default event mode based on agent mode
               // orchestrator -> advanced (more complex, needs detailed view)
@@ -2048,14 +2130,19 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                   if (config.enable_workspace_access !== undefined) {
                     configUpdate.enableWorkspaceAccess = config.enable_workspace_access
                   }
-                  
+
+                  // Restore selected skills
+                  if (config.selected_skills && Array.isArray(config.selected_skills)) {
+                    configUpdate.selectedSkills = config.selected_skills
+                  }
+
                   // Update tab config
                   if (Object.keys(configUpdate).length > 0) {
                     chatStore.setTabConfig(newTabId, configUpdate)
                     console.log(`[History] Restored config for session ${originalSessionId}:`, configUpdate)
                   }
                 }
-                
+
                 // Restore agent mode (stored separately in agent_mode field)
                 if (chatSession.agent_mode) {
                   // Agent mode is already used when creating the tab, but we can log it
@@ -2136,14 +2223,19 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                 if (config.enable_workspace_access !== undefined) {
                   configUpdate.enableWorkspaceAccess = config.enable_workspace_access
                 }
-                
+
+                // Restore selected skills
+                if (config.selected_skills && Array.isArray(config.selected_skills)) {
+                  configUpdate.selectedSkills = config.selected_skills
+                }
+
                 // Update tab config
                 if (Object.keys(configUpdate).length > 0) {
                   chatStore.setTabConfig(tabWithSession.tabId, configUpdate)
                   console.log(`[History] Restored config for existing tab ${tabWithSession.tabId}:`, configUpdate)
                 }
               }
-              
+
               // Switch to it (events should already be loaded)
               switchTab(tabWithSession.tabId)
               
@@ -2472,12 +2564,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       const chatStore = useChatStore.getState()
       chatStore.setTabCompleted(currentTab.tabId, false)
       chatStore.setTabStreaming(currentTab.tabId, true) // UI: Show stop button immediately
-      console.log(`[SUBMIT] Set tab ${currentTab.tabId} streaming to true immediately (UI feedback only)`)
-      console.log(`[SUBMIT] Tab state before query: completed=${currentTab.isCompleted}, streaming=${currentTab.isStreaming}, sessionId=${currentTab.sessionId}`)
+
+      // Start polling immediately so we catch streaming events from the start
+      // Don't wait for API response or active sessions cache refresh
+      if (!chatStore.pollingInterval) {
+        startPolling(pollEvents)
+      }
     }
-    
-    // Log session state for debugging reactivated sessions
-    console.log(`[SUBMIT] Current sessionState: ${sessionState}, isStreaming: ${isStreaming}`)
 
     // Reset event tracking for new query (preserve lastEventIndex for multi-turn chat)
     // Deprecated: setLastEventCount removed
@@ -2511,7 +2604,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         filteredPresetTools,
         effectiveServers,
         enabledToolsCount: enabledTools.length,
-        'hasAllToolsMarkers': presetTools.some(t => t.endsWith(':*')) ? 'YES' : 'NO'
+        'hasAllToolsMarkers': presetTools.some(t => t.endsWith(':*')) ? 'YES' : 'NO',
+        selectedSkills: currentTab?.config?.selectedSkills
       });
       const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode
       const presetUseToolSearchMode = activePreset?.useToolSearchMode
@@ -3056,7 +3150,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             )}
             
             {activeTab?.sessionId && (
-              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} flatHierarchy={true} />
+              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} flatHierarchy={true} sessionId={activeTab.sessionId} />
             )}
           </WorkflowModeHandler>
         ) : (
@@ -3065,9 +3159,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             {!chatSessionId && displayEvents.length === 0 && !isStreaming && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
-            
+
             {activeTab?.sessionId && (
-              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} />
+              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} sessionId={activeTab.sessionId} />
             )}
           </>
         )}

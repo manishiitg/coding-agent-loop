@@ -3,6 +3,7 @@ import { History, Loader2, Search } from 'lucide-react'
 import { useChatStore } from '../stores'
 import { useAppStore } from '../stores'
 import type { ChatHistorySummary } from '../services/api-types'
+import { truncateTabTitle } from '../utils/textUtils'
 
 interface ResumeSessionDialogProps {
   onClose: () => void
@@ -81,7 +82,7 @@ export default function ResumeSessionDialog({ onClose }: ResumeSessionDialogProp
       chatStore.switchTab(existingTab.tabId)
     } else {
       const newTabId = await chatStore.createChatTab(
-        session.title || 'Chat',
+        truncateTabTitle(session.title || 'Chat'),
         { mode: 'chat' },
         session.session_id,
         'tiny'

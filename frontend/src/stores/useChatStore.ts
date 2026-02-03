@@ -218,7 +218,11 @@ interface ChatState extends StoreActions {
   chatHistoryLastLoadedMode: string | null  // Track which mode category was last loaded
   chatHistoryTotalCount: number | null  // Total count of sessions available
   chatHistoryLoadedCount: number  // Number of sessions currently loaded
-  
+
+  // Streaming text accumulation (per session)
+  streamingText: Record<string, string>  // sessionId → accumulated streaming text
+  lastStreamingChunkIndex: Record<string, number>  // sessionId → last processed chunk_index (dedup guard)
+
   // Actions
   setIsStreaming: (streaming: boolean) => void
   // Computed: Derive isStreaming from polling status
@@ -312,6 +316,10 @@ interface ChatState extends StoreActions {
   setChatHistory: (sessions: ChatHistorySummary[], modeCategory: string) => void
   getChatHistoryHasMore: () => boolean
   
+  // Streaming text actions
+  appendStreamingChunk: (sessionId: string, chunkIndex: number, chunk: string) => void
+  clearStreamingText: (sessionId: string) => void
+
   // Helper methods
   resetChatState: () => void
   isAtBottom: (element: HTMLDivElement) => boolean
@@ -359,6 +367,10 @@ export const useChatStore = create<ChatState>()(
       chatHistoryTotalCount: null,
       chatHistoryLoadedCount: 0,
 
+      // Streaming text accumulation (per session)
+      streamingText: {},
+      lastStreamingChunkIndex: {},
+
       // Actions
       setIsStreaming: (streaming) => {
         set({ isStreaming: streaming })
@@ -402,7 +414,7 @@ export const useChatStore = create<ChatState>()(
           onPoll().catch(error => {
             console.error('[ChatStore] Error in polling callback:', error)
           })
-        }, 2000)  // 2 seconds - reduced from 1s to improve performance
+        }, 500)  // 500ms for streaming responsiveness
         
         set({ pollingInterval: interval })
       },
@@ -691,6 +703,45 @@ export const useChatStore = create<ChatState>()(
         set({ toasts: [] })
       },
 
+      // Streaming text actions
+      appendStreamingChunk: (sessionId: string, chunkIndex: number, chunk: string) => {
+        if (typeof chunk !== 'string' || !chunk) return
+        set((state) => {
+          let lastIndex = state.lastStreamingChunkIndex[sessionId] ?? -1
+          let currentText = state.streamingText[sessionId] || ''
+
+          // Auto-reset if we see chunk 0 (start of new generation)
+          if (chunkIndex === 0) {
+             lastIndex = -1
+             currentText = ''
+          }
+
+          // Deduplicate: skip chunks already processed (handles concurrent poll overlap)
+          if (chunkIndex >= 0 && chunkIndex <= lastIndex) {
+            return state
+          }
+
+          return {
+            streamingText: {
+              ...state.streamingText,
+              [sessionId]: currentText + chunk
+            },
+            lastStreamingChunkIndex: {
+              ...state.lastStreamingChunkIndex,
+              [sessionId]: chunkIndex
+            }
+          }
+        })
+      },
+
+      clearStreamingText: (sessionId: string) => {
+        set((state) => {
+          const { [sessionId]: _text, ...restText } = state.streamingText
+          const { [sessionId]: _idx, ...restIdx } = state.lastStreamingChunkIndex
+          return { streamingText: restText, lastStreamingChunkIndex: restIdx }
+        })
+      },
+
       // Helper methods
       resetChatState: () => {
         const state = get()
@@ -727,7 +778,9 @@ export const useChatStore = create<ChatState>()(
           currentWorkflowQueryId: null,
           toasts: [],
           chatTabs: {},
-          activeTabId: null
+          activeTabId: null,
+          streamingText: {},
+          lastStreamingChunkIndex: {}
         })
         
         // Clear the requiresNewChat flag after successful chat reset

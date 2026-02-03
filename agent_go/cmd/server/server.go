@@ -1315,12 +1315,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Build typed config from request
 		var configJSON json.RawMessage
-		hasConfig := len(req.Servers) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.EnableContextSummarization != nil || req.Provider != "" || req.ModelID != "" || req.LLMConfig != nil
+		hasConfig := len(req.Servers) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.EnableContextSummarization != nil || req.Provider != "" || req.ModelID != "" || req.LLMConfig != nil || len(req.SelectedSkills) > 0
 		if hasConfig {
 			config := &database.ChatSessionConfig{
 				SelectedServers:      req.Servers,
 				EnabledServers:       req.EnabledServers,
 				UseCodeExecutionMode: req.UseCodeExecutionMode,
+				SelectedSkills:       req.SelectedSkills,
 				EnableContextSummarization: func() *bool {
 					if req.EnableContextSummarization != nil {
 						val := *req.EnableContextSummarization
@@ -1393,6 +1394,52 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			updateReq.CompletedAt = nil // Clear completion timestamp when reactivating
 			shouldUpdate = true
 			log.Printf("[SESSION REACTIVATION] Reactivating session %s (old status: %s)", sessionID, chatSession.Status)
+		}
+
+		// 3. Update config if skills or other settings changed
+		// This ensures selected_skills and other settings are persisted on each query
+		hasConfigToUpdate := len(req.SelectedSkills) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.LLMConfig != nil
+		if hasConfigToUpdate {
+			config := &database.ChatSessionConfig{
+				SelectedServers:      req.Servers,
+				EnabledServers:       req.EnabledServers,
+				UseCodeExecutionMode: req.UseCodeExecutionMode,
+				SelectedSkills:       req.SelectedSkills,
+				EnableContextSummarization: func() *bool {
+					if req.EnableContextSummarization != nil {
+						val := *req.EnableContextSummarization
+						return &val
+					}
+					return nil
+				}(),
+			}
+
+			// Extract LLM config
+			if req.LLMConfig != nil {
+				config.LLMConfig = &database.LLMConfigForStorage{
+					Provider: req.LLMConfig.Primary.Provider,
+					ModelID:  req.LLMConfig.Primary.ModelID,
+				}
+				if len(req.LLMConfig.Fallbacks) > 0 {
+					for _, fallback := range req.LLMConfig.Fallbacks {
+						config.LLMConfig.FallbackModels = append(config.LLMConfig.FallbackModels, fallback.ModelID)
+					}
+				}
+			} else if req.Provider != "" || req.ModelID != "" {
+				config.LLMConfig = &database.LLMConfigForStorage{
+					Provider: req.Provider,
+					ModelID:  req.ModelID,
+				}
+			}
+
+			configJSON, err := config.ToJSON()
+			if err != nil {
+				log.Printf("[CONFIG DEBUG] Failed to marshal config for update: %v", err)
+			} else {
+				updateReq.Config = configJSON
+				shouldUpdate = true
+				log.Printf("[SESSION UPDATE] Updating session %s config with selected_skills=%v", sessionID, req.SelectedSkills)
+			}
 		}
 
 		// Apply updates if needed
@@ -3550,13 +3597,10 @@ func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
 			log.Printf("[ACTIVE_SESSION] Successfully updated database for session %s status to: %s", sessionID, status)
 		}
 
-		// Remove completed sessions from activeSessions map
-		if status == "completed" {
-			api.activeSessionsMux.Lock()
-			delete(api.activeSessions, sessionID)
-			api.activeSessionsMux.Unlock()
-			log.Printf("[ACTIVE_SESSION] Removed completed session %s from activeSessions", sessionID)
-		}
+		// NOTE: Completed sessions are NOT removed from activeSessions map immediately.
+		// They remain in the map so getAllActiveSessions can include them in the 30-minute
+		// window for page refresh restoration. The cleanupInactiveSessions goroutine will
+		// eventually remove old sessions.
 	}()
 }
 
@@ -3576,11 +3620,15 @@ func (api *StreamingAPI) getAllActiveSessions() []*ActiveSessionInfo {
 
 	now := time.Now()
 	inactivityTimeout := 10 * time.Minute
+	recentCompletionWindow := 30 * time.Minute
 	sessions := make([]*ActiveSessionInfo, 0, len(api.activeSessions))
 
 	for _, session := range api.activeSessions {
-		// Only return sessions that are running and have been active within the last 10 minutes
+		// Include running sessions that have been active within the last 10 minutes
 		if session.Status == "running" && now.Sub(session.LastActivity) < inactivityTimeout {
+			sessions = append(sessions, session)
+		} else if session.Status == "completed" && now.Sub(session.LastActivity) < recentCompletionWindow {
+			// Also include recently completed sessions (within 30 minutes) for page refresh restore
 			sessions = append(sessions, session)
 		}
 	}
@@ -3588,7 +3636,9 @@ func (api *StreamingAPI) getAllActiveSessions() []*ActiveSessionInfo {
 	return sessions
 }
 
-// cleanupInactiveSessions runs periodically to mark sessions as inactive if no events for 10 minutes
+// cleanupInactiveSessions runs periodically to:
+// 1. Mark running sessions as inactive if no events for 10 minutes
+// 2. Remove completed/inactive sessions from map after 30 minutes (to prevent memory leaks)
 func (api *StreamingAPI) cleanupInactiveSessions() {
 	ticker := time.NewTicker(2 * time.Minute) // Check every 2 minutes
 	defer ticker.Stop()
@@ -3597,12 +3647,28 @@ func (api *StreamingAPI) cleanupInactiveSessions() {
 		api.activeSessionsMux.Lock()
 		now := time.Now()
 		inactivityTimeout := 10 * time.Minute
+		completedSessionRetention := 30 * time.Minute
 		sessionsToMarkInactive := make([]string, 0)
+		sessionsToDelete := make([]string, 0)
 
 		for sessionID, session := range api.activeSessions {
 			// Mark as inactive if no activity for 10 minutes and status is still "running"
 			if session.Status == "running" && now.Sub(session.LastActivity) >= inactivityTimeout {
 				sessionsToMarkInactive = append(sessionsToMarkInactive, sessionID)
+			}
+			// Delete completed/inactive sessions after 30 minutes to prevent memory leaks
+			// These sessions have already been saved to the database
+			if (session.Status == "completed" || session.Status == "inactive") && now.Sub(session.LastActivity) >= completedSessionRetention {
+				sessionsToDelete = append(sessionsToDelete, sessionID)
+			}
+		}
+
+		// Delete old sessions within the lock
+		for _, sessionID := range sessionsToDelete {
+			if session, exists := api.activeSessions[sessionID]; exists {
+				status := session.Status
+				delete(api.activeSessions, sessionID)
+				log.Printf("[ACTIVE_SESSION] Cleanup: Removed old %s session %s from memory (>30 min old)", status, sessionID)
 			}
 		}
 

@@ -123,6 +123,7 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	getEventsResult := api.eventStore.GetEvents(sessionID, opts)
 	sessionEvents := getEventsResult.Events
 	exists := getEventsResult.Exists
+
 	lastProcessedIndex := getEventsResult.LastProcessedIndex
 	hasMoreFromStore := getEventsResult.HasMore
 
@@ -285,15 +286,17 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 				}
 
 				// Apply sinceIndex filtering if specified
+				totalConverted := len(convertedEvents)
 				if opts.SinceIndex >= 0 && opts.SinceIndex < len(convertedEvents) {
 					convertedEvents = convertedEvents[opts.SinceIndex+1:]
 				}
 
 				response := GetEventsResponse{
-					Events:        convertedEvents,
-					HasMore:       false, // Completed sessions don't have more events
-					SessionID:     sessionID,
-					SessionStatus: sessionStatus,
+					Events:             convertedEvents,
+					HasMore:            false, // Completed sessions don't have more events
+					SessionID:          sessionID,
+					SessionStatus:      sessionStatus,
+					LastProcessedIndex: totalConverted - 1, // Prevent sinceIndex from resetting to 0
 				}
 
 				if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -307,10 +310,11 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		// Session doesn't exist yet (no events have been added)
 		// Return empty events array instead of 404 - this is expected when polling starts before events are generated
 		response := GetEventsResponse{
-			Events:        []events.Event{},
-			HasMore:       false,
-			SessionID:     sessionID,
-			SessionStatus: sessionStatus,
+			Events:             []events.Event{},
+			HasMore:            false,
+			SessionID:          sessionID,
+			SessionStatus:      sessionStatus,
+			LastProcessedIndex: -1, // No events processed
 		}
 
 		if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -389,22 +393,61 @@ type ReconnectSessionResponse struct {
 }
 
 // handleGetActiveSessions handles requests to get all active sessions
+// Returns running sessions and recently completed sessions (within 30 minutes)
+// This allows the frontend to restore sessions on page refresh
+// Also queries database for recent sessions if in-memory map is empty (e.g., after backend restart)
 func (api *StreamingAPI) handleGetActiveSessions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
+	// getAllActiveSessions returns running + recently completed sessions from in-memory map
 	activeSessions := api.getAllActiveSessions()
 
-	// Filter only running sessions
-	runningSessions := make([]*ActiveSessionInfo, 0)
-	for _, session := range activeSessions {
-		if session.Status == "running" {
-			runningSessions = append(runningSessions, session)
+	// If no in-memory sessions, check database for recent sessions (handles backend restart case)
+	// Query for sessions with status 'active' or 'running', or recently completed (within 30 minutes)
+	if len(activeSessions) == 0 && api.chatDB != nil {
+		thirtyMinutesAgo := time.Now().Add(-30 * time.Minute)
+
+		// Get recent sessions from database
+		dbSessions, _, err := api.chatDB.ListChatSessions(r.Context(), 20, 0, nil, nil)
+		if err != nil {
+			log.Printf("[ACTIVE_SESSION] Failed to query database for recent sessions: %v", err)
+		} else {
+			for _, dbSession := range dbSessions {
+				// Include sessions that are active/running or recently completed
+				isActive := dbSession.Status == "active" || dbSession.Status == "running"
+				isRecentlyCompleted := dbSession.Status == "completed" && dbSession.LastActivity != nil && dbSession.LastActivity.After(thirtyMinutesAgo)
+
+				if isActive || isRecentlyCompleted {
+					// Convert to ActiveSessionInfo
+					sessionInfo := &ActiveSessionInfo{
+						SessionID:    dbSession.SessionID,
+						AgentMode:    dbSession.AgentMode,
+						Status:       dbSession.Status,
+						CreatedAt:    dbSession.CreatedAt,
+						Query:        dbSession.Title, // Use title as query summary
+					}
+					if dbSession.LastActivity != nil {
+						sessionInfo.LastActivity = *dbSession.LastActivity
+					} else {
+						sessionInfo.LastActivity = dbSession.CreatedAt
+					}
+
+					// Map 'active' status to 'completed' for frontend consistency
+					// (frontend expects 'running' or 'completed')
+					if sessionInfo.Status == "active" {
+						sessionInfo.Status = "completed"
+					}
+
+					activeSessions = append(activeSessions, sessionInfo)
+					log.Printf("[ACTIVE_SESSION] Restored session from DB: %s (status: %s, last_activity: %v)", dbSession.SessionID, dbSession.Status, dbSession.LastActivity)
+				}
+			}
 		}
 	}
 
 	response := GetActiveSessionsResponse{
-		ActiveSessions: runningSessions,
-		Total:          len(runningSessions),
+		ActiveSessions: activeSessions,
+		Total:          len(activeSessions),
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {

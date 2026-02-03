@@ -351,6 +351,9 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		options = append(options, mcpagent.WithLogger(v2Logger))
 	}
 
+	// Enable streaming for LLM text responses (emits streaming_start, streaming_chunk, streaming_end events)
+	options = append(options, mcpagent.WithStreaming(true))
+
 	if config.AgentMode == mcpagent.SimpleAgent {
 		// Create Simple agent
 		// modelID is automatically extracted from llm

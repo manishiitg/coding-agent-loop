@@ -81,6 +81,10 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       return true;
     });
 
+    // Filter out streaming events in all modes - these are internal events for UI streaming
+    const HIDDEN_STREAMING_EVENTS = ['streaming_start', 'streaming_chunk', 'streaming_end'];
+    allEvents = allEvents.filter(event => !HIDDEN_STREAMING_EVENTS.includes(event.type));
+
     // Filter out "Total Token Usage" and "Context Offloading" events in tiny/micro mode
     if (eventMode === 'tiny' || eventMode === 'micro') {
       allEvents = allEvents.filter(event => {
@@ -89,17 +93,27 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           // events-bridge structure: event.data.data holds the actual event payload
           const agentEvent = event.data as { data?: Record<string, unknown> } | undefined
           const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined
-          
+
           if (payload?.context === 'conversation_total') {
             return false
           }
         }
-        
+
         // Hide Context Offloading events in tiny mode
         if (event.type === 'large_tool_output_detected' || event.type === 'large_tool_output_file_written') {
           return false
         }
-        
+
+        // Hide agent_end, agent_start, and orchestrator_agent_end events with agent_type "simple" in micro mode
+        if (eventMode === 'micro' && (event.type === 'orchestrator_agent_end' || event.type === 'agent_end' || event.type === 'agent_start')) {
+          const agentEvent = event.data as { data?: Record<string, unknown>; agent_type?: string } | undefined
+          const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined
+          const agentType = (payload as Record<string, unknown> | undefined)?.agent_type || agentEvent?.agent_type
+          if (agentType === 'simple') {
+            return false
+          }
+        }
+
         return true
       })
     }

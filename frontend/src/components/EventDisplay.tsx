@@ -12,10 +12,39 @@ interface EventDisplayProps {
   compact?: boolean
   flatHierarchy?: boolean
   events?: PollingEvent[]  // Required: events should always be passed from ChatArea (tab-specific)
+  sessionId?: string | null  // Session ID for streaming text lookup
 }
 
+// Shared markdown components factory for consistent rendering
+const getMarkdownComponents = (compact: boolean) => ({
+  p: ({ children }: { children?: React.ReactNode }) => <p className={`${compact ? 'mb-2 last:mb-0 text-xs' : 'mb-2.5 last:mb-0 text-xs'} text-gray-800 dark:text-gray-200 leading-relaxed`}>{children}</p>,
+  h1: ({ children }: { children?: React.ReactNode }) => <h1 className={`${compact ? 'text-lg' : 'text-xl'} font-bold ${compact ? 'mb-2' : 'mb-3'} text-gray-900 dark:text-gray-100`}>{children}</h1>,
+  h2: ({ children }: { children?: React.ReactNode }) => <h2 className={`${compact ? 'text-base' : 'text-lg'} font-semibold ${compact ? 'mb-2' : 'mb-2.5'} text-gray-900 dark:text-gray-100`}>{children}</h2>,
+  h3: ({ children }: { children?: React.ReactNode }) => <h3 className={`${compact ? 'text-sm' : 'text-base'} font-semibold ${compact ? 'mb-1' : 'mb-2'} text-gray-900 dark:text-gray-100`}>{children}</h3>,
+  ul: ({ children }: { children?: React.ReactNode }) => <ul className={`list-disc ${compact ? 'pl-4 mb-2 space-y-0.5' : 'pl-5 mb-2.5 space-y-1'} text-gray-800 dark:text-gray-200`}>{children}</ul>,
+  ol: ({ children }: { children?: React.ReactNode }) => <ol className={`list-decimal ${compact ? 'pl-4 mb-2 space-y-0.5' : 'pl-5 mb-2.5 space-y-1'} text-gray-800 dark:text-gray-200`}>{children}</ol>,
+  li: ({ children }: { children?: React.ReactNode }) => <li className={`${compact ? 'text-xs' : 'text-xs'} text-gray-800 dark:text-gray-200 leading-relaxed`}>{children}</li>,
+  code: ({ children }: { children?: React.ReactNode }) => (
+    <code className={`bg-gray-100 dark:bg-gray-800 ${compact ? 'px-1 py-0.5' : 'px-1.5 py-0.5'} rounded ${compact ? 'text-[10px]' : 'text-xs'} font-mono text-gray-800 dark:text-gray-200`}>
+      {children}
+    </code>
+  ),
+  pre: ({ children }: { children?: React.ReactNode }) => (
+    <pre className={`bg-gray-100 dark:bg-gray-800 ${compact ? 'p-2 my-2' : 'p-3 my-2.5'} rounded ${compact ? 'text-[10px]' : 'text-xs'} font-mono overflow-x-auto text-gray-800 dark:text-gray-200`}>
+      {children}
+    </pre>
+  ),
+  blockquote: ({ children }: { children?: React.ReactNode }) => (
+    <blockquote className={`border-l-4 border-green-300 ${compact ? 'pl-3 my-2' : 'pl-4 my-2.5'} italic text-gray-700 dark:text-gray-300`}>
+      {children}
+    </blockquote>
+  ),
+  strong: ({ children }: { children?: React.ReactNode }) => <strong className="font-semibold text-gray-900 dark:text-gray-100">{children}</strong>,
+  em: ({ children }: { children?: React.ReactNode }) => <em className="italic text-gray-800 dark:text-gray-200">{children}</em>,
+})
+
 // Isolated event display component that can re-render without affecting input
-export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted, compact = false, flatHierarchy = false, events: propEvents }) => {
+export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted, compact = false, flatHierarchy = false, events: propEvents, sessionId }) => {
   // Store subscriptions (only for finalResponse and isCompleted - not events)
   const {
     finalResponse,
@@ -27,7 +56,12 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
     isCompleted: state.isCompleted,
     isApprovingWorkflow: state.isApprovingWorkflow
   })))
-  
+
+  // Subscribe to streaming text for current session
+  const currentStreamingText = useChatStore(state =>
+    sessionId ? state.streamingText[sessionId] || '' : ''
+  )
+
   // CRITICAL: Always use prop events - never fall back to global events to prevent cross-tab mixing
   // Events should always be passed from ChatArea (which uses tab-specific events)
   const events = React.useMemo(() => {
@@ -36,6 +70,9 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
     }
     return propEvents || []
   }, [propEvents])
+
+  // Memoize markdown components to avoid re-creating on every render
+  const markdownComponents = React.useMemo(() => getMarkdownComponents(compact), [compact])
 
   // Handle workflow approval
   const handleApproveWorkflow = React.useCallback(async (requestId: string) => {
@@ -73,8 +110,8 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
             )}
           </div>
           <div className="min-w-0" data-testid="event-list-wrapper" data-event-count={events.length}>
-            <EventList 
-              events={events} 
+            <EventList
+              events={events}
               onApproveWorkflow={handleApproveWorkflow}
               onSubmitFeedback={handleSubmitFeedback}
               onFeedbackSubmitted={onFeedbackSubmitted}
@@ -84,6 +121,26 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
             />
           </div>
         </div>
+      )}
+
+      {/* Streaming Text Display - shows LLM output as it generates */}
+      {currentStreamingText && (
+        <Card className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 shadow-sm min-w-0">
+          <CardContent className={`${compact ? 'p-2' : 'p-3'} min-w-0`}>
+            <div className="flex items-center gap-1.5 mb-1">
+              <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+              <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-blue-600 dark:text-blue-400 font-medium`}>
+                Generating...
+              </span>
+            </div>
+            <div className={`prose prose-xs max-w-none dark:prose-invert min-w-0 ${compact ? 'text-[10px]' : 'text-xs'}`}>
+              <ReactMarkdown components={markdownComponents}>
+                {currentStreamingText}
+              </ReactMarkdown>
+              <span className="inline-block w-1.5 h-3 bg-blue-500 animate-pulse ml-0.5" />
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Final Response Display */}
@@ -103,34 +160,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
           <Card className="border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-900/20 shadow-lg min-w-0">
             <CardContent className={`${compact ? 'p-3' : 'p-6'} min-w-0`}>
               <div className={`prose ${compact ? 'prose-xs' : 'prose-sm'} max-w-none dark:prose-invert min-w-0`}>
-                <ReactMarkdown 
-                  components={{
-                    p: ({ children }) => <p className={`${compact ? 'mb-2 last:mb-0 text-xs' : 'mb-3 last:mb-0'} text-gray-800 dark:text-gray-200 leading-relaxed`}>{children}</p>,
-                    h1: ({ children }) => <h1 className={`${compact ? 'text-lg' : 'text-2xl'} font-bold ${compact ? 'mb-2' : 'mb-4'} text-gray-900 dark:text-gray-100`}>{children}</h1>,
-                    h2: ({ children }) => <h2 className={`${compact ? 'text-base' : 'text-xl'} font-semibold ${compact ? 'mb-2' : 'mb-3'} text-gray-900 dark:text-gray-100`}>{children}</h2>,
-                    h3: ({ children }) => <h3 className={`${compact ? 'text-sm' : 'text-lg'} font-semibold ${compact ? 'mb-1' : 'mb-2'} text-gray-900 dark:text-gray-100`}>{children}</h3>,
-                    ul: ({ children }) => <ul className={`list-disc list-inside ${compact ? 'mb-2 space-y-0.5' : 'mb-3 space-y-1'} text-gray-800 dark:text-gray-200`}>{children}</ul>,
-                    ol: ({ children }) => <ol className={`list-decimal list-inside ${compact ? 'mb-2 space-y-0.5' : 'mb-3 space-y-1'} text-gray-800 dark:text-gray-200`}>{children}</ol>,
-                    li: ({ children }) => <li className={`${compact ? 'text-xs' : ''} text-gray-800 dark:text-gray-200`}>{children}</li>,
-                    code: ({ children }) => (
-                      <code className={`bg-gray-100 dark:bg-gray-800 ${compact ? 'px-1 py-0.5' : 'px-2 py-1'} rounded ${compact ? 'text-[10px]' : 'text-sm'} font-mono text-gray-800 dark:text-gray-200`}>
-                        {children}
-                      </code>
-                    ),
-                    pre: ({ children }) => (
-                      <pre className={`bg-gray-100 dark:bg-gray-800 ${compact ? 'p-2' : 'p-3'} rounded ${compact ? 'text-[10px]' : 'text-sm'} font-mono overflow-x-auto text-gray-800 dark:text-gray-200`}>
-                        {children}
-                      </pre>
-                    ),
-                    blockquote: ({ children }) => (
-                      <blockquote className={`border-l-4 border-green-300 pl-4 italic text-gray-700 dark:text-gray-300 ${compact ? 'my-2' : 'my-3'}`}>
-                        {children}
-                      </blockquote>
-                    ),
-                    strong: ({ children }) => <strong className="font-semibold text-gray-900 dark:text-gray-100">{children}</strong>,
-                    em: ({ children }) => <em className="italic text-gray-800 dark:text-gray-200">{children}</em>,
-                  }}
-                >
+                <ReactMarkdown components={markdownComponents}>
                   {finalResponse}
                 </ReactMarkdown>
               </div>
@@ -145,4 +175,3 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
 EventDisplay.displayName = 'EventDisplay'
 
 EventDisplay.whyDidYouRender = true
-

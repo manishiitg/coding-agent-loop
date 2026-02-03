@@ -1,18 +1,26 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle, Info } from 'lucide-react';
+import { CheckCircle, Info, XCircle } from 'lucide-react';
+
+type ToastType = 'success' | 'info' | 'error';
 
 interface ToastProps {
   message: string;
-  type: 'success' | 'info';
+  type: ToastType;
   duration?: number;
   onClose: () => void;
 }
 
-export const Toast: React.FC<ToastProps> = ({ 
-  message, 
-  type, 
-  duration = 2000, 
-  onClose 
+const TOAST_CONFIG: Record<ToastType, { icon: typeof CheckCircle; bgColor: string }> = {
+  success: { icon: CheckCircle, bgColor: 'bg-green-500' },
+  info: { icon: Info, bgColor: 'bg-blue-500' },
+  error: { icon: XCircle, bgColor: 'bg-red-500' },
+};
+
+export const Toast: React.FC<ToastProps> = ({
+  message,
+  type,
+  duration = 3000,
+  onClose
 }) => {
   const [isVisible, setIsVisible] = useState(true);
 
@@ -27,8 +35,7 @@ export const Toast: React.FC<ToastProps> = ({
 
   if (!isVisible) return null;
 
-  const Icon = type === 'success' ? CheckCircle : Info;
-  const bgColor = type === 'success' ? 'bg-green-500' : 'bg-blue-500';
+  const { icon: Icon, bgColor } = TOAST_CONFIG[type];
 
   return (
     <div className="fixed top-4 right-4 z-50 animate-in slide-in-from-right-full duration-300">
@@ -41,7 +48,7 @@ export const Toast: React.FC<ToastProps> = ({
 };
 
 interface ToastContainerProps {
-  toasts: Array<{ id: string; message: string; type: 'success' | 'info' }>;
+  toasts: Array<{ id: string; message: string; type: ToastType }>;
   onRemoveToast: (id: string) => void;
 }
 

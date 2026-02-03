@@ -50,6 +50,7 @@ type ChatSessionConfig struct {
 	FileContext                []FileContextItem    `json:"file_context,omitempty"`                 // Workspace files/folders
 	EnableWorkspaceAccess      *bool                `json:"enable_workspace_access,omitempty"`      // Workspace access setting
 	WorkflowMetadata           *WorkflowMetadata    `json:"workflow_metadata,omitempty"`            // Workflow-specific metadata (for background workflows)
+	SelectedSkills             []string             `json:"selected_skills,omitempty"`              // Selected skill folder names
 }
 
 // LLMConfigForStorage stores LLM config without sensitive API keys

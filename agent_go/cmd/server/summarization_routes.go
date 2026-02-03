@@ -244,9 +244,18 @@ func (api *StreamingAPI) handleSummarizeConversation(w http.ResponseWriter, r *h
 		log.Printf("[SUMMARIZATION] Warning: eventStore is nil, events will not be captured")
 	}
 
+	// Emit context_summarization_started event
+	if api.eventStore != nil {
+		api.eventStore.AddSummarizationStartedEvent(sessionID, len(messages), keepLastMessages)
+	}
+
 	// Call summarization
 	summarizedMessages, err := mcpagent.SummarizeConversationHistory(tempAgent, ctx, messages, keepLastMessages)
 	if err != nil {
+		// Emit error event
+		if api.eventStore != nil {
+			api.eventStore.AddSummarizationErrorEvent(sessionID, err.Error())
+		}
 		http.Error(w, fmt.Sprintf("Failed to summarize conversation: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -279,6 +288,11 @@ func (api *StreamingAPI) handleSummarizeConversation(w http.ResponseWriter, r *h
 	api.conversationMux.Unlock()
 
 	log.Printf("[SUMMARIZATION] Summarized conversation for session %s: %d -> %d messages", sessionID, len(messages), len(summarizedMessages))
+
+	// Emit context_summarization_completed event
+	if api.eventStore != nil {
+		api.eventStore.AddSummarizationCompletedEvent(sessionID, len(messages), len(summarizedMessages), summary)
+	}
 
 	response := SummarizeConversationResponse{
 		SessionID:     sessionID,

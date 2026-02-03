@@ -20,6 +20,11 @@ func NewEventDatabaseObserver(db Database) *EventDatabaseObserver {
 
 // OnEvent handles incoming events and stores them in the database
 func (e *EventDatabaseObserver) OnEvent(event *events.Event) {
+	// Skip streaming events - they are ephemeral and handled in real-time via polling
+	if event.Type == events.StreamingStart || event.Type == events.StreamingChunk || event.Type == events.StreamingEnd {
+		return
+	}
+
 	ctx := context.Background()
 
 	// Convert unified Event to AgentEvent for storage
@@ -46,6 +51,12 @@ func (e *EventDatabaseObserver) OnEvent(event *events.Event) {
 func (e *EventDatabaseObserver) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
 	// Note: We can't use logger here as EventDatabaseObserver doesn't have one
 	// This is called from the agent event system
+
+	// Skip streaming events - they are ephemeral and handled in real-time via polling
+	// Persisting them would cause "Unknown Event Type" on page reload
+	if event.Type == events.StreamingStart || event.Type == events.StreamingChunk || event.Type == events.StreamingEnd {
+		return nil
+	}
 
 	// Extract original session ID from modified session ID
 	// The agent modifies session ID to: agent-init-{originalSessionID}-{timestamp}

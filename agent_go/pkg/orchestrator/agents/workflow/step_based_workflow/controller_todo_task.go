@@ -497,14 +497,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🤖 Executing generic agent for task: %s", taskTitle))
 
-	// Get parent step config to inherit execution modes
-	parentConfig := getAgentConfigs(step)
-	var useToolSearchMode *bool
-	var useCodeExecutionMode *bool
-	if parentConfig != nil {
-		useToolSearchMode = parentConfig.UseToolSearchMode
-		useCodeExecutionMode = parentConfig.UseCodeExecutionMode
-	}
+	// TEMP: Force simple agent mode for generic sub-agents — always disable code execution and tool search
+	// TODO: Remove this override once todo task step supports tool_search/code_exec agent types properly
+	useToolSearchMode := boolPtr(false)
+	useCodeExecutionMode := boolPtr(false)
 
 	// Create a synthetic RegularPlanStep for the generic execution
 	// Use the orchestrator's instructions and success criteria

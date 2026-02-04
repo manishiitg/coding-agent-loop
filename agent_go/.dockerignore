@@ -44,6 +44,8 @@ Dockerfile
 *.log
 *.tmp
 *.bak
+.env
+.env.*
 
 # Reports (will be mounted as volume)
 reports/

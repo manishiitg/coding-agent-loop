@@ -83,12 +83,12 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     // Filter out streaming events in all modes - these are internal events for UI streaming
     const HIDDEN_STREAMING_EVENTS = ['streaming_start', 'streaming_chunk', 'streaming_end'];
-    allEvents = allEvents.filter(event => !HIDDEN_STREAMING_EVENTS.includes(event.type));
+    allEvents = allEvents.filter(event => !HIDDEN_STREAMING_EVENTS.includes(event.type || ''));
 
     // Filter out tool_call events for "delegate" tool - we show delegation_start/delegation_end instead
     const DELEGATE_TOOL_EVENTS = ['tool_call_start', 'tool_call_end', 'tool_call_error'];
     allEvents = allEvents.filter(event => {
-      if (!DELEGATE_TOOL_EVENTS.includes(event.type)) return true;
+      if (!DELEGATE_TOOL_EVENTS.includes(event.type || '')) return true;
       // Check if this is a delegate tool call
       const agentEvent = event.data as { data?: { tool_name?: string }; tool_name?: string } | undefined;
       const toolName = agentEvent?.data?.tool_name || agentEvent?.tool_name;

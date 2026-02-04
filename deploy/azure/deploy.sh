@@ -57,9 +57,8 @@ create_clean_context() {
     --exclude='.terraform' \
     --exclude='tmp' \
     --exclude='*.db' \
-    --exclude='__pycache__' \
-    --exclude='mcpagent' \
-    --exclude='multi-llm-provider-go'
+    --exclude='__pycache__'
+
     
   echo "    Clean context created."
 }
@@ -77,7 +76,7 @@ build_agent() {
       -t "mcp-agent:$TAG" \
       -t "mcp-agent:latest" \
       -f mcp-agent-builder-go/agent_go/Dockerfile.localdeps \
-      . > /dev/null
+      . > "$SCRIPT_DIR/build_${FUNCNAME[0]#build_}.log" 2>&1
   )
     
   echo "    [Agent] Build complete."
@@ -96,7 +95,7 @@ build_workspace() {
       -t "workspace-api:$TAG" \
       -t "workspace-api:latest" \
       -f Dockerfile \
-      . > /dev/null
+      . > "$SCRIPT_DIR/build_${FUNCNAME[0]#build_}.log" 2>&1
   )
     
   echo "    [Workspace] Build complete."
@@ -120,7 +119,7 @@ build_frontend() {
       -f Dockerfile.prod \
       --build-arg VITE_API_BASE_URL="$AGENT_URL" \
       --build-arg VITE_WORKSPACE_API_URL="$WORKSPACE_URL" \
-      . > /dev/null
+      . > "$SCRIPT_DIR/build_${FUNCNAME[0]#build_}.log" 2>&1
   )
     
   echo "    [Frontend] Build complete."

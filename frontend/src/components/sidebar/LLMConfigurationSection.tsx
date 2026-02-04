@@ -13,7 +13,7 @@ export default function LLMConfigurationSection({
 }: LLMConfigurationSectionProps) {
   
   // Store subscriptions
-  const { primaryConfig: llmConfig, setPrimaryConfig: setLlmConfig } = useLLMStore()
+  const { primaryConfig: llmConfig, setPrimaryConfig: setLlmConfig, isProviderSupported } = useLLMStore()
   const [isExpanded, setIsExpanded] = useState(false);
   const [showCrossProvider, setShowCrossProvider] = useState(false);
   const [customModelInput, setCustomModelInput] = useState("");
@@ -208,32 +208,36 @@ export default function LLMConfigurationSection({
                   Provider
                 </label>
                 <div className="space-y-2">
-                  <label className="flex items-center">
-                    <input
-                      type="radio"
-                      name="provider"
-                      value="openrouter"
-                      checked={llmConfig.provider === "openrouter"}
-                      onChange={() => handleProviderChange("openrouter")}
-                      className="mr-2"
-                    />
-                    <span className="text-sm text-gray-700 dark:text-gray-300">
-                      OpenRouter
-                    </span>
-                  </label>
-                  <label className="flex items-center">
-                    <input
-                      type="radio"
-                      name="provider"
-                      value="bedrock"
-                      checked={llmConfig.provider === "bedrock"}
-                      onChange={() => handleProviderChange("bedrock")}
-                      className="mr-2"
-                    />
-                    <span className="text-sm text-gray-700 dark:text-gray-300">
-                      Bedrock
-                    </span>
-                  </label>
+                  {isProviderSupported('openrouter') && (
+                    <label className="flex items-center">
+                      <input
+                        type="radio"
+                        name="provider"
+                        value="openrouter"
+                        checked={llmConfig.provider === "openrouter"}
+                        onChange={() => handleProviderChange("openrouter")}
+                        className="mr-2"
+                      />
+                      <span className="text-sm text-gray-700 dark:text-gray-300">
+                        OpenRouter
+                      </span>
+                    </label>
+                  )}
+                  {isProviderSupported('bedrock') && (
+                    <label className="flex items-center">
+                      <input
+                        type="radio"
+                        name="provider"
+                        value="bedrock"
+                        checked={llmConfig.provider === "bedrock"}
+                        onChange={() => handleProviderChange("bedrock")}
+                        className="mr-2"
+                      />
+                      <span className="text-sm text-gray-700 dark:text-gray-300">
+                        Bedrock
+                      </span>
+                    </label>
+                  )}
                 </div>
               </div>
 
@@ -310,32 +314,36 @@ export default function LLMConfigurationSection({
               Primary Provider
             </label>
             <div className="space-y-2">
-              <label className="flex items-center">
-                <input
-                  type="radio"
-                  name="provider"
-                  value="openrouter"
-                  checked={llmConfig.provider === "openrouter"}
-                  onChange={() => handleProviderChange("openrouter")}
-                  className="mr-2 text-blue-600"
-                />
-                <span className="text-sm text-gray-700 dark:text-gray-300">
-                  OpenRouter
-                </span>
-              </label>
-              <label className="flex items-center">
-                <input
-                  type="radio"
-                  name="provider"
-                  value="bedrock"
-                  checked={llmConfig.provider === "bedrock"}
-                  onChange={() => handleProviderChange("bedrock")}
-                  className="mr-2 text-blue-600"
-                />
-                <span className="text-sm text-gray-700 dark:text-gray-300">
-                  Bedrock
-                </span>
-              </label>
+              {isProviderSupported('openrouter') && (
+                <label className="flex items-center">
+                  <input
+                    type="radio"
+                    name="provider"
+                    value="openrouter"
+                    checked={llmConfig.provider === "openrouter"}
+                    onChange={() => handleProviderChange("openrouter")}
+                    className="mr-2 text-blue-600"
+                  />
+                  <span className="text-sm text-gray-700 dark:text-gray-300">
+                    OpenRouter
+                  </span>
+                </label>
+              )}
+              {isProviderSupported('bedrock') && (
+                <label className="flex items-center">
+                  <input
+                    type="radio"
+                    name="provider"
+                    value="bedrock"
+                    checked={llmConfig.provider === "bedrock"}
+                    onChange={() => handleProviderChange("bedrock")}
+                    className="mr-2 text-blue-600"
+                  />
+                  <span className="text-sm text-gray-700 dark:text-gray-300">
+                    Bedrock
+                  </span>
+                </label>
+              )}
             </div>
           </div>
 

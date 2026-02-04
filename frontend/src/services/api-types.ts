@@ -139,6 +139,7 @@ export interface LLMDefaultsResponse {
     anthropic?: string[]
     azure?: string[]
   }
+  supported_providers?: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure')[]
 }
 
 // API Key Validation Request/Response

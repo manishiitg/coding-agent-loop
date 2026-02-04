@@ -27,6 +27,8 @@ require (
 )
 
 replace workspace => ../workspace
+replace github.com/manishiitg/mcpagent => ../../mcpagent
+replace github.com/manishiitg/multi-llm-provider-go => ../../multi-llm-provider-go
 
 require (
 	cloud.google.com/go v0.123.0 // indirect

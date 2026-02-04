@@ -88,8 +88,8 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
             <div className="text-sm font-medium text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
               Tool Call Start{' '}
               {event.is_parallel && (
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 border border-purple-200 dark:border-purple-700">
-                  PARALLEL
+                <span className="ml-1.5 text-[10px] text-gray-500 dark:text-gray-400 font-normal opacity-75">
+                  (parallel)
                 </span>
               )}
               <span className="text-xs font-normal text-blue-600 dark:text-blue-400">

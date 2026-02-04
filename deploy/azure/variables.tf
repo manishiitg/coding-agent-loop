@@ -81,6 +81,13 @@ variable "openai_api_key" {
   description = "OpenAI API key (for agent and optionally workspace-api)"
 }
 
+variable "anthropic_api_key" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Anthropic API key (for agent LLM configuration defaults)"
+}
+
 variable "agent_env" {
   type        = map(string)
   default     = {}

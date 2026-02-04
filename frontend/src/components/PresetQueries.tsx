@@ -325,6 +325,7 @@ interface PresetQueriesProps {
         onSave={handleSavePreset}
         editingPreset={editingPreset}
         availableServers={availableServers}
+        agentMode={selectedModeCategory === 'workflow' ? 'workflow' : 'simple'}
       />
 
       {/* Server Selection Modal for Predefined Presets */}

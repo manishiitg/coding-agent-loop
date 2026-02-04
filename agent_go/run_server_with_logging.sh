@@ -157,6 +157,9 @@ export BEDROCK_AVAILABLE_MODELS="global.anthropic.claude-sonnet-4-5-20250929-v1:
 export OPENROUTER_AVAILABLE_MODELS="x-ai/grok-code-fast-1,x-ai/grok-4-fast"
 export OPENAI_AVAILABLE_MODELS="gpt-5-mini,gpt-4.1-mini"
 
+# Supported LLM providers (controls which providers appear in the UI)
+export SUPPORTED_LLM_PROVIDERS="azure,anthropic"
+
 # Set structured output LLM to Bedrock for better JSON generation
 export DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER="bedrock"
 export DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL="global.anthropic.claude-sonnet-4-5-20250929-v1:0"

@@ -40,6 +40,14 @@ resource "azurerm_container_app" "agent" {
   }
 
   dynamic "secret" {
+    for_each = toset(var.anthropic_api_key != "" ? [1] : [])
+    content {
+      name  = "anthropic-api-key"
+      value = var.anthropic_api_key
+    }
+  }
+
+  dynamic "secret" {
     for_each = nonsensitive(var.agent_env)
     content {
       name  = "agent-env-${replace(secret.key, ".", "-")}"
@@ -70,11 +78,12 @@ resource "azurerm_container_app" "agent" {
     }
 
     container {
-      name   = "agent"
-      image  = "${local.acr_login_server}/mcp-agent:${var.agent_image_tag}"
-      cpu    = 1.0
-      memory = "2Gi"
-      args   = ["--mcp-config", "/home/appuser/.config/mcpagent/mcp_config.json"]
+      name    = "agent"
+      image   = "${local.acr_login_server}/mcp-agent:${var.agent_image_tag}"
+      cpu     = 1.0
+      memory  = "2Gi"
+      command = ["./mcp-agent", "server"]
+      args    = ["--host", "0.0.0.0", "--port", "8000", "--mcp-config", "/home/appuser/.config/mcpagent/mcp_config.json", "--db-type", "postgres"]
 
       env {
         name  = "PORT"
@@ -96,6 +105,10 @@ resource "azurerm_container_app" "agent" {
         name  = "PUBLIC_URL"
         value = "https://${var.project_name}-agent.${azurerm_container_app_environment.env.default_domain}"
       }
+      env {
+        name  = "SUPPORTED_LLM_PROVIDERS"
+        value = "azure,anthropic"
+      }
       # Hack: The 'value' above is a template. We need to construct the full string inside the container 
       # or use a secret for the whole URL. 
       # Better approach: Pass components or use a secret for the whole URL? 
@@ -113,6 +126,13 @@ resource "azurerm_container_app" "agent" {
         content {
           name          = "OPENAI_API_KEY"
           secret_name   = "openai-api-key"
+        }
+      }
+      dynamic "env" {
+        for_each = toset(var.anthropic_api_key != "" ? [1] : [])
+        content {
+          name          = "ANTHROPIC_API_KEY"
+          secret_name   = "anthropic-api-key"
         }
       }
       dynamic "env" {

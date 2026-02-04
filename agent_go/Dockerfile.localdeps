@@ -12,8 +12,8 @@ RUN apk add --no-cache git ca-certificates tzdata gcc musl-dev
 WORKDIR /build
 COPY mcp-agent-builder-go /build/mcp-agent-builder-go
 # mcpagent and multi-llm-provider-go are now fetched via go modules
-# COPY mcpagent /build/mcpagent
-# COPY multi-llm-provider-go /build/multi-llm-provider-go
+COPY mcpagent /build/mcpagent
+COPY multi-llm-provider-go /build/multi-llm-provider-go
 
 WORKDIR /build/mcp-agent-builder-go/agent_go
 RUN go mod download

@@ -150,6 +150,8 @@ github.com/manishiitg/mcpagent v1.2.5 h1:xh2JRiHco3knLvrccRk2msKY/f6rtheBUMF9ROp
 github.com/manishiitg/mcpagent v1.2.5/go.mod h1:orSK8bw3r8lWWWPEmUiaxXd40PypJALR86j6daZSyEI=
 github.com/manishiitg/multi-llm-provider-go v0.3.1 h1:VxgmdkAckTKn9xxJzj1DaPT1oQTRRToiWGoXIfP1I/I=
 github.com/manishiitg/multi-llm-provider-go v0.3.1/go.mod h1:roTv+RtW1fmyIt9+ltdfXcfoe6RI1PJFXpTGeYnEM9U=
+github.com/manishiitg/multi-llm-provider-go v0.3.2 h1:bA7614SarfRU12oUVylckzelbzFpFlWvsESXzn6+iVA=
+github.com/manishiitg/multi-llm-provider-go v0.3.2/go.mod h1:roTv+RtW1fmyIt9+ltdfXcfoe6RI1PJFXpTGeYnEM9U=
 github.com/mark3labs/mcp-go v0.44.0-beta.1 h1:96+eeCyywh4gpaJCaXKfkO5BkSNUThGbLgo3yQqvGHg=
 github.com/mark3labs/mcp-go v0.44.0-beta.1/go.mod h1:YnJfOL382MIWDx1kMY+2zsRHU/q78dBg9aFb8W6Thdw=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=

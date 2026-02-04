@@ -437,4 +437,103 @@
    - Verify: backend creates synthetic plan, skips planning phase                                                                                               
    - Verify: TodoTask events (route selected, step completed) render in chat                                                                                    
    - Verify: tasks.md is created and managed by orchestrator                                                                                                    
- 5. Library import test: Create a simple _test.go that calls todotask.RunLoop() with mock implementations of all interfaces                                     
+ 5. Library import test: Create a simple _test.go that calls todotask.RunLoop() with mock implementations of all interfaces
+
+---
+Delegation Mode Task Tracking (Future Enhancement)
+
+This section describes how to add task tracking to delegation mode using shell-based task file management.
+
+Concept
+
+The delegation mode agent should create and manage a `tasks.md` file using shell commands to track progress as it delegates and completes work. This parallels the task agent mode's todo system but uses simpler shell-based management.
+
+Task File Format
+
+```markdown
+# Tasks
+
+## Plan
+Brief description of what we're building
+
+## Tasks
+- [ ] Task 1: Description (assigned: sub-agent-1)
+- [ ] Task 2: Description (assigned: sub-agent-2)
+- [x] Task 3: Description (completed)
+- [~] Task 4: Description (in progress)
+
+## Status
+- Total: 4
+- Completed: 1
+- In Progress: 1
+- Pending: 2
+```
+
+Shell Commands for Task Management
+
+```bash
+# Create initial task file
+cat > tasks.md << 'EOF'
+# Tasks
+## Plan
+...
+## Tasks
+- [ ] Task 1...
+EOF
+
+# Mark task as in-progress (replace [ ] with [~])
+sed -i '' 's/- \[ \] Task 1/- [~] Task 1/' tasks.md
+
+# Mark task as complete (replace [ ] or [~] with [x])
+sed -i '' 's/- \[.\] Task 1/- [x] Task 1/' tasks.md
+
+# View current status
+cat tasks.md
+```
+
+Workflow Integration
+
+Update `GetDelegationInstructions()` in `delegation_tools.go` to include:
+
+Phase 1: PLAN
+- Analyze the request and understand the goal
+- Create `tasks.md` with plan and task breakdown
+- List all tasks with [ ] status
+
+Phase 2: TASK BREAKDOWN
+- Each task should be concrete and independent where possible
+- Mark dependencies in task descriptions
+- Identify parallel vs sequential tasks
+
+Phase 3: EXECUTE VIA DELEGATION
+- Mark task as [~] (in progress) before delegating
+- Delegate with instruction to mark [x] when complete
+- Delegate ALL independent tasks simultaneously
+- Check tasks.md status between batches
+
+Phase 4: VERIFY
+- Run `cat tasks.md` to check all tasks completed
+- Verify outputs work together
+- Report final status
+
+Sub-Agent Task Updates
+
+When delegating, include the task ID and instruct the sub-agent:
+"When complete, run: `sed -i '' 's/- \\[.\\] Task 1/- [x] Task 1/' tasks.md`"
+
+Sub-agents already have shell access, so they can update the shared task file.
+
+Benefits
+
+| Aspect | Benefit |
+|--------|---------|
+| Simplicity | No new tools, uses existing shell |
+| Visibility | tasks.md is human-readable |
+| Persistence | File persists across conversation |
+| Sub-agent updates | Shell commands work in sub-agents |
+
+File to Update
+
+**`/docs/refactor/task_agent_mode.md`**
+
+Add this section at the end of the file (after the Verification section).                                     

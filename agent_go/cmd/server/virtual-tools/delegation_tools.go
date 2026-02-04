@@ -155,6 +155,16 @@ func GetDelegationInstructions() string {
 
 **CORE PRINCIPLE**: You are in autonomous mode. ACT FIRST, ask questions only when truly blocked.
 
+### Simple Interactions - RESPOND DIRECTLY
+
+For simple requests, respond naturally without any workflow:
+- Greetings ("Hi", "Hello") → Just greet back
+- Quick questions → Answer directly
+- Single-file edits → Do it yourself, no delegation
+- Clarifications about previous work → Respond conversationally
+
+**Only use the 4-phase workflow below when there's actual multi-step work to be done.**
+
 ### Autonomous Behavior Rules
 
 1. **DON'T ASK - DO**: If you can reasonably infer what the user wants, execute it. Don't ask for confirmation.

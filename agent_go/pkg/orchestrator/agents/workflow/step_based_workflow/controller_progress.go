@@ -55,6 +55,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) loadStepProgress(ctx context.Context)
 		progress.DecisionEvaluationCounts = make(DecisionEvaluationCount)
 	}
 
+	// Backward compatibility: initialize ArchivalCounts if nil
+	if progress.ArchivalCounts == nil {
+		progress.ArchivalCounts = make(map[int]int)
+	}
+
 	return &progress, nil
 }
 
@@ -438,6 +443,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) initializeFreshProgress(ctx context.C
 		BranchSteps:              make(map[int]BranchStepProgress),
 		ValidationFailures:       make(map[string]int),
 		DecisionEvaluationCounts: make(DecisionEvaluationCount),
+		ArchivalCounts:           make(map[int]int),
 	}
 
 	if err := hcpo.saveStepProgress(ctx, freshProgress); err != nil {
@@ -698,6 +704,119 @@ func (hcpo *StepBasedWorkflowOrchestrator) deleteStepExecutionFolder(ctx context
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Deleted execution folder for step %d", stepNumber))
+	return nil
+}
+
+// getNextArchivalRunNumber returns the next archival run number for a step and increments the count
+// stepNumber is 1-based (e.g., step 1, step 2, etc.)
+// Returns the run number to use for archiving (1 for first archive, 2 for second, etc.)
+func (hcpo *StepBasedWorkflowOrchestrator) getNextArchivalRunNumber(ctx context.Context, progress *StepProgress, stepNumber int) int {
+	if progress.ArchivalCounts == nil {
+		progress.ArchivalCounts = make(map[int]int)
+	}
+	// Get current count and increment
+	currentCount := progress.ArchivalCounts[stepNumber]
+	nextRunNumber := currentCount + 1
+	progress.ArchivalCounts[stepNumber] = nextRunNumber
+	return nextRunNumber
+}
+
+// archiveStepExecutionFolder archives the execution folder for a specific step instead of deleting it
+// stepNumber is 1-based (e.g., step 1, step 2, etc.)
+// runNumber is the archive run number (1 for first archive, 2 for second, etc.)
+// Moves execution/step-{N}/ to execution/archived/run-{runNumber}/step-{N}/
+// Also archives branch folders (step-{N}-if-*), decision folders (step-{N}-decision), and sub-agent folders (step-{N}-sub-agent-*)
+func (hcpo *StepBasedWorkflowOrchestrator) archiveStepExecutionFolder(ctx context.Context, stepNumber int, runNumber int) error {
+	// Validate that run folder is set (required for building correct path)
+	if hcpo.selectedRunFolder == "" {
+		return fmt.Errorf("selectedRunFolder not set - run folder must be resolved before archiving execution folders")
+	}
+
+	// Build execution folder path: workspacePath/runs/{runFolder}/execution/step-{stepNumber}
+	baseWorkspacePath := hcpo.GetWorkspacePath()
+	runWorkspacePath := fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
+	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
+	archiveBasePath := fmt.Sprintf("%s/archived/run-%d", executionWorkspacePath, runNumber)
+
+	hcpo.GetLogger().Info(fmt.Sprintf("📦 Archiving execution folder for step %d to run-%d", stepNumber, runNumber))
+
+	// Helper function to archive a single folder
+	archiveFolder := func(folderName string) error {
+		sourcePath := fmt.Sprintf("%s/%s", executionWorkspacePath, folderName)
+		destPath := fmt.Sprintf("%s/%s", archiveBasePath, folderName)
+
+		// Check if source folder exists
+		exists, err := hcpo.CheckWorkspaceFileExists(ctx, sourcePath)
+		if err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to check if folder exists: %s: %v", folderName, err))
+			return nil // Continue with other folders
+		}
+
+		if !exists {
+			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Folder does not exist, skipping archive: %s", folderName))
+			return nil
+		}
+
+		// Move the folder to archive location
+		if err := hcpo.MoveWorkspaceFile(ctx, sourcePath, destPath); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive folder %s: %v", folderName, err))
+			return nil // Continue with other folders
+		}
+
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Archived folder: %s -> archived/run-%d/%s", folderName, runNumber, folderName))
+		return nil
+	}
+
+	// Archive main step folder
+	archiveFolder(fmt.Sprintf("step-%d", stepNumber))
+
+	// Also archive logs folder for this step
+	logsWorkspacePath := fmt.Sprintf("%s/logs", runWorkspacePath)
+	stepLogsFolderPath := fmt.Sprintf("%s/step-%d", logsWorkspacePath, stepNumber)
+	if err := hcpo.archiveLogsFolder(ctx, stepLogsFolderPath, fmt.Sprintf("step-%d", stepNumber)); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive logs folder for step %d: %v", stepNumber, err))
+	}
+
+	// Archive branch step folders, decision step folders, and sub-agent step folders
+	branchStepPrefix := fmt.Sprintf("step-%d-if-", stepNumber)
+	decisionStepFolder := fmt.Sprintf("step-%d-decision", stepNumber)
+	subAgentStepPrefix := fmt.Sprintf("step-%d-sub-agent-", stepNumber)
+
+	// List all files/folders in the execution directory
+	files, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, executionWorkspacePath)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to list execution directory to find additional folders: %v", err))
+	} else {
+		for _, file := range files {
+			if strings.HasPrefix(file, branchStepPrefix) {
+				// Archive branch step folder
+				archiveFolder(file)
+				// Also archive corresponding branch step logs folder
+				branchLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)
+				if err := hcpo.archiveLogsFolder(ctx, branchLogsFolderPath, file); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive branch step logs folder %s: %v", file, err))
+				}
+			} else if file == decisionStepFolder {
+				// Archive decision step folder
+				archiveFolder(file)
+				// Also archive corresponding decision step logs folder
+				decisionLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)
+				if err := hcpo.archiveLogsFolder(ctx, decisionLogsFolderPath, file); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive decision step logs folder %s: %v", file, err))
+				}
+			} else if strings.HasPrefix(file, subAgentStepPrefix) {
+				// Archive sub-agent step folder
+				archiveFolder(file)
+				// Also archive corresponding sub-agent step logs folder
+				subAgentLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)
+				if err := hcpo.archiveLogsFolder(ctx, subAgentLogsFolderPath, file); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive sub-agent step logs folder %s: %v", file, err))
+				}
+			}
+		}
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Archived execution folder for step %d to run-%d", stepNumber, runNumber))
 	return nil
 }
 

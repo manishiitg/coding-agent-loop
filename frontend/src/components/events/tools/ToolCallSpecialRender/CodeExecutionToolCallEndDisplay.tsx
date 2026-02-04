@@ -478,15 +478,15 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
 
     const bgColor = isError 
       ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
-      : 'bg-violet-50 dark:bg-violet-900/20 border-violet-200 dark:border-violet-800'
+      : 'bg-purple-100 dark:bg-purple-900/50 border-purple-200 dark:border-purple-800'
     
     const textColor = isError
       ? 'text-red-700 dark:text-red-300'
-      : 'text-violet-700 dark:text-violet-300'
+      : 'text-purple-700 dark:text-purple-300'
     
     const secondaryTextColor = isError
       ? 'text-red-600 dark:text-red-400'
-      : 'text-violet-600 dark:text-violet-400'
+      : 'text-purple-600 dark:text-purple-400'
 
     const statusIcon = isError ? '❌' : '✅'
     const statusText = isError ? 'Code Execution Failed' : 'Code Executed Successfully'
@@ -525,7 +525,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
           <div className="mt-2">
             <div className={`bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3`}>
               <div className="flex items-center justify-between mb-2">
-                <div className={`text-xs font-medium ${isError ? 'text-red-700 dark:text-red-300' : 'text-violet-700 dark:text-violet-300'}`}>
+                <div className={`text-xs font-medium ${isError ? 'text-red-700 dark:text-red-300' : 'text-purple-700 dark:text-purple-300'}`}>
                   {isError ? '🔨 Error Details' : '📝 Execution Output'}
                 </div>
                 <div className="text-xs text-gray-500 dark:text-gray-400">

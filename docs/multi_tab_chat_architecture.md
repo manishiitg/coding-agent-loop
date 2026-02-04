@@ -22,8 +22,9 @@ Multi-tab chat enables parallel chat sessions in both chat and workflow modes. E
 | **Workflow Chat Tabs UI** | [`frontend/src/components/workflow/WorkflowChatTabs.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/workflow/WorkflowChatTabs.tsx) | `WorkflowChatTabs` component for workflow mode |
 | **Chat Area** | [`frontend/src/components/ChatArea.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/components/ChatArea.tsx) | Tab-aware chat interface, handles session selection and tab creation |
 | **App** | [`frontend/src/App.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/App.tsx) | `handleChatSessionSelect()` - prevents duplicate tabs when selecting sessions |
-| **Event Store** | [`agent_go/internal/events/event_store.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/internal/events/event_store.go) | `EventStore`, `GetSessionEvents()`, `AddEvent()`, `GetSessionStatus()` |
-| **Session API** | [`agent_go/cmd/server/polling.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/polling.go) | `handleGetSessionEvents()`, `handleGetSessionStatus()`, `handleGetActiveSessions()` |
+| **Event Store** | [`agent_go/internal/events/event_store.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/internal/events/event_store.go) | `EventStore`, `GetEvents()`, `AddEvent()`, `InitializeSession()`, `GetSessionStatus()` |
+| **Session API** | [`agent_go/cmd/server/polling.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/polling.go) | `handleGetSessionEvents()`, `handleGetSessionStatus()`, `handleGetActiveSessions()`, `flatEventData` |
+| **Server** | [`agent_go/cmd/server/server.go`](file:///Users/mipl/ai-work/mcp-agent-builder-go/agent_go/cmd/server/server.go) | `sessionReactivationMux`, `trackActiveSession()`, `convertDBEventToPollingEvent()` |
 | **API Service** | [`frontend/src/services/api.ts`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/services/api.ts) | `getSessionEvents()`, `getSessionStatus()`, `getActiveSessions()` |
 
 ---
@@ -125,7 +126,7 @@ sequenceDiagram
     Backend-->>API: Return session_id
     
     ChatArea->>ChatArea: Start polling loop
-    loop Every 1 second
+    loop Every 500ms
         ChatArea->>API: getSessionEvents(sessionId, lastIndex)
         API->>Backend: GET /api/sessions/{sessionId}/events
         Backend-->>API: Return new events
@@ -149,7 +150,7 @@ export interface ChatTab {
   sessionId: string | null  // Chat session ID (used for API requests)
   isStreaming: boolean  // Whether this tab's execution is currently running
   isCompleted: boolean  // Whether this tab's execution has completed
-  eventMode: 'basic' | 'advanced' | 'tiny'  // Event display mode for this tab
+  eventMode: 'basic' | 'advanced' | 'tiny' | 'micro'  // Event display mode for this tab
   config: ChatTabConfig  // Tab-specific configuration (servers, LLM, etc.)
   createdAt: number  // Timestamp for ordering
   lastViewedEventCount: number  // Last event count when viewed (for badge)
@@ -282,7 +283,7 @@ useEffect(() => {
     }
   }
   
-  const interval = setInterval(pollEvents, 1000)
+  const interval = setInterval(pollEvents, 500)  // 500ms for streaming responsiveness
   return () => clearInterval(interval)
 }, [sessionId, isPolling])
 ```
@@ -378,8 +379,67 @@ Both chat and workflow tabs use the same `ChatTab` interface:
 
 - Single polling loop in `ChatArea` polls active tab's session
 - Polling stops when no active tab has a session
-- Polling interval: 1 second
+- Polling interval: 500ms (for streaming responsiveness)
 - Each tab tracks its own `lastEventIndex` for incremental polling
+
+### Backend Event Index Handling
+
+The backend properly handles `sinceIndex` filtering for both in-memory and database events:
+
+#### In-Memory Events (EventStore)
+
+```go
+// From event_store.go - GetEvents()
+// adjustedSinceIndex accounts for baseIndex (events stored in DB before reactivation)
+adjustedSinceIndex := opts.SinceIndex
+if baseIndex > 0 && opts.SinceIndex >= 0 {
+    adjustedSinceIndex = opts.SinceIndex - baseIndex
+}
+
+// Filter events first, then apply sinceIndex based on original positions
+filteredCountUpToSinceIndex := 0
+for i := 0; i <= effectiveSinceIndex && i < len(events); i++ {
+    if ShouldShowEventByMode(events[i].Type, opts.EventMode) {
+        filteredCountUpToSinceIndex++
+    }
+}
+```
+
+#### Database Events (Completed Sessions)
+
+```go
+// From polling.go - handleGetSessionEvents()
+// CRITICAL: sinceIndex is the EventIndex from AgentEvent, NOT the array position
+// After event mode filtering, array positions don't match EventIndex values
+var filteredBySinceIndex []events.Event
+maxEventIndex := -1
+for _, event := range convertedEvents {
+    eventIndex := -1
+    if event.Data != nil {
+        eventIndex = event.Data.EventIndex
+    }
+    if eventIndex > maxEventIndex {
+        maxEventIndex = eventIndex
+    }
+    // Only include events with EventIndex > sinceIndex
+    if eventIndex > opts.SinceIndex {
+        filteredBySinceIndex = append(filteredBySinceIndex, event)
+    }
+}
+```
+
+#### has_more Logic
+
+```go
+// has_more from EventStore is used directly:
+// - True for sinceIndex=0 when older events exist beyond InitialEventsLimit
+// - False for normal polling (sinceIndex > 0) - frontend continues polling anyway
+// - For backward pagination: true if more events exist after current offset
+hasMore := hasMoreFromStore
+if !hasMoreFromStore && opts.Limit > 0 {
+    hasMore = len(sessionEvents) >= opts.Limit
+}
+```
 
 ### Tab State Persistence
 
@@ -394,6 +454,69 @@ Both chat and workflow tabs use the same `ChatTab` interface:
   - Workflow tabs: Restored from localStorage, can reconnect to active sessions
   - Chat tabs: Cleared, new default tab created if needed
   - Events: Must be fetched from backend for restored tabs
+
+### Race Condition Prevention
+
+The system implements several mechanisms to prevent race conditions:
+
+#### 1. Auto-Restore vs Manual Detection Coordination
+
+A global `sessionsBeingRestored` Set prevents duplicate tab creation when auto-restore and manual session detection run simultaneously:
+
+```typescript
+// Global Set to track session IDs currently being restored
+const sessionsBeingRestored = new Set<string>()
+
+// Before creating a tab, check if session is already being restored
+if (sessionsBeingRestored.has(sessionId)) {
+  console.log(`Session ${sessionId} is already being restored, skipping`)
+  continue
+}
+
+// Mark as being restored before async tab creation
+sessionsBeingRestored.add(sessionId)
+
+try {
+  const newTabId = await createChatTab(...)
+  // ... load events and config
+} finally {
+  // Always remove from Set when done
+  sessionsBeingRestored.delete(sessionId)
+}
+```
+
+#### 2. Stop Session Safety
+
+The `stopStreaming` function only uses `activeTab?.sessionId` - never falls back to global `chatSessionId`:
+
+```typescript
+// CRITICAL: Only use active tab's sessionId - never fall back to global
+const sessionIdToStop = activeTab?.sessionId
+if (!sessionIdToStop) {
+  console.warn('[STOP] No session ID available for active tab, cannot stop session')
+  return
+}
+await agentApi.stopSession(sessionIdToStop)
+```
+
+This prevents accidentally stopping a different tab's session when multiple tabs are open.
+
+#### 3. Backend Session Reactivation Locking
+
+The backend uses a mutex to ensure atomic baseIndex calculation and EventStore initialization:
+
+```go
+// From server.go - session reactivation
+api.sessionReactivationMux.Lock()
+existingEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 1000000, 0)
+if err == nil {
+    baseIndex = len(existingEvents)
+}
+api.eventStore.InitializeSession(sessionID, baseIndex)
+api.sessionReactivationMux.Unlock()
+```
+
+This prevents concurrent requests from causing misaligned event indices.
 
 ---
 
@@ -410,6 +533,11 @@ Both chat and workflow tabs use the same `ChatTab` interface:
 | Duplicate tabs created when clicking same chat | No duplicate check before creating tab | Check `handleChatSessionSelect()` in [`App.tsx`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/App.tsx) |
 | Chat tabs persist on reload | All tabs persisted regardless of mode | Only workflow tabs should persist (see [`useChatStore.ts:1307`](file:///Users/mipl/ai-work/mcp-agent-builder-go/frontend/src/stores/useChatStore.ts#L1307)) |
 | Wrong event mode on restored tabs | Event mode not set based on agent mode | Pass `eventMode` parameter to `createChatTab()` based on `sessionStatus.agent_mode` |
+| Stop button stops wrong session | `stopSession` falls back to global sessionId | Fixed: `stopSession` only uses `activeTab?.sessionId`, returns early if unavailable |
+| Duplicate tabs during auto-restore | Auto-restore and manual detection race | Fixed: `sessionsBeingRestored` Set prevents concurrent tab creation for same session |
+| Database events have wrong sinceIndex | sinceIndex applied to filtered array position | Fixed: Backend filters by `EventIndex` from events, not array position |
+| Session reactivation has wrong event indices | baseIndex calculation not atomic | Fixed: Backend uses `sessionReactivationMux` mutex for atomic operations |
+| has_more always true during polling | Incorrect logic: `hasMore = len(events) > 0` | Fixed: `hasMore` from EventStore is used directly, only true when older events exist |
 
 ---
 
@@ -476,6 +604,9 @@ useChatStore.getState().setTabLastEventIndex(sessionId, newIndex)
 - Sharing `sessionId` between tabs (each tab should have unique session)
 - Polling without active tab's `sessionId`
 - Storing events globally (must use `tabEvents[sessionId]`)
+- Falling back to global `chatSessionId` in `stopSession` (could stop wrong session)
+- Creating tabs without checking `sessionsBeingRestored` Set first (could create duplicates)
+- Using array position for `sinceIndex` filtering on database events (must use `EventIndex`)
 
 ### Common Patterns
 
@@ -521,14 +652,52 @@ if (existingTab) {
 // When loading previous chat session
 const sessionStatus = await agentApi.getSessionStatus(sessionId)
 const agentMode = sessionStatus.agent_mode?.toLowerCase() || ''
-const eventMode = agentMode === 'orchestrator' ? 'advanced' : 'basic'
+const eventMode = agentMode === 'orchestrator' ? 'advanced' : 'tiny'
 
 const tabId = await createChatTab(
-  sessionTitle, 
-  { mode: 'chat' }, 
-  sessionId, 
+  sessionTitle,
+  { mode: 'chat' },
+  sessionId,
   eventMode
 )
+```
+
+**Pattern 6: Safe Session Restoration (Race Condition Prevention)**
+```typescript
+// Check if session is already being restored
+if (sessionsBeingRestored.has(sessionId)) {
+  console.log(`Session ${sessionId} already being restored, skipping`)
+  // Wait and check if tab was created
+  await new Promise(resolve => setTimeout(resolve, 1000))
+  const existingTab = Object.values(chatStore.chatTabs)
+    .find(tab => tab.sessionId === sessionId)
+  if (existingTab) {
+    switchTab(existingTab.tabId)
+    return
+  }
+}
+
+// Mark as being restored
+sessionsBeingRestored.add(sessionId)
+
+try {
+  const newTabId = await createChatTab(...)
+  // Load events, restore config, etc.
+} finally {
+  // Always cleanup
+  sessionsBeingRestored.delete(sessionId)
+}
+```
+
+**Pattern 7: Safe Stop Session**
+```typescript
+// CRITICAL: Only use active tab's sessionId, never fall back to global
+const sessionIdToStop = activeTab?.sessionId
+if (!sessionIdToStop) {
+  console.warn('No session ID available for active tab')
+  return
+}
+await agentApi.stopSession(sessionIdToStop)
 ```
 
 ---
@@ -547,8 +716,12 @@ Multi-tab chat uses a unified `ChatTab` interface for both chat and workflow mod
 **Key Behaviors:**
 - **Persistence**: Only workflow tabs persist across page reloads; chat tabs start fresh
 - **Duplicate Prevention**: Clicking an existing chat session switches to its tab instead of creating a duplicate
-- **Event Mode**: Automatically set based on agent mode (orchestrator → 'advanced', others → 'basic') when opening previous sessions
+- **Event Mode**: Automatically set based on agent mode (orchestrator → 'advanced', others → 'tiny') when opening previous sessions
 - **Session Isolation**: Each tab maintains independent events, polling, and state management
+- **Race Condition Prevention**: `sessionsBeingRestored` Set prevents duplicate tabs when auto-restore and manual detection run simultaneously
+- **Safe Stop**: `stopSession` only uses `activeTab?.sessionId`, never falls back to global sessionId
+- **Atomic Session Reactivation**: Backend uses `sessionReactivationMux` for atomic baseIndex calculation
+- **Correct Event Indexing**: Database event filtering uses `EventIndex` from events, not array positions
 
 ---
 ---
@@ -879,3 +1052,32 @@ When replying to a restored session:
    - `tabsWithActiveSessions` filter checks `isStreaming` directly from store
    - Includes tab if streaming OR in active sessions list
    - `pollEvents` function also checks both conditions
+
+---
+
+## Recent Fixes (2026-02)
+
+### 1. Stop Session Safety Fix
+**Issue**: `stopSession` fell back to global `chatSessionId` which could stop a different tab's session.
+
+**Solution**: `stopSession` now only uses `activeTab?.sessionId` and returns early if unavailable.
+
+### 2. Database Event sinceIndex Fix
+**Issue**: `sinceIndex` was applied to array positions after event mode filtering. After filtering, indices became relative (not absolute), causing wrong events to be returned.
+
+**Solution**: Backend now filters database events based on `EventIndex` from each event's `AgentEvent.EventIndex` field, not array position.
+
+### 3. Session Reactivation Atomicity Fix
+**Issue**: `baseIndex` calculation and `InitializeSession()` weren't atomic. Concurrent requests could cause misaligned event indices.
+
+**Solution**: Added `sessionReactivationMux` mutex to wrap the baseIndex calculation and EventStore initialization.
+
+### 4. has_more Logic Fix
+**Issue**: `hasMore = len(sessionEvents) > 0` for forward polling was incorrect. It should only be true if MORE events exist after the returned batch.
+
+**Solution**: `hasMore` from EventStore is used directly. For forward polling (sinceIndex > 0), `hasMore` is always false - frontend continues polling anyway until session completes.
+
+### 5. Auto-Restore Race Condition Fix
+**Issue**: Auto-restore and manual session detection could both try to create tabs for the same session simultaneously.
+
+**Solution**: Added global `sessionsBeingRestored` Set. Both code paths check and add to this Set before creating tabs, preventing duplicate creation.

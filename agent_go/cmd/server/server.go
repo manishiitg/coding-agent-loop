@@ -527,6 +527,10 @@ type StreamingAPI struct {
 	activeSessions    map[string]*ActiveSessionInfo
 	activeSessionsMux sync.RWMutex
 
+	// Session reactivation lock: prevents race conditions when calculating baseIndex
+	// and initializing the event store for reactivated sessions
+	sessionReactivationMux sync.Mutex
+
 	// Orchestrator objects in memory for guidance injection
 	workflowOrchestrators    map[string]orchestrator.Orchestrator
 	workflowOrchestratorsMux sync.RWMutex
@@ -584,6 +588,8 @@ type QueryRequest struct {
 	EnableBrowserAccess *bool `json:"enable_browser_access,omitempty"` // Enable/disable browser automation tool (nil = inherit default, true/false = explicit override)
 	// Selected skills to include in chat context
 	SelectedSkills []string `json:"selected_skills,omitempty"` // Array of skill folder names
+	// Delegation mode: When enabled, agent gets a 'delegate' tool to spawn sub-agents
+	EnableDelegationMode *bool `json:"enable_delegation_mode,omitempty"` // Enable/disable delegation mode (nil = inherit default, true/false = explicit override)
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -1454,6 +1460,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Initialize EventStore for reactivated session to ensure new events are stored correctly
 		// Only needed if we actually reactivated (status changed)
 		if chatSession.Status == "stopped" || chatSession.Status == "completed" || chatSession.Status == "error" {
+			// CRITICAL: Lock session reactivation to prevent race conditions
+			// Multiple concurrent requests could calculate different baseIndex values
+			// and initialize the session with misaligned event indices
+			api.sessionReactivationMux.Lock()
+
 			// Calculate existing event count to use as baseIndex for polling
 			var baseIndex int
 			existingEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 1000000, 0)
@@ -1464,6 +1475,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[SESSION REACTIVATION] Failed to count existing events for session %s: %v", sessionID, err)
 			}
 			api.eventStore.InitializeSession(sessionID, baseIndex)
+
+			api.sessionReactivationMux.Unlock()
 		}
 	}
 
@@ -2246,6 +2259,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			UseCodeExecutionMode: useCodeExecutionMode,
 			// Tool search mode: When enabled, LLM discovers tools on-demand via search_tools
 			UseToolSearchMode: useToolSearchMode,
+			// Pre-discovered tools: delegate tool is always available when delegation mode is on
+			PreDiscoveredTools: func() []string {
+				enableDelegationMode := req.EnableDelegationMode != nil && *req.EnableDelegationMode
+				if useToolSearchMode && enableDelegationMode {
+					return []string{"delegate"}
+				}
+				return nil
+			}(),
 			// Convert API keys from request to LLM format
 			APIKeys: func() *llm.ProviderAPIKeys {
 				if req.LLMConfig != nil && req.LLMConfig.APIKeys != nil {
@@ -2640,8 +2661,74 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					log.Printf("[BROWSER TOOLS] Successfully registered %d browser tools for chat mode", len(browserTools))
 				}
+
 			} else {
 				log.Printf("[WORKSPACE TOOLS] Skipping workspace tools registration (enable_workspace_access: false)")
+			}
+
+			// Register delegation tool if delegation mode is enabled
+			// Note: This is outside the workspace access block because delegation should work regardless of workspace access
+			enableDelegationMode := false
+			if req.EnableDelegationMode != nil && *req.EnableDelegationMode {
+				enableDelegationMode = true
+			}
+
+			if enableDelegationMode {
+				delegationTools := virtualtools.CreateDelegationTools()
+				delegationExecutors := virtualtools.CreateDelegationToolExecutors()
+				delegationCategory := virtualtools.GetDelegationToolCategory()
+
+				// Get underlying agent for tool registration
+				delegationAgent := llmAgent.GetUnderlyingAgent()
+				if delegationAgent == nil {
+					log.Printf("[DELEGATION TOOLS ERROR] Cannot register delegation tools - underlying agent is nil")
+				} else {
+					// Create the delegation execution function that will spawn sub-agents
+					// This function is injected into the context for the delegate tool to use
+					executeDelegatedTask := func(subCtx context.Context, instruction string) (string, error) {
+						return api.executeDelegatedTask(subCtx, req, sessionID, instruction)
+					}
+
+					for _, tool := range delegationTools {
+						if tool.Function == nil {
+							continue
+						}
+						toolName := tool.Function.Name
+						if executor, exists := delegationExecutors[toolName]; exists {
+							var params map[string]interface{}
+							if tool.Function.Parameters != nil {
+								paramsBytes, err := json.Marshal(tool.Function.Parameters)
+								if err == nil {
+									json.Unmarshal(paramsBytes, &params)
+								}
+							}
+							if params == nil {
+								log.Printf("[DELEGATION TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
+								continue
+							}
+
+							// Wrap the executor to inject the delegation execution function
+							wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
+								// Inject the execution function into context
+								ctx = context.WithValue(ctx, virtualtools.ExecuteDelegatedTaskKey, virtualtools.ExecuteDelegatedTaskFunc(executeDelegatedTask))
+								return executor(ctx, args)
+							}
+
+							if err := delegationAgent.RegisterCustomTool(
+							toolName,
+							tool.Function.Description,
+							params,
+							wrappedExecutor,
+							delegationCategory,
+						); err != nil {
+							log.Printf("[DELEGATION TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
+							continue
+						}
+							log.Printf("[DELEGATION TOOLS] Registered delegation tool: %s (category: %s)", toolName, delegationCategory)
+						}
+					}
+					log.Printf("[DELEGATION TOOLS] Successfully registered delegation tools for chat mode")
+				}
 			}
 		}
 
@@ -2727,6 +2814,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					underlyingAgent.AppendSystemPrompt(skillPrompt)
 					log.Printf("[SKILLS] Added skill instructions to system prompt (%d skills)", len(req.SelectedSkills))
 				}
+			}
+
+			// Add delegation instructions if delegation mode is enabled
+			if req.EnableDelegationMode != nil && *req.EnableDelegationMode {
+				underlyingAgent.AppendSystemPrompt(virtualtools.GetDelegationInstructions())
+				log.Printf("[DELEGATION] Added delegation instructions to system prompt")
 			}
 		}
 
@@ -3602,6 +3695,309 @@ func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
 		// window for page refresh restoration. The cleanupInactiveSessions goroutine will
 		// eventually remove old sessions.
 	}()
+}
+
+// executeDelegatedTask executes a delegated task via a sub-agent
+// This method creates a new agent with the same configuration as the parent
+// and runs it with the given instruction as the prompt
+func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq QueryRequest, sessionID string, instruction string) (string, error) {
+	log.Printf("[DELEGATION] Creating sub-agent for delegated task in session %s", sessionID)
+
+	// Check delegation depth from context
+	currentDepth := 0
+	if depth, ok := ctx.Value(virtualtools.DelegationDepthKey).(int); ok {
+		currentDepth = depth
+	}
+
+	if currentDepth >= virtualtools.MaxDelegationDepth {
+		return "", fmt.Errorf("maximum delegation depth (%d) reached", virtualtools.MaxDelegationDepth)
+	}
+
+	// Generate a unique delegation ID for tracking
+	delegationID := fmt.Sprintf("delegation-%d-%d", currentDepth, time.Now().UnixNano())
+
+	// Emit delegation_start event
+	api.emitDelegationStartEvent(sessionID, delegationID, currentDepth, instruction)
+
+	// Build sub-agent config from parent request
+	// Get provider and model from parent request
+	provider := llm.Provider(parentReq.Provider)
+	if provider == "" {
+		provider = llm.Provider("anthropic")
+	}
+	modelID := parentReq.ModelID
+	if modelID == "" {
+		modelID = "claude-sonnet-4-20250514"
+	}
+
+	// Build server name from enabled servers
+	var serverName string
+	if len(parentReq.EnabledServers) > 0 {
+		serverName = strings.Join(parentReq.EnabledServers, ",")
+	} else if len(parentReq.Servers) > 0 {
+		serverName = strings.Join(parentReq.Servers, ",")
+	}
+
+	// Convert API keys from parent request to LLM format
+	var apiKeys *llm.ProviderAPIKeys
+	if parentReq.LLMConfig != nil && parentReq.LLMConfig.APIKeys != nil {
+		apiKeys = &llm.ProviderAPIKeys{
+			OpenRouter: parentReq.LLMConfig.APIKeys.OpenRouter,
+			OpenAI:     parentReq.LLMConfig.APIKeys.OpenAI,
+			Anthropic:  parentReq.LLMConfig.APIKeys.Anthropic,
+			Vertex:     parentReq.LLMConfig.APIKeys.Vertex,
+		}
+		if parentReq.LLMConfig.APIKeys.Bedrock != nil {
+			apiKeys.Bedrock = &llm.BedrockConfig{
+				Region: parentReq.LLMConfig.APIKeys.Bedrock.Region,
+			}
+		}
+		if parentReq.LLMConfig.APIKeys.Azure != nil {
+			apiKeys.Azure = &llm.AzureAPIConfig{
+				Endpoint:   parentReq.LLMConfig.APIKeys.Azure.Endpoint,
+				APIKey:     parentReq.LLMConfig.APIKeys.Azure.APIKey,
+				APIVersion: parentReq.LLMConfig.APIKeys.Azure.APIVersion,
+				Region:     parentReq.LLMConfig.APIKeys.Azure.Region,
+			}
+		}
+	}
+
+	// Create sub-agent config based on parent request
+	subAgentConfig := agent.LLMAgentConfig{
+		Name:                 fmt.Sprintf("%s-sub-%d-%d", sessionID, currentDepth, time.Now().UnixNano()),
+		ServerName:           serverName,
+		ConfigPath:           api.mcpConfigPath,
+		Provider:             provider,
+		ModelID:              modelID,
+		Temperature:          0.7,
+		MaxTurns:             30,
+		ToolChoice:           "auto",
+		StreamingChunkSize:   1,
+		UseCodeExecutionMode: parentReq.UseCodeExecutionMode,
+		UseToolSearchMode:    parentReq.UseToolSearchMode,
+		APIKeys:              apiKeys,
+	}
+
+	// Create sub-agent using the wrapper (same as parent agent creation)
+	subAgent, err := agent.NewLLMAgentWrapper(ctx, subAgentConfig, nil, api.logger)
+	if err != nil {
+		api.emitDelegationEndEvent(sessionID, delegationID, currentDepth, "", err.Error())
+		return "", fmt.Errorf("failed to create sub-agent: %w", err)
+	}
+
+	// Add event observers to sub-agent so its events appear in the UI
+	// Events from sub-agent will be tagged with Component field for identification
+	if underlyingAgent := subAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+		// Create in-memory event observer for real-time updates
+		subAgentObserver := events.NewDelegationEventObserver(api.eventStore, sessionID, currentDepth, delegationID, api.logger)
+		underlyingAgent.AddEventListener(subAgentObserver)
+
+		// Create database event observer to store events in database
+		dbEventObserver := database.NewEventDatabaseObserver(api.chatDB)
+		underlyingAgent.AddEventListener(dbEventObserver)
+		log.Printf("[DELEGATION] Added event observers for sub-agent at depth %d", currentDepth)
+	}
+
+	// Register the same workspace tools as parent (if workspace access is enabled)
+	if underlyingAgent := subAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+		// Check workspace access from parent request
+		enableWorkspaceAccess := true
+		if parentReq.EnableWorkspaceAccess != nil {
+			enableWorkspaceAccess = *parentReq.EnableWorkspaceAccess
+		}
+		if len(parentReq.SelectedSkills) > 0 {
+			enableWorkspaceAccess = true
+		}
+
+		if enableWorkspaceAccess {
+			workspaceTools := virtualtools.CreateWorkspaceTools()
+			workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
+			_, _, toolCategories := createCustomTools(true)
+
+			// Check for skill-creator
+			hasSkillCreator := false
+			for _, s := range parentReq.SelectedSkills {
+				if s == "skill-creator" {
+					hasSkillCreator = true
+					break
+				}
+			}
+
+			// Apply folder guards
+			if hasSkillCreator {
+				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, "skills/custom/")
+			} else {
+				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors)
+			}
+
+			if len(parentReq.SelectedSkills) > 0 {
+				workspaceExecutors = wrapExecutorsWithSkillFolderGuard(workspaceExecutors, parentReq.SelectedSkills)
+			}
+
+			// Register workspace tools
+			for _, tool := range workspaceTools {
+				if tool.Function == nil {
+					continue
+				}
+				toolName := tool.Function.Name
+				if executor, exists := workspaceExecutors[toolName]; exists {
+					enhancedDescription := enhanceToolDescriptionForChatMode(toolName, tool.Function.Description)
+
+					var params map[string]interface{}
+					if tool.Function.Parameters != nil {
+						paramsBytes, err := json.Marshal(tool.Function.Parameters)
+						if err == nil {
+							json.Unmarshal(paramsBytes, &params)
+						}
+					}
+					if params == nil {
+						continue
+					}
+
+					toolCategory := toolCategories[toolName]
+					if toolCategory == "" {
+						continue
+					}
+
+					if err := underlyingAgent.RegisterCustomTool(
+						toolName,
+						enhancedDescription,
+						params,
+						executor,
+						toolCategory,
+					); err != nil {
+						log.Printf("[DELEGATION] Warning: Failed to register tool %s for sub-agent: %v", toolName, err)
+					}
+				}
+			}
+
+			// Register browser tools if enabled
+			if parentReq.EnableBrowserAccess != nil && *parentReq.EnableBrowserAccess {
+				browserTools := virtualtools.CreateWorkspaceBrowserTools()
+				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors()
+				browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
+
+				if hasSkillCreator {
+					browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, "skills/custom/")
+				} else {
+					browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors)
+				}
+
+				for _, tool := range browserTools {
+					if tool.Function == nil {
+						continue
+					}
+					toolName := tool.Function.Name
+					if executor, exists := browserExecutors[toolName]; exists {
+						var params map[string]interface{}
+						if tool.Function.Parameters != nil {
+							paramsBytes, err := json.Marshal(tool.Function.Parameters)
+							if err == nil {
+								json.Unmarshal(paramsBytes, &params)
+							}
+						}
+						if params == nil {
+							continue
+						}
+
+						if err := underlyingAgent.RegisterCustomTool(
+							toolName,
+							tool.Function.Description,
+							params,
+							executor,
+							browserCategory,
+						); err != nil {
+							log.Printf("[DELEGATION] Warning: Failed to register browser tool %s for sub-agent: %v", toolName, err)
+						}
+					}
+				}
+			}
+
+			// NOTE: Sub-agents do NOT get the delegate tool themselves (v1 design choice)
+			// This prevents runaway delegation chains
+		}
+	}
+
+	log.Printf("[DELEGATION] Sub-agent created, executing instruction at depth %d", currentDepth)
+
+	// Run the sub-agent with the instruction
+	startTime := time.Now()
+	result, err := subAgent.Invoke(ctx, instruction)
+	duration := time.Since(startTime)
+
+	if err != nil {
+		api.emitDelegationEndEvent(sessionID, delegationID, currentDepth, "", err.Error())
+		return "", fmt.Errorf("sub-agent execution failed: %w", err)
+	}
+
+	// Emit delegation_end event with success
+	api.emitDelegationEndEvent(sessionID, delegationID, currentDepth, fmt.Sprintf("Completed in %s", duration), "")
+
+	log.Printf("[DELEGATION] Sub-agent completed at depth %d in %s", currentDepth, duration)
+	return result, nil
+}
+
+// emitDelegationStartEvent emits an event when delegation starts
+// This event serves as the parent for all sub-agent events (via parent_id linking)
+func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string, depth int, instruction string) {
+	now := time.Now()
+	eventID := fmt.Sprintf("%s_delegation_start_%s", sessionID, delegationID)
+	eventData := &events.DelegationStartEventData{
+		DelegationID: delegationID,
+		Depth:        depth,
+		Instruction:  instruction,
+		Timestamp:    now.Format(time.RFC3339),
+	}
+	event := events.Event{
+		ID:        eventID,
+		Type:      "delegation_start",
+		Timestamp: now,
+		SessionID: sessionID,
+		Data: &unifiedevents.AgentEvent{
+			Type:           unifiedevents.EventType("delegation_start"),
+			Timestamp:      now,
+			HierarchyLevel: depth,
+			SessionID:      sessionID,
+			Component:      fmt.Sprintf("delegation-%d", depth),
+			CorrelationID:  delegationID, // Links all delegation events together
+			Data:           eventData,
+		},
+	}
+	api.eventStore.AddEvent(sessionID, event)
+	log.Printf("[DELEGATION] Emitted delegation_start event %s for %s at depth %d", eventID, delegationID, depth)
+}
+
+// emitDelegationEndEvent emits an event when delegation ends
+// This event has the same correlation_id as delegation_start for grouping
+func (api *StreamingAPI) emitDelegationEndEvent(sessionID, delegationID string, depth int, result, errorMsg string) {
+	now := time.Now()
+	delegationStartEventID := fmt.Sprintf("%s_delegation_start_%s", sessionID, delegationID)
+	eventData := &events.DelegationEndEventData{
+		DelegationID: delegationID,
+		Depth:        depth,
+		Result:       result,
+		Error:        errorMsg,
+		Success:      errorMsg == "",
+		Timestamp:    now.Format(time.RFC3339),
+	}
+	event := events.Event{
+		ID:        fmt.Sprintf("%s_delegation_end_%s", sessionID, delegationID),
+		Type:      "delegation_end",
+		Timestamp: now,
+		SessionID: sessionID,
+		Data: &unifiedevents.AgentEvent{
+			Type:           unifiedevents.EventType("delegation_end"),
+			Timestamp:      now,
+			HierarchyLevel: depth,
+			SessionID:      sessionID,
+			Component:      fmt.Sprintf("delegation-%d", depth),
+			CorrelationID:  delegationID,           // Links all delegation events together
+			ParentID:       delegationStartEventID, // Makes this a child of delegation_start (for tree display)
+			Data:           eventData,
+		},
+	}
+	api.eventStore.AddEvent(sessionID, event)
+	log.Printf("[DELEGATION] Emitted delegation_end event for %s at depth %d (success: %v)", delegationID, depth, errorMsg == "")
 }
 
 // getActiveSession retrieves an active session by ID

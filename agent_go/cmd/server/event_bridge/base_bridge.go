@@ -17,6 +17,25 @@ type EventBridge interface {
 	HandleEvent(ctx context.Context, event *pkgevents.AgentEvent) error
 }
 
+// SKIP_EVENTS contains event types that should NOT be emitted (no UI component, pure waste)
+var SKIP_EVENTS = map[string]bool{
+	// Tool extras - no UI component
+	"tool_execution":     true,
+	"tool_output":        true,
+	"tool_response":      true,
+	"tool_call_progress": true,
+	// Cache events - all 9 (only 2 had UI, disabling all for now)
+	"cache_event":               true,
+	"comprehensive_cache_event": true,
+	"cache_hit":                 true,
+	"cache_miss":                true,
+	"cache_write":               true,
+	"cache_expired":             true,
+	"cache_cleanup":             true,
+	"cache_error":               true,
+	"cache_operation_start":     true,
+}
+
 // BaseEventBridge contains the common functionality for all event bridges
 type BaseEventBridge struct {
 	EventStore *events.EventStore
@@ -28,6 +47,10 @@ type BaseEventBridge struct {
 
 // HandleEvent processes events and converts them to server events
 func (b *BaseEventBridge) HandleEvent(ctx context.Context, event *pkgevents.AgentEvent) error {
+	// Skip events that have no UI component (reduces bandwidth and storage)
+	if SKIP_EVENTS[string(event.Type)] {
+		return nil
+	}
 
 	// Create server event with typed AgentEvent data directly - no conversion needed!
 	serverEvent := events.Event{

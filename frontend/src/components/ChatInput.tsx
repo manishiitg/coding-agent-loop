@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
-import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -42,7 +42,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Store subscriptions
   const {
     agentMode,
-    setWorkspaceMinimized
+    setWorkspaceMinimized,
+    enableDelegationMode
   } = useAppStore()
   
   // Use selectors to subscribe only to specific values, reducing re-renders
@@ -703,7 +704,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         return
       }
     }
-    
+
+    // Handle Escape key to stop streaming (when no dialogs are open)
+    if (e.key === 'Escape' && isStreaming) {
+      e.preventDefault()
+      onStopStreaming()
+      return
+    }
+
     // Handle normal Enter to submit
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       e.preventDefault()
@@ -1078,6 +1086,24 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       case 'resume':
         openDialog('resume')
         break
+      case 'spawn': {
+        // Enable sub-agent spawning mode globally (persisted)
+        useAppStore.getState().setEnableDelegationMode(true)
+        addToast(
+          'Sub-agent spawning enabled - Agent can now delegate tasks to sub-agents',
+          'success'
+        )
+        break
+      }
+      case 'nospawn': {
+        // Disable sub-agent spawning mode globally (persisted)
+        useAppStore.getState().setEnableDelegationMode(false)
+        addToast(
+          'Sub-agent spawning disabled',
+          'success'
+        )
+        break
+      }
       default:
         // For unknown commands, insert into text (fallback)
         if (textareaRef.current) {
@@ -1096,7 +1122,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     // Focus back to textarea
     setTimeout(() => textareaRef.current?.focus(), 0)
-  }, [inputText, slashPosition, commandSearchQuery, activeTabId, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, tabConfig?.selectedSkills, setTabConfig, onSubmit, openDialog])
+  }, [inputText, slashPosition, commandSearchQuery, activeTabId, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, tabConfig?.selectedSkills, tabConfig?.enableDelegationMode, setTabConfig, onSubmit, openDialog, addToast])
 
   const handleFileSelect = useCallback((file: PlannerFile) => {
     if (!textareaRef.current || atPosition === -1 || !activeTabId) return
@@ -1403,29 +1429,44 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       </TooltipContent>
                     </Tooltip>
                   ) : (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button 
-                          type="submit" 
-                          disabled={submitButtonDisabled}
-                          size="sm"
-                          className="px-3"
-                          data-testid="chat-submit-button"
-                        >
-                          <Send className="w-4 h-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>
-                          {!inputText?.trim()
-                            ? 'Type a message to send'
-                            : !tabSessionId 
-                              ? 'Session not ready yet' 
-                              : 'Send message'
-                          }
-                        </p>
-                      </TooltipContent>
-                    </Tooltip>
+                    <div className="flex items-center gap-1">
+                      {/* Delegation mode indicator */}
+                      {enableDelegationMode && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="p-1.5 text-purple-500 dark:text-purple-400 opacity-60 hover:opacity-100 transition-opacity cursor-default">
+                              <GitBranch className="w-3.5 h-3.5" />
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Sub-agent delegation enabled (/nospawn to disable)</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="submit"
+                            disabled={submitButtonDisabled}
+                            size="sm"
+                            className="px-3"
+                            data-testid="chat-submit-button"
+                          >
+                            <Send className="w-4 h-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>
+                            {!inputText?.trim()
+                              ? 'Type a message to send'
+                              : !tabSessionId
+                                ? 'Session not ready yet'
+                                : 'Send message'
+                            }
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
                   )}
                 </div>
               )}

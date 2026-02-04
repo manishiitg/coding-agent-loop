@@ -3380,19 +3380,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Cleaned up progress: removed step %d and all subsequent steps from completed list", targetStepIndex+1))
 					}
 
-					// Delete execution folders for target step and all subsequent steps
-					// This ensures old execution artifacts don't interfere with re-execution
-					cleanedCount := 0
+					// Archive execution folders for target step and all subsequent steps
+					// This preserves execution artifacts for debugging while allowing clean re-execution
+					runNumber := hcpo.getNextArchivalRunNumber(ctx, progress, targetStepIndex+1)
+					archivedCount := 0
 					for stepNum := targetStepIndex + 1; stepNum <= len(breakdownSteps); stepNum++ {
-						if err := hcpo.deleteStepExecutionFolder(ctx, stepNum); err != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete execution folder for step %d: %v (continuing)", stepNum, err))
+						if err := hcpo.archiveStepExecutionFolder(ctx, stepNum, runNumber); err != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive execution folder for step %d: %v (continuing)", stepNum, err))
 						} else {
-							cleanedCount++
-							hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned up execution folder for step %d", stepNum))
+							archivedCount++
+							hcpo.GetLogger().Info(fmt.Sprintf("📦 Archived execution folder for step %d to run-%d", stepNum, runNumber))
 						}
 					}
-					if cleanedCount > 0 {
-						hcpo.GetLogger().Info(fmt.Sprintf("✅ Cleaned up execution folders for %d steps (step-%d to step-%d)", cleanedCount, targetStepIndex+1, len(breakdownSteps)))
+					if archivedCount > 0 {
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ Archived execution folders for %d steps (step-%d to step-%d) to run-%d", archivedCount, targetStepIndex+1, len(breakdownSteps), runNumber))
+					}
+					// Save updated archival counts
+					if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save archival counts: %v", err))
 					}
 
 					// Update startFromStep to allow execution from target step
@@ -3476,19 +3481,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Cleaned up progress: removed step %d and all subsequent steps from completed list", targetStepIndex+1))
 					}
 
-					// Delete execution folders for target step and all subsequent steps
-					// This ensures old execution artifacts don't interfere with re-execution
-					cleanedCount := 0
+					// Archive execution folders for target step and all subsequent steps
+					// This preserves execution artifacts for debugging while allowing clean re-execution
+					runNumber := hcpo.getNextArchivalRunNumber(ctx, progress, targetStepIndex+1)
+					archivedCount := 0
 					for stepNum := targetStepIndex + 1; stepNum <= len(breakdownSteps); stepNum++ {
-						if err := hcpo.deleteStepExecutionFolder(ctx, stepNum); err != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete execution folder for step %d: %v (continuing)", stepNum, err))
+						if err := hcpo.archiveStepExecutionFolder(ctx, stepNum, runNumber); err != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive execution folder for step %d: %v (continuing)", stepNum, err))
 						} else {
-							cleanedCount++
-							hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaned up execution folder for step %d", stepNum))
+							archivedCount++
+							hcpo.GetLogger().Info(fmt.Sprintf("📦 Archived execution folder for step %d to run-%d", stepNum, runNumber))
 						}
 					}
-					if cleanedCount > 0 {
-						hcpo.GetLogger().Info(fmt.Sprintf("✅ Cleaned up execution folders for %d steps (step-%d to step-%d)", cleanedCount, targetStepIndex+1, len(breakdownSteps)))
+					if archivedCount > 0 {
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ Archived execution folders for %d steps (step-%d to step-%d) to run-%d", archivedCount, targetStepIndex+1, len(breakdownSteps), runNumber))
+					}
+					// Save updated archival counts
+					if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save archival counts: %v", err))
 					}
 
 					// Update startFromStep to allow execution from target step
@@ -3564,11 +3574,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup progress from step %d: %v (continuing anyway)", targetStepIndex+1, err))
 					}
 
-					// Delete execution folders for target step and all subsequent steps
+					// Archive execution folders for target step and all subsequent steps
+					// This preserves execution artifacts for debugging while allowing clean re-execution
+					runNumber := hcpo.getNextArchivalRunNumber(ctx, progress, targetStepIndex+1)
 					for stepNum := targetStepIndex + 1; stepNum <= len(breakdownSteps); stepNum++ {
-						if err := hcpo.deleteStepExecutionFolder(ctx, stepNum); err != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete execution folder for step %d: %v (continuing)", stepNum, err))
+						if err := hcpo.archiveStepExecutionFolder(ctx, stepNum, runNumber); err != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive execution folder for step %d: %v (continuing)", stepNum, err))
 						}
+					}
+					// Save updated archival counts
+					if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save archival counts: %v", err))
 					}
 
 					// Update startFromStep to allow execution from target step

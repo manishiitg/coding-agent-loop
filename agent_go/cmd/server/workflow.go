@@ -3653,23 +3653,24 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 			}
 
 			stepsLogs[stepId] = map[string]interface{}{
-				"step_id":          stepId,
-				"original_id":      originalId,
-				"type":             stepType,
-				"title":            title,
-				"description":      desc,
-				"success_criteria": successCriteria,
-				"context_output":   contextOutput,
-				"is_completed":     false,
-				"output_content":   nil, // Will be populated if output file exists
-				"artifacts":        []map[string]interface{}{},
-				"validations":      []map[string]interface{}{},
-				"executions":       []map[string]interface{}{},
-				"decisions":        []map[string]interface{}{},
-				"orchestration":    []map[string]interface{}{},
-				"conditionals":     []map[string]interface{}{},
-				"learnings":        []map[string]interface{}{},
-				"archived_logs":    []map[string]interface{}{}, // Archived logs from previous runs
+				"step_id":             stepId,
+				"original_id":         originalId,
+				"type":                stepType,
+				"title":               title,
+				"description":         desc,
+				"success_criteria":    successCriteria,
+				"context_output":      contextOutput,
+				"is_completed":        false,
+				"output_content":      nil, // Will be populated if output file exists
+				"artifacts":           []map[string]interface{}{},
+				"validations":         []map[string]interface{}{},
+				"executions":          []map[string]interface{}{},
+				"decisions":           []map[string]interface{}{},
+				"orchestration":       []map[string]interface{}{},
+				"conditionals":        []map[string]interface{}{},
+				"learnings":           []map[string]interface{}{},
+				"archived_logs":       []map[string]interface{}{}, // Archived logs from previous runs
+				"archived_executions": []map[string]interface{}{}, // Archived execution outputs from decision step routing
 			}
 		}
 		return stepsLogs[stepId]
@@ -4141,6 +4142,98 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 								"is_json":   isJson,
 							}
 						}
+					}
+				}
+			} else if isDir && name == "archived" {
+				// Process archived execution folders (execution/archived/run-{N}/step-{N}/)
+				// Each run folder contains archived step folders from decision step routing
+				for _, runFolder := range item.Children {
+					runFolderName := filepath.Base(runFolder.FilePath)
+					runFolderIsDir := runFolder.IsDirectory || runFolder.Type == "folder"
+
+					if !runFolderIsDir || !strings.HasPrefix(runFolderName, "run-") {
+						continue
+					}
+
+					// Extract run number from folder name (e.g., "run-1" -> "1")
+					runNumber := strings.TrimPrefix(runFolderName, "run-")
+
+					// Process each archived step folder within this run
+					for _, archivedStepFolder := range runFolder.Children {
+						archivedStepName := filepath.Base(archivedStepFolder.FilePath)
+						archivedStepIsDir := archivedStepFolder.IsDirectory || archivedStepFolder.Type == "folder"
+
+						if !archivedStepIsDir || !strings.HasPrefix(archivedStepName, "step-") {
+							continue
+						}
+
+						// Get the step entry for this archived step
+						stepId := archivedStepName
+						entry := getStepEntry(stepId)
+
+						// Initialize archived_executions array if not exists
+						archivedExecutions, _ := entry["archived_executions"].([]map[string]interface{})
+						if archivedExecutions == nil {
+							archivedExecutions = []map[string]interface{}{}
+						}
+
+						// Create archive entry for this run
+						archiveEntry := map[string]interface{}{
+							"run_number": runNumber,
+							"artifacts":  []map[string]interface{}{},
+						}
+
+						expectedOutputsStr, _ := entry["context_output"].(string)
+						expectedOutputs := strings.Split(expectedOutputsStr, ",")
+
+						// Process files in the archived step folder
+						for _, archivedFile := range archivedStepFolder.Children {
+							archivedFileName := filepath.Base(archivedFile.FilePath)
+							archivedFileIsDir := archivedFile.IsDirectory || archivedFile.Type == "folder"
+
+							if archivedFileIsDir {
+								continue
+							}
+
+							// Check if this file matches expected output
+							isMatched := false
+							for _, expected := range expectedOutputs {
+								if expected != "" && archivedFileName == expected {
+									isMatched = true
+									break
+								}
+							}
+
+							if isMatched {
+								// This is the output content for this archived run
+								content, exists, _ := readFileFromWorkspace(r.Context(), archivedFile.FilePath)
+								if exists {
+									var outputData interface{}
+									isJson := false
+									if err := json.Unmarshal([]byte(content), &outputData); err == nil {
+										isJson = true
+									} else {
+										outputData = content
+									}
+									archiveEntry["output_content"] = map[string]interface{}{
+										"file_path": archivedFile.FilePath,
+										"content":   outputData,
+										"is_json":   isJson,
+									}
+								}
+							} else {
+								// It's an artifact for this archived run
+								artifacts, _ := archiveEntry["artifacts"].([]map[string]interface{})
+								artifacts = append(artifacts, map[string]interface{}{
+									"file_name": archivedFileName,
+									"file_path": archivedFile.FilePath,
+								})
+								archiveEntry["artifacts"] = artifacts
+							}
+						}
+
+						archivedExecutions = append(archivedExecutions, archiveEntry)
+						entry["archived_executions"] = archivedExecutions
 					}
 				}
 			} else if isDir {

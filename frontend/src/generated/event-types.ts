@@ -274,7 +274,10 @@ export type EventTypeString =
   | 'todo_task_item_created'
   | 'todo_task_item_updated'
   | 'todo_task_item_completed'
-  | 'todo_task_step_completed';
+  | 'todo_task_step_completed'
+  // Delegation Events
+  | 'delegation_start'
+  | 'delegation_end';
 
 // =============================================================================
 // EVENT TYPE TO DATA TYPE MAPPING
@@ -396,6 +399,9 @@ export interface EventTypeToDataMap {
   'todo_task_item_updated': TodoTaskItemUpdatedEvent;
   'todo_task_item_completed': TodoTaskItemCompletedEvent;
   'todo_task_step_completed': TodoTaskStepCompletedEvent;
+  // Delegation Events
+  'delegation_start': DelegationStartEvent;
+  'delegation_end': DelegationEndEvent;
 }
 
 // Todo Task event data types (not in generated schema)
@@ -527,6 +533,47 @@ export interface TodoTaskStepCompletedEvent {
   completed_count?: number;
   completion_reason?: string;
   next_step_id?: string;
+}
+
+// Delegation event data types (not in generated schema)
+export interface DelegationStartEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  delegation_id?: string;
+  depth?: number;
+  instruction?: string;
+}
+
+export interface DelegationEndEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  delegation_id?: string;
+  depth?: number;
+  result?: string;
+  error?: string;
+  duration?: string;
 }
 
 // Workflow event data types (not in generated schema)

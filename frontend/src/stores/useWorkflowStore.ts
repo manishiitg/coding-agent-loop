@@ -123,6 +123,7 @@ interface WorkflowStore {
   // UI state
   activePhase: string | null // Currently running phase
   showChatArea: boolean
+  chatAreaExpanded: boolean
   layoutDirection: LayoutDirection // Canvas layout direction ('LR' = horizontal, 'TB' = vertical)
 
   // Multi-tab chat state
@@ -208,6 +209,7 @@ interface WorkflowStore {
   // UI
   setActivePhase: (phase: string | null) => void
   setShowChatArea: (show: boolean) => void
+  setChatAreaExpanded: (expanded: boolean) => void
   setLayoutDirection: (direction: LayoutDirection) => void
 
   // Workflow chat tabs
@@ -464,6 +466,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // UI state
       activePhase: null,
       showChatArea: false,
+      chatAreaExpanded: false,
       // Layout direction (persists across page refreshes via localStorage)
       layoutDirection: (() => {
         try {
@@ -1651,6 +1654,10 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       setShowChatArea: (show: boolean) => {
         set({ showChatArea: show })
+      },
+
+      setChatAreaExpanded: (expanded: boolean) => {
+        set({ chatAreaExpanded: expanded })
       },
 
       setLayoutDirection: (direction: LayoutDirection) => {

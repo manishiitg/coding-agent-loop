@@ -8,20 +8,36 @@ import (
 	"github.com/manishiitg/mcpagent/events"
 )
 
+// NEVER_SHOW_EVENTS contains event types that should NEVER be shown in any mode
+// These are filtered out at the polling layer, regardless of source (memory or database)
+// This catches events that were stored before SKIP_EVENTS was added to the event bridge
+var NEVER_SHOW_EVENTS = map[string]bool{
+	// Tool extras - no UI component
+	"tool_execution":     true,
+	"tool_output":        true,
+	"tool_response":      true,
+	"tool_call_progress": true,
+	// Cache events - all 9 (no UI needed)
+	"cache_event":               true,
+	"comprehensive_cache_event": true,
+	"cache_hit":                 true,
+	"cache_miss":                true,
+	"cache_write":               true,
+	"cache_expired":             true,
+	"cache_cleanup":             true,
+	"cache_error":               true,
+	"cache_operation_start":     true,
+}
+
 // ADVANCED_MODE_EVENTS contains event types that are hidden in basic mode
 // These events are only shown in advanced mode
-// Note: workspace_file_operation is NOT in this list because it needs to be sent to frontend
-// for file highlighting functionality, but it will be filtered from display in basic/tiny mode
-// Note: Workflow execution events (step_progress_updated) are NOT in this list because they are
-// required for React Flow canvas node highlighting and status updates. They must always be sent
-// to frontend for workflow mode to function correctly, even if filtered from display in basic/tiny mode.
+// Note: step_progress_updated is NOT in this list because it's required for React Flow canvas
+// node highlighting - it must always be sent to frontend for workflow mode to function correctly.
 var ADVANCED_MODE_EVENTS = map[string]bool{
 	"llm_generation_start":      true,
 	"llm_generation_with_retry": true,
 	"conversation_start":        true,
 	"conversation_turn":         true,
-	"cache_event":               true,
-	"comprehensive_cache_event": true,
 }
 
 // TINY_MODE_ADDITIONAL_EVENTS contains additional event types hidden in tiny mode (beyond basic mode)
@@ -45,6 +61,10 @@ const InitialEventsLimit = 50
 // ShouldShowEventByMode checks if an event should be shown based on event mode
 func ShouldShowEventByMode(eventType string, eventMode string) bool {
 	if eventType == "" {
+		return false
+	}
+	// First check: NEVER show these events in any mode
+	if NEVER_SHOW_EVENTS[eventType] {
 		return false
 	}
 	if eventMode == "advanced" {
@@ -570,4 +590,30 @@ func (es *EventStore) AddSummarizationErrorEvent(sessionID string, errorMessage 
 		},
 	}
 	es.AddEvent(sessionID, event)
+}
+
+// DelegationStartEventData implements events.EventData for delegation_start
+type DelegationStartEventData struct {
+	DelegationID string `json:"delegation_id"`
+	Depth        int    `json:"depth"`
+	Instruction  string `json:"instruction"`
+	Timestamp    string `json:"timestamp"`
+}
+
+func (d *DelegationStartEventData) GetEventType() events.EventType {
+	return events.EventType("delegation_start")
+}
+
+// DelegationEndEventData implements events.EventData for delegation_end
+type DelegationEndEventData struct {
+	DelegationID string `json:"delegation_id"`
+	Depth        int    `json:"depth"`
+	Result       string `json:"result"`
+	Error        string `json:"error,omitempty"`
+	Success      bool   `json:"success"`
+	Timestamp    string `json:"timestamp"`
+}
+
+func (d *DelegationEndEventData) GetEventType() events.EventType {
+	return events.EventType("delegation_end")
 }

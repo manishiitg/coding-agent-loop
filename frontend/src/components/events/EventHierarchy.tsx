@@ -85,6 +85,16 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     const HIDDEN_STREAMING_EVENTS = ['streaming_start', 'streaming_chunk', 'streaming_end'];
     allEvents = allEvents.filter(event => !HIDDEN_STREAMING_EVENTS.includes(event.type));
 
+    // Filter out tool_call events for "delegate" tool - we show delegation_start/delegation_end instead
+    const DELEGATE_TOOL_EVENTS = ['tool_call_start', 'tool_call_end', 'tool_call_error'];
+    allEvents = allEvents.filter(event => {
+      if (!DELEGATE_TOOL_EVENTS.includes(event.type)) return true;
+      // Check if this is a delegate tool call
+      const agentEvent = event.data as { data?: { tool_name?: string }; tool_name?: string } | undefined;
+      const toolName = agentEvent?.data?.tool_name || agentEvent?.tool_name;
+      return toolName !== 'delegate';
+    });
+
     // Filter out "Total Token Usage" and "Context Offloading" events in tiny/micro mode
     if (eventMode === 'tiny' || eventMode === 'micro') {
       allEvents = allEvents.filter(event => {
@@ -141,9 +151,19 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   
   // Helpers to extract hierarchy info
   const getParentId = useCallback((event: PollingEvent): string | undefined => {
+    // Check top-level parent_id
     if ('parent_id' in event && event.parent_id) return event.parent_id;
+
     if (event.data && typeof event.data === 'object') {
-      for (const [, value] of Object.entries(event.data)) {
+      const data = event.data as Record<string, unknown>;
+
+      // Check event.data.parent_id directly (for AgentEvent structure)
+      if ('parent_id' in data && typeof data.parent_id === 'string' && data.parent_id) {
+        return data.parent_id;
+      }
+
+      // Check nested objects within event.data
+      for (const [, value] of Object.entries(data)) {
         if (value && typeof value === 'object' && 'parent_id' in value) {
           return (value as { parent_id: string }).parent_id;
         }

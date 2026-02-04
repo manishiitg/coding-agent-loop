@@ -4,14 +4,12 @@ import type { EventMode } from './EventContext';
 export const ADVANCED_MODE_EVENTS = new Set([
   'llm_generation_start',
   'llm_generation_with_retry',
-  // 'system_prompt' - removed: now shown in basic mode
   'conversation_start',
   'conversation_turn',
+  'step_progress_updated',
+  // Cache events - still filter on frontend as safety net (old events may be in database)
   'cache_event',
   'comprehensive_cache_event',
-  'step_progress_updated',
-  'workspace_file_operation', // File operations for debugging
-  // Add more advanced events here as needed
 ]);
 
 // Tiny mode additional events - events hidden in tiny mode beyond what basic mode hides

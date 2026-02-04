@@ -110,6 +110,8 @@ export interface AgentQueryRequest {
   enable_context_editing?: boolean // Enable context editing (dynamic context reduction)
   // Selected skills to include in the chat context
   selected_skills?: string[] // Array of skill folder names
+  // Delegation mode: When enabled, agent gets a 'delegate' tool to spawn sub-agents
+  enable_delegation_mode?: boolean
 }
 
 export interface AgentQueryResponse {
@@ -1083,6 +1085,13 @@ export interface StepOutputContent {
   is_json: boolean;
 }
 
+// Archived execution outputs from decision step routing (when step routes back to earlier step)
+export interface ArchivedExecutionEntry {
+  run_number: string;
+  artifacts?: { file_name: string; file_path: string }[];
+  output_content?: StepOutputContent;
+}
+
 export interface StepExecutionLogs {
   step_id: string;
   original_id?: string;
@@ -1102,6 +1111,7 @@ export interface StepExecutionLogs {
   conditionals?: ConditionalLog[];
   learnings?: LearningLog[];
   archived_logs?: ArchivedLogEntry[];  // Logs from previous runs
+  archived_executions?: ArchivedExecutionEntry[];  // Archived execution outputs from decision step routing
 }
 
 export interface ModelTokenUsage {

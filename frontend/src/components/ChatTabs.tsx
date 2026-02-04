@@ -3,6 +3,8 @@ import { X, Plus, ArrowDown } from 'lucide-react'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
 import { EventModeToggle } from './events'
+import { shouldShowEventByMode } from './events/eventModeUtils'
+import { logger } from '../utils/logger'
 
 interface ChatTabsProps {
   // For chat mode: callback when starting a new chat
@@ -61,7 +63,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     const tabsWithSessions = modeTabs.filter(tab => tab.sessionId)
     
     if (tabsWithSessions.length === 0) {
-      console.log('[ChatTabs] No tabs with session IDs to fetch status for')
+      logger.debug('ChatTabs', 'No tabs with session IDs to fetch status for')
       return
     }
     
@@ -69,7 +71,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     
     // Fetch status for all tabs
     const fetchStatuses = async () => {
-      console.log(`[ChatTabs] Fetching session status for ${tabIds.length} tabs`)
+      logger.debug('ChatTabs', `Fetching session status for ${tabIds.length} tabs`)
       await fetchAllTabSessionStatuses(tabIds)
     }
     
@@ -93,16 +95,16 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
   }
 
   const handleNewTab = async () => {
-    console.log('[ChatTabs] handleNewTab called, mode:', selectedModeCategory)
+    logger.debug('ChatTabs', 'handleNewTab called, mode:', selectedModeCategory)
     // In workflow mode, phases are started from WorkflowToolbar, not from ChatTabs
     if (selectedModeCategory === 'workflow') {
-      console.log('[ChatTabs] Workflow mode: phases should be started from WorkflowToolbar, not ChatTabs')
+      logger.debug('ChatTabs', 'Workflow mode: phases should be started from WorkflowToolbar, not ChatTabs')
       return
     }
     
     if (selectedModeCategory === 'chat') {
       // Create a new chat tab
-      console.log(`[ChatTabs] Creating new chat tab...`)
+      logger.debug('ChatTabs', 'Creating new chat tab...')
       const chatStore = useChatStore.getState()
       const allChatTabs = Object.values(chatTabs).filter(tab =>
         tab.metadata?.mode === 'chat'
@@ -110,21 +112,21 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
       const chatNumber = allChatTabs.length + 1
       const tabName = `Chat ${chatNumber}`
 
-      console.log(`[ChatTabs] Tab name: ${tabName}, existing tabs: ${allChatTabs.length}`)
+      logger.debug('ChatTabs', `Tab name: ${tabName}, existing tabs: ${allChatTabs.length}`)
 
       try {
-        console.log(`[ChatTabs] Creating new tab: ${tabName} in mode: chat`)
+        logger.debug('ChatTabs', `Creating new tab: ${tabName} in mode: chat`)
         const newTabId = await chatStore.createChatTab(tabName, { mode: 'chat' })
-        console.log(`[ChatTabs] ✅ createChatTab returned tab ID: ${newTabId}`)
+        logger.debug('ChatTabs', `createChatTab returned tab ID: ${newTabId}`)
         
         // Note: Tab creation is verified inside createChatTab itself
         // The tab should now be active and visible in the UI
         // React will re-render and show the new tab automatically via the useChatStore hook
-        console.log(`[ChatTabs] ✅ Tab creation completed. Tab ID: ${newTabId}`)
+        logger.debug('ChatTabs', `Tab creation completed. Tab ID: ${newTabId}`)
       } catch (error) {
-        console.error('[ChatTabs] ❌ Failed to create new chat tab:', error)
+        logger.error('ChatTabs', 'Failed to create new chat tab:', error)
         if (error instanceof Error) {
-          console.error('[ChatTabs] Error details:', {
+          logger.error('ChatTabs', 'Error details:', {
             name: error.name,
             message: error.message,
             stack: error.stack
@@ -133,7 +135,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
         alert(`Failed to create new tab: ${error instanceof Error ? error.message : String(error)}`)
       }
     } else {
-      console.warn('[ChatTabs] Unknown mode category:', selectedModeCategory)
+      logger.warn('ChatTabs', 'Unknown mode category:', selectedModeCategory)
     }
   }
 
@@ -194,19 +196,22 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
         // Determine active border color based on mode
           const activeBorderClass = 'border-blue-500'
 
-          // Calculate new event count for inactive tabs
-          // NOTE: Events are already filtered by backend based on event_mode, so no need to filter again
+          // Calculate new event count for inactive tabs using per-mode filtering
+          // This ensures the badge count matches what the user sees in the current event mode
           const newEventCount = (() => {
             if (isActive || !tab.sessionId) return 0
-            
-            // Get all events for this tab's session (already filtered by backend)
+
+            // Get all events for this tab's session
             const allEvents = tabEvents[tab.sessionId] || []
-            
-            // Get the last viewed count (events are already filtered, so this is the filtered count)
-            const lastViewedCount = tab.lastViewedEventCount || 0
-            
-            // New events = current count - last viewed count
-            const newCount = Math.max(0, allEvents.length - lastViewedCount)
+
+            // Filter events by the tab's current event mode
+            const visibleEvents = allEvents.filter(e => e.type && shouldShowEventByMode(e.type, tab.eventMode))
+
+            // Get the last viewed count for this mode (with fallback for migration)
+            const lastViewedCount = tab.lastViewedEventCounts?.[tab.eventMode] ?? tab.lastViewedEventCount ?? 0
+
+            // New events = current visible count - last viewed count for this mode
+            const newCount = Math.max(0, visibleEvents.length - lastViewedCount)
             return newCount
           })()
           

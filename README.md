@@ -27,6 +27,8 @@ MCP Agent provides sophisticated workflow orchestration capabilities for complex
 
 - **[Human Feedback Tool](docs/human_feedback_system.md)**: Interactive virtual tool that pauses LLM execution to request real-time user input via browser notifications and UI, enabling human-in-the-loop workflows for 2FA, confirmations, and critical decisions.
 
+- **[Sub-Agent Delegation](docs/sub_agent_delegation.md)**: Enable agents to spawn independent sub-agents for parallel task execution. Sub-agents inherit the same tools and can work autonomously on delegated tasks. Toggle with `/spawn` and `/nospawn` commands.
+
 **Core MCP Agent Library Features**:
 
 - **[Code Execution Mode](docs/code_execution_mode.md)**: Specialized agent for executing Go code with security sandboxing and comprehensive error handling.
@@ -302,6 +304,7 @@ Key architectural documentation and implementation plans:
 
 ### **Frontend & API**
 - **[Frontend Chat Architecture](docs/multi_tab_chat_architecture.md)**: Overview of the multi-tab chat system and frontend data flow.
+- **[Sub-Agent Delegation](docs/sub_agent_delegation.md)**: Architecture for spawning sub-agents to handle delegated tasks in parallel.
 - **[Workflow Canvas Implementation](docs/react_flow_workflow_canvas.md)**: Implementation details for the React Flow-based workflow visualization.
 - **[Frontend API & Data Model](docs/frontend_api_structure_data_model.md)**: The contract between the Go backend and React frontend.
 - **[Event System Structure](docs/event_type_discriminated_union.md)**: Technical detail on the event system's data structure for the frontend.

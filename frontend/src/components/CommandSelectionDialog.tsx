@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Terminal, FileText, Scissors, Lightbulb, Download, Server, Cpu, History } from 'lucide-react'
+import { Terminal, FileText, Lightbulb, Download, Server, Cpu, History, GitBranch } from 'lucide-react'
 
 interface Command {
   command: string
@@ -42,6 +42,16 @@ const AVAILABLE_COMMANDS: Command[] = [
     command: 'resume',
     description: 'Resume a previous conversation',
     icon: <History className="w-4 h-4" />
+  },
+  {
+    command: 'spawn',
+    description: 'Enable sub-agent delegation for parallel task execution',
+    icon: <GitBranch className="w-4 h-4" />
+  },
+  {
+    command: 'nospawn',
+    description: 'Disable sub-agent delegation',
+    icon: <GitBranch className="w-4 h-4" />
   }
 ]
 

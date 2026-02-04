@@ -85,3 +85,59 @@ func (m *minimalLogger) Error(msg string, err error, fields ...loggerv2.Field) {
 func (m *minimalLogger) Fatal(msg string, err error, fields ...loggerv2.Field) {}
 func (m *minimalLogger) With(fields ...loggerv2.Field) loggerv2.Logger         { return m }
 func (m *minimalLogger) Close() error                                          { return nil }
+
+// DelegationEventObserver implements AgentEventListener to capture sub-agent events
+// It tags events with Component field and ParentID to enable hierarchical display in UI
+type DelegationEventObserver struct {
+	store                  *EventStore
+	sessionID              string
+	depth                  int
+	delegationID           string
+	delegationStartEventID string // ID of the delegation_start event (for parent_id linking)
+	logger                 loggerv2.Logger
+}
+
+// NewDelegationEventObserver creates a new event observer for delegated sub-agents
+func NewDelegationEventObserver(store *EventStore, sessionID string, depth int, delegationID string, logger loggerv2.Logger) *DelegationEventObserver {
+	return &DelegationEventObserver{
+		store:                  store,
+		sessionID:              sessionID,
+		depth:                  depth,
+		delegationID:           delegationID,
+		delegationStartEventID: fmt.Sprintf("%s_delegation_start_%s", sessionID, delegationID),
+		logger:                 logger,
+	}
+}
+
+// HandleEvent processes sub-agent events and stores them with delegation metadata
+// Events are linked to the delegation_start event via ParentID for hierarchical display
+func (deo *DelegationEventObserver) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
+	// Tag the event with delegation metadata
+	// We modify a copy to avoid affecting the original event
+	taggedEvent := *event
+	taggedEvent.Component = fmt.Sprintf("delegation-%d", deo.depth)
+	taggedEvent.HierarchyLevel = deo.depth + 1 // Sub-agent events are one level deeper
+	taggedEvent.SessionID = deo.sessionID
+	taggedEvent.CorrelationID = deo.delegationID                   // Links all events in this delegation
+	taggedEvent.ParentID = deo.delegationStartEventID              // Makes events children of delegation_start
+
+	// Create the store event with the tagged data
+	randomSuffix := fmt.Sprintf("%d", time.Now().UnixNano()%1000000)
+	storeEvent := Event{
+		ID:        fmt.Sprintf("%s_%s_%s_%d_%s", deo.sessionID, deo.delegationID, taggedEvent.Type, taggedEvent.Timestamp.UnixNano(), randomSuffix),
+		Type:      string(taggedEvent.Type),
+		Timestamp: taggedEvent.Timestamp,
+		SessionID: deo.sessionID,
+		Data:      &taggedEvent,
+	}
+
+	// Store the event by sessionID
+	deo.store.AddEvent(deo.sessionID, storeEvent)
+
+	return nil
+}
+
+// Name returns the observer name
+func (deo *DelegationEventObserver) Name() string {
+	return fmt.Sprintf("delegation_event_observer_%s_%s", deo.sessionID, deo.delegationID)
+}

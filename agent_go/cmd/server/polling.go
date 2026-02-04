@@ -160,8 +160,10 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		if chatSession != nil && (chatSession.Status == "completed" || chatSession.Status == "error" || chatSession.Status == "stopped") {
 			// Fallback to database for non-active sessions
 			// Fetch events from database and convert to polling format
+			// Use larger limit (10000) for completed sessions to handle full history
+			// Frontend will filter/paginate as needed
 			api.logger.Debug(fmt.Sprintf("[POLLING] Session %s not in memory, falling back to database (status: %s)", sessionID, chatSession.Status))
-			dbEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 1000, 0)
+			dbEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 10000, 0)
 			if err != nil {
 				log.Printf("[POLLING ERROR] Failed to fetch events from database for session %s: %v", sessionID, err)
 				api.logger.Warn(fmt.Sprintf("[POLLING] Failed to fetch events from database for session %s: %v", sessionID, err))
@@ -285,18 +287,62 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 					})
 				}
 
+				// Log summary of conversion results (including any errors beyond the first 3)
+				if parseErrors > 0 || filteredOut > 0 {
+					log.Printf("[POLLING] Session %s conversion summary: %d events converted, %d parse errors, %d filtered out (total db events: %d)",
+						sessionID, len(convertedEvents), parseErrors, filteredOut, len(dbEvents))
+				}
+				if parseErrors > 3 {
+					log.Printf("[POLLING WARNING] Session %s had %d total parse errors (only first 3 were logged in detail)", sessionID, parseErrors)
+				}
+
 				// Apply sinceIndex filtering if specified
-				totalConverted := len(convertedEvents)
-				if opts.SinceIndex >= 0 && opts.SinceIndex < len(convertedEvents) {
-					convertedEvents = convertedEvents[opts.SinceIndex+1:]
+				// CRITICAL: sinceIndex is the EventIndex from AgentEvent, NOT the array position
+				// After event mode filtering, array positions don't match EventIndex values
+				// We need to filter based on the actual EventIndex stored in each event
+				var filteredBySinceIndex []events.Event
+				maxEventIndex := -1
+				if opts.SinceIndex >= 0 {
+					// Filter events by their actual EventIndex, not array position
+					for _, event := range convertedEvents {
+						eventIndex := -1
+						if event.Data != nil {
+							eventIndex = event.Data.EventIndex
+						}
+						// Track the maximum EventIndex we've seen
+						if eventIndex > maxEventIndex {
+							maxEventIndex = eventIndex
+						}
+						// Only include events with EventIndex > sinceIndex
+						if eventIndex > opts.SinceIndex {
+							filteredBySinceIndex = append(filteredBySinceIndex, event)
+						}
+					}
+					// If we didn't find any events with higher index, use max seen
+					if maxEventIndex < 0 && len(convertedEvents) > 0 {
+						// Fallback: use array length if no EventIndex found
+						maxEventIndex = len(convertedEvents) - 1
+					}
+				} else {
+					// No sinceIndex filtering, return all
+					filteredBySinceIndex = convertedEvents
+					// Calculate max EventIndex from all events
+					for _, event := range convertedEvents {
+						if event.Data != nil && event.Data.EventIndex > maxEventIndex {
+							maxEventIndex = event.Data.EventIndex
+						}
+					}
+					if maxEventIndex < 0 && len(convertedEvents) > 0 {
+						maxEventIndex = len(convertedEvents) - 1
+					}
 				}
 
 				response := GetEventsResponse{
-					Events:             convertedEvents,
+					Events:             filteredBySinceIndex,
 					HasMore:            false, // Completed sessions don't have more events
 					SessionID:          sessionID,
 					SessionStatus:      sessionStatus,
-					LastProcessedIndex: totalConverted - 1, // Prevent sinceIndex from resetting to 0
+					LastProcessedIndex: maxEventIndex, // Use actual max EventIndex, not array length
 				}
 
 				if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -329,23 +375,22 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	}
 
 	// Determine has_more based on mode
-	// Use hasMoreFromStore if available (for sinceIndex=0 case), otherwise calculate
+	// Use hasMoreFromStore which is calculated correctly by the event store:
+	// - For sinceIndex=0: hasMore is true if there are older events beyond InitialEventsLimit
+	// - For sinceIndex>0 (forward polling): hasMore is false (frontend continues polling anyway)
+	// - For limit/offset (backward pagination): hasMore is true if more events exist
 	hasMore := hasMoreFromStore
-	if !hasMoreFromStore {
-		if opts.SinceIndex >= 0 {
-			// Forward polling: has more if we got events (for normal polling, not initial fetch)
-			// For sinceIndex=0, hasMoreFromStore is already set correctly
-			if opts.SinceIndex > 0 {
-				hasMore = len(sessionEvents) > 0
-			}
-		} else if opts.Limit > 0 {
-			// Backward pagination: has more if there are more filtered events after current offset
-			// totalCount is the total UNFILTERED events, but we need to check filtered count
-			// Since we filter first then paginate, we can check if we got a full page
-			// If we got fewer events than requested limit, we've reached the end
-			hasMore = len(sessionEvents) >= opts.Limit
-		}
+	if !hasMoreFromStore && opts.Limit > 0 {
+		// Backward pagination: has more if there are more filtered events after current offset
+		// totalCount is the total UNFILTERED events, but we need to check filtered count
+		// Since we filter first then paginate, we can check if we got a full page
+		// If we got fewer events than requested limit, we've reached the end
+		hasMore = len(sessionEvents) >= opts.Limit
 	}
+	// Note: For forward polling (sinceIndex >= 0), hasMore from store is correct:
+	// - It's true only when we limited results due to InitialEventsLimit (sinceIndex=0 case)
+	// - It's false for normal polling (sinceIndex > 0) which is correct behavior
+	// Frontend doesn't need hasMore for streaming - it keeps polling until session completes
 
 	response := GetEventsResponse{
 		Events:             sessionEvents,

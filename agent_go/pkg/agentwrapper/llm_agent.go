@@ -63,7 +63,9 @@ type LLMAgentConfig struct {
 	UseCodeExecutionMode bool
 	// Tool search mode: When enabled, LLM discovers tools on-demand via search_tools
 	UseToolSearchMode bool
-	APIKeys           *llm.ProviderAPIKeys // API keys for providers
+	// Pre-discovered tools: Tools always available in tool search mode (without needing to search)
+	PreDiscoveredTools []string
+	APIKeys            *llm.ProviderAPIKeys // API keys for providers
 
 	// Context summarization configuration
 	EnableContextSummarization     bool    // Enable context summarization feature
@@ -256,6 +258,12 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if config.UseToolSearchMode {
 		agentOptions = append(agentOptions, mcpagent.WithToolSearchMode(true))
 		logger.Info("🔍 Tool search mode enabled - LLM will discover tools on-demand via search_tools and add them via add_tool")
+	}
+
+	// Add pre-discovered tools if specified (tools available without searching in tool search mode)
+	if len(config.PreDiscoveredTools) > 0 {
+		agentOptions = append(agentOptions, mcpagent.WithPreDiscoveredTools(config.PreDiscoveredTools))
+		logger.Info(fmt.Sprintf("🔧 Pre-discovered tools configured: %v", config.PreDiscoveredTools))
 	}
 
 	// Add session ID for MCP connection reuse (e.g., Playwright browser sharing)

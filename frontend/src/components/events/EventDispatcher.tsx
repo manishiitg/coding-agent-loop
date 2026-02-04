@@ -107,7 +107,6 @@ import {
   ComprehensiveCacheEventDisplay,
   StructuredOutputStartEventDisplay,
   StructuredOutputEndEventDisplay,
-  WorkspaceFileOperationEventDisplay,
   ContextSummarizationStartedEventDisplay,
   ContextSummarizationCompletedEventDisplay,
   ContextSummarizationErrorEventDisplay,
@@ -256,6 +255,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
 
   // Tool Events
+  // Note: delegate tool events are filtered out at EventHierarchy level
   if (isEventType(event, 'tool_call_start')) {
     return <CompactWrapper><WithContext Component={ToolCallStartEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
@@ -264,10 +264,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
   if (isEventType(event, 'tool_call_error')) {
     return <CompactWrapper><WithContext Component={ToolCallErrorEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
-  }
-  // Workspace file operation events - shown in advanced mode only
-  if (isEventType(event, 'workspace_file_operation')) {
-    return <CompactWrapper><WorkspaceFileOperationEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
 
   // System Events
@@ -898,6 +894,93 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
                 </pre>
               </details>
             )}
+          </div>
+        </div>
+      </CompactWrapper>
+    )
+  }
+
+  // Delegation Start Event
+  if (event.type === 'delegation_start') {
+    const data = event.data as {
+      data?: {
+        delegation_id?: string
+        depth?: number
+        instruction?: string
+      }
+      delegation_id?: string
+      depth?: number
+      instruction?: string
+      timestamp?: string
+    }
+
+    const delegationData = data?.data || data
+    const instruction = delegationData?.instruction || 'No instruction provided'
+
+    return (
+      <CompactWrapper>
+        <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded px-2 py-1.5">
+          <div className="flex items-center gap-2">
+            <span className="text-sm">🔀</span>
+            <div className="text-xs font-medium text-purple-700 dark:text-purple-300 flex-1 truncate" title={instruction}>
+              Sub-agent: {instruction.length > 80 ? instruction.substring(0, 80) + '...' : instruction}
+            </div>
+            {event.timestamp && (
+              <div className="text-[10px] text-purple-500 dark:text-purple-400 flex-shrink-0">
+                {new Date(event.timestamp).toLocaleTimeString()}
+              </div>
+            )}
+          </div>
+        </div>
+      </CompactWrapper>
+    )
+  }
+
+  // Delegation End Event
+  if (event.type === 'delegation_end') {
+    const data = event.data as {
+      data?: {
+        delegation_id?: string
+        depth?: number
+        result?: string
+        error?: string
+        duration?: string
+      }
+      delegation_id?: string
+      depth?: number
+      result?: string
+      error?: string
+      duration?: string
+      timestamp?: string
+    }
+
+    const delegationData = data?.data || data
+    const result = delegationData?.result || ''
+    const error = delegationData?.error
+    const duration = delegationData?.duration || ''
+    const isSuccess = !error
+
+    return (
+      <CompactWrapper>
+        <div className={`${isSuccess ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'} border rounded px-2 py-1.5`}>
+          <div className="flex items-center gap-2">
+            <span className="text-sm">{isSuccess ? '✅' : '❌'}</span>
+            <div className={`text-xs font-medium flex-1 ${isSuccess ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}`}>
+              {isSuccess ? 'Sub-agent done' : 'Sub-agent failed'}
+              {error && <span className="font-normal ml-1">- {error.length > 50 ? error.substring(0, 50) + '...' : error}</span>}
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px] flex-shrink-0">
+              {duration && (
+                <span className={isSuccess ? 'text-green-500 dark:text-green-400' : 'text-red-500 dark:text-red-400'}>
+                  {duration}
+                </span>
+              )}
+              {event.timestamp && (
+                <span className={isSuccess ? 'text-green-500 dark:text-green-400' : 'text-red-500 dark:text-red-400'}>
+                  {new Date(event.timestamp).toLocaleTimeString()}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </CompactWrapper>

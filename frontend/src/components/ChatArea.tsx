@@ -52,6 +52,10 @@ export interface ChatAreaRef {
 // Global flag to ensure auto-restore only happens once per page load
 let globalHasRestored = false
 
+// Global Set to track session IDs currently being restored to prevent race conditions
+// between auto-restore and manual session detection creating duplicate tabs
+const sessionsBeingRestored = new Set<string>()
+
 // Inner component that can use the EventMode context
 const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   const { onNewChat, hideHeader = false, hideInput = false, compact = false, tabId } = props
@@ -1115,17 +1119,29 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           const newEvents: PollingEvent[] = []
           let hasCompletionEvent = false
           for (const event of eventsBeforeFilter) {
+            // Extract component from event (used to identify sub-agent events)
+            // Sub-agent events have component like "delegation-0", "delegation-1", etc.
+            const agentEvent = event.data as Record<string, unknown> | undefined
+            const innerData = agentEvent?.data as Record<string, unknown> | undefined
+            const rawComponent = innerData?.component ?? agentEvent?.component
+            const isSubAgentEvent = typeof rawComponent === 'string' && rawComponent.startsWith('delegation-')
+
             // Intercept streaming events - accumulate text in store, don't add to event list
+            // IMPORTANT: Only process streaming from parent agent, skip sub-agent streaming
+            // This prevents sub-agents from overwriting the main agent's streaming text
             if (event.type === 'streaming_start') {
-              chatStore.clearStreamingText(actualSessionId)
+              if (!isSubAgentEvent) {
+                chatStore.clearStreamingText(actualSessionId)
+              }
               continue
             }
             if (event.type === 'streaming_chunk') {
+              // Skip sub-agent streaming chunks - only show parent agent streaming
+              if (isSubAgentEvent) {
+                continue
+              }
               // Extract content and chunk_index from streaming chunk event
               // Structure: event.data (AgentEvent) → event.data.data (StreamingChunkEvent) → content/chunk_index
-              const agentEvent = event.data as Record<string, unknown> | undefined
-              const innerData = agentEvent?.data as Record<string, unknown> | undefined
-
               const rawContent = innerData?.content ?? agentEvent?.content
               const content = typeof rawContent === 'string' ? rawContent : ''
 
@@ -1148,7 +1164,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             // Clearing synchronously in the same loop as appendStreamingChunk prevents
             // React from ever rendering the streaming card (state is set then cleared
             // before the next render).
-            if (event.type === 'llm_generation_end' || event.type === 'unified_completion' || event.type === 'agent_end' || event.type === 'conversation_end') {
+            // Only track parent agent completion events for clearing streaming text
+            if (!isSubAgentEvent && (event.type === 'llm_generation_end' || event.type === 'unified_completion' || event.type === 'agent_end' || event.type === 'conversation_end')) {
               hasCompletionEvent = true
             }
 
@@ -1265,28 +1282,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                     totalGroups
                   )
                 }
-              }
-
-              // Handle todo list generation from workflow agent
-              if (currentTab?.metadata?.phaseId && event.type === 'agent_end') {
-                const agentEventData = event.data as { data?: { agent_type?: string; result?: string } }
-                const agentEvent = agentEventData?.data
-                if (agentEvent && agentEvent.agent_type === 'todo_planner') {
-                  const result = agentEvent.result || ''
-                  if (result) {
-                    const planningPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
-                    // Use ref to check current value without causing re-renders
-                    if (currentWorkflowPhaseRef.current !== planningPhase) {
-                      setCurrentWorkflowPhase(planningPhase)
-                    }
-                  }
-                }
-              }
-
-              // Handle workflow completion events (for phase transitions, not completion detection)
-              if (currentTab?.metadata?.phaseId && event.type === 'workflow_end') {
-                const completionPhase = phases.length > 1 ? phases[1].id : (phases.length > 0 ? phases[0].id : 'execution')
-                setCurrentWorkflowPhase(completionPhase)
               }
             }
           }
@@ -1407,29 +1402,39 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         // For each active session, create a tab if one doesn't exist
         for (const activeSession of runningSessions) {
           const sessionId = activeSession.session_id
-          
+
           // Check if a tab already exists for this session
           const existingTab = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === sessionId)
-          
+
           if (existingTab) {
             console.log(`[AutoRestore] Tab already exists for active session ${sessionId}, skipping`)
             continue
           }
-          
+
+          // CRITICAL: Check if this session is already being restored by another code path
+          // This prevents race conditions between auto-restore and manual session detection
+          if (sessionsBeingRestored.has(sessionId)) {
+            console.log(`[AutoRestore] Session ${sessionId} is already being restored, skipping`)
+            continue
+          }
+
+          // Mark as being restored to prevent duplicate tab creation
+          sessionsBeingRestored.add(sessionId)
+
           // Create a tab for this active session (truncate to 3 words for display)
           const sessionTitle = truncateTabTitle(activeSession.query || 'Active Chat')
-          
+
           // Determine default event mode based on agent mode
           // orchestrator -> advanced (more complex, needs detailed view)
           // simple -> tiny (minimal view for restored sessions)
           // workflow -> tiny (minimal view for restored sessions)
           const agentMode = activeSession.agent_mode?.toLowerCase() || ''
-          const defaultEventMode: 'basic' | 'advanced' | 'tiny' = 
+          const defaultEventMode: 'basic' | 'advanced' | 'tiny' =
             agentMode === 'orchestrator' ? 'advanced' : 'tiny'
-            
+
           // Determine tab mode
           const tabMode = 'chat' as const
-          
+
           try {
             console.log(`[AutoRestore] Creating tab for active session ${sessionId}: ${sessionTitle} (mode: ${tabMode})`)
             const newTabId = await createChatTab(sessionTitle, { mode: tabMode }, sessionId, defaultEventMode)
@@ -1559,12 +1564,17 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               }
             } catch (error) {
               console.error(`[AutoRestore] Failed to load events/config for session ${sessionId}:`, error)
+            } finally {
+              // Remove from sessionsBeingRestored after processing is complete
+              sessionsBeingRestored.delete(sessionId)
             }
           } catch (error) {
             console.error(`[AutoRestore] Failed to create tab for active session ${sessionId}:`, error)
+            // Remove from sessionsBeingRestored on error too
+            sessionsBeingRestored.delete(sessionId)
           }
         }
-        
+
         console.log(`[AutoRestore] Completed restoring ${runningSessions.length} active session(s)`)
       } catch (error) {
         console.error('[AutoRestore] Failed to restore active sessions:', error)
@@ -1753,17 +1763,44 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           }
           
           if (!tabWithSession) {
+            // CRITICAL: Check if this session is already being restored by auto-restore
+            // This prevents race conditions creating duplicate tabs
+            if (sessionsBeingRestored.has(originalSessionId)) {
+              console.log(`[History] Session ${originalSessionId} is already being restored by auto-restore, waiting...`)
+              // Wait a bit and check again - auto-restore should finish soon
+              await new Promise(resolve => setTimeout(resolve, 1000))
+              // Re-check if tab was created
+              tabWithSession = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === originalSessionId)
+              if (tabWithSession) {
+                console.log(`[History] Tab was created by auto-restore for session ${originalSessionId}, using it`)
+                switchTab(tabWithSession.tabId)
+                setIsCheckingActiveSessions(false)
+                processingRef.current = null
+                return
+              }
+              // Still no tab and still being restored - bail out to avoid conflict
+              if (sessionsBeingRestored.has(originalSessionId)) {
+                console.log(`[History] Session ${originalSessionId} still being restored, bailing out`)
+                setIsCheckingActiveSessions(false)
+                processingRef.current = null
+                return
+              }
+            }
+
+            // Mark as being restored to prevent duplicate creation
+            sessionsBeingRestored.add(originalSessionId)
+
             // Create a tab for this active session (truncate to 3 words for display)
             const sessionTitle = truncateTabTitle(chatSessionTitle || chatSession?.title || activeSession.query || 'Active Chat')
-            
+
             // Determine default event mode based on agent mode
             // orchestrator -> advanced (more complex, needs detailed view)
             // simple -> tiny (minimal view for restored sessions)
             // workflow -> tiny (minimal view for restored sessions)
             const agentMode = activeSession.agent_mode?.toLowerCase() || ''
-            const defaultEventMode: 'basic' | 'advanced' | 'tiny' = 
+            const defaultEventMode: 'basic' | 'advanced' | 'tiny' =
               agentMode === 'orchestrator' ? 'advanced' : 'tiny'
-            
+
             try {
               const newTabId = await createChatTab(sessionTitle, { mode: 'chat' }, originalSessionId, defaultEventMode)
               tabWithSession = chatStore.getTab(newTabId)
@@ -1858,7 +1895,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               console.error(`[History] Failed to create tab for active session:`, error)
               setIsLoadingHistory(false)
               processingRef.current = null
+              // Remove from sessionsBeingRestored on error
+              sessionsBeingRestored.delete(originalSessionId)
               return
+            } finally {
+              // Remove from sessionsBeingRestored after processing is complete
+              sessionsBeingRestored.delete(originalSessionId)
             }
           } else {
             // Tab exists, restore config if not already restored
@@ -2379,15 +2421,18 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
 
     // Call backend to stop the agent execution (preserves conversation history)
-    // Use tab's session ID
-    const currentSessionId = getSessionId()
-    const sessionIdToStop = activeTab?.sessionId || currentSessionId
-    if (sessionIdToStop) {
-      try {
-        await agentApi.stopSession(sessionIdToStop)
-      } catch (error) {
-        console.error('[STOP] Failed to stop session:', error)
-      }
+    // CRITICAL: Only use the active tab's session ID - never fall back to global sessionId
+    // Falling back to global sessionId could stop a different tab's session
+    const sessionIdToStop = activeTab?.sessionId
+    if (!sessionIdToStop) {
+      console.warn('[STOP] No session ID available for active tab, cannot stop session')
+      return
+    }
+
+    try {
+      await agentApi.stopSession(sessionIdToStop)
+    } catch (error) {
+      console.error('[STOP] Failed to stop session:', error)
     }
 
     // DO NOT reset global event polling index - preserve it for multi-turn conversations
@@ -2401,18 +2446,24 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
   // Wrapper function to submit query with the current local query
   const submitQueryWithQuery = useCallback(async (query: string, executionOptions?: ExecutionOptions) => {
+    // CRITICAL: Get fresh tab state from store to avoid stale closure issues
+    // This ensures we have the latest config (e.g., selectedSkills) even if user just changed it
+    const chatStore = useChatStore.getState()
+    const freshActiveTab = activeTab?.tabId ? chatStore.chatTabs[activeTab.tabId] : activeTab
+
     console.log('[ChatArea] submitQueryWithQuery called:', {
       query: query?.substring(0, 50),
       hasQuery: Boolean(query?.trim()),
-      activeTab: activeTab?.tabId,
-      tabSessionId: activeTab?.sessionId,
+      activeTab: freshActiveTab?.tabId,
+      tabSessionId: freshActiveTab?.sessionId,
+      selectedSkills: freshActiveTab?.config?.selectedSkills,
     })
-    
+
     // Store execution options for inclusion in the request
     console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Received executionOptions:', executionOptions ? JSON.stringify(executionOptions, null, 2) : 'undefined')
     executionOptionsRef.current = executionOptions
     console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Stored executionOptionsRef.current:', executionOptionsRef.current ? JSON.stringify(executionOptionsRef.current, null, 2) : 'undefined')
-    
+
     // Early validation
     if (!query?.trim()) {
       console.warn('[ChatArea] submitQueryWithQuery: Empty query, returning early')
@@ -2428,9 +2479,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     if (isStreaming) {
       await stopStreaming()
     }
-    
-    // Get or create current tab
-    let currentTab = activeTab
+
+    // Get or create current tab - use fresh state from store
+    let currentTab = freshActiveTab
     if (!currentTab && selectedModeCategory === 'chat') {
       const chatStore = useChatStore.getState()
       const chatTabs = Object.values(chatStore.chatTabs).filter(tab => 
@@ -2738,6 +2789,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         enable_browser_access: isChatMode
           ? (currentTab?.config?.enableBrowserAccess ?? false)
           : undefined,
+        // Delegation mode: Send the global setting (persisted across sessions)
+        enable_delegation_mode: isChatMode
+          ? useAppStore.getState().enableDelegationMode
+          : undefined,
         // Selected skills: Include skill folder names from tab config
         selected_skills: isChatMode && currentTab?.config?.selectedSkills?.length
           ? currentTab.config.selectedSkills
@@ -2948,28 +3003,40 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     // Check if chat just completed (transitioned from false to true)
     if (!prevIsCompleted && currentIsCompleted && activeTab && !isProcessingQueueRef.current) {
       const queuedMessages = activeTab.config?.queuedMessages || []
-      
+
       if (queuedMessages.length > 0) {
         console.log('[ChatArea] Chat completed, processing queued messages:', queuedMessages.length)
         isProcessingQueueRef.current = true
-        
+
         // Get the first message from queue
         const messageToSend = queuedMessages[0]
         const remainingMessages = queuedMessages.slice(1)
-        
+
         // Update queue to remove the message we're about to send
         const chatStore = useChatStore.getState()
         chatStore.setTabConfig(activeTab.tabId, { queuedMessages: remainingMessages })
-        
+
         // Small delay to ensure completion state is fully processed
-        setTimeout(() => {
+        setTimeout(async () => {
           console.log('[ChatArea] Auto-sending queued message:', messageToSend)
-          submitQueryWithQuery(messageToSend.trim()).finally(() => {
+          try {
+            await submitQueryWithQuery(messageToSend.trim())
+          } catch (error) {
+            console.error('[ChatArea] Failed to send queued message:', error)
+            // Re-add the failed message back to the front of the queue
+            const currentChatStore = useChatStore.getState()
+            const currentQueue = currentChatStore.getTabConfig(activeTab.tabId)?.queuedMessages || []
+            currentChatStore.setTabConfig(activeTab.tabId, {
+              queuedMessages: [messageToSend, ...currentQueue]
+            })
+            // Show error toast
+            addToast('Failed to send queued message. It has been re-queued.', 'error')
+          } finally {
             // Reset processing flag after a delay to allow the new chat to start
             setTimeout(() => {
               isProcessingQueueRef.current = false
             }, 500)
-          })
+          }
         }, 100)
       }
     }

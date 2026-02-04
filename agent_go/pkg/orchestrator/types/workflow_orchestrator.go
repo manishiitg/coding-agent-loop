@@ -928,21 +928,10 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 	}
 
 	// Generate todo list using Execute method
-	todoListMarkdown, err := todoPlannerAgent.Execute(ctx, objective, wo.GetWorkspacePath(), nil)
+	planningResult, err := todoPlannerAgent.Execute(ctx, objective, wo.GetWorkspacePath(), nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create/update todo list: %w", err)
 	}
-
-	// Emit blocking_human_feedback event (no Slack notifications)
-	// Note: Execution now happens automatically after plan approval, so no separate phase needed
-	if err := wo.emitBlockingHumanFeedback(ctx, objective, todoListMarkdown,
-		"Human Controlled Planning Complete",
-		"Approve Plan & Continue",
-		"Please review the generated todo list and approve to proceed with execution."); err != nil {
-		wo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit blocking human feedback event: %v", err))
-	}
-
-	planningResult := fmt.Sprintf("Human controlled planning completed. Todo list generated with %d characters. Ready for human verification.", len(todoListMarkdown))
 
 	// Emit orchestrator completion events
 	wo.EmitOrchestratorEnd(ctx, objective, planningResult, "completed", "", "workflow_execution")

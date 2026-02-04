@@ -1,10 +1,12 @@
 import React, { useMemo, useEffect } from 'react'
-import { X, ArrowDown, Square } from 'lucide-react'
+import { X, ArrowDown, Square, Maximize2, Minimize2 } from 'lucide-react'
 import { useChatStore, type ChatTab } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { EventModeToggle } from '../events'
+import { shouldShowEventByMode } from '../events/eventModeUtils'
 import { agentApi } from '../../services/api'
+import { logger } from '../../utils/logger'
 
 /**
  * Mini ChatTabs component for workflow mode chat area
@@ -25,6 +27,8 @@ export const WorkflowChatTabs: React.FC = () => {
   } = useChatStore()
 
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
+  const chatAreaExpanded = useWorkflowStore(state => state.chatAreaExpanded)
+  const setChatAreaExpanded = useWorkflowStore(state => state.setChatAreaExpanded)
 
   // Filter to only show active workflow tabs (have sessionId or isStreaming)
   const activeWorkflowTabs = useMemo(() => {
@@ -61,19 +65,19 @@ export const WorkflowChatTabs: React.FC = () => {
     e.stopPropagation()
 
     if (!tab.sessionId) {
-      console.warn('[WorkflowChatTabs] No session ID to stop for tab:', tab.tabId)
+      logger.warn('WorkflowChatTabs', 'No session ID to stop for tab:', tab.tabId)
       return
     }
 
     try {
       // Stop the session via API
       await agentApi.stopSession(tab.sessionId)
-      console.log(`[WorkflowChatTabs] ✅ Stopped session ${tab.sessionId} for tab ${tab.tabId}`)
+      logger.debug('WorkflowChatTabs', `Stopped session ${tab.sessionId} for tab ${tab.tabId}`)
 
       // Update tab's streaming status
       setTabStreaming(tab.tabId, false)
     } catch (error) {
-      console.error('[WorkflowChatTabs] ❌ Failed to stop session:', error)
+      logger.error('WorkflowChatTabs', 'Failed to stop session:', error)
     }
   }
 
@@ -118,19 +122,22 @@ export const WorkflowChatTabs: React.FC = () => {
         const isTabStreaming = getTabStreamingStatus(tab.tabId)
         const canStop = tab.sessionId && (isTabStreaming || tab.isStreaming)
 
-          // Calculate new event count for inactive tabs
-          // NOTE: Events are already filtered by backend based on event_mode, so no need to filter again
+          // Calculate new event count for inactive tabs using per-mode filtering
+          // This ensures the badge count matches what the user sees in the current event mode
           const newEventCount = (() => {
             if (isActive || !tab.sessionId) return 0
 
-            // Get all events for this tab's session (already filtered by backend)
+            // Get all events for this tab's session
             const allEvents = tabEvents[tab.sessionId] || []
 
-            // Get the last viewed count (events are already filtered, so this is the filtered count)
-            const lastViewedCount = tab.lastViewedEventCount || 0
+            // Filter events by the tab's current event mode
+            const visibleEvents = allEvents.filter(e => e.type && shouldShowEventByMode(e.type, tab.eventMode))
 
-            // New events = current count - last viewed count
-            const newCount = Math.max(0, allEvents.length - lastViewedCount)
+            // Get the last viewed count for this mode (with fallback for migration)
+            const lastViewedCount = tab.lastViewedEventCounts?.[tab.eventMode] ?? tab.lastViewedEventCount ?? 0
+
+            // New events = current visible count - last viewed count for this mode
+            const newCount = Math.max(0, visibleEvents.length - lastViewedCount)
             return newCount
           })()
 
@@ -240,6 +247,29 @@ export const WorkflowChatTabs: React.FC = () => {
                 {autoScroll ? 'Auto-scroll' : 'Manual'}
               </span>
             </button>
+
+            {/* Expand/Collapse Button */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setChatAreaExpanded(!chatAreaExpanded)
+                  }}
+                  className="flex items-center justify-center p-1.5 rounded text-xs font-medium transition-colors bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100"
+                  title={chatAreaExpanded ? "Restore width" : "Expand width"}
+                >
+                  {chatAreaExpanded ? (
+                    <Minimize2 className="w-3.5 h-3.5" />
+                  ) : (
+                    <Maximize2 className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{chatAreaExpanded ? "Restore width" : "Expand width"}</p>
+              </TooltipContent>
+            </Tooltip>
 
             {/* Close Button - closes the entire chat area panel */}
             <Tooltip>

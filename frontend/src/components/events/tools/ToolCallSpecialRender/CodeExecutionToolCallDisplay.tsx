@@ -157,13 +157,13 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
     }
 
     return (
-      <div className="bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-800 rounded p-2">
+      <div className="bg-purple-100 dark:bg-purple-900/50 border border-purple-200 dark:border-purple-800 rounded p-2">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-violet-700 dark:text-violet-300 flex items-center">
+              <div className="text-sm font-medium text-purple-700 dark:text-purple-300 flex items-center">
                 ✍️ Write Code{parallelBadge}{' '}
-                <span className="text-xs font-normal text-violet-600 dark:text-violet-400">
+                <span className="text-xs font-normal text-purple-600 dark:text-purple-400">
                   {event.turn && `• Turn: ${event.turn}`}
                   {event.server_name && ` • Server: ${event.server_name}`}
                 </span>
@@ -173,13 +173,13 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
 
           <div className="flex items-center gap-2 flex-shrink-0">
             {event.timestamp && (
-              <div className="text-xs text-violet-600 dark:text-violet-400">
+              <div className="text-xs text-purple-600 dark:text-purple-400">
                 {new Date(event.timestamp).toLocaleTimeString()}
               </div>
             )}
             <button
               onClick={toggle}
-              className="p-0.5 hover:bg-violet-200 dark:hover:bg-violet-800 rounded text-violet-700 dark:text-violet-300 transition-colors"
+              className="p-0.5 hover:bg-purple-200 dark:hover:bg-purple-800 rounded text-purple-700 dark:text-purple-300 transition-colors"
               title={isExpanded ? "Collapse arguments (Alt+Click for all)" : "Expand arguments (Alt+Click for all)"}
             >
               {isExpanded ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
@@ -191,7 +191,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
           <div className="mt-2 space-y-2">
             {filename && (
               <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-                <div className="text-xs font-medium text-violet-700 dark:text-violet-300 mb-1">📄 Filename:</div>
+                <div className="text-xs font-medium text-purple-700 dark:text-purple-300 mb-1">📄 Filename:</div>
                 <div className="text-sm font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 px-2 py-1 rounded">
                   {filename}
                 </div>
@@ -200,7 +200,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
 
             {cliArgs.length > 0 && (
               <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-                <div className="text-xs font-medium text-violet-700 dark:text-violet-300">
+                <div className="text-xs font-medium text-purple-700 dark:text-purple-300">
                   🔧 CLI Arguments:{' '}
                   <span className="font-mono text-gray-800 dark:text-gray-200">
                     {cliArgs.join(', ')}
@@ -212,7 +212,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
             {code && (
               <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
                 <div className="flex items-center justify-between mb-1">
-                  <div className="text-xs font-medium text-violet-700 dark:text-violet-300">
+                  <div className="text-xs font-medium text-purple-700 dark:text-purple-300">
                     💻 Go Code Preview
                   </div>
                   <div className="text-xs text-gray-500 dark:text-gray-400">

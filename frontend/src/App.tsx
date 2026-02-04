@@ -163,6 +163,9 @@ function App() {
   
   // Ref to prevent duplicate default tab creation (React StrictMode runs effects twice)
   const hasCreatedDefaultTabRef = useRef<string | null>(null)
+
+  // Ref to prevent duplicate tab creation during rapid clicks on same session
+  const sessionsBeingSelectedRef = useRef<Set<string>>(new Set())
   
   const { clearActivePreset, applyPreset, getActivePreset } = useGlobalPresetStore()
 
@@ -559,40 +562,65 @@ function App() {
     // Check if a tab with this session ID already exists
     const chatStore = useChatStore.getState()
     const existingTab = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === sessionId)
-    
+
     if (existingTab) {
       // Tab already exists, just switch to it
       console.log(`[App] Tab ${existingTab.tabId} already exists for session ${sessionId}, switching to it`)
       chatStore.switchTab(existingTab.tabId)
-      
+
       // Auto-minimize sidebar when restoring a chat
       setSidebarMinimized(true)
-      
+
       // Don't set chatSessionId/Title here - this triggers redundant effects in ChatArea
       // The tab switch is sufficient for the UI to update via activeTabId
-      
+
       // Clear file content view
       setShowFileContent(false)
       return
     }
-    
+
+    // CRITICAL: Check if this session is already being selected (rapid click prevention)
+    if (sessionsBeingSelectedRef.current.has(sessionId)) {
+      console.log(`[App] Session ${sessionId} is already being selected, ignoring duplicate click`)
+      return
+    }
+
+    // Mark as being selected to prevent duplicate tab creation
+    sessionsBeingSelectedRef.current.add(sessionId)
+
     // No existing tab, create one immediately to ensure UI selection
     const createAndSwitchTab = async () => {
-      // Default to tiny mode, ChatArea will update to advanced if needed (e.g. for orchestrator)
-      const newTabId = await chatStore.createChatTab(
-        truncateTabTitle(sessionTitle || 'Chat'),
-        { mode: 'chat' },
-        sessionId,
-        'tiny'
-      )
-      chatStore.switchTab(newTabId)
-      
-      // Now set the session ID to trigger hydration in ChatArea
-      setChatSessionId(sessionId);
-      setSidebarMinimized(true);
-      setChatSessionTitle(sessionTitle || '');
+      try {
+        // Double-check tab doesn't exist (race condition protection)
+        const currentTabs = Object.values(useChatStore.getState().chatTabs)
+        const existingTabNow = currentTabs.find(tab => tab.sessionId === sessionId)
+        if (existingTabNow) {
+          console.log(`[App] Tab was created by another process for session ${sessionId}, switching to it`)
+          chatStore.switchTab(existingTabNow.tabId)
+          setSidebarMinimized(true)
+          setShowFileContent(false)
+          return
+        }
+
+        // Default to tiny mode, ChatArea will update to advanced if needed (e.g. for orchestrator)
+        const newTabId = await chatStore.createChatTab(
+          truncateTabTitle(sessionTitle || 'Chat'),
+          { mode: 'chat' },
+          sessionId,
+          'tiny'
+        )
+        chatStore.switchTab(newTabId)
+
+        // Now set the session ID to trigger hydration in ChatArea
+        setChatSessionId(sessionId);
+        setSidebarMinimized(true);
+        setChatSessionTitle(sessionTitle || '');
+      } finally {
+        // Always remove from the set when done
+        sessionsBeingSelectedRef.current.delete(sessionId)
+      }
     }
-    
+
     createAndSwitchTab()
   }, [setChatSessionId, setChatSessionTitle, setShowFileContent, setSidebarMinimized]);
 

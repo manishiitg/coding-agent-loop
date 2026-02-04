@@ -20,7 +20,8 @@ import {
   History,
   Filter,
   RefreshCw,
-  ListTodo
+  ListTodo,
+  Archive
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { ExecutionLogsResponse } from '../../services/api-types'
@@ -1404,6 +1405,120 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                   )}
                                 </div>
                               ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Archived Execution Runs Section (from decision step routing) */}
+          {stepLogs.archived_executions && stepLogs.archived_executions.length > 0 && (
+            <div className="p-4 bg-blue-500/5 border-t border-blue-500/20">
+              <h4 className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                <Archive className="w-4 h-4" /> Archived Execution Runs ({stepLogs.archived_executions.length})
+              </h4>
+              <div className="space-y-3">
+                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                {stepLogs.archived_executions.map((archive: any, archiveIdx: number) => {
+                  const archiveId = `${stepId}-archived-exec-${archiveIdx}`
+                  const isArchiveExpanded = expandedArchived.has(archiveId)
+                  const hasOutput = !!archive.output_content
+                  const artifactCount = archive.artifacts?.length || 0
+
+                  return (
+                    <div key={archiveIdx} className="bg-background rounded border border-blue-500/30 overflow-hidden">
+                      <button
+                        onClick={() => toggleArchived(archiveId)}
+                        className="w-full flex items-center gap-3 p-3 text-left hover:bg-blue-500/10 transition-colors"
+                      >
+                        {isArchiveExpanded ? <ChevronDown className="w-4 h-4 text-blue-500" /> : <ChevronRight className="w-4 h-4 text-blue-500" />}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-foreground">
+                              Run {archive.run_number}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {hasOutput ? '1 output' : ''}{hasOutput && artifactCount > 0 ? ', ' : ''}{artifactCount > 0 ? `${artifactCount} artifact${artifactCount !== 1 ? 's' : ''}` : ''}
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+
+                      {isArchiveExpanded && (
+                        <div className="border-t border-blue-500/20 p-3 space-y-3 bg-muted/20">
+                          {/* Archived Output Content */}
+                          {archive.output_content && (
+                            <div>
+                              <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
+                                <FileText className="w-3 h-3" /> Output
+                              </div>
+                              <div className="text-xs bg-background border border-border rounded p-2">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="font-mono text-[10px] text-muted-foreground truncate max-w-[200px]">
+                                    {archive.output_content.file_path?.split('/').pop()}
+                                  </span>
+                                  <button
+                                    onClick={() => toggleFileExpansion(archive.output_content.file_path)}
+                                    className="text-primary hover:underline text-[10px] font-medium"
+                                  >
+                                    {expandedFiles.has(archive.output_content.file_path) ? 'Hide' : 'View'}
+                                  </button>
+                                </div>
+                                {expandedFiles.has(archive.output_content.file_path) && (
+                                  <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-60 overflow-y-auto font-mono text-[10px] mt-2 pt-2 border-t border-border">
+                                    {archive.output_content.is_json
+                                      ? JSON.stringify(archive.output_content.content, null, 2)
+                                      : String(archive.output_content.content)}
+                                  </pre>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Archived Artifacts */}
+                          {archive.artifacts && archive.artifacts.length > 0 && (
+                            <div>
+                              <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
+                                <FileText className="w-3 h-3" /> Artifacts ({archive.artifacts.length})
+                              </div>
+                              <div className="space-y-1">
+                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                                {archive.artifacts.map((artifact: any, idx: number) => (
+                                  <div key={idx} className="text-xs bg-background border border-border rounded p-2">
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-mono text-[10px] text-muted-foreground truncate max-w-[200px]">
+                                        {artifact.file_name}
+                                      </span>
+                                      <button
+                                        onClick={() => toggleFileExpansion(artifact.file_path)}
+                                        disabled={loadingFiles.has(artifact.file_path)}
+                                        className="text-primary hover:underline text-[10px] font-medium"
+                                      >
+                                        {loadingFiles.has(artifact.file_path) ? 'Loading...' : expandedFiles.has(artifact.file_path) ? 'Hide' : 'View'}
+                                      </button>
+                                    </div>
+                                    {expandedFiles.has(artifact.file_path) && (
+                                      <div className="mt-2 pt-2 border-t border-border">
+                                        {fileContents[artifact.file_path] ? (
+                                          <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-60 overflow-y-auto font-mono text-[10px]">
+                                            {fileContents[artifact.file_path]}
+                                          </pre>
+                                        ) : (
+                                          <div className="flex items-center gap-2 py-2 text-muted-foreground">
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                            Loading...
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           )}
                         </div>

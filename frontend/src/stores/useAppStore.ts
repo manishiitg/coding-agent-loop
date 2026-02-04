@@ -20,7 +20,10 @@ interface AppState {
   
   // Code execution mode (for chat mode when no preset is active)
   useCodeExecutionMode: boolean
-  
+
+  // Delegation mode (spawn sub-agents)
+  enableDelegationMode: boolean
+
   // Actions
   setAgentMode: (mode: AgentMode) => void
   
@@ -40,7 +43,7 @@ interface AppState {
   setSidebarMinimized: (minimized: boolean) => void
   setWorkspaceMinimized: (minimized: boolean) => void
   setUseCodeExecutionMode: (enabled: boolean) => void
-
+  setEnableDelegationMode: (enabled: boolean) => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -61,6 +64,7 @@ export const useAppStore = create<AppState>()(
           sidebarMinimized: false,
           workspaceMinimized: false,
           useCodeExecutionMode: true, // Default to enabled
+          enableDelegationMode: true, // Default to enabled (user can disable via /nospawn)
           // Actions
           setAgentMode: (mode) => {
             const currentMode = get().agentMode
@@ -134,6 +138,10 @@ export const useAppStore = create<AppState>()(
         setUseCodeExecutionMode: (enabled) => {
           set({ useCodeExecutionMode: enabled })
         },
+
+        setEnableDelegationMode: (enabled) => {
+          set({ enableDelegationMode: enabled })
+        },
         }
       },
       {
@@ -144,7 +152,8 @@ export const useAppStore = create<AppState>()(
         sidebarMinimized: state.sidebarMinimized,
         workspaceMinimized: state.workspaceMinimized,
         selectedPresetId: state.selectedPresetId,
-        useCodeExecutionMode: state.useCodeExecutionMode
+        useCodeExecutionMode: state.useCodeExecutionMode,
+        enableDelegationMode: state.enableDelegationMode
         // Note: requiresNewChat is not persisted as it's temporary state
         // File context is now mode-specific: chat tabs have their own, workflow uses preset
         })

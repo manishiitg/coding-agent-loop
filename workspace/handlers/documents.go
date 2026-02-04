@@ -844,6 +844,71 @@ func GetDocument(c *gin.Context) {
 	})
 }
 
+// GetRawDocument handles GET /api/documents/*filepath/raw
+// Returns the raw file content as binary data (no JSON wrapping)
+func GetRawDocument(c *gin.Context) {
+	filePathParam := c.Param("filepath")
+	docsDir := viper.GetString("docs-dir")
+
+	// Sanitize input path to ensure it's relative
+	filePathParam = utils.SanitizeInputPath(filePathParam, docsDir)
+
+	// Convert relative path to full path internally
+	filePath := filepath.Join(docsDir, filePathParam)
+
+	// Validate file path for security
+	if !utils.IsValidFilePath(filePath, docsDir) {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+			Success: false,
+			Message: "Invalid file path",
+			Error:   "File path contains invalid characters or attempts directory traversal",
+		})
+		return
+	}
+
+	// Acquire read lock
+	if err := lockManager.AcquireReadLock(filePath, 5*time.Second); err != nil {
+		c.JSON(http.StatusConflict, models.APIResponse[any]{
+			Success: false,
+			Message: "File is currently being modified",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, models.APIResponse[any]{
+			Success: false,
+			Message: "File not found",
+			Error:   fmt.Sprintf("File not found: %s", filePathParam),
+		})
+		return
+	} else if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to get file info",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	// Read file content
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to read file",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	// Serve raw content
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filepath.Base(filePath)))
+	c.Data(http.StatusOK, "application/octet-stream", content)
+}
+
 // UpdateDocument handles PUT /api/documents/*filepath
 func UpdateDocument(c *gin.Context) {
 	filePathParam := c.Param("filepath")
@@ -2225,9 +2290,16 @@ func HandleDocumentRequest(c *gin.Context) {
 	// Route based on HTTP method and path
 	switch method {
 	case "GET":
-		// Basic document retrieval
-		c.Params = []gin.Param{{Key: "filepath", Value: filePathParam}}
-		GetDocument(c)
+		if strings.HasSuffix(path, "/raw") {
+			// Remove /raw from filepath for raw content serving
+			filePathParam = strings.TrimSuffix(filePathParam, "/raw")
+			c.Params = []gin.Param{{Key: "filepath", Value: filePathParam}}
+			GetRawDocument(c)
+		} else {
+			// Basic document retrieval
+			c.Params = []gin.Param{{Key: "filepath", Value: filePathParam}}
+			GetDocument(c)
+		}
 	case "PUT":
 		// Basic document update
 		c.Params = []gin.Param{{Key: "filepath", Value: filePathParam}}

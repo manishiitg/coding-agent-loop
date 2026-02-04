@@ -69,8 +69,10 @@ func (bo *BaseOrchestrator) EnhanceToolDescriptionWithFolderGuard(toolName, orig
 		"list_workspace_files":            true,
 		"regex_search_workspace_files":    true,
 		"semantic_search_workspace_files": true,
+		"glob_discover_workspace_files":   true,
 		"execute_shell_command":           true,
 		"read_image":                      true,
+		"read_pdf":                        true,
 	}
 
 	writeTools := map[string]bool{
@@ -172,7 +174,10 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 		"list_workspace_files":            {"folder"},
 		"regex_search_workspace_files":    {"folder"},
 		"semantic_search_workspace_files": {"folder"},
+		"glob_discover_workspace_files":   {"folder"},
 		"execute_shell_command":           {"working_directory"},
+		"read_image":                      {"filepath"},
+		"read_pdf":                        {"filepath"},
 	}
 
 	writeTools := map[string][]string{
@@ -268,10 +273,14 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 			for _, paramName := range paramsToValidateCopy {
 				if paramValue, exists := args[paramName]; exists {
 					if pathStr, ok := paramValue.(string); ok {
-						// Empty string or "." means workspace root - normalize to ""
+						// Empty string or "." means workspace root
 						if pathStr == "" || pathStr == "." {
+							// When folder guard is active with specific allowed paths,
+							// reject empty/root paths to prevent unrestricted workspace access
+							if useFolderGuardPaths && len(allowedPaths) > 0 {
+								return "", fmt.Errorf("parameter '%s' cannot be empty when folder guard is enabled for tool %s; you must specify a path within the allowed directories: %v", paramName, toolNameCopy, allowedPaths)
+							}
 							args[paramName] = ""
-							// Removed verbose logging
 							continue
 						}
 
@@ -290,6 +299,10 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 						// Update the args with normalized path
 						args[paramName] = normalizedPath
 					}
+				} else if useFolderGuardPaths && len(allowedPaths) > 0 {
+					// Path parameter not provided - reject if folder guard is active
+					// to prevent unrestricted workspace-root access
+					return "", fmt.Errorf("parameter '%s' is required when folder guard is enabled for tool %s; you must specify a path within the allowed directories: %v", paramName, toolNameCopy, allowedPaths)
 				}
 			}
 

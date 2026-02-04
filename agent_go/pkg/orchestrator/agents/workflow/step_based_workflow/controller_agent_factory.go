@@ -1747,15 +1747,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default todo task orchestrator tools: %v", config.SelectedTools))
 	}
 
-	// Code execution mode: Priority: step config > orchestrator default
-	// Use helper method for consistency
-	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
+	// TEMP: Force simple agent mode for todo task orchestrator — always disable code execution and tool search
+	// TODO: Remove this override once todo task step supports tool_search/code_exec agent types properly
+	isCodeExecutionMode := false
 	config.UseCodeExecutionMode = isCodeExecutionMode
 
-	// Tool search mode: Priority: step config > orchestrator default
-	isToolSearchMode := hcpo.getToolSearchMode(stepConfig)
+	isToolSearchMode := false
 	config.UseToolSearchMode = isToolSearchMode
-	config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
+	config.PreDiscoveredTools = nil
 
 	// Enable parallel tool execution for todo task orchestrator
 	// This allows concurrent execution of multiple tool calls (e.g., call_sub_agent, call_generic_agent)

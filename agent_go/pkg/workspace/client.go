@@ -110,37 +110,36 @@ func isPathUnder(inputPath, basePath string) bool {
 		return true
 	}
 
-	// Check if input is under base path
+	// Check if input is under base path using filepath.Rel
+	// This works correctly when both paths are the same type (both relative or both absolute)
 	rel, err := filepath.Rel(basePath, inputPath)
 	if err == nil && !strings.HasPrefix(rel, "..") {
 		return true
 	}
 
-	// For relative input paths, check if they match the suffix of base path
-	if !filepath.IsAbs(inputPath) {
-		inputSegments := strings.Split(inputPath, string(filepath.Separator))
-		baseSegments := strings.Split(basePath, string(filepath.Separator))
+	// Handle mixed relative/absolute case:
+	// If input is relative and base is absolute (or vice versa), check if the base path
+	// ends with the input path at a directory boundary. This handles the common case where
+	// folder guard has absolute paths like "/workspace/docs" and the agent sends "docs/file.txt".
+	if !filepath.IsAbs(inputPath) && filepath.IsAbs(basePath) {
+		// Check if input path equals the base path's basename or is a subpath of it
+		// e.g., base="/workspace/docs", input="docs" → match
+		// e.g., base="/workspace/docs", input="docs/file.txt" → match
+		// e.g., base="/workspace/src/docs", input="docs" → NO match (ambiguous)
+		baseName := filepath.Base(basePath)
+		inputSegments := strings.Split(filepath.Clean(inputPath), string(filepath.Separator))
 
-		if len(inputSegments) > 0 && len(baseSegments) > 0 {
-			// Check if input's first segment matches base path's last segment
-			inputFirst := inputSegments[0]
-			baseLast := baseSegments[len(baseSegments)-1]
-			if inputFirst == baseLast {
+		if len(inputSegments) > 0 && inputSegments[0] == baseName {
+			// The input starts with the base's last segment. To avoid ambiguity
+			// (e.g., "/a/docs" vs "/b/docs" both ending in "docs"), only match if
+			// the base path has exactly one trailing segment that matches.
+			// Construct the expected relative path from base's parent and check.
+			parentDir := filepath.Dir(basePath)
+			resolvedInput := filepath.Join(parentDir, inputPath)
+			resolvedInput = filepath.Clean(resolvedInput)
+			relCheck, err := filepath.Rel(basePath, resolvedInput)
+			if err == nil && !strings.HasPrefix(relCheck, "..") {
 				return true
-			}
-
-			// Check if input matches trailing segments of base path
-			for i := 0; i <= len(baseSegments)-len(inputSegments); i++ {
-				match := true
-				for j := 0; j < len(inputSegments); j++ {
-					if baseSegments[i+j] != inputSegments[j] {
-						match = false
-						break
-					}
-				}
-				if match {
-					return true
-				}
 			}
 		}
 	}

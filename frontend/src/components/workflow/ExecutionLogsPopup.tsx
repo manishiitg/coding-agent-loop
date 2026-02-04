@@ -25,6 +25,8 @@ import {
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { ExecutionLogsResponse } from '../../services/api-types'
+import { ConversationViewer } from './ConversationViewer'
+import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 
 interface ValidationFeedback {
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | string
@@ -430,9 +432,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                 Conversation History
                               </div>
                               {fileContents[exec.conversation_path] ? (
-                                <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-96 overflow-y-auto">
-                                  {fileContents[exec.conversation_path]}
-                                </pre>
+                                <ConversationViewer content={fileContents[exec.conversation_path]} />
                               ) : (
                                 <div className="flex items-center gap-2 py-4 justify-center text-muted-foreground">
                                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -443,9 +443,9 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                           )}
 
                           <div className="font-semibold text-foreground mb-1">Execution Result:</div>
-                          <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-60 overflow-y-auto mb-3">
-                            {result}
-                          </pre>
+                          <div className="max-h-60 overflow-y-auto mb-3">
+                            <MarkdownRenderer content={result || ''} className="!text-[11px] [&_p]:!text-[11px] [&_li]:!text-[11px] [&_h1]:!text-base [&_h2]:!text-sm [&_h3]:!text-xs [&_code]:!text-[10px]" />
+                          </div>
                           <div className="font-semibold text-foreground mb-1">Full JSON:</div>
                           <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-40 overflow-y-auto">
                             {JSON.stringify(exec.content, null, 2)}
@@ -678,9 +678,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                     Learning Conversation History
                                   </div>
                                   {fileContents[log.conversation_path!] ? (
-                                    <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-80 overflow-y-auto font-mono text-[10px]">
-                                      {fileContents[log.conversation_path!]}
-                                    </pre>
+                                    <ConversationViewer content={fileContents[log.conversation_path!]} />
                                   ) : (
                                     <div className="flex items-center gap-2 py-4 justify-center text-muted-foreground">
                                       <Loader2 className="w-4 h-4 animate-spin" />

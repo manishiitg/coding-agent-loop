@@ -307,6 +307,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
         availableServers={availableServers}
         hideAgentModeSelection={true}
         fixedAgentMode={getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'workflow'}
+        agentMode={getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'workflow'}
       />
     </div>
   )

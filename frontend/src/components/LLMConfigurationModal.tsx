@@ -69,7 +69,9 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     customBedrockModels,
     customOpenAIModels,
     customVertexModels,
-    customAzureModels
+    customAzureModels,
+    // Supported providers filter
+    isProviderSupported
   } = useLLMStore()
 
   // Get mode-specific configs
@@ -375,7 +377,9 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 </button>
 
                 <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">Providers</h3>
-                {['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure'].map((provider) => (
+                {(['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure'] as const)
+                  .filter(provider => isProviderSupported(provider))
+                  .map((provider) => (
                   <button
                     key={provider}
                     onClick={() => setActiveTab(provider as typeof activeTab)}

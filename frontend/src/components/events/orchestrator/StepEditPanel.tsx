@@ -1915,6 +1915,7 @@ const allCategoryTools = getToolsByCategory(category, capabilities?.workspace);
                       }}
                       onToolChange={setSelectedTools}
                       stepId={step.id}
+                      agentMode="workflow"
                     />
                   )}
 

@@ -1185,14 +1185,63 @@ func (api *StreamingAPI) handleCapabilities(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// getSupportedProviders returns the list of supported LLM providers based on environment configuration
+func getSupportedProviders() []string {
+	allProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic", "azure"}
+	envValue := os.Getenv("SUPPORTED_LLM_PROVIDERS")
+	if envValue == "" {
+		return allProviders
+	}
+
+	// Parse comma-separated list
+	parts := strings.Split(envValue, ",")
+	validProviders := make(map[string]bool)
+	for _, p := range allProviders {
+		validProviders[p] = true
+	}
+
+	var supported []string
+	for _, part := range parts {
+		provider := strings.ToLower(strings.TrimSpace(part))
+		if provider == "" {
+			continue
+		}
+		if validProviders[provider] {
+			supported = append(supported, provider)
+		} else {
+			log.Printf("Warning: ignoring invalid provider '%s' in SUPPORTED_LLM_PROVIDERS", part)
+		}
+	}
+
+	// If no valid providers found, return all
+	if len(supported) == 0 {
+		log.Printf("Warning: no valid providers found in SUPPORTED_LLM_PROVIDERS, enabling all providers")
+		return allProviders
+	}
+
+	return supported
+}
+
 // handleGetLLMDefaults returns default LLM configurations from environment variables
 func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Received request for LLM defaults")
 
 	defaults := llm.GetLLMDefaults()
 
+	// Add supported_providers to the response
+	response := map[string]interface{}{
+		"primary_config":      defaults.PrimaryConfig,
+		"openrouter_config":   defaults.OpenrouterConfig,
+		"bedrock_config":      defaults.BedrockConfig,
+		"openai_config":       defaults.OpenaiConfig,
+		"anthropic_config":    defaults.AnthropicConfig,
+		"azure_config":        defaults.AzureConfig,
+		"available_models":    defaults.AvailableModels,
+		"supported_providers": getSupportedProviders(),
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(defaults)
+	json.NewEncoder(w).Encode(response)
 }
 
 // handleValidateAPIKey validates API keys for OpenRouter, OpenAI, Bedrock, Vertex, and Anthropic

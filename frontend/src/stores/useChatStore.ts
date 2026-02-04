@@ -878,12 +878,10 @@ export const useChatStore = create<ChatState>()(
           throw new Error('Session ID is required but was not provided or is empty')
         }
         
-        // Use provided eventMode, or default based on mode:
-        // workflow -> 'tiny'
-        // chat -> 'micro'
+        // Use provided eventMode, or default to 'micro' for both workflow and chat
         let finalEventMode = eventMode
         if (!finalEventMode) {
-          finalEventMode = mode === 'workflow' ? 'tiny' : 'micro'
+          finalEventMode = 'micro'
         }
         
         // Create tab with session ID

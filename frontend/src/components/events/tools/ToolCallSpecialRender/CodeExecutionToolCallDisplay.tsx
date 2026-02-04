@@ -13,8 +13,8 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
   const toolName = event.tool_name || ''
 
   const parallelBadge = event.is_parallel ? (
-    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 border border-purple-200 dark:border-purple-700 ml-1.5">
-      PARALLEL
+    <span className="ml-1.5 text-[10px] text-gray-500 dark:text-gray-400 font-normal opacity-75">
+      (parallel)
     </span>
   ) : null
 

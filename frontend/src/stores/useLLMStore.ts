@@ -57,7 +57,11 @@ interface LLMState extends StoreActions {
   isLoadingLLMs: boolean
   error: string | null
   defaultsLoaded: boolean
-  
+
+  // Supported providers (from backend, not persisted)
+  supportedProviders: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure')[]
+  isProviderSupported: (provider: string) => boolean
+
   // Actions
   setPrimaryConfig: (config: LLMConfiguration) => void
   setAgentConfig: (config: AgentLLMConfiguration | null) => void
@@ -210,6 +214,13 @@ export const useLLMStore = create<LLMState>()(
         isLoadingLLMs: false,
         error: null,
         defaultsLoaded: false,
+
+        // Supported providers (always load fresh from backend, default to all)
+        supportedProviders: ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure'],
+        isProviderSupported: (provider) => {
+          const supported = get().supportedProviders
+          return supported.includes(provider as typeof supported[number])
+        },
 
         // Actions
         setPrimaryConfig: (config) => {
@@ -452,6 +463,7 @@ export const useLLMStore = create<LLMState>()(
               availableVertexModels: defaults.available_models.vertex || [],
               availableAnthropicModels: defaults.available_models.anthropic || [],
               availableAzureModels: defaults.available_models.azure || [],
+              supportedProviders: defaults.supported_providers || ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure'],
               defaultsLoaded: true,
               error: null,
               isLoadingLLMs: false
@@ -608,7 +620,13 @@ export const useLLMStore = create<LLMState>()(
 
             // Build availableLLMs from Published LLMs (savedLLMs)
             // This replaces the old provider-specific model lists
+            const supportedProviders = state.supportedProviders || []
             state.savedLLMs.forEach(savedLLM => {
+              // Skip if provider is not supported
+              if (supportedProviders.length > 0 && !supportedProviders.includes(savedLLM.provider)) {
+                return
+              }
+
               const metadata = metadataMap[savedLLM.model_id]
               availableLLMs.push({
                 provider: savedLLM.provider,

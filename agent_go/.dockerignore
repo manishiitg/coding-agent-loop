@@ -1,27 +1,30 @@
-# Binaries
+# Binaries and Build Artifacts
 *.exe
-*.exe~
 *.dll
 *.so
 *.dylib
-orchestrator
-agent_go
-
-# Test binary, built with `go test -c`
 *.test
-
-# Output of the go coverage tool
 *.out
+bin/
+dist/
+build/
 
-# Go workspace file
+# Dependencies
+node_modules/
+
+# Go files
 go.work
+go.work.sum
 
-# IDE files
+# IDE & Editor files
 .vscode/
 .idea/
+.cursor/
+.claude/
 *.swp
 *.swo
 *~
+*.swn
 
 # OS generated files
 .DS_Store
@@ -37,23 +40,25 @@ Thumbs.db
 .gitignore
 
 # Docker
-Dockerfile
+Dockerfile*
 .dockerignore
 
-# Development files
+# Logs and Temp files
 *.log
 *.tmp
 *.bak
+logs/
+cache/
+.cache/
+tmp/
+
+# Sensitive
 .env
 .env.*
 
-# Reports (will be mounted as volume)
+# Data & Docs
 reports/
-*.md
-
-# Cache
-.cache/
-tmp/ 
-# Ignore large local workspace data
 workspace-docs/
 workflow-docs/
+tool_output_folder/
+Downloads/

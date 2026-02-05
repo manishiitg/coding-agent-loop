@@ -118,9 +118,11 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 	// Anonymization agent doesn't need MCP servers - uses workspace tools only
 	config.ServerNames = []string{mcpclient.NoServers}
 
-	// Code execution mode only applies to execution agents, not anonymization agents
+	// Code execution mode and tool search mode only apply to execution agents, not anonymization agents
+	// Phase agents always use simple mode regardless of workflow mode setting
 	config.UseCodeExecutionMode = false
-	am.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for anonymization agent (only execution agents use MCP tools)"))
+	config.UseToolSearchMode = false
+	am.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode and tool search mode for anonymization agent (phase agents always use simple mode)"))
 
 	// Large output virtual tools are enabled for anonymization (agent may generate large reports)
 

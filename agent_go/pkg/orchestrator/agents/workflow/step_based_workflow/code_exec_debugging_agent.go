@@ -197,7 +197,10 @@ func (cdm *CodeExecDebuggingManager) createCodeExecDebuggingAgent(ctx context.Co
 
 	config := cdm.CreateStandardAgentConfigWithLLM("code-exec-debugging-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
 	config.ServerNames = []string{mcpclient.NoServers}
-	config.UseCodeExecutionMode = false // Debugging agent analyzes code, doesn't execute it
+	// Debugging agent analyzes code, doesn't execute it
+	// Phase agents always use simple mode regardless of workflow mode setting
+	config.UseCodeExecutionMode = false
+	config.UseToolSearchMode = false
 
 	// Create wrapper function
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {

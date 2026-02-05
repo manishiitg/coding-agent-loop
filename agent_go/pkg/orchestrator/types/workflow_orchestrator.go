@@ -383,8 +383,14 @@ func NewWorkflowOrchestrator(
 				ModelID:  presetLLMConfig.TieredConfig.Tier3.ModelID,
 			},
 		}
-		// In tiered mode, populate presetPhaseLLM from Tier1 for phase agents created outside the controller
-		presetPhaseLLM = tieredConfig.Tier1
+		// In tiered mode, only use Tier1 as fallback if no explicit Phase LLM is configured
+		// This allows users to configure a separate Phase LLM even in tiered mode
+		if presetPhaseLLM == nil {
+			presetPhaseLLM = tieredConfig.Tier1
+			log.Printf("[TIERED_LLM] Using Tier1 as Phase LLM fallback: %s/%s", tieredConfig.Tier1.Provider, tieredConfig.Tier1.ModelID)
+		} else {
+			log.Printf("[TIERED_LLM] Using explicitly configured Phase LLM: %s/%s", presetPhaseLLM.Provider, presetPhaseLLM.ModelID)
+		}
 		log.Printf("[TIERED_LLM] Tiered mode enabled - Tier1: %s/%s, Tier2: %s/%s, Tier3: %s/%s",
 			tieredConfig.Tier1.Provider, tieredConfig.Tier1.ModelID,
 			tieredConfig.Tier2.Provider, tieredConfig.Tier2.ModelID,

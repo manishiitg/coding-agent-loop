@@ -158,7 +158,7 @@ export OPENROUTER_AVAILABLE_MODELS="x-ai/grok-code-fast-1,x-ai/grok-4-fast"
 export OPENAI_AVAILABLE_MODELS="gpt-5-mini,gpt-4.1-mini"
 
 # Supported LLM providers (controls which providers appear in the UI)
-export SUPPORTED_LLM_PROVIDERS="azure,anthropic"
+export SUPPORTED_LLM_PROVIDERS="azure,anthropic,vertex"
 
 # Set structured output LLM to Bedrock for better JSON generation
 export DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER="bedrock"

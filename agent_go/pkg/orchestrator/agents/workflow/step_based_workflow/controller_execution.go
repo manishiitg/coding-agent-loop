@@ -996,6 +996,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		}
 		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), hasLearnings)
 
+		// Determine if skip execution cleanup is enabled
+		skipExecutionCleanup := false
+		if hcpo.executionOptions != nil {
+			skipExecutionCleanup = hcpo.executionOptions.SkipExecutionCleanup
+		}
+
 		templateVars := map[string]string{
 			"StepTitle":             ResolveVariables(step.GetTitle(), hcpo.variableValues),
 			"StepDescription":       ResolveVariables(step.GetDescription(), hcpo.variableValues),
@@ -1012,6 +1018,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"StepExecutionPath":     stepExecutionPath,                         // Full execution folder path (e.g., "execution/step-8")
 			"FolderGuardReadPaths":  strings.Join(folderGuardReadPaths, ", "),  // Folder guard read paths for agent guidance
 			"FolderGuardWritePaths": strings.Join(folderGuardWritePaths, ", "), // Folder guard write paths for agent guidance
+			"SkipExecutionCleanup":  fmt.Sprintf("%v", skipExecutionCleanup),   // Skip cleanup mode flag for state verification prompt
 		}
 
 		// Add context dependencies as a comma-separated string (also resolve variables)
@@ -3527,7 +3534,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Starting todo task step execution: %s", step.GetTitle()))
 			// Generate step path for todo task step
 			todoTaskStepPath := fmt.Sprintf("step-%d", i+1)
-			successCriteriaMet, nextStepID, err := hcpo.executeTodoTaskStep(ctx, step, i, progress, previousContextFiles, previousExecutionResults, iteration, execCtx, breakdownSteps, todoTaskStepPath)
+
+			// Check if this todo task step has decision context (routed from a decision step)
+			var todoTaskDecisionCtx *DecisionContext
+			if dc, exists := decisionContextMap[i]; exists {
+				todoTaskDecisionCtx = dc
+				// Clean up after use (optional, but good practice)
+				delete(decisionContextMap, i)
+				hcpo.GetLogger().Info(fmt.Sprintf("📝 Using decision context for todo task step %d (routed from decision step %d)", i+1, dc.DecisionStepIndex+1))
+			}
+
+			successCriteriaMet, nextStepID, err := hcpo.executeTodoTaskStep(ctx, step, i, progress, previousContextFiles, previousExecutionResults, iteration, execCtx, breakdownSteps, todoTaskStepPath, todoTaskDecisionCtx)
 			if err != nil {
 				hcpo.GetLogger().Error(fmt.Sprintf("❌ Todo task step %d execution failed: %v", i+1, err), nil)
 				// Emit error event using centralized method

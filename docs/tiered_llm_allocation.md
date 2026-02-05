@@ -10,10 +10,11 @@ The two allocation modes are **mutually exclusive** at the preset level:
 
 | | Fixed Models (default) | Tiered Auto |
 |---|---|---|
-| Preset config | 4 LLM dropdowns | 3 tier dropdowns |
+| Preset config | 4 LLM dropdowns (Execution, Validation, Learning, Phase) | 3 tier dropdowns + Phase LLM dropdown |
+| Phase LLM | Configurable | Configurable (falls back to Tier 1 if not set) |
 | Temp LLM overrides | Available | Disabled |
 | Per-step LLM overrides | Available | Disabled |
-| LLM selection | Manual | Automatic via tier resolver |
+| LLM selection | Manual | Automatic via tier resolver (except Phase) |
 
 ## Tier Configuration
 
@@ -30,10 +31,12 @@ The tier resolver selects the LLM based on agent type and learning maturity:
 | Execution | Tier 1 | Tier 2 | Tier 2 |
 | Learning | Tier 1 | Tier 2 | Tier 3 |
 | Validation | Tier 3 | Tier 3 | Tier 3 |
-| Phase Agents | Tier 1 | Tier 1 | Tier 1 |
+| Phase Agents | Phase LLM (or Tier 1 fallback) | Phase LLM (or Tier 1 fallback) | Phase LLM (or Tier 1 fallback) |
 | Conditional | Tier 1 | Tier 2 | Tier 2 |
 
 Learning maturity is determined by counting files in the step's learnings folder (excluding metadata).
+
+**Phase Agents**: In tiered mode, phase agents (planning, evaluation, anonymization, plan improvement, etc.) use the explicitly configured Phase LLM if set, otherwise fall back to Tier 1. This allows users to configure a separate model for phase agents even when using tiered allocation for execution agents.
 
 ## Backend Architecture
 
@@ -51,7 +54,7 @@ Learning maturity is determined by counting files in the step's learnings folder
 2. `NewWorkflowOrchestrator` extracts tiered config and passes it through to `NewStepBasedWorkflowOrchestrator`
 3. Controller creates a `TierResolver` and sets `useTieredMode = true`
 4. When `selectExecutionLLM` / `selectValidationLLM` / `selectLearningLLM` are called, the tiered check at the top short-circuits all manual selection logic
-5. Phase agents get `presetPhaseLLM` populated from Tier 1 at construction time
+5. Phase agents use explicitly configured Phase LLM if set, otherwise fall back to Tier 1 at construction time
 
 ### Backward Compatibility
 
@@ -72,12 +75,13 @@ Learning maturity is determined by counting files in the step's learnings folder
 
 In the Preset Modal, a segmented control toggles between **Fixed Models** and **Tiered Auto**:
 
-- **Fixed Models**: Shows the existing 4 agent-specific LLM dropdowns
-- **Tiered Auto**: Shows 3 tier dropdowns with an info panel explaining auto-selection rules
+- **Fixed Models**: Shows the existing 4 agent-specific LLM dropdowns (Execution, Validation, Learning, Phase)
+- **Tiered Auto**: Shows 3 tier dropdowns (Tier 1/2/3) plus a Phase LLM dropdown with an info panel explaining auto-selection rules
 
 When tiered mode is active:
 - The temp LLM override button in the toolbar is disabled with a tooltip
 - The BulkStepConfigModal LLM section shows an info panel instead of dropdowns
+- Phase LLM dropdown is still available, allowing a separate model for phase agents (falls back to Tier 1 if not configured)
 
 ## TodoTask Sub-Agent Tier Selection
 
@@ -100,6 +104,42 @@ When tiered mode is active, todo_task steps gain two additional capabilities con
 - Only the execution LLM is overridden; validation (always Tier 3) and learning (own progression) are unaffected
 - UI: Toggle switch in the BulkStepConfigModal tiered mode section
 
+## Direct LLM Configuration (Works in Both Modes)
+
+In addition to tier-based selection, users can specify exact LLM provider/model for orchestrators and sub-agents. These direct overrides work in **both tiered and manual modes** and take highest priority.
+
+### Orchestrator LLM Override
+
+- Field: `orchestrator_llm` (object with `provider` and `model_id`)
+- Directly specifies the LLM for the todo task orchestrator agent
+- **Highest priority**: Overrides both `todo_task_orchestrator_tier` and maturity-based selection
+- Works in both tiered and manual allocation modes
+- UI: LLM dropdown in the BulkStepConfigModal todo task settings section
+
+### Sub-Agent LLM Override
+
+- Field: `sub_agent_llm` (object with `provider` and `model_id`)
+- Directly specifies the LLM for ALL sub-agents spawned by the orchestrator
+- **Highest priority**: Overrides `preferred_tier`, maturity-based selection, and manual mode settings
+- Works in both tiered and manual allocation modes
+- Propagated via Go context (`SubAgentLLMContextKey`) through the execution chain
+- UI: LLM dropdown in the BulkStepConfigModal todo task settings section
+
+### Priority Order
+
+LLM selection follows this priority (highest to lowest):
+
+**For Orchestrator Agent:**
+1. `orchestrator_llm` (direct LLM override) - works in both modes
+2. `todo_task_orchestrator_tier` (tiered mode only)
+3. `selectExecutionLLM()` fallback (mode-dependent)
+
+**For Sub-Agents:**
+1. `sub_agent_llm` from context (direct LLM override) - works in both modes
+2. `preferred_tier` from context (tiered mode only, set by orchestrator)
+3. Maturity-based tier resolution (tiered mode only)
+4. Manual mode step config / preset settings
+
 ### Flow
 
 1. User configures `todo_task_orchestrator_tier` and/or `enable_dynamic_tier_selection` on a todo_task step
@@ -111,13 +151,13 @@ When tiered mode is active, todo_task steps gain two additional capabilities con
 
 ### Key Files
 
-- `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go` - `AgentConfigs` struct fields
-- `agent_go/cmd/server/virtual-tools/sub_agent_tools.go` - `PreferredTierContextKey`, parameterized `CreateSubAgentTools(bool)`, handler extraction
-- `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_todo_task.go` - `selectTodoTaskOrchestratorLLM` tier check, `buildTodoTaskOrchestratorTemplateVars` dynamic tier flag
-- `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go` - `CreateSubAgentTools` call with tier selection, `selectExecutionLLM` preferred tier override
+- `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go` - `AgentConfigs` struct fields (`orchestrator_llm`, `sub_agent_llm`, `todo_task_orchestrator_tier`, `enable_dynamic_tier_selection`)
+- `agent_go/cmd/server/virtual-tools/sub_agent_tools.go` - `PreferredTierContextKey`, `SubAgentLLMContextKey`, parameterized `CreateSubAgentTools(bool)`, handler extraction
+- `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_todo_task.go` - `selectTodoTaskOrchestratorLLM` checks `orchestrator_llm` first, then tier, `buildTodoTaskOrchestratorTemplateVars` dynamic tier flag
+- `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go` - `wrapSubAgentToolExecutor` injects `sub_agent_llm` into context, `selectExecutionLLM` checks `SubAgentLLMContextKey` first, then `PreferredTierContextKey`
 - `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/todo_task_orchestrator_agent.go` - System prompt conditional tier guidance section
 - `frontend/src/utils/stepConfigMatching.ts` - `AgentConfigs` interface fields
-- `frontend/src/components/workflow/BulkStepConfigModal.tsx` - Tier controls in tiered mode panel
+- `frontend/src/components/workflow/BulkStepConfigModal.tsx` - Tier controls and direct LLM dropdowns in both tiered and manual mode panels
 
 ## Events
 

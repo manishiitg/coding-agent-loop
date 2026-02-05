@@ -112,6 +112,20 @@ Your '{{.StepContextOutput}}' MUST match this structure:
 {{printf "%s" .ValidationSchema}}
 {{end}}
 
+{{if eq .SkipExecutionCleanup "true"}}
+## ⚠️ State Verification Required (Skip Cleanup Mode)
+
+Previous execution outputs are preserved. Existing progress files (tasks.md, todos.json, step outputs) may contain completed work from prior runs.
+
+**IMPORTANT**: Do NOT assume existing "completed" state is still valid. Step configurations or requirements may have changed since the last run.
+
+Before proceeding:
+1. Review the CURRENT step description and success criteria carefully
+2. Compare against any existing progress/todos to check alignment
+3. If requirements changed, update todos or restart work as needed
+4. Only consider tasks complete if they satisfy the CURRENT success criteria
+{{end}}
+
 {{if .DecisionEvaluationQuestion}}
 ## 🤖 Output Formatting for Evaluation
 **Evaluation Question**: {{.DecisionEvaluationQuestion}}
@@ -308,9 +322,10 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"PrerequisiteRulesInfo":      prerequisiteRulesInfo,
 		"DecisionEvaluationQuestion": decisionEvaluationQuestion,
 		"ValidationSchema":           validationSchema,      // Validation schema JSON string
-		"KnowledgebasePath":          knowledgebasePath,     // Knowledgebase folder path
-		"FolderGuardReadPaths":       folderGuardReadPaths,  // Folder guard read paths for agent guidance
-		"FolderGuardWritePaths":      folderGuardWritePaths, // Folder guard write paths for agent guidance
+		"KnowledgebasePath":          knowledgebasePath,                       // Knowledgebase folder path
+		"FolderGuardReadPaths":       folderGuardReadPaths,                    // Folder guard read paths for agent guidance
+		"FolderGuardWritePaths":      folderGuardWritePaths,                   // Folder guard write paths for agent guidance
+		"SkipExecutionCleanup":       templateVars["SkipExecutionCleanup"],    // Skip cleanup mode flag
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution-only system prompt template: %v", err)

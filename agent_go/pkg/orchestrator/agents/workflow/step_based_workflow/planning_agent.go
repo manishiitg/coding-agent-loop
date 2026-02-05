@@ -340,6 +340,8 @@ type AgentConfigs struct {
 	DisableTempLLM              *bool              `json:"disable_temp_llm,omitempty"`               // If true, skip tempLLM override and use step config base LLM (step config > preset > orchestrator default)
 	TodoTaskOrchestratorTier    *int               `json:"todo_task_orchestrator_tier,omitempty"`    // Tier for todo task orchestrator agent (1/2/3) in tiered mode
 	EnableDynamicTierSelection  *bool              `json:"enable_dynamic_tier_selection,omitempty"`  // Allow todo task orchestrator to choose tier for sub-agents
+	OrchestratorLLM             *AgentLLMConfig    `json:"orchestrator_llm,omitempty"`               // Direct LLM override for orchestrator (works in both tiered and manual modes)
+	SubAgentLLM                 *AgentLLMConfig    `json:"sub_agent_llm,omitempty"`                  // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
 }
 
 // ============================================================================

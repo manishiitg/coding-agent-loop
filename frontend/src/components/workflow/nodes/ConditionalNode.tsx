@@ -466,7 +466,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
         className={`
           relative rounded-xl border-2 bg-white dark:bg-gray-900 shadow-lg overflow-visible
           ${statusBorderColors[status]}
-          ${selected ? 'ring-2 ring-purple-500/40' : ''}
+          ${selected ? 'ring-2 ring-purple-500/60' : ''}
           ${status === 'evaluating' ? 'animate-pulse' : ''}
         `}
         style={{

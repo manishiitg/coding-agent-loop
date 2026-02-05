@@ -167,9 +167,11 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 	// Consolidation agent doesn't need MCP servers - uses workspace tools only
 	config.ServerNames = []string{mcpclient.NoServers}
 
-	// Code execution mode only applies to execution agents, not learning consolidation agents
+	// Code execution mode and tool search mode only apply to execution agents, not learning consolidation agents
+	// Phase agents always use simple mode regardless of workflow mode setting
 	config.UseCodeExecutionMode = false
-	lcm.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for learning consolidation agent (only execution agents use MCP tools)"))
+	config.UseToolSearchMode = false
+	lcm.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode and tool search mode for learning consolidation agent (phase agents always use simple mode)"))
 
 	// Large output virtual tools are enabled for consolidation (agent may generate large reports)
 	enabled := true

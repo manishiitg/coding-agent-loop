@@ -423,7 +423,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
     <div className={`
       relative w-[300px] rounded-xl border-2 border-dashed bg-white dark:bg-gray-900 shadow-lg
       ${statusBorderColors[status]}
-      ${selected ? 'ring-2 ring-blue-500/40' : ''}
+      ${selected ? 'ring-2 ring-purple-500/60' : ''}
       ${changeType ? changeHighlightStyles[changeType] : ''}
     `}>
       {/* Loop Badge - Top Left */}

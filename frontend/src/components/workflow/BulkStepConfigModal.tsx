@@ -187,6 +187,8 @@ export default function BulkStepConfigModal({
       setSelectedMaxTurns(100);
       setTodoTaskOrchestratorTier("");
       setEnableDynamicTierSelection(false);
+      setSelectedOrchestratorLLM(null);
+      setSelectedSubAgentLLM(null);
     }
   }, [isOpen]);
 
@@ -383,9 +385,41 @@ export default function BulkStepConfigModal({
         } else {
           setTodoTaskOrchestratorTier("");
         }
+
+        // Check orchestrator LLM override
+        // If ALL todo tasks have the same orchestrator_llm, set it. Otherwise null.
+        const firstOrchestratorLLM = todoSteps[0].agent_configs?.orchestrator_llm;
+        const allSameOrchestratorLLM = todoSteps.every(
+          (s) => s.agent_configs?.orchestrator_llm?.provider === firstOrchestratorLLM?.provider &&
+                 s.agent_configs?.orchestrator_llm?.model_id === firstOrchestratorLLM?.model_id
+        );
+        if (allSameOrchestratorLLM && firstOrchestratorLLM?.provider && firstOrchestratorLLM?.model_id) {
+          const matchingLLM = availableLLMs.find(
+            (l) => l.provider === firstOrchestratorLLM.provider && l.model === firstOrchestratorLLM.model_id
+          );
+          setSelectedOrchestratorLLM(matchingLLM || null);
+        } else {
+          setSelectedOrchestratorLLM(null);
+        }
+
+        // Check sub-agent LLM override
+        // If ALL todo tasks have the same sub_agent_llm, set it. Otherwise null.
+        const firstSubAgentLLM = todoSteps[0].agent_configs?.sub_agent_llm;
+        const allSameSubAgentLLM = todoSteps.every(
+          (s) => s.agent_configs?.sub_agent_llm?.provider === firstSubAgentLLM?.provider &&
+                 s.agent_configs?.sub_agent_llm?.model_id === firstSubAgentLLM?.model_id
+        );
+        if (allSameSubAgentLLM && firstSubAgentLLM?.provider && firstSubAgentLLM?.model_id) {
+          const matchingLLM = availableLLMs.find(
+            (l) => l.provider === firstSubAgentLLM.provider && l.model === firstSubAgentLLM.model_id
+          );
+          setSelectedSubAgentLLM(matchingLLM || null);
+        } else {
+          setSelectedSubAgentLLM(null);
+        }
       }
     }
-  }, [isOpen, plan, getAllSteps]);
+  }, [isOpen, plan, getAllSteps, availableLLMs]);
 
   // Handle immediate action (disable/enable validation, learning, lock learnings, LLM updates, disable human tools, set max turns, learning detail level, agent mode)
   const handleImmediateAction = async (
@@ -710,6 +744,10 @@ export default function BulkStepConfigModal({
   const [todoTaskOrchestratorTier, setTodoTaskOrchestratorTier] = useState<string>("");
   const [enableDynamicTierSelection, setEnableDynamicTierSelection] = useState(false);
 
+  // Local state for todo task direct LLM overrides (work in both tiered and manual modes)
+  const [selectedOrchestratorLLM, setSelectedOrchestratorLLM] = useState<LLMOption | null>(null);
+  const [selectedSubAgentLLM, setSelectedSubAgentLLM] = useState<LLMOption | null>(null);
+
   // Handler to apply all todo task settings at once
   const handleApplyTodoTaskSettings = useCallback(async () => {
     if (!plan) return;
@@ -729,6 +767,20 @@ export default function BulkStepConfigModal({
 
           newAgentConfigs.todo_task_orchestrator_tier = todoTaskOrchestratorTier ? parseInt(todoTaskOrchestratorTier) : undefined;
           newAgentConfigs.enable_dynamic_tier_selection = enableDynamicTierSelection;
+
+          // Direct LLM overrides (work in both tiered and manual modes)
+          if (selectedOrchestratorLLM) {
+            newAgentConfigs.orchestrator_llm = {
+              provider: selectedOrchestratorLLM.provider as AgentLLMConfig["provider"],
+              model_id: selectedOrchestratorLLM.model,
+            };
+          }
+          if (selectedSubAgentLLM) {
+            newAgentConfigs.sub_agent_llm = {
+              provider: selectedSubAgentLLM.provider as AgentLLMConfig["provider"],
+              model_id: selectedSubAgentLLM.model,
+            };
+          }
 
           todoTaskStepUpdates.push({
             stepId: stepId,
@@ -751,7 +803,7 @@ export default function BulkStepConfigModal({
     } finally {
       setApplyingAction(null);
     }
-  }, [plan, onBulkUpdate, todoTaskOrchestratorTier, enableDynamicTierSelection, getAllSteps]);
+  }, [plan, onBulkUpdate, todoTaskOrchestratorTier, enableDynamicTierSelection, selectedOrchestratorLLM, selectedSubAgentLLM, getAllSteps]);
 
   if (!isOpen) return null;
 
@@ -879,6 +931,45 @@ export default function BulkStepConfigModal({
                           </div>
                         </div>
 
+                        {/* Direct LLM Override Section */}
+                        <div className="pt-3 mt-3 border-t border-border space-y-4">
+                          <div className="text-xs font-medium text-foreground">Direct LLM Overrides (override tiers)</div>
+
+                          {/* Orchestrator LLM Override */}
+                          <div>
+                            <label className="text-xs font-medium text-foreground">Orchestrator LLM Override</label>
+                            <p className="text-[10px] text-muted-foreground mb-2">
+                              Force a specific LLM for the orchestrator agent (overrides tier selection)
+                            </p>
+                            <LLMSelectionDropdown
+                              availableLLMs={availableLLMs}
+                              selectedLLM={selectedOrchestratorLLM}
+                              onLLMSelect={setSelectedOrchestratorLLM}
+                              onRefresh={refreshAvailableLLMs}
+                              inModal={true}
+                              openDirection="down"
+                              title="Select Orchestrator LLM"
+                            />
+                          </div>
+
+                          {/* Sub-Agent LLM Override */}
+                          <div>
+                            <label className="text-xs font-medium text-foreground">Sub-Agent LLM Override</label>
+                            <p className="text-[10px] text-muted-foreground mb-2">
+                              Force a specific LLM for ALL sub-agents (overrides tier/maturity selection)
+                            </p>
+                            <LLMSelectionDropdown
+                              availableLLMs={availableLLMs}
+                              selectedLLM={selectedSubAgentLLM}
+                              onLLMSelect={setSelectedSubAgentLLM}
+                              onRefresh={refreshAvailableLLMs}
+                              inModal={true}
+                              openDirection="down"
+                              title="Select Sub-Agent LLM"
+                            />
+                          </div>
+                        </div>
+
                         {/* Single Apply Button */}
                         <div className="pt-2 border-t border-border">
                           <Button
@@ -1003,6 +1094,70 @@ export default function BulkStepConfigModal({
                       title="Select Learning LLM"
                     />
                   </div>
+
+                  {/* Todo Task LLM Overrides (Manual Mode) */}
+                  {hasTodoTaskSteps && (
+                    <div className="p-4 rounded-xl border border-border bg-card shadow-sm">
+                      <div className="font-semibold text-sm text-foreground mb-3">Todo Task LLM Overrides</div>
+                      <p className="text-[10px] text-muted-foreground mb-4">
+                        Configure specific LLMs for todo task orchestrators and their sub-agents
+                      </p>
+                      <div className="space-y-4">
+                        {/* Orchestrator LLM Override */}
+                        <div>
+                          <label className="text-xs font-medium text-foreground">Orchestrator LLM Override</label>
+                          <p className="text-[10px] text-muted-foreground mb-2">
+                            Force a specific LLM for the orchestrator agent
+                          </p>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={selectedOrchestratorLLM}
+                            onLLMSelect={setSelectedOrchestratorLLM}
+                            onRefresh={refreshAvailableLLMs}
+                            inModal={true}
+                            openDirection="down"
+                            title="Select Orchestrator LLM"
+                          />
+                        </div>
+
+                        {/* Sub-Agent LLM Override */}
+                        <div>
+                          <label className="text-xs font-medium text-foreground">Sub-Agent LLM Override</label>
+                          <p className="text-[10px] text-muted-foreground mb-2">
+                            Force a specific LLM for ALL sub-agents
+                          </p>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={selectedSubAgentLLM}
+                            onLLMSelect={setSelectedSubAgentLLM}
+                            onRefresh={refreshAvailableLLMs}
+                            inModal={true}
+                            openDirection="down"
+                            title="Select Sub-Agent LLM"
+                          />
+                        </div>
+
+                        {/* Apply Button */}
+                        <div className="pt-2 border-t border-border">
+                          <Button
+                            size="sm"
+                            className="w-full h-8"
+                            disabled={applyingAction !== null || (!selectedOrchestratorLLM && !selectedSubAgentLLM)}
+                            onClick={handleApplyTodoTaskSettings}
+                          >
+                            {applyingAction === "todo_task_settings" ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                Applying...
+                              </>
+                            ) : (
+                              "Apply to All Todo Tasks"
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 </>
                 )}

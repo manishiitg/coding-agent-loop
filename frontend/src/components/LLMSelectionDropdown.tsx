@@ -133,18 +133,18 @@ export default function LLMSelectionDropdown({
                 setIsOpen(!isOpen);
               }}
               disabled={disabled || availableLLMs.length === 0}
-              className={`group flex items-center h-8 px-2 text-xs font-medium bg-background border border-border hover:bg-secondary text-foreground rounded-md transition-all duration-200 ${
+              className={`group flex items-center h-9 px-3 text-base font-medium bg-background border border-border hover:bg-secondary text-foreground rounded-md transition-all duration-200 ${
                 disabled || availableLLMs.length === 0 ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
               }`}
               aria-expanded={isOpen}
               aria-haspopup="menu"
               aria-label={title}
             >
-              <Brain className="w-3 h-3 mr-1 flex-shrink-0" />
-              <span className="inline-block overflow-hidden whitespace-nowrap w-[60px] group-hover:w-[150px] transition-[width] duration-300 text-left">
+              <Brain className="w-5 h-5 mr-2 flex-shrink-0" />
+              <span className="inline-block overflow-hidden whitespace-nowrap w-[180px] group-hover:w-[280px] transition-[width] duration-300 text-left">
                 {getDisplayText(false)}
               </span>
-              <ChevronDown className="w-3 h-3 ml-1 flex-shrink-0" />
+              <ChevronDown className="w-4 h-4 ml-1.5 flex-shrink-0" />
             </button>
           </TooltipTrigger>
           <TooltipContent>

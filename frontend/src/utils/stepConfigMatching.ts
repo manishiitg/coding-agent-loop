@@ -36,6 +36,8 @@ export interface AgentConfigs {
   disable_temp_llm?: boolean;
   todo_task_orchestrator_tier?: number;       // 1/2/3 - tier for orchestrator agent in tiered mode
   enable_dynamic_tier_selection?: boolean;    // allow orchestrator to choose tier for sub-agents
+  orchestrator_llm?: AgentLLMConfig;          // Direct LLM override for orchestrator (works in both tiered and manual modes)
+  sub_agent_llm?: AgentLLMConfig;             // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
 }
 
 // PrerequisiteRule represents a single prerequisite rule with one step dependency and one description

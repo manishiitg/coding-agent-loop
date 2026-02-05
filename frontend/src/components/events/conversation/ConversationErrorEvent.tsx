@@ -12,12 +12,18 @@ export const ConversationErrorEventDisplay: React.FC<ConversationErrorEventProps
   if (compact) {
     return (
       <div className="p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
-        <div className="text-xs text-red-700 dark:text-red-300 flex items-center gap-2">
-          <AlertCircle className="w-3 h-3 text-red-600" />
-          <span className="font-medium">Conversation Error</span>
-          {event.turn && <span className="text-red-600 dark:text-red-400">• Turn {event.turn}</span>}
-          {event.duration && <span className="text-red-600 dark:text-red-400">• {formatDuration(event.duration)}</span>}
-          {event.error && <span className="text-red-600 dark:text-red-400">• Error</span>}
+        <div className="text-xs text-red-700 dark:text-red-300 space-y-1">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-3 h-3 text-red-600" />
+            <span className="font-medium">Conversation Error</span>
+            {event.turn && <span className="text-red-600 dark:text-red-400">• Turn {event.turn}</span>}
+            {event.duration && <span className="text-red-600 dark:text-red-400">• {formatDuration(event.duration)}</span>}
+          </div>
+          {event.error && (
+            <div className="text-red-600 dark:text-red-400 mt-1 break-words">
+              {event.error.length > 200 ? `${event.error.substring(0, 200)}...` : event.error}
+            </div>
+          )}
         </div>
       </div>
     )

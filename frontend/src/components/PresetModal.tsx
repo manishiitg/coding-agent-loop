@@ -597,13 +597,50 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             Cost-efficient model for validation and mature learnings.
                           </div>
                         </div>
+                        {/* Phase Agent - also available in tiered mode */}
+                        <div>
+                          <div className="flex items-center gap-1.5 mb-2">
+                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                              Phase Agent
+                            </label>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-xs">Handles planning, variable extraction, and other workflow phases. Falls back to Tier 1 if not set.</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+                          <LLMSelectionDropdown
+                            availableLLMs={availableLLMs}
+                            selectedLLM={phaseLLM ? availableLLMs.find(llm =>
+                              llm.provider === phaseLLM.provider && llm.model === phaseLLM.model_id
+                            ) || null : (tier1LLM ? availableLLMs.find(llm =>
+                              llm.provider === tier1LLM.provider && llm.model === tier1LLM.model_id
+                            ) || null : currentLLMOption)}
+                            onLLMSelect={(llm) => setPhaseLLM({
+                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                              model_id: llm.model
+                            })}
+                            onRefresh={refreshAvailableLLMs}
+                            disabled={false}
+                            inModal={true}
+                            openDirection="down"
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            Handles planning, evaluation, anonymization, and other phases.
+                          </div>
+                        </div>
                         {/* Info panel */}
                         <div className="text-xs text-gray-500 pt-2 border-t border-gray-200 dark:border-gray-700 space-y-1">
                           <div className="font-medium text-gray-600 dark:text-gray-400">Auto-selection rules:</div>
                           <div>Execution: Tier 1 → Tier 2 (after first learning)</div>
                           <div>Learning: Tier 1 → Tier 2 → Tier 3 (progressive)</div>
                           <div>Validation: Always Tier 3</div>
-                          <div>Phase agents: Always Tier 1</div>
+                          <div>Phase agents: Uses configured Phase LLM (or Tier 1 fallback)</div>
                           <div className="text-yellow-600 dark:text-yellow-400 mt-1">Temp LLM overrides and per-step LLM configs are disabled in tiered mode</div>
                         </div>
                       </>

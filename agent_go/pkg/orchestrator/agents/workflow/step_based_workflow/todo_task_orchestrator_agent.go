@@ -217,6 +217,20 @@ A powerful execution agent that can handle any task you define.
 
 ---
 
+{{if eq .SkipExecutionCleanup "true"}}
+## ⚠️ State Verification Required (Skip Cleanup Mode)
+
+Previous execution outputs are preserved. The existing tasks.md or progress files may contain completed tasks from a prior run.
+
+**IMPORTANT**: Do NOT assume existing "completed" todos are still valid. The step configuration or sub-agent prompts may have changed.
+
+Before proceeding:
+1. Review the CURRENT step objective and predefined routes
+2. Check if existing completed todos still satisfy the current requirements
+3. If requirements changed, re-open relevant todos or create new ones
+4. Validate that completed work aligns with current success criteria
+{{end}}
+
 ## 🔍 EVALUATION & DECISION FRAMEWORK
 
 ### Phase 1: PLAN (First Iteration Only)
@@ -293,6 +307,10 @@ var todoTaskOrchestratorUserTemplate = MustRegisterTemplate("todoTaskOrchestrato
 {{if .PreviousStepsSummary}}
 ## PREVIOUS STEPS SUMMARY
 {{.PreviousStepsSummary}}
+{{end}}
+
+{{if .DecisionReasoning}}
+{{.DecisionReasoning}}
 {{end}}
 
 {{if .SubAgentResult}}
@@ -438,6 +456,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"LearningHistory":            templateVars["LearningHistory"],
 		"StepExecutionPath":          templateVars["StepExecutionPath"],
 		"ShellWorkingDirectory":      templateVars["ShellWorkingDirectory"],
+		"SkipExecutionCleanup":       templateVars["SkipExecutionCleanup"],
 	}
 
 	var result strings.Builder
@@ -461,6 +480,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorUserMessageP
 		"StepExecutionPath":       templateVars["StepExecutionPath"],
 		"StepContextDependencies": templateVars["StepContextDependencies"],
 		"PreviousStepsSummary":    templateVars["PreviousStepsSummary"],
+		"DecisionReasoning":       templateVars["DecisionReasoning"],
 		"SubAgentResult":          templateVars["SubAgentResult"],
 		"LastSubAgentName":        templateVars["LastSubAgentName"],
 		"LastTodoID":              templateVars["LastTodoID"],

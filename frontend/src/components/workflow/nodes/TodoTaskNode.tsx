@@ -109,8 +109,9 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
   const { availableLLMs } = useLLMStore()
   const { capabilities } = useCapabilitiesStore()
 
-  // Get step config (agent_configs)
-  const stepConfig = step as { agent_configs?: {
+  // Get step config (agent_configs) - for TodoTask, check inner todo_task_step first, then outer step
+  // The inner todo_task_step contains the actual execution configs
+  const innerStep = todo_task_step as { agent_configs?: {
     use_code_execution_mode?: boolean
     use_tool_search_mode?: boolean
     enable_prerequisite_detection?: boolean
@@ -126,7 +127,10 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
     selected_tools?: string[]
     enabled_custom_tools?: string[]
     enable_context_offloading?: boolean
-  } }
+  } } | undefined
+  const outerStep = step as { agent_configs?: typeof innerStep extends { agent_configs?: infer T } ? T : never }
+  // Prefer inner step configs (where the actual execution happens), fall back to outer step
+  const stepConfig = innerStep?.agent_configs ? innerStep : outerStep
 
   // Determine code execution mode: step config > preset default
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
@@ -508,7 +512,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
         className={`
           relative rounded-xl border-2 bg-white dark:bg-gray-900 shadow-lg overflow-visible
           ${statusBorderColors[status]}
-          ${selected ? 'ring-2 ring-purple-500/40' : ''}
+          ${selected ? 'ring-2 ring-purple-500/60' : ''}
           ${status === 'running' || status === 'executing' || status === 'evaluating' || status === 'orchestrating' ? 'animate-pulse' : ''}
         `}
         style={{

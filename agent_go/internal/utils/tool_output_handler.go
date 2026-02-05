@@ -17,36 +17,44 @@ const (
 
 	// DefaultToolOutputFolder is the default folder for storing large tool outputs
 	DefaultToolOutputFolder = "tool_output_folder"
+
+	// DefaultMaxToolOutputTokenLimit is the absolute maximum token limit for tool outputs
+	// This applies even when context offloading is disabled to prevent API errors
+	// Set to 100k tokens to leave room for system prompt and conversation history
+	DefaultMaxToolOutputTokenLimit = 100000
 )
 
 // ToolOutputHandler handles large tool outputs by writing them to files
 type ToolOutputHandler struct {
-	Threshold       int
-	OutputFolder    string
-	SessionID       string // Session ID for organizing files by conversation
-	Enabled         bool
-	ServerAvailable bool // Whether the read_large_tool_output server is available
+	Threshold            int
+	OutputFolder         string
+	SessionID            string // Session ID for organizing files by conversation
+	Enabled              bool
+	ServerAvailable      bool // Whether the read_large_tool_output server is available
+	MaxToolOutputTokens  int  // Absolute maximum token limit (applies even when offloading is disabled)
 }
 
 // NewToolOutputHandler creates a new tool output handler with default settings
 func NewToolOutputHandler() *ToolOutputHandler {
 	return &ToolOutputHandler{
-		Threshold:       DefaultLargeToolOutputThreshold,
-		OutputFolder:    DefaultToolOutputFolder,
-		SessionID:       "",
-		Enabled:         true,
-		ServerAvailable: false, // Will be set by agent
+		Threshold:           DefaultLargeToolOutputThreshold,
+		OutputFolder:        DefaultToolOutputFolder,
+		SessionID:           "",
+		Enabled:             true,
+		ServerAvailable:     false, // Will be set by agent
+		MaxToolOutputTokens: DefaultMaxToolOutputTokenLimit,
 	}
 }
 
 // NewToolOutputHandlerWithConfig creates a new tool output handler with custom settings
 func NewToolOutputHandlerWithConfig(threshold int, outputFolder string, sessionID string, enabled bool, serverAvailable bool) *ToolOutputHandler {
 	return &ToolOutputHandler{
-		Threshold:       threshold,
-		OutputFolder:    outputFolder,
-		SessionID:       sessionID,
-		Enabled:         enabled,
-		ServerAvailable: serverAvailable,
+		Threshold:           threshold,
+		OutputFolder:        outputFolder,
+		SessionID:           sessionID,
+		Enabled:             enabled,
+		ServerAvailable:     serverAvailable,
+		MaxToolOutputTokens: DefaultMaxToolOutputTokenLimit,
 	}
 }
 
@@ -294,4 +302,49 @@ func (h *ToolOutputHandler) getFileExtension(content string) string {
 		return ".json"
 	}
 	return ".txt"
+}
+
+// ExceedsMaxTokenLimit checks if content exceeds the absolute max token limit
+// This check applies regardless of whether context offloading is enabled
+func (h *ToolOutputHandler) ExceedsMaxTokenLimit(content string, model string) bool {
+	tokenCount := h.CountTokensForModel(content, model)
+	return tokenCount > h.MaxToolOutputTokens
+}
+
+// TruncateToMaxTokenLimit returns an error message when content exceeds the max token limit
+// Instead of truncating (which could lead to incorrect results), it returns a clear error
+// Returns the error message and true if the limit was exceeded
+func (h *ToolOutputHandler) TruncateToMaxTokenLimit(content string, model string, toolName string) (string, bool) {
+	tokenCount := h.CountTokensForModel(content, model)
+	if tokenCount <= h.MaxToolOutputTokens {
+		return content, false
+	}
+
+	// Return error message instead of truncated content
+	errorMessage := fmt.Sprintf(`[ERROR: TOOL OUTPUT TOO LARGE]
+
+The tool '%s' returned %d tokens which exceeds the maximum limit of %d tokens.
+The output was NOT included to prevent API errors.
+
+To fix this, you need to make more targeted queries:
+1. Use filters to narrow down the results (e.g., specific folder paths, file patterns)
+2. Request specific fields or ranges instead of full data dumps
+3. Break the request into smaller chunks
+4. Use pagination if the tool supports it
+5. Query for specific items by ID/name instead of listing everything
+
+Example: Instead of listing all files recursively, list files in a specific subfolder.
+`, toolName, tokenCount, h.MaxToolOutputTokens)
+
+	return errorMessage, true
+}
+
+// SetMaxToolOutputTokens sets the maximum token limit for tool outputs
+func (h *ToolOutputHandler) SetMaxToolOutputTokens(limit int) {
+	h.MaxToolOutputTokens = limit
+}
+
+// GetMaxToolOutputTokens returns the current max token limit
+func (h *ToolOutputHandler) GetMaxToolOutputTokens() int {
+	return h.MaxToolOutputTokens
 }

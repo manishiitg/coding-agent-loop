@@ -28,6 +28,8 @@ const (
 	ValidateTodoExistsKey subAgentContextKey = "validate_todo_exists"
 	// PreferredTierContextKey is the context key for preferred LLM tier override (1/2/3)
 	PreferredTierContextKey subAgentContextKey = "preferred_tier"
+	// SubAgentLLMContextKey is the context key for direct LLM override for sub-agents (works in both tiered and manual modes)
+	SubAgentLLMContextKey subAgentContextKey = "sub_agent_llm"
 )
 
 // ValidateTodoExistsFunc is the function signature for validating if a task exists in tasks.md

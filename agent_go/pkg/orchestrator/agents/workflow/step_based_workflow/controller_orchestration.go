@@ -1209,6 +1209,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationOrchestratorStep(
 		templateVars["VariableValues"] = variableValues
 	}
 
+	// Add skip execution cleanup flag for state verification prompt
+	skipExecutionCleanup := false
+	if hcpo.executionOptions != nil {
+		skipExecutionCleanup = hcpo.executionOptions.SkipExecutionCleanup
+	}
+	templateVars["SkipExecutionCleanup"] = fmt.Sprintf("%v", skipExecutionCleanup)
+
 	// Set folder guard paths: allow reads from step-specific learnings, execution, and run folder, writes only to current step folder
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	stepID := step.GetID()

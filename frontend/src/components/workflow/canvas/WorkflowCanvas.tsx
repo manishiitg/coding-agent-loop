@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useImperativeHandle, forwardRef, useEffect } from 'react'
+import React, { useCallback, useRef, useImperativeHandle, forwardRef, useEffect, useState } from 'react'
 import {
   ReactFlow,
   Background,
@@ -7,7 +7,8 @@ import {
   useReactFlow,
   BackgroundVariant,
   ReactFlowProvider,
-  type NodeChange
+  type NodeChange,
+  type OnSelectionChangeParams
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
@@ -16,6 +17,7 @@ import { WorkflowToolbar } from './WorkflowToolbar'
 import { StepSidebar } from './StepSidebar'
 import { VariablesSidebar } from './VariablesSidebar'
 import { StepLegend } from './StepLegend'
+import { MultiStepSidebar } from './MultiStepSidebar'
 import { BatchProgressHeader } from '../BatchProgressHeader'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
@@ -504,6 +506,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<WorkflowNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<WorkflowEdge>([])
   const [selectedNode, setSelectedNode] = React.useState<WorkflowNode | null>(null)
+
+  // Multi-selection state for configuring multiple steps at once
+  const [selectedNodes, setSelectedNodes] = useState<WorkflowNode[]>([])
 
   // Store latest nodes in ref to avoid dependency issues
   const nodesRef = React.useRef(nodes)
@@ -1835,7 +1840,35 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Handle node deselection
   const onPaneClick = useCallback(() => {
     setSelectedNode(null)
+    setSelectedNodes([])
   }, [])
+
+  // Handle multi-selection changes from React Flow
+  const onSelectionChange = useCallback(({ nodes: selectedFlowNodes }: OnSelectionChangeParams) => {
+    // Filter to only include configurable step nodes
+    const configurableTypes = ['step', 'conditional', 'decision', 'loop', 'orchestrator', 'todo_task', 'human_input']
+    const stepNodes = selectedFlowNodes.filter(n =>
+      configurableTypes.includes(n.type || '')
+    ) as WorkflowNode[]
+    setSelectedNodes(stepNodes)
+
+    // If exactly one node is selected, also update selectedNode for sidebar compatibility
+    if (stepNodes.length === 1) {
+      setSelectedNode(stepNodes[0])
+    } else if (stepNodes.length > 1) {
+      // Multiple selection - clear single selection (sidebar won't show)
+      setSelectedNode(null)
+    }
+  }, [])
+
+  // Extract step IDs from selected nodes for multi-step configuration
+  const selectedStepIds = React.useMemo(() => {
+    return selectedNodes.map(node => {
+      // Get step ID from node data if available, otherwise use node ID
+      const data = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | undefined
+      return data?.step?.id || node.id
+    })
+  }, [selectedNodes])
 
   // Handle start phase with execution options (for toolbar)
   const handleStartPhase = useCallback((phaseId: string, executionOptions?: ExecutionOptions) => {
@@ -2206,16 +2239,19 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         hasUnsavedLayoutChanges={hasUnsavedLayoutChanges}
         isSavingLayout={isSavingLayout}
         isDeletingLayout={isDeletingLayout}
+        selectedStepIds={selectedStepIds}
       />
 
       {/* React Flow Canvas with Sidebar */}
       <div className="flex-1 relative flex">
         <div className={`flex-1 transition-all duration-300 ${
-          selectedNode 
+          selectedNode
             ? (showChatArea ? 'mr-[50vw]' : (isStepSidebarCompact ? 'mr-[400px]' : 'mr-[600px]'))
-            : showVariablesSidebar 
-              ? 'mr-[450px]' 
-              : ''
+            : selectedStepIds.length >= 2
+              ? (isStepSidebarCompact ? 'mr-[400px]' : 'mr-[500px]')
+              : showVariablesSidebar
+                ? 'mr-[450px]'
+                : ''
         }`}>
         <ReactFlow
           nodes={nodes}
@@ -2224,6 +2260,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           onEdgesChange={onEdgesChange}
           onNodeClick={onNodeClick}
           onPaneClick={onPaneClick}
+          onSelectionChange={onSelectionChange}
+          multiSelectionKeyCode={["Shift", "Control", "Meta"]}
+          selectionOnDrag={false}
           onViewportChange={(viewport) => {
             // Track viewport state to preserve it during refresh
             const viewportState = {
@@ -2277,7 +2316,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         )}
         </div>
 
-        {/* Step Sidebar */}
+        {/* Step Sidebar - Single step selected */}
         {selectedNode && (
           <StepSidebar
             node={selectedNode}
@@ -2296,6 +2335,18 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           />
         )}
 
+        {/* Multi-Step Sidebar - Multiple steps selected */}
+        {!selectedNode && selectedStepIds.length >= 2 && handleBulkUpdateSteps && (
+          <MultiStepSidebar
+            selectedStepIds={selectedStepIds}
+            plan={plan || null}
+            onClose={() => setSelectedNodes([])}
+            onBulkUpdate={handleBulkUpdateSteps}
+            isCompact={isStepSidebarCompact}
+            showChatArea={showChatArea}
+          />
+        )}
+
         {/* Variables Sidebar */}
         {showVariablesSidebar && (
           <VariablesSidebar
@@ -2306,6 +2357,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           />
         )}
       </div>
+
     </div>
   )
 })

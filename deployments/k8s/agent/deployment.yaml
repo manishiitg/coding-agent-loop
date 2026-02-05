@@ -1,0 +1,98 @@
+# MCP Agent API server: chat, workflows, MCP tool execution, chat history (Postgres).
+# Ingress routes /api to this service. Env from mcpagent-shared-config + prod-mcpagent-secret.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcpagent-agent-cs
+  namespace: prod-mcpagent
+  labels:
+    app.kubernetes.io/name: cs
+    app.kubernetes.io/instance: mcpagent-agent
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: script
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cs
+      app.kubernetes.io/instance: mcpagent-agent
+  # Recreate (not RollingUpdate) so the single RWO PVC (agent-db) is released before a new pod starts; avoids Multi-Attach.
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cs
+        app.kubernetes.io/instance: mcpagent-agent
+    spec:
+      terminationGracePeriodSeconds: 60
+      serviceAccountName: default
+      securityContext:
+        {}
+      containers:
+        - name: agent
+          securityContext:
+            {}
+          image: 414085459896.dkr.ecr.ap-south-1.amazonaws.com/mcpagent-agent:latest
+          imagePullPolicy: Always
+          command: ["./mcp-agent"]
+          # db-type postgres uses DATABASE_URL from secret; mcp_servers.json comes from agent ConfigMap (synced from deployments/k8s/agent/mcp_config.json).
+          args: ["server", "--host", "0.0.0.0", "--port", "8000", "--db-type", "postgres", "--db-path", "/app/data/chat_history.db", "--mcp-config", "/app/configs/mcp_servers.json"]
+          ports:
+            - containerPort: 8000
+              name: http
+          # ConfigMap: LLM/Vertex, WORKSPACE_API_URL, ENABLE_CONTEXT_EDITING, etc. Secret: API keys, DATABASE_URL, Langfuse.
+          envFrom:
+            - configMapRef:
+                name: mcpagent-shared-config
+            - secretRef:
+                name: prod-mcpagent-secret
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          volumeMounts:
+            # Persistent chat history and DB; RWO so only one pod can attach (use Recreate strategy).
+            - name: agent-db
+              mountPath: /app/data
+            # MCP server list (command/args per server); from ConfigMap mcpagent-agent-config (deploy script syncs agent/mcp_config.json).
+            - name: mcp-config
+              mountPath: /app/configs/mcp_servers.json
+              subPath: mcp_servers.json
+            # Optional: uncomment to allow MCP configs with "command": "docker", "args": ["run", ...]. Requires node to have /var/run/docker.sock (Docker). Most K8s nodes use containerd-only; if so, leave commented.
+            # - name: docker-socket
+            #   mountPath: /var/run/docker.sock
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: agent-db
+          persistentVolumeClaim:
+            claimName: agent-db-pvc
+        - name: mcp-config
+          configMap:
+            name: mcpagent-agent-config
+        # Uncomment when nodes have Docker (see volumeMount above).
+        # - name: docker-socket
+        #   hostPath:
+        #     path: /var/run/docker.sock
+        #     type: Socket
+      # Schedule on Karpenter-managed nodes; toleration allows this pod to run on app-services-ondemand pool.
+      nodeSelector:
+        karpenter.sh/nodepool: app-services-ondemand
+      tolerations:
+        - effect: NoSchedule
+          key: app-services-ondemand
+          operator: Exists

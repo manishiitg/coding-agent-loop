@@ -13,7 +13,7 @@ interface LLMOverrideModalProps {
 }
 
 export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalProps) {
-  const { availableLLMs, refreshAvailableLLMs } = useLLMStore()
+  const { availableLLMs, refreshAvailableLLMs, llmConfigLocked } = useLLMStore()
   const tempOverrideLLM = useWorkflowStore(state => state.tempOverrideLLM)
   const setTempOverrideLLM = useWorkflowStore(state => state.setTempOverrideLLM)
   const clearTempOverrideLLM = useWorkflowStore(state => state.clearTempOverrideLLM)

@@ -23,12 +23,10 @@ require (
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/viper v1.21.0
 	gopkg.in/yaml.v3 v3.0.1
-	workspace v0.0.0-00010101000000-000000000000
+	github.com/manishiitg/mcp-agent-builder-go/workspace v0.0.0
 )
 
-replace workspace => ../workspace
-replace github.com/manishiitg/mcpagent => ../../mcpagent
-replace github.com/manishiitg/multi-llm-provider-go => ../../multi-llm-provider-go
+replace github.com/manishiitg/mcp-agent-builder-go/workspace => ../workspace
 
 require (
 	cloud.google.com/go v0.123.0 // indirect

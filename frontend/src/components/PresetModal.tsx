@@ -65,6 +65,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const availableLLMs = useLLMStore(state => state.availableLLMs);
   const getCurrentLLMOption = useLLMStore(state => state.getCurrentLLMOption);
   const refreshAvailableLLMs = useLLMStore(state => state.refreshAvailableLLMs);
+  const llmConfigLocked = useLLMStore(state => state.llmConfigLocked);
 
   const effectiveAgentMode = useMemo(() => {
     if (fixedAgentMode) return fixedAgentMode;

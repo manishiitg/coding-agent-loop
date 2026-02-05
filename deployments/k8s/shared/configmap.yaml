@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcpagent-shared-config
+  namespace: prod-mcpagent
+  labels:
+    app.kubernetes.io/name: mcpagent
+    app.kubernetes.io/managed-by: script
+data:
+  GO_ENV: "production"
+  # Primary Agent Configuration - Gemini only; default = Flash, user can pick Pro
+  AGENT_PROVIDER: "vertex"
+  AGENT_MODEL: "gemini-3-flash-preview"
+  PROVIDER: "vertex"
+  MODEL: "gemini-3-flash-preview"
+  MAX_TURNS: "100"
+  TRACING_PROVIDER: "langfuse"
+  # Vertex/Gemini - two models; first is default
+  VERTEX_PRIMARY_MODEL: "gemini-3-flash-preview"
+  VERTEX_AVAILABLE_MODELS: "gemini-3-flash-preview,gemini-3-pro-preview"
+  # LLM lock: only Vertex; user can choose Flash or Pro from the two below
+  SUPPORTED_LLM_PROVIDERS: "vertex"
+  LLM_CONFIG_LOCKED: "true"
+  # Default published LLMs (first = default). User selection is honored when locked if in this list.
+  DEFAULT_PUBLISHED_LLMS: '[{"id":"default-gemini-flash","name":"Gemini 3 Flash Preview","provider":"vertex","model_id":"gemini-3-flash-preview"},{"id":"default-gemini-pro","name":"Gemini 3 Pro Preview","provider":"vertex","model_id":"gemini-3-pro-preview"}]'
+  # MCP lock: users cannot add/edit/remove MCP servers; only use pre-configured servers from mcp_config.json
+  MCP_CONFIG_LOCKED: "true"
+  # Context editing (compact large tool outputs) - default in code is true when unset
+  ENABLE_CONTEXT_EDITING: "false"
+  # Workspace Configuration (agent calls workspace-api via in-cluster service)
+  WORKSPACE_API_URL: "http://mcpagent-workspace-api-cs"
+  WORKSPACE_ENABLE_GITHUB_SYNC: "false"
+  WORKSPACE_ENABLE_SEMANTIC_SEARCH: "false"

@@ -54,3 +54,8 @@ i) prompt tempaltes, need to check variables on compile time
 13. in Chat also lets show in ly stuff inside Chat/ folder and also when type using @ limit to search inside by default 
 
 14. for new workflows we should not have all workspace tools selected
+
+
+15. able to download a workspace file.. 
+16. able to share chats 
+17. have multi users in platform

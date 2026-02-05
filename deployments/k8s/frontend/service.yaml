@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcpagent-frontend-cs
+  namespace: prod-mcpagent
+  labels:
+    app.kubernetes.io/name: cs
+    app.kubernetes.io/instance: mcpagent-frontend
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: script
+spec:
+  selector:
+    app.kubernetes.io/name: cs
+    app.kubernetes.io/instance: mcpagent-frontend
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 80
+  type: ClusterIP

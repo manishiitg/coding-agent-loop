@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Settings, ChevronDown, ChevronRight } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
-import { useLLMStore, useAppStore } from '../../stores'
+import { useLLMStore, useAppStore, useChatStore } from '../../stores'
 
 interface LLMConfigurationSummaryProps {
   minimized?: boolean
@@ -15,6 +15,10 @@ export default function LLMConfigurationSummary({
   const currentMode: 'chat' | 'workflow' = agentMode === 'workflow' ? 'workflow' : 'chat'
 
   const { getConfigForMode, setShowLLMModal, savedLLMs } = useLLMStore()
+  const activeTabId = useChatStore(state => state.activeTabId)
+  const activeTabConfig = useChatStore(state =>
+    state.activeTabId ? state.chatTabs[state.activeTabId]?.config?.llmConfig : undefined
+  )
 
   // Get mode-specific config
   const modeConfig = getConfigForMode(currentMode)
@@ -23,10 +27,14 @@ export default function LLMConfigurationSummary({
 
   const [isExpanded, setIsExpanded] = useState(false)
 
-  // Use agentConfig if available, otherwise fallback to primaryConfig
-  // agentConfig.primary is LLMModel, primaryConfig is LLMConfiguration
-  // Both have provider and model_id, so we can use either
-  const currentLLM = agentConfig?.primary || primaryConfig
+  // In chat mode: show active tab's LLM if set, so sidebar reflects the actual selection/default
+  // In workflow mode: use agentConfig.primary or primaryConfig
+  const currentLLM = useMemo(() => {
+    if (currentMode === 'chat' && activeTabConfig?.provider && activeTabConfig?.model_id) {
+      return { provider: activeTabConfig.provider, model_id: activeTabConfig.model_id }
+    }
+    return agentConfig?.primary || primaryConfig
+  }, [currentMode, activeTabId, activeTabConfig, agentConfig?.primary, primaryConfig])
 
   // Get provider display info
   const getProviderInfo = (provider: string) => {

@@ -5,7 +5,7 @@
 *.so
 *.dylib
 orchestrator
-agent_go
+# agent_go not ignored: agent image is built from repo root and needs COPY agent_go/
 
 # Test binary, built with `go test -c`
 *.test
@@ -13,8 +13,8 @@ agent_go
 # Output of the go coverage tool
 *.out
 
-# Go workspace file
-go.work
+# Go workspace file (included so agent Dockerfile can use GOWORK for workspace module)
+# go.work - do not ignore; needed for agent build
 
 # IDE files
 .vscode/

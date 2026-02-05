@@ -140,30 +140,6 @@ export ENABLE_CONTEXT_EDITING="false"  # Enable context editing (default: true)
 export CONTEXT_EDITING_THRESHOLD="10000"  # Compact outputs larger than 10k tokens (default: 10000)
 export CONTEXT_EDITING_TURN_THRESHOLD="20"  # Compact outputs older than 20 turns (default: 20)
 
-# Set main LLM configuration (uses Bedrock with AWS credentials from environment)
-# Note: Frontend Published LLMs override this for actual agent execution
-export DEEP_SEARCH_MAIN_LLM_PROVIDER="bedrock"
-export DEEP_SEARCH_MAIN_LLM_MODEL="global.anthropic.claude-sonnet-4-5-20250929-v1:0"
-export DEEP_SEARCH_MAIN_LLM_TEMPERATURE="0.0"
-export DEEP_SEARCH_MAIN_LLM_MAX_TOKENS="40000"
-
-# Set agent provider environment variable (used by server.go for internal operations)
-# Note: Actual agent execution uses Published LLMs from frontend with their own API keys
-export AGENT_PROVIDER="bedrock"
-export AGENT_MODEL="global.anthropic.claude-sonnet-4-5-20250929-v1:0"
-
-# Set available models for each provider
-export BEDROCK_AVAILABLE_MODELS="global.anthropic.claude-sonnet-4-5-20250929-v1:0,us.anthropic.claude-sonnet-4-20250514-v1:0,us.anthropic.claude-3-7-sonnet-20250219-v1:0"
-export OPENROUTER_AVAILABLE_MODELS="x-ai/grok-code-fast-1,x-ai/grok-4-fast"
-export OPENAI_AVAILABLE_MODELS="gpt-5-mini,gpt-4.1-mini"
-
-# Supported LLM providers (controls which providers appear in the UI)
-export SUPPORTED_LLM_PROVIDERS="azure,anthropic"
-
-# Set structured output LLM to Bedrock for better JSON generation
-export DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER="bedrock"
-export DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL="global.anthropic.claude-sonnet-4-5-20250929-v1:0"
-export DEEP_SEARCH_STRUCTURED_OUTPUT_TEMPERATURE="0.0"
 
 # Obsidian configuration removed - now using workspace tools
 

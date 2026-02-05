@@ -240,7 +240,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 	baseIndex := es.sessionStartIndices[sessionID]
 
 	var result []Event
-	lastProcessedIndex := -1
+	var lastProcessedIndex int
 	hasMore := false
 
 	// Adjust sinceIndex to be relative to in-memory array if a base index is set

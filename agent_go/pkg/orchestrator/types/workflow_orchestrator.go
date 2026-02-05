@@ -9,13 +9,10 @@ import (
 	"strings"
 	"time"
 
-	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/database"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
-	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
-	baseevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
 
@@ -971,77 +968,6 @@ func (wo *WorkflowOrchestrator) getWorkflowID() string {
 	// This should be generated when the workflow starts
 	// For now, return a placeholder
 	return "workflow-" + fmt.Sprintf("%d", time.Now().Unix())
-}
-
-// emitBlockingHumanFeedback emits a blocking human feedback event (no Slack notifications)
-func (wo *WorkflowOrchestrator) emitBlockingHumanFeedback(ctx context.Context, objective string, todoListMarkdown string, title string, actionLabel string, actionDescription string) error {
-
-	// Generate unique request ID
-	requestID := fmt.Sprintf("feedback_%d", time.Now().UnixNano())
-
-	// Build question text from event data
-	questionText := title
-	if actionDescription != "" {
-		questionText = fmt.Sprintf("%s\n\n%s", title, actionDescription)
-	}
-	if objective != "" {
-		questionText = fmt.Sprintf("%s\n\nObjective: %s", questionText, objective)
-	}
-
-	// Build context message from todo list
-	contextMsg := todoListMarkdown
-
-	// Set default labels if not provided
-	yesLabel := actionLabel
-	if yesLabel == "" {
-		yesLabel = "Approve Plan & Continue"
-	}
-
-	// Create blocking human feedback event data
-	eventData := &orchestrator_events.BlockingHumanFeedbackEvent{
-		BaseEventData: baseevents.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Question:      questionText,
-		AllowFeedback: true, // Allow text feedback in frontend
-		Context:       contextMsg,
-		SessionID:     wo.getSessionID(),
-		WorkflowID:    wo.getWorkflowID(),
-		RequestID:     requestID,
-		YesNoOnly:     false, // false = frontend shows textarea + "Approve & Continue" button
-		YesLabel:      yesLabel,
-		NoLabel:       "Reject",
-	}
-
-	// Create agent event
-	agentEvent := &baseevents.AgentEvent{
-		Type:      orchestrator_events.BlockingHumanFeedback,
-		Timestamp: time.Now(),
-		Data:      eventData,
-	}
-
-	// Emit through event bridge if available
-	if wo.GetContextAwareBridge() != nil {
-		if bridge, ok := wo.GetContextAwareBridge().(interface {
-			HandleEvent(context.Context, *baseevents.AgentEvent) error
-		}); ok {
-			if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
-				return err
-			}
-		}
-	}
-
-	// Note: blocking_human_feedback events do NOT send Slack notifications
-	// Only request_human_feedback events send Slack notifications
-	feedbackStore := virtualtools.GetHumanFeedbackStore()
-
-	// Create feedback request without notifications (only registers in store for WaitForResponse)
-	if err := feedbackStore.CreateRequestWithoutNotification(requestID, questionText); err != nil {
-		wo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create feedback request: %v", err))
-		// Don't return error, as the event is already emitted to frontend
-	}
-
-	return nil
 }
 
 // Execute implements the Orchestrator interface

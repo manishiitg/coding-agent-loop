@@ -15,7 +15,9 @@ func RegisterSkillRoutes(router *mux.Router, api *StreamingAPI) {
 
 	router.HandleFunc("/skills", listSkillsHandler(workspaceAPIURL)).Methods("GET", "OPTIONS")
 	router.HandleFunc("/skills/import", importSkillHandler(workspaceAPIURL)).Methods("POST", "OPTIONS")
+	router.HandleFunc("/skills/import-zip", importSkillZipHandler(workspaceAPIURL)).Methods("POST", "OPTIONS")
 	router.HandleFunc("/skills/validate", validateSkillHandler()).Methods("POST", "OPTIONS")
+	router.HandleFunc("/skills/validate-zip", validateSkillZipHandler()).Methods("POST", "OPTIONS")
 	router.HandleFunc("/skills/{name}", getSkillHandler(workspaceAPIURL)).Methods("GET", "OPTIONS")
 	router.HandleFunc("/skills/{name}", updateSkillHandler(workspaceAPIURL)).Methods("PUT", "OPTIONS")
 	router.HandleFunc("/skills/{name}", deleteSkillHandler(workspaceAPIURL)).Methods("DELETE", "OPTIONS")
@@ -181,5 +183,70 @@ func deleteSkillHandler(workspaceAPIURL string) http.HandlerFunc {
 		}
 
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func validateSkillZipHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Parse multipart form with 10MB limit
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			http.Error(w, "failed to parse form: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, "file is required", http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+
+		result, err := skills.ValidateZipSkill(file, header)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func importSkillZipHandler(workspaceAPIURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Parse multipart form with 10MB limit
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			http.Error(w, "failed to parse form: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, "file is required", http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+
+		result, err := skills.ImportZipSkill(workspaceAPIURL, file, header)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if !result.Success {
+			w.WriteHeader(http.StatusBadRequest)
+		}
+		json.NewEncoder(w).Encode(result)
 	}
 }

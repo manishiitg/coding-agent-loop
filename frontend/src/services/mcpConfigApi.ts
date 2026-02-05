@@ -16,6 +16,7 @@ export interface MCPConfigStatus {
     total_entries: number;
     hit_rate: number;
   };
+  mcp_config_locked?: boolean;
 }
 
 export class MCPConfigApi {

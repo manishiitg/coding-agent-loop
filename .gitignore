@@ -101,3 +101,7 @@ gcp-oauth.keys.json
 Downloads/*
 Workflow/*
 agent_go/Workflow/
+
+# K8s deployment secrets
+deployments/k8s/.env
+workspace/workspace

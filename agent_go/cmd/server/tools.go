@@ -338,6 +338,12 @@ func (api *StreamingAPI) handleSetEnabledTools(w http.ResponseWriter, r *http.Re
 
 // handleAddServer handles POST requests to add a server
 func (api *StreamingAPI) handleAddServer(w http.ResponseWriter, r *http.Request) {
+	// Check if MCP config is locked
+	if isMCPConfigLocked() {
+		http.Error(w, "MCP configuration is locked by administrator", http.StatusForbidden)
+		return
+	}
+
 	var req AddServerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -353,6 +359,12 @@ func (api *StreamingAPI) handleAddServer(w http.ResponseWriter, r *http.Request)
 
 // handleEditServer handles POST requests to edit a server
 func (api *StreamingAPI) handleEditServer(w http.ResponseWriter, r *http.Request) {
+	// Check if MCP config is locked
+	if isMCPConfigLocked() {
+		http.Error(w, "MCP configuration is locked by administrator", http.StatusForbidden)
+		return
+	}
+
 	var req EditServerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -368,6 +380,12 @@ func (api *StreamingAPI) handleEditServer(w http.ResponseWriter, r *http.Request
 
 // handleRemoveServer handles POST requests to remove a server
 func (api *StreamingAPI) handleRemoveServer(w http.ResponseWriter, r *http.Request) {
+	// Check if MCP config is locked
+	if isMCPConfigLocked() {
+		http.Error(w, "MCP configuration is locked by administrator", http.StatusForbidden)
+		return
+	}
+
 	var req RemoveServerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)

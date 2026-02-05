@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, Save, RefreshCw, CheckCircle, XCircle, AlertTriangle, Settings } from 'lucide-react';
+import { Loader2, Save, RefreshCw, CheckCircle, XCircle, AlertTriangle, Settings, Lock } from 'lucide-react';
 import { mcpConfigApi, type MCPConfigStatus } from '../services/mcpConfigApi';
 
 interface MCPConfigEditorProps {
@@ -20,6 +20,7 @@ export const MCPConfigEditor: React.FC<MCPConfigEditorProps> = ({
   const [success, setSuccess] = useState<string | null>(null);
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
 
   // Load initial config
   useEffect(() => {
@@ -53,6 +54,7 @@ export const MCPConfigEditor: React.FC<MCPConfigEditorProps> = ({
     try {
       const data = await mcpConfigApi.getStatus();
       setStatus(data);
+      setIsLocked(data.mcp_config_locked ?? false);
     } catch (error) {
       console.error('Failed to load status:', error);
     }
@@ -173,6 +175,86 @@ export const MCPConfigEditor: React.FC<MCPConfigEditorProps> = ({
       <div className="flex items-center justify-center p-8">
         <Loader2 className="h-8 w-8 animate-spin text-gray-500 dark:text-gray-400" />
         <span className="ml-2 text-gray-600 dark:text-gray-400">Loading MCP configuration...</span>
+      </div>
+    );
+  }
+
+  // Show locked message when MCP config is locked by admin
+  if (isLocked) {
+    return (
+      <div className="space-y-6">
+        {/* Header with Lock Icon */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <Lock className="h-6 w-6 text-amber-500" />
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">MCP Server Configuration</h2>
+              <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
+                Configuration is locked by administrator
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Locked Message */}
+        <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+          <div className="flex items-start gap-3">
+            <Lock className="h-5 w-5 text-amber-500 mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="text-amber-800 dark:text-amber-200 font-medium">
+                MCP server configuration is read-only
+              </p>
+              <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                Contact your administrator to add, edit, or remove MCP servers.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Status Cards (read-only) */}
+        {status && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+              <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Total Servers</div>
+              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{status.total_servers}</div>
+            </div>
+            <div className="bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+              <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Discovered Servers</div>
+              <div className="text-2xl font-bold text-green-600 dark:text-green-400">{status.discovered_servers}</div>
+            </div>
+            <div className="bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+              <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Discovery Status</div>
+              <div className="flex items-center gap-2">
+                {status.discovery_running ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                    <span className="text-sm text-gray-900 dark:text-gray-100">Running</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+                    <span className="text-sm text-gray-900 dark:text-gray-100">Idle</span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Read-only JSON view */}
+        <div className="bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+          <div className="mb-4">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Current Configuration</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+              View-only mode — editing is disabled
+            </p>
+          </div>
+          <textarea
+            value={configJson}
+            readOnly
+            className="w-full h-64 p-4 border border-gray-300 dark:border-gray-600 rounded-lg font-mono text-sm resize-none bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 cursor-not-allowed"
+          />
+        </div>
       </div>
     );
   }

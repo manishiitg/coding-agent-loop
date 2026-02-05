@@ -50,6 +50,17 @@ func runServer(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	// Create default workspace subdirectories
+	defaultFolders := []string{"Downloads", "Chats", "Workflow", "skills", "Workspace"}
+	for _, folder := range defaultFolders {
+		path := filepath.Join(docsDir, folder)
+		if err := os.MkdirAll(path, 0755); err != nil {
+			fmt.Printf("Warning: Failed to create default folder %s: %v\n", folder, err)
+		} else {
+			fmt.Printf("Created default folder: %s\n", path)
+		}
+	}
+
 	// Sync with GitHub on startup if credentials are configured
 	if githubToken != "" && githubRepo != "" {
 		fmt.Printf("🔄 Syncing with GitHub repository on startup...\n")
@@ -250,6 +261,25 @@ func syncWithGitHubOnStartup(docsDir, githubToken, githubRepo string) error {
 	isEmpty, err := isDirEmpty(docsDir)
 	if err != nil {
 		return fmt.Errorf("failed to check directory status: %v", err)
+	}
+
+	// Check if it's effectively empty (only standard folders created by Dockerfile)
+	// Dockerfile creates Downloads, Chats, Workspace, so we consider dir empty if only these exist
+	if !isEmpty {
+		entries, _ := os.ReadDir(docsDir)
+		isEffectivelyEmpty := true
+		for _, entry := range entries {
+			name := entry.Name()
+			// Ignore these folders and .DS_Store
+			if name != "Downloads" && name != "Chats" && name != "Workspace" && name != "data" && name != ".DS_Store" {
+				isEffectivelyEmpty = false
+				break
+			}
+		}
+		if isEffectivelyEmpty {
+			fmt.Printf("ℹ️  Directory contains only standard folders (Downloads/Chats/Workspace) - treating as empty\n")
+			isEmpty = true
+		}
 	}
 
 	githubBranch := viper.GetString("github-branch")

@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Loader2, CheckCircle, AlertCircle, Download, ExternalLink } from 'lucide-react'
+import { useState, useRef } from 'react'
+import { Loader2, CheckCircle, AlertCircle, Download, ExternalLink, Upload, FileArchive } from 'lucide-react'
 import { skillsApi } from '../../api/skills'
 import type { ValidateSkillResponse } from '../../types/skills'
 
@@ -8,17 +8,68 @@ interface SkillImportDialogProps {
   onSuccess: () => void
 }
 
+type ImportMethod = 'github' | 'zip'
+
 export default function SkillImportDialog({ onClose, onSuccess }: SkillImportDialogProps) {
+  const [importMethod, setImportMethod] = useState<ImportMethod>('github')
   const [url, setUrl] = useState('')
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isValidating, setIsValidating] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const [validationResult, setValidationResult] = useState<ValidateSkillResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleMethodChange = (method: ImportMethod) => {
+    setImportMethod(method)
+    setValidationResult(null)
+    setError(null)
+  }
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      if (!file.name.toLowerCase().endsWith('.zip')) {
+        setError('Please select a .zip file')
+        setSelectedFile(null)
+        return
+      }
+      setSelectedFile(file)
+      setValidationResult(null)
+      setError(null)
+    }
+  }
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const file = e.dataTransfer.files?.[0]
+    if (file) {
+      if (!file.name.toLowerCase().endsWith('.zip')) {
+        setError('Please select a .zip file')
+        setSelectedFile(null)
+        return
+      }
+      setSelectedFile(file)
+      setValidationResult(null)
+      setError(null)
+    }
+  }
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+  }
 
   const handleValidate = async () => {
-    if (!url.trim()) {
-      setError('Please enter a GitHub URL')
-      return
+    if (importMethod === 'github') {
+      if (!url.trim()) {
+        setError('Please enter a GitHub URL')
+        return
+      }
+    } else {
+      if (!selectedFile) {
+        setError('Please select a zip file')
+        return
+      }
     }
 
     setIsValidating(true)
@@ -26,7 +77,9 @@ export default function SkillImportDialog({ onClose, onSuccess }: SkillImportDia
     setValidationResult(null)
 
     try {
-      const result = await skillsApi.validateSkill({ github_url: url.trim() })
+      const result = importMethod === 'github'
+        ? await skillsApi.validateSkill({ github_url: url.trim() })
+        : await skillsApi.validateSkillZip(selectedFile!)
       setValidationResult(result)
       if (!result.valid) {
         setError(result.error || 'Invalid skill')
@@ -39,16 +92,25 @@ export default function SkillImportDialog({ onClose, onSuccess }: SkillImportDia
   }
 
   const handleImport = async () => {
-    if (!url.trim()) {
-      setError('Please enter a GitHub URL')
-      return
+    if (importMethod === 'github') {
+      if (!url.trim()) {
+        setError('Please enter a GitHub URL')
+        return
+      }
+    } else {
+      if (!selectedFile) {
+        setError('Please select a zip file')
+        return
+      }
     }
 
     setIsImporting(true)
     setError(null)
 
     try {
-      const result = await skillsApi.importSkill({ github_url: url.trim() })
+      const result = importMethod === 'github'
+        ? await skillsApi.importSkill({ github_url: url.trim() })
+        : await skillsApi.importSkillZip(selectedFile!)
       if (result.success) {
         onSuccess()
       } else {
@@ -61,12 +123,14 @@ export default function SkillImportDialog({ onClose, onSuccess }: SkillImportDia
     }
   }
 
+  const canValidate = importMethod === 'github' ? url.trim() !== '' : selectedFile !== null
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 shadow-xl w-full max-w-lg">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-            Import Skill from GitHub
+            Import Skill
           </h3>
           <button
             onClick={onClose}
@@ -77,26 +141,97 @@ export default function SkillImportDialog({ onClose, onSuccess }: SkillImportDia
         </div>
 
         <div className="space-y-4">
-          {/* URL Input */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              GitHub Folder URL
-            </label>
-            <input
-              type="text"
-              value={url}
-              onChange={(e) => {
-                setUrl(e.target.value)
-                setValidationResult(null)
-                setError(null)
-              }}
-              placeholder="https://github.com/user/repo/tree/main/skills/my-skill"
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-            />
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              Paste a URL to a skill folder containing SKILL.md
-            </p>
+          {/* Tab Buttons */}
+          <div className="flex border-b border-gray-200 dark:border-gray-700">
+            <button
+              onClick={() => handleMethodChange('github')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                importMethod === 'github'
+                  ? 'border-purple-500 text-purple-600 dark:text-purple-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+              }`}
+            >
+              GitHub URL
+            </button>
+            <button
+              onClick={() => handleMethodChange('zip')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                importMethod === 'zip'
+                  ? 'border-purple-500 text-purple-600 dark:text-purple-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+              }`}
+            >
+              Upload Zip
+            </button>
           </div>
+
+          {/* GitHub URL Input */}
+          {importMethod === 'github' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                GitHub Folder URL
+              </label>
+              <input
+                type="text"
+                value={url}
+                onChange={(e) => {
+                  setUrl(e.target.value)
+                  setValidationResult(null)
+                  setError(null)
+                }}
+                placeholder="https://github.com/user/repo/tree/main/skills/my-skill"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              />
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Paste a URL to a skill folder containing SKILL.md
+              </p>
+            </div>
+          )}
+
+          {/* Zip Upload */}
+          {importMethod === 'zip' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Zip File
+              </label>
+              <div
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                onClick={() => fileInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+                  selectedFile
+                    ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
+                    : 'border-gray-300 dark:border-gray-600 hover:border-purple-400 dark:hover:border-purple-500'
+                }`}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".zip"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                {selectedFile ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <FileArchive className="w-6 h-6 text-purple-500" />
+                    <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">
+                      {selectedFile.name}
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <Upload className="w-8 h-8 mx-auto text-gray-400 dark:text-gray-500 mb-2" />
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      Drop a .zip file here or click to browse
+                    </p>
+                  </>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Zip file should contain SKILL.md at root or in a single folder
+              </p>
+            </div>
+          )}
 
           {/* Error Message */}
           {error && (
@@ -157,7 +292,7 @@ export default function SkillImportDialog({ onClose, onSuccess }: SkillImportDia
             <div className="flex items-center gap-2">
               <button
                 onClick={handleValidate}
-                disabled={isValidating || !url.trim()}
+                disabled={isValidating || !canValidate}
                 className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {isValidating ? (

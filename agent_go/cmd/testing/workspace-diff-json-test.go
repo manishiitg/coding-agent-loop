@@ -13,8 +13,8 @@ import (
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"workspace/handlers"
-	"workspace/models"
+	"github.com/manishiitg/mcp-agent-builder-go/workspace/handlers"
+	"github.com/manishiitg/mcp-agent-builder-go/workspace/models"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

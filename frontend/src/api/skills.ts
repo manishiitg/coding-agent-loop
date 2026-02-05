@@ -43,6 +43,26 @@ export const skillsApi = {
     return response.data;
   },
 
+  // Validate a skill from uploaded zip file
+  validateSkillZip: async (file: File): Promise<ValidateSkillResponse> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/api/skills/validate-zip', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return response.data;
+  },
+
+  // Import a skill from uploaded zip file
+  importSkillZip: async (file: File): Promise<ImportSkillResponse> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/api/skills/import-zip', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return response.data;
+  },
+
   // Update a skill's content
   updateSkill: async (name: string, request: UpdateSkillRequest): Promise<Skill> => {
     const response = await api.put(`/api/skills/${encodeURIComponent(name)}`, request);

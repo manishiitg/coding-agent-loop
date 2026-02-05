@@ -62,6 +62,10 @@ interface LLMState extends StoreActions {
   supportedProviders: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure')[]
   isProviderSupported: (provider: string) => boolean
 
+  // Lock state from backend (not persisted; re-read on each load)
+  llmConfigLocked: boolean
+  defaultPublishedLLMsLocked: boolean
+
   // Actions
   setPrimaryConfig: (config: LLMConfiguration) => void
   setAgentConfig: (config: AgentLLMConfiguration | null) => void
@@ -217,6 +221,8 @@ export const useLLMStore = create<LLMState>()(
 
         // Supported providers (always load fresh from backend, default to all)
         supportedProviders: ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure'],
+        llmConfigLocked: false,
+        defaultPublishedLLMsLocked: false,
         isProviderSupported: (provider) => {
           const supported = get().supportedProviders
           return supported.includes(provider as typeof supported[number])
@@ -417,12 +423,43 @@ export const useLLMStore = create<LLMState>()(
               }
             }
             
+            const locked = !!defaults.llm_config_locked
+            const defaultPublishedLocked = !!defaults.default_published_llms_locked
+            const defaultList = Array.isArray(defaults.default_published_llms) ? defaults.default_published_llms as SavedLLM[] : []
+
+            let newSavedLLMs = currentState.savedLLMs
+            if (defaultList.length > 0) {
+              if (defaultPublishedLocked) {
+                newSavedLLMs = defaultList
+              } else {
+                const byId = new Map(currentState.savedLLMs.map((llm) => [llm.id, llm]))
+                for (const d of defaultList) {
+                  if (d.id && !byId.has(d.id)) {
+                    byId.set(d.id, d)
+                  } else if (d.provider && d.model_id) {
+                    const key = `${d.provider}:${d.model_id}`
+                    if (!Array.from(byId.values()).some((llm) => llm.provider === d.provider && llm.model_id === d.model_id)) {
+                      byId.set(d.id || key, { ...d, id: d.id || key })
+                    }
+                  }
+                }
+                newSavedLLMs = Array.from(byId.values())
+              }
+            }
+
+            let newPrimaryConfig = hasUserSelection ? currentState.primaryConfig : defaults.primary_config
+            if (locked && defaultList.length > 0) {
+              const first = defaultList[0]
+              newPrimaryConfig = {
+                provider: first.provider,
+                model_id: first.model_id,
+                fallback_models: [],
+                cross_provider_fallback: undefined
+              }
+            }
+
             set({
-              // Only overwrite primaryConfig if user hasn't selected a model yet
-              // This preserves user's LLM selection across app reloads and modal opens
-              primaryConfig: hasUserSelection 
-                ? currentState.primaryConfig 
-                : defaults.primary_config,
+              primaryConfig: newPrimaryConfig,
               openrouterConfig: preserveUserConfig(currentState.openrouterConfig, defaults.openrouter_config),
               bedrockConfig: preserveUserConfig(currentState.bedrockConfig, defaults.bedrock_config),
               openaiConfig: preserveUserConfig(currentState.openaiConfig, defaults.openai_config),
@@ -457,6 +494,7 @@ export const useLLMStore = create<LLMState>()(
                 endpoint: ''
                 }
               ),
+              savedLLMs: newSavedLLMs,
               availableBedrockModels: defaults.available_models.bedrock,
               availableOpenRouterModels: defaults.available_models.openrouter,
               availableOpenAIModels: defaults.available_models.openai,
@@ -464,10 +502,19 @@ export const useLLMStore = create<LLMState>()(
               availableAnthropicModels: defaults.available_models.anthropic || [],
               availableAzureModels: defaults.available_models.azure || [],
               supportedProviders: defaults.supported_providers || ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure'],
+              llmConfigLocked: locked,
+              defaultPublishedLLMsLocked: defaultPublishedLocked,
               defaultsLoaded: true,
               error: null,
               isLoadingLLMs: false
             })
+
+            if (locked && defaultList.length > 0) {
+              const first = defaultList[0]
+              get().setChatPrimaryConfig({ provider: first.provider, model_id: first.model_id, fallback_models: [], cross_provider_fallback: undefined })
+              get().setWorkflowPrimaryConfig({ provider: first.provider, model_id: first.model_id, fallback_models: [], cross_provider_fallback: undefined })
+              get().setAgentConfig({ primary: first, fallbacks: [] })
+            }
 
             // Refresh availableLLMs from savedLLMs (Published LLMs)
             get().refreshAvailableLLMs()
@@ -597,10 +644,17 @@ export const useLLMStore = create<LLMState>()(
         },
 
         refreshAvailableLLMs: async () => {
+          const state = get()
+          // Don't build list until backend defaults are loaded (so supported_providers is set)
+          if (!state.defaultsLoaded) {
+            set({ availableLLMs: [], isLoadingLLMs: false })
+            return
+          }
+
           set({ isLoadingLLMs: true, error: null })
 
           try {
-            const state = get()
+            const currentState = get()
             const availableLLMs: LLMOption[] = []
 
             // Fetch model metadata for cost/context info
@@ -620,8 +674,8 @@ export const useLLMStore = create<LLMState>()(
 
             // Build availableLLMs from Published LLMs (savedLLMs)
             // This replaces the old provider-specific model lists
-            const supportedProviders = state.supportedProviders || []
-            state.savedLLMs.forEach(savedLLM => {
+            const supportedProviders = currentState.supportedProviders || []
+            currentState.savedLLMs.forEach(savedLLM => {
               // Skip if provider is not supported
               if (supportedProviders.length > 0 && !supportedProviders.includes(savedLLM.provider)) {
                 return

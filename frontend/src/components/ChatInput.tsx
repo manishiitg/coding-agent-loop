@@ -320,7 +320,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const {
     availableLLMs,
     getCurrentLLMOption,
-    refreshAvailableLLMs: onRefreshAvailableLLMs
+    refreshAvailableLLMs: onRefreshAvailableLLMs,
+    llmConfigLocked
   } = useLLMStore()
 
   const { scrollToFile } = useWorkspaceStore()
@@ -1348,14 +1349,25 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         />
                       </>
                     
-                    <LLMSelectionDropdown
-                      availableLLMs={availableLLMs}
-                      selectedLLM={primaryLLM}
-                      onLLMSelect={onPrimaryLLMSelect}
-                      onRefresh={onRefreshAvailableLLMs}
-                      disabled={isStreaming || isSummarizing}
-                      openDirection="up"
-                    />
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="flex">
+                            <LLMSelectionDropdown
+                              availableLLMs={availableLLMs}
+                              selectedLLM={primaryLLM}
+                              onLLMSelect={onPrimaryLLMSelect}
+                              onRefresh={onRefreshAvailableLLMs}
+                              disabled={isStreaming || isSummarizing}
+                              openDirection="up"
+                            />
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">
+                          <p>{llmConfigLocked ? 'Select from admin-configured LLMs' : 'Select Primary LLM'}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                     {/* Workspace Access Toggle - Icon Button with expand on hover */}
                     <button
                       type="button"

@@ -20,18 +20,19 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	unifiedevents "github.com/manishiitg/mcpagent/events"
-	"github.com/manishiitg/mcpagent/executor"
-	"github.com/manishiitg/mcpagent/llm"
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"github.com/manishiitg/mcpagent/mcpclient"
-	"github.com/manishiitg/mcpagent/observability"
 	"mcp-agent-builder-go/agent_go/internal/events"
 	agent "mcp-agent-builder-go/agent_go/pkg/agentwrapper"
 	"mcp-agent-builder-go/agent_go/pkg/database"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	orchtypes "mcp-agent-builder-go/agent_go/pkg/orchestrator/types"
+
+	unifiedevents "github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/executor"
+	"github.com/manishiitg/mcpagent/llm"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
@@ -41,12 +42,13 @@ import (
 
 	"github.com/joho/godotenv"
 
-	mcpagent "github.com/manishiitg/mcpagent/agent"
 	eventbridge "mcp-agent-builder-go/agent_go/cmd/server/event_bridge"
 	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 	"strconv"
+
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 )
 
 // extractWorkspacePathFromObjective extracts the workspace path from the objective string
@@ -1222,23 +1224,209 @@ func getSupportedProviders() []string {
 	return supported
 }
 
-// handleGetLLMDefaults returns default LLM configurations from environment variables
+// isLLMConfigLocked returns true when LLM configuration is locked by admin (server uses env only).
+func isLLMConfigLocked() bool {
+	return os.Getenv("LLM_CONFIG_LOCKED") == "true" || os.Getenv("LLM_CONFIG_LOCKED") == "1"
+}
+
+// isAllowedDefaultLLM returns true when (provider, modelID) is in the default published LLMs list (for locked mode).
+func isAllowedDefaultLLM(provider, modelID string) bool {
+	if provider == "" || modelID == "" {
+		return false
+	}
+	defaults := llm.GetLLMDefaults()
+	list := getDefaultPublishedLLMs(true, defaults.PrimaryConfig)
+	for _, entry := range list {
+		p, _ := entry["provider"].(string)
+		m, _ := entry["model_id"].(string)
+		if p == provider && m == modelID {
+			return true
+		}
+	}
+	return false
+}
+
+// getPrimaryProviderAndModelFromDefaults extracts provider and model_id from llm.GetLLMDefaults().PrimaryConfig.
+func getPrimaryProviderAndModelFromDefaults() (provider, modelID string) {
+	defaults := llm.GetLLMDefaults()
+	bytes, err := json.Marshal(defaults.PrimaryConfig)
+	if err != nil {
+		return "openrouter", llm.GetDefaultModel(llm.Provider("openrouter"))
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(bytes, &m); err != nil {
+		return "openrouter", llm.GetDefaultModel(llm.Provider("openrouter"))
+	}
+	if p, _ := m["provider"].(string); p != "" {
+		provider = p
+	} else {
+		provider = "openrouter"
+	}
+	if mid, _ := m["model_id"].(string); mid != "" {
+		modelID = mid
+	} else {
+		modelID = llm.GetDefaultModel(llm.Provider(provider))
+	}
+	return provider, modelID
+}
+
+// buildProviderAPIKeysFromEnv builds llm.ProviderAPIKeys from environment variables (for locked mode).
+func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
+	keys := &llm.ProviderAPIKeys{}
+	if s := os.Getenv("OPENROUTER_API_KEY"); s != "" {
+		keys.OpenRouter = &s
+	}
+	if s := os.Getenv("OPENAI_API_KEY"); s != "" {
+		keys.OpenAI = &s
+	}
+	if s := os.Getenv("ANTHROPIC_API_KEY"); s != "" {
+		keys.Anthropic = &s
+	}
+	if s := os.Getenv("VERTEX_API_KEY"); s != "" {
+		keys.Vertex = &s
+	} else if s := os.Getenv("GOOGLE_API_KEY"); s != "" {
+		keys.Vertex = &s
+	} else if s := os.Getenv("GEMINI_API_KEY"); s != "" {
+		keys.Vertex = &s
+	} else if s := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); s != "" {
+		keys.Vertex = &s
+	}
+	if region := os.Getenv("BEDROCK_REGION"); region != "" {
+		keys.Bedrock = &llm.BedrockConfig{Region: region}
+	}
+	if endpoint := os.Getenv("AZURE_AI_ENDPOINT"); endpoint != "" {
+		apiKey := os.Getenv("AZURE_AI_API_KEY")
+		apiVer := os.Getenv("AZURE_AI_API_VERSION")
+		region := os.Getenv("AZURE_AI_REGION")
+		keys.Azure = &llm.AzureAPIConfig{
+			Endpoint:   endpoint,
+			APIKey:     apiKey,
+			APIVersion: apiVer,
+			Region:     region,
+		}
+	}
+	return keys
+}
+
+// stripSecretsFromMap recursively removes api_key, endpoint, and other sensitive fields from m (for locked mode).
+// endpoint is stripped so Azure tenant URLs (e.g. https://tenant-name.openai.azure.com/) are not sent to the client.
+func stripSecretsFromMap(m map[string]interface{}) {
+	delete(m, "api_key")
+	delete(m, "endpoint")
+	for _, v := range m {
+		if nested, ok := v.(map[string]interface{}); ok {
+			stripSecretsFromMap(nested)
+		}
+	}
+}
+
+// getDefaultPublishedLLMs returns the list of default published LLMs from env, file, or primary config.
+// When locked is true, entries must not include api_key or endpoint (Azure tenant URL).
+func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[string]interface{} {
+	stripEntrySecrets := func(entry map[string]interface{}) {
+		delete(entry, "api_key")
+		delete(entry, "endpoint")
+	}
+	// 1) Try DEFAULT_PUBLISHED_LLMS (JSON string)
+	if s := os.Getenv("DEFAULT_PUBLISHED_LLMS"); s != "" {
+		var list []map[string]interface{}
+		if err := json.Unmarshal([]byte(s), &list); err == nil && len(list) > 0 {
+			if locked {
+				for i := range list {
+					stripEntrySecrets(list[i])
+				}
+			}
+			return list
+		}
+	}
+	// 2) Try DEFAULT_PUBLISHED_LLMS_PATH (path to JSON file)
+	if path := os.Getenv("DEFAULT_PUBLISHED_LLMS_PATH"); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			var list []map[string]interface{}
+			if err := json.Unmarshal(data, &list); err == nil && len(list) > 0 {
+				if locked {
+					for i := range list {
+						stripEntrySecrets(list[i])
+					}
+				}
+				return list
+			}
+		}
+	}
+	// 3) Build one entry from primary config
+	var provider, modelID string
+	if pc, ok := primaryConfig.(map[string]interface{}); ok {
+		if p, _ := pc["provider"].(string); p != "" {
+			provider = p
+		}
+		if m, _ := pc["model_id"].(string); m != "" {
+			modelID = m
+		}
+	}
+	if provider == "" {
+		provider = "openrouter"
+	}
+	if modelID == "" {
+		modelID = llm.GetDefaultModel(llm.Provider(provider))
+	}
+	entry := map[string]interface{}{
+		"id":       "default-" + provider + "-" + strings.ReplaceAll(modelID, "/", "-"),
+		"name":     "Default (" + provider + ")",
+		"provider": provider,
+		"model_id": modelID,
+	}
+	if !locked {
+		// Only include api_key when not locked (server still won't send it in locked response path)
+		if key := os.Getenv("OPENROUTER_API_KEY"); provider == "openrouter" && key != "" {
+			entry["api_key"] = key
+		} else if key := os.Getenv("OPENAI_API_KEY"); provider == "openai" && key != "" {
+			entry["api_key"] = key
+		} else if key := os.Getenv("ANTHROPIC_API_KEY"); provider == "anthropic" && key != "" {
+			entry["api_key"] = key
+		}
+	}
+	return []map[string]interface{}{entry}
+}
+
+// handleGetLLMDefaults returns default LLM configurations from environment variables.
+// When LLM_CONFIG_LOCKED=true, api_key and endpoint (e.g. Azure tenant URL) are stripped from all configs and default_published_llms.
 func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Received request for LLM defaults")
 
 	defaults := llm.GetLLMDefaults()
+	locked := isLLMConfigLocked()
 
-	// Add supported_providers to the response
+	// Build response (same shape as before)
 	response := map[string]interface{}{
 		"primary_config":      defaults.PrimaryConfig,
 		"openrouter_config":   defaults.OpenrouterConfig,
 		"bedrock_config":      defaults.BedrockConfig,
 		"openai_config":       defaults.OpenaiConfig,
-		"anthropic_config":    defaults.AnthropicConfig,
-		"azure_config":        defaults.AzureConfig,
 		"available_models":    defaults.AvailableModels,
 		"supported_providers": getSupportedProviders(),
 	}
+
+	if locked {
+		// Marshal then unmarshal to map so we can strip api_key from any nested structure
+		bytes, err := json.Marshal(response)
+		if err != nil {
+			log.Printf("Failed to marshal LLM defaults: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		var clean map[string]interface{}
+		if err := json.Unmarshal(bytes, &clean); err != nil {
+			log.Printf("Failed to unmarshal LLM defaults: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		stripSecretsFromMap(clean)
+		response = clean
+	}
+
+	response["llm_config_locked"] = locked
+	response["default_published_llms"] = getDefaultPublishedLLMs(locked, defaults.PrimaryConfig)
+	response["default_published_llms_locked"] = locked
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -1538,7 +1726,31 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	var finalModelID string
 	var fallbacks []agent.FallbackModel
 
-	if req.LLMConfig != nil {
+	if isLLMConfigLocked() {
+		// Locked mode: use server env for API keys; allow provider/model only if in default_published_llms
+		if req.LLMConfig != nil && req.LLMConfig.Primary.Provider != "" && req.LLMConfig.Primary.ModelID != "" {
+			p, m := req.LLMConfig.Primary.Provider, req.LLMConfig.Primary.ModelID
+			if isAllowedDefaultLLM(p, m) {
+				finalProvider, finalModelID = p, m
+			} else {
+				finalProvider, finalModelID = getPrimaryProviderAndModelFromDefaults()
+			}
+		} else {
+			finalProvider, finalModelID = getPrimaryProviderAndModelFromDefaults()
+		}
+		supported := getSupportedProviders()
+		if len(supported) > 0 {
+			allowed := make(map[string]bool)
+			for _, p := range supported {
+				allowed[p] = true
+			}
+			if !allowed[finalProvider] {
+				finalProvider = supported[0]
+				finalModelID = llm.GetDefaultModel(llm.Provider(finalProvider))
+			}
+		}
+		fallbacks = nil
+	} else if req.LLMConfig != nil {
 		// Use LLM configuration from frontend (new unified structure)
 		finalProvider = req.LLMConfig.Primary.Provider
 		finalModelID = req.LLMConfig.Primary.ModelID
@@ -2316,8 +2528,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				return nil
 			}(),
-			// Convert API keys from request to LLM format
+			// Convert API keys from request to LLM format (when locked, use env only)
 			APIKeys: func() *llm.ProviderAPIKeys {
+				if isLLMConfigLocked() {
+					return buildProviderAPIKeysFromEnv()
+				}
 				if req.LLMConfig != nil && req.LLMConfig.APIKeys != nil {
 					llmKeys := &llm.ProviderAPIKeys{
 						OpenRouter: req.LLMConfig.APIKeys.OpenRouter,
@@ -2764,15 +2979,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							}
 
 							if err := delegationAgent.RegisterCustomTool(
-							toolName,
-							tool.Function.Description,
-							params,
-							wrappedExecutor,
-							delegationCategory,
-						); err != nil {
-							log.Printf("[DELEGATION TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
-							continue
-						}
+								toolName,
+								tool.Function.Description,
+								params,
+								wrappedExecutor,
+								delegationCategory,
+							); err != nil {
+								log.Printf("[DELEGATION TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
+								continue
+							}
 							log.Printf("[DELEGATION TOOLS] Registered delegation tool: %s (category: %s)", toolName, delegationCategory)
 						}
 					}
@@ -3787,9 +4002,25 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		serverName = strings.Join(parentReq.Servers, ",")
 	}
 
-	// Convert API keys from parent request to LLM format
+	// Convert API keys from parent request to LLM format (when locked, use env only)
 	var apiKeys *llm.ProviderAPIKeys
-	if parentReq.LLMConfig != nil && parentReq.LLMConfig.APIKeys != nil {
+	if isLLMConfigLocked() {
+		apiKeys = buildProviderAPIKeysFromEnv()
+		provStr, modelStr := getPrimaryProviderAndModelFromDefaults()
+		supported := getSupportedProviders()
+		if len(supported) > 0 {
+			allowed := make(map[string]bool)
+			for _, p := range supported {
+				allowed[p] = true
+			}
+			if !allowed[provStr] {
+				provStr = supported[0]
+				modelStr = llm.GetDefaultModel(llm.Provider(provStr))
+			}
+		}
+		provider = llm.Provider(provStr)
+		modelID = modelStr
+	} else if parentReq.LLMConfig != nil && parentReq.LLMConfig.APIKeys != nil {
 		apiKeys = &llm.ProviderAPIKeys{
 			OpenRouter: parentReq.LLMConfig.APIKeys.OpenRouter,
 			OpenAI:     parentReq.LLMConfig.APIKeys.OpenAI,

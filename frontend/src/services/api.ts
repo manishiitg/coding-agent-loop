@@ -80,8 +80,23 @@ export type {
   EvaluationStepScore,
 } from './api-types'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
-export const WORKSPACE_API_BASE_URL = import.meta.env.VITE_WORKSPACE_API_URL || 'http://localhost:8081'
+// Resolve API base URL: use build-time env if set; in production (non-localhost) use same origin so it works even with cached builds
+function getApiBaseUrl(): string {
+  const env = import.meta.env.VITE_API_BASE_URL
+  if (env) return env
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') return ''
+  return 'http://localhost:8000'
+}
+
+function getWorkspaceApiBaseUrl(): string {
+  const env = import.meta.env.VITE_WORKSPACE_API_URL
+  if (env) return env
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') return `${window.location.origin}/workspace`
+  return 'http://localhost:8081'
+}
+
+const API_BASE_URL = getApiBaseUrl()
+export const WORKSPACE_API_BASE_URL = getWorkspaceApiBaseUrl()
 
 const api = axios.create({
   baseURL: API_BASE_URL,

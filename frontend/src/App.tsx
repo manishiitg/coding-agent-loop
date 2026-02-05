@@ -366,8 +366,7 @@ function App() {
     // Initialize MCP store
     useMCPStore.getState().refreshTools()
     
-    // Initialize LLM store
-    useLLMStore.getState().refreshAvailableLLMs()
+    // LLM list is refreshed after loadDefaultsFromBackend() in useLLMDefaults (so supported_providers is set)
     
     // Initialize global preset store
     useGlobalPresetStore.getState().refreshPresets()

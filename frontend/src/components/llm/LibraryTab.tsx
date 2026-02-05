@@ -48,7 +48,7 @@ interface LibraryTabProps {
 }
 
 export function LibraryTab({ onSelect }: LibraryTabProps) {
-  const { savedLLMs, deleteSavedLLM, agentConfig, setShowLLMModal, setAzureConfig, azureConfig } = useLLMStore()
+  const { savedLLMs, deleteSavedLLM, agentConfig, setShowLLMModal, setAzureConfig, azureConfig, defaultPublishedLLMsLocked } = useLLMStore()
   const { createChatTab, setTabConfig } = useChatStore()
   const { setAgentMode } = useAppStore()
   const [metadataMap, setMetadataMap] = useState<Record<string, ModelMetadata>>({})
@@ -246,9 +246,11 @@ export function LibraryTab({ onSelect }: LibraryTabProps) {
                         Set as Primary
                       </Button>
                     )}
-                    <Button size="sm" variant="ghost" onClick={() => deleteSavedLLM(llm.id)} className="text-destructive hover:text-destructive hover:bg-destructive/10">
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                    {!defaultPublishedLLMsLocked && (
+                      <Button size="sm" variant="ghost" onClick={() => deleteSavedLLM(llm.id)} className="text-destructive hover:text-destructive hover:bg-destructive/10">
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               </Card>

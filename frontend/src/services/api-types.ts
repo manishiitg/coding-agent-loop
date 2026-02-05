@@ -140,6 +140,12 @@ export interface LLMDefaultsResponse {
     azure?: string[]
   }
   supported_providers?: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure')[]
+  /** When true, LLM config is locked by admin; do not show editable modal, use server env only */
+  llm_config_locked?: boolean
+  /** Default published LLMs from server (e.g. one "Gemini" entry); when locked, list is read-only */
+  default_published_llms?: SavedLLM[]
+  /** When true, default published LLMs list is locked (no add/delete/edit) */
+  default_published_llms_locked?: boolean
 }
 
 // API Key Validation Request/Response

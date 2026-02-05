@@ -301,7 +301,9 @@ func (em *EvaluationManager) createEvaluationAgent(ctx context.Context, phase st
 
 	agentConfig := em.CreateStandardAgentConfigWithLLM("evaluation-designer-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
 	agentConfig.ServerNames = []string{mcpclient.NoServers}
+	// Phase agents always use simple mode regardless of workflow mode setting
 	agentConfig.UseCodeExecutionMode = false
+	agentConfig.UseToolSearchMode = false
 
 	// Register WorkspaceTools (including human_feedback)
 	var toolsToRegister []llmtypes.Tool

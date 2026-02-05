@@ -93,6 +93,7 @@ interface WorkflowToolbarProps {
   hasUnsavedLayoutChanges?: boolean  // Whether there are unsaved layout changes
   isSavingLayout?: boolean  // Whether layout is currently being saved
   isDeletingLayout?: boolean  // Whether layout is currently being deleted
+  selectedStepIds?: string[]  // IDs of currently selected steps (shows indicator when 2+ selected)
   className?: string
 }
 
@@ -120,6 +121,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   hasUnsavedLayoutChanges = false,
   isSavingLayout = false,
   isDeletingLayout = false,
+  selectedStepIds,
   className = ''
 }) => {
   // Normalize runFolders to avoid repeated null checks throughout the component
@@ -908,7 +910,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     // Create stable data representation for comparison
     const indicesStr = JSON.stringify(completedStepIndices)
     const branchStepsStr = stepProgressBranchSteps ? JSON.stringify(stepProgressBranchSteps) : ''
-    const dataStr = `${indicesStr}|${branchStepsStr}|${totalSteps}|${planStepsCount}`
+    const dataStr = `${indicesStr}|${branchStepsStr}|${totalSteps}|${planStepsCount}|${selectedStartPoint}`
     
     // Only recalculate if data actually changed
     if (startPointOptionsDataRef.current === dataStr && startPointOptionsRef.current.length > 0) {
@@ -932,12 +934,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         options.push({
           id: 'resume',
           stepNumber: stepNum,
-          label: `Start Again from step${stepNum}: ${stepTitle}`,
+          label: `Start Again from step ${stepNum}: ${stepTitle}`,
           icon: RefreshCw,
           description: `Start again from step ${stepNum}`
         })
       })
-      
+
       // Add next step if it exists (resume from after all completed steps)
       // This is a new step that will run, so it says "Resume" not "Start Again"
       if (nextStep <= totalSteps) {
@@ -947,7 +949,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         options.push({
           id: 'resume',
           stepNumber: nextStep,
-          label: `Resume from step${nextStep}: ${stepTitle}`,
+          label: `Resume from step ${nextStep}: ${stepTitle}`,
           icon: RefreshCw,
           description: `Resume from step ${nextStep}`
         })
@@ -1022,6 +1024,35 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       })
     }
     
+    // If selectedStartPoint > 0 but no resume options were added (e.g., completedStepIndices is empty),
+    // add the selected start point as an option so the user can see and change their selection
+    if (selectedStartPoint > 0 && totalSteps > 0) {
+      const hasSelectedOption = options.some(o => o.stepNumber === selectedStartPoint)
+      if (!hasSelectedOption) {
+        // Add options for all steps up to selectedStartPoint so user can change their selection
+        for (let stepNum = 1; stepNum <= Math.min(selectedStartPoint, totalSteps); stepNum++) {
+          // Skip if already exists
+          if (options.some(o => o.stepNumber === stepNum)) continue
+
+          const stepIndex = stepNum - 1
+          const step = planSteps?.[stepIndex]
+          const stepTitle = step?.title || `Step ${stepNum}`
+          const isSelectedStep = stepNum === selectedStartPoint
+          options.push({
+            id: 'resume',
+            stepNumber: stepNum,
+            label: isSelectedStep
+              ? `Resume from step ${stepNum}: ${stepTitle}`
+              : `Start Again from step ${stepNum}: ${stepTitle}`,
+            icon: RefreshCw,
+            description: isSelectedStep
+              ? `Resume from step ${stepNum}`
+              : `Start again from step ${stepNum}`
+          })
+        }
+      }
+    }
+
     // Sort options: from_beginning first, then regular resume options, then branch resume options
     options.sort((a, b) => {
       if (a.id === 'from_beginning') return -1
@@ -1047,7 +1078,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     startPointOptionsRef.current = options
     return options
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [completedStepIndices, totalSteps, plan?.steps?.length, stepProgress?.branch_steps]) // Only depend on specific data, not whole objects - using ref comparison to prevent loops
+  }, [completedStepIndices, totalSteps, plan?.steps?.length, stepProgress?.branch_steps, selectedStartPoint]) // Only depend on specific data, not whole objects - using ref comparison to prevent loops
 
   // Get current start point info
   const currentStartPointInfo = useMemo(() => {
@@ -2268,6 +2299,17 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </button>
         )}
         
+        {/* Multi-Select Indicator - appears when 2+ steps are selected */}
+        {selectedStepIds && selectedStepIds.length >= 2 && (
+          <div
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700"
+            title={`${selectedStepIds.length} steps selected - configure in sidebar`}
+          >
+            <Settings className="w-3.5 h-3.5" />
+            <span className="text-xs font-medium">{selectedStepIds.length} Selected</span>
+          </div>
+        )}
+
         {/* Bulk Step Config Button */}
         {hasPlan && plan && onBulkUpdateSteps && (
           <button

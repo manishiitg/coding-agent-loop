@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { agentApi } from '../../../services/api'
 import type { PlanStep, PlanningResponse, StepConfig, AgentConfigs } from '../../../utils/stepConfigMatching'
-import { isConditionalStep, isDecisionStep, isOrchestrationStep } from '../../../utils/stepConfigMatching'
+import { isConditionalStep, isDecisionStep, isOrchestrationStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
 
 // Module-level cache to dedupe loadPlan calls across multiple hook instances
 // This prevents duplicate API calls when multiple components use usePlanData
@@ -129,7 +129,19 @@ function mergeStepConfigs(
         })) : undefined,
       } as PlanStep
     }
-    
+
+    // Handle todo task step
+    if (isTodoTaskStep(step)) {
+      mergedStep = {
+        ...mergedStep,
+        todo_task_step: step.todo_task_step ? mergeIntoStep(step.todo_task_step) : undefined,
+        predefined_routes: step.predefined_routes ? step.predefined_routes.map(route => ({
+          ...route,
+          sub_agent_step: route.sub_agent_step ? mergeIntoStep(route.sub_agent_step) : undefined
+        })) : undefined,
+      } as PlanStep
+    }
+
     return mergedStep
   }
 

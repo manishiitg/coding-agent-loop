@@ -43,6 +43,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	execCtx *ExecutionContext,
 	allSteps []PlanStepInterface,
 	stepPath string,
+	decisionContext *DecisionContext, // Optional: context from decision step that routed to this step (nil if not routed from decision)
 ) (bool, string, error) {
 	// Cast to TodoTaskPlanStep
 	todoTaskStep, ok := step.(*TodoTaskPlanStep)
@@ -137,6 +138,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			lastSubAgentResult,
 			lastSubAgentName,
 			lastTodoID,
+			decisionContext,
 		)
 
 		// Execute TodoTaskOrchestratorAgent
@@ -283,6 +285,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	lastSubAgentResult string,
 	lastSubAgentName string,
 	lastTodoID string,
+	decisionContext *DecisionContext, // Optional: context from decision step that routed to this step
 ) map[string]string {
 	// Build predefined routes description
 	var routesBuilder strings.Builder
@@ -315,6 +318,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	// Get knowledgebase setting
 	useKnowledgebase := hcpo.UseKnowledgebase()
 
+	// Determine if skip execution cleanup is enabled
+	skipExecutionCleanup := false
+	if hcpo.executionOptions != nil {
+		skipExecutionCleanup = hcpo.executionOptions.SkipExecutionCleanup
+	}
+
 	// Note: CurrentTodos and ProgressSummary are not populated here because
 	// the LLM manages tasks.md directly via shell commands and reads it directly
 	templateVars := map[string]string{
@@ -335,8 +344,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"LastSubAgentName":        lastSubAgentName,
 		"LastTodoID":              lastTodoID,
 		// Add code execution mode and knowledgebase flags
-		"IsCodeExecutionMode": fmt.Sprintf("%v", isCodeExecutionMode),
-		"UseKnowledgebase":    fmt.Sprintf("%v", useKnowledgebase),
+		"IsCodeExecutionMode":    fmt.Sprintf("%v", isCodeExecutionMode),
+		"UseKnowledgebase":       fmt.Sprintf("%v", useKnowledgebase),
+		"SkipExecutionCleanup":   fmt.Sprintf("%v", skipExecutionCleanup), // Skip cleanup mode flag for state verification prompt
 	}
 
 	// Add EnableDynamicTierSelection flag for system prompt
@@ -357,17 +367,53 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		templateVars["VariableValues"] = variableValues
 	}
 
+	// Add decision context if this step was routed from a decision step
+	if decisionContext != nil {
+		decisionReasoning := fmt.Sprintf(
+			"## 🎯 Decision Context\n\n"+
+				"This step was routed from decision step **%d: %s**.\n\n"+
+				"**Decision Result**: %v\n"+
+				"**Decision Reasoning**: %s\n\n"+
+				"## 📋 Decision Step Execution Output\n\n"+
+				"The following is the execution output from the decision step's inner step that was evaluated:\n\n"+
+				"```\n%s\n```\n\n"+
+				"Use this context to understand why this step is being executed and what conditions led to routing here.",
+			decisionContext.DecisionStepIndex+1, // Convert to 1-based for display
+			decisionContext.DecisionStepTitle,
+			decisionContext.DecisionResult,
+			decisionContext.DecisionReasoning,
+			decisionContext.DecisionExecutionResult,
+		)
+		templateVars["DecisionReasoning"] = decisionReasoning
+	} else {
+		templateVars["DecisionReasoning"] = ""
+	}
+
 	return templateVars
 }
 
 // selectTodoTaskOrchestratorLLM selects the LLM config for todo task orchestrator
-// Priority: configured orchestrator tier (tiered mode) > selectExecutionLLM fallback
+// Priority: OrchestratorLLM (direct override) > configured orchestrator tier (tiered mode) > selectExecutionLLM fallback
 func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskOrchestratorLLM(
 	ctx context.Context,
 	stepConfig *AgentConfigs,
 	stepID string,
 	stepPath string,
 ) *orchestrator.LLMConfig {
+	// DIRECT LLM OVERRIDE: Check for orchestrator_llm first (works in both tiered and manual modes)
+	if stepConfig != nil && stepConfig.OrchestratorLLM != nil &&
+		stepConfig.OrchestratorLLM.Provider != "" && stepConfig.OrchestratorLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🎯 [DIRECT] Todo task orchestrator using direct LLM override: %s/%s",
+			stepConfig.OrchestratorLLM.Provider, stepConfig.OrchestratorLLM.ModelID))
+		return &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: stepConfig.OrchestratorLLM.Provider,
+				ModelID:  stepConfig.OrchestratorLLM.ModelID,
+			},
+			APIKeys: hcpo.GetAPIKeys(),
+		}
+	}
+
 	// TIERED MODE: Use configured orchestrator tier if set
 	if hcpo.useTieredMode && hcpo.tierResolver != nil && stepConfig != nil &&
 		stepConfig.TodoTaskOrchestratorTier != nil {
@@ -436,6 +482,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 		StepPath:     stepPath,
 		AllSteps:     allSteps,
 		Progress:     progress,
+		StepConfig:   stepConfig, // Pass step config for sub_agent_llm override
 	}
 
 	// Use factory method to create agent with proper event bridge connection

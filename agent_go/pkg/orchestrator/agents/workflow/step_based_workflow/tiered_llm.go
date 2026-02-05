@@ -113,10 +113,9 @@ func (tr *TierResolver) ResolveForValidation() (*orchestrator.LLMConfig, TierLev
 	return tr.ResolveTier(TierLow), TierLow
 }
 
-// ResolveForPhase returns the LLM for phase agents (always Tier 1)
-func (tr *TierResolver) ResolveForPhase() (*orchestrator.LLMConfig, TierLevel) {
-	return tr.ResolveTier(TierHigh), TierHigh
-}
+// Note: Phase agents get their LLM from presetPhaseLLM which is populated from Tier1
+// in tiered mode (see workflow_orchestrator.go and controller.go). No resolver method
+// is needed since phase agents don't have maturity-based selection.
 
 // ResolveForConditional returns the LLM for conditional agents based on learning maturity
 // No Learnings: Tier 1 (High), Has Learnings: Tier 2 (Medium), Mature: Tier 2 (Medium)

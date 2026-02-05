@@ -224,7 +224,9 @@ func (edm *EvaluationDebuggerManager) createEvaluationDebuggerAgent(ctx context.
 
 	// Tools
 	config := edm.CreateStandardAgentConfigWithLLM("evaluation-debugger-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
+	// Phase agents always use simple mode regardless of workflow mode setting
 	config.UseCodeExecutionMode = false
+	config.UseToolSearchMode = false
 	
 	// MCP Servers (use preset if available, else none)
 	selectedServers := edm.GetSelectedServers()

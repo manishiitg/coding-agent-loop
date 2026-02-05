@@ -59,6 +59,20 @@ Coordinate work between sub-agents. You evaluate the situation, verify success, 
 
 ---
 
+{{if eq .SkipExecutionCleanup "true"}}
+## ⚠️ State Verification Required (Skip Cleanup Mode)
+
+Previous execution outputs are preserved. Existing progress files or sub-agent outputs may contain completed work from prior runs.
+
+**IMPORTANT**: Do NOT assume existing "completed" state is still valid. Step configurations, sub-agent prompts, or routes may have changed.
+
+Before proceeding:
+1. Review the CURRENT step objective, success criteria, and available routes
+2. Check if existing completed work still satisfies the current requirements
+3. If requirements changed, re-delegate to appropriate sub-agents as needed
+4. Only consider success criteria met if they satisfy the CURRENT requirements
+{{end}}
+
 ## 🔍 EVALUATION & ROUTING FRAMEWORK
 
 ### 1. Analysis
@@ -271,6 +285,7 @@ func (hctpooa *WorkflowOrchestrationOrchestratorAgent) orchestrationOrchestrator
 		"PreviousStepsSummary":      templateVars["PreviousStepsSummary"],
 		"LearningHistory":           templateVars["LearningHistory"],
 		"CodeExecutionInstructions": "",
+		"SkipExecutionCleanup":      templateVars["SkipExecutionCleanup"],
 	}
 
 	if isCodeExecutionMode {

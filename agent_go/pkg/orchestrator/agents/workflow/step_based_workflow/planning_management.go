@@ -436,9 +436,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createPlanningAgent(ctx context.Conte
 	agentConfig := hcpo.CreateStandardAgentConfigWithLLM("human-controlled-planning-agent", hcpo.GetMaxTurns(), agents.OutputFormatStructured, llmConfigToUse)
 	agentConfig.ServerNames = []string{mcpclient.NoServers} // No MCP servers needed - pure LLM planning agent
 
-	// Code execution mode only applies to execution agents, not planning agents
+	// Code execution mode and tool search mode only apply to execution agents, not planning agents
+	// Phase agents always use simple mode regardless of workflow mode setting
 	agentConfig.UseCodeExecutionMode = false
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for planning agent (only execution agents use MCP tools)"))
+	agentConfig.UseToolSearchMode = false
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode and tool search mode for planning agent (phase agents always use simple mode)"))
 
 	// Disable large output virtual tools for planning agent
 	disabled := false

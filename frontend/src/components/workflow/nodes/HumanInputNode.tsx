@@ -59,7 +59,7 @@ export const HumanInputNode = memo(({ data, selected }: HumanInputNodeProps) => 
         shadow-md hover:shadow-lg transition-all duration-200
         min-w-[320px] max-w-[320px]
         ${changeStyle}
-        ${selected ? 'ring-2 ring-blue-500' : ''}
+        ${selected ? 'ring-2 ring-purple-500/60' : ''}
       `}
     >
       {/* Change badge */}

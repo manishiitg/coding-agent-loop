@@ -483,10 +483,12 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 	// Create agent config with the selected LLM config
 	config := ptom.CreateStandardAgentConfigWithLLM("plan-tool-optimization-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
 
-	// Explicitly disable code execution mode for tool optimization agent
+	// Explicitly disable code execution mode and tool search mode for tool optimization agent
 	// This agent only needs file read/write operations, not Go code generation
+	// Phase agents always use simple mode regardless of workflow mode setting
 	config.UseCodeExecutionMode = false
-	ptom.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode disabled for plan tool optimization agent - using direct tool access"))
+	config.UseToolSearchMode = false
+	ptom.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode and tool search mode disabled for plan tool optimization agent (phase agents always use simple mode)"))
 
 	// Tool optimization agent doesn't need MCP servers - uses workspace tools only
 	config.ServerNames = []string{mcpclient.NoServers}

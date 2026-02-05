@@ -102,8 +102,9 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
 
   const { availableLLMs } = useLLMStore()
 
-  // Get step config (agent_configs)
-  const stepConfig = step as { agent_configs?: { 
+  // Get step config (agent_configs) - for DecisionStep, check inner decision_step first, then outer step
+  // The inner decision_step contains the actual execution configs
+  type AgentConfigsType = {
     use_code_execution_mode?: boolean
     use_tool_search_mode?: boolean
     enable_prerequisite_detection?: boolean
@@ -120,7 +121,11 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
     enabled_custom_tools?: string[]
     enable_context_offloading?: boolean
     llm_validation_mode?: string
-  } }
+  }
+  const innerStep = decision_step as { agent_configs?: AgentConfigsType } | undefined
+  const outerStep = step as { agent_configs?: AgentConfigsType }
+  // Prefer inner step configs (where the actual execution happens), fall back to outer step
+  const stepConfig = innerStep?.agent_configs ? innerStep : outerStep
 
   // Determine code execution mode: step config > preset default
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
@@ -517,7 +522,7 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
         className={`
           relative rounded-xl border-2 bg-white dark:bg-gray-900 shadow-lg overflow-visible
           ${statusBorderColors[status]}
-          ${selected ? 'ring-2 ring-indigo-500/40' : ''}
+          ${selected ? 'ring-2 ring-purple-500/60' : ''}
           ${status === 'executing' || status === 'evaluating' ? 'animate-pulse' : ''}
         `}
         style={{

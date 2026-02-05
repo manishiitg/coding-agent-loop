@@ -235,13 +235,13 @@ export const NodeConfigFooter = memo(({
             </div>
           )}
           {description && (
-            <div className="text-[10px] text-gray-600 dark:text-gray-400">
+            <div className="text-[10px] text-gray-600 dark:text-gray-400 whitespace-pre-line">
               <span className="font-semibold text-gray-700 dark:text-gray-300">Description: </span>
               {description}
             </div>
           )}
           {successCriteria && (
-            <div className="text-[10px] text-gray-600 dark:text-gray-400">
+            <div className="text-[10px] text-gray-600 dark:text-gray-400 whitespace-pre-line">
               <span className="font-semibold text-green-700 dark:text-green-400">Success Criteria: </span>
               {successCriteria}
             </div>

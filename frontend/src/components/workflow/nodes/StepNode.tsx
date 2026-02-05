@@ -512,7 +512,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
       ${isSubAgent ? 'overflow-visible' : 'overflow-hidden'}
       ${statusBorderColors[status]}
       ${isSubAgent ? 'border-dashed border-indigo-400 dark:border-indigo-500' : ''}
-      ${selected ? 'ring-2 ring-blue-500/40' : ''}
+      ${selected ? 'ring-2 ring-purple-500/60' : ''}
       ${changeType ? changeHighlightStyles[changeType] : ''}
     `}>
       {/* Status badge - positioned at top-right edge (shows for running/failed status) */}

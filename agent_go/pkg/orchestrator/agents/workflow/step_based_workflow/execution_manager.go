@@ -576,26 +576,35 @@ func (em *ExecutionManager) PrepareForBatchGroup(
 
 	// Determine cleanup scope
 	cleanup := CleanupScope{
-		DeleteProgress:    !isNewFolder, // Only delete if folder existed
-		InitFreshProgress: true,         // Always initialize fresh progress
-		NewTotalSteps:     totalSteps,
+		NewTotalSteps: totalSteps,
 	}
 
 	// CleanAllSteps should ONLY be set for "start from beginning" strategies
 	// Never set it when resuming from a step
 	if resumeStep > 0 {
-		// Resuming from a specific step - clean from that step onwards
+		// Resuming from a specific step - preserve progress, only clean from resume step
+		cleanup.DeleteProgress = false     // Don't delete progress - we need to preserve it
+		cleanup.InitFreshProgress = false  // Don't reinit - we're updating existing progress
 		cleanup.CleanFromStep = resumeStep // Delete step-N and all after
 		cleanup.UpdateProgress = true      // Update progress to remove steps >= resumeStep
 		orch.GetLogger().Info(fmt.Sprintf("🔧 Batch group cleanup: will clean from step %d onwards (preserving steps 1-%d)", resumeStep, resumeStep-1))
 	} else if isStartFromBeginningStrategy && !isNewFolder {
 		// Only set CleanAllSteps if it's explicitly a "start from beginning" strategy AND folder exists
+		// Fresh start: delete old and init new
+		cleanup.DeleteProgress = true
+		cleanup.InitFreshProgress = true
 		cleanup.CleanAllSteps = true
 		orch.GetLogger().Info(fmt.Sprintf("🔧 Batch group cleanup: will clean ALL steps (start from beginning strategy)"))
 	} else if !isNewFolder {
 		// Folder exists but not a "start from beginning" strategy and not resuming
 		// Don't clean anything - preserve existing step folders
+		cleanup.DeleteProgress = false
+		cleanup.InitFreshProgress = false
 		orch.GetLogger().Info(fmt.Sprintf("🔧 Batch group cleanup: folder exists but not starting from beginning and not resuming - preserving existing step folders"))
+	} else {
+		// New folder - initialize fresh progress
+		cleanup.DeleteProgress = false
+		cleanup.InitFreshProgress = true
 	}
 
 	// Determine start step and mode: if resuming, use resume step; otherwise start from beginning

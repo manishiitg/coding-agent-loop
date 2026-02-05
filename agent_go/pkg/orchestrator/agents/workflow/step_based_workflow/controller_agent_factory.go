@@ -388,6 +388,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveStepID(stepPath, stepIDOverrid
 
 // selectExecutionLLM selects the LLM config with cascading fallback logic
 // Priority:
+// - HIGHEST: SubAgentLLM from context (direct LLM override for sub-agents, works in both modes)
+// - If tiered mode: preferred_tier from context > maturity-based resolution
 // - If disable_temp_llm is true: step config > preset (skip tempLLM)
 // - Otherwise: tempLLM1 (attempt 1) > tempLLM2 (attempt 2) > step config > preset default
 // Only uses tempLLM if learnings folder has files (has existing learnings to improve upon)
@@ -400,6 +402,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	stepPath string,
 	learningsFolderEmpty bool,
 ) *orchestrator.LLMConfig {
+	// DIRECT SUB-AGENT LLM OVERRIDE: Check for sub_agent_llm from context first (works in both tiered and manual modes)
+	if subAgentLLM, ok := ctx.Value(virtualtools.SubAgentLLMContextKey).(*AgentLLMConfig); ok &&
+		subAgentLLM != nil && subAgentLLM.Provider != "" && subAgentLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🎯 [DIRECT] Execution agent using direct sub_agent_llm override for step %s: %s/%s",
+			stepPath, subAgentLLM.Provider, subAgentLLM.ModelID))
+		return &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: subAgentLLM.Provider,
+				ModelID:  subAgentLLM.ModelID,
+			},
+			APIKeys: hcpo.GetAPIKeys(),
+		}
+	}
+
 	// TIERED MODE: Bypass all manual selection logic
 	if hcpo.useTieredMode && hcpo.tierResolver != nil {
 		// Check for preferred tier override from sub-agent tool context
@@ -1205,9 +1221,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Con
 	// Validation agents always use NoServers (pure LLM validation agent)
 	config.ServerNames = []string{mcpclient.NoServers} // No MCP servers needed - pure LLM validation agent
 
-	// Code execution mode only applies to execution agents, not validation agents
+	// Code execution mode and tool search mode only apply to execution agents, not validation agents
+	// Phase agents always use simple mode regardless of workflow mode setting
 	config.UseCodeExecutionMode = false
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode for validation agent (only execution agents use MCP tools)"))
+	config.UseToolSearchMode = false
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode and tool search mode for validation agent (phase agents always use simple mode)"))
 
 	// Set EnableContextOffloading if specified
 	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
@@ -1290,9 +1308,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 	// Step-specific server/tool selection is only for execution agents
 	config.ServerNames = []string{mcpclient.NoServers} // No MCP servers needed - pure LLM analysis agent
 
-	// Code execution mode only applies to execution agents, not learning agents
-	// CRITICAL: Override orchestrator-level code execution mode setting - learning agents are pure LLM analysis agents
+	// Code execution mode and tool search mode only apply to execution agents, not learning agents
+	// CRITICAL: Override orchestrator-level code execution mode and tool search mode setting - learning agents are pure LLM analysis agents
+	// Phase agents always use simple mode regardless of workflow mode setting
 	config.UseCodeExecutionMode = false
+	config.UseToolSearchMode = false
 	if wasCodeExecutionMode {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Execution was in code execution mode - using code execution learning agent (but agent itself does NOT use code execution mode)"))
 	} else {
@@ -1681,6 +1701,7 @@ type SubAgentExecutionContext struct {
 	StepPath     string
 	AllSteps     []PlanStepInterface
 	Progress     *StepProgress
+	StepConfig   *AgentConfigs // Step-level configuration for LLM overrides
 }
 
 // createTodoTaskOrchestratorAgent creates a todo task orchestrator agent using the standard factory pattern
@@ -1883,7 +1904,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 }
 
 // wrapSubAgentToolExecutor wraps a sub-agent tool executor to inject execution functions
-// The wrapper adds: execute_predefined_sub_agent, execute_generic_agent, mark_step_complete, predefined_routes, validate_todo_exists
+// The wrapper adds: execute_predefined_sub_agent, execute_generic_agent, mark_step_complete, predefined_routes, validate_todo_exists, sub_agent_llm
 func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 	originalExecutor func(ctx context.Context, args map[string]interface{}) (string, error),
 	execCtx *SubAgentExecutionContext,
@@ -1905,6 +1926,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 		// Inject predefined routes for route lookup
 		if execCtx.TodoTaskStep != nil {
 			ctx = context.WithValue(ctx, virtualtools.PredefinedRoutesKey, execCtx.TodoTaskStep.PredefinedRoutes)
+		}
+
+		// Inject sub_agent_llm override if configured (works in both tiered and manual modes)
+		if execCtx.StepConfig != nil && execCtx.StepConfig.SubAgentLLM != nil {
+			ctx = context.WithValue(ctx, virtualtools.SubAgentLLMContextKey, execCtx.StepConfig.SubAgentLLM)
 		}
 
 		// Call original executor with enriched context
@@ -2089,8 +2115,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 
 	// Scoring agents always use NoServers (pure LLM analysis agent)
+	// Phase agents always use simple mode regardless of workflow mode setting
 	config.ServerNames = []string{mcpclient.NoServers}
 	config.UseCodeExecutionMode = false
+	config.UseToolSearchMode = false
 
 	// Setup Downloads folder for browser tools (Playwright or agent-browser)
 	// Use shared function to ensure all agent types set the override correctly if they use Playwright
@@ -2249,10 +2277,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationLearningAgent(ctx 
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 
 	// Orchestration learning agents always use NoServers (pure LLM analysis agent)
+	// Phase agents always use simple mode regardless of workflow mode setting
 	config.ServerNames = []string{mcpclient.NoServers}
 
-	// Code execution mode doesn't apply to learning agents
+	// Code execution mode and tool search mode don't apply to learning agents
 	config.UseCodeExecutionMode = false
+	config.UseToolSearchMode = false
 
 	// Setup Downloads folder for browser tools (Playwright or agent-browser)
 	// Use shared function to ensure all agent types set the override correctly if they use Playwright

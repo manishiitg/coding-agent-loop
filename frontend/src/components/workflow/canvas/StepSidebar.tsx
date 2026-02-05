@@ -704,6 +704,47 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
           await onEditStep(innerStepId, innerStepUpdates)
         }
+
+        // For todo_task steps, also save agent_configs to the inner todo_task_step
+        console.log('[StepSidebar] Checking if todo_task step:', {
+          stepDataForLogging: !!stepDataForLogging,
+          stepType: stepDataForLogging?.type,
+          isTodoTaskStepResult: stepDataForLogging ? isTodoTaskStep(stepDataForLogging) : false,
+          hasTodoTaskStep: !!(stepDataForLogging as any)?.todo_task_step,
+          todoTaskStepId: (stepDataForLogging as any)?.todo_task_step?.id
+        })
+        if (stepDataForLogging && isTodoTaskStep(stepDataForLogging) && stepDataForLogging.todo_task_step?.id) {
+          const innerStepId = stepDataForLogging.todo_task_step.id
+          console.log('[StepSidebar] Saving agent config to inner step of todo_task step:', {
+            parentStepId: stepId,
+            innerStepId: innerStepId,
+            hasAgentConfigs: !!agentConfigs
+          })
+
+          // Save only agent_configs to the inner step (don't update other fields)
+          const innerStepUpdates: Partial<PlanStep> = {
+            agent_configs: agentConfigs
+          }
+
+          await onEditStep(innerStepId, innerStepUpdates)
+        }
+
+        // For orchestration steps, also save agent_configs to the inner orchestration_step
+        if (stepDataForLogging && isOrchestrationStep(stepDataForLogging) && stepDataForLogging.orchestration_step?.id) {
+          const innerStepId = stepDataForLogging.orchestration_step.id
+          console.log('[StepSidebar] Saving agent config to inner step of orchestration step:', {
+            parentStepId: stepId,
+            innerStepId: innerStepId,
+            hasAgentConfigs: !!agentConfigs
+          })
+
+          // Save only agent_configs to the inner step (don't update other fields)
+          const innerStepUpdates: Partial<PlanStep> = {
+            agent_configs: agentConfigs
+          }
+
+          await onEditStep(innerStepId, innerStepUpdates)
+        }
       }
       
       onClose()
@@ -1021,6 +1062,11 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
               ID: {step.id}
             </span>
           )}
+          {!isEditing && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 italic">
+              Tip: Shift+Click or Ctrl+Click to select multiple steps
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5">
           {!isEditing && (
@@ -1053,7 +1099,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                           >
                             <div className="font-medium">{phase.title}</div>
                             {phase.description && (
-                              <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 line-clamp-2">
+                              <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 line-clamp-2 whitespace-pre-line">
                                 {phase.description}
                               </div>
                             )}
@@ -1517,7 +1563,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                                 </span>
                               </div>
                               {rule.description && (
-                                <div className="mt-0.5 text-[11px] text-orange-700 dark:text-orange-300">
+                                <div className="mt-0.5 text-[11px] text-orange-700 dark:text-orange-300 whitespace-pre-line">
                                   {rule.description}
                                 </div>
                               )}
@@ -1854,7 +1900,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                       {step.todo_task_step.title || 'Untitled Task'}
                     </p>
                     {step.todo_task_step.description && (
-                      <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                      <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 whitespace-pre-line">
                         {step.todo_task_step.description}
                       </p>
                     )}

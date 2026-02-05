@@ -84,44 +84,29 @@ terraform apply -auto-approve
 
 Apply creates ACR (if new), Log Analytics, Container App Environment, and **agent**, **workspace-api**, and **frontend** Container Apps.
 
-## 3. Build and Deploy (Parallel & Zero-Downtime)
+## 3. Build and Deploy (Local Build - Recommended)
 
-After initial `terraform apply`, use the deploy script to build on ACR (native amd64) and update the apps.
+Always use local builds (`--local` flag) for the fastest and most reliable deployment. This builds images on your machine and pushes them to Azure, bypassing slow source code uploads.
 
-The script now:
+The script:
 1.  **Builds in parallel:** Agent, Workspace, and Frontend build simultaneously.
-2.  **Uses unique tags:** Generates a timestamped tag (e.g., `v20260201-1200`) for every deploy. This ensures zero caching issues and allows easy rollback.
-3.  **Zero-Downtime Update:** Uses `az containerapp update` to spin up a new revision before shutting down the old one.
+2.  **Uses unique tags:** Generates a timestamped tag (e.g., `v20260201-1200`) for every deploy.
+3.  **Fast Context:** Automatically prunes `node_modules` and heavy folders before building.
+4.  **Zero-Downtime Update:** Triggers a new revision on Azure only after a successful push.
 
 ```bash
 cd deploy/azure
 
-# Deploy all services (fastest)
-./deploy.sh all
+# Deploy all services (fastest/standard)
+./deploy.sh all --local
 
 # Or deploy a single service
-./deploy.sh frontend
-./deploy.sh workspace
-./deploy.sh agent
+./deploy.sh agent --local
+./deploy.sh workspace --local
+./deploy.sh frontend --local
 ```
 
-### Manual build (alternative)
-
-If you prefer local Docker builds (not recommended for Apple Silicon unless you have a cross-compiler setup):
-
-```bash
-# Get ACR name
-ACR=$(cd deploy/azure && terraform output -raw acr_login_server)
-TAG="manual-$(date +%s)"
-az acr login -n <acr_name>
-
-# Build and push with a unique tag
-docker build --platform linux/amd64 -t "$ACR/mcp-agent:$TAG" -f mcp-agent-builder-go/agent_go/Dockerfile.localdeps ..
-docker push "$ACR/mcp-agent:$TAG"
-
-# Update the app manually
-az containerapp update -n mcpagent-agent -g code-analysis-phase-1 --image "$ACR/mcp-agent:$TAG"
-```
+> **Note:** Remote builds (without `--local`) are available but much slower as they upload your entire source code to Azure for every build.
 
 ## 4. Test the deployment
 

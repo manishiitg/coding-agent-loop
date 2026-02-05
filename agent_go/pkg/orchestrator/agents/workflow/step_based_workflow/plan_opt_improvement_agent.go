@@ -253,6 +253,12 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 	evaluationLearningsPath := fmt.Sprintf("%s/evaluation/learnings", originalWorkspacePath)          // Read evaluation learnings (shared)
 	evaluationRunPath := fmt.Sprintf("%s/evaluation/runs/%s", originalWorkspacePath, iterationFolder) // Read only this iteration's evaluation report
 
+	// Logs and execution paths - explicit paths for debugging access
+	// These are needed because the folder guard may not resolve relative paths properly
+	logsPath := fmt.Sprintf("%s/logs", currentWorkspacePath)                               // Logs inside current run workspace (e.g., runs/iteration-1/repo/logs)
+	executionPath := fmt.Sprintf("%s/execution", currentWorkspacePath)                     // Execution outputs inside current run workspace
+	runIterationLogsPath := fmt.Sprintf("%s/runs/%s/logs", originalWorkspacePath, iterationFolder) // Explicit logs path using iteration folder
+
 	readPaths := []string{
 		currentWorkspacePath,    // Read execution results and logs from current workspace
 		runsPath,                // Read access to all runs
@@ -262,6 +268,9 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 		evaluationPlanPath,      // Read evaluation plan definition
 		evaluationLearningsPath, // Read evaluation learnings (shared across runs)
 		evaluationRunPath,       // Read evaluation report for THIS iteration only
+		logsPath,                // Explicit logs path for debugging
+		executionPath,           // Explicit execution path for outputs
+		runIterationLogsPath,    // Explicit logs path using runs/iteration folder format
 	}
 
 	pim.GetLogger().Info(fmt.Sprintf("📊 Evaluation access scoped to iteration: %s", iterationFolder))
@@ -344,9 +353,11 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 	selectedTools := pim.GetSelectedTools()
 	mcpConfigPath := pim.GetMCPConfigPath()
 
-	// Plan improvement agent uses simple agent mode (no code execution)
+	// Plan improvement agent uses simple agent mode (no code execution, no tool search)
 	// Even with MCP tools, we don't need code execution for plan debugging
+	// Phase agents always use simple mode regardless of workflow mode setting
 	config.UseCodeExecutionMode = false
+	config.UseToolSearchMode = false
 
 	if len(selectedServers) > 0 && mcpConfigPath != "" {
 		// Use preset's MCP configuration (simple agent mode)

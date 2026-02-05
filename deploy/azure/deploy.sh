@@ -28,14 +28,66 @@ if [ -z "$ACR_NAME" ]; then
 fi
 
 TARGET="${1:-all}"
+shift # Shift arguments so we can check for --local
+USE_LOCAL_BUILD=false
+
+if [[ "$1" == "--local" ]] || [[ "$TARGET" == "--local" ]]; then
+  USE_LOCAL_BUILD=true
+  # If first arg was --local, default target to all
+  if [[ "$TARGET" == "--local" ]]; then
+    TARGET="all"
+  fi
+  echo "==> Mode: LOCAL BUILD (docker build + push)"
+else
+  echo "==> Mode: REMOTE BUILD (az acr build)"
+fi
+
 TAG="v$(date +%Y%m%d-%H%M%S)"
 
 echo "==> Starting deployment: $TAG"
 echo "==> ACR: $ACR_NAME"
 
+if [ "$USE_LOCAL_BUILD" = "true" ]; then
+  echo "    Logging into ACR..."
+  az acr login -n "$ACR_NAME"
+fi
+
 # ------------------------------------------------------------------
 # Build Functions (Run in background)
 # ------------------------------------------------------------------
+
+# Generic build function to handle both local and remote builds
+run_build() {
+  local image_name="$1"
+  local dockerfile="$2"
+  local build_args="$3" # Optional build args string
+  local context_dir="$4"
+
+  if [ "$USE_LOCAL_BUILD" = "true" ]; then
+    # Local Build
+    local full_image="$ACR_NAME.azurecr.io/$image_name"
+    # shellcheck disable=SC2086
+    docker build --platform linux/amd64 \
+      -t "$full_image:$TAG" \
+      -t "$full_image:latest" \
+      -f "$dockerfile" \
+      $build_args \
+      . > "$SCRIPT_DIR/build_${image_name}.log" 2>&1
+    
+    docker push "$full_image:$TAG" >> "$SCRIPT_DIR/build_${image_name}.log" 2>&1
+    docker push "$full_image:latest" >> "$SCRIPT_DIR/build_${image_name}.log" 2>&1
+  else
+    # Remote Build (Azure ACR)
+    # shellcheck disable=SC2086
+    az acr build -r "$ACR_NAME" \
+      --platform linux/amd64 \
+      -t "$image_name:$TAG" \
+      -t "$image_name:latest" \
+      -f "$dockerfile" \
+      $build_args \
+      . > "$SCRIPT_DIR/build_${image_name}.log" 2>&1
+  fi
+}
 
 # Create a clean build context to speed up uploads
 create_clean_context() {
@@ -59,24 +111,54 @@ create_clean_context() {
     --exclude='*.db' \
     --exclude='__pycache__'
 
+  if [ -f "$REPO_ROOT/.dockerignore" ]; then
+    cp "$REPO_ROOT/.dockerignore" "$TEMP_DIR/.dockerignore"
+    echo "    Copied .dockerignore to build context root."
+  fi
+
+  # Aggressively prune known heavy folders that are not needed
+  echo "    Pruning unnecessary heavy folders..."
+  rm -rf "$TEMP_DIR/mcpagent/examples"
+  rm -rf "$TEMP_DIR/mcpagent/sdk-node"
+  rm -rf "$TEMP_DIR/mcpagent/bin"
+  rm -rf "$TEMP_DIR/multi-llm-provider-go/bin"
+  rm -rf "$TEMP_DIR/multi-llm-provider-go/examples"
+  rm -rf "$TEMP_DIR/mcp-agent-builder-go/frontend/node_modules"
+  rm -rf "$TEMP_DIR/mcp-agent-builder-go/frontend/dist"
     
   echo "    Clean context created."
 }
 
 build_agent() {
   local CONTEXT_DIR="/tmp/mcp-agent-build-ctx-$$/agent"
-  create_clean_context "$CONTEXT_DIR"
+  
+  if [ "$USE_LOCAL_BUILD" = "true" ]; then
+     # For local build, we can just use the selective copy approach we established
+     # It's faster than rsyncing everything for local docker context too
+     echo "    Creating selective build context in $CONTEXT_DIR..."
+     mkdir -p "$CONTEXT_DIR/mcp-agent-builder-go"
+     cp -r "$REPO_ROOT/agent_go" "$CONTEXT_DIR/mcp-agent-builder-go/"
+     cp -r "$REPO_ROOT/workspace" "$CONTEXT_DIR/mcp-agent-builder-go/"
+     
+     # Copy sibling dependencies for local build
+     cp -r "$PARENT_DIR/mcpagent" "$CONTEXT_DIR/mcpagent"
+     cp -r "$PARENT_DIR/multi-llm-provider-go" "$CONTEXT_DIR/multi-llm-provider-go"
+  else 
+     # Use the same selective context for remote build to be consistent
+     echo "    Creating selective build context in $CONTEXT_DIR..."
+     mkdir -p "$CONTEXT_DIR/mcp-agent-builder-go"
+     cp -r "$REPO_ROOT/agent_go" "$CONTEXT_DIR/mcp-agent-builder-go/"
+     cp -r "$REPO_ROOT/workspace" "$CONTEXT_DIR/mcp-agent-builder-go/"
+     
+     # Copy sibling dependencies for remote build
+     cp -r "$PARENT_DIR/mcpagent" "$CONTEXT_DIR/mcpagent"
+     cp -r "$PARENT_DIR/multi-llm-provider-go" "$CONTEXT_DIR/multi-llm-provider-go"
+  fi
   
   echo "    [Agent] Building..."
-  # Build from the CLEAN context root (simulating the 'ai-work' parent dir)
   (
     cd "$CONTEXT_DIR" || exit 1
-    az acr build -r "$ACR_NAME" \
-      --platform linux/amd64 \
-      -t "mcp-agent:$TAG" \
-      -t "mcp-agent:latest" \
-      -f mcp-agent-builder-go/agent_go/Dockerfile.localdeps \
-      . > "$SCRIPT_DIR/build_${FUNCNAME[0]#build_}.log" 2>&1
+    run_build "mcp-agent" "mcp-agent-builder-go/agent_go/Dockerfile.localdeps" "" "$CONTEXT_DIR"
   )
     
   echo "    [Agent] Build complete."
@@ -90,12 +172,7 @@ build_workspace() {
   echo "    [Workspace] Building..."
   (
     cd "$CONTEXT_DIR/mcp-agent-builder-go/workspace" || exit 1
-    az acr build -r "$ACR_NAME" \
-      --platform linux/amd64 \
-      -t "workspace-api:$TAG" \
-      -t "workspace-api:latest" \
-      -f Dockerfile \
-      . > "$SCRIPT_DIR/build_${FUNCNAME[0]#build_}.log" 2>&1
+    run_build "workspace-api" "Dockerfile" "" "$CONTEXT_DIR/mcp-agent-builder-go/workspace"
   )
     
   echo "    [Workspace] Build complete."
@@ -112,14 +189,7 @@ build_frontend() {
   
   (
     cd "$CONTEXT_DIR/mcp-agent-builder-go/frontend" || exit 1
-    az acr build -r "$ACR_NAME" \
-      --platform linux/amd64 \
-      -t "mcp-agent-frontend:$TAG" \
-      -t "mcp-agent-frontend:latest" \
-      -f Dockerfile.prod \
-      --build-arg VITE_API_BASE_URL="$AGENT_URL" \
-      --build-arg VITE_WORKSPACE_API_URL="$WORKSPACE_URL" \
-      . > "$SCRIPT_DIR/build_${FUNCNAME[0]#build_}.log" 2>&1
+    run_build "mcp-agent-frontend" "Dockerfile.prod" "--build-arg VITE_API_BASE_URL=$AGENT_URL --build-arg VITE_WORKSPACE_API_URL=$WORKSPACE_URL" "$CONTEXT_DIR/mcp-agent-builder-go/frontend"
   )
     
   echo "    [Frontend] Build complete."

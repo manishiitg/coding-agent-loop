@@ -60,7 +60,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   isCompact = false,
   showChatArea = false
 }) => {
-  const { availableLLMs } = useLLMStore()
+  const { availableLLMs, llmConfigLocked } = useLLMStore()
   
   // Get step-specific phases from workflow store (already filtered)
   const { getStepSpecificPhases, loadPhases } = useWorkflowStore()

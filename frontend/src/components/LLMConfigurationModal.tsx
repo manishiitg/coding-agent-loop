@@ -71,7 +71,8 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     customVertexModels,
     customAzureModels,
     // Supported providers filter
-    isProviderSupported
+    isProviderSupported,
+    llmConfigLocked
   } = useLLMStore()
 
   // Get mode-specific configs
@@ -320,6 +321,31 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   }, [providerConfigMap, handleSetPrimaryProvider])
 
   if (!isOpen) return null
+
+  if (llmConfigLocked) {
+    return (
+      <TooltipProvider>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4">
+          <div className="bg-background border border-border rounded-lg shadow-xl w-full max-w-md flex flex-col p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-foreground">LLM Configuration</h2>
+              <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0 hover:bg-secondary">
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <p className="text-muted-foreground">
+              LLM settings are locked by admin. Contact your administrator to enable new LLMs or models.
+            </p>
+            {modePrimaryConfig?.provider && modePrimaryConfig?.model_id && (
+              <p className="text-sm text-muted-foreground mt-3">
+                Current: {modePrimaryConfig.provider} — {modePrimaryConfig.model_id}
+              </p>
+            )}
+          </div>
+        </div>
+      </TooltipProvider>
+    )
+  }
 
   return (
     <TooltipProvider>

@@ -13,6 +13,11 @@ import (
 	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
+// isMCPConfigLocked returns true when MCP configuration is locked by admin (read-only mode).
+func isMCPConfigLocked() bool {
+	return os.Getenv("MCP_CONFIG_LOCKED") == "true" || os.Getenv("MCP_CONFIG_LOCKED") == "1"
+}
+
 // MCPConfigRequest represents a request to save MCP config
 type MCPConfigRequest struct {
 	Config mcpclient.MCPConfig `json:"config"`
@@ -92,10 +97,12 @@ func (api *StreamingAPI) handleGetMCPConfig(w http.ResponseWriter, r *http.Reque
 	api.logger.Debug(fmt.Sprintf("Merged config: %d base servers + %d user servers = %d total",
 		len(api.mcpConfig.MCPServers), len(userConfig.MCPServers), len(orderedConfig.MCPServers)))
 
+	locked := isMCPConfigLocked()
+
 	w.Header().Set("Content-Type", "application/json")
 
 	// Write JSON manually to preserve order
-	fmt.Fprintf(w, "{\n  \"mcpServers\": {\n")
+	fmt.Fprintf(w, "{\n  \"mcp_config_locked\": %v,\n  \"mcpServers\": {\n", locked)
 
 	// Write servers in the correct order
 	for i, name := range allServerNames {
@@ -122,6 +129,12 @@ func (api *StreamingAPI) handleGetMCPConfig(w http.ResponseWriter, r *http.Reque
 
 // handleSaveMCPConfig handles POST requests to save user additions to MCP config
 func (api *StreamingAPI) handleSaveMCPConfig(w http.ResponseWriter, r *http.Request) {
+	// Check if MCP config is locked
+	if isMCPConfigLocked() {
+		http.Error(w, "MCP configuration is locked by administrator", http.StatusForbidden)
+		return
+	}
+
 	var req MCPConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
@@ -391,6 +404,7 @@ func (api *StreamingAPI) handleGetMCPConfigStatus(w http.ResponseWriter, r *http
 		"discovery_running":  isDiscoveryRunning,
 		"last_discovery":     lastDiscovery.Format(time.RFC3339),
 		"cache_stats":        cacheStats,
+		"mcp_config_locked":  isMCPConfigLocked(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

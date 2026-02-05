@@ -10,6 +10,7 @@ dist/
 build/
 agent_go/bin/
 multi-llm-provider-go/bin/
+orchestrator
 
 # Dependencies
 node_modules/
@@ -24,8 +25,8 @@ mcpagent/bin/
 multi-llm-provider-go/examples/
 
 # Go files
-go.work
-go.work.sum
+# go.work and go.work.sum are needed for agent Dockerfile build using GOWORK
+# do not ignore them if they are required for the build context
 
 # IDE & Editor files
 .vscode/

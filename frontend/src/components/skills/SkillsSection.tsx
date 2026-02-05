@@ -142,7 +142,7 @@ export default function SkillsSection() {
                       className="px-3 py-1.5 text-sm font-medium text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-900/50 rounded-md transition-colors flex items-center gap-2"
                     >
                       <Plus className="w-4 h-4" />
-                      Import from GitHub
+                      Import
                     </button>
                     <button
                       onClick={() => setShowDetails(false)}
@@ -159,7 +159,7 @@ export default function SkillsSection() {
                       <Sparkles className="w-12 h-12 mb-4 opacity-50" />
                       <p className="text-lg font-medium mb-2">No skills installed</p>
                       <p className="text-sm text-center mb-4">
-                        Import skills from GitHub to extend your agent's capabilities
+                        Import skills to extend your agent's capabilities
                       </p>
                       <div className="flex gap-2">
                         <button
@@ -174,7 +174,7 @@ export default function SkillsSection() {
                           className="px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 rounded-md transition-colors flex items-center gap-2"
                         >
                           <Plus className="w-4 h-4" />
-                          Import from GitHub
+                          Import
                         </button>
                       </div>
                     </div>

@@ -34,7 +34,7 @@ export default function BulkStepConfigModal({
   plan,
   onBulkUpdate,
 }: BulkStepConfigModalProps) {
-  const { availableLLMs, refreshAvailableLLMs } = useLLMStore();
+  const { availableLLMs, refreshAvailableLLMs, llmConfigLocked } = useLLMStore();
   const { capabilities } = useCapabilitiesStore();
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);

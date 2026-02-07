@@ -1037,7 +1037,6 @@ export interface TodoTaskLog {
   timestamp: string;
   iteration?: number;
   model?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   todo_task_response?: {
     next_action?: string;  // 'delegate', 'complete', 'continue'
     selected_route_id?: string;

@@ -21,7 +21,6 @@ interface MultiStepSidebarProps {
   onClose: () => void
   onBulkUpdate: (updates: Array<{ stepId: string; updates: Partial<PlanStep> }>) => Promise<void>
   isCompact?: boolean
-  showChatArea?: boolean
 }
 
 const MAX_TURNS_OPTIONS = [10, 25, 50, 75, 100] as const
@@ -32,7 +31,6 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
   onClose,
   onBulkUpdate,
   isCompact = false,
-  showChatArea = false
 }) => {
   const { availableLLMs, getCurrentLLMOption } = useLLMStore()
   const { capabilities } = useCapabilitiesStore()

@@ -30,7 +30,10 @@ The Workflow Orchestrator (implemented as the **Human-Controlled Todo Creation O
 | **Code Execution Learning** | [`learning_agent_code_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/learning_agent_code_execution.go) | `HumanControlledTodoPlannerCodeExecutionLearningAgent` |
 | **Variable Management** | [`variable_management.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/variable_management.go) | `VariableManager`, `ExtractVariablesOnly()`, `VariablesManifest` |
 | **Anonymization** | [`anonymization_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/anonymization_agent.go) | `AnonymizationManager`, `AnonymizeLearningsOnly()` |
-| **Plan Improvement** | [`plan_improvement_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/plan_improvement_agent.go) | `PlanImprovementManager`, `PlanImprovementOnly()` |
+| **Plan Improvement** | [`plan_opt_improvement_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/plan_opt_improvement_agent.go) | `PlanImprovementManager`, `PlanImprovementOnly()` |
+| **Evaluation Debugger** | [`evaluation_debugger_manager.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/evaluation_debugger_manager.go) | `EvaluationDebuggerManager`, `EvaluationDebuggerOnly()` |
+| **Code Exec Debugging** | [`code_exec_debugging_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/code_exec_debugging_agent.go) | `CodeExecDebuggingManager`, `CodeExecDebuggingOnly()` |
+| **Execution Debugger** | [`execution_debugger_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/execution_debugger_agent.go) | `ExecutionDebuggerManager`, `ExecutionDebuggerOnly()` |
 | **Conditional Agent** | [`conditional_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/conditional_agent.go) | `ConditionalLLM`, `ConditionalResponse` |
 | **Agent Factory** | [`controller_agent_factory.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go) | `createExecutionOnlyAgent()`, `createConditionalAgent()` |
 
@@ -40,31 +43,37 @@ The Workflow Orchestrator (implemented as the **Human-Controlled Todo Creation O
 
 ### Workflow Phases
 
-The orchestrator operates through 7 distinct phases, each isolated and independently executable:
+The orchestrator operates through distinct phases, each isolated and independently executable:
 
 | Phase | Status | Entry Point | Output | Human Decision |
 |-------|--------|-------------|--------|----------------|
-| **0. Variable Extraction** | `variable-extraction` | `runVariableExtraction()` | `variables.json` | Use/Extract new/Update |
-| **1. Planning** | `planning` | `runPlanningOnly()` | `plan.json` | Use/Create/Update (max 20 rev) |
-| **2. Execution** | `execution` | `runPlanning()` | Step results | Approve/Re-execute/Stop |
-| **3. Evaluation Designer** | `evaluation-designer` | `runEvaluationDesignerOnly()` | `evaluation_plan.json` | Review evaluation guide |
-| **4. Evaluation Execution** | `evaluation-execution` | `runEvaluationExecutionOnly()` | Scores & Reports | - |
-| **5. Anonymize Learnings** | `anonymize-learnings` | `runAnonymization()` | Anonymized learnings | Confirm replacements |
-| **6. Plan Improvement** | `plan-improvement` | `runPlanImprovement()` | Feedback report | Review feedback |
-| **7. Plan-Learnings Alignment** | `plan-learnings-alignment` | `runPlanLearningsAlignment()` | Alignment report | - |
-| **8. Plan Tool Optimization** | `plan-tool-optimization` | `runPlanToolOptimization()` | Optimized `step_config.json` | - |
+| **Planning** | `planning` | `runPlanningOnly()` | `plan.json` | Use/Create/Update (max 20 rev) |
+| **Execution** | `execution` | `runPlanning()` | Step results | Approve/Re-execute/Stop |
+| **Evaluation Designer** | `evaluation-designer` | `runEvaluationDesignerOnly()` | `evaluation_plan.json` | Review evaluation guide |
+| **Evaluation Execution** | `evaluation-execution` | `runEvaluationExecutionOnly()` | Scores & Reports | - |
+| **Evaluation Debugger** | `evaluation-debugger` | `runEvaluationDebugger()` | Updated evaluation plan | Review suggestions |
+| **Plan Improvement** | `plan-improvement` | `runPlanImprovement()` | Updated `plan.json` | Review feedback |
+| **Plan Tool Optimization** | `plan-tool-optimization` | `runPlanToolOptimization()` | Optimized `step_config.json` | - |
+| **Learning Anonymization** | `learning-anonymization` | `runLearningAnonymization()` | Anonymized learnings | Confirm replacements |
+| **Plan-Learnings Alignment** | `plan-learnings-alignment` | `runPlanLearningsAlignment()` | Alignment report | - |
+| **Learning Consolidation** | `learning-consolidation` | `runLearningConsolidation()` | Consolidated learnings | - |
+| **Code Exec Debugging** | `code-exec-debugging` | `runCodeExecDebugging()` | Plan fixes for code steps | Review fixes |
+| **Execution Debugger** | `execution-debugger` | `runExecutionDebugger()` | Read-only analysis | Conversational Q&A |
 
 ### Execution Flow
 
-1. **Variable Extraction**: Extracts dynamic values from objective, creates `variables/variables.json` with templated placeholders
-2. **Planning**: Creates structured execution plan, saves to `planning/plan.json`, supports iterative refinement (max 20 revisions)
-3. **Execution**: Executes plan step-by-step (Execute → Validate → Learn → Human feedback per step)
-4. **Evaluation Designer**: Creates structured evaluation guides to assess execution results against success criteria
-5. **Evaluation Execution**: Runs evaluation steps against execution outputs to generate scores (0-10) and detailed feedback
-6. **Anonymize Learnings**: Scans `learnings/` folder, replaces actual values with `{{VARIABLE_NAME}}` placeholders
-7. **Plan Improvement**: Analyzes execution results and provides feedback for plan improvement
-8. **Plan-Learnings Alignment**: Checks alignment between `plan.json` and learnings folder
-9. **Plan Tool Optimization**: Optimizes tool selections in `step_config.json`
+1. **Planning**: Creates structured execution plan, saves to `planning/plan.json`, supports iterative refinement (max 20 revisions)
+2. **Execution**: Executes plan step-by-step (Execute → Validate → Learn → Human feedback per step)
+3. **Evaluation Designer**: Creates structured evaluation guides to assess execution results against success criteria
+4. **Evaluation Execution**: Runs evaluation steps against execution outputs to generate scores (0-10) and detailed feedback
+5. **Evaluation Debugger**: Analyzes evaluation results and plan to provide feedback for improving the evaluation plan based on scores
+6. **Plan Improvement**: Analyzes execution results and provides feedback for plan improvement, can modify `plan.json`
+7. **Plan Tool Optimization**: Optimizes tool selections in `step_config.json` based on learnings and actual tool usage
+8. **Learning Anonymization**: Scans `learnings/` folder, replaces actual values with `{{VARIABLE_NAME}}` placeholders
+9. **Plan-Learnings Alignment**: Checks alignment between `plan.json` and learnings folder structure
+10. **Learning Consolidation**: Consolidates redundant learning files, merges similar patterns
+11. **Code Exec Debugging**: Analyzes execution logs for code execution steps — identifies hardcoded paths, incorrect CLI arguments, workspace tool misuse
+12. **Execution Debugger**: Read-only analysis agent for answering questions about execution results, logs, and plan state (no file modifications)
 
 ### Step Execution Flow
 
@@ -200,10 +209,13 @@ func (em *ExecutionManager) CleanupForFreshStart(...) error {
 | **Code Execution Learning** | Captures Go code patterns | Execution history (code execution mode) | Go code patterns, imports | Code Pattern Extraction | `learning_llm` |
 | **Conditional** | Evaluates branching decisions | Condition question, step output | `ConditionalResponse` (Boolean, Reasoning) | Tool-Based Verification | `execution_llm` |
 | **Anonymization** | Replaces values with placeholders | Workspace path, variables JSON | Anonymized learning files | Fuzzy Matching | `phase_llm` |
-| **Plan Improvement** | Analyzes execution for plan feedback | Workspace path, plan JSON | Updated `plan.json` | `update_regular_step`, `update_todo_task_route`, `human_feedback` | `phase_llm` |
+| **Plan Improvement** | Analyzes execution for plan feedback | Workspace path, plan JSON, run path | Updated `plan.json` | `update_regular_step`, `update_todo_task_route`, `human_feedback` | `phase_llm` |
 | **Plan Tool Optimization** | Optimizes tool selections | Workspace path, plan JSON | Optimized `step_config.json` | Tool Analysis | `phase_llm` |
 | **Learning Consolidation** | Consolidates learning files | Workspace path | Consolidated learnings | File Consolidation | `phase_llm` |
 | **Plan Learnings Alignment** | Aligns plan with learnings | Workspace path, plan JSON | Alignment report | Alignment Analysis | `phase_llm` |
+| **Evaluation Debugger** | Analyzes evaluation results and plan | Workspace path, eval plan, eval report, run path | Updated `evaluation_plan.json` | `update_evaluation_step`, `add_evaluation_step`, `human_feedback` | `phase_llm` |
+| **Code Exec Debugging** | Debugs code execution step failures | Workspace path, plan JSON, run path | Updated `plan.json` (code step fixes) | `update_regular_step`, `human_feedback` | `phase_llm` |
+| **Execution Debugger** | Read-only Q&A about execution results | Workspace path, plan JSON, run path | Conversational analysis (no file changes) | Read-only workspace access, `human_feedback` | `phase_llm` |
 | **TodoTask Orchestrator** | Manages todo lists and delegates to sub-agents | Step details, todo list, predefined routes | Todo management, sub-agent results | Todo tools, Sub-agent tools | `execution_llm` |
 
 ---
@@ -519,30 +531,54 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
 
 ```
 workspace/
-├── step_based_workflow/
-│   ├── variables/
-│   │   └── variables.json          # Phase 0: Variable definitions
-│   ├── planning/
-│   │   ├── plan.json               # Phase 1: Execution plan
-│   │   └── step_config.json        # Per-step agent configurations
-│   ├── knowledgebase/               # Persistent shared storage (optional, enabled by default)
-│   │   └── *.md, *.json, etc.      # Templates, reference data, global configs
-│   ├── learnings/                   # Learning patterns
-│   │   ├── success_patterns.md     # What worked (shared)
-│   │   ├── failure_analysis.md     # What failed (shared)
-│   │   ├── {step_id}/              # Step-specific learnings
-│   │   │   ├── *_learning.md
-│   │   │   ├── scripts/            # Python scripts (code execution mode)
-│   │   │   └── code/               # Go code patterns (code execution mode)
-│   │   └── {step_id}-{true/false}-{Y}/  # Branch step learnings
+├── planning/
+│   ├── plan.json                    # Execution plan (step definitions, dependencies, criteria)
+│   └── step_config.json             # Per-step agent configurations (LLM, tools, modes)
+├── knowledgebase/                    # Persistent shared storage (optional, enabled by default)
+│   └── *.md, *.json, etc.           # Templates, reference data, global configs
+├── learnings/                        # Learning patterns (shared across runs)
+│   ├── shared_learnings.md          # Learnings shared across all steps
+│   ├── {step_id}/                   # Step-specific learnings (by stable ID)
+│   │   ├── learnings.md             # Consolidated learnings
+│   │   ├── learnings_metadata.json  # Success counts, confidence scores
+│   │   ├── scripts/                 # Python scripts (code execution mode)
+│   │   └── code/                    # Go code patterns (code execution mode)
+│   └── {step_id}-{true/false}-{Y}/  # Branch step learnings
+├── evaluation/
+│   ├── evaluation_plan.json         # Evaluation criteria and steps
+│   ├── learnings/                   # Evaluation-specific learnings
 │   └── runs/
-│       ├── iteration-same/          # Default run folder
-│       │   ├── execution/           # Execution outputs
-│       │   ├── validation/          # Validation reports
-│       │   └── steps_done.json      # Progress tracking
-│       └── iteration-N/             # Numbered or nested run folders
-│           ├── execution/
-│           └── steps_done.json
+│       └── {iteration}/
+│           └── evaluation_report.json  # Scored assessment (total_score, step_scores[])
+└── runs/
+    ├── iteration-same/               # Default run folder
+    │   ├── execution/                # Step output files
+    │   │   ├── steps_done.json       # Progress tracking
+    │   │   ├── step-1/               # Regular step output
+    │   │   │   ├── {context_output}  # User-defined output file (e.g., output.json)
+    │   │   │   └── step_done.json    # Completion marker
+    │   │   ├── step-2-if-true-0/     # Conditional branch step (true branch, index 0)
+    │   │   ├── step-3-if-false-1/    # Conditional branch step (false branch, index 1)
+    │   │   ├── step-4-decision/      # Decision step execution output
+    │   │   ├── step-5-sub-agent-0/   # Orchestration/todo_task sub-agent output
+    │   │   └── step-5-generic-agent-0/  # Todo_task generic agent output
+    │   └── logs/                     # Validation and execution logs
+    │       ├── step-1/
+    │       │   ├── validation-1.json                  # Validation attempt (is_success_criteria_met, reasoning)
+    │       │   └── execution/
+    │       │       ├── execution-attempt-1-iteration-0.json              # Execution result
+    │       │       └── execution-attempt-1-iteration-0-conversation.json # Full LLM conversation
+    │       ├── step-2/
+    │       │   └── conditional-evaluation.json   # Conditional decision (condition_result, branch_executed)
+    │       ├── step-4/
+    │       │   ├── decision-execution.json       # Decision step execution output
+    │       │   └── decision-evaluation.json      # Decision routing (decision_result, reasoning)
+    │       ├── step-5/
+    │       │   └── orchestration-execution.json  # JSONL: routing decisions per iteration
+    │       ├── step-2-if-true-0/                 # Branch step logs (same structure as regular)
+    │       ├── step-5-sub-agent-0/               # Sub-agent logs
+    │       └── step-5-generic-agent-0/           # Generic agent logs
+    └── iteration-N/                  # Numbered or nested run folders (same structure)
 ```
 
 ### variables.json
@@ -562,29 +598,68 @@ workspace/
 
 ### plan.json
 
+Supports 6 step types: `regular`, `conditional`, `decision`, `orchestration`, `todo_task`, `human_input`.
+
 ```json
 {
   "steps": [
     {
-      "id": "step-1",
+      "type": "regular",
+      "id": "read-config",
       "title": "Read config file",
       "description": "Read and parse config.json",
-      "success_criteria": "File read successfully",
+      "success_criteria": "File read successfully, output contains all required fields",
       "context_dependencies": [],
-      "context_output": "config_content.md",
+      "context_output": "config_content.json",
       "has_loop": false,
-      "has_condition": false,
-      "agent_configs": {
-        "execution_llm": { "provider": "anthropic", "model_id": "claude-3-5-sonnet-20241022" },
-        "learning_detail_level": "exact",
-        "disable_validation": false
+      "validation_schema": {
+        "files": [{"file_name": "config_content.json", "must_exist": true}]
       }
+    },
+    {
+      "type": "conditional",
+      "id": "check-data-quality",
+      "title": "Check data quality",
+      "condition_question": "Does the config contain valid database credentials?",
+      "context_dependencies": ["config_content.json"],
+      "if_true_steps": [
+        {"type": "regular", "id": "process-data", "title": "Process data", "...": "..."}
+      ],
+      "if_false_steps": [
+        {"type": "regular", "id": "request-config", "title": "Request new config", "...": "..."}
+      ]
+    },
+    {
+      "type": "decision",
+      "id": "evaluate-results",
+      "title": "Evaluate processing results",
+      "description": "Run quality checks on processed data",
+      "decision_evaluation_question": "Did all quality checks pass?",
+      "if_true_next_step_id": "publish-results",
+      "if_false_next_step_id": "process-data",
+      "context_output": "quality_report.json"
+    },
+    {
+      "type": "todo_task",
+      "id": "multi-task-processing",
+      "title": "Process multiple data sources",
+      "todo_task_step": {
+        "description": "Process each data source and aggregate results",
+        "success_criteria": "All sources processed",
+        "context_output": "aggregated_results.json"
+      },
+      "predefined_routes": [
+        {"route_id": "api-fetch", "route_name": "API Fetcher", "sub_agent_step": {"...": "..."}}
+      ],
+      "enable_generic_agent": true
     }
   ]
 }
 ```
 
 ### steps_done.json
+
+Located at `runs/{iteration}/execution/steps_done.json`:
 
 ```json
 {
@@ -596,22 +671,47 @@ workspace/
       "branch_executed": "if_true",
       "completed_steps": ["step-3-if-true-0"]
     }
+  },
+  "validation_failures": {
+    "step-5": 2
+  },
+  "archival_counts": {
+    "6": 2
   }
 }
 ```
 
+- `completed_step_indices`: 0-based indices of completed steps
+- `branch_steps`: tracks which branch was taken for conditional steps and which steps completed
+- `validation_failures`: counts retry attempts per step (step failed validation, was re-executed)
+- `archival_counts`: how many times each step's execution was archived (loop steps)
+
 ### Step-Specific Folder Rules
 
-| Step Type | Learning Folder | Execution Folder |
-|-----------|----------------|------------------|
-| **Regular** | `learnings/{step_id}/` | `execution/step-{X}/` |
-| **Branch** | `learnings/{step_id}/` | `execution/step-{parentStep}-{true/false}-{branchIdx}/` |
-| **Sub-Agent** | `learnings/{step_id}/` | `execution/step-{X}-sub-agent-{index}/` |
+| Step Type | Execution Folder | Logs Folder | Special Log Files |
+|-----------|-----------------|-------------|-------------------|
+| **Regular** | `execution/step-{X}/` | `logs/step-{X}/` | `validation-{N}.json`, `execution-attempt-{A}-iteration-{I}.json` |
+| **Conditional** (wrapper) | _(not executed)_ | `logs/step-{X}/` | `conditional-evaluation.json` (condition_result, branch_executed) |
+| **Conditional** (branches) | `execution/step-{X}-if-true-{idx}/` or `step-{X}-if-false-{idx}/` | `logs/step-{X}-if-true-{idx}/` | Same as regular |
+| **Decision** | `execution/step-{X}-decision/` | `logs/step-{X}/` | `decision-execution.json`, `decision-evaluation.json` (decision_result, reasoning) |
+| **Orchestration** | `execution/step-{X}/` | `logs/step-{X}/` | `orchestration-execution.json` (JSONL: routing decisions per iteration) |
+| **Orchestration** (sub-agents) | `execution/step-{X}-sub-agent-{idx}/` | `logs/step-{X}-sub-agent-{idx}/` | Same as regular |
+| **TodoTask** | `execution/step-{X}/` | `logs/step-{X}/` | `orchestration-execution.json`, `tasks.md` (markdown task list with checkboxes) |
+| **TodoTask** (sub-agents) | `execution/step-{X}-sub-agent-{idx}/` | `logs/step-{X}-sub-agent-{idx}/` | Same as regular |
+| **TodoTask** (generic agents) | `execution/step-{X}-generic-agent-{idx}/` | `logs/step-{X}-generic-agent-{idx}/` | Same as regular |
+| **Human Input** | `execution/step-{X}/` | _(none)_ | Only `step_done.json` |
+
+**Learning Folders** (separate from execution, shared across runs):
+- All step types: `learnings/{step_id}/` (using stable step ID from plan.json)
+- Branch steps: `learnings/{step_id}/` (branch step has its own ID)
 
 **Key Rules:**
 - Learning folders use step IDs (stable identifiers from plan.json)
-- Execution folders use step numbers (1-based) for backward compatibility
-- All folders located at workspace root, not inside `runs/`
+- Execution folders use step numbers (1-based, X = stepIndex + 1)
+- Execution and logs folders are inside run folders (`runs/{iteration}/`)
+- Learnings are at workspace root (shared across all runs)
+- Loop iterations: same folder, different filenames (`execution-attempt-{A}-iteration-{I}.json`)
+- TodoTask completion is **validation-driven** (pre-validation passing is the primary completion signal)
 
 ---
 
@@ -630,7 +730,7 @@ workspace/
 - **`execution_llm`**: Default for execution agents
 - **`validation_llm`**: Default for validation agents
 - **`learning_llm`**: Default for learning agents
-- **`phase_llm`**: Default for all phase agents (planning, anonymization, plan improvement, plan tool optimization, learning consolidation, plan learnings alignment)
+- **`phase_llm`**: Default for all phase agents (planning, anonymization, plan improvement, plan tool optimization, learning consolidation, plan learnings alignment, evaluation debugger, code exec debugging, execution debugger)
   - All phase agents use this unified configuration
 
 ### Temporary LLM Override (tempLLM)
@@ -833,11 +933,18 @@ Only include `read_image` or `read_pdf` when the step needs to **analyze content
 
 | Phase | Agent | Output | Human Decision | Manager |
 |-------|-------|--------|---------------|---------|
-| **0** | Variable Extraction | `variables.json` | Use/Extract new/Update | `VariableManager` ✅ |
-| **1** | Planning | `plan.json` | Use/Create/Update (max 20 rev) | - |
-| **2** | Execute → Validate → Learn | Step results | Approve/Re-execute/Stop | - |
-| **3** | Anonymize Learnings | Anonymized learnings | Confirm replacements | `AnonymizationManager` ✅ |
-| **4** | Plan Improvement | Feedback report | Review feedback | `PlanImprovementManager` ✅ |
+| Planning | Planning Agent | `plan.json` | Use/Create/Update (max 20 rev) | - |
+| Execution | Execute → Validate → Learn | Step results | Approve/Re-execute/Stop | `ExecutionManager` ✅ |
+| Evaluation Designer | Evaluation Agent | `evaluation_plan.json` | Review guide | `EvaluationManager` ✅ |
+| Evaluation Execution | Evaluation Scoring | Scores & Reports | - | - |
+| Evaluation Debugger | Eval Debugger Agent | Updated eval plan | Review suggestions | `EvaluationDebuggerManager` ✅ |
+| Plan Improvement | Plan Improvement Agent | Updated `plan.json` | Review feedback | `PlanImprovementManager` ✅ |
+| Plan Tool Optimization | Tool Optimization Agent | `step_config.json` | - | `PlanToolOptimizationManager` ✅ |
+| Learning Anonymization | Anonymization Agent | Anonymized learnings | Confirm replacements | `AnonymizationManager` ✅ |
+| Plan-Learnings Alignment | Alignment Agent | Alignment report | - | `PlanLearningsAlignmentManager` ✅ |
+| Learning Consolidation | Consolidation Agent | Consolidated learnings | - | `LearningConsolidationManager` ✅ |
+| Code Exec Debugging | Code Debugging Agent | Plan fixes | Review fixes | `CodeExecDebuggingManager` ✅ |
+| Execution Debugger | Execution Debugger Agent | Read-only analysis | Conversational Q&A | `ExecutionDebuggerManager` ✅ |
 
 ### Constraints
 
@@ -848,7 +955,7 @@ Only include `read_image` or `read_pdf` when the step needs to **analyze content
 - Per-step LLM configuration overrides
 - Temporary LLM overrides for execution agents
 - Loop and conditional logic in plan steps
-- Unified `phase_llm` configuration for all phase agents (planning, anonymization, plan improvement, plan tool optimization, learning consolidation, plan learnings alignment)
+- Unified `phase_llm` configuration for all phase agents (planning, anonymization, plan improvement, plan tool optimization, learning consolidation, plan learnings alignment, evaluation debugger, code exec debugging, execution debugger)
 
 ❌ **Forbidden:**
 - Modifying `steps_done.json` manually (use orchestrator methods)

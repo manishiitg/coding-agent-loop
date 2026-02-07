@@ -15,7 +15,6 @@ export default function LLMConfigurationSummary({
   const currentMode: 'chat' | 'workflow' = agentMode === 'workflow' ? 'workflow' : 'chat'
 
   const { getConfigForMode, setShowLLMModal, savedLLMs } = useLLMStore()
-  const activeTabId = useChatStore(state => state.activeTabId)
   const activeTabConfig = useChatStore(state =>
     state.activeTabId ? state.chatTabs[state.activeTabId]?.config?.llmConfig : undefined
   )
@@ -34,7 +33,7 @@ export default function LLMConfigurationSummary({
       return { provider: activeTabConfig.provider, model_id: activeTabConfig.model_id }
     }
     return agentConfig?.primary || primaryConfig
-  }, [currentMode, activeTabId, activeTabConfig, agentConfig?.primary, primaryConfig])
+  }, [currentMode, activeTabConfig, agentConfig?.primary, primaryConfig])
 
   // Get provider display info
   const getProviderInfo = (provider: string) => {

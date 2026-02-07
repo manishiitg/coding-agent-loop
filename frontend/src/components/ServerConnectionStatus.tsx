@@ -62,6 +62,7 @@ export default function ServerConnectionStatus({ children }: { children: React.R
       mounted.current = false
       if (timeoutRef.current) clearTimeout(timeoutRef.current)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const retry = useCallback(() => {

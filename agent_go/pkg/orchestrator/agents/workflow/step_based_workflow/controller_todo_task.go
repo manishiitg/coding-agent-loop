@@ -135,6 +135,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			stepIndex,
 			todoTaskStepPath,
 			previousContextFiles,
+			previousExecutionResults,
+			allSteps,
 			lastSubAgentResult,
 			lastSubAgentName,
 			lastTodoID,
@@ -282,6 +284,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	stepIndex int,
 	stepPath string,
 	previousContextFiles []string,
+	previousExecutionResults []string,
+	allSteps []PlanStepInterface,
 	lastSubAgentResult string,
 	lastSubAgentName string,
 	lastTodoID string,
@@ -348,6 +352,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"UseKnowledgebase":       fmt.Sprintf("%v", useKnowledgebase),
 		"SkipExecutionCleanup":   fmt.Sprintf("%v", skipExecutionCleanup), // Skip cleanup mode flag for state verification prompt
 	}
+
+	// Build previous steps summary (includes descriptions, output files, and execution results like human_input responses)
+	previousStepsSummary := hcpo.buildPreviousStepsSummary(allSteps, stepIndex, previousContextFiles, previousExecutionResults)
+	templateVars["PreviousStepsSummary"] = previousStepsSummary
 
 	// Add EnableDynamicTierSelection flag for system prompt
 	enableDynamicTier := false

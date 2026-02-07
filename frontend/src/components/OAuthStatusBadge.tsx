@@ -32,18 +32,7 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
   const [discoveryInfo, setDiscoveryInfo] = useState<OAuthDiscoveryResponse | null>(null);
 
   // Check token status on mount and periodically
-  useEffect(() => {
-    // If requiresOAuth is explicitly passed (from auto-discovery), use it immediately
-    if (requiresOAuth !== undefined) {
-      setHasOAuth(requiresOAuth);
-    }
-
-    checkTokenStatus();
-    const interval = setInterval(checkTokenStatus, 10000); // Every 10 seconds
-    return () => clearInterval(interval);
-  }, [serverName, requiresOAuth]);
-
-  const checkTokenStatus = async () => {
+  const checkTokenStatus = React.useCallback(async () => {
     try {
       console.log(`[OAuthStatusBadge] Checking status for ${serverName}...`);
       const status = await oauthApi.getOAuthStatus(serverName);
@@ -72,7 +61,18 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
       setTokenValid(false);
       prevTokenValidRef.current = false;
     }
-  };
+  }, [serverName, requiresOAuth, onAuthChange]);
+
+  useEffect(() => {
+    // If requiresOAuth is explicitly passed (from auto-discovery), use it immediately
+    if (requiresOAuth !== undefined) {
+      setHasOAuth(requiresOAuth);
+    }
+
+    checkTokenStatus();
+    const interval = setInterval(checkTokenStatus, 10000); // Every 10 seconds
+    return () => clearInterval(interval);
+  }, [serverName, requiresOAuth, checkTokenStatus]);
 
   const handleManualRefresh = async () => {
     setRefreshing(true);

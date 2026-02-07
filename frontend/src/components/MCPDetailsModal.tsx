@@ -3,7 +3,6 @@ import { MarkdownRenderer } from './ui/MarkdownRenderer'
 import { OAuthStatusBadge } from './OAuthStatusBadge'
 import MCPToolApiTester from './MCPToolApiTester'
 import { useMCPStore } from '../stores'
-import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 
 // Tool detail type for cached data
 type ToolDetail = {

@@ -51,11 +51,27 @@ Answer user questions directly. Only analyze logs/files when the user specifical
 
 ## 📁 FILE LOCATIONS (read only when needed)
 - **Plan file**: 'planning/plan.json'
+- **Step config**: 'planning/step_config.json' — per-step LLM, tool, and mode settings
 - **Learnings**: 'learnings/' and 'learnings/{step_id}/'
-- **Execution outputs**: '{{.RunPathRelative}}/execution/'
-- **Logs (for debugging)**: '{{.RunPathRelative}}/logs/' - only read if user asks about failures
-- **Knowledgebase**: 'knowledgebase/' - persistent files across runs
+- **Execution outputs**: '{{.RunPathRelative}}/execution/' — step output files
+- **Logs (for debugging)**: '{{.RunPathRelative}}/logs/' — only read if user asks about failures
+- **Progress**: '{{.RunPathRelative}}/execution/steps_done.json' — which steps completed, branch decisions, retry counts
+- **Knowledgebase**: 'knowledgebase/' — persistent files across runs
 - **Evaluation reports**: 'evaluation/runs/{runFolder}/evaluation_report.json'
+
+### Step Folder Naming (inside execution/ and logs/)
+- Regular steps: 'step-{X}/' (X = 1-based step number)
+- Conditional branches: 'step-{X}-if-true-{idx}/', 'step-{X}-if-false-{idx}/'
+- Decision steps: 'step-{X}-decision/'
+- Sub-agents (orchestration/todo_task): 'step-{X}-sub-agent-{idx}/'
+- Generic agents (todo_task only): 'step-{X}-generic-agent-{idx}/'
+
+### Key Log Files Per Step Type
+- **All steps**: 'logs/step-X/validation-{N}.json' (validation attempts), 'logs/step-X/execution/execution-attempt-{A}-iteration-{I}.json' (execution result), plus '-conversation.json' (full LLM chat)
+- **Conditional**: 'logs/step-X/conditional-evaluation.json' — condition_result (true/false), condition_reason, branch_executed
+- **Decision**: 'logs/step-X/decision-evaluation.json' — decision_result, decision_reasoning, routing targets
+- **Orchestration/TodoTask**: 'logs/step-X/orchestration-execution.json' — JSONL file, one line per iteration with selected_route_id, success_criteria_met
+- **TodoTask**: 'execution/step-X/tasks.md' — markdown task list with checkbox progress
 
 ## 🛠️ PLAN MODIFICATION TOOLS
 Use 'update_*', 'add_*', 'delete_plan_steps', etc. ONLY after user approval via 'human_feedback'.
@@ -95,16 +111,25 @@ Example: To update 'publish-notion-report' inside todo_task step 'codebase-inven
 ## 📖 REFERENCE: Analysis Checklists (use when debugging)
 
 <details>
+<summary>Conditional/Decision Steps</summary>
+- Conditional: Read 'logs/step-X/conditional-evaluation.json' — which branch was taken and why ('condition_result', 'condition_reason', 'branch_executed')
+- Decision: Read 'logs/step-X/decision-evaluation.json' — routing decision after execution ('decision_result', 'decision_reasoning')
+- Branch step logs are in 'logs/step-X-if-true-{idx}/' or 'logs/step-X-if-false-{idx}/'
+</details>
+
+<details>
 <summary>Orchestration Steps</summary>
-- Main Orchestrator: Check 'orchestration-evaluation.json' for infinite loops
+- Main Orchestrator: Check 'logs/step-X/orchestration-execution.json' (JSONL) for routing decisions and infinite loops (same route selected repeatedly)
 - Sub-Agents: Check 'logs/step-X-sub-agent-{i}/' for sub-agent issues
 </details>
 
 <details>
 <summary>Todo Task Steps</summary>
-- Main Orchestrator: Check '{{.RunPathRelative}}/execution/step-X/tasks.md' for task status and progress
-- Sub-Agents: Check 'logs/step-X-sub-agent-{i}/' for sub-agent issues (predefined agents)
-- Generic Agent: Check 'logs/step-X-generic-agent-{i}/' for issues
+- Task Progress: Check '{{.RunPathRelative}}/execution/step-X/tasks.md' for task list status
+- Routing: Check 'logs/step-X/orchestration-execution.json' for which sub-agent handled which todo
+- Sub-Agents: Check 'logs/step-X-sub-agent-{i}/' for predefined agent issues
+- Generic Agent: Check 'logs/step-X-generic-agent-{i}/' for dynamic task issues
+- **Completion**: todo_task steps complete when 'validation_schema' passes (not success_criteria)
 </details>
 
 <details>

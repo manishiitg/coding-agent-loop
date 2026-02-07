@@ -118,6 +118,12 @@ func GetWorkflowConstants() WorkflowConstants {
 				Description: "Analyze execution logs and conversation history for code execution steps. Identifies common errors like hardcoded paths, incorrect CLI arguments, and workspace tool misuse, providing specific fixes to the plan.",
 				Options:     []WorkflowPhaseOption{}, // No options for code debugger phase
 			},
+			{
+				ID:          "execution-debugger",
+				Title:       "Execution Debugger",
+				Description: "Analyze execution results, logs, and validation reports to answer questions about what happened during workflow execution. Read-only analysis without plan modifications.",
+				Options:     []WorkflowPhaseOption{},
+			},
 		},
 	}
 }
@@ -494,6 +500,10 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return wo.runCodeExecDebugging(ctx, objective, selectedOptions)
 	}
 
+	if workflowStatus == "execution-debugger" {
+		return wo.runExecutionDebugger(ctx, objective, selectedOptions)
+	}
+
 	// All other workflow statuses (execution) go through execution phase
 	// Execution requires both variables.json and plan.json to exist
 	return wo.runPlanning(ctx, objective, selectedOptions)
@@ -527,6 +537,37 @@ func (wo *WorkflowOrchestrator) runCodeExecDebugging(ctx context.Context, object
 	}
 
 	wo.GetLogger().Info(fmt.Sprintf("✅ Code execution debugging completed successfully"))
+	return result, nil
+}
+
+// runExecutionDebugger runs only the execution debugger phase (read-only)
+func (wo *WorkflowOrchestrator) runExecutionDebugger(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Execution Debugger Phase"))
+
+	// Create execution debugger manager directly (independent from controller)
+	debuggerManager := step_based_workflow.NewExecutionDebuggerManager(
+		wo.BaseOrchestrator,
+		wo.presetPhaseLLM, // Use phase LLM for debugging
+		wo.getSessionID(),
+		wo.getWorkflowID(),
+	)
+
+	// Extract selected_run_folder from execution options if available
+	var runPath string
+	if wo.executionOptions != nil && wo.executionOptions.SelectedRunFolder != "" {
+		runPath = wo.executionOptions.SelectedRunFolder
+		wo.GetLogger().Info(fmt.Sprintf("📊 Using selected_run_folder from execution options: %s", runPath))
+	} else {
+		wo.GetLogger().Info("📊 No selected_run_folder in execution options, will ask user for path")
+	}
+
+	// Run only execution debugger
+	result, err := debuggerManager.ExecutionDebuggerOnly(ctx, wo.GetWorkspacePath(), runPath)
+	if err != nil {
+		return "", fmt.Errorf("execution debugger failed: %w", err)
+	}
+
+	wo.GetLogger().Info("✅ Execution debugger completed successfully")
 	return result, nil
 }
 
@@ -999,6 +1040,7 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 					"plan-learnings-alignment",             // Plan-learnings alignment phase
 					"learning-consolidation",               // Learning consolidation phase
 					"code-exec-debugging",                  // Code execution debugging phase
+					"execution-debugger",                   // Execution debugger phase (read-only)
 				}
 				valid := false
 				for _, status := range validStatuses {

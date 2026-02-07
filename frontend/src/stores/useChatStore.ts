@@ -774,9 +774,11 @@ export const useChatStore = create<ChatState>()(
 
       clearStreamingText: (sessionId: string) => {
         set((state) => {
-          const { [sessionId]: _text, ...restText } = state.streamingText
-          const { [sessionId]: _idx, ...restIdx } = state.lastStreamingChunkIndex
-          return { streamingText: restText, lastStreamingChunkIndex: restIdx }
+          const newStreamingText = { ...state.streamingText }
+          delete newStreamingText[sessionId]
+          const newLastIdx = { ...state.lastStreamingChunkIndex }
+          delete newLastIdx[sessionId]
+          return { streamingText: newStreamingText, lastStreamingChunkIndex: newLastIdx }
         })
       },
 

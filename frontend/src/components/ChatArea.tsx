@@ -196,6 +196,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   }, [allTools, effectiveServers, selectedModeCategory, activeTab?.config])
   
   // Get all tabs to track changes for polling
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const allTabs = useMemo(() => Object.values(chatTabs), [chatTabs])
   const tabsWithSessions = useMemo(() => allTabs.filter(tab => tab.sessionId), [allTabs])
   
@@ -1198,7 +1199,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           // Process workflow-specific events (after filtering)
           if (selectedModeCategory === 'workflow') {
             const workflowStore = useWorkflowStore.getState()
-            const phases = workflowStore.phases
+            // phases removed
 
             for (const event of response.events as PollingEvent[]) {
               // Handle batch progress updates from polling layer (more reliable than component useEffect)
@@ -1317,7 +1318,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         // Continue polling other observers even if one fails
       }
     }
-  }, [selectedModeCategory, getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, getTabEvents, pollingInterval, setIsStreaming, setIsCompleted, setHasActiveChat, setCurrentWorkflowPhase, processedCompletionEventsRef, stopPolling, activeSessionIds])
+  }, [selectedModeCategory, getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, getTabEvents, setIsStreaming, setIsCompleted, setHasActiveChat, activeSessionIds])
 
 
   // Track if we're already processing to prevent infinite loops
@@ -2975,7 +2976,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       }
     }
 
-  }, [correctAgentMode, selectedModeCategory, isRequiredFolderSelected, isStreaming, stopStreaming, finalResponse, startPolling, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setSessionId, llmConfig, openrouterConfig, openaiConfig, anthropicConfig, vertexConfig, bedrockConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, selectedWorkflowPreset, activeWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, agentMode, currentPresetServers, addTabEvents, getTabEvents, setAutoScroll, scrollToBottom, chatSessionId, sessionState, getActiveSessions])
+  }, [correctAgentMode, selectedModeCategory, isRequiredFolderSelected, isStreaming, stopStreaming, finalResponse, startPolling, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setSessionId, llmConfig, openrouterConfig, openaiConfig, anthropicConfig, vertexConfig, bedrockConfig, azureConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, selectedWorkflowPreset, activeWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, agentMode, currentPresetServers, addTabEvents, getTabEvents, setAutoScroll, scrollToBottom, chatSessionId, sessionState, getActiveSessions])
 
   // Auto-send queued messages one by one when chat completes
   const prevIsCompletedRef = useRef<boolean>(false)
@@ -3043,6 +3044,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     
     // Update ref
     prevIsCompletedRef.current = currentIsCompleted
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab?.isCompleted, activeTab?.config?.queuedMessages, activeTab?.tabId, submitQueryWithQuery])
 
   // Handle new chat - clear backend session and reset all chat state
@@ -3095,6 +3097,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     
     // Call the parent's new chat handler
     onNewChat()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearWorkflowState, resetChatState, onNewChat, activeTab?.sessionId, activeTab?.tabId, selectedModeCategory, selectedWorkflowPreset, setCurrentWorkflowPhase, setLastEventIndex])
 
   // Refresh workflow presets function

@@ -39,9 +39,18 @@ const (
 	DelegationTierConfigKey delegationContextKey = "delegation_tier_config"
 	// ReasoningLevelKey is the context key for the reasoning level of a delegation
 	ReasoningLevelKey delegationContextKey = "reasoning_level"
+	// PlanEventEmitterKey is the context key for emitting workspace file events when plans are saved
+	PlanEventEmitterKey delegationContextKey = "plan_event_emitter"
+	// PlanFolderKey is the context key for the plan-specific output folder (e.g. "Chats/Delegations/{planID}")
+	PlanFolderKey delegationContextKey = "plan_folder"
 	// PlanFileFolderPath is the workspace folder for delegation plan files
 	PlanFileFolderPath = "Chats/Delegations"
 )
+
+// PlanEventEmitter is the interface for emitting workspace file events when plans are saved
+type PlanEventEmitter interface {
+	EmitFileEvent(filepath string)
+}
 
 // DelegationTierConfig holds provider/model for each reasoning tier
 type DelegationTierConfig struct {
@@ -601,10 +610,12 @@ func handleExecutePlanTask(ctx context.Context, args map[string]interface{}) (st
 	}
 
 	// Build instruction from task description + additional context
+	planFolder := fmt.Sprintf("%s/%s", PlanFileFolderPath, planID)
 	instruction := fmt.Sprintf("## Task: %s\n\n%s", task.Title, task.Description)
 	if additionalContext != "" {
 		instruction += fmt.Sprintf("\n\n## Additional Context\n%s", additionalContext)
 	}
+	instruction += fmt.Sprintf("\n\n## Output Location\nSave ALL output files to the folder: `%s/`\nDo NOT write files to `Chats/` root or any other location. Your workspace write access is restricted to this folder.", planFolder)
 
 	// Check delegation depth
 	currentDepth := 0
@@ -625,8 +636,9 @@ func handleExecutePlanTask(ctx context.Context, args map[string]interface{}) (st
 
 	startTime := time.Now()
 
-	// Set up context with depth and reasoning level
+	// Set up context with depth, reasoning level, and plan folder
 	subCtx := context.WithValue(ctx, DelegationDepthKey, currentDepth+1)
+	subCtx = context.WithValue(subCtx, PlanFolderKey, planFolder)
 	if reasoningLevel != "" {
 		subCtx = context.WithValue(subCtx, ReasoningLevelKey, reasoningLevel)
 	}
@@ -1011,6 +1023,14 @@ func savePlanToWorkspace(ctx context.Context, plan *DelegationPlan) error {
 		Content:  mdContent,
 	}); err != nil {
 		return fmt.Errorf("failed to write plan file: %w", err)
+	}
+
+	// Emit workspace file event so the sidebar highlights the plan file
+	if emitter, ok := ctx.Value(PlanEventEmitterKey).(PlanEventEmitter); ok && emitter != nil {
+		emitter.EmitFileEvent(mdPath)
+		log.Printf("[DELEGATION PLAN] Emitted file event for plan: %s", mdPath)
+	} else {
+		log.Printf("[DELEGATION PLAN] No plan event emitter in context for: %s", mdPath)
 	}
 
 	return nil

@@ -389,6 +389,97 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 	return wrappedExecutors
 }
 
+// wrapExecutorsWithPlanFolderGuard wraps workspace tool executors to restrict writes to a specific plan folder.
+// Like wrapExecutorsWithChatModeFolderGuard but uses the plan folder (e.g. "Chats/Delegations/{planID}")
+// instead of "Chats/" as the allowed write folder. This ensures sub-agents only write to their assigned plan folder.
+func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), planFolder string, additionalWriteFolders ...string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+	protectedFolders := []string{"_users"}
+
+	// Use the plan folder as the allowed write folder (instead of Chats/)
+	planFolderWithSlash := strings.TrimSuffix(planFolder, "/") + "/"
+	allowedWriteFolders := []string{planFolderWithSlash}
+	allowedWriteFolders = append(allowedWriteFolders, additionalWriteFolders...)
+
+	shellAllowedFolder := planFolderWithSlash
+
+	writeTools := map[string]bool{
+		"update_workspace_file":     true,
+		"delete_workspace_file":     true,
+		"move_workspace_file":       true,
+		"diff_patch_workspace_file": true,
+		"write_workspace_file":      true,
+	}
+
+	allPathParams := []string{"filepath", "source_filepath", "destination_filepath", "folder", "pattern"}
+	writePathParams := []string{"filepath", "source_filepath", "destination_filepath"}
+
+	isPathProtected := func(cleanedPath string) bool {
+		pathLower := strings.ToLower(cleanedPath)
+		for _, folder := range protectedFolders {
+			folderLower := strings.ToLower(folder)
+			if pathLower == folderLower || strings.HasPrefix(pathLower, folderLower+"/") {
+				return true
+			}
+		}
+		return false
+	}
+
+	isWriteAllowed := func(cleanedPath string) bool {
+		pathLower := strings.ToLower(cleanedPath)
+		for _, folder := range allowedWriteFolders {
+			folderLower := strings.ToLower(folder)
+			if strings.HasPrefix(pathLower, folderLower) || pathLower == strings.TrimSuffix(folderLower, "/") {
+				return true
+			}
+		}
+		return false
+	}
+
+	wrappedExecutors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
+
+	for toolName, executor := range executors {
+		toolNameCopy := toolName
+		originalExecutor := executor
+
+		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if toolNameCopy == "execute_shell_command" {
+				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, shellAllowedFolder)
+			}
+
+			if writeTools[toolNameCopy] {
+				for _, paramName := range writePathParams {
+					if pathValue, exists := args[paramName]; exists {
+						if pathStr, ok := pathValue.(string); ok {
+							cleanedPath := filepath.Clean(pathStr)
+							if !isWriteAllowed(cleanedPath) {
+								return "", fmt.Errorf("access denied: writes restricted to %s (got: %s)", planFolderWithSlash, cleanedPath)
+							}
+						}
+					}
+				}
+			}
+
+			for _, paramName := range allPathParams {
+				if pathValue, exists := args[paramName]; exists {
+					if pathStr, ok := pathValue.(string); ok {
+						cleanedPath := filepath.Clean(pathStr)
+						if isPathProtected(cleanedPath) {
+							return "", fmt.Errorf("access denied: cannot access protected folder _users/")
+						}
+					}
+				}
+			}
+
+			return originalExecutor(ctx, args)
+		}
+
+		wrappedExecutors[toolNameCopy] = wrappedExecutor
+	}
+
+	log.Printf("[PLAN FOLDER GUARD] Wrapped %d executors - writes restricted to: %v", len(wrappedExecutors), allowedWriteFolders)
+	return wrappedExecutors
+}
+
 // wrapExecutorsWithSkillFolderGuard wraps workspace tool executors to restrict skill folder access
 // This creates a wrapper that:
 // 1. ALLOWS read-only access to selected skill folders (skills/<selected-skill>/)
@@ -3034,6 +3125,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
 								ctx = context.WithValue(ctx, virtualtools.ExecuteDelegatedTaskKey, virtualtools.ExecuteDelegatedTaskFunc(executeDelegatedTask))
 								ctx = context.WithValue(ctx, virtualtools.WorkspaceClientKey, planWorkspaceClient)
+								ctx = context.WithValue(ctx, virtualtools.PlanEventEmitterKey, &planEventEmitter{
+									eventStore: api.eventStore,
+									sessionID:  sessionID,
+								})
 								if tierConfig != nil {
 									ctx = context.WithValue(ctx, virtualtools.DelegationTierConfigKey, tierConfig)
 								}
@@ -4069,6 +4164,33 @@ func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
 	}()
 }
 
+// planEventEmitter implements virtualtools.PlanEventEmitter to emit workspace_file_operation events
+// when delegation plan files are saved, so the workspace sidebar highlights them.
+type planEventEmitter struct {
+	eventStore *events.EventStore
+	sessionID  string
+}
+
+func (e *planEventEmitter) EmitFileEvent(filepath string) {
+	now := time.Now()
+	eventData := unifiedevents.NewWorkspaceFileOperationEvent("update", filepath, virtualtools.PlanFileFolderPath, 0, "delegation")
+	event := events.Event{
+		ID:        fmt.Sprintf("%s_plan_file_%d", e.sessionID, now.UnixNano()),
+		Type:      "workspace_file_operation",
+		Timestamp: now,
+		SessionID: e.sessionID,
+		Data: &unifiedevents.AgentEvent{
+			Type:      unifiedevents.WorkspaceFileOperation,
+			Timestamp: now,
+			SessionID: e.sessionID,
+			Component: "delegation",
+			Data:      eventData,
+		},
+	}
+	e.eventStore.AddEvent(e.sessionID, event)
+	log.Printf("[DELEGATION PLAN] Emitted workspace_file_operation event for plan file: %s (session: %s)", filepath, e.sessionID)
+}
+
 // executeDelegatedTask executes a delegated task via a sub-agent
 // This method creates a new agent with the same configuration as the parent
 // and runs it with the given instruction as the prompt
@@ -4088,9 +4210,6 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	// Generate a unique delegation ID for tracking
 	delegationID := fmt.Sprintf("delegation-%d-%d", currentDepth, time.Now().UnixNano())
 
-	// Emit delegation_start event
-	api.emitDelegationStartEvent(sessionID, delegationID, currentDepth, instruction)
-
 	// Build sub-agent config from parent request
 	// Get provider and model from parent request
 	provider := llm.Provider(parentReq.Provider)
@@ -4103,7 +4222,8 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	}
 
 	// Resolve reasoning level tier to specific provider/model if configured
-	if reasoningLevel, ok := ctx.Value(virtualtools.ReasoningLevelKey).(string); ok && reasoningLevel != "" {
+	reasoningLevel, _ := ctx.Value(virtualtools.ReasoningLevelKey).(string)
+	if reasoningLevel != "" {
 		tierConfig := resolveDelegationTierConfig(parentReq.DelegationTierConfig)
 		if tierConfig != nil {
 			var tierModel *virtualtools.TierModel
@@ -4122,6 +4242,9 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			}
 		}
 	}
+
+	// Emit delegation_start event (after model resolution so we can include reasoning level and model)
+	api.emitDelegationStartEvent(sessionID, delegationID, currentDepth, instruction, reasoningLevel, modelID)
 
 	// Build server name from enabled servers
 	var serverName string
@@ -4206,7 +4329,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	// Create sub-agent using the wrapper (same as parent agent creation)
 	subAgent, err := agent.NewLLMAgentWrapper(ctx, subAgentConfig, nil, api.logger)
 	if err != nil {
-		api.emitDelegationEndEvent(sessionID, delegationID, currentDepth, "", err.Error())
+		api.emitDelegationEndEvent(sessionID, delegationID, currentDepth, "", err.Error(), nil)
 		return "", fmt.Errorf("failed to create sub-agent: %w", err)
 	}
 
@@ -4221,6 +4344,15 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		dbEventObserver := database.NewEventDatabaseObserver(api.chatDB)
 		underlyingAgent.AddEventListener(dbEventObserver)
 		log.Printf("[DELEGATION] Added event observers for sub-agent at depth %d", currentDepth)
+
+		// Add skill instructions to sub-agent system prompt (mirrors parent agent setup)
+		if len(parentReq.SelectedSkills) > 0 {
+			skillPrompt := buildSkillPrompt(parentReq.SelectedSkills)
+			if skillPrompt != "" {
+				underlyingAgent.AppendSystemPrompt(skillPrompt)
+				log.Printf("[DELEGATION] Added skill instructions to sub-agent (%d skills)", len(parentReq.SelectedSkills))
+			}
+		}
 	}
 
 	// Register the same workspace tools as parent (if workspace access is enabled)
@@ -4249,7 +4381,17 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			}
 
 			// Apply folder guards
-			if hasSkillCreator {
+			// If executing a plan task, restrict writes to the plan's specific folder
+			planFolder, _ := ctx.Value(virtualtools.PlanFolderKey).(string)
+			if planFolder != "" {
+				// Tighter restriction: only allow writes to plan folder (e.g. Chats/Delegations/{planID}/)
+				additionalFolders := []string{}
+				if hasSkillCreator {
+					additionalFolders = append(additionalFolders, "skills/custom/")
+				}
+				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, planFolder, additionalFolders...)
+				log.Printf("[DELEGATION] Applied plan folder guard: writes restricted to %s/", planFolder)
+			} else if hasSkillCreator {
 				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, "skills/custom/")
 			} else {
 				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors)
@@ -4350,13 +4492,22 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	result, err := subAgent.Invoke(ctx, instruction)
 	duration := time.Since(startTime)
 
+	// Collect metrics from sub-agent
+	metrics := subAgent.GetMetricsSnapshot()
+	stats := &delegationEndStats{
+		InputTokens:  metrics.InputTokens,
+		OutputTokens: metrics.OutputTokens,
+		ToolCalls:    metrics.ToolCallsExecuted,
+		Duration:     duration.String(),
+	}
+
 	if err != nil {
-		api.emitDelegationEndEvent(sessionID, delegationID, currentDepth, "", err.Error())
+		api.emitDelegationEndEvent(sessionID, delegationID, currentDepth, "", err.Error(), stats)
 		return "", fmt.Errorf("sub-agent execution failed: %w", err)
 	}
 
 	// Emit delegation_end event with success
-	api.emitDelegationEndEvent(sessionID, delegationID, currentDepth, fmt.Sprintf("Completed in %s", duration), "")
+	api.emitDelegationEndEvent(sessionID, delegationID, currentDepth, fmt.Sprintf("Completed in %s", duration), "", stats)
 
 	log.Printf("[DELEGATION] Sub-agent completed at depth %d in %s", currentDepth, duration)
 	return result, nil
@@ -4364,14 +4515,16 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 
 // emitDelegationStartEvent emits an event when delegation starts
 // This event serves as the parent for all sub-agent events (via parent_id linking)
-func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string, depth int, instruction string) {
+func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string, depth int, instruction, reasoningLevel, modelID string) {
 	now := time.Now()
 	eventID := fmt.Sprintf("%s_delegation_start_%s", sessionID, delegationID)
 	eventData := &events.DelegationStartEventData{
-		DelegationID: delegationID,
-		Depth:        depth,
-		Instruction:  instruction,
-		Timestamp:    now.Format(time.RFC3339),
+		DelegationID:   delegationID,
+		Depth:          depth,
+		Instruction:    instruction,
+		ReasoningLevel: reasoningLevel,
+		ModelID:        modelID,
+		Timestamp:      now.Format(time.RFC3339),
 	}
 	event := events.Event{
 		ID:        eventID,
@@ -4392,9 +4545,17 @@ func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string
 	log.Printf("[DELEGATION] Emitted delegation_start event %s for %s at depth %d", eventID, delegationID, depth)
 }
 
+// delegationEndStats holds optional stats for delegation end events
+type delegationEndStats struct {
+	InputTokens  int64
+	OutputTokens int64
+	ToolCalls    int64
+	Duration     string
+}
+
 // emitDelegationEndEvent emits an event when delegation ends
 // This event has the same correlation_id as delegation_start for grouping
-func (api *StreamingAPI) emitDelegationEndEvent(sessionID, delegationID string, depth int, result, errorMsg string) {
+func (api *StreamingAPI) emitDelegationEndEvent(sessionID, delegationID string, depth int, result, errorMsg string, stats *delegationEndStats) {
 	now := time.Now()
 	delegationStartEventID := fmt.Sprintf("%s_delegation_start_%s", sessionID, delegationID)
 	eventData := &events.DelegationEndEventData{
@@ -4404,6 +4565,12 @@ func (api *StreamingAPI) emitDelegationEndEvent(sessionID, delegationID string, 
 		Error:        errorMsg,
 		Success:      errorMsg == "",
 		Timestamp:    now.Format(time.RFC3339),
+	}
+	if stats != nil {
+		eventData.InputTokens = stats.InputTokens
+		eventData.OutputTokens = stats.OutputTokens
+		eventData.ToolCalls = stats.ToolCalls
+		eventData.Duration = stats.Duration
 	}
 	event := events.Event{
 		ID:        fmt.Sprintf("%s_delegation_end_%s", sessionID, delegationID),

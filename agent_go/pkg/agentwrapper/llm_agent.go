@@ -597,6 +597,24 @@ func (w *LLMAgentWrapper) GetUnderlyingAgent() *mcpagent.Agent {
 	return w.agent
 }
 
+// AgentMetricsSnapshot is a read-only snapshot of agent metrics
+type AgentMetricsSnapshot struct {
+	InputTokens       int64
+	OutputTokens      int64
+	ToolCallsExecuted int64
+}
+
+// GetMetricsSnapshot returns a snapshot of the agent's current metrics
+func (w *LLMAgentWrapper) GetMetricsSnapshot() AgentMetricsSnapshot {
+	w.metrics.mu.RLock()
+	defer w.metrics.mu.RUnlock()
+	return AgentMetricsSnapshot{
+		InputTokens:       w.metrics.InputTokens,
+		OutputTokens:      w.metrics.OutputTokens,
+		ToolCallsExecuted: w.metrics.ToolCallsExecuted,
+	}
+}
+
 // GetName implements the AgentCapabilities interface
 func (w *LLMAgentWrapper) GetName() string {
 	return w.name

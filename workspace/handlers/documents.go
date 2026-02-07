@@ -493,8 +493,17 @@ func ListDocuments(c *gin.Context) {
 		fmt.Printf("[FOLDER GUARD] List with blocked paths: %v\n", blockedPaths)
 	}
 
+	// Determine the logical root for path relativization.
+	// For per-user folders (Chats/, Downloads/), the physical path is under _users/{userID}/
+	// but the logical path should be relative to the user directory so that
+	// paths like "Chats/Delegations" appear correctly (not "_users/default-user/Chats/Delegations")
+	logicalDocsDir := docsDir
+	if normalizedFolder != "" && utils.IsPerUserPath(normalizedFolder) {
+		logicalDocsDir = filepath.Join(docsDir, utils.UsersDirectory, userID)
+	}
+
 	// Use recursive function to get all documents with max depth
-	documents, err := getAllDocumentsRecursively(searchPath, docsDir, req.MaxDepth)
+	documents, err := getAllDocumentsRecursively(searchPath, logicalDocsDir, req.MaxDepth)
 	if err != nil {
 		// Check if error is due to directory not existing
 		if os.IsNotExist(err) {
@@ -517,12 +526,17 @@ func ListDocuments(c *gin.Context) {
 
 	// For root listing, inject per-user folders and filter out _users/ directory
 	if isRootListing {
-		// Filter out _users/ directory from the listing (internal implementation detail)
+		// Filter out _users/ directory AND any residual per-user folders at root level
+		// (per-user folders will be re-injected from the user's isolated directory below)
 		var filteredDocs []models.Document
 		for _, doc := range documents {
-			if !strings.HasPrefix(doc.FilePath, utils.UsersDirectory+"/") && doc.FilePath != utils.UsersDirectory {
-				filteredDocs = append(filteredDocs, doc)
+			if strings.HasPrefix(doc.FilePath, utils.UsersDirectory+"/") || doc.FilePath == utils.UsersDirectory {
+				continue // Skip _users/ internal directory
 			}
+			if utils.IsPerUserPath(doc.FilePath) {
+				continue // Skip residual per-user folders at root (e.g., Chats/, Downloads/)
+			}
+			filteredDocs = append(filteredDocs, doc)
 		}
 		documents = filteredDocs
 

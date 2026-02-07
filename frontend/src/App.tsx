@@ -6,11 +6,12 @@ import Workspace from "./components/Workspace.tsx";
 import ChatArea, { type ChatAreaRef } from "./components/ChatArea.tsx";
 import { MarkdownRenderer } from "./components/ui/MarkdownRenderer";
 import { resetSessionId, agentApi } from "./services/api";
+import { AuthWrapper } from "./components/AuthWrapper";
 import type { ActiveSessionInfo, FileVersion } from "./services/api-types";
 import FileRevisionsModal from "./components/workspace/FileRevisionsModal";
 import FileEditor from "./components/workspace/FileEditor";
 import { isValidJSON } from "./utils/event-helpers";
-import { Edit, Save, X, Loader2 } from "lucide-react";
+import { Edit, Save, X, Loader2, Download } from "lucide-react";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { WorkflowLayout } from "./components/workflow";
 import { EventModeProvider } from "./components/events";
@@ -182,6 +183,21 @@ function App() {
     setIsEditMode(true)
     setSaveError(null)
   }, [fileContent, setEditedContent, setIsEditMode])
+
+  // Handle download
+  const handleDownload = useCallback(() => {
+    if (!selectedFile || !fileContent) return
+
+    const blob = new Blob([fileContent], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = selectedFile.path.split('/').pop() || 'download'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }, [selectedFile, fileContent])
 
   // Handle cancel edit
   const handleCancelEdit = useCallback(() => {
@@ -781,13 +797,14 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
+        <AuthWrapper>
         <TooltipProvider>
         {/* Mode Selection Modal */}
-        <ModeSelectionModal 
+        <ModeSelectionModal
           isOpen={showModeSelection}
           onClose={() => {}} // Modal handles its own closing
         />
-        
+
         <div className="h-screen bg-background flex">
           {/* Left Sidebar */}
           <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out relative z-30`}>
@@ -897,6 +914,14 @@ function App() {
                       >
                         <Edit className="w-4 h-4" />
                         Edit
+                      </button>
+                      <button
+                        onClick={handleDownload}
+                        className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+                        title="Download file"
+                      >
+                        <Download className="w-4 h-4" />
+                        Download
                       </button>
                       <button
                         onClick={() => setShowRevisionsModal(true)}
@@ -1159,6 +1184,7 @@ function App() {
           </div>
         )}
         </TooltipProvider>
+        </AuthWrapper>
       </ThemeProvider>
     </QueryClientProvider>
   );

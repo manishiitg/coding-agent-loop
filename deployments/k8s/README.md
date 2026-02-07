@@ -85,10 +85,61 @@ kubectl port-forward svc/mcpagent-agent-cs 8000:80 -n prod-mcpagent
 
 ## Authentication
 
-Basic auth is enabled via nginx ingress. Credentials are stored in `basic-auth` secret.
+The application supports multiple authentication providers. See [docs/authentication.md](docs/authentication.md) for detailed setup instructions.
 
-To update credentials:
+### Quick Reference
+
+| Provider | Config | Description |
+|----------|--------|-------------|
+| `cognito` | `COGNITO_*` env vars | AWS Cognito OAuth |
+| `supabase` | `SUPABASE_*` env vars | Supabase Auth |
+| `simple` | `AUTH_USERS` env var | Username/password |
+
+### Current Setup (AWS Cognito + Google Workspace SSO)
+
+```yaml
+# shared/configmap.yaml
+MULTI_USER_MODE: "true"
+AUTH_PROVIDERS: "cognito"
+COGNITO_USER_POOL_ID: "ap-south-1_YhXWOPgST"
+COGNITO_CLIENT_ID: "2gahrd23uppdrlil01naotmvme"
+COGNITO_DOMAIN: "mcpagent-auth.auth.ap-south-1.amazoncognito.com"
+AWS_REGION: "ap-south-1"
+```
+
+**Login Options:**
+1. **Email/Password** - For manually created users
+2. **Google SSO** - For @citymall.live Google Workspace users (domain-restricted)
+
+### Test Users
+
+| User | Password | Status |
+|------|----------|--------|
+| manish.prakash@citymall.live | Citymall@123 | CONFIRMED |
+| nverdhan@citymall.live | Citymall@123 | CONFIRMED |
+
+### Create Users
+
 ```bash
-htpasswd -c auth admin
-kubectl create secret generic basic-auth --from-file=auth -n prod-mcpagent
+# Admin create user
+aws cognito-idp admin-create-user \
+  --user-pool-id ap-south-1_YhXWOPgST \
+  --username user@example.com \
+  --user-attributes Name=email,Value=user@example.com Name=email_verified,Value=true \
+  --temporary-password TempPass123! \
+  --message-action SUPPRESS \
+  --region ap-south-1
+
+# Set permanent password (so user doesn't need to change on first login)
+aws cognito-idp admin-set-user-password \
+  --user-pool-id ap-south-1_YhXWOPgST \
+  --username user@example.com \
+  --password "YourPassword123!" \
+  --permanent \
+  --region ap-south-1
+
+# List users
+aws cognito-idp list-users \
+  --user-pool-id ap-south-1_YhXWOPgST \
+  --region ap-south-1
 ```

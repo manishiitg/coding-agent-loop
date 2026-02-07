@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -236,6 +237,17 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Get user ID from context for per-user token storage
+	userID := GetUserIDFromContext(r.Context())
+	api.logger.Info(fmt.Sprintf("🔐 OAuth start for server %s, user %s", req.ServerName, userID))
+
+	// Ensure user token directory exists
+	if _, err := ensureUserTokenDir(userID); err != nil {
+		api.logger.Error(fmt.Sprintf("Failed to create user token directory: %v", err), err)
+		http.Error(w, "Failed to create token directory", http.StatusInternalServerError)
+		return
+	}
+
 	// Load server config
 	config, err := mcpclient.LoadMergedConfig(api.mcpConfigPath, api.logger)
 	if err != nil {
@@ -266,13 +278,16 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 		redirectURI = fmt.Sprintf("%s://%s/api/oauth/callback", scheme, r.Host)
 	}
 
+	// Use per-user token file path
+	userTokenFile := getUserTokenFilePath(userID, req.ServerName)
+
 	// Apply user-provided client_id if present (from the "needs_client_id" flow)
 	if req.ClientID != "" {
 		if serverConfig.OAuth == nil {
 			serverConfig.OAuth = &oauth.OAuthConfig{
 				AutoDiscover: true,
 				UsePKCE:      true,
-				TokenFile:    fmt.Sprintf("~/.config/mcpagent/tokens/%s.json", req.ServerName),
+				TokenFile:    userTokenFile,
 			}
 		}
 		serverConfig.OAuth.ClientID = req.ClientID
@@ -288,9 +303,12 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 		serverConfig.OAuth = &oauth.OAuthConfig{
 			AutoDiscover: true,
 			UsePKCE:      true,
-			TokenFile:    fmt.Sprintf("~/.config/mcpagent/tokens/%s.json", req.ServerName),
+			TokenFile:    userTokenFile,
 		}
 	}
+
+	// Always update TokenFile to user-specific path
+	serverConfig.OAuth.TokenFile = userTokenFile
 
 	// Set redirect URL if not configured
 	if serverConfig.OAuth.RedirectURL == "" {
@@ -523,6 +541,11 @@ func (api *StreamingAPI) handleOAuthStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Get user ID from context for per-user token storage
+	userID := GetUserIDFromContext(r.Context())
+	userTokenFile := getUserTokenFilePath(userID, serverName)
+	api.logger.Info(fmt.Sprintf("🔍 OAuth status check for server %s, user %s, token file: %s", serverName, userID, userTokenFile))
+
 	// Load server config
 	config, err := mcpclient.LoadMergedConfig(api.mcpConfigPath, api.logger)
 	if err != nil {
@@ -556,15 +579,18 @@ func (api *StreamingAPI) handleOAuthStatus(w http.ResponseWriter, r *http.Reques
 			}
 		}
 
-		// Create default OAuth config for auto-discovered server
+		// Create default OAuth config for auto-discovered server with user-specific token path
 		serverConfig.OAuth = &oauth.OAuthConfig{
 			AuthURL:      endpoints.AuthURL,
 			TokenURL:     endpoints.TokenURL,
 			UsePKCE:      true,
 			AutoDiscover: false,
-			TokenFile:    fmt.Sprintf("~/.config/mcpagent/tokens/%s.json", serverName),
+			TokenFile:    userTokenFile,
 		}
 	}
+
+	// Always set token file to user-specific path for status check
+	serverConfig.OAuth.TokenFile = userTokenFile
 
 	// Auto-discover endpoints if needed (for token refresh to work)
 	api.logger.Info(fmt.Sprintf("🔍 Checking if auto-discovery needed for %s: AutoDiscover=%v, TokenURL='%s', URL='%s'",
@@ -647,6 +673,11 @@ func (api *StreamingAPI) handleOAuthLogout(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Get user ID from context for per-user token storage
+	userID := GetUserIDFromContext(r.Context())
+	userTokenFile := getUserTokenFilePath(userID, req.ServerName)
+	api.logger.Info(fmt.Sprintf("🔐 OAuth logout for server %s, user %s, token file: %s", req.ServerName, userID, userTokenFile))
+
 	// Load server config
 	config, err := mcpclient.LoadMergedConfig(api.mcpConfigPath, api.logger)
 	if err != nil {
@@ -680,17 +711,20 @@ func (api *StreamingAPI) handleOAuthLogout(w http.ResponseWriter, r *http.Reques
 			}
 		}
 
-		// Create default OAuth config for auto-discovered server
+		// Create default OAuth config for auto-discovered server with user-specific token path
 		serverConfig.OAuth = &oauth.OAuthConfig{
 			AuthURL:      endpoints.AuthURL,
 			TokenURL:     endpoints.TokenURL,
 			UsePKCE:      true,
 			AutoDiscover: false,
-			TokenFile:    fmt.Sprintf("~/.config/mcpagent/tokens/%s.json", req.ServerName),
+			TokenFile:    userTokenFile,
 		}
 	}
 
-	// Logout (remove token)
+	// Always set token file to user-specific path for logout
+	serverConfig.OAuth.TokenFile = userTokenFile
+
+	// Logout (remove token) - only removes this user's token
 	oauthMgr := oauth.NewManager(serverConfig.OAuth, api.logger)
 	if err := oauthMgr.Logout(); err != nil {
 		api.logger.Error(fmt.Sprintf("Failed to logout from %s: %v", req.ServerName, err), err)
@@ -698,7 +732,7 @@ func (api *StreamingAPI) handleOAuthLogout(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	api.logger.Info(fmt.Sprintf("Successfully logged out from %s", req.ServerName))
+	api.logger.Info(fmt.Sprintf("Successfully logged out user %s from %s", userID, req.ServerName))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
@@ -752,4 +786,29 @@ func (api *StreamingAPI) getUserConfigPath() string {
 		return api.mcpConfigPath[:len(api.mcpConfigPath)-5] + "_user.json"
 	}
 	return api.mcpConfigPath + "_user"
+}
+
+// expandPath expands ~ to the user's home directory
+func expandPath(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
+// ensureUserTokenDir creates the user-specific token directory if it doesn't exist
+// Returns the expanded path to the user's token directory
+func ensureUserTokenDir(userID string) (string, error) {
+	tokenDir := expandPath(fmt.Sprintf("~/.config/mcpagent/tokens/%s", userID))
+	if err := os.MkdirAll(tokenDir, 0700); err != nil {
+		return "", fmt.Errorf("failed to create user token directory: %w", err)
+	}
+	return tokenDir, nil
+}
+
+// getUserTokenFilePath returns the token file path for a specific user and server
+func getUserTokenFilePath(userID, serverName string) string {
+	return fmt.Sprintf("~/.config/mcpagent/tokens/%s/%s.json", userID, serverName)
 }

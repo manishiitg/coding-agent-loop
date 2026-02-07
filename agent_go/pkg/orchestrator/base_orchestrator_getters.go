@@ -222,3 +222,8 @@ func (bo *BaseOrchestrator) GetContextEditingThreshold() int {
 func (bo *BaseOrchestrator) GetContextEditingTurnThreshold() int {
 	return bo.contextEditingTurnThreshold
 }
+
+// GetLargeOutputThreshold returns the token threshold for context offloading (0 = use default: 10000)
+func (bo *BaseOrchestrator) GetLargeOutputThreshold() int {
+	return bo.largeOutputThreshold
+}

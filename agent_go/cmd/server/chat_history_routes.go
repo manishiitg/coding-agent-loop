@@ -41,7 +41,7 @@ func ChatHistoryRoutes(router *gin.Engine, db database.Database) {
 	}
 }
 
-// createChatSession creates a new chat session
+// createChatSession creates a new chat session (associated with current user)
 func createChatSession(db database.Database) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req database.CreateChatSessionRequest
@@ -50,7 +50,11 @@ func createChatSession(db database.Database) gin.HandlerFunc {
 			return
 		}
 
-		session, err := db.CreateChatSession(c.Request.Context(), &req)
+		// Get user ID from context (set by auth middleware)
+		userID := GetUserIDFromContext(c.Request.Context())
+
+		// Create session associated with the current user
+		session, err := db.CreateChatSessionWithUser(c.Request.Context(), &req, userID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -60,7 +64,7 @@ func createChatSession(db database.Database) gin.HandlerFunc {
 	}
 }
 
-// listChatSessions lists all chat sessions with pagination
+// listChatSessions lists all chat sessions with pagination (filtered by user)
 func listChatSessions(db database.Database) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limitStr := c.DefaultQuery("limit", "20")
@@ -92,7 +96,11 @@ func listChatSessions(db database.Database) gin.HandlerFunc {
 			agentModePtr = &agentMode
 		}
 
-		sessions, total, err := db.ListChatSessions(c.Request.Context(), limit, offset, presetQueryIDPtr, agentModePtr)
+		// Get user ID from context (set by auth middleware)
+		userID := GetUserIDFromContext(c.Request.Context())
+
+		// Use user-scoped query to only return sessions for this user
+		sessions, total, err := db.ListChatSessionsWithUser(c.Request.Context(), limit, offset, presetQueryIDPtr, agentModePtr, userID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -112,7 +120,7 @@ func listChatSessions(db database.Database) gin.HandlerFunc {
 	}
 }
 
-// getChatSession gets a specific chat session
+// getChatSession gets a specific chat session (user-scoped)
 func getChatSession(db database.Database) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sessionID := c.Param("session_id")
@@ -121,7 +129,11 @@ func getChatSession(db database.Database) gin.HandlerFunc {
 			return
 		}
 
-		session, err := db.GetChatSession(c.Request.Context(), sessionID)
+		// Get user ID from context (set by auth middleware)
+		userID := GetUserIDFromContext(c.Request.Context())
+
+		// Get session with user scope to ensure user owns the session
+		session, err := db.GetChatSessionWithUser(c.Request.Context(), sessionID, userID)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return

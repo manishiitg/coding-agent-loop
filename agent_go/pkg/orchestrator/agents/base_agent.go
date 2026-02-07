@@ -133,6 +133,7 @@ func NewBaseAgent(
 	logger loggerv2.Logger,
 	cacheOnly bool,
 	enableContextOffloading *bool, // Context offloading configuration
+	largeOutputThreshold int, // Token threshold for context offloading (0 = use default: 10000)
 	enableContextSummarization bool, // Context summarization configuration
 	summarizeOnTokenThreshold bool, // Enable token-based summarization trigger
 	tokenThresholdPercent float64, // Percentage of context window to trigger summarization
@@ -225,6 +226,11 @@ func NewBaseAgent(
 		contextOffloadingEnabled = *enableContextOffloading
 	}
 	agentOptions = append(agentOptions, mcpagent.WithContextOffloading(contextOffloadingEnabled))
+
+	// Add large output threshold if specified (0 = use default: 10000 tokens)
+	if largeOutputThreshold > 0 {
+		agentOptions = append(agentOptions, mcpagent.WithLargeOutputThreshold(largeOutputThreshold))
+	}
 
 	// Add context summarization configuration
 	if enableContextSummarization {

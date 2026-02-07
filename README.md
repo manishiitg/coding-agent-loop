@@ -86,7 +86,15 @@ AWS_SECRET_ACCESS_KEY=your_secret_key
 LANGFUSE_PUBLIC_KEY=your_public_key
 LANGFUSE_SECRET_KEY=your_secret_key
 TRACING_PROVIDER=langfuse
+
+# Multi-User Mode (optional)
+MULTI_USER_MODE=true
+AUTH_PROVIDERS=simple
+AUTH_USERS=admin:password123
+AUTH_SECRET=your-secret-key
 ```
+
+See [Environment Variables](docs/env-api-key-defaults.md) for all configuration options and [Multi-User Authentication](docs/multi_user_authentication.md) for authentication setup.
 
 ### **3. Build and Run**
 
@@ -292,7 +300,8 @@ mcp-agent-builder-go/
 Key architectural documentation and implementation plans:
 
 ### **Authentication & Security**
-- **[OAuth Authentication](docs/oauth.md)**: OAuth 2.0 authentication system with auto-discovery, PKCE, and automatic cache invalidation
+- **[Multi-User Authentication](docs/multi_user_authentication.md)**: Multi-provider authentication system (Simple, Cognito, Supabase) with JWT tokens and per-user workspace isolation
+- **[MCP Server OAuth](docs/oauth.md)**: OAuth 2.0 authentication for MCP servers with auto-discovery, PKCE, and automatic cache invalidation
 
 ### **Workflow Engine**
 - **[Learnings Architecture](docs/learnings_architecture.md)**: Details the "Explore vs. Exploit" learning system and turn-count based auto-locking.

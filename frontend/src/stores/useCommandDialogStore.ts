@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-type DialogName = 'skillImport' | 'mcpDetails' | 'mcpConfig' | 'models' | 'resume'
+type DialogName = 'skillImport' | 'mcpDetails' | 'mcpConfig' | 'models' | 'resume' | 'delegationTiers'
 
 interface CommandDialogState {
   showSkillImport: boolean
@@ -8,6 +8,7 @@ interface CommandDialogState {
   showMCPConfig: boolean
   showModels: boolean
   showResume: boolean
+  showDelegationTiers: boolean
   openDialog: (dialog: DialogName) => void
   closeDialog: (dialog: DialogName) => void
   closeAll: () => void
@@ -19,6 +20,7 @@ const dialogKeyMap: Record<DialogName, keyof CommandDialogState> = {
   mcpConfig: 'showMCPConfig',
   models: 'showModels',
   resume: 'showResume',
+  delegationTiers: 'showDelegationTiers',
 }
 
 export const useCommandDialogStore = create<CommandDialogState>()((set) => ({
@@ -27,6 +29,7 @@ export const useCommandDialogStore = create<CommandDialogState>()((set) => ({
   showMCPConfig: false,
   showModels: false,
   showResume: false,
+  showDelegationTiers: false,
   openDialog: (dialog) => set({ [dialogKeyMap[dialog]]: true }),
   closeDialog: (dialog) => set({ [dialogKeyMap[dialog]]: false }),
   closeAll: () => set({
@@ -35,5 +38,6 @@ export const useCommandDialogStore = create<CommandDialogState>()((set) => ({
     showMCPConfig: false,
     showModels: false,
     showResume: false,
+    showDelegationTiers: false,
   }),
 }))

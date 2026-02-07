@@ -27,7 +27,30 @@ data:
   MCP_CONFIG_LOCKED: "true"
   # Context editing (compact large tool outputs) - default in code is true when unset
   ENABLE_CONTEXT_EDITING: "false"
+  # Large output threshold for context offloading - tool outputs larger than this are offloaded to filesystem
+  # Default in library is 10000 tokens. Set to 50000 for larger outputs.
+  LARGE_OUTPUT_THRESHOLD: "50000"
   # Workspace Configuration (agent calls workspace-api via in-cluster service)
   WORKSPACE_API_URL: "http://mcpagent-workspace-api-cs"
   WORKSPACE_ENABLE_GITHUB_SYNC: "false"
   WORKSPACE_ENABLE_SEMANTIC_SEARCH: "false"
+  # Multi-User Authentication Mode
+  # Set to "true" to require user registration/login
+  # Set to "false" (default) for single-user mode (no login required)
+  MULTI_USER_MODE: "true"
+  # Default user ID for single-user mode (ignored when MULTI_USER_MODE=true)
+  DEFAULT_USER_ID: "default-user"
+  # Hardcoded users (format: user1:password1,user2:password2)
+  # When set, registration is disabled and only these users can login
+  # AUTH_USERS: "admin:changeme,user1:secret123"
+
+  # --- Multi-Provider Authentication ---
+  # Enabled auth providers (comma-separated): simple, cognito, supabase
+  AUTH_PROVIDERS: "cognito"
+
+  # AWS Cognito Configuration (for OAuth authentication)
+  # These are public OAuth client values, not secrets
+  COGNITO_USER_POOL_ID: "ap-south-1_YhXWOPgST"
+  COGNITO_CLIENT_ID: "2gahrd23uppdrlil01naotmvme"
+  COGNITO_DOMAIN: "mcpagent-auth.auth.ap-south-1.amazoncognito.com"
+  AWS_REGION: "ap-south-1"

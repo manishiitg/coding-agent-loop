@@ -107,6 +107,39 @@ When a **new user** visits the site for the first time, they have no localStorag
 | `DEFAULT_PUBLISHED_LLMS` | Optional. JSON array of default published LLM entries (each: `id`, `name`, `provider`, `model_id`, etc.). When `LLM_CONFIG_LOCKED=true`, `api_key` is omitted from entries. |
 | `DEFAULT_PUBLISHED_LLMS_PATH` | Optional. Path to a JSON file containing the same array. Used if `DEFAULT_PUBLISHED_LLMS` is not set. If neither is set, one entry is built from primary config (provider + model_id from env). |
 
+### Multi-User Authentication
+
+| Variable | Description |
+|----------|-------------|
+| `MULTI_USER_MODE` | When `true`: JWT authentication required for all API requests. When `false` (default): single-user mode, no login required. |
+| `AUTH_SECRET` | JWT signing secret. **Required in production.** Default: dev-only secret (warning logged). |
+| `DEFAULT_USER_ID` | User ID for single-user mode. Default: `default-user`. |
+| `AUTH_PROVIDERS` | Comma-separated list of enabled auth providers. Valid: `simple`, `cognito`, `supabase`. Example: `simple,cognito`. |
+
+### Simple Auth Provider
+
+| Variable | Description |
+|----------|-------------|
+| `AUTH_USERS` | Comma-separated `user:password` pairs. Example: `admin:password123,user1:secret456`. |
+
+### AWS Cognito Provider
+
+| Variable | Description |
+|----------|-------------|
+| `COGNITO_USER_POOL_ID` | AWS Cognito User Pool ID (e.g., `us-east-1_xxxxx`). |
+| `COGNITO_CLIENT_ID` | Cognito App Client ID. |
+| `COGNITO_DOMAIN` | Cognito hosted UI domain (e.g., `myapp.auth.us-east-1.amazoncognito.com`). |
+| `AWS_REGION` | AWS region for Cognito (e.g., `us-east-1`). |
+
+### Supabase Auth Provider
+
+| Variable | Description |
+|----------|-------------|
+| `SUPABASE_URL` | Supabase project URL (e.g., `https://xxx.supabase.co`). |
+| `SUPABASE_ANON_KEY` | Supabase anonymous (public) key. |
+
+See [Multi-User Authentication](./multi_user_authentication.md) for detailed documentation on authentication providers and per-user workspace isolation.
+
 ---
 
 ## How API Keys Flow in Locked Mode

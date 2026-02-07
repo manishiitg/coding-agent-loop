@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -77,21 +79,77 @@ func validateUpdateField(field string) bool {
 	return allowedUpdateFields[fieldName]
 }
 
+// hasValidLLMConfig checks if a session config has valid LLM configuration
+// Returns false for old sessions without LLM config (null config or missing/empty provider)
+func hasValidLLMConfig(config json.RawMessage) bool {
+	if config == nil || len(config) == 0 {
+		return false
+	}
+
+	var configMap map[string]interface{}
+	if err := json.Unmarshal(config, &configMap); err != nil {
+		return false
+	}
+
+	llmConfig, ok := configMap["llm_config"]
+	if !ok || llmConfig == nil {
+		return false
+	}
+
+	llmConfigMap, ok := llmConfig.(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	provider, ok := llmConfigMap["provider"]
+	if !ok || provider == nil {
+		return false
+	}
+
+	providerStr, ok := provider.(string)
+	if !ok || providerStr == "" || providerStr == "." {
+		return false
+	}
+
+	return true
+}
+
 // NewSQLiteDB creates a new SQLite database connection
 func NewSQLiteDB(dbPath string) (*SQLiteDB, error) {
-	// Use connection string options for compatibility with network storage (Azure Files, SMB/CIFS).
+	// Default to 10 connections for multi-user support
+	maxConns := 10
+	if val := os.Getenv("SQLITE_MAX_CONNECTIONS"); val != "" {
+		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+			maxConns = n
+		}
+	}
+
+	// Build DSN with connection options
 	// _journal_mode=WAL: better concurrency and works on network shares
-	// _locking_mode=EXCLUSIVE: avoids POSIX file locking which doesn't work on SMB
-	// _busy_timeout=5000: wait up to 5s if DB is busy
+	// _busy_timeout=10000: wait up to 10s if DB is busy (increased for multi-user)
 	// _foreign_keys=1: enable foreign key constraints
-	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_locking_mode=EXCLUSIVE&_busy_timeout=5000&_foreign_keys=1", dbPath)
+	// cache=shared: shared cache for better concurrency
+	lockingMode := ""
+	if os.Getenv("SQLITE_EXCLUSIVE_LOCKING") == "true" {
+		// EXCLUSIVE mode for network storage (Azure Files, SMB/CIFS)
+		// This avoids POSIX file locking which doesn't work on SMB
+		lockingMode = "&_locking_mode=EXCLUSIVE"
+		maxConns = 1 // Must use single connection with exclusive locking
+		log.Printf("[SQLITE] Using exclusive locking mode (single connection) for network storage compatibility")
+	}
+
+	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_busy_timeout=10000&_foreign_keys=1&cache=shared%s", dbPath, lockingMode)
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Limit to single connection to avoid lock contention on network storage
-	db.SetMaxOpenConns(1)
+	// Configure connection pool for multi-user support
+	db.SetMaxOpenConns(maxConns)
+	db.SetMaxIdleConns(maxConns / 2)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	log.Printf("[SQLITE] Connection pool configured: maxOpen=%d, maxIdle=%d", maxConns, maxConns/2)
 
 	// Test the connection
 	if err := db.Ping(); err != nil {
@@ -498,24 +556,48 @@ func (s *SQLiteDB) StoreEvent(ctx context.Context, sessionID string, event *even
 }
 
 // getChatSessionID gets the chat_session_id for a session, using cache if available
+// extractParentSessionID extracts the parent session ID from a sub-agent session ID.
+// Sub-agent session IDs have format: {parent_session_id}-sub-{n}-{timestamp}
+// Returns the original sessionID if it's not a sub-agent session.
+func extractParentSessionIDSQLite(sessionID string) string {
+	// Check if this is a sub-agent session ID
+	if idx := strings.Index(sessionID, "-sub-"); idx != -1 {
+		return sessionID[:idx]
+	}
+	return sessionID
+}
+
 func (s *SQLiteDB) getChatSessionID(ctx context.Context, sessionID string) (string, error) {
+	// Extract parent session ID for sub-agents
+	lookupSessionID := extractParentSessionIDSQLite(sessionID)
+
 	// Check cache first
 	s.batchMux.Lock()
-	if cachedID, ok := s.chatSessionCache[sessionID]; ok {
+	if cachedID, ok := s.chatSessionCache[lookupSessionID]; ok {
 		s.batchMux.Unlock()
+		// Also cache for the original sub-agent session ID
+		if lookupSessionID != sessionID {
+			s.batchMux.Lock()
+			s.chatSessionCache[sessionID] = cachedID
+			s.batchMux.Unlock()
+		}
 		return cachedID, nil
 	}
 	s.batchMux.Unlock()
 
 	// Cache miss - fetch from database
-	chatSession, err := s.GetChatSession(ctx, sessionID)
+	chatSession, err := s.GetChatSession(ctx, lookupSessionID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get chat session: %w", err)
 	}
 
 	// Update cache
 	s.batchMux.Lock()
-	s.chatSessionCache[sessionID] = chatSession.ID
+	s.chatSessionCache[lookupSessionID] = chatSession.ID
+	// Also cache for the original sub-agent session ID
+	if lookupSessionID != sessionID {
+		s.chatSessionCache[sessionID] = chatSession.ID
+	}
 	s.batchMux.Unlock()
 
 	return chatSession.ID, nil
@@ -745,12 +827,14 @@ func (s *SQLiteDB) GetEvents(ctx context.Context, req *GetChatHistoryRequest) (*
 	}, nil
 }
 
-// GetEventsBySession retrieves events for a specific session
+// GetEventsBySession retrieves events for a chat session
+// The sessionID parameter is the chat_session_id (UUID from chat_sessions table),
+// not the internal trace/session_id used during event emission
 func (s *SQLiteDB) GetEventsBySession(ctx context.Context, sessionID string, limit, offset int) ([]Event, error) {
 	query := `
 		SELECT id, session_id, chat_session_id, event_type, timestamp, event_data
 		FROM events
-		WHERE session_id = ?
+		WHERE chat_session_id = ?
 		ORDER BY timestamp ASC
 		LIMIT ? OFFSET ?
 	`
@@ -1456,4 +1540,483 @@ func (s *SQLiteDB) Close() error {
 	s.flushBatches()
 
 	return s.db.Close()
+}
+
+// ============================================================================
+// User-aware methods for multi-user support
+// ============================================================================
+
+// CreateChatSessionWithUser creates a new chat session with user association
+func (s *SQLiteDB) CreateChatSessionWithUser(ctx context.Context, req *CreateChatSessionRequest, userID string) (*ChatSession, error) {
+	query := `
+		INSERT INTO chat_sessions (session_id, title, agent_mode, preset_query_id, config, status, user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		RETURNING id, session_id, title, agent_mode, preset_query_id, config, created_at, completed_at, status
+	`
+
+	log.Printf("[CREATE_CHAT_SESSION DEBUG] Creating session with SessionID: %s, Title: '%s', AgentMode: '%s', UserID: '%s'", req.SessionID, req.Title, req.AgentMode, userID)
+
+	// Handle empty preset_query_id by converting to NULL
+	var presetQueryID interface{}
+	if req.PresetQueryID == "" {
+		presetQueryID = nil
+	} else {
+		presetQueryID = req.PresetQueryID
+	}
+
+	// Handle config - convert to JSON string or NULL
+	var configValue interface{}
+	if len(req.Config) == 0 {
+		configValue = nil
+	} else {
+		configValue = string(req.Config)
+	}
+
+	// Handle empty userID by converting to NULL
+	var userIDValue interface{}
+	if userID == "" {
+		userIDValue = nil
+	} else {
+		userIDValue = userID
+	}
+
+	var session ChatSession
+	var agentModeStr *string
+	var presetQueryIDStr *string
+	var configStr sql.NullString
+	err := s.db.QueryRowContext(ctx, query, req.SessionID, req.Title, req.AgentMode, presetQueryID, configValue, "active", userIDValue).Scan(
+		&session.ID, &session.SessionID, &session.Title, &agentModeStr, &presetQueryIDStr, &configStr, &session.CreatedAt, &session.CompletedAt, &session.Status,
+	)
+	if err != nil {
+		log.Printf("[CREATE_CHAT_SESSION ERROR] Failed to create chat session: %v", err)
+		return nil, fmt.Errorf("failed to create chat session: %w", err)
+	}
+
+	// Handle NULL agent_mode
+	if agentModeStr != nil {
+		session.AgentMode = *agentModeStr
+	} else {
+		session.AgentMode = ""
+	}
+
+	// Handle NULL preset_query_id
+	if presetQueryIDStr != nil {
+		session.PresetQueryID = presetQueryIDStr
+	}
+
+	// Handle NULL config
+	if configStr.Valid {
+		session.Config = json.RawMessage(configStr.String)
+	} else {
+		session.Config = nil
+	}
+
+	log.Printf("[CREATE_CHAT_SESSION DEBUG] Successfully created session ID: %s, SessionID: %s, UserID: %s", session.ID, session.SessionID, userID)
+
+	return &session, nil
+}
+
+// GetChatSessionWithUser retrieves a chat session by session ID with user verification
+func (s *SQLiteDB) GetChatSessionWithUser(ctx context.Context, sessionID string, userID string) (*ChatSession, error) {
+	var query string
+	var args []interface{}
+
+	if userID == "" {
+		// No user filtering
+		query = `
+			SELECT id, session_id, title, agent_mode, preset_query_id, config, created_at, completed_at, status
+			FROM chat_sessions
+			WHERE session_id = ?
+		`
+		args = []interface{}{sessionID}
+	} else {
+		// Filter by user_id (also allow sessions with NULL user_id for backwards compatibility)
+		query = `
+			SELECT id, session_id, title, agent_mode, preset_query_id, config, created_at, completed_at, status
+			FROM chat_sessions
+			WHERE session_id = ? AND (user_id = ? OR user_id IS NULL)
+		`
+		args = []interface{}{sessionID, userID}
+	}
+
+	var session ChatSession
+	var agentModeStr *string
+	var presetQueryIDStr *string
+	var configStr sql.NullString
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(
+		&session.ID, &session.SessionID, &session.Title, &agentModeStr, &presetQueryIDStr, &configStr, &session.CreatedAt, &session.CompletedAt, &session.Status,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("chat session not found")
+		}
+		return nil, fmt.Errorf("failed to get chat session: %w", err)
+	}
+
+	// Handle NULL agent_mode
+	if agentModeStr != nil {
+		session.AgentMode = *agentModeStr
+	} else {
+		session.AgentMode = ""
+	}
+
+	// Handle NULL preset_query_id
+	if presetQueryIDStr != nil {
+		session.PresetQueryID = presetQueryIDStr
+	}
+
+	// Handle NULL config
+	if configStr.Valid {
+		session.Config = json.RawMessage(configStr.String)
+	} else {
+		session.Config = nil
+	}
+
+	return &session, nil
+}
+
+// ListChatSessionsWithUser lists chat sessions with pagination and user filtering
+func (s *SQLiteDB) ListChatSessionsWithUser(ctx context.Context, limit, offset int, presetQueryID *string, agentMode *string, userID string) ([]ChatHistorySummary, int, error) {
+	// Build WHERE clause for filtering
+	var whereConditions []string
+	var args []interface{}
+
+	if presetQueryID != nil && *presetQueryID != "" {
+		whereConditions = append(whereConditions, "cs.preset_query_id = ?")
+		args = append(args, *presetQueryID)
+	}
+
+	if agentMode != nil && *agentMode != "" {
+		whereConditions = append(whereConditions, "cs.agent_mode = ?")
+		args = append(args, *agentMode)
+	}
+
+	// Filter by user_id (also include sessions with NULL user_id for backwards compatibility)
+	if userID != "" {
+		whereConditions = append(whereConditions, "(cs.user_id = ? OR cs.user_id IS NULL)")
+		args = append(args, userID)
+	}
+
+	var whereClause string
+	if len(whereConditions) > 0 {
+		whereClause = " WHERE " + strings.Join(whereConditions, " AND ")
+	}
+
+	// Validate WHERE clause for safety
+	if err := validateWhereClause(whereClause); err != nil {
+		return nil, 0, fmt.Errorf("invalid WHERE clause: %w", err)
+	}
+
+	// Get total count
+	//nolint:gosec // G202: whereClause is validated and uses parameterized queries (?)
+	countQuery := `SELECT COUNT(*) FROM chat_sessions cs` + whereClause
+	var total int
+	err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
+	}
+
+	// Get sessions with summary data
+	//nolint:gosec // G202: whereClause is validated and uses parameterized queries (?)
+	query := `
+		SELECT
+			cs.id,
+			cs.session_id,
+			cs.title,
+			cs.agent_mode,
+			cs.status,
+			cs.created_at,
+			cs.completed_at,
+			cs.preset_query_id,
+			cs.config,
+			0 as total_events,
+			0 as total_turns,
+			NULL as last_activity
+		FROM chat_sessions cs` + whereClause + `
+		ORDER BY cs.created_at DESC
+		LIMIT ? OFFSET ?
+	`
+
+	// Add limit and offset to args
+	args = append(args, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list chat sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []ChatHistorySummary
+	for rows.Next() {
+		var session ChatHistorySummary
+		var lastActivityStr *string
+		var agentModeStr *string
+		var presetQueryIDStr *string
+		var configStr sql.NullString
+		err := rows.Scan(
+			&session.ChatSessionID, &session.SessionID, &session.Title, &agentModeStr, &session.Status,
+			&session.CreatedAt, &session.CompletedAt, &presetQueryIDStr, &configStr, &session.TotalEvents, &session.TotalTurns, &lastActivityStr,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan session: %w", err)
+		}
+
+		// Handle NULL agent_mode
+		if agentModeStr != nil {
+			session.AgentMode = *agentModeStr
+		} else {
+			session.AgentMode = ""
+		}
+
+		// Handle NULL preset_query_id
+		if presetQueryIDStr != nil {
+			session.PresetQueryID = *presetQueryIDStr
+		} else {
+			session.PresetQueryID = ""
+		}
+
+		// Handle NULL config
+		if configStr.Valid {
+			session.Config = json.RawMessage(configStr.String)
+		} else {
+			session.Config = nil
+		}
+
+		// Parse lastActivity string to time.Time
+		if lastActivityStr != nil {
+			if lastActivity, err := time.Parse("2006-01-02 15:04:05.999999999-07:00", *lastActivityStr); err == nil {
+				session.LastActivity = &lastActivity
+			} else {
+				session.LastActivity = nil
+			}
+		} else {
+			session.LastActivity = nil
+		}
+
+		// Filter out sessions without valid LLM config (old sessions before LLM config was stored)
+		// Skip this filter when LLM_CONFIG_LOCKED=true because backend uses env vars for LLM config
+		if !isLLMConfigLocked() && !hasValidLLMConfig(session.Config) {
+			continue
+		}
+
+		sessions = append(sessions, session)
+	}
+
+	// Adjust total count to exclude filtered sessions
+	// Note: This is approximate as we filter in-memory; for exact count would need SQL filtering
+	validTotal := total
+	if len(sessions) < limit {
+		validTotal = offset + len(sessions)
+	}
+
+	return sessions, validTotal, nil
+}
+
+// CreatePresetQueryWithUser creates a new preset query with user association
+func (s *SQLiteDB) CreatePresetQueryWithUser(ctx context.Context, req *CreatePresetQueryRequest, userID string) (*PresetQuery, error) {
+	// Validate the request
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
+	// Convert selected servers to JSON
+	selectedServersJSON := "[]"
+	if len(req.SelectedServers) > 0 {
+		serversJSON, err := json.Marshal(req.SelectedServers)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal selected servers: %w", err)
+		}
+		selectedServersJSON = string(serversJSON)
+	}
+
+	// Convert selected tools to JSON
+	selectedToolsJSON := "[]"
+	if len(req.SelectedTools) > 0 {
+		toolsJSON, err := json.Marshal(req.SelectedTools)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal selected tools: %w", err)
+		}
+		selectedToolsJSON = string(toolsJSON)
+	}
+
+	// Prepare LLM config for insert (NULL when absent)
+	var llmConfigParam interface{}
+	if req.LLMConfig != nil {
+		llmConfigBytes, err := json.Marshal(req.LLMConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal LLM config: %w", err)
+		}
+		llmConfigParam = string(llmConfigBytes)
+	} else {
+		llmConfigParam = nil
+	}
+
+	// Set default agent mode if not provided
+	agentMode := req.AgentMode
+	if agentMode == "" {
+		agentMode = AgentModeSimple
+	}
+
+	// Convert boolean flags to INTEGER for SQLite
+	useCodeExecutionModeInt := 0
+	if req.UseCodeExecutionMode {
+		useCodeExecutionModeInt = 1
+	}
+	useToolSearchModeInt := 0
+	if req.UseToolSearchMode {
+		useToolSearchModeInt = 1
+	}
+	enableBrowserAccessInt := 0
+	if req.EnableBrowserAccess {
+		enableBrowserAccessInt = 1
+	}
+
+	// Convert pre_discovered_tools to JSON
+	preDiscoveredToolsJSON := "[]"
+	if len(req.PreDiscoveredTools) > 0 {
+		toolsJSON, err := json.Marshal(req.PreDiscoveredTools)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal pre-discovered tools: %w", err)
+		}
+		preDiscoveredToolsJSON = string(toolsJSON)
+	}
+
+	// Convert selected_skills to JSON
+	selectedSkillsJSON := "[]"
+	if len(req.SelectedSkills) > 0 {
+		skillsJSON, err := json.Marshal(req.SelectedSkills)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal selected skills: %w", err)
+		}
+		selectedSkillsJSON = string(skillsJSON)
+	}
+
+	// Handle userID
+	var userIDValue interface{}
+	if userID == "" {
+		userIDValue = nil
+	} else {
+		userIDValue = userID
+	}
+
+	query := `
+		INSERT INTO preset_queries (label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_by, user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_at, updated_at, created_by
+	`
+
+	var preset PresetQuery
+	var selectedServersStr string
+	var selectedToolsStr string
+	var selectedFolderStr sql.NullString
+	var llmConfigNullStr sql.NullString
+	var returnedUseCodeExecutionModeInt int
+	var returnedUseToolSearchModeInt int
+	var preDiscoveredToolsStr string
+	var selectedSkillsStr string
+	var returnedEnableBrowserAccessInt int
+	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, selectedToolsJSON, req.SelectedFolder, agentMode, llmConfigParam, useCodeExecutionModeInt, useToolSearchModeInt, preDiscoveredToolsJSON, selectedSkillsJSON, enableBrowserAccessInt, req.IsPredefined, "user", userIDValue).Scan(
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &returnedUseCodeExecutionModeInt, &returnedUseToolSearchModeInt, &preDiscoveredToolsStr, &selectedSkillsStr, &returnedEnableBrowserAccessInt, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create preset query: %w", err)
+	}
+
+	// Parse fields
+	preset.SelectedServers = selectedServersStr
+	preset.SelectedTools = selectedToolsStr
+	preset.SelectedFolder = selectedFolderStr
+	if llmConfigNullStr.Valid {
+		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
+	} else {
+		preset.LLMConfig = json.RawMessage("null")
+	}
+	preset.UseCodeExecutionMode = returnedUseCodeExecutionModeInt != 0
+	preset.UseToolSearchMode = returnedUseToolSearchModeInt != 0
+	preset.PreDiscoveredTools = preDiscoveredToolsStr
+	preset.SelectedSkills = selectedSkillsStr
+	preset.EnableBrowserAccess = returnedEnableBrowserAccessInt != 0
+
+	return &preset, nil
+}
+
+// ListPresetQueriesWithUser lists preset queries with pagination and user filtering
+func (s *SQLiteDB) ListPresetQueriesWithUser(ctx context.Context, limit, offset int, userID string) ([]PresetQuery, int, error) {
+	var whereClause string
+	var args []interface{}
+
+	// Filter by user_id (also include presets with NULL user_id for backwards compatibility and system presets)
+	if userID != "" {
+		whereClause = " WHERE (user_id = ? OR user_id IS NULL OR is_predefined = 1)"
+		args = append(args, userID)
+	}
+
+	// Get total count
+	countQuery := `SELECT COUNT(*) FROM preset_queries` + whereClause
+	var total int
+	err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
+	}
+
+	// Get presets
+	query := `
+		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_at, updated_at, created_by
+		FROM preset_queries` + whereClause + `
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?
+	`
+
+	args = append(args, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list preset queries: %w", err)
+	}
+	defer rows.Close()
+
+	presets := make([]PresetQuery, 0)
+	for rows.Next() {
+		var preset PresetQuery
+		var selectedServersStr string
+		var selectedToolsStr string
+		var selectedFolderStr sql.NullString
+		var llmConfigNullStr sql.NullString
+		var useCodeExecutionModeInt int
+		var useToolSearchModeInt int
+		var preDiscoveredToolsStr sql.NullString
+		var selectedSkillsStr sql.NullString
+		var enableBrowserAccessInt sql.NullInt64
+		err := rows.Scan(
+			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &useCodeExecutionModeInt, &useToolSearchModeInt, &preDiscoveredToolsStr, &selectedSkillsStr, &enableBrowserAccessInt, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan preset query: %w", err)
+		}
+
+		preset.SelectedServers = selectedServersStr
+		preset.SelectedTools = selectedToolsStr
+		if llmConfigNullStr.Valid {
+			preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
+		} else {
+			preset.LLMConfig = json.RawMessage("null")
+		}
+		preset.SelectedFolder = selectedFolderStr
+		preset.UseCodeExecutionMode = useCodeExecutionModeInt != 0
+		preset.UseToolSearchMode = useToolSearchModeInt != 0
+		preset.EnableBrowserAccess = enableBrowserAccessInt.Valid && enableBrowserAccessInt.Int64 != 0
+		if preDiscoveredToolsStr.Valid {
+			preset.PreDiscoveredTools = preDiscoveredToolsStr.String
+		} else {
+			preset.PreDiscoveredTools = "[]"
+		}
+		if selectedSkillsStr.Valid {
+			preset.SelectedSkills = selectedSkillsStr.String
+		} else {
+			preset.SelectedSkills = "[]"
+		}
+		presets = append(presets, preset)
+	}
+
+	return presets, total, nil
 }

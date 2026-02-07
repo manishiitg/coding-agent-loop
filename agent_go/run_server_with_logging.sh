@@ -108,8 +108,8 @@ cd "$SCRIPT_DIR" || {
 }
 echo "📁 Working directory: $(pwd)"
 
-# Set agent mode to simple for better reliability
-export DEEP_SEARCH_AGENT_MODE="simple"
+# Explicitly set single-user mode (no authentication required)
+export MULTI_USER_MODE="false"
 
 # Enable split execution learning feature (separates learning reading from execution)
 export SPLIT_EXECUTION_LEARNING="true"
@@ -140,6 +140,10 @@ export ENABLE_CONTEXT_EDITING="false"  # Enable context editing (default: true)
 export CONTEXT_EDITING_THRESHOLD="10000"  # Compact outputs larger than 10k tokens (default: 10000)
 export CONTEXT_EDITING_TURN_THRESHOLD="20"  # Compact outputs older than 20 turns (default: 20)
 
+# Context offloading configuration (offloads large tool outputs to filesystem)
+# Tool outputs larger than this threshold are saved to file and replaced with a reference
+export LARGE_OUTPUT_THRESHOLD="50000"  # Offload outputs larger than 50k tokens (default: 10000)
+
 # Set main LLM configuration (uses Bedrock with AWS credentials from environment)
 # Note: Frontend Published LLMs override this for actual agent execution
 export DEEP_SEARCH_MAIN_LLM_PROVIDER="bedrock"
@@ -159,11 +163,6 @@ export OPENAI_AVAILABLE_MODELS="gpt-5-mini,gpt-4.1-mini"
 
 # Supported LLM providers (controls which providers appear in the UI)
 export SUPPORTED_LLM_PROVIDERS="azure,anthropic,vertex"
-
-# Set structured output LLM to Bedrock for better JSON generation
-export DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER="bedrock"
-export DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL="global.anthropic.claude-sonnet-4-5-20250929-v1:0"
-export DEEP_SEARCH_STRUCTURED_OUTPUT_TEMPERATURE="0.0"
 
 # Obsidian configuration removed - now using workspace tools
 
@@ -201,7 +200,6 @@ fi
 echo "🚀 MCP Agent Server Session Started: $(date)" > "$LOG_PATH"
 echo "=========================================" >> "$LOG_PATH"
 echo "Configuration:" >> "$LOG_PATH"
-echo "- Agent Mode: $DEEP_SEARCH_AGENT_MODE" >> "$LOG_PATH"
 echo "- Split Execution Learning: $SPLIT_EXECUTION_LEARNING" >> "$LOG_PATH"
 echo "- Tool Execution Timeout: $TOOL_EXECUTION_TIMEOUT" >> "$LOG_PATH"
 echo "- MCP Cache TTL: $MCP_CACHE_TTL_MINUTES minutes (7 days)" >> "$LOG_PATH"
@@ -213,20 +211,19 @@ echo "- Main LLM Temperature: $DEEP_SEARCH_MAIN_LLM_TEMPERATURE" >> "$LOG_PATH"
 echo "- Available Bedrock Models: $BEDROCK_AVAILABLE_MODELS" >> "$LOG_PATH"
 echo "- Available OpenRouter Models: $OPENROUTER_AVAILABLE_MODELS" >> "$LOG_PATH"
 echo "- Available OpenAI Models: $OPENAI_AVAILABLE_MODELS" >> "$LOG_PATH"
-echo "- Structured Output LLM: $DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER/$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL" >> "$LOG_PATH"
 echo "- Workspace tools: Enabled" >> "$LOG_PATH"
 echo "- Workspace Semantic Search: $WORKSPACE_ENABLE_SEMANTIC_SEARCH" >> "$LOG_PATH"
 echo "- Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION" >> "$LOG_PATH"
 echo "- Token Threshold: $TOKEN_THRESHOLD_PERCENT (70%) | Fixed: ${FIXED_TOKEN_THRESHOLD} tokens" >> "$LOG_PATH"
 echo "- Keep Last Messages: $SUMMARY_KEEP_LAST_MESSAGES" >> "$LOG_PATH"
 echo "- Context Editing: $ENABLE_CONTEXT_EDITING (Threshold: ${CONTEXT_EDITING_THRESHOLD} tokens, Age: ${CONTEXT_EDITING_TURN_THRESHOLD} turns)" >> "$LOG_PATH"
+echo "- Large Output Threshold: ${LARGE_OUTPUT_THRESHOLD} tokens" >> "$LOG_PATH"
 echo "=========================================" >> "$LOG_PATH"
 echo "" >> "$LOG_PATH"
 
 # Start the server with enhanced logging and structured output LLM
 echo "🚀 Starting MCP Agent Server with enhanced logging..."
 echo "📝 Log file: $LOG_PATH"
-echo "🧠 Agent Mode: $DEEP_SEARCH_AGENT_MODE"
 echo "🔀 Split Execution Learning: $SPLIT_EXECUTION_LEARNING"
 echo "⏱️  Tool Timeout: $TOOL_EXECUTION_TIMEOUT"
 echo "💾 MCP Cache TTL: $MCP_CACHE_TTL_MINUTES minutes (7 days)"
@@ -234,6 +231,7 @@ echo "📁 Workspace Tools: Enabled"
 echo "🔍 Workspace Semantic Search: $WORKSPACE_ENABLE_SEMANTIC_SEARCH"
 echo "📝 Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION (Threshold: $TOKEN_THRESHOLD_PERCENT = 70%, Fixed: ${FIXED_TOKEN_THRESHOLD} tokens, Keep: $SUMMARY_KEEP_LAST_MESSAGES msgs)"
 echo "✂️  Context Editing: $ENABLE_CONTEXT_EDITING (Threshold: ${CONTEXT_EDITING_THRESHOLD} tokens, Age: ${CONTEXT_EDITING_TURN_THRESHOLD} turns)"
+echo "📦 Large Output Threshold: ${LARGE_OUTPUT_THRESHOLD} tokens"
 echo "📊 Debug level: $LOG_LEVEL"
 
 # Database configuration based on DATABASE_URL
@@ -273,11 +271,7 @@ if [ "$BACKGROUND_MODE" = true ]; then
         --model "$DEEP_SEARCH_MAIN_LLM_MODEL" \
         --temperature "$DEEP_SEARCH_MAIN_LLM_TEMPERATURE" \
         --max-turns 50 \
-        --mcp-config "configs/mcp_servers_clean.json" \
-        --agent-mode "$DEEP_SEARCH_AGENT_MODE" \
-        --structured-output-provider "$DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER" \
-        --structured-output-model "$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL" \
-        --structured-output-temp "$DEEP_SEARCH_STRUCTURED_OUTPUT_TEMPERATURE" >> "$LOG_PATH" 2>&1 &
+        --mcp-config "configs/mcp_servers_clean.json" >> "$LOG_PATH" 2>&1 &
     
     SERVER_PID=$!
     echo "✅ Server started in background (PID: $SERVER_PID)"
@@ -314,11 +308,7 @@ else
         --model "$DEEP_SEARCH_MAIN_LLM_MODEL" \
         --temperature "$DEEP_SEARCH_MAIN_LLM_TEMPERATURE" \
         --max-turns 50 \
-        --mcp-config "configs/mcp_servers_clean.json" \
-        --agent-mode "$DEEP_SEARCH_AGENT_MODE" \
-        --structured-output-provider "$DEEP_SEARCH_STRUCTURED_OUTPUT_PROVIDER" \
-        --structured-output-model "$DEEP_SEARCH_STRUCTURED_OUTPUT_MODEL" \
-        --structured-output-temp "$DEEP_SEARCH_STRUCTURED_OUTPUT_TEMPERATURE" >> "$LOG_PATH" 2>&1
+        --mcp-config "configs/mcp_servers_clean.json" >> "$LOG_PATH" 2>&1
     
     EXIT_CODE=$?
     if [ $EXIT_CODE -ne 0 ]; then

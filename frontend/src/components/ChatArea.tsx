@@ -111,13 +111,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     azureConfig: state.azureConfig
   })))
   
-  const { 
+  const {
     toolList: allTools,
     selectedServers,
+    enabledServers,
     getAvailableServers
   } = useMCPStore(useShallow(state => ({
     toolList: state.toolList,
     selectedServers: state.selectedServers,
+    enabledServers: state.enabledServers,
     getAvailableServers: state.getAvailableServers
   })))
   
@@ -151,16 +153,19 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       const availableServers = getAvailableServers()
       return availableServers.length > 0 ? availableServers : []
     }
-    // Return selected servers (including "NO_SERVERS" if explicitly selected)
-    return tabSelectedServers
+    // Filter out servers that aren't currently enabled (connected).
+    // Stale servers from localStorage could block queries if sent to backend.
+    const filtered = tabSelectedServers.filter(s => s === "NO_SERVERS" || enabledServers.includes(s))
+    return filtered
   }, [
-    selectedModeCategory, 
+    selectedModeCategory,
     // Include currentPresetServers only for workflow mode reactivity
     // In chat mode, this value is ignored but included to satisfy exhaustive-deps
     // The logic above ensures chat mode never uses currentPresetServers
     currentPresetServers,
-    selectedServers, 
-    getAvailableServers, 
+    selectedServers,
+    enabledServers,
+    getAvailableServers,
     activeTab?.config  // ✅ Now reactive - will update when tab config changes
   ])
   
@@ -1124,7 +1129,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             const agentEvent = event.data as Record<string, unknown> | undefined
             const innerData = agentEvent?.data as Record<string, unknown> | undefined
             const rawComponent = innerData?.component ?? agentEvent?.component
-            const isSubAgentEvent = typeof rawComponent === 'string' && rawComponent.startsWith('delegation-')
+            // Also check hierarchy_level as a robust fallback for sub-agent detection
+            // Sub-agents always have hierarchy_level > 0 (set by DelegationEventObserver)
+            const rawHierarchyLevel = innerData?.hierarchy_level ?? agentEvent?.hierarchy_level
+            
+            const isSubAgentEvent = (typeof rawComponent === 'string' && rawComponent.startsWith('delegation-')) || 
+                                    (typeof rawHierarchyLevel === 'number' && rawHierarchyLevel > 0)
 
             // Intercept streaming events - accumulate text in store, don't add to event list
             // IMPORTANT: Only process streaming from parent agent, skip sub-agent streaming
@@ -2789,9 +2799,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         enable_browser_access: isChatMode
           ? (currentTab?.config?.enableBrowserAccess ?? false)
           : undefined,
-        // Delegation mode: Send the global setting (persisted across sessions)
-        enable_delegation_mode: isChatMode
-          ? useAppStore.getState().enableDelegationMode
+        // Delegation mode: Send the mode setting (persisted across sessions)
+        delegation_mode: isChatMode && useAppStore.getState().delegationMode !== 'off'
+          ? useAppStore.getState().delegationMode as 'spawn' | 'plan'
+          : undefined,
+        // Delegation tier config: Send tier assignments for multi-LLM delegation (only for plan mode)
+        delegation_tier_config: isChatMode && useAppStore.getState().delegationMode === 'plan'
+          ? (useLLMStore.getState().delegationTierConfig ?? undefined)
           : undefined,
         // Selected skills: Include skill folder names from tab config
         selected_skills: isChatMode && currentTab?.config?.selectedSkills?.length

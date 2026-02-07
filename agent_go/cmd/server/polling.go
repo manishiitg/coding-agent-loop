@@ -127,24 +127,32 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	lastProcessedIndex := getEventsResult.LastProcessedIndex
 	hasMoreFromStore := getEventsResult.HasMore
 
+	// Get current user ID for session isolation
+	currentUserID := GetUserIDFromContext(r.Context())
+
 	// Get session status (from active sessions or database)
 	var sessionStatus string
 	var chatSession *database.ChatSession
 	activeSession, existsInActive := api.getActiveSession(sessionID)
 	if existsInActive {
+		// Verify user ownership for active session
+		if activeSession.UserID != "" && activeSession.UserID != currentUserID {
+			http.Error(w, "Session not found or access denied", http.StatusNotFound)
+			return
+		}
 		sessionStatus = activeSession.Status
 		api.logger.Debug(fmt.Sprintf("[POLLING] Session %s found in active sessions (status: %s)", sessionID, sessionStatus))
 	} else {
-		// Check database for completed/error sessions
+		// Check database for completed/error sessions - filter by user for isolation
 		var err error
-		chatSession, err = api.chatDB.GetChatSession(r.Context(), sessionID)
+		chatSession, err = api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
 		if err == nil && chatSession != nil {
 			sessionStatus = chatSession.Status
 			api.logger.Debug(fmt.Sprintf("[POLLING] Session %s found in database (status: %s)", sessionID, sessionStatus))
 		} else {
-			api.logger.Debug(fmt.Sprintf("[POLLING] Session %s not found in database: %v", sessionID, err))
+			api.logger.Debug(fmt.Sprintf("[POLLING] Session %s not found in database for user %s: %v", sessionID, currentUserID, err))
 		}
-		// If not found, leave empty (session might not exist yet)
+		// If not found, leave empty (session might not exist yet or belongs to another user)
 	}
 
 	api.logger.Debug(fmt.Sprintf("[POLLING] Session %s: exists=%v, events_in_memory=%d, status=%s", sessionID, exists, len(sessionEvents), sessionStatus))
@@ -444,16 +452,28 @@ type ReconnectSessionResponse struct {
 func (api *StreamingAPI) handleGetActiveSessions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
+	// Get current user ID for session isolation
+	currentUserID := GetUserIDFromContext(r.Context())
+
 	// getAllActiveSessions returns running + recently completed sessions from in-memory map
-	activeSessions := api.getAllActiveSessions()
+	allActiveSessions := api.getAllActiveSessions()
+
+	// Filter sessions by user ID for isolation
+	activeSessions := make([]*ActiveSessionInfo, 0, len(allActiveSessions))
+	for _, session := range allActiveSessions {
+		// Include session if it belongs to this user (or if UserID is empty for backwards compat)
+		if session.UserID == "" || session.UserID == currentUserID {
+			activeSessions = append(activeSessions, session)
+		}
+	}
 
 	// If no in-memory sessions, check database for recent sessions (handles backend restart case)
 	// Query for sessions with status 'active' or 'running', or recently completed (within 30 minutes)
 	if len(activeSessions) == 0 && api.chatDB != nil {
 		thirtyMinutesAgo := time.Now().Add(-30 * time.Minute)
 
-		// Get recent sessions from database
-		dbSessions, _, err := api.chatDB.ListChatSessions(r.Context(), 20, 0, nil, nil)
+		// Get recent sessions from database - filter by user for isolation
+		dbSessions, _, err := api.chatDB.ListChatSessionsWithUser(r.Context(), 20, 0, nil, nil, currentUserID)
 		if err != nil {
 			log.Printf("[ACTIVE_SESSION] Failed to query database for recent sessions: %v", err)
 		} else {
@@ -548,11 +568,14 @@ func (api *StreamingAPI) handleGetSessionStatus(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Get current user ID for session isolation
+	currentUserID := GetUserIDFromContext(r.Context())
+
 	// Check if session is active
 	activeSession, exists := api.getActiveSession(sessionID)
 	if !exists {
-		// Check if session exists in database (completed)
-		chatSession, err := api.chatDB.GetChatSession(r.Context(), sessionID)
+		// Check if session exists in database (completed) - filter by user for isolation
+		chatSession, err := api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
 		if err != nil {
 			http.Error(w, "Session not found", http.StatusNotFound)
 			return

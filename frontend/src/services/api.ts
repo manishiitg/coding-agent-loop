@@ -166,20 +166,98 @@ export function setSessionId(sessionId: string): void {
 
 // Observer ID management removed - no longer needed
 
-// --- Axios request interceptor to inject session ID ---
+// --- Auth token management ---
+const AUTH_TOKEN_KEY = 'auth_token'
+
+export function getAuthToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_KEY)
+}
+
+export function setAuthToken(token: string): void {
+  localStorage.setItem(AUTH_TOKEN_KEY, token)
+}
+
+export function clearAuthToken(): void {
+  localStorage.removeItem(AUTH_TOKEN_KEY)
+}
+
+// --- Axios request interceptor to inject session ID and auth token ---
 // Only adds session ID if not already provided in headers
 api.interceptors.request.use((config) => {
   config.headers = config.headers || {}
-  
+
   // Only add session ID if not already provided
   if (!config.headers['X-Session-ID']) {
     config.headers['X-Session-ID'] = getSessionId()
   }
 
-  // Observer ID header removed - no longer needed
+  // Add auth token if available
+  const authToken = getAuthToken()
+  if (authToken && !config.headers['Authorization']) {
+    config.headers['Authorization'] = `Bearer ${authToken}`
+  }
 
   return config
 })
+
+// --- Axios response interceptor to handle 401 errors ---
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Clear auth token on 401
+      clearAuthToken()
+      // Don't redirect automatically - let the app handle it
+      // window.location.href = '/login'
+    }
+    return Promise.reject(error)
+  }
+)
+
+// Helper to extract user ID from JWT token
+function getUserIdFromToken(token: string): string | null {
+  try {
+    // JWT format: header.payload.signature
+    const parts = token.split('.')
+    if (parts.length !== 3) return null
+
+    // Decode payload (base64url)
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')))
+    return payload.user_id || payload.sub || null
+  } catch {
+    return null
+  }
+}
+
+// --- Workspace API interceptors for auth ---
+workspaceApi.interceptors.request.use((config) => {
+  config.headers = config.headers || {}
+
+  // Add auth token if available
+  const authToken = getAuthToken()
+  if (authToken && !config.headers['Authorization']) {
+    config.headers['Authorization'] = `Bearer ${authToken}`
+
+    // Extract user ID from JWT and add X-User-ID header for workspace API
+    // Workspace API doesn't parse JWT - it needs X-User-ID header for per-user folder isolation
+    const userId = getUserIdFromToken(authToken)
+    if (userId && !config.headers['X-User-ID']) {
+      config.headers['X-User-ID'] = userId
+    }
+  }
+
+  return config
+})
+
+workspaceApi.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      clearAuthToken()
+    }
+    return Promise.reject(error)
+  }
+)
 
 export const agentApi = {
   // Observer APIs removed - no longer needed
@@ -932,4 +1010,133 @@ export const healthApi = {
   },
 }
 
-export default api 
+// --- Auth API ---
+export interface AuthUser {
+  id: string
+  username: string
+  email?: string
+  provider?: string
+}
+
+export interface AuthResponse {
+  token: string
+  user: AuthUser
+}
+
+export interface AuthProvider {
+  name: string
+  type: 'credentials' | 'oauth'
+  auth_url?: string
+}
+
+export interface AuthModeResponse {
+  multi_user_mode: boolean
+  registration_enabled?: boolean
+  providers: AuthProvider[]
+}
+
+export interface OAuthStartResponse {
+  auth_url: string
+  state: string
+}
+
+export const authApi = {
+  // Get authentication mode and available providers
+  getAuthMode: async (): Promise<AuthModeResponse> => {
+    const response = await api.get('/api/auth/mode')
+    return response.data
+  },
+
+  // Register a new user (only available in multi-user mode)
+  register: async (username: string, password: string, email?: string): Promise<AuthResponse> => {
+    const response = await api.post('/api/auth/register', { username, password, email })
+    return response.data
+  },
+
+  // Login with credentials (for "simple" and "supabase" providers)
+  login: async (username: string, password: string, provider?: string): Promise<AuthResponse> => {
+    const response = await api.post('/api/auth/login', { username, password, provider })
+    return response.data
+  },
+
+  // Start OAuth flow for a provider (for "cognito" and "supabase" OAuth)
+  startOAuth: async (provider: string, redirectUri: string): Promise<OAuthStartResponse> => {
+    const response = await api.post('/api/auth/start', { provider, redirect_uri: redirectUri })
+    return response.data
+  },
+
+  // Handle OAuth callback - exchange code for app JWT
+  handleOAuthCallback: async (code: string, state: string): Promise<AuthResponse> => {
+    const response = await api.get('/api/auth/callback', {
+      params: { code, state }
+    })
+    return response.data
+  },
+
+  // Logout
+  logout: async (): Promise<void> => {
+    await api.post('/api/auth/logout')
+  },
+
+  // Get current user info
+  getCurrentUser: async (): Promise<AuthUser> => {
+    const response = await api.get('/api/auth/me')
+    return response.data
+  },
+}
+
+// --- Session Sharing API ---
+export interface ShareResponse {
+  share_id: string
+  share_url: string
+  token: string
+  expires_at?: string
+}
+
+export interface SessionShare {
+  id: string
+  session_id: string
+  share_token: string
+  created_by: string
+  created_at: string
+  expires_at?: string
+  access_level: string
+}
+
+export interface SharedSessionResponse {
+  session_id: string
+  title: string
+  agent_mode: string
+  status: string
+  created_at: string
+  completed_at?: string
+  events?: unknown[]
+  is_shared: boolean
+}
+
+export const sessionShareApi = {
+  // Create a share link for a session
+  createShare: async (sessionId: string, expiresInHours?: number): Promise<ShareResponse> => {
+    const response = await api.post(`/api/sessions/${sessionId}/share`, { expires_in_hours: expiresInHours })
+    return response.data
+  },
+
+  // List all shares for a session
+  listShares: async (sessionId: string): Promise<{ shares: SessionShare[] }> => {
+    const response = await api.get(`/api/sessions/${sessionId}/shares`)
+    return response.data
+  },
+
+  // Revoke a share link
+  revokeShare: async (sessionId: string, shareId: string): Promise<void> => {
+    await api.delete(`/api/sessions/${sessionId}/share/${shareId}`)
+  },
+
+  // Get a shared session (no auth required)
+  getSharedSession: async (shareToken: string): Promise<SharedSessionResponse> => {
+    const response = await api.get(`/api/shared/${shareToken}`)
+    return response.data
+  },
+}
+
+export default api

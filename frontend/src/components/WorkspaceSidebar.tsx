@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import SidebarHeader from './sidebar/SidebarHeader'
 import LLMConfigurationSummary from './sidebar/LLMConfigurationSummary'
 import HumanFeedbackConnectorsSection from './sidebar/HumanFeedbackConnectorsSection'
@@ -6,10 +6,14 @@ import MCPServersSection from './sidebar/MCPServersSection'
 import { SkillsSection } from './skills'
 import ChatHistorySection from './sidebar/ChatHistorySection'
 import LLMConfigurationModal from './LLMConfigurationModal'
+import DelegationTierConfigModal from './DelegationTierConfigModal'
 import type { ActiveSessionInfo } from '../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
-import { useMCPStore, useLLMStore } from '../stores'
+import { useMCPStore, useLLMStore, useAppStore } from '../stores'
+import { Layers, LogOut, User } from 'lucide-react'
 import { RunningWorkflowsIndicator } from './workflow/RunningWorkflowsIndicator'
+import { useAuthStore } from '../stores/useAuthStore'
+import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 
 interface WorkspaceSidebarProps {
   // Chat session selection
@@ -28,8 +32,21 @@ export default function WorkspaceSidebar({
   
   // Store subscriptions
   const { showMCPDetails, setShowMCPDetails } = useMCPStore()
-  const { showLLMModal, setShowLLMModal } = useLLMStore()
+  const { showLLMModal, setShowLLMModal, delegationTierConfig } = useLLMStore()
+  const { user, logout, isMultiUserMode } = useAuthStore()
+  const delegationMode = useAppStore(state => state.delegationMode)
+  const showDelegationTiersDialog = useCommandDialogStore(state => state.showDelegationTiers)
+  const closeDialog = useCommandDialogStore(state => state.closeDialog)
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const [showTierModal, setShowTierModal] = useState(false)
+
+  // Auto-open delegation tier modal when triggered from /plan command
+  useEffect(() => {
+    if (showDelegationTiersDialog && delegationMode === 'plan') {
+      setShowTierModal(true)
+      closeDialog('delegationTiers')
+    }
+  }, [showDelegationTiersDialog, delegationMode, closeDialog])
 
   // Handle ESC and Enter keys for shortcuts modal
   React.useEffect(() => {
@@ -101,6 +118,37 @@ export default function WorkspaceSidebar({
               minimized={minimized}
             />
 
+            {/* Delegation Tier Models - Only visible when plan delegation mode is enabled */}
+            {delegationMode === 'plan' && (
+              <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700">
+                <button
+                  onClick={() => setShowTierModal(true)}
+                  className="w-full p-3 flex items-center justify-between text-left hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors rounded-lg"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Layers className="w-4 h-4 text-indigo-500 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Delegation Models</span>
+                      {delegationTierConfig && (delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
+                        <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">
+                          {[
+                            delegationTierConfig.high && `H: ${delegationTierConfig.high.model_id.split('/').pop()}`,
+                            delegationTierConfig.medium && `M: ${delegationTierConfig.medium.model_id.split('/').pop()}`,
+                            delegationTierConfig.low && `L: ${delegationTierConfig.low.model_id.split('/').pop()}`,
+                          ].filter(Boolean).join(' | ')}
+                        </div>
+                      ) : (
+                        <div className="text-[10px] text-gray-400 dark:text-gray-500">Click to configure tiers</div>
+                      )}
+                    </div>
+                  </div>
+                  <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+            )}
+
             {/* Human Feedback Connectors */}
             <HumanFeedbackConnectorsSection
               minimized={minimized}
@@ -125,6 +173,42 @@ export default function WorkspaceSidebar({
                 }
               }}
             />
+          </div>
+        </div>
+      )}
+
+      {/* User Info & Logout - Bottom Section (Expanded) */}
+      {!minimized && isMultiUserMode && user && (
+        <div className="border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+          <div className="p-3 flex items-center justify-between">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <User className="w-4 h-4 text-primary" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                  {user.username || user.email || 'User'}
+                </p>
+                {user.email && user.username !== user.email && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                    {user.email}
+                  </p>
+                )}
+              </div>
+            </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={logout}
+                  className="p-2 text-gray-500 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Sign out</p>
+              </TooltipContent>
+            </Tooltip>
           </div>
         </div>
       )}
@@ -207,6 +291,41 @@ export default function WorkspaceSidebar({
 
           {/* Chat History Icon */}
           <ChatHistorySection minimized={true} />
+
+          {/* Spacer to push user section to bottom */}
+          <div className="flex-1" />
+
+          {/* User Info & Logout - Bottom (Minimized) */}
+          {isMultiUserMode && user && (
+            <div className="border-t border-gray-200 dark:border-slate-700 pt-3 flex flex-col items-center gap-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center cursor-default">
+                    <User className="w-4 h-4 text-primary" />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  <p>{user.username || user.email || 'User'}</p>
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      logout()
+                    }}
+                    className="p-2 text-gray-500 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  <p>Sign out</p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          )}
         </div>
       )}
 
@@ -299,6 +418,12 @@ export default function WorkspaceSidebar({
       <LLMConfigurationModal
         isOpen={showLLMModal}
         onClose={() => setShowLLMModal(false)}
+      />
+
+      {/* Delegation Tier Configuration Modal */}
+      <DelegationTierConfigModal
+        isOpen={showTierModal}
+        onClose={() => setShowTierModal(false)}
       />
     </TooltipProvider>
   )

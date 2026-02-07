@@ -119,6 +119,9 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	config.ContextEditingThreshold = bo.GetContextEditingThreshold()
 	config.ContextEditingTurnThreshold = bo.GetContextEditingTurnThreshold()
 
+	// Context offloading configuration from orchestrator
+	config.LargeOutputThreshold = bo.GetLargeOutputThreshold()
+
 	return config
 }
 

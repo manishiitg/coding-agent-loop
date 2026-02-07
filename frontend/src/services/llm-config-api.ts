@@ -1,8 +1,10 @@
 import axios from 'axios'
-import type { 
+import { getAuthToken } from './api'
+import type {
   LLMDefaultsResponse,
   APIKeyValidationRequest,
-  APIKeyValidationResponse
+  APIKeyValidationResponse,
+  DelegationTierConfig
 } from './api-types'
 
 export interface ModelMetadata {
@@ -32,6 +34,15 @@ const llmConfigApi = axios.create({
   },
 })
 
+// Add auth token interceptor
+llmConfigApi.interceptors.request.use((config) => {
+  const authToken = getAuthToken()
+  if (authToken && config.headers) {
+    config.headers['Authorization'] = `Bearer ${authToken}`
+  }
+  return config
+})
+
 // LLM Configuration API service
 export const llmConfigService = {
   // Get LLM configuration defaults from backend
@@ -58,6 +69,12 @@ export const llmConfigService = {
       endpoint,
       api_key: apiKey
     })
+    return response.data
+  },
+
+  // Get delegation tier defaults from environment variables
+  getDelegationTierDefaults: async (): Promise<DelegationTierConfig> => {
+    const response = await llmConfigApi.get('/api/llm-config/delegation-tiers')
     return response.data
   },
 }

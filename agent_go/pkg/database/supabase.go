@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,12 @@ import (
 
 	_ "github.com/lib/pq"
 )
+
+// isLLMConfigLocked checks if LLM configuration is locked via environment variable
+// When locked, the backend uses env vars for LLM config instead of stored session config
+func isLLMConfigLocked() bool {
+	return os.Getenv("LLM_CONFIG_LOCKED") == "true" || os.Getenv("LLM_CONFIG_LOCKED") == "1"
+}
 
 // SupabaseDB implements the Database interface using PostgreSQL (Supabase)
 type SupabaseDB struct {
@@ -421,22 +428,47 @@ func (s *SupabaseDB) StoreEvent(ctx context.Context, sessionID string, event *ev
 	return nil
 }
 
+// extractParentSessionID extracts the parent session ID from a sub-agent session ID.
+// Sub-agent session IDs have format: {parent_session_id}-sub-{n}-{timestamp}
+// Returns the original sessionID if it's not a sub-agent session.
+func extractParentSessionID(sessionID string) string {
+	// Check if this is a sub-agent session ID
+	if idx := strings.Index(sessionID, "-sub-"); idx != -1 {
+		return sessionID[:idx]
+	}
+	return sessionID
+}
+
 // getChatSessionID gets the chat_session_id for a session
+// For sub-agent sessions (format: {parent}-sub-{n}-{ts}), it returns the parent's chat_session_id
 func (s *SupabaseDB) getChatSessionID(ctx context.Context, sessionID string) (string, error) {
+	// Extract parent session ID for sub-agents
+	lookupSessionID := extractParentSessionID(sessionID)
+
 	s.batchMux.Lock()
-	if cachedID, ok := s.chatSessionCache[sessionID]; ok {
+	if cachedID, ok := s.chatSessionCache[lookupSessionID]; ok {
 		s.batchMux.Unlock()
+		// Also cache for the original sub-agent session ID
+		if lookupSessionID != sessionID {
+			s.batchMux.Lock()
+			s.chatSessionCache[sessionID] = cachedID
+			s.batchMux.Unlock()
+		}
 		return cachedID, nil
 	}
 	s.batchMux.Unlock()
 
-	chatSession, err := s.GetChatSession(ctx, sessionID)
+	chatSession, err := s.GetChatSession(ctx, lookupSessionID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get chat session: %w", err)
 	}
 
 	s.batchMux.Lock()
-	s.chatSessionCache[sessionID] = chatSession.ID
+	s.chatSessionCache[lookupSessionID] = chatSession.ID
+	// Also cache for the original sub-agent session ID
+	if lookupSessionID != sessionID {
+		s.chatSessionCache[sessionID] = chatSession.ID
+	}
 	s.batchMux.Unlock()
 
 	return chatSession.ID, nil
@@ -645,12 +677,14 @@ func (s *SupabaseDB) GetEvents(ctx context.Context, req *GetChatHistoryRequest) 
 	}, nil
 }
 
-// GetEventsBySession retrieves events for a session
+// GetEventsBySession retrieves events for a chat session
+// The sessionID parameter is the chat_session_id (UUID from chat_sessions table),
+// not the internal trace/session_id used during event emission
 func (s *SupabaseDB) GetEventsBySession(ctx context.Context, sessionID string, limit, offset int) ([]Event, error) {
 	query := `
 		SELECT id, session_id, chat_session_id, event_type, timestamp, event_data
 		FROM events
-		WHERE session_id = $1
+		WHERE chat_session_id = $1
 		ORDER BY timestamp ASC
 		LIMIT $2 OFFSET $3
 	`
@@ -1305,4 +1339,436 @@ func (s *SupabaseDB) Close() error {
 	s.flushBatches()
 
 	return s.db.Close()
+}
+
+// ============================================================================
+// User-aware methods for multi-user support
+// ============================================================================
+
+// CreateChatSessionWithUser creates a new chat session with user association
+func (s *SupabaseDB) CreateChatSessionWithUser(ctx context.Context, req *CreateChatSessionRequest, userID string) (*ChatSession, error) {
+	query := `
+		INSERT INTO chat_sessions (session_id, title, agent_mode, preset_query_id, config, status, user_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, session_id, title, agent_mode, preset_query_id, config, created_at, completed_at, status
+	`
+
+	log.Printf("[CREATE_CHAT_SESSION DEBUG] Creating session with SessionID: %s, Title: '%s', AgentMode: '%s', UserID: '%s'", req.SessionID, req.Title, req.AgentMode, userID)
+
+	var presetQueryID interface{}
+	if req.PresetQueryID == "" {
+		presetQueryID = nil
+	} else {
+		presetQueryID = req.PresetQueryID
+	}
+
+	var configValue interface{}
+	if len(req.Config) == 0 {
+		configValue = nil
+	} else {
+		configValue = string(req.Config)
+	}
+
+	var userIDValue interface{}
+	if userID == "" {
+		userIDValue = nil
+	} else {
+		userIDValue = userID
+	}
+
+	var session ChatSession
+	var agentModeStr *string
+	var presetQueryIDStr *string
+	var configStr sql.NullString
+	err := s.db.QueryRowContext(ctx, query, req.SessionID, req.Title, req.AgentMode, presetQueryID, configValue, "active", userIDValue).Scan(
+		&session.ID, &session.SessionID, &session.Title, &agentModeStr, &presetQueryIDStr, &configStr, &session.CreatedAt, &session.CompletedAt, &session.Status,
+	)
+	if err != nil {
+		log.Printf("[CREATE_CHAT_SESSION ERROR] Failed to create chat session: %v", err)
+		return nil, fmt.Errorf("failed to create chat session: %w", err)
+	}
+
+	if agentModeStr != nil {
+		session.AgentMode = *agentModeStr
+	} else {
+		session.AgentMode = ""
+	}
+
+	if presetQueryIDStr != nil {
+		session.PresetQueryID = presetQueryIDStr
+	}
+
+	if configStr.Valid {
+		session.Config = json.RawMessage(configStr.String)
+	} else {
+		session.Config = nil
+	}
+
+	log.Printf("[CREATE_CHAT_SESSION DEBUG] Successfully created session ID: %s, SessionID: %s, UserID: %s", session.ID, session.SessionID, userID)
+
+	return &session, nil
+}
+
+// GetChatSessionWithUser retrieves a chat session by session ID with user verification
+func (s *SupabaseDB) GetChatSessionWithUser(ctx context.Context, sessionID string, userID string) (*ChatSession, error) {
+	var query string
+	var args []interface{}
+
+	if userID == "" {
+		query = `
+			SELECT id, session_id, title, agent_mode, preset_query_id, config, created_at, completed_at, status
+			FROM chat_sessions
+			WHERE session_id = $1
+		`
+		args = []interface{}{sessionID}
+	} else {
+		query = `
+			SELECT id, session_id, title, agent_mode, preset_query_id, config, created_at, completed_at, status
+			FROM chat_sessions
+			WHERE session_id = $1 AND (user_id = $2 OR user_id IS NULL)
+		`
+		args = []interface{}{sessionID, userID}
+	}
+
+	var session ChatSession
+	var agentModeStr *string
+	var presetQueryIDStr *string
+	var configStr sql.NullString
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(
+		&session.ID, &session.SessionID, &session.Title, &agentModeStr, &presetQueryIDStr, &configStr, &session.CreatedAt, &session.CompletedAt, &session.Status,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("chat session not found")
+		}
+		return nil, fmt.Errorf("failed to get chat session: %w", err)
+	}
+
+	if agentModeStr != nil {
+		session.AgentMode = *agentModeStr
+	} else {
+		session.AgentMode = ""
+	}
+
+	if presetQueryIDStr != nil {
+		session.PresetQueryID = presetQueryIDStr
+	}
+
+	if configStr.Valid {
+		session.Config = json.RawMessage(configStr.String)
+	} else {
+		session.Config = nil
+	}
+
+	return &session, nil
+}
+
+// ListChatSessionsWithUser lists chat sessions with pagination and user filtering
+func (s *SupabaseDB) ListChatSessionsWithUser(ctx context.Context, limit, offset int, presetQueryID *string, agentMode *string, userID string) ([]ChatHistorySummary, int, error) {
+	var whereConditions []string
+	var args []interface{}
+	argCount := 0
+
+	if presetQueryID != nil && *presetQueryID != "" {
+		argCount++
+		whereConditions = append(whereConditions, fmt.Sprintf("cs.preset_query_id = $%d", argCount))
+		args = append(args, *presetQueryID)
+	}
+
+	if agentMode != nil && *agentMode != "" {
+		argCount++
+		whereConditions = append(whereConditions, fmt.Sprintf("cs.agent_mode = $%d", argCount))
+		args = append(args, *agentMode)
+	}
+
+	if userID != "" {
+		argCount++
+		whereConditions = append(whereConditions, fmt.Sprintf("(cs.user_id = $%d OR cs.user_id IS NULL)", argCount))
+		args = append(args, userID)
+	}
+
+	var whereClause string
+	if len(whereConditions) > 0 {
+		whereClause = " WHERE " + strings.Join(whereConditions, " AND ")
+	}
+
+	if err := validateWhereClause(whereClause); err != nil {
+		return nil, 0, fmt.Errorf("invalid WHERE clause: %w", err)
+	}
+
+	countQuery := `SELECT COUNT(*) FROM chat_sessions cs` + whereClause
+	var total int
+	err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
+	}
+
+	query := `
+		SELECT
+			cs.id,
+			cs.session_id,
+			cs.title,
+			cs.agent_mode,
+			cs.status,
+			cs.created_at,
+			cs.completed_at,
+			cs.preset_query_id,
+			cs.config,
+			0 as total_events,
+			0 as total_turns,
+			NULL as last_activity
+		FROM chat_sessions cs` + whereClause + fmt.Sprintf(`
+		ORDER BY cs.created_at DESC
+		LIMIT $%d OFFSET $%d
+	`, argCount+1, argCount+2)
+
+	args = append(args, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list chat sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []ChatHistorySummary
+	for rows.Next() {
+		var session ChatHistorySummary
+		var lastActivityStr *string
+		var agentModeStr *string
+		var presetQueryIDStr *string
+		var configStr sql.NullString
+		err := rows.Scan(
+			&session.ChatSessionID, &session.SessionID, &session.Title, &agentModeStr, &session.Status,
+			&session.CreatedAt, &session.CompletedAt, &presetQueryIDStr, &configStr, &session.TotalEvents, &session.TotalTurns, &lastActivityStr,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan session: %w", err)
+		}
+
+		if agentModeStr != nil {
+			session.AgentMode = *agentModeStr
+		} else {
+			session.AgentMode = ""
+		}
+
+		if presetQueryIDStr != nil {
+			session.PresetQueryID = *presetQueryIDStr
+		} else {
+			session.PresetQueryID = ""
+		}
+
+		if configStr.Valid {
+			session.Config = json.RawMessage(configStr.String)
+		} else {
+			session.Config = nil
+		}
+
+		if lastActivityStr != nil {
+			if lastActivity, err := time.Parse("2006-01-02 15:04:05.999999999-07:00", *lastActivityStr); err == nil {
+				session.LastActivity = &lastActivity
+			} else {
+				session.LastActivity = nil
+			}
+		} else {
+			session.LastActivity = nil
+		}
+
+		// Filter out sessions without valid LLM config (old sessions before LLM config was stored)
+		// Skip this filter when LLM_CONFIG_LOCKED=true because backend uses env vars for LLM config
+		if !isLLMConfigLocked() && !hasValidLLMConfig(session.Config) {
+			continue
+		}
+
+		sessions = append(sessions, session)
+	}
+
+	// Adjust total count to exclude filtered sessions
+	// Note: This is approximate as we filter in-memory; for exact count would need SQL filtering
+	validTotal := total
+	if len(sessions) < limit {
+		validTotal = offset + len(sessions)
+	}
+
+	return sessions, validTotal, nil
+}
+
+// CreatePresetQueryWithUser creates a new preset query with user association
+func (s *SupabaseDB) CreatePresetQueryWithUser(ctx context.Context, req *CreatePresetQueryRequest, userID string) (*PresetQuery, error) {
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
+	selectedServersJSON := "[]"
+	if len(req.SelectedServers) > 0 {
+		serversJSON, err := json.Marshal(req.SelectedServers)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal selected servers: %w", err)
+		}
+		selectedServersJSON = string(serversJSON)
+	}
+
+	selectedToolsJSON := "[]"
+	if len(req.SelectedTools) > 0 {
+		toolsJSON, err := json.Marshal(req.SelectedTools)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal selected tools: %w", err)
+		}
+		selectedToolsJSON = string(toolsJSON)
+	}
+
+	var llmConfigParam interface{}
+	if req.LLMConfig != nil {
+		llmConfigBytes, err := json.Marshal(req.LLMConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal LLM config: %w", err)
+		}
+		llmConfigParam = string(llmConfigBytes)
+	} else {
+		llmConfigParam = nil
+	}
+
+	agentMode := req.AgentMode
+	if agentMode == "" {
+		agentMode = AgentModeSimple
+	}
+
+	preDiscoveredToolsJSON := "[]"
+	if len(req.PreDiscoveredTools) > 0 {
+		toolsJSON, err := json.Marshal(req.PreDiscoveredTools)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal pre-discovered tools: %w", err)
+		}
+		preDiscoveredToolsJSON = string(toolsJSON)
+	}
+
+	selectedSkillsJSON := "[]"
+	if len(req.SelectedSkills) > 0 {
+		skillsJSON, err := json.Marshal(req.SelectedSkills)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal selected skills: %w", err)
+		}
+		selectedSkillsJSON = string(skillsJSON)
+	}
+
+	var userIDValue interface{}
+	if userID == "" {
+		userIDValue = nil
+	} else {
+		userIDValue = userID
+	}
+
+	query := `
+		INSERT INTO preset_queries (label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_by, user_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_at, updated_at, created_by
+	`
+
+	var preset PresetQuery
+	var selectedServersStr string
+	var selectedToolsStr string
+	var selectedFolderStr sql.NullString
+	var llmConfigNullStr sql.NullString
+	var preDiscoveredToolsStr sql.NullString
+	var selectedSkillsStr sql.NullString
+	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, selectedToolsJSON, req.SelectedFolder, agentMode, llmConfigParam, req.UseCodeExecutionMode, req.UseToolSearchMode, preDiscoveredToolsJSON, selectedSkillsJSON, req.EnableBrowserAccess, req.IsPredefined, "user", userIDValue).Scan(
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create preset query: %w", err)
+	}
+
+	preset.SelectedServers = selectedServersStr
+	preset.SelectedTools = selectedToolsStr
+	preset.SelectedFolder = selectedFolderStr
+	if llmConfigNullStr.Valid {
+		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
+	} else {
+		preset.LLMConfig = json.RawMessage("null")
+	}
+	if preDiscoveredToolsStr.Valid {
+		preset.PreDiscoveredTools = preDiscoveredToolsStr.String
+	} else {
+		preset.PreDiscoveredTools = "[]"
+	}
+	if selectedSkillsStr.Valid {
+		preset.SelectedSkills = selectedSkillsStr.String
+	} else {
+		preset.SelectedSkills = "[]"
+	}
+
+	return &preset, nil
+}
+
+// ListPresetQueriesWithUser lists preset queries with pagination and user filtering
+func (s *SupabaseDB) ListPresetQueriesWithUser(ctx context.Context, limit, offset int, userID string) ([]PresetQuery, int, error) {
+	var whereClause string
+	var args []interface{}
+	argCount := 0
+
+	if userID != "" {
+		argCount++
+		whereClause = fmt.Sprintf(" WHERE (user_id = $%d OR user_id IS NULL OR is_predefined = true)", argCount)
+		args = append(args, userID)
+	}
+
+	countQuery := `SELECT COUNT(*) FROM preset_queries` + whereClause
+	var total int
+	err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
+	}
+
+	query := `
+		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_at, updated_at, created_by
+		FROM preset_queries` + whereClause + fmt.Sprintf(`
+		ORDER BY created_at DESC
+		LIMIT $%d OFFSET $%d
+	`, argCount+1, argCount+2)
+
+	args = append(args, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list preset queries: %w", err)
+	}
+	defer rows.Close()
+
+	presets := make([]PresetQuery, 0)
+	for rows.Next() {
+		var preset PresetQuery
+		var selectedServersStr string
+		var selectedToolsStr string
+		var selectedFolderStr sql.NullString
+		var llmConfigNullStr sql.NullString
+		var preDiscoveredToolsStr sql.NullString
+		var selectedSkillsStr sql.NullString
+		err := rows.Scan(
+			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan preset query: %w", err)
+		}
+
+		preset.SelectedServers = selectedServersStr
+		preset.SelectedTools = selectedToolsStr
+		preset.SelectedFolder = selectedFolderStr
+		if llmConfigNullStr.Valid {
+			preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
+		} else {
+			preset.LLMConfig = json.RawMessage("null")
+		}
+		if preDiscoveredToolsStr.Valid {
+			preset.PreDiscoveredTools = preDiscoveredToolsStr.String
+		} else {
+			preset.PreDiscoveredTools = "[]"
+		}
+		if selectedSkillsStr.Valid {
+			preset.SelectedSkills = selectedSkillsStr.String
+		} else {
+			preset.SelectedSkills = "[]"
+		}
+		presets = append(presets, preset)
+	}
+
+	return presets, total, nil
 }

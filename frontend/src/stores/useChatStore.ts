@@ -91,7 +91,6 @@ export interface ChatTabConfig {
   enableContextSummarization?: boolean  // Context summarization setting
   enableWorkspaceAccess?: boolean  // Enable/disable workspace file access tools
   enableBrowserAccess?: boolean  // Enable/disable browser automation tool (auto-enables workspace when true)
-  enableDelegationMode?: boolean  // Enable/disable delegation mode (spawn sub-agents)
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
   autoRun?: boolean  // Automatically run the chat when tab is loaded
 }

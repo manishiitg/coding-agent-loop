@@ -3,6 +3,18 @@
  * Handles OAuth authentication flows for MCP servers
  */
 
+import { getAuthToken } from './api';
+
+// Helper to get auth headers
+function getAuthHeaders(): HeadersInit {
+  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  const token = getAuthToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 export interface OAuthStartRequest {
   server_name: string;
   client_id?: string;
@@ -55,7 +67,7 @@ export class OAuthApi {
 
     const response = await fetch(`${this.baseUrl}/api/oauth/start`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(body),
     });
 
@@ -72,7 +84,8 @@ export class OAuthApi {
    */
   async getOAuthStatus(serverName: string): Promise<OAuthStatusResponse> {
     const response = await fetch(
-      `${this.baseUrl}/api/oauth/status?server_name=${encodeURIComponent(serverName)}`
+      `${this.baseUrl}/api/oauth/status?server_name=${encodeURIComponent(serverName)}`,
+      { headers: getAuthHeaders() }
     );
 
     if (!response.ok) {
@@ -89,7 +102,7 @@ export class OAuthApi {
   async logout(serverName: string): Promise<void> {
     const response = await fetch(`${this.baseUrl}/api/oauth/logout`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ server_name: serverName }),
     });
 

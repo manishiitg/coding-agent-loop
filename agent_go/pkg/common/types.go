@@ -22,6 +22,8 @@ const (
 	FolderGuardBlockedPathsKey ContextKey = "folder_guard_blocked_paths"
 	// FolderGuardAllowedWriteFolderKey is the context key for the only folder allowed for writes (chat mode)
 	FolderGuardAllowedWriteFolderKey ContextKey = "folder_guard_allowed_write_folder"
+	// UserIDKey is the context key for the user ID (used for per-user workspace isolation)
+	UserIDKey ContextKey = "user_id"
 )
 
 // QuoteShellArg quotes a shell argument if it contains special characters

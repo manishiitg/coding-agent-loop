@@ -11,11 +11,16 @@ import (
 // Database interface for chat history storage
 type Database interface {
 	// Chat session management
+	// userID parameter is used for session isolation in multi-user mode
+	// Pass empty string to skip user filtering (for single-user mode)
 	CreateChatSession(ctx context.Context, req *CreateChatSessionRequest) (*ChatSession, error)
+	CreateChatSessionWithUser(ctx context.Context, req *CreateChatSessionRequest, userID string) (*ChatSession, error)
 	GetChatSession(ctx context.Context, sessionID string) (*ChatSession, error)
+	GetChatSessionWithUser(ctx context.Context, sessionID string, userID string) (*ChatSession, error)
 	UpdateChatSession(ctx context.Context, sessionID string, req *UpdateChatSessionRequest) (*ChatSession, error)
 	DeleteChatSession(ctx context.Context, sessionID string) error
 	ListChatSessions(ctx context.Context, limit, offset int, presetQueryID *string, agentMode *string) ([]ChatHistorySummary, int, error)
+	ListChatSessionsWithUser(ctx context.Context, limit, offset int, presetQueryID *string, agentMode *string, userID string) ([]ChatHistorySummary, int, error)
 
 	// Event storage
 	StoreEvent(ctx context.Context, sessionID string, event *events.AgentEvent) error
@@ -23,11 +28,14 @@ type Database interface {
 	GetEventsBySession(ctx context.Context, sessionID string, limit, offset int) ([]Event, error)
 
 	// Preset query management
+	// userID parameter is used for isolation in multi-user mode
 	CreatePresetQuery(ctx context.Context, req *CreatePresetQueryRequest) (*PresetQuery, error)
+	CreatePresetQueryWithUser(ctx context.Context, req *CreatePresetQueryRequest, userID string) (*PresetQuery, error)
 	GetPresetQuery(ctx context.Context, id string) (*PresetQuery, error)
 	UpdatePresetQuery(ctx context.Context, id string, req *UpdatePresetQueryRequest) (*PresetQuery, error)
 	DeletePresetQuery(ctx context.Context, id string) error
 	ListPresetQueries(ctx context.Context, limit, offset int) ([]PresetQuery, int, error)
+	ListPresetQueriesWithUser(ctx context.Context, limit, offset int, userID string) ([]PresetQuery, int, error)
 
 	// Workflow management
 	CreateWorkflow(ctx context.Context, req *CreateWorkflowRequest) (*Workflow, error)

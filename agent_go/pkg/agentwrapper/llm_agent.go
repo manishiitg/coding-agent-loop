@@ -80,6 +80,9 @@ type LLMAgentConfig struct {
 	ContextEditingThreshold     int  // Token threshold for context editing (0 = use default: 100)
 	ContextEditingTurnThreshold int  // Turn age threshold for context editing (0 = use default: 5)
 
+	// Context offloading configuration
+	LargeOutputThreshold int // Token threshold for context offloading (0 = use default: 10000)
+
 	// Parallel tool execution: When enabled, multiple tool calls in a single LLM response
 	// are executed concurrently using a fork-join pattern instead of sequentially
 	EnableParallelToolExecution bool
@@ -88,6 +91,11 @@ type LLMAgentConfig struct {
 	// When set, MCP connections are shared via session registry instead of creating new connections
 	// This enables browser reuse in Playwright and other stateful MCP servers
 	SessionID string
+
+	// User ID for per-user OAuth token isolation
+	// When set, OAuth tokens for MCP servers are stored at user-specific paths
+	// This enables multi-user deployments where each user's OAuth credentials are isolated
+	UserID string
 }
 
 // FallbackModel represents a fallback model configuration
@@ -272,6 +280,12 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		logger.Info(fmt.Sprintf("🔗 MCP session ID configured for connection reuse: %s", config.SessionID))
 	}
 
+	// Add user ID for per-user OAuth token isolation
+	if config.UserID != "" {
+		agentOptions = append(agentOptions, mcpagent.WithUserID(config.UserID))
+		logger.Info(fmt.Sprintf("👤 User ID configured for per-user OAuth isolation: %s", config.UserID))
+	}
+
 	// Add parallel tool execution if enabled
 	if config.EnableParallelToolExecution {
 		agentOptions = append(agentOptions, mcpagent.WithParallelToolExecution(true))
@@ -309,6 +323,12 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		}
 		logger.Info(fmt.Sprintf("✂️ Context editing enabled - Token threshold: %d, Turn threshold: %d",
 			config.ContextEditingThreshold, config.ContextEditingTurnThreshold))
+	}
+
+	// Add large output threshold for context offloading if specified
+	if config.LargeOutputThreshold > 0 {
+		agentOptions = append(agentOptions, mcpagent.WithLargeOutputThreshold(config.LargeOutputThreshold))
+		logger.Info(fmt.Sprintf("📦 Large output threshold set to %d tokens", config.LargeOutputThreshold))
 	}
 
 	// Add smart routing options if enabled

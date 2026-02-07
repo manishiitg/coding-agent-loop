@@ -36,6 +36,7 @@ const (
 	TodoPlannerPlanImprovementAgentType      AgentType = "todo_planner_plan_improvement"       // Analyzes execution and provides plan improvement feedback
 	TodoPlannerEvaluationDebuggerAgentType   AgentType = "todo_planner_evaluation_debugger"    // Analyzes evaluation execution and provides feedback for evaluation plan improvement
 	TodoPlannerCodeExecDebuggingAgentType    AgentType = "todo_planner_code_exec_debugging"    // Analyzes execution logs for code execution errors
+	TodoPlannerExecutionDebuggerAgentType   AgentType = "todo_planner_execution_debugger"     // Analyzes execution results and answers questions (read-only)
 	TodoPlannerPlanningAgentType             AgentType = "todo_planner_planning"               // Creates step-wise plan from objective
 	TodoPlannerExecutionAgentType            AgentType = "todo_planner_execution"              // Executes first step of plan
 	TodoPlannerValidationAgentType           AgentType = "todo_planner_validation"             // Validates execution results

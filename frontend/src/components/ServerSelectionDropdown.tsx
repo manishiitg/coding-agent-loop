@@ -16,7 +16,6 @@ interface ServerSelectionDropdownProps {
   onSelectAll: () => void;
   onClearAll: () => void;
   disabled?: boolean;
-  agentMode?: string;
 }
 
 export default function ServerSelectionDropdown({
@@ -26,7 +25,6 @@ export default function ServerSelectionDropdown({
   onSelectAll,
   onClearAll,
   disabled = false,
-  agentMode = 'chat'
 }: ServerSelectionDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');

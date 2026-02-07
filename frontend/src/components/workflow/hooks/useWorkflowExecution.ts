@@ -189,7 +189,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
         setTabStreaming(activeTab.tabId, false)
       }
     }
-  }, [getActivePreset, currentPresetTools, enabledTools, effectiveServers, llmConfig, events.length, setTabStreaming, updateTabSessionId])
+  }, [getActivePreset, currentPresetTools, enabledTools, effectiveServers, llmConfig, setTabStreaming, updateTabSessionId])
 
   // Run a specific step
   const runStep = useCallback(async (stepId: string, presetQueryId: string) => {
@@ -241,7 +241,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
       setError(err instanceof Error ? err.message : 'Failed to run step')
       setManualStatus('failed')
     }
-  }, [getActivePreset, currentPresetTools, enabledTools, effectiveServers, llmConfig, events.length])
+  }, [getActivePreset, currentPresetTools, enabledTools, effectiveServers, llmConfig])
 
   // Pause workflow
   const pauseWorkflow = useCallback(async () => {

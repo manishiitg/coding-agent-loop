@@ -315,6 +315,7 @@ export const StepLegend: React.FC<StepLegendProps> = ({
         return newCache
       })
     })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspacePath, allStepsKey]) // Depend on stable key instead of allSteps object
 
   const handleStepClick = useCallback((nodeId: string) => {

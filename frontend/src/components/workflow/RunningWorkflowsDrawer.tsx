@@ -92,7 +92,7 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
   const isSwitchingRef = useRef(false)
 
   // Helper to extract progress and orchestrator info from events for a session
-  const getInfoFromEvents = (sessionId: string | undefined) => {
+  const getInfoFromEvents = React.useCallback((sessionId: string | undefined) => {
     if (!sessionId) {
       return {
         progress: undefined,
@@ -143,7 +143,7 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
       lastEventTime,
       latestEvent
     }
-  }
+  }, [tabEvents])
 
   // Get set of session IDs that are already active in tabs
   // Only compute when drawer is visible
@@ -388,7 +388,7 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
       // Stale workflows go to bottom
       return aIsStale ? 1 : -1
     })
-  }, [showRunningDrawer, runningWorkflows, chatTabs, tabEvents, getTabStreamingStatus, customPresets, predefinedPresets, activePresetId, stepProgress])
+  }, [showRunningDrawer, runningWorkflows, chatTabs, getTabStreamingStatus, customPresets, predefinedPresets, activePresetId, stepProgress, activeSessionIds, getInfoFromEvents])
 
   // Auto-expand latest events by default - update when workflows change
   useEffect(() => {

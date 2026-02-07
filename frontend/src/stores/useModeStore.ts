@@ -128,7 +128,7 @@ export const useModeStore = create<ModeState>()(
           hasCompletedInitialSetup: state.hasCompletedInitialSetup,
           lastSelectedPreset: state.lastSelectedPreset
         }),
-        migrate: (persistedState: unknown, _version: number) => {
+        migrate: (persistedState: unknown) => {
           return persistedState as ModeState
         }
       }

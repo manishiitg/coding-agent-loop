@@ -68,19 +68,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 	// Add context from the LAST previous execution agent output ONLY
 	// Use only the most recent step's execution result (in-memory, not file paths)
 	if len(previousExecutionResults) > 0 {
-		// Get the last (most recent) execution result
+		// Get the last (most recent) execution result and its step index
 		lastExecutionResult := ""
+		lastResultStepIndex := -1
 		for i := len(previousExecutionResults) - 1; i >= 0; i-- {
 			if previousExecutionResults[i] != "" {
 				lastExecutionResult = previousExecutionResults[i]
+				lastResultStepIndex = i
 				break
 			}
 		}
 
 		if lastExecutionResult != "" {
-			contextBuilder.WriteString("Previous Step Execution Output:\n")
+			// Check if the source step was a human_input step — human feedback is critical
+			isHumanInput := lastResultStepIndex >= 0 && lastResultStepIndex < len(allSteps) && allSteps[lastResultStepIndex].StepType() == StepTypeHumanInput
+			if isHumanInput {
+				contextBuilder.WriteString("🚨 HUMAN FEEDBACK (CRITICAL - This takes priority over other context):\n")
+			} else {
+				contextBuilder.WriteString("Previous Step Execution Output:\n")
+			}
 			contextBuilder.WriteString(fmt.Sprintf("%s\n", lastExecutionResult))
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Included last previous step execution output (length: %d chars)", len(lastExecutionResult)))
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Included last previous step execution output (length: %d chars, isHumanInput: %v)", len(lastExecutionResult), isHumanInput))
 		} else {
 			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ No previous step execution outputs available for conditional evaluation"))
 		}

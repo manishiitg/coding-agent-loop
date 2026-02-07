@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useMemo, useCallback, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useShallow } from 'zustand/react/shallow'
 import {
   Play,
@@ -125,21 +126,23 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   className = ''
 }) => {
   // Normalize runFolders to avoid repeated null checks throughout the component
-  const folders = runFolders ?? []
+  const folders = useMemo(() => runFolders ?? [], [runFolders])
 
   // Workspace store for opening folders
   const fetchFiles = useWorkspaceStore(state => state.fetchFiles)
 
+  // Get preset data for tiered mode check
+  const activePresetIdForMode = useGlobalPresetStore(state => state.activePresetIds.workflow)
+  const { customPresets, predefinedPresets } = useGlobalPresetStore()
+
   // Check if tiered LLM mode is active (hides tempLLM override controls)
   const isTieredMode = useMemo(() => {
-    const presetStore = useGlobalPresetStore.getState()
-    const activePresetId = presetStore.activePresetIds.workflow
-    const activePreset = activePresetId
-      ? presetStore.customPresets.find(p => p.id === activePresetId) ||
-        presetStore.predefinedPresets.find(p => p.id === activePresetId)
+    const activePreset = activePresetIdForMode
+      ? customPresets.find(p => p.id === activePresetIdForMode) ||
+        predefinedPresets.find(p => p.id === activePresetIdForMode)
       : null
     return activePreset?.llmConfig?.llm_allocation_mode === 'tiered'
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activePresetIdForMode, customPresets, predefinedPresets])
 
   // Workflow store - use useShallow to prevent unnecessary re-renders
   // Note: runFolders, variablesManifest, stepProgress come from props (passed from WorkflowCanvas)
@@ -296,6 +299,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const dropdownRef = useRef<HTMLDivElement>(null)
   const iterationDropdownRef = useRef<HTMLDivElement>(null)
   const startPointDropdownRef = useRef<HTMLDivElement>(null)
+  const dropdownButtonRef = useRef<HTMLButtonElement>(null)
+  const iterationDropdownButtonRef = useRef<HTMLButtonElement>(null)
+  const startPointButtonRef = useRef<HTMLButtonElement>(null)
+  
+  // State for dropdown positions (for portal rendering)
+  const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number } | null>(null)
+  const [iterationDropdownPosition, setIterationDropdownPosition] = useState<{ top: number; left: number } | null>(null)
+  const [startPointDropdownPosition, setStartPointDropdownPosition] = useState<{ top: number; left: number } | null>(null)
   
   // Keep isRunning for other uses (like dropdown disabled state)
   const isRunning = status === 'running'
@@ -418,19 +429,72 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      const target = event.target as Node
+      
+      // Check first dropdown (phase selector)
+      const phaseDropdown = document.querySelector('[data-phase-dropdown]')
+      const clickedPhaseButton = dropdownButtonRef.current?.contains(target)
+      const clickedPhaseDropdown = phaseDropdown?.contains(target)
+      if (!clickedPhaseButton && !clickedPhaseDropdown) {
         setIsDropdownOpen(false)
       }
-      if (iterationDropdownRef.current && !iterationDropdownRef.current.contains(event.target as Node)) {
+      
+      // Check iteration dropdown
+      const iterationDropdown = document.querySelector('[data-iteration-dropdown]')
+      const clickedIterationButton = iterationDropdownButtonRef.current?.contains(target)
+      const clickedIterationDropdown = iterationDropdown?.contains(target)
+      if (!clickedIterationButton && !clickedIterationDropdown) {
         setIsIterationDropdownOpen(false)
       }
-      if (startPointDropdownRef.current && !startPointDropdownRef.current.contains(event.target as Node)) {
+      
+      // Check start point dropdown
+      const startPointDropdown = document.querySelector('[data-start-point-dropdown]')
+      const clickedStartPointButton = startPointButtonRef.current?.contains(target)
+      const clickedStartPointDropdown = startPointDropdown?.contains(target)
+      if (!clickedStartPointButton && !clickedStartPointDropdown) {
         setIsStartPointDropdownOpen(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+  
+  // Calculate dropdown positions when they open
+  useEffect(() => {
+    if (isDropdownOpen && dropdownButtonRef.current) {
+      const rect = dropdownButtonRef.current.getBoundingClientRect()
+      setDropdownPosition({
+        top: rect.bottom + 4, // mt-1 = 4px
+        left: rect.left
+      })
+    } else {
+      setDropdownPosition(null)
+    }
+  }, [isDropdownOpen])
+  
+  useEffect(() => {
+    if (isIterationDropdownOpen && iterationDropdownButtonRef.current) {
+      const rect = iterationDropdownButtonRef.current.getBoundingClientRect()
+      setIterationDropdownPosition({
+        top: rect.bottom + 4, // mt-1 = 4px
+        left: rect.left
+      })
+    } else {
+      setIterationDropdownPosition(null)
+    }
+  }, [isIterationDropdownOpen])
+  
+  useEffect(() => {
+    if (isStartPointDropdownOpen && startPointButtonRef.current) {
+      const rect = startPointButtonRef.current.getBoundingClientRect()
+      setStartPointDropdownPosition({
+        top: rect.bottom + 4, // mt-1 = 4px
+        left: rect.left
+      })
+    } else {
+      setStartPointDropdownPosition(null)
+    }
+  }, [isStartPointDropdownOpen])
 
   // Separate phases based on mode
   // Only calculate when phases are actually loaded (not empty and not loading)
@@ -1180,7 +1244,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       // evaluation-execution, and code-exec-debugging
       if (phaseId === 'plan-improvement' || phaseId === 'plan-tool-optimization' ||
           phaseId === 'plan-learnings-alignment' || phaseId === 'evaluation-execution' ||
-          phaseId === 'code-exec-debugging' || phaseId === 'evaluation-debugger') {
+          phaseId === 'code-exec-debugging' || phaseId === 'evaluation-debugger' ||
+          phaseId === 'execution-debugger') {
         // Build execution options to include selected_run_folder
         const executionOptions = buildExecutionOptions()
         console.log('[WorkflowToolbar] Starting', phaseId, 'with execution options:', executionOptions)
@@ -1431,6 +1496,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             {/* Regular Phases Dropdown Selector - moved before execution button */}
             <div className="relative" ref={dropdownRef}>
               <button
+                ref={dropdownButtonRef}
                 onClick={() => {
                   console.log('[WorkflowToolbar] Phase dropdown button clicked:', { isLoadingPhases, visiblePhasesLength: visiblePhases.length, isDropdownOpen })
                   // Allow dropdown to open even when phases are running - enables parallel execution
@@ -1486,9 +1552,17 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 })()}
               </button>
 
-              {/* Dropdown Menu - Only show visible phases based on mode */}
-              {isDropdownOpen && !isLoadingPhases && visiblePhases.length > 0 && (
-                <div className="absolute top-full left-0 mt-1 w-80 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 max-h-[400px] overflow-y-auto">
+              {/* Dropdown Menu - rendered via portal for proper z-index */}
+              {isDropdownOpen && !isLoadingPhases && visiblePhases.length > 0 && dropdownPosition && createPortal(
+                <div 
+                  data-phase-dropdown
+                  ref={dropdownRef}
+                  className="fixed w-80 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-[9999] max-h-[400px] overflow-y-auto"
+                  style={{
+                    top: `${dropdownPosition.top}px`,
+                    left: `${dropdownPosition.left}px`
+                  }}
+                >
                   <div className="p-2">
                     <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">
                       {workflowMode === 'eval' ? 'Evaluation Phases' : 'Workflow Phases'}
@@ -1577,7 +1651,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                       )
                     }))}
                   </div>
-                </div>
+                </div>,
+                document.body
               )}
             </div>
 
@@ -1662,6 +1737,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 {/* Iteration Selector */}
                 <div className="relative" ref={iterationDropdownRef}>
                   <button
+                    ref={iterationDropdownButtonRef}
                     onClick={(e) => {
                       e.stopPropagation() // Prevok ent event bubbling
                       if (!isRunning && !isLoadingWorkspaceState) {
@@ -1689,9 +1765,17 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                     <ChevronDown className={`w-3 h-3 transition-transform ${isIterationDropdownOpen ? 'rotate-180' : ''}`} />
                   </button>
                   
-                  {/* Iteration Dropdown */}
-                  {isIterationDropdownOpen && !isRunning && (
-                    <div className="absolute top-full left-0 mt-1 w-56 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 max-h-[300px] overflow-y-auto">
+                  {/* Iteration Dropdown - rendered via portal for proper z-index */}
+                  {isIterationDropdownOpen && !isRunning && iterationDropdownPosition && createPortal(
+                    <div 
+                      data-iteration-dropdown
+                      ref={iterationDropdownRef}
+                      className="fixed w-56 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-[9999] max-h-[300px] overflow-y-auto"
+                      style={{
+                        top: `${iterationDropdownPosition.top}px`,
+                        left: `${iterationDropdownPosition.left}px`
+                      }}
+                    >
                       <div className="p-1">
                         {/* Create New Iteration Button */}
                         <button
@@ -2003,7 +2087,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                           </div>
                         ) : null}
                       </div>
-                    </div>
+                    </div>,
+                    document.body
                   )}
                 </div>
 
@@ -2018,6 +2103,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 {/* Dropdown 2: Start Point - Where to start */}
                 <div className="relative" ref={startPointDropdownRef}>
                   <button
+                    ref={startPointButtonRef}
                     onClick={() => !isRunning && setIsStartPointDropdownOpen(!isStartPointDropdownOpen)}
                     disabled={isRunning}
                     className={`
@@ -2037,9 +2123,17 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                     <ChevronDown className={`w-3 h-3 transition-transform ${isStartPointDropdownOpen ? 'rotate-180' : ''}`} />
                   </button>
                   
-                  {/* Start Point Dropdown */}
-                  {isStartPointDropdownOpen && !isRunning && (
-                    <div className="absolute top-full left-0 mt-1 w-64 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 max-h-[300px] overflow-y-auto">
+                  {/* Start Point Dropdown - rendered via portal for proper z-index */}
+                  {isStartPointDropdownOpen && !isRunning && startPointDropdownPosition && createPortal(
+                    <div 
+                      data-start-point-dropdown
+                      ref={startPointDropdownRef}
+                      className="fixed w-64 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-[9999] max-h-[300px] overflow-y-auto"
+                      style={{
+                        top: `${startPointDropdownPosition.top}px`,
+                        left: `${startPointDropdownPosition.left}px`
+                      }}
+                    >
                       <div className="p-1">
                         <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">
                           Start Point
@@ -2104,7 +2198,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                           )
                         })}
                       </div>
-                    </div>
+                    </div>,
+                    document.body
                   )}
                 </div>
               </>

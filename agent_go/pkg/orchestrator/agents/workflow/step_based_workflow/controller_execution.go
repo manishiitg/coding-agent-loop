@@ -892,10 +892,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildPreviousStepsSummary(allSteps []
 			previousStepTitle = fmt.Sprintf("Step %d", previousStepIndex+1)
 		}
 
-		summary.WriteString(fmt.Sprintf("\n## 📤 Previous Step Execution Output\n\n"))
-		summary.WriteString(fmt.Sprintf("**Step %d: %s** execution result:\n\n", previousStepIndex+1, previousStepTitle))
-		summary.WriteString(fmt.Sprintf("```\n%s\n```\n", execOutput))
-		summary.WriteString("\nUse this execution output to understand what the immediately previous step accomplished.\n")
+		// Check if previous step was a human_input step - human feedback is critical and needs emphasis
+		isHumanInput := previousStepIndex < len(allSteps) && allSteps[previousStepIndex].StepType() == StepTypeHumanInput
+		if isHumanInput {
+			summary.WriteString(fmt.Sprintf("\n## 🚨 HUMAN FEEDBACK (CRITICAL - READ CAREFULLY)\n\n"))
+			summary.WriteString(fmt.Sprintf("The human provided the following feedback/input in **Step %d: %s**.\n", previousStepIndex+1, previousStepTitle))
+			summary.WriteString("**You MUST incorporate this human feedback into your work. This takes priority over other context.**\n\n")
+			summary.WriteString(fmt.Sprintf("```\n%s\n```\n", execOutput))
+		} else {
+			summary.WriteString(fmt.Sprintf("\n## 📤 Previous Step Execution Output\n\n"))
+			summary.WriteString(fmt.Sprintf("**Step %d: %s** execution result:\n\n", previousStepIndex+1, previousStepTitle))
+			summary.WriteString(fmt.Sprintf("```\n%s\n```\n", execOutput))
+			summary.WriteString("\nUse this execution output to understand what the immediately previous step accomplished.\n")
+		}
 	}
 
 	return summary.String()
@@ -3672,8 +3681,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 				var responseData map[string]interface{}
 				if err := json.Unmarshal([]byte(responseContent), &responseData); err == nil {
 					if response, ok := responseData["response"].(string); ok {
-						question, _ := responseData["question"].(string)
-						executionResult = fmt.Sprintf("Human input response to '%s': %s", question, response)
+						executionResult = response
 					} else {
 						executionResult = fmt.Sprintf("Human input step completed: %s", step.GetTitle())
 					}

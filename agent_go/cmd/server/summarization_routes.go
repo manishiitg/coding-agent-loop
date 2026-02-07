@@ -184,7 +184,7 @@ func (api *StreamingAPI) handleSummarizeConversation(w http.ResponseWriter, r *h
 			}
 		}
 		if fixedTokenThreshold <= 0 {
-			fixedTokenThreshold = 200000 // Default to 200k tokens (matches orchestrator)
+			fixedTokenThreshold = 80000 // Default to 80k tokens (triggers before 100k max limit)
 		}
 	}
 

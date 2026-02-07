@@ -393,8 +393,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const changes = workflowMode === 'plan' ? planData.changes : null
   
   const loadPlanRefresh = workflowMode === 'plan' ? planData.refresh : evalData.refresh
-  const clearChanges = workflowMode === 'plan' ? planData.clearChanges : () => {}
-  const setChanges = workflowMode === 'plan' ? planData.setChanges : () => {}
+  const noop = useCallback(() => {}, [])
+  const clearChanges = workflowMode === 'plan' ? planData.clearChanges : noop
+  const setChanges = workflowMode === 'plan' ? planData.setChanges : noop
 
   // *** NEW CONSOLIDATED API ***
   // Load all workspace state (run folders, variables, phases, progress) in one call
@@ -997,7 +998,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       }
       onStartPhase('execution', executionOptions)
     }
-  }, [onStartPhase, focusNode, selectedRunFolder])
+  }, [onStartPhase, focusNode])
 
   // Store handleRunFromStep in ref for early access
   React.useEffect(() => {
@@ -1512,7 +1513,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       setEdges(initialEdges)
       prevEdgesRef.current = initialEdges
     }
-  }, [initialNodes, initialEdges, setNodes, setEdges, focusNode, buildNodeGroups, loadSavedLayout, layoutDirection])
+  }, [initialNodes, initialEdges, setNodes, setEdges, focusNode, buildNodeGroups, loadSavedLayout, layoutDirection, setLayoutDirection, updateNode])
 
   // Store selected node ID in ref to track which node is selected
   const selectedNodeIdRef = React.useRef<string | null>(null)

@@ -62,20 +62,17 @@ export const BatchExecutionEndEventDisplay: React.FC<BatchExecutionEventProps<Ba
   let iconColor = 'text-green-600 dark:text-green-400'
   let bgIconColor = 'bg-green-100 dark:bg-green-900/20'
   let titleColor = 'text-gray-900 dark:text-gray-100'
-  let borderColor = 'border-green-200 dark:border-green-900/30'
   
   if (hasFailures) {
     colorClass = 'border-red-500 bg-white dark:bg-gray-800/40'
     iconColor = 'text-red-600 dark:text-red-400'
     bgIconColor = 'bg-red-100 dark:bg-red-900/20'
     titleColor = 'text-gray-900 dark:text-gray-100'
-    borderColor = 'border-red-200 dark:border-red-900/30'
   } else if (hasCancellations && !isSuccess) {
     colorClass = 'border-blue-500 bg-white dark:bg-gray-800/40'
     iconColor = 'text-blue-600 dark:text-blue-400'
     bgIconColor = 'bg-blue-100 dark:bg-blue-900/20'
     titleColor = 'text-gray-900 dark:text-gray-100'
-    borderColor = 'border-blue-200 dark:border-blue-900/30'
   }
   
   return (
